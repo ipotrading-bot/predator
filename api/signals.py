@@ -1,55 +1,65 @@
+"""
+api/signals.py — GET /api/signals
+Retourne les signaux du cycle actuel pour la Page 2 (Live Signals).
+"""
+from __future__ import annotations
+
+import json
+import os
+import time
 from http.server import BaseHTTPRequestHandler
-import json, os, time
 
-def _get(k): return os.environ.get(k, "")
-
-def _next_scan_ts() -> int:
-    """Returns unix timestamp of next scan (00:00, 08:00, 16:00 UTC)."""
-    now = time.gmtime()
-    hours = [0, 8, 16]
-    current_hour = now.tm_hour
-    for h in hours:
-        if h > current_hour:
-            next_h = h
-            break
-    else:
-        next_h = hours[0] + 24
-    import calendar
-    base = calendar.timegm(time.strptime(
-        f"{now.tm_year}-{now.tm_mon:02d}-{now.tm_mday:02d} {next_h % 24:02d}:00:00",
-        "%Y-%m-%d %H:%M:%S"
-    ))
-    if next_h >= 24:
-        base += 86400
-    return base
+from supabase import create_client
 
 
 class handler(BaseHTTPRequestHandler):
-    def do_GET(self):
-        url = _get("SUPABASE_URL")
-        key = _get("SUPABASE_KEY")
-        signals, error = [], None
 
-        if url and key:
-            try:
-                from supabase import create_client
-                db = create_client(url, key)
-                rows = db.table("signals").select("*").order("created_at", desc=True).limit(20).execute()
-                signals = rows.data or []
-            except Exception as e:
-                error = str(e)
-
-        body = json.dumps({
-            "signals": signals,
-            "next_scan_ts": _next_scan_ts(),
-            "error": error,
-        }, default=str).encode()
-
-        self.send_response(200)
-        self.send_header("Content-Type", "application/json")
-        self.send_header("Access-Control-Allow-Origin", "*")
-        self.end_headers()
-        self.wfile.write(body)
-
-    def log_message(self, *args):
+    def log_message(self, format, *args):
         pass
+
+    def do_OPTIONS(self):
+        self._cors(); self.send_response(204); self.end_headers()
+
+    def do_GET(self):
+        self._cors()
+        try:
+            client = create_client(
+                os.environ["SUPABASE_URL"],
+                os.environ["SUPABASE_KEY"],
+            )
+
+            # Paramètre de filtre depuis query string
+            from urllib.parse import urlparse, parse_qs
+            params = parse_qs(urlparse(self.path).query)
+            limit = int(params.get("limit", ["9"])[0])
+            status = params.get("status", ["pending"])[0]
+
+            resp = (
+                client.table("signals")
+                .select(
+                    "id,event_name,sport,match_time,market_key,selection,"
+                    "bookmaker_target,ev_plus,snr_ratio,sharp_prob,"
+                    "implied_prob_soft,recommended_stake,clv_estimate,"
+                    "ai_context,status,outcome,profit_eur,created_at"
+                )
+                .eq("status", status)
+                .order("ev_plus", desc=True)
+                .limit(limit)
+                .execute()
+            )
+
+            self._json({"signals": resp.data, "count": len(resp.data)})
+        except Exception as e:
+            self._json({"error": str(e)}, 500)
+
+    def _json(self, data: dict, status: int = 200):
+        self._cors()
+        self.send_response(status)
+        self.send_header("Content-Type", "application/json")
+        self.end_headers()
+        self.wfile.write(json.dumps(data, default=str).encode())
+
+    def _cors(self):
+        self.send_header("Access-Control-Allow-Origin", "*")
+        self.send_header("Access-Control-Allow-Methods", "GET, OPTIONS")
+        self.send_header("Access-Control-Allow-Headers", "Content-Type")

@@ -1,8 +1,8 @@
 """
-config.py — Configuration centralisée via Pydantic Settings
-Charge depuis os.environ (Vercel) ou .env (local)
+config.py v2.0 — Configuration centralisée
+Compatible : local (.env) + GitHub Actions (secrets) + Vercel (env vars)
 """
-import os
+from __future__ import annotations
 
 from pydantic import Field
 from pydantic_settings import BaseSettings, SettingsConfigDict
@@ -12,65 +12,85 @@ class Settings(BaseSettings):
     model_config = SettingsConfigDict(
         env_file=".env",
         env_file_encoding="utf-8",
-        populate_by_name=True,
-        extra="ignore",
+        extra="ignore",           # ignore les vars d'env inconnues (Vercel)
     )
 
     # ── API Keys ──────────────────────────────────────────────
-    ODDS_API_KEY: str = Field(default="")
-    GEMINI_API_KEY: str = Field(default="")
-    TELEGRAM_BOT_TOKEN: str = Field(default="")
-    TELEGRAM_CHAT_ID: str = Field(default="")
+    odds_api_key: str = Field(..., alias="ODDS_API_KEY")
+    gemini_api_key: str = Field(..., alias="GEMINI_API_KEY")
+    telegram_bot_token: str = Field(..., alias="TELEGRAM_BOT_TOKEN")
+    telegram_chat_id: str = Field(..., alias="TELEGRAM_CHAT_ID")
 
     # ── Supabase ──────────────────────────────────────────────
-    SUPABASE_URL: str = Field(default="")
-    SUPABASE_KEY: str = Field(default="")
+    supabase_url: str = Field(..., alias="SUPABASE_URL")
+    supabase_key: str = Field(..., alias="SUPABASE_KEY")
+
+    # ── Dashboard Security ────────────────────────────────────
+    predator_secret: str = Field(default="", alias="PREDATOR_SECRET")
 
     # ── PAIM Engine ───────────────────────────────────────────
-    min_ev_threshold: float = 0.08
-    min_snr_ratio: float = 1.5
-    kelly_fraction: float = 0.25
-    max_drawdown_pct: float = 0.15
-    starting_bankroll: float = 10_000.0
+    min_ev_threshold: float = Field(default=0.08)
+    min_snr_ratio: float = Field(default=1.5)
+    kelly_fraction: float = Field(default=0.25)
+    max_drawdown_pct: float = Field(default=0.15)
+    starting_bankroll: float = Field(default=10_000.0)
 
     # ── Système 7/9 ───────────────────────────────────────────
-    system_size: int = 9
-    system_min_wins: int = 7
+    system_size: int = Field(default=9)
+    system_min_wins: int = Field(default=7)
 
     # ── Rate Limiting ─────────────────────────────────────────
-    api_requests_per_minute: int = 15
-    jitter_min_seconds: float = 1.5
-    jitter_max_seconds: float = 4.0
+    api_requests_per_minute: int = Field(default=15)
+    jitter_min_seconds: float = Field(default=1.5)
+    jitter_max_seconds: float = Field(default=4.0)
 
     # ── Smart Staking ─────────────────────────────────────────
-    stake_rounding_base: int = 10
+    stake_rounding_base: int = Field(default=10)
 
-    # ── Scan Windows ──────────────────────────────────────────
-    scan_hours_ahead: int = 24
-    scan_schedule: list[str] = ["00:00", "08:00", "16:00"]
+    # ── Scan ──────────────────────────────────────────────────
+    scan_hours_ahead: int = Field(default=24)
 
     # ── Bookmakers ────────────────────────────────────────────
-    sharp_books: list[str] = ["pinnacle", "betfair_ex_eu"]
-    soft_books: list[str] = ["1xbet", "bet365", "unibet"]
-    target_sports: list[str] = [
-        "soccer_epl", "soccer_ligue_1", "basketball_nba",
-        "americanfootball_nfl", "tennis_atp"
-    ]
+    sharp_books: list[str] = Field(
+        default=["pinnacle", "betfair_ex_eu"]
+    )
+    soft_books: list[str] = Field(
+        default=["1xbet", "bet365", "unibet", "williamhill"]
+    )
 
-    # ── Aliases lowercase pour compatibilité ─────────────────
-    @property
-    def odds_api_key(self) -> str: return self.ODDS_API_KEY
-    @property
-    def gemini_api_key(self) -> str: return self.GEMINI_API_KEY
-    @property
-    def telegram_bot_token(self) -> str: return self.TELEGRAM_BOT_TOKEN
-    @property
-    def telegram_chat_id(self) -> str: return self.TELEGRAM_CHAT_ID
-    @property
-    def supabase_url(self) -> str: return self.SUPABASE_URL
-    @property
-    def supabase_key(self) -> str: return self.SUPABASE_KEY
+    # ── Multi-Sport v2.0 ──────────────────────────────────────
+    # Tous les sports couverts selon le Manifeste
+    target_sports: list[str] = Field(default=[
+        # Football
+        "soccer_epl",
+        "soccer_ligue_1",
+        "soccer_spain_la_liga",
+        "soccer_germany_bundesliga",
+        "soccer_italy_serie_a",
+        "soccer_uefa_champs_league",
+        # Basketball
+        "basketball_nba",
+        "basketball_euroleague",
+        # Tennis
+        "tennis_atp_french_open",
+        "tennis_wta_french_open",
+        # Baseball
+        "baseball_mlb",
+        # Hockey
+        "icehockey_nhl",
+        # MMA
+        "mma_mixed_martial_arts",
+        # Volleyball (si disponible via API)
+        "volleyball_vnl",
+    ])
+
+    # ── 1XBet Link Template ───────────────────────────────────
+    # Template pour liens directs depuis le dashboard
+    xbet_base_url: str = Field(
+        default="https://1xbet.com/en/line/",
+        alias="XBET_BASE_URL",
+    )
 
 
-# Singleton global
+# Singleton
 settings = Settings()

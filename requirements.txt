@@ -1,13 +1,35 @@
-python-dotenv>=1.0.1
-pydantic>=2.7.1
-pydantic-settings>=2.3.0
-httpx>=0.27.0
-aiohttp>=3.9.5
-tenacity>=8.3.0
-supabase>=2.5.0
-google-generativeai>=0.7.2
-python-telegram-bot>=21.3
-fastapi>=0.110.0
-uvicorn>=0.29.0
-numpy>=1.26.4
-jinja2>=3.1.4
+# PREDATOR PAIM v2.0 — Dependencies
+# Compatible: local · GitHub Actions · Vercel Serverless
+
+# Core
+python-dotenv==1.0.1
+pydantic==2.7.1
+pydantic-settings==2.3.0
+
+# Data & Math
+numpy==1.26.4
+pandas==2.2.2
+scipy==1.13.1
+
+# HTTP async
+httpx==0.27.0
+aiohttp==3.9.5
+tenacity==8.3.0
+
+# Database
+supabase==2.5.0
+
+# AI
+google-generativeai==0.7.2
+
+# Telegram
+python-telegram-bot==21.3
+
+# Scheduler (local dev uniquement)
+apscheduler==3.10.4
+
+# Code quality
+black==24.4.2
+ruff==0.4.7
+pytest==8.2.2
+pytest-asyncio==0.23.7

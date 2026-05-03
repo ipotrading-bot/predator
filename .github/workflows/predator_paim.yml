@@ -1,0 +1,101 @@
+name: PREDATOR PAIM — Scan Triplé (Asie / Europe / USA)
+
+on:
+  # ── 1 scan automatique par jour ──────────────────────────
+  schedule:
+    - cron: "0 0 * * *"   # 00:00 UTC — Scan unique quotidien
+
+  # ── Déclenchement manuel (bouton FORCE SCAN dashboard) ─────
+  workflow_dispatch:
+    inputs:
+      session:
+        description: "Session de scan"
+        required: false
+        default: "manual"
+        type: choice
+        options: [manual, asie, europe, usa]
+
+  # ── Déclenchement via API GitHub (depuis le dashboard UI) ──
+  repository_dispatch:
+    types: [force-scan]
+
+jobs:
+  scan:
+    name: "🦅 Scan PAIM — ${{ github.event.inputs.session || 'scheduled' }}"
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+
+    steps:
+      # ── 1. Checkout ──────────────────────────────────────────
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      # ── 2. Python setup ──────────────────────────────────────
+      - name: Setup Python 3.11
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+          cache: "pip"
+
+      # ── 3. Dépendances ───────────────────────────────────────
+      - name: Install dependencies
+        run: |
+          pip install --upgrade pip
+          pip install -r requirements.txt
+
+      # ── 4. Variables d'environnement ─────────────────────────
+      - name: Configure environment
+        run: |
+          echo "ODDS_API_KEY=${{ secrets.ODDS_API_KEY }}"           >> $GITHUB_ENV
+          echo "GEMINI_API_KEY=${{ secrets.GEMINI_API_KEY }}"       >> $GITHUB_ENV
+          echo "TELEGRAM_BOT_TOKEN=${{ secrets.TELEGRAM_BOT_TOKEN }}" >> $GITHUB_ENV
+          echo "TELEGRAM_CHAT_ID=${{ secrets.TELEGRAM_CHAT_ID }}"   >> $GITHUB_ENV
+          echo "SUPABASE_URL=${{ secrets.SUPABASE_URL }}"           >> $GITHUB_ENV
+          echo "SUPABASE_KEY=${{ secrets.SUPABASE_SERVICE_KEY }}"   >> $GITHUB_ENV
+
+      # ── 5. Détermination de la session ────────────────────────
+      - name: Determine session name
+        id: session
+        run: |
+          HOUR=$(date -u +%H)
+          if [[ "${{ github.event_name }}" == "workflow_dispatch" ]]; then
+            SESSION="${{ github.event.inputs.session }}"
+          elif [[ "${{ github.event_name }}" == "repository_dispatch" ]]; then
+            SESSION="force"
+          elif [ "$HOUR" -lt 4 ]; then
+            SESSION="Asie"
+          elif [ "$HOUR" -lt 12 ]; then
+            SESSION="Europe"
+          else
+            SESSION="USA"
+          fi
+          echo "name=$SESSION" >> $GITHUB_OUTPUT
+          echo "🕐 Session: $SESSION"
+
+      # ── 6. Lancement du scan PAIM ─────────────────────────────
+      - name: Run PAIM scan
+        run: python main.py --session "${{ steps.session.outputs.name }}" --once
+        env:
+          PYTHONUNBUFFERED: "1"
+          PYTHONPATH: "."
+
+      # ── 7. Rapport d'exécution ───────────────────────────────
+      - name: Upload scan log
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: scan-log-${{ steps.session.outputs.name }}-${{ github.run_number }}
+          path: predator_paim.log
+          retention-days: 7
+
+      # ── 8. Notification Telegram si échec ────────────────────
+      - name: Notify Telegram on failure
+        if: failure()
+        run: |
+          curl -s -X POST "https://api.telegram.org/bot${{ secrets.TELEGRAM_BOT_TOKEN }}/sendMessage" \
+            -H "Content-Type: application/json" \
+            -d '{
+              "chat_id": "${{ secrets.TELEGRAM_CHAT_ID }}",
+              "text": "🚨 *PREDATOR PAIM — ERREUR*\nScan `${{ steps.session.outputs.name }}` a échoué.\nRun: [${{ github.run_number }}](${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }})",
+              "parse_mode": "Markdown"
+            }'
