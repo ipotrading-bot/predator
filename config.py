@@ -18,6 +18,8 @@ class Settings(BaseSettings):
     # ── API Keys ──────────────────────────────────────────────
     odds_api_key: str = Field(..., alias="ODDS_API_KEY")
     gemini_api_key: str = Field(..., alias="GEMINI_API_KEY")
+    groq_api_key: str = Field(default="", alias="GROQ_API_KEY")
+    news_api_key: str = Field(default="", alias="NEWS_API_KEY")
     telegram_bot_token: str = Field(..., alias="TELEGRAM_BOT_TOKEN")
     telegram_chat_id: str = Field(..., alias="TELEGRAM_CHAT_ID")
 
@@ -27,6 +29,10 @@ class Settings(BaseSettings):
 
     # ── Dashboard Security ────────────────────────────────────
     predator_secret: str = Field(default="", alias="PREDATOR_SECRET")
+
+    # ── BetterStack Logging ───────────────────────────────────
+    betterstack_token: str = Field(default="", alias="BETTERSTACK_TOKEN")
+    betterstack_source_id: str = Field(default="", alias="BETTERSTACK_SOURCE_ID")
 
     # ── PAIM Engine ───────────────────────────────────────────
     min_ev_threshold: float = Field(default=0.08)
@@ -90,6 +96,27 @@ class Settings(BaseSettings):
         default="https://1xbet.com/en/line/",
         alias="XBET_BASE_URL",
     )
+
+    # ── News Sources ──────────────────────────────────────────
+    news_sources: list[str] = Field(default=[
+        "espn",
+        "bbc-sport",
+        "sky-sports",
+        "the-sports-db",
+    ])
+
+    # ── RSS Feeds ─────────────────────────────────────────────
+    rss_feeds: list[str] = Field(default=[
+        "https://www.espn.com/espn/rss/news",
+        "https://www.skysports.com/rss/12",  # Football
+        "https://www.skysports.com/rss/16",  # NBA
+    ])
+
+    # ── Groq Model ────────────────────────────────────────────
+    groq_model: str = Field(default="llama-3.1-70b-versatile")
+
+    # ── Gemini Model ──────────────────────────────────────────
+    gemini_model: str = Field(default="gemini-2.0-flash-exp")
 
 
 # Singleton

@@ -17,14 +17,33 @@ flask==3.0.3
 # Database
 supabase==2.5.0
 
-# AI
+# AI - Google Gemini
 google-generativeai==0.7.2
+
+# AI - Groq (Ultra-fast inference)
+groq==0.9.0
 
 # Telegram
 python-telegram-bot==21.3
 
 # Scheduler (local dev uniquement)
 apscheduler==3.10.4
+
+# Analytics & Quantitative
+quantstats==0.0.62
+pandas==2.2.2
+numpy==1.26.4
+
+# News & RSS
+feedparser==6.0.11
+newsapi-python==0.2.7
+
+# PDF Generation
+reportlab==4.2.0
+fpdf2==2.7.9
+
+# Logging & Monitoring
+logging-azure-eventhub==0.1.2
 
 # Code quality
 pytest==8.2.2
