@@ -202,9 +202,47 @@ async def root():
         return JSONResponse({"status": "error", "message": str(e)}, status_code=500)
 
 
-@app.get("/")
-async def root() -> JSONResponse:
-    return JSONResponse({"status": "ok", "name": "Predator PAIM API", "endpoints": ["/api/scan", "/api/health"]})
+HTML_TEMPLATE = """
+<!DOCTYPE html>
+<html lang="fr">
+<head>
+    <meta charset="UTF-8">
+    <title>PREDATOR PAIM | Terminal</title>
+    <style>
+        body { background: #0a0a0a; color: #00ff00; font-family: 'Courier New', monospace; padding: 20px; }
+        .container { border: 1px solid #00ff00; padding: 20px; border-radius: 5px; box-shadow: 0 0 15px #00ff0033; }
+        h1 { border-bottom: 1px solid #00ff00; padding-bottom: 10px; }
+        .status { color: #00ff00; font-weight: bold; }
+        .btn { background: #00ff00; color: #000; padding: 10px 20px; text-decoration: none; border-radius: 3px; font-weight: bold; cursor: pointer; }
+        .stats { display: grid; grid-template-columns: 1fr 1fr 1fr; gap: 20px; margin-top: 20px; }
+        .card { border: 1px solid #333; padding: 15px; background: #111; }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <h1>🦅 PREDATOR PAIM v2.0 <span style="font-size: 12px; float: right;">PHD MIT QUANT SYSTEM</span></h1>
+        <div class="stats">
+            <div class="card">STATUT: <span class="status">ACTIF</span></div>
+            <div class="card">CAPITAL: 10,000 €</div>
+            <div class="card">TARGET: +100% / MOIS</div>
+        </div>
+        <br><br>
+        <a href="/api/scan" class="btn">DÉCLENCHER SCAN MANUEL</a>
+        <br><br>
+        <h3>DERNIERS SIGNAUX (SUPABASE)</h3>
+        <div id="signals">Chargement des flux de données...</div>
+    </div>
+</body>
+</html>
+"""
+
+
+from fastapi.responses import HTMLResponse
+
+
+@app.get("/", response_class=HTMLResponse)
+async def root() -> HTMLResponse:
+    return HTMLResponse(content=HTML_TEMPLATE)
 
 
 @app.get("/api/health")
