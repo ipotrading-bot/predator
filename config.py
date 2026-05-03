@@ -88,4 +88,18 @@ class Settings(BaseSettings):
 
 
 # Singleton global
-settings = Settings()
+try:
+    print(f"DEBUG: ODDS_API_KEY from env: {os.environ.get('ODDS_API_KEY')}")
+    settings = Settings()
+except Exception as e:
+    import logging
+    import traceback
+    logging.basicConfig(level=logging.ERROR)
+    logger = logging.getLogger(__name__)
+    logger.error(f"Failed to initialize Settings: {e}")
+    logger.error(traceback.format_exc())
+    # If it is a ValidationError, print details
+    if hasattr(e, 'errors'):
+        for error in e.errors():
+            logger.error(f"Error: {error}")
+    raise e
