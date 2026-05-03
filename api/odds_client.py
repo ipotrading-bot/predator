@@ -1,5 +1,4 @@
 import requests
-import streamlit as st
 from api.rate_limiter import rate_limiter
 
 @rate_limiter

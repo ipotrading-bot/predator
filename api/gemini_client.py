@@ -1,4 +1,3 @@
-import streamlit as st
 import google.generativeai as genai
 
 def get_gemini_client():
