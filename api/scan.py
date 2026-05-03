@@ -1,395 +1,344 @@
 """
-api/scan.py — Predator PAIM — Vercel Serverless API
+api/scan.py — Predator PAIM v2.0 — Main entry point
+4-page dashboard + PAIM scan pipeline
 """
 from __future__ import annotations
-
-import logging
-import os
-import time
+from http.server import BaseHTTPRequestHandler
+import json, os, time, logging
 from typing import Optional
+from urllib.parse import urlparse
 
-from fastapi import FastAPI
-from fastapi.responses import JSONResponse, HTMLResponse
+logger = logging.getLogger("predator")
 
-logging.basicConfig(level=logging.INFO)
-logger = logging.getLogger("api.scan")
+def _get(k): return os.environ.get(k, "")
 
-app = FastAPI(title="Predator PAIM API", version="2.0.0")
-
-
-def _get(key: str) -> str:
-    return os.environ.get(key, "")
-
-
-# ── HTML Terminal UI ──────────────────────────────────────────────
+# ── 4-Page Dashboard HTML ─────────────────────────────────────────
 
 HTML = """<!DOCTYPE html>
 <html lang="fr">
 <head>
-    <meta charset="UTF-8">
-    <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>PREDATOR PAIM | Terminal</title>
-    <style>
-        * { box-sizing: border-box; margin: 0; padding: 0; }
-        body { background: #0a0a0a; color: #00ff00; font-family: 'Courier New', monospace; padding: 24px; }
-        .container { border: 1px solid #00ff00; padding: 24px; border-radius: 6px;
-                     box-shadow: 0 0 20px #00ff0022; max-width: 960px; margin: auto; }
-        h1 { border-bottom: 1px solid #00ff00; padding-bottom: 12px; margin-bottom: 20px; font-size: 1.3rem; }
-        h3 { margin: 24px 0 12px; color: #00cc00; font-size: 1rem; }
-        .stats { display: grid; grid-template-columns: repeat(3, 1fr); gap: 16px; margin-bottom: 24px; }
-        .card { border: 1px solid #1a3a1a; padding: 14px; background: #0f1f0f; border-radius: 4px; font-size: 0.85rem; }
-        .card span { color: #00ff00; font-weight: bold; }
-        .btn { display: inline-block; background: #00ff00; color: #000; padding: 10px 22px;
-               border-radius: 4px; font-weight: bold; cursor: pointer; border: none;
-               font-family: 'Courier New', monospace; font-size: 0.9rem; }
-        .btn:hover { background: #00cc00; }
-        .btn:disabled { background: #005500; color: #333; cursor: not-allowed; }
-        #scan-result { margin-top: 12px; padding: 12px; background: #0f1f0f;
-                       border: 1px solid #1a3a1a; border-radius: 4px; font-size: 0.8rem;
-                       min-height: 40px; color: #888; }
-        table { width: 100%; border-collapse: collapse; font-size: 0.8rem; margin-top: 8px; }
-        th { text-align: left; padding: 8px 10px; border-bottom: 1px solid #1a3a1a;
-             color: #00aa00; font-weight: normal; text-transform: uppercase; font-size: 0.7rem; }
-        td { padding: 8px 10px; border-bottom: 1px solid #111; }
-        tr:hover td { background: #0f1f0f; }
-        .ev-high { color: #ff6600; font-weight: bold; }
-        .ev-ok   { color: #00ff00; }
-        .status-pending  { color: #f59e0b; }
-        .status-settled  { color: #6b7280; }
-        .empty { color: #444; padding: 20px; text-align: center; }
-        .loading { color: #555; animation: blink 1s infinite; }
-        @keyframes blink { 0%,100%{opacity:1} 50%{opacity:0.3} }
-        .tag { display: inline-block; padding: 2px 8px; border-radius: 3px;
-               font-size: 0.7rem; background: #0f2f0f; border: 1px solid #1a3a1a; }
-    </style>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>PREDATOR PAIM v2.0</title>
+<style>
+*{box-sizing:border-box;margin:0;padding:0}
+body{background:#050a05;color:#00ff00;font-family:'Courier New',monospace;min-height:100vh}
+nav{background:#0a0a0a;border-bottom:1px solid #0f2f0f;padding:12px 24px;display:flex;align-items:center;gap:24px;position:sticky;top:0;z-index:100}
+.logo{font-size:1.1rem;font-weight:bold;color:#00ff00;margin-right:auto}
+.logo span{color:#444;font-size:0.7rem;margin-left:8px}
+.nav-btn{background:none;border:1px solid #1a3a1a;color:#00aa00;padding:6px 14px;border-radius:3px;cursor:pointer;font-family:'Courier New',monospace;font-size:0.8rem;transition:all .2s}
+.nav-btn:hover,.nav-btn.active{background:#0f2f0f;border-color:#00ff00;color:#00ff00}
+.page{display:none;padding:24px;max-width:1100px;margin:auto}
+.page.active{display:block}
+h2{font-size:1.1rem;margin-bottom:20px;border-bottom:1px solid #0f2f0f;padding-bottom:10px;color:#00cc00}
+.grid3{display:grid;grid-template-columns:repeat(3,1fr);gap:16px;margin-bottom:24px}
+.grid2{display:grid;grid-template-columns:repeat(2,1fr);gap:16px;margin-bottom:24px}
+.card{background:#0a0a0a;border:1px solid #0f2f0f;border-radius:4px;padding:16px}
+.card-label{font-size:0.65rem;color:#444;text-transform:uppercase;letter-spacing:.1em;margin-bottom:6px}
+.card-value{font-size:1.6rem;font-weight:bold;color:#00ff00}
+.card-value.red{color:#ef4444}
+.card-value.yellow{color:#f59e0b}
+.btn{background:#00ff00;color:#000;border:none;padding:10px 20px;border-radius:3px;font-weight:bold;cursor:pointer;font-family:'Courier New',monospace;font-size:0.85rem}
+.btn:hover{background:#00cc00}
+.btn:disabled{background:#0a2a0a;color:#1a4a1a;cursor:not-allowed}
+.btn-sm{padding:6px 12px;font-size:0.75rem}
+#scan-log{background:#0a0a0a;border:1px solid #0f2f0f;border-radius:4px;padding:12px;font-size:0.75rem;min-height:50px;color:#00aa00;white-space:pre-wrap;margin-top:12px}
+table{width:100%;border-collapse:collapse;font-size:0.78rem}
+th{text-align:left;padding:8px 10px;border-bottom:1px solid #0f2f0f;color:#006600;font-weight:normal;text-transform:uppercase;font-size:0.65rem}
+td{padding:8px 10px;border-bottom:1px solid #050a05}
+tr:hover td{background:#0a0a0a}
+.ev-hot{color:#ff6600;font-weight:bold}
+.ev-ok{color:#00ff00}
+.badge{display:inline-block;padding:2px 8px;border-radius:2px;font-size:0.65rem;background:#0a1a0a;border:1px solid #0f2f0f}
+.badge-pending{color:#f59e0b;border-color:#3a2a00}
+.badge-settled{color:#444;border-color:#1a1a1a}
+.win{color:#00ff00}
+.loss{color:#ef4444}
+.countdown{font-size:2rem;font-weight:bold;color:#00ff00;letter-spacing:.1em}
+.signal-card{background:#0a0a0a;border:1px solid #0f2f0f;border-radius:4px;padding:14px;margin-bottom:10px}
+.signal-card:hover{border-color:#00ff00}
+.signal-num{color:#444;font-size:0.7rem;margin-bottom:4px}
+.signal-event{font-size:0.95rem;font-weight:bold;margin-bottom:8px}
+.signal-meta{display:flex;gap:12px;flex-wrap:wrap;font-size:0.75rem}
+.signal-meta span{color:#006600}
+.signal-meta b{color:#00ff00}
+.chart-wrap{background:#0a0a0a;border:1px solid #0f2f0f;border-radius:4px;padding:16px;height:220px;position:relative}
+canvas{width:100%!important;height:180px!important}
+.empty{color:#1a3a1a;text-align:center;padding:40px;font-size:0.85rem}
+.status-dot{width:8px;height:8px;border-radius:50%;background:#00ff00;display:inline-block;margin-right:6px;animation:pulse 2s infinite}
+@keyframes pulse{0%,100%{opacity:1}50%{opacity:.3}}
+</style>
 </head>
 <body>
-<div class="container">
-    <h1>🦅 PREDATOR PAIM v2.0
-        <span style="font-size:10px;float:right;color:#444;line-height:2.5">PHD MIT QUANT SYSTEM</span>
-    </h1>
+<nav>
+  <div class="logo">🦅 PREDATOR PAIM <span>v2.0 | PHD MIT QUANT</span></div>
+  <button class="nav-btn active" onclick="showPage('terminal')">TERMINAL</button>
+  <button class="nav-btn" onclick="showPage('signals')">SIGNALS 7/9</button>
+  <button class="nav-btn" onclick="showPage('ledger')">LEDGER</button>
+  <button class="nav-btn" onclick="showPage('audit')">AUDIT</button>
+</nav>
 
-    <div class="stats">
-        <div class="card">STATUT: <span id="sys-status">ACTIF</span></div>
-        <div class="card">CAPITAL: <span>10,000 €</span></div>
-        <div class="card">EV+ MIN: <span>8%</span> | SNR MIN: <span>1.5</span></div>
-    </div>
+<!-- PAGE 1: TERMINAL -->
+<div id="page-terminal" class="page active">
+  <h2><span class="status-dot"></span>TERMINAL DE CONTRÔLE</h2>
+  <div class="grid3">
+    <div class="card"><div class="card-label">Statut Système</div><div class="card-value" id="sys-state">ACTIF</div></div>
+    <div class="card"><div class="card-label">Capital Initial</div><div class="card-value">10,000 €</div></div>
+    <div class="card"><div class="card-label">Prochain Scan</div><div class="countdown" id="countdown">--:--:--</div></div>
+  </div>
+  <div class="grid3">
+    <div class="card"><div class="card-label">EV+ Minimum</div><div class="card-value">8%</div></div>
+    <div class="card"><div class="card-label">Kelly Fraction</div><div class="card-value">0.25×</div></div>
+    <div class="card"><div class="card-label">Kill-Switch</div><div class="card-value yellow">15% DD</div></div>
+  </div>
+  <button class="btn" id="scan-btn" onclick="forceScan()">⚡ FORCE SCAN MANUEL</button>
+  <div id="scan-log">Système prêt. En attente du prochain cycle...</div>
+</div>
 
-    <button class="btn" id="scan-btn" onclick="triggerScan()">⚡ DÉCLENCHER SCAN MANUEL</button>
-    <div id="scan-result">Prêt.</div>
+<!-- PAGE 2: SIGNALS -->
+<div id="page-signals" class="page">
+  <h2>TICKET SYSTÈME 7/9 — CYCLE ACTUEL</h2>
+  <div id="signals-list"><div class="empty">Chargement des signaux...</div></div>
+</div>
 
-    <h3>📊 DERNIERS SIGNAUX — SUPABASE</h3>
-    <div id="signals-container">
-        <div class="loading">⏳ Chargement des signaux...</div>
-    </div>
+<!-- PAGE 3: LEDGER -->
+<div id="page-ledger" class="page">
+  <h2>LEDGER — HISTORIQUE COMPLET</h2>
+  <div id="ledger-table"><div class="empty">Chargement...</div></div>
+</div>
 
-    <h3>📈 PERFORMANCE</h3>
-    <div id="perf-container">
-        <div class="loading">⏳ Chargement des métriques...</div>
-    </div>
+<!-- PAGE 4: AUDIT -->
+<div id="page-audit" class="page">
+  <h2>AUDIT QUANTITATIF</h2>
+  <div class="grid3" id="audit-kpis">
+    <div class="card"><div class="card-label">Total Paris</div><div class="card-value" id="a-total">—</div></div>
+    <div class="card"><div class="card-label">Win Rate</div><div class="card-value" id="a-wr">—</div></div>
+    <div class="card"><div class="card-label">Profit Net</div><div class="card-value" id="a-profit">—</div></div>
+  </div>
+  <div class="grid2">
+    <div class="card"><div class="card-label">CLV Index (cible &gt;5%)</div><div class="card-value" id="a-clv">—</div></div>
+    <div class="card"><div class="card-label">Brier Score (cible &lt;0.25)</div><div class="card-value" id="a-brier">—</div></div>
+  </div>
+  <div class="chart-wrap">
+    <div class="card-label" style="margin-bottom:8px">EQUITY CURVE — Bankroll (€)</div>
+    <canvas id="equity-chart"></canvas>
+  </div>
 </div>
 
 <script>
+// ── Navigation ────────────────────────────────────────────────
+function showPage(name) {
+  document.querySelectorAll('.page').forEach(p => p.classList.remove('active'));
+  document.querySelectorAll('.nav-btn').forEach(b => b.classList.remove('active'));
+  document.getElementById('page-' + name).classList.add('active');
+  event.target.classList.add('active');
+  if (name === 'signals') loadSignals();
+  if (name === 'ledger') loadLedger();
+  if (name === 'audit') loadAudit();
+}
+
+// ── Countdown ─────────────────────────────────────────────────
+let nextScanTs = 0;
+function updateCountdown() {
+  if (!nextScanTs) return;
+  const diff = nextScanTs - Math.floor(Date.now() / 1000);
+  if (diff <= 0) { document.getElementById('countdown').textContent = 'SCAN...'; return; }
+  const h = String(Math.floor(diff / 3600)).padStart(2,'0');
+  const m = String(Math.floor((diff % 3600) / 60)).padStart(2,'0');
+  const s = String(diff % 60).padStart(2,'0');
+  document.getElementById('countdown').textContent = h + ':' + m + ':' + s;
+}
+setInterval(updateCountdown, 1000);
+
+// ── Force Scan ────────────────────────────────────────────────
+async function forceScan() {
+  const btn = document.getElementById('scan-btn');
+  const log = document.getElementById('scan-log');
+  btn.disabled = true; btn.textContent = '⏳ Scan en cours...';
+  log.textContent = '[' + new Date().toISOString() + '] Pipeline PAIM démarré...\n';
+  try {
+    const r = await fetch('/api/scan', {method:'POST'});
+    const d = await r.json();
+    log.textContent += JSON.stringify(d, null, 2);
+    if (d.status === 'success') {
+      log.textContent += '\n\n✅ ' + (d.message || 'Scan terminé.');
+      loadSignals();
+    }
+  } catch(e) { log.textContent += '\n❌ Erreur: ' + e.message; }
+  finally { btn.disabled = false; btn.textContent = '⚡ FORCE SCAN MANUEL'; }
+}
+
+// ── Signals Page ──────────────────────────────────────────────
 async function loadSignals() {
-    try {
-        const r = await fetch('/api/signals');
-        const data = await r.json();
-        const container = document.getElementById('signals-container');
+  const el = document.getElementById('signals-list');
+  try {
+    const r = await fetch('/api/signals');
+    const d = await r.json();
+    nextScanTs = d.next_scan_ts || 0;
+    const sigs = (d.signals || []).filter(s => s.status === 'pending').slice(0, 9);
+    if (!sigs.length) { el.innerHTML = '<div class="empty">Aucun signal actif. Déclenchez un scan.</div>'; return; }
+    el.innerHTML = sigs.map((s, i) => {
+      const ev = parseFloat(s.ev_plus || 0);
+      const evStr = (ev * 100).toFixed(1) + '%';
+      const evClass = ev >= 0.15 ? 'ev-hot' : 'ev-ok';
+      const icon = ev >= 0.15 ? '🔥' : '✅';
+      return `<div class="signal-card">
+        <div class="signal-num">${icon} SÉLECTION #${i+1} / 9</div>
+        <div class="signal-event">${s.event_name || '—'}</div>
+        <div class="signal-meta">
+          <span>Sport: <b>${s.sport || '—'}</b></span>
+          <span>Sélection: <b>${s.selection || '—'}</b></span>
+          <span>Bookmaker: <b>${s.bookmaker_target || '—'}</b></span>
+          <span>EV+: <b class="${evClass}">${evStr}</b></span>
+          <span>Prob. Sharp: <b>${((s.sharp_prob||0)*100).toFixed(1)}%</b></span>
+          <span>Mise: <b>${s.recommended_stake || '—'}€</b></span>
+        </div>
+      </div>`;
+    }).join('');
+  } catch(e) { el.innerHTML = '<div class="empty">Erreur: ' + e.message + '</div>'; }
+}
 
-        if (!data.signals || data.signals.length === 0) {
-            container.innerHTML = '<div class="empty">Aucun signal enregistré pour le moment.</div>';
-            return;
+// ── Ledger Page ───────────────────────────────────────────────
+async function loadLedger() {
+  const el = document.getElementById('ledger-table');
+  try {
+    const r = await fetch('/api/signals');
+    const d = await r.json();
+    const rows = d.signals || [];
+    if (!rows.length) { el.innerHTML = '<div class="empty">Aucun historique disponible.</div>'; return; }
+    let html = `<table><thead><tr>
+      <th>Événement</th><th>Sport</th><th>Sélection</th><th>EV+</th>
+      <th>Mise</th><th>Résultat</th><th>Profit</th><th>Statut</th>
+    </tr></thead><tbody>`;
+    rows.forEach(s => {
+      const ev = ((s.ev_plus||0)*100).toFixed(1) + '%';
+      const evClass = parseFloat(s.ev_plus||0) >= 0.15 ? 'ev-hot' : 'ev-ok';
+      const outcome = s.outcome === 1 ? '<span class="win">✅ WIN</span>'
+                    : s.outcome === 0 ? '<span class="loss">❌ LOSS</span>' : '—';
+      const profit = s.profit_eur != null
+        ? `<span class="${s.profit_eur >= 0 ? 'win' : 'loss'}">${s.profit_eur >= 0 ? '+' : ''}${s.profit_eur}€</span>`
+        : '—';
+      const badge = s.status === 'settled'
+        ? '<span class="badge badge-settled">settled</span>'
+        : '<span class="badge badge-pending">pending</span>';
+      html += `<tr>
+        <td>${s.event_name || '—'}</td>
+        <td>${s.sport || '—'}</td>
+        <td><b>${s.selection || '—'}</b></td>
+        <td class="${evClass}">${ev}</td>
+        <td>${s.recommended_stake || '—'}€</td>
+        <td>${outcome}</td>
+        <td>${profit}</td>
+        <td>${badge}</td>
+      </tr>`;
+    });
+    html += '</tbody></table>';
+    el.innerHTML = html;
+  } catch(e) { el.innerHTML = '<div class="empty">Erreur: ' + e.message + '</div>'; }
+}
+
+// ── Audit Page ────────────────────────────────────────────────
+let chartInstance = null;
+async function loadAudit() {
+  try {
+    const r = await fetch('/api/audit');
+    const d = await r.json();
+    document.getElementById('a-total').textContent = d.total_bets || 0;
+    const wr = ((d.win_rate||0)*100).toFixed(1) + '%';
+    document.getElementById('a-wr').textContent = wr;
+    document.getElementById('a-wr').className = 'card-value ' + (d.win_rate >= 0.55 ? '' : 'yellow');
+    const profit = d.total_profit || 0;
+    document.getElementById('a-profit').textContent = (profit >= 0 ? '+' : '') + profit.toFixed(0) + '€';
+    document.getElementById('a-profit').className = 'card-value ' + (profit >= 0 ? '' : 'red');
+    document.getElementById('a-clv').textContent = ((d.clv_avg||0)*100).toFixed(2) + '%';
+    document.getElementById('a-brier').textContent = d.brier_score != null ? d.brier_score.toFixed(4) : 'N/A';
+
+    // Equity curve
+    const curve = d.equity_curve || [];
+    if (curve.length > 1) {
+      const labels = curve.map(p => p.timestamp ? p.timestamp.substring(0,10) : '');
+      const values = curve.map(p => p.balance);
+      const ctx = document.getElementById('equity-chart').getContext('2d');
+      if (chartInstance) chartInstance.destroy();
+      chartInstance = new Chart(ctx, {
+        type: 'line',
+        data: {
+          labels,
+          datasets: [{
+            data: values,
+            borderColor: '#00ff00',
+            backgroundColor: 'rgba(0,255,0,0.05)',
+            borderWidth: 2,
+            pointRadius: 0,
+            fill: true,
+            tension: 0.3,
+          }]
+        },
+        options: {
+          responsive: true,
+          plugins: { legend: { display: false } },
+          scales: {
+            x: { ticks: { color: '#006600', font: { size: 9 } }, grid: { color: '#0a1a0a' } },
+            y: { ticks: { color: '#006600', font: { size: 9 }, callback: v => v + '€' }, grid: { color: '#0a1a0a' } }
+          }
         }
-
-        let html = '<table><thead><tr>' +
-            '<th>#</th><th>Événement</th><th>Sport</th><th>Sélection</th>' +
-            '<th>Bookmaker</th><th>EV+</th><th>Mise</th><th>Statut</th>' +
-            '</tr></thead><tbody>';
-
-        data.signals.forEach((s, i) => {
-            const ev = parseFloat(s.ev_plus || 0);
-            const evClass = ev >= 0.15 ? 'ev-high' : 'ev-ok';
-            const evStr = (ev * 100).toFixed(1) + '%';
-            const statusClass = s.status === 'settled' ? 'status-settled' : 'status-pending';
-            html += `<tr>
-                <td>${i + 1}</td>
-                <td>${s.event_name || '—'}</td>
-                <td><span class="tag">${s.sport || '—'}</span></td>
-                <td><b>${s.selection || '—'}</b></td>
-                <td>${s.bookmaker_target || '—'}</td>
-                <td class="${evClass}">${evStr}</td>
-                <td>${s.recommended_stake || '—'}€</td>
-                <td class="${statusClass}">${s.status || '—'}</td>
-            </tr>`;
-        });
-
-        html += '</tbody></table>';
-        container.innerHTML = html;
-    } catch(e) {
-        document.getElementById('signals-container').innerHTML =
-            '<div class="empty">Erreur chargement signaux: ' + e.message + '</div>';
+      });
+    } else {
+      document.getElementById('equity-chart').parentElement.innerHTML +=
+        '<div class="empty" style="margin-top:-160px">Données insuffisantes pour la courbe.</div>';
     }
+  } catch(e) { console.error(e); }
 }
 
-async function loadPerf() {
-    try {
-        const r = await fetch('/api/performance');
-        const d = await r.json();
-        const profitColor = d.total_profit >= 0 ? '#00ff00' : '#ef4444';
-        document.getElementById('perf-container').innerHTML = `
-            <div class="stats" style="margin-top:8px">
-                <div class="card">PARIS: <span>${d.total_bets || 0}</span></div>
-                <div class="card">WIN RATE: <span>${((d.win_rate||0)*100).toFixed(1)}%</span></div>
-                <div class="card">PROFIT: <span style="color:${profitColor}">${d.total_profit >= 0 ? '+' : ''}${(d.total_profit||0).toFixed(0)}€</span></div>
-            </div>`;
-    } catch(e) {
-        document.getElementById('perf-container').innerHTML =
-            '<div class="empty">Erreur chargement métriques.</div>';
-    }
-}
-
-async function triggerScan() {
-    const btn = document.getElementById('scan-btn');
-    const result = document.getElementById('scan-result');
-    btn.disabled = true;
-    btn.textContent = '⏳ Scan en cours...';
-    result.style.color = '#888';
-    result.textContent = 'Pipeline PAIM en cours d\'exécution...';
-    try {
-        const r = await fetch('/api/scan');
-        const data = await r.json();
-        result.style.color = data.status === 'success' ? '#00ff00' : '#ef4444';
-        result.textContent = JSON.stringify(data, null, 2);
-        await loadSignals();
-        await loadPerf();
-    } catch(e) {
-        result.style.color = '#ef4444';
-        result.textContent = '❌ Erreur: ' + e.message;
-    } finally {
-        btn.disabled = false;
-        btn.textContent = '⚡ DÉCLENCHER SCAN MANUEL';
-    }
-}
-
-// Load on page open
-loadSignals();
-loadPerf();
+// ── Init ──────────────────────────────────────────────────────
+(async () => {
+  try {
+    const r = await fetch('/api/signals');
+    const d = await r.json();
+    nextScanTs = d.next_scan_ts || 0;
+  } catch(e) {}
+})();
 </script>
+<script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.0/dist/chart.umd.min.js"></script>
 </body>
 </html>"""
 
 
-# ── Routes ────────────────────────────────────────────────────────
-
-@app.get("/", response_class=HTMLResponse)
-async def root() -> HTMLResponse:
-    supabase_url = _get("SUPABASE_URL")
-    supabase_key = _get("SUPABASE_KEY")
-    
-    signals = []
-    timestamps = []
-    balances = []
-    
-    if supabase_url and supabase_key:
-        try:
-            from supabase import create_client
-            db = create_client(supabase_url, supabase_key)
-            signals = db.table("signals").select("*").order("created_at", desc=True).limit(10).execute().data
-            snapshots = db.table("bankroll_snapshots").select("*").order("timestamp").execute().data
-            timestamps = [s["timestamp"] for s in snapshots]
-            balances = [s["balance"] for s in snapshots]
-        except Exception as e:
-            logger.error(f"Erreur UI: {e}")
-
-    from jinja2 import Template
-    return HTMLResponse(content=Template(HTML_TEMPLATE).render(signals=signals, timestamps=timestamps, balances=balances))
-
-
-@app.get("/api/health")
-async def health() -> JSONResponse:
-    return JSONResponse({"status": "ok", "version": "2.0.0"})
-
-
-@app.get("/api/signals")
-async def get_signals() -> JSONResponse:
-    """Retourne les derniers signaux depuis Supabase."""
-    supabase_url = _get("SUPABASE_URL")
-    supabase_key = _get("SUPABASE_KEY")
-    if not supabase_url or not supabase_key:
-        return JSONResponse({"signals": []})
-    try:
-        from supabase import create_client
-        db = create_client(supabase_url, supabase_key)
-        rows = db.table("signals").select("*").order("created_at", desc=True).limit(20).execute()
-        return JSONResponse({"signals": rows.data or []})
-    except Exception as e:
-        logger.error(f"Supabase signals error: {e}")
-        return JSONResponse({"signals": [], "error": str(e)})
-
-
-@app.get("/api/performance")
-async def get_performance() -> JSONResponse:
-    """Retourne les métriques de performance depuis Supabase."""
-    supabase_url = _get("SUPABASE_URL")
-    supabase_key = _get("SUPABASE_KEY")
-    if not supabase_url or not supabase_key:
-        return JSONResponse({"total_bets": 0, "win_rate": 0, "total_profit": 0})
-    try:
-        from supabase import create_client
-        db = create_client(supabase_url, supabase_key)
-        rows = db.table("signals").select("*").eq("status", "settled").execute().data or []
-        total = len(rows)
-        wins = sum(1 for r in rows if r.get("outcome") == 1)
-        profit = sum(r.get("profit_eur", 0) or 0 for r in rows)
-        return JSONResponse({
-            "total_bets": total,
-            "win_rate": wins / total if total else 0,
-            "total_profit": round(profit, 2),
-        })
-    except Exception as e:
-        logger.error(f"Supabase perf error: {e}")
-        return JSONResponse({"total_bets": 0, "win_rate": 0, "total_profit": 0})
-
-
-@app.get("/api/scan")
-async def run_scan() -> JSONResponse:
-    """Pipeline PAIM complet — déclenché par cron ou manuellement."""
-    logger.info("🕐 Scan PAIM démarré")
-    start = time.monotonic()
-
-    odds_api_key = _get("ODDS_API_KEY")
-    telegram_token = _get("TELEGRAM_BOT_TOKEN")
-    telegram_chat_id = _get("TELEGRAM_CHAT_ID")
-    supabase_url = _get("SUPABASE_URL")
-    supabase_key = _get("SUPABASE_KEY")
-
-    if not odds_api_key:
-        return JSONResponse({"status": "error", "message": "ODDS_API_KEY manquant"}, status_code=500)
-
-    try:
-        import httpx
-        from supabase import create_client
-
-        # 1. Fetch odds
-        sports = ["soccer_epl", "soccer_ligue_1", "basketball_nba"]
-        all_events: list[dict] = []
-
-        async with httpx.AsyncClient(timeout=15.0) as client:
-            for sport in sports:
-                try:
-                    r = await client.get(
-                        f"https://api.the-odds-api.com/v4/sports/{sport}/odds/",
-                        params={
-                            "apiKey": odds_api_key,
-                            "regions": "eu",
-                            "markets": "h2h",
-                            "oddsFormat": "decimal",
-                            "bookmakers": "pinnacle,bet365,unibet",
-                        },
-                    )
-                    if r.status_code == 200:
-                        all_events.extend(r.json())
-                except Exception as e:
-                    logger.warning(f"Fetch error {sport}: {e}")
-
-        # 2. PAIM Engine
-        signals = [s for e in all_events if (s := _process_event(e))]
-        signals.sort(key=lambda x: x["ev_plus"], reverse=True)
-        top = signals[:9]
-
-        # 3. Persist to Supabase
-        if supabase_url and supabase_key and top:
-            try:
-                db = create_client(supabase_url, supabase_key)
-                for s in top:
-                    db.table("signals").insert({
-                        "event_id": s["event_id"],
-                        "event_name": s["event_name"],
-                        "sport": s["sport"],
-                        "selection": s["selection"],
-                        "bookmaker_target": s["bookmaker"],
-                        "ev_plus": round(s["ev_plus"], 5),
-                        "sharp_prob": round(s["sharp_prob"], 5),
-                        "recommended_stake": s["stake"],
-                        "status": "pending",
-                        "created_at": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()),
-                    }).execute()
-            except Exception as e:
-                logger.error(f"Supabase error: {e}")
-
-        # 4. Telegram
-        if telegram_token and telegram_chat_id and top:
-            await _send_telegram(telegram_token, telegram_chat_id, top)
-
-        duration = round(time.monotonic() - start, 2)
-
-        if not top:
-            return JSONResponse({
-                "status": "success",
-                "message": "Aucune anomalie EV+ détectée.",
-                "events_analyzed": len(all_events),
-                "duration_seconds": duration,
-            })
-
-        return JSONResponse({
-            "status": "success",
-            "message": f"Ticket d'Élite envoyé — {len(top)} signaux.",
-            "events_analyzed": len(all_events),
-            "signals_validated": len(top),
-            "top_signals": [{"event": s["event_name"], "selection": s["selection"],
-                             "ev": f"{s['ev_plus']:.1%}", "stake": f"{s['stake']:.0f}€"} for s in top],
-            "duration_seconds": duration,
-        })
-
-    except Exception as e:
-        logger.error(f"❌ Erreur: {e}", exc_info=True)
-        return JSONResponse({"status": "error", "message": str(e)}, status_code=500)
-
-
 # ── PAIM Engine (inline) ──────────────────────────────────────────
 
-def _shin_probs(odds: list[float]) -> list[float]:
-    total = sum(1 / o for o in odds)
-    return [1 / (o * total) for o in odds]
+def _shin_probs(odds):
+    total = sum(1/o for o in odds)
+    return [1/(o*total) for o in odds]
 
+def _compute_ev(prob, odds):
+    return prob*(odds-1)-(1-prob)
 
-def _compute_ev(prob: float, odds: float) -> float:
-    return prob * (odds - 1) - (1 - prob)
+def _kelly_stake(prob, odds, bankroll=10000.0, fraction=0.25):
+    b = odds-1
+    f = max((b*prob-(1-prob))/b, 0.0)
+    return round(f*fraction*bankroll/10)*10
 
-
-def _kelly_stake(prob: float, odds: float, bankroll: float = 10000.0, fraction: float = 0.25) -> float:
-    b = odds - 1
-    f = max((b * prob - (1 - prob)) / b, 0.0)
-    return round(f * fraction * bankroll / 10) * 10
-
-
-def _process_event(event: dict) -> Optional[dict]:
-    sharp = next((b for b in event.get("bookmakers", []) if b["key"] == "pinnacle"), None)
-    soft = next((b for b in event.get("bookmakers", []) if b["key"] in ("bet365", "unibet")), None)
-    if not sharp or not soft:
-        return None
-    sm = next((m for m in sharp.get("markets", []) if m["key"] == "h2h"), None)
-    fm = next((m for m in soft.get("markets", []) if m["key"] == "h2h"), None)
-    if not sm or not fm:
-        return None
-    so = sm.get("outcomes", [])
-    fo = fm.get("outcomes", [])
-    if len(so) < 2 or len(fo) < 2:
-        return None
+def _process_event(event):
+    sharp = next((b for b in event.get("bookmakers",[]) if b["key"]=="pinnacle"), None)
+    soft  = next((b for b in event.get("bookmakers",[]) if b["key"] in ("bet365","unibet","1xbet")), None)
+    if not sharp or not soft: return None
+    sm = next((m for m in sharp.get("markets",[]) if m["key"]=="h2h"), None)
+    fm = next((m for m in soft.get("markets",[])  if m["key"]=="h2h"), None)
+    if not sm or not fm: return None
+    so, fo = sm.get("outcomes",[]), fm.get("outcomes",[])
+    if len(so)<2 or len(fo)<2: return None
     probs = _shin_probs([o["price"] for o in so[:2]])
-    best_ev, best_sel, best_odds, best_prob = -999.0, "", 0.0, 0.0
-    for i, outcome in enumerate(fo[:2]):
-        if i >= len(probs):
-            break
+    best_ev, best_sel, best_odds, best_prob = -999.0,"",0.0,0.0
+    for i,outcome in enumerate(fo[:2]):
+        if i>=len(probs): break
         ev = _compute_ev(probs[i], outcome["price"])
-        if ev > best_ev:
-            best_ev, best_sel, best_odds, best_prob = ev, outcome["name"], outcome["price"], probs[i]
-    if best_ev < 0.08:
-        return None
+        if ev>best_ev:
+            best_ev,best_sel,best_odds,best_prob = ev,outcome["name"],outcome["price"],probs[i]
+    if best_ev<0.08: return None
     return {
-        "event_id": event.get("id", ""),
+        "event_id": event.get("id",""),
         "event_name": f"{event.get('home_team')} vs {event.get('away_team')}",
-        "sport": event.get("sport_key", ""),
+        "sport": event.get("sport_key",""),
         "selection": best_sel,
         "bookmaker": soft["key"],
         "ev_plus": best_ev,
@@ -397,19 +346,116 @@ def _process_event(event: dict) -> Optional[dict]:
         "stake": _kelly_stake(best_prob, best_odds),
     }
 
-
-async def _send_telegram(token: str, chat_id: str, signals: list[dict]) -> None:
+async def _run_pipeline():
     import httpx
-    lines = ["🦅 *PREDATOR PAIM — TICKET SYSTÈME*", "─" * 28]
-    for i, s in enumerate(signals, 1):
-        icon = "🔥" if s["ev_plus"] >= 0.15 else "✅"
-        lines.append(f"{icon} *#{i}* {s['event_name']}\n   ➤ `{s['selection']}` | EV `{s['ev_plus']:.1%}` | Mise `{s['stake']:.0f}€`")
-    lines.append(f"\n📋 *Système 7/{len(signals)}* — Profit dès 7 bons résultats")
-    async with httpx.AsyncClient() as client:
+    odds_key = _get("ODDS_API_KEY")
+    if not odds_key:
+        return {"status":"error","message":"ODDS_API_KEY manquant"}
+
+    sports = ["soccer_epl","soccer_ligue_1","basketball_nba","americanfootball_nfl","tennis_atp"]
+    all_events = []
+    start = time.monotonic()
+
+    async with httpx.AsyncClient(timeout=15.0) as client:
+        for sport in sports:
+            try:
+                r = await client.get(
+                    f"https://api.the-odds-api.com/v4/sports/{sport}/odds/",
+                    params={"apiKey":odds_key,"regions":"eu","markets":"h2h",
+                            "oddsFormat":"decimal","bookmakers":"pinnacle,bet365,unibet,1xbet"},
+                )
+                if r.status_code==200: all_events.extend(r.json())
+            except Exception as e:
+                logger.warning(f"Fetch {sport}: {e}")
+
+    signals = [s for e in all_events if (s:=_process_event(e))]
+    signals.sort(key=lambda x: x["ev_plus"], reverse=True)
+    top = signals[:9]
+
+    # Persist
+    url,key = _get("SUPABASE_URL"),_get("SUPABASE_KEY")
+    if url and key and top:
         try:
-            await client.post(
-                f"https://api.telegram.org/bot{token}/sendMessage",
-                json={"chat_id": chat_id, "text": "\n".join(lines), "parse_mode": "Markdown"},
-            )
+            from supabase import create_client
+            db = create_client(url,key)
+            for s in top:
+                db.table("signals").insert({
+                    "event_id": s["event_id"],
+                    "event_name": s["event_name"],
+                    "sport": s["sport"],
+                    "selection": s["selection"],
+                    "bookmaker_target": s["bookmaker"],
+                    "ev_plus": round(s["ev_plus"],5),
+                    "sharp_prob": round(s["sharp_prob"],5),
+                    "recommended_stake": s["stake"],
+                    "status": "pending",
+                    "created_at": time.strftime("%Y-%m-%dT%H:%M:%SZ",time.gmtime()),
+                }).execute()
         except Exception as e:
-            logger.error(f"Telegram error: {e}")
+            logger.error(f"Supabase: {e}")
+
+    # Telegram
+    tg_token,tg_chat = _get("TELEGRAM_BOT_TOKEN"),_get("TELEGRAM_CHAT_ID")
+    if tg_token and tg_chat and top:
+        try:
+            import httpx as _hx
+            lines = ["*PREDATOR PAIM - TICKET SYSTEME 7/9*","="*28]
+            for i,s in enumerate(top,1):
+                icon = "🔥" if s["ev_plus"]>=0.15 else "✅"
+                lines.append(f"{icon} #{i} {s['event_name']}\n   -> {s['selection']} | EV {s['ev_plus']:.1%} | {s['stake']:.0f}EUR")
+            lines.append(f"\nSysteme 7/{len(top)} - Profit des 7 bons resultats")
+            async with _hx.AsyncClient() as c:
+                await c.post(f"https://api.telegram.org/bot{tg_token}/sendMessage",
+                    json={"chat_id":tg_chat,"text":"\n".join(lines),"parse_mode":"Markdown"})
+        except Exception as e:
+            logger.error(f"Telegram: {e}")
+
+    duration = round(time.monotonic()-start,2)
+    if not top:
+        return {"status":"success","message":"Aucune anomalie EV+ detectee.",
+                "events_analyzed":len(all_events),"duration_seconds":duration}
+    return {"status":"success","message":f"Ticket Elite envoye - {len(top)} signaux.",
+            "events_analyzed":len(all_events),"signals_validated":len(top),
+            "top_signals":[{"event":s["event_name"],"ev":f"{s['ev_plus']:.1%}","stake":f"{s['stake']:.0f}EUR"} for s in top],
+            "duration_seconds":duration}
+
+
+# ── HTTP Handler ──────────────────────────────────────────────────
+
+class handler(BaseHTTPRequestHandler):
+    def do_GET(self):
+        path = urlparse(self.path).path
+        if path in ("/", ""):
+            body = HTML.encode("utf-8")
+            self.send_response(200)
+            self.send_header("Content-Type", "text/html; charset=utf-8")
+            self.end_headers()
+            self.wfile.write(body)
+        elif path == "/api/scan":
+            self._run_scan()
+        else:
+            self.send_response(404)
+            self.end_headers()
+
+    def do_POST(self):
+        if urlparse(self.path).path == "/api/scan":
+            self._run_scan()
+        else:
+            self.send_response(404)
+            self.end_headers()
+
+    def _run_scan(self):
+        import asyncio
+        try:
+            result = asyncio.run(_run_pipeline())
+        except Exception as e:
+            result = {"status":"error","message":str(e)}
+        body = json.dumps(result).encode()
+        self.send_response(200)
+        self.send_header("Content-Type","application/json")
+        self.send_header("Access-Control-Allow-Origin","*")
+        self.end_headers()
+        self.wfile.write(body)
+
+    def log_message(self, *args):
+        pass

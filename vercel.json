@@ -1,21 +1,34 @@
 {
   "version": 2,
+  "name": "predator-paim",
   "builds": [
     {
-      "src": "api/scan.py",
+      "src": "api/*.py",
       "use": "@vercel/python"
     }
   ],
   "routes": [
     {
+      "src": "/api/(.*)",
+      "dest": "/api/$1.py",
+      "headers": {
+        "Access-Control-Allow-Origin": "*",
+        "Access-Control-Allow-Methods": "GET, POST, OPTIONS",
+        "Access-Control-Allow-Headers": "Content-Type, Authorization"
+      }
+    },
+    {
       "src": "/(.*)",
-      "dest": "api/scan.py"
+      "dest": "/api/scan.py"
     }
   ],
+  "functions": {
+    "api/scan.py":    { "maxDuration": 60, "memory": 512 },
+    "api/signals.py": { "maxDuration": 10, "memory": 256 },
+    "api/audit.py":   { "maxDuration": 10, "memory": 256 },
+    "api/health.py":  { "maxDuration": 5,  "memory": 128 }
+  },
   "crons": [
-    {
-      "path": "/api/scan",
-      "schedule": "0 8 * * *"
-    }
+    { "path": "/api/scan", "schedule": "0 8 * * *" }
   ]
 }
