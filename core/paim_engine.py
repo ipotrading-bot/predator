@@ -1,4 +1,5 @@
 from core.math_engine import shin_method
+from core.notifications import send_elite_ticket
 import numpy as np
 
 def calculate_ev(odds_xbet, true_prob_pinnacle):
@@ -25,3 +26,10 @@ def select_top_signals(signals, limit=9):
     # Sort signals by EV descending
     sorted_signals = sorted(signals, key=lambda x: x['ev'], reverse=True)
     return sorted_signals[:limit]
+
+def process_elite_ticket(ticket_data):
+    """
+    Integrates 7/9 ticket processing with elite notification.
+    """
+    # Assuming the logic is to notify for all elite tickets
+    return send_elite_ticket(ticket_data)

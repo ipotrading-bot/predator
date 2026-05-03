@@ -2,7 +2,7 @@ import streamlit as st
 import asyncio
 import pandas as pd
 from api.odds_client import fetch_odds
-from core.paim_engine import process_market, select_top_signals
+from core.paim_engine import process_market, select_top_signals, process_elite_ticket
 from api.supabase_client import get_history
 
 def render_dashboard():
@@ -22,6 +22,9 @@ def render_dashboard():
                 
                 # Filter and select
                 top_signals = select_top_signals([s for s in signals if s['ev'] > 0.08])
+                
+                for signal in top_signals:
+                    process_elite_ticket(signal)
                 
                 st.subheader("Top Signals (EV+ > 8%)")
                 st.table(pd.DataFrame(top_signals))
