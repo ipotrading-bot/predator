@@ -11,20 +11,100 @@ import time
 from typing import Optional
 
 from fastapi import FastAPI
-from fastapi.responses import JSONResponse
+from fastapi.responses import JSONResponse, HTMLResponse
+from supabase import create_client
+import httpx
+import json
 
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger("api.scan")
 
 app = FastAPI(title="Predator PAIM API", version="1.0.0")
 
+HTML_TEMPLATE = """
+<!DOCTYPE html>
+<html lang="fr">
+<head>
+    <meta charset="UTF-8">
+    <title>Predator PAIM Dashboard</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+    <style>
+        body { background-color: #0c0c0c; color: #e5e7eb; }
+        .bg-card { background-color: #1a1a1a; }
+    </style>
+</head>
+<body class="p-8">
+    <h1 class="text-3xl font-bold mb-4">Predator PAIM Dashboard <span class="text-green-500">ONLINE</span></h1>
+    <button onclick="forceScan()" class="bg-blue-600 hover:bg-blue-700 text-white font-bold py-2 px-4 rounded mb-8">FORCER LE SCAN</button>
+    <div class="grid grid-cols-2 gap-8">
+        <div class="bg-card p-6 rounded shadow">
+            <h2 class="text-xl mb-4">Derniers Signaux</h2>
+            <ul id="signalsList">
+                {% for signal in signals %}
+                <li class="mb-2 border-b border-gray-700 pb-2">
+                    {{ signal.event_name }} - {{ signal.selection }} (EV: {{ signal.ev_plus }})
+                </li>
+                {% endfor %}
+            </ul>
+        </div>
+        <div class="bg-card p-6 rounded shadow">
+            <h2 class="text-xl mb-4">Equity Curve</h2>
+            <canvas id="equityChart"></canvas>
+        </div>
+    </div>
+    <script>
+        async function forceScan() {
+            alert("Scan déclenché...");
+            await fetch('/api/scan');
+            location.reload();
+        }
+        
+        const ctx = document.getElementById('equityChart').getContext('2d');
+        new Chart(ctx, {
+            type: 'line',
+            data: {
+                labels: {{ timestamps|tojson }},
+                datasets: [{
+                    label: 'Balance',
+                    data: {{ balances|tojson }},
+                    borderColor: '#10b981',
+                    fill: false
+                }]
+            },
+            options: {
+                scales: {
+                    y: { ticks: { color: '#e5e7eb' } },
+                    x: { ticks: { color: '#e5e7eb' } }
+                }
+            }
+        });
+    </script>
+</body>
+</html>
+"""
 
 def _get(key: str, default: str = "") -> str:
     return os.environ.get(key, default)
 
+@app.get("/", response_class=HTMLResponse)
+async def root():
+    supabase_url = _get("SUPABASE_URL")
+    supabase_key = _get("SUPABASE_KEY")
+    
+    signals = []
+    timestamps = []
+    balances = []
+    
+    if supabase_url and supabase_key:
+        db = create_client(supabase_url, supabase_key)
+        signals = db.table("signals").select("*").order("created_at", desc=True).limit(10).execute().data
+        snapshots = db.table("bankroll_snapshots").select("*").order("timestamp").execute().data
+        timestamps = [s["timestamp"] for s in snapshots]
+        balances = [s["balance"] for s in snapshots]
 
-@app.get("/api/scan")
-async def run_scan() -> JSONResponse:
+    from jinja2 import Template
+    return Template(HTML_TEMPLATE).render(signals=signals, timestamps=timestamps, balances=balances)
     """Déclenché par Vercel Cron — pipeline PAIM complet."""
     logger.info("🕐 Scan PAIM démarré")
     start = time.monotonic()
