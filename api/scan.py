@@ -1,111 +1,94 @@
 """
-api/scan.py — Endpoint FastAPI pour Vercel Serverless + Cron Jobs
-GET /api/scan  →  déclenche un scan PAIM complet
+api/scan.py — Predator PAIM — Vercel Serverless API
 """
 from __future__ import annotations
 
 import logging
 import os
-import math
 import time
 from typing import Optional
 
 from fastapi import FastAPI
 from fastapi.responses import JSONResponse, HTMLResponse
-from supabase import create_client
-import httpx
-import json
 
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger("api.scan")
 
-app = FastAPI(title="Predator PAIM API", version="1.0.0")
+app = FastAPI(title="Predator PAIM API", version="2.0.0")
 
-HTML_TEMPLATE = """
-<!DOCTYPE html>
+
+def _get(key: str) -> str:
+    return os.environ.get(key, "")
+
+
+# ── HTML Terminal UI ──────────────────────────────────────────────
+
+HTML = """<!DOCTYPE html>
 <html lang="fr">
 <head>
     <meta charset="UTF-8">
-    <title>Predator PAIM Dashboard</title>
-    <script src="https://cdn.tailwindcss.com"></script>
-    <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+    <title>PREDATOR PAIM | Terminal</title>
     <style>
-        body { background-color: #0c0c0c; color: #e5e7eb; }
-        .bg-card { background-color: #1a1a1a; }
+        * { box-sizing: border-box; margin: 0; padding: 0; }
+        body { background: #0a0a0a; color: #00ff00; font-family: 'Courier New', monospace; padding: 24px; }
+        .container { border: 1px solid #00ff00; padding: 24px; border-radius: 6px; box-shadow: 0 0 20px #00ff0022; max-width: 900px; margin: auto; }
+        h1 { border-bottom: 1px solid #00ff00; padding-bottom: 12px; margin-bottom: 20px; font-size: 1.4rem; }
+        .stats { display: grid; grid-template-columns: 1fr 1fr 1fr; gap: 16px; margin-bottom: 24px; }
+        .card { border: 1px solid #1a1a1a; padding: 14px; background: #111; border-radius: 4px; font-size: 0.9rem; }
+        .green { color: #00ff00; font-weight: bold; }
+        .btn { display: inline-block; background: #00ff00; color: #000; padding: 10px 22px; border-radius: 4px; font-weight: bold; cursor: pointer; text-decoration: none; font-family: 'Courier New', monospace; border: none; font-size: 0.95rem; }
+        .btn:hover { background: #00cc00; }
+        h3 { margin: 24px 0 12px; border-bottom: 1px solid #1a1a1a; padding-bottom: 8px; }
+        #result { margin-top: 16px; padding: 14px; background: #111; border: 1px solid #1a1a1a; border-radius: 4px; min-height: 60px; white-space: pre-wrap; font-size: 0.85rem; }
+        .loading { color: #888; }
     </style>
 </head>
-<body class="p-8">
-    <h1 class="text-3xl font-bold mb-4">Predator PAIM Dashboard <span class="text-green-500">ONLINE</span></h1>
-    <button onclick="forceScan()" class="bg-blue-600 hover:bg-blue-700 text-white font-bold py-2 px-4 rounded mb-8">FORCER LE SCAN</button>
-    <div class="grid grid-cols-2 gap-8">
-        <div class="bg-card p-6 rounded shadow">
-            <h2 class="text-xl mb-4">Derniers Signaux</h2>
-            <ul id="signalsList">
-                {% for signal in signals %}
-                <li class="mb-2 border-b border-gray-700 pb-2">
-                    {{ signal.event_name }} - {{ signal.selection }} (EV: {{ signal.ev_plus }})
-                </li>
-                {% endfor %}
-            </ul>
+<body>
+    <div class="container">
+        <h1>🦅 PREDATOR PAIM v2.0 <span style="font-size:11px;float:right;color:#888;">PHD MIT QUANT SYSTEM</span></h1>
+        <div class="stats">
+            <div class="card">STATUT: <span class="green">ACTIF</span></div>
+            <div class="card">CAPITAL: 10,000 €</div>
+            <div class="card">TARGET: EV+ &gt; 8%</div>
         </div>
-        <div class="bg-card p-6 rounded shadow">
-            <h2 class="text-xl mb-4">Equity Curve</h2>
-            <canvas id="equityChart"></canvas>
-        </div>
+        <button class="btn" onclick="triggerScan()">⚡ DÉCLENCHER SCAN MANUEL</button>
+        <h3>RÉSULTAT DU DERNIER SCAN</h3>
+        <div id="result" class="loading">En attente du scan...</div>
     </div>
     <script>
-        async function forceScan() {
-            alert("Scan déclenché...");
-            await fetch('/api/scan');
-            location.reload();
-        }
-        
-        const ctx = document.getElementById('equityChart').getContext('2d');
-        new Chart(ctx, {
-            type: 'line',
-            data: {
-                labels: {{ timestamps|tojson }},
-                datasets: [{
-                    label: 'Balance',
-                    data: {{ balances|tojson }},
-                    borderColor: '#10b981',
-                    fill: false
-                }]
-            },
-            options: {
-                scales: {
-                    y: { ticks: { color: '#e5e7eb' } },
-                    x: { ticks: { color: '#e5e7eb' } }
-                }
+        async function triggerScan() {
+            const el = document.getElementById('result');
+            el.className = 'loading';
+            el.textContent = '⏳ Scan en cours...';
+            try {
+                const r = await fetch('/api/scan');
+                const data = await r.json();
+                el.className = '';
+                el.textContent = JSON.stringify(data, null, 2);
+            } catch(e) {
+                el.textContent = '❌ Erreur: ' + e.message;
             }
-        });
+        }
     </script>
 </body>
-</html>
-"""
+</html>"""
 
-def _get(key: str, default: str = "") -> str:
-    return os.environ.get(key, default)
+
+# ── Routes ────────────────────────────────────────────────────────
 
 @app.get("/", response_class=HTMLResponse)
-async def root():
-    supabase_url = _get("SUPABASE_URL")
-    supabase_key = _get("SUPABASE_KEY")
-    
-    signals = []
-    timestamps = []
-    balances = []
-    
-    if supabase_url and supabase_key:
-        db = create_client(supabase_url, supabase_key)
-        signals = db.table("signals").select("*").order("created_at", desc=True).limit(10).execute().data
-        snapshots = db.table("bankroll_snapshots").select("*").order("timestamp").execute().data
-        timestamps = [s["timestamp"] for s in snapshots]
-        balances = [s["balance"] for s in snapshots]
+async def root() -> HTMLResponse:
+    return HTMLResponse(content=HTML)
 
-    from jinja2 import Template
-    return Template(HTML_TEMPLATE).render(signals=signals, timestamps=timestamps, balances=balances)
-    """Déclenché par Vercel Cron — pipeline PAIM complet."""
+
+@app.get("/api/health")
+async def health() -> JSONResponse:
+    return JSONResponse({"status": "ok", "version": "2.0.0"})
+
+
+@app.get("/api/scan")
+async def run_scan() -> JSONResponse:
+    """Pipeline PAIM complet — déclenché par cron ou manuellement."""
     logger.info("🕐 Scan PAIM démarré")
     start = time.monotonic()
 
@@ -122,11 +105,11 @@ async def root():
         import httpx
         from supabase import create_client
 
-        # ── 1. Fetch odds ─────────────────────────────────────
+        # 1. Fetch odds
         sports = ["soccer_epl", "soccer_ligue_1", "basketball_nba"]
-        all_events = []
+        all_events: list[dict] = []
 
-        async with httpx.AsyncClient(timeout=10.0) as client:
+        async with httpx.AsyncClient(timeout=15.0) as client:
             for sport in sports:
                 try:
                     r = await client.get(
@@ -144,18 +127,12 @@ async def root():
                 except Exception as e:
                     logger.warning(f"Fetch error {sport}: {e}")
 
-        # ── 2. PAIM Engine (inline — no scipy) ───────────────
-        signals = []
-        for event in all_events:
-            signal = _process_event(event)
-            if signal:
-                signals.append(signal)
-
-        # Top 9 by EV+
+        # 2. PAIM Engine
+        signals = [s for e in all_events if (s := _process_event(e))]
         signals.sort(key=lambda x: x["ev_plus"], reverse=True)
         top = signals[:9]
 
-        # ── 3. Persist to Supabase ────────────────────────────
+        # 3. Persist to Supabase
         if supabase_url and supabase_key and top:
             try:
                 db = create_client(supabase_url, supabase_key)
@@ -175,7 +152,7 @@ async def root():
             except Exception as e:
                 logger.error(f"Supabase error: {e}")
 
-        # ── 4. Send Telegram ticket ───────────────────────────
+        # 4. Telegram
         if telegram_token and telegram_chat_id and top:
             await _send_telegram(telegram_token, telegram_chat_id, top)
 
@@ -194,114 +171,57 @@ async def root():
             "message": f"Ticket d'Élite envoyé — {len(top)} signaux.",
             "events_analyzed": len(all_events),
             "signals_validated": len(top),
+            "top_signals": [{"event": s["event_name"], "selection": s["selection"], "ev": f"{s['ev_plus']:.1%}", "stake": f"{s['stake']:.0f}€"} for s in top],
             "duration_seconds": duration,
         })
 
     except Exception as e:
-        logger.error(f"❌ Erreur scan: {e}", exc_info=True)
+        logger.error(f"❌ Erreur: {e}", exc_info=True)
         return JSONResponse({"status": "error", "message": str(e)}, status_code=500)
 
 
-HTML_TEMPLATE = """
-<!DOCTYPE html>
-<html lang="fr">
-<head>
-    <meta charset="UTF-8">
-    <title>PREDATOR PAIM | Terminal</title>
-    <style>
-        body { background: #0a0a0a; color: #00ff00; font-family: 'Courier New', monospace; padding: 20px; }
-        .container { border: 1px solid #00ff00; padding: 20px; border-radius: 5px; box-shadow: 0 0 15px #00ff0033; }
-        h1 { border-bottom: 1px solid #00ff00; padding-bottom: 10px; }
-        .status { color: #00ff00; font-weight: bold; }
-        .btn { background: #00ff00; color: #000; padding: 10px 20px; text-decoration: none; border-radius: 3px; font-weight: bold; cursor: pointer; }
-        .stats { display: grid; grid-template-columns: 1fr 1fr 1fr; gap: 20px; margin-top: 20px; }
-        .card { border: 1px solid #333; padding: 15px; background: #111; }
-    </style>
-</head>
-<body>
-    <div class="container">
-        <h1>🦅 PREDATOR PAIM v2.0 <span style="font-size: 12px; float: right;">PHD MIT QUANT SYSTEM</span></h1>
-        <div class="stats">
-            <div class="card">STATUT: <span class="status">ACTIF</span></div>
-            <div class="card">CAPITAL: 10,000 €</div>
-            <div class="card">TARGET: +100% / MOIS</div>
-        </div>
-        <br><br>
-        <a href="/api/scan" class="btn">DÉCLENCHER SCAN MANUEL</a>
-        <br><br>
-        <h3>DERNIERS SIGNAUX (SUPABASE)</h3>
-        <div id="signals">Chargement des flux de données...</div>
-    </div>
-</body>
-</html>
-"""
-
-
-from fastapi.responses import HTMLResponse
-
-
-@app.get("/", response_class=HTMLResponse)
-async def root() -> HTMLResponse:
-    return HTMLResponse(content=HTML_TEMPLATE)
-
-
-@app.get("/api/health")
-async def health() -> JSONResponse:
-    return JSONResponse({"status": "ok", "version": "1.0.0"})
-
-
-# ── PAIM Engine inline (no scipy/sklearn) ─────────────────────────
+# ── PAIM Engine (inline) ──────────────────────────────────────────
 
 def _shin_probs(odds: list[float]) -> list[float]:
-    """Démargeage additif simplifié (Shin fallback)."""
     total = sum(1 / o for o in odds)
     return [1 / (o * total) for o in odds]
 
 
-def _compute_ev(true_prob: float, offered_odds: float) -> float:
-    return true_prob * (offered_odds - 1) - (1 - true_prob)
+def _compute_ev(prob: float, odds: float) -> float:
+    return prob * (odds - 1) - (1 - prob)
 
 
 def _kelly_stake(prob: float, odds: float, bankroll: float = 10000.0, fraction: float = 0.25) -> float:
     b = odds - 1
     f = max((b * prob - (1 - prob)) / b, 0.0)
-    raw = f * fraction * bankroll
-    return round(raw / 10) * 10
+    return round(f * fraction * bankroll / 10) * 10
 
 
 def _process_event(event: dict) -> Optional[dict]:
-    """Extrait le meilleur signal EV+ d'un événement."""
-    sharp_bm = next((b for b in event.get("bookmakers", []) if b["key"] == "pinnacle"), None)
-    soft_bm = next((b for b in event.get("bookmakers", []) if b["key"] in ("bet365", "unibet")), None)
-
-    if not sharp_bm or not soft_bm:
+    sharp = next((b for b in event.get("bookmakers", []) if b["key"] == "pinnacle"), None)
+    soft = next((b for b in event.get("bookmakers", []) if b["key"] in ("bet365", "unibet")), None)
+    if not sharp or not soft:
         return None
 
-    sharp_market = next((m for m in sharp_bm.get("markets", []) if m["key"] == "h2h"), None)
-    soft_market = next((m for m in soft_bm.get("markets", []) if m["key"] == "h2h"), None)
-
-    if not sharp_market or not soft_market:
+    sm = next((m for m in sharp.get("markets", []) if m["key"] == "h2h"), None)
+    fm = next((m for m in soft.get("markets", []) if m["key"] == "h2h"), None)
+    if not sm or not fm:
         return None
 
-    sharp_outcomes = sharp_market.get("outcomes", [])
-    soft_outcomes = soft_market.get("outcomes", [])
-
-    if len(sharp_outcomes) < 2 or len(soft_outcomes) < 2:
+    so = sm.get("outcomes", [])
+    fo = fm.get("outcomes", [])
+    if len(so) < 2 or len(fo) < 2:
         return None
 
-    sharp_odds = [o["price"] for o in sharp_outcomes[:2]]
-    sharp_probs = _shin_probs(sharp_odds)
+    probs = _shin_probs([o["price"] for o in so[:2]])
+    best_ev, best_sel, best_odds, best_prob = -999.0, "", 0.0, 0.0
 
-    best_ev, best_sel, best_odds, best_prob = -999, "", 0.0, 0.0
-    for i, outcome in enumerate(soft_outcomes[:2]):
-        if i >= len(sharp_probs):
+    for i, outcome in enumerate(fo[:2]):
+        if i >= len(probs):
             break
-        ev = _compute_ev(sharp_probs[i], outcome["price"])
+        ev = _compute_ev(probs[i], outcome["price"])
         if ev > best_ev:
-            best_ev = ev
-            best_sel = outcome["name"]
-            best_odds = outcome["price"]
-            best_prob = sharp_probs[i]
+            best_ev, best_sel, best_odds, best_prob = ev, outcome["name"], outcome["price"], probs[i]
 
     if best_ev < 0.08:
         return None
@@ -311,7 +231,7 @@ def _process_event(event: dict) -> Optional[dict]:
         "event_name": f"{event.get('home_team')} vs {event.get('away_team')}",
         "sport": event.get("sport_key", ""),
         "selection": best_sel,
-        "bookmaker": soft_bm["key"],
+        "bookmaker": soft["key"],
         "ev_plus": best_ev,
         "sharp_prob": best_prob,
         "stake": _kelly_stake(best_prob, best_odds),
@@ -319,24 +239,17 @@ def _process_event(event: dict) -> Optional[dict]:
 
 
 async def _send_telegram(token: str, chat_id: str, signals: list[dict]) -> None:
-    """Envoie le ticket système via Telegram."""
     import httpx
-
     lines = ["🦅 *PREDATOR PAIM — TICKET SYSTÈME*", "─" * 28]
     for i, s in enumerate(signals, 1):
-        ev_icon = "🔥" if s["ev_plus"] >= 0.15 else "✅"
-        lines.append(
-            f"{ev_icon} *#{i}* {s['event_name']}\n"
-            f"   ➤ `{s['selection']}` | EV `{s['ev_plus']:.1%}` | Mise `{s['stake']:.0f}€`"
-        )
+        icon = "🔥" if s["ev_plus"] >= 0.15 else "✅"
+        lines.append(f"{icon} *#{i}* {s['event_name']}\n   ➤ `{s['selection']}` | EV `{s['ev_plus']:.1%}` | Mise `{s['stake']:.0f}€`")
     lines.append(f"\n📋 *Système 7/{len(signals)}* — Profit dès 7 bons résultats")
-
-    text = "\n".join(lines)
     async with httpx.AsyncClient() as client:
         try:
             await client.post(
                 f"https://api.telegram.org/bot{token}/sendMessage",
-                json={"chat_id": chat_id, "text": text, "parse_mode": "Markdown"},
+                json={"chat_id": chat_id, "text": "\n".join(lines), "parse_mode": "Markdown"},
             )
         except Exception as e:
             logger.error(f"Telegram error: {e}")
