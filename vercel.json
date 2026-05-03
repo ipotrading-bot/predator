@@ -3,15 +3,12 @@
   "builds": [
     {
       "src": "api/scan.py",
-      "use": "@vercel/python",
-      "config": {
-        "maxLambdaSize": "50mb"
-      }
+      "use": "@vercel/python"
     }
   ],
   "routes": [
     {
-      "src": "/api/(.*)",
+      "src": "/(.*)",
       "dest": "api/scan.py"
     }
   ],

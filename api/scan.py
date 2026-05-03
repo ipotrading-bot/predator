@@ -122,6 +122,11 @@ async def run_scan() -> JSONResponse:
         return JSONResponse({"status": "error", "message": str(e)}, status_code=500)
 
 
+@app.get("/")
+async def root() -> JSONResponse:
+    return JSONResponse({"status": "ok", "name": "Predator PAIM API", "endpoints": ["/api/scan", "/api/health"]})
+
+
 @app.get("/api/health")
 async def health() -> JSONResponse:
     return JSONResponse({"status": "ok", "version": "1.0.0"})
