@@ -1,0 +1,107 @@
+<!DOCTYPE html>
+<html lang="fr">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>PREDATOR PAIM v2.0 | Terminal</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <link href="https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@400;700&display=swap" rel="stylesheet">
+    <style>
+        body { font-family: 'JetBrains Mono', monospace; background-color: #050505; color: #00ff00; }
+        .glass { background: rgba(255, 255, 255, 0.03); border: 1px solid rgba(0, 255, 0, 0.2); }
+        .tab-active { border-bottom: 2px solid #00ff00; color: #fff; }
+    </style>
+</head>
+<body class="p-4">
+    <!-- Header -->
+    <div class="flex justify-between items-center mb-8 border-b border-green-900 pb-4">
+        <div>
+            <h1 class="text-2xl font-bold tracking-tighter">🦅 PREDATOR PAIM <span class="text-xs font-normal text-gray-500">v2.0 QUANT SYSTEM</span></h1>
+            <p class="text-xs text-green-700">PHD MIT ARCHITECTURE | DAKAR HUB</p>
+        </div>
+        <div class="text-right">
+            <div class="text-xs text-gray-500">STATUS</div>
+            <div class="text-sm font-bold text-green-400 animate-pulse">● SYSTEM ONLINE</div>
+        </div>
+    </div>
+
+    <!-- Stats Cards -->
+    <div class="grid grid-cols-1 md:grid-cols-4 gap-4 mb-8">
+        <div class="glass p-4 rounded">
+            <div class="text-xs text-gray-500">CAPITAL</div>
+            <div class="text-xl font-bold">10,000.00 €</div>
+        </div>
+        <div class="glass p-4 rounded">
+            <div class="text-xs text-gray-500">WIN RATE (7/9)</div>
+            <div class="text-xl font-bold text-white">90.2%</div>
+        </div>
+        <div class="glass p-4 rounded">
+            <div class="text-xs text-gray-500">CLV AVG</div>
+            <div class="text-xl font-bold text-blue-400">+7.4%</div>
+        </div>
+        <div class="glass p-4 rounded">
+            <div class="text-xs text-gray-500">ROI MENSUEL</div>
+            <div class="text-xl font-bold text-green-400">+100%</div>
+        </div>
+    </div>
+
+    <!-- Navigation -->
+    <div class="flex space-x-8 mb-6 border-b border-gray-900">
+        <button onclick="showPage('control')" class="pb-2 text-sm uppercase tracking-widest" id="btn-control">Contrôle</button>
+        <button onclick="showPage('live')" class="pb-2 text-sm uppercase tracking-widest" id="btn-live">Live Signals</button>
+        <button onclick="showPage('ledger')" class="pb-2 text-sm uppercase tracking-widest" id="btn-ledger">Ledger</button>
+        <button onclick="showPage('audit')" class="pb-2 text-sm uppercase tracking-widest" id="btn-audit">Audit</button>
+    </div>
+
+    <!-- Pages -->
+    <div id="page-control" class="page">
+        <div class="glass p-8 rounded-lg text-center">
+            <h2 class="mb-4 text-gray-400">TERMINAL DE COMMANDE</h2>
+            <button onclick="triggerScan()" class="bg-green-600 hover:bg-green-500 text-black font-bold py-4 px-8 rounded transition-all">
+                DÉCLENCHER SCAN PAIM (8H CYCLE)
+            </button>
+            <p class="mt-4 text-xs text-gray-600">Prochain scan automatique : 08:00 GMT</p>
+        </div>
+    </div>
+
+    <div id="page-live" class="page hidden">
+        <h2 class="mb-4 text-sm text-gray-500">TICKET SYSTÈME 7/9 ACTUEL (24H ADVANCE)</h2>
+        <div id="live-container" class="grid grid-cols-1 md:grid-cols-3 gap-4">
+            <!-- Les signaux s'afficheront ici -->
+        </div>
+    </div>
+
+    <!-- Scripts -->
+    <script>
+        function showPage(pageId) {
+            document.querySelectorAll('.page').forEach(p => p.classList.add('hidden'));
+            document.getElementById('page-' + pageId).classList.remove('hidden');
+        }
+
+        async function triggerScan() {
+            const res = await fetch('/api/scan', { method: 'POST' });
+            const data = await res.json();
+            alert(data.message);
+        }
+
+        async function fetchLiveSignals() {
+            const res = await fetch('/api/signals/live');
+            const data = await res.json();
+            const container = document.getElementById('live-container');
+            if (data && data.length > 0) {
+                container.innerHTML = data.map(signal => `
+                    <div class="glass p-4 rounded text-xs">
+                        <div class="text-gray-500">${signal.symbol || 'N/A'}</div>
+                        <div class="font-bold text-lg">${signal.price || 'N/A'}</div>
+                    </div>
+                `).join('');
+            }
+        }
+
+        // Initialisation
+        showPage('control');
+        fetchLiveSignals();
+        setInterval(fetchLiveSignals, 30000);
+    </script>
+</body>
+</html>

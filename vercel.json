@@ -1,18 +1,6 @@
 {
-  "version": 2,
-  "name": "predator-paim",
-  "routes": [
-    {
-      "src": "/api/(.*)",
-      "dest": "/api/$1.py",
-      "headers": {
-        "Access-Control-Allow-Origin": "*",
-        "Access-Control-Allow-Methods": "GET, POST, OPTIONS",
-        "Access-Control-Allow-Headers": "Content-Type, Authorization"
-      }
-    }
-  ],
-  "crons": [
-    { "path": "/api/scan", "schedule": "0 0 * * *" }
+  "rewrites": [
+    { "source": "/api/(.*)", "destination": "/api/index.py" },
+    { "source": "/(.*)", "destination": "/api/index.py" }
   ]
 }
