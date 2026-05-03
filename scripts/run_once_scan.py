@@ -1,17 +1,22 @@
-import sys
-import os
-# Ajouter le répertoire racine au PYTHONPATH
-sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
-
+"""
+scripts/run_once_scan.py — Scan one-shot pour GitHub Actions
+Utilise le pipeline inline de api/scan.py (sans scipy/sklearn)
+"""
 import asyncio
-from signals.scanner import MarketScanner
-from config import settings
+import os
+import sys
 
-async def run():
-    print("Starting one-off scan...")
-    scanner = MarketScanner(bankroll=settings.starting_bankroll)
-    result = await scanner.run_scan()
-    print(f"Scan finished. Signals validated: {result.signals_validated}")
+# Ensure repo root is in path
+sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+
+from api.scan import run_scan
+
+
+async def main():
+    print("🦅 Predator PAIM — Scan one-shot démarré")
+    result = await run_scan()
+    print(f"✅ Résultat: {result.body.decode()}")
+
 
 if __name__ == "__main__":
-    asyncio.run(run())
+    asyncio.run(main())
