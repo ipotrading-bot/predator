@@ -42,9 +42,6 @@ newsapi-python==0.2.7
 reportlab==4.2.0
 fpdf2==2.7.9
 
-# Logging & Monitoring
-logging-azure-eventhub==0.1.2
-
 # Code quality
 pytest==8.2.2
 pytest-asyncio==0.23.7
