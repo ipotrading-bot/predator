@@ -17,7 +17,7 @@ from core.signal_validator import GeminiValidator
 from data.odds_fetcher import OddsFetcher
 from data.supabase_client import SupabaseClient
 from signals.obfuscator import Obfuscator
-from telegram.bot import TelegramNotifier
+from tgbot.bot import TelegramNotifier
 
 logger = logging.getLogger(__name__)
 
