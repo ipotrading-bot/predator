@@ -12,12 +12,6 @@
       }
     }
   ],
-  "functions": {
-    "api/scan.py":    { "maxDuration": 60, "memory": 512 },
-    "api/signals.py": { "maxDuration": 10, "memory": 256 },
-    "api/audit.py":   { "maxDuration": 10, "memory": 256 },
-    "api/health.py":  { "maxDuration": 5,  "memory": 128 }
-  },
   "crons": [
     { "path": "/api/scan", "schedule": "0 0 * * *" }
   ]
