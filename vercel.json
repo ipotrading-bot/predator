@@ -16,10 +16,6 @@
         "Access-Control-Allow-Methods": "GET, POST, OPTIONS",
         "Access-Control-Allow-Headers": "Content-Type, Authorization"
       }
-    },
-    {
-      "src": "/(.*)",
-      "dest": "/api/scan.py"
     }
   ],
   "functions": {
