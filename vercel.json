@@ -14,16 +14,8 @@
   ],
   "crons": [
     {
-      "path": "/api/scan?session=Asie",
-      "schedule": "0 0 * * *"
-    },
-    {
-      "path": "/api/scan?session=Europe",
-      "schedule": "0 8 * * *"
-    },
-    {
-      "path": "/api/scan?session=USA",
-      "schedule": "0 16 * * *"
+      "path": "/api/scan",
+      "schedule": "0 */8 * * *"
     }
   ],
   "env": {
