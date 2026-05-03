@@ -1,3 +1,8 @@
+import sys
+import os
+# Ajouter le répertoire racine au PYTHONPATH
+sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+
 import asyncio
 from signals.scanner import MarketScanner
 from config import settings
