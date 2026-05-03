@@ -1,8 +1,7 @@
 import streamlit as st
-import os
+from ui.dashboard import render_dashboard
 
-st.title("Predator App")
-st.write("Welcome to the Predator dashboard.")
+st.set_page_config(page_title="PREDATOR PAIM", layout="wide")
 
 # Running the dashboard
-exec(open("ui/dashboard.py").read())
+render_dashboard()
