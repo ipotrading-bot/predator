@@ -1,17 +1,21 @@
-from api.telegram_client import get_telegram_client
+"""
+core/notifications.py — Notifications Telegram centralisées
+"""
+from __future__ import annotations
 
-def send_elite_ticket(ticket_data):
-    """
-    Sends an elite ticket notification using the telegram client.
-    """
-    client = get_telegram_client()
-    # Assuming ticket_data is a dictionary or an object with a __str__ representation
-    message = f"Elite Ticket Notification:\n{ticket_data}"
-    return client.send_message(message)
+import logging
 
-def send_startup_notification():
-    """
-    Sends a bot startup notification using the telegram client.
-    """
-    client = get_telegram_client()
-    return client.send_message("Bot Started")
+logger = logging.getLogger(__name__)
+
+
+async def send_telegram_ticket(signals: list, token: str, chat_id: str) -> None:
+    """Envoie le ticket système 7/9 via Telegram."""
+    if not token or not chat_id:
+        logger.warning("⚠️ TELEGRAM_BOT_TOKEN ou TELEGRAM_CHAT_ID manquant — envoi ignoré.")
+        return
+
+    from tgbot.bot import TelegramNotifier
+    notifier = TelegramNotifier()
+    metas = [{"event_name": getattr(s, "event_id", "?"), "sport": "", "commence_time": ""} for s in signals]
+    await notifier.send_system_ticket(signals, metas)
+    logger.info(f"📨 Ticket système envoyé — {len(signals)} signaux")
