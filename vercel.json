@@ -1,0 +1,37 @@
+{
+  "version": 2,
+  "builds": [
+    {
+      "src": "api/scan.py",
+      "use": "@vercel/python"
+    }
+  ],
+  "routes": [
+    {
+      "src": "/api/(.*)",
+      "dest": "api/scan.py"
+    }
+  ],
+  "crons": [
+    {
+      "path": "/api/scan?session=Asie",
+      "schedule": "0 0 * * *"
+    },
+    {
+      "path": "/api/scan?session=Europe",
+      "schedule": "0 8 * * *"
+    },
+    {
+      "path": "/api/scan?session=USA",
+      "schedule": "0 16 * * *"
+    }
+  ],
+  "env": {
+    "ODDS_API_KEY": "@odds_api_key",
+    "GEMINI_API_KEY": "@gemini_api_key",
+    "TELEGRAM_BOT_TOKEN": "@telegram_bot_token",
+    "TELEGRAM_CHAT_ID": "@telegram_chat_id",
+    "SUPABASE_URL": "@supabase_url",
+    "SUPABASE_KEY": "@supabase_key"
+  }
+}

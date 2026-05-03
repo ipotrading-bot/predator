@@ -1,26 +1,11 @@
 """
-config.py — Configuration centralisée
-Charge depuis st.secrets (Streamlit Cloud) ou .env (local)
+config.py — Configuration centralisée via Pydantic Settings
+Charge depuis os.environ (Vercel) ou .env (local)
 """
 import os
 
 from pydantic import Field
 from pydantic_settings import BaseSettings, SettingsConfigDict
-
-
-def _inject_secrets() -> None:
-    """Injecte st.secrets dans os.environ avant que Pydantic ne lise les variables."""
-    try:
-        import streamlit as st
-        secrets = dict(st.secrets)
-        for key, value in secrets.items():
-            if isinstance(value, str) and key not in os.environ:
-                os.environ[key] = value
-    except Exception:
-        pass  # Pas sur Streamlit Cloud — on utilise .env
-
-
-_inject_secrets()
 
 
 class Settings(BaseSettings):
@@ -32,14 +17,14 @@ class Settings(BaseSettings):
     )
 
     # ── API Keys ──────────────────────────────────────────────
-    ODDS_API_KEY: str
-    GEMINI_API_KEY: str
-    TELEGRAM_BOT_TOKEN: str
-    TELEGRAM_CHAT_ID: str = ""
+    ODDS_API_KEY: str = Field(default="")
+    GEMINI_API_KEY: str = Field(default="")
+    TELEGRAM_BOT_TOKEN: str = Field(default="")
+    TELEGRAM_CHAT_ID: str = Field(default="")
 
     # ── Supabase ──────────────────────────────────────────────
-    SUPABASE_URL: str
-    SUPABASE_KEY: str
+    SUPABASE_URL: str = Field(default="")
+    SUPABASE_KEY: str = Field(default="")
 
     # ── PAIM Engine ───────────────────────────────────────────
     min_ev_threshold: float = 0.08
@@ -72,7 +57,7 @@ class Settings(BaseSettings):
         "americanfootball_nfl", "tennis_atp"
     ]
 
-    # ── Aliases pour compatibilité avec l'ancien code ─────────
+    # ── Aliases lowercase pour compatibilité ─────────────────
     @property
     def odds_api_key(self) -> str: return self.ODDS_API_KEY
     @property
@@ -88,18 +73,4 @@ class Settings(BaseSettings):
 
 
 # Singleton global
-try:
-    print(f"DEBUG: ODDS_API_KEY from env: {os.environ.get('ODDS_API_KEY')}")
-    settings = Settings()
-except Exception as e:
-    import logging
-    import traceback
-    logging.basicConfig(level=logging.ERROR)
-    logger = logging.getLogger(__name__)
-    logger.error(f"Failed to initialize Settings: {e}")
-    logger.error(traceback.format_exc())
-    # If it is a ValidationError, print details
-    if hasattr(e, 'errors'):
-        for error in e.errors():
-            logger.error(f"Error: {error}")
-    raise e
+settings = Settings()
