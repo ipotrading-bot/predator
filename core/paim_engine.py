@@ -9,7 +9,6 @@ from dataclasses import dataclass, field
 from typing import Optional
 
 import numpy as np
-from scipy.optimize import brentq
 
 
 # ═══════════════════════════════════════════════════════════════════
@@ -66,10 +65,47 @@ class ShinDemarger:
         return [1 / (o * total_implied) for o in odds]
 
     @staticmethod
+    def _bisection_root(func, a, b, tol=1e-8, max_iter=1000):
+        """
+        Méthode de la bisection pour trouver la racine d'une fonction.
+        Remplace scipy.optimize.brentq pour éviter la dépendance scipy.
+        """
+        fa = func(a)
+        fb = func(b)
+
+        if fa * fb > 0:
+            raise ValueError(
+                f"La fonction ne change pas de signe sur [{a}, {b}]. "
+                f"f({a})={fa}, f({b})={fb}"
+            )
+
+        if fa == 0:
+            return a
+        if fb == 0:
+            return b
+
+        for _ in range(max_iter):
+            c = (a + b) / 2.0
+            fc = func(c)
+
+            if abs(fc) < tol or (b - a) / 2.0 < tol:
+                return c
+
+            if fa * fc < 0:
+                b = c
+                fb = fc
+            else:
+                a = c
+                fa = fc
+
+        return (a + b) / 2.0
+
+    @staticmethod
     def shin_probabilities(odds: list[float]) -> tuple[list[float], float]:
         """
         Résolution numérique du paramètre z (proportion insider).
         Retourne (probabilités_vraies, z_insider_proportion).
+        Utilise la méthode de la bisection (pure Python) au lieu de scipy.
         """
         n = len(odds)
         implied = [1 / o for o in odds]
@@ -89,7 +125,7 @@ class ShinDemarger:
             return sum(pis) - 1.0
 
         try:
-            z = brentq(shin_equation, 1e-6, 0.2, xtol=1e-8)
+            z = ShinDemarger._bisection_root(shin_equation, 1e-6, 0.2, tol=1e-8)
         except ValueError:
             return ShinDemarger.deMargin_additive(odds), 0.0
 
@@ -202,29 +238,41 @@ class BinarySynthesizer:
     def is_binary_market(market_key: str) -> bool:
         return any(bm in market_key for bm in BinarySynthesizer.BINARY_MARKETS)
 
+    # Commission moyenne 1XBet sur les marchés binaires
+    COMMISSION_1XBET = 0.035  # 3.5%
+
     @staticmethod
     def compute_ev(true_prob: float, offered_odds: float, commission: float = 0.0) -> float:
         """
-        EV = (prob_vraie × (cote_net - 1)) - (1 - prob_vraie)
+        EV_net = (prob_vraie × (cote_net - 1)) - (1 - prob_vraie)
         
-        commission: Frais implicite du bookmaker soft (1XBet ~5-10%)
-        cote_net = offered_odds × (1 - commission)
+        Où cote_net = offered_odds × (1 - commission)
+        
+        commission: Frais implicite du bookmaker soft.
+        Par défaut: 3.5% pour 1XBet sur les marchés binaires.
+        
+        Formule complète:
+        EV_net = [Cote_Soft × (1 - Comm_Soft)] / Cote_Fair_Sharp - 1
         """
-        # Déduction commission 1XBet (typiquement 5-10% sur les gains)
-        net_odds = offered_odds * (1 - commission)
-        return true_prob * (net_odds - 1) - (1 - true_prob)
+        # Déduction commission bookmaker (défaut: 3.5% pour 1XBet)
+        net_odds = offered_odds * (1.0 - commission)
+        return true_prob * (net_odds - 1.0) - (1.0 - true_prob)
 
     @staticmethod
     def best_binary_selection(
         sharp_probs: list[float],
         soft_odds_home: float,
         soft_odds_away: float,
+        commission: float = 0.0,
     ) -> tuple[str, float, float]:
         """
         Retourne (sélection, EV, cote_soft) pour la meilleure issue binaire.
+        
+        Args:
+            commission: Frais du bookmaker (3.5% pour 1XBet par défaut)
         """
-        ev_home = BinarySynthesizer.compute_ev(sharp_probs[0], soft_odds_home)
-        ev_away = BinarySynthesizer.compute_ev(sharp_probs[1], soft_odds_away)
+        ev_home = BinarySynthesizer.compute_ev(sharp_probs[0], soft_odds_home, commission)
+        ev_away = BinarySynthesizer.compute_ev(sharp_probs[1], soft_odds_away, commission)
 
         if ev_home >= ev_away:
             return "home", ev_home, soft_odds_home
@@ -305,7 +353,8 @@ class PAIMEngine:
             return None
 
         selection, ev, soft_cote = self.synthesizer.best_binary_selection(
-            sharp_probs, soft.outcome_home, soft.outcome_away
+            sharp_probs, soft.outcome_home, soft.outcome_away,
+            commission=self.synthesizer.COMMISSION_1XBET  # 3.5% pour 1XBet
         )
 
         if ev < self.min_ev:

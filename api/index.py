@@ -1,10 +1,17 @@
 from flask import Flask, render_template, jsonify, request, send_file, make_response
 import os
+import sys
 import time
 import random
+
+# Add parent directory to path for Vercel deployment
+sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+
 from supabase import create_client
 
-app = Flask(__name__, template_folder='../templates')
+# Configure template folder relative to project root for Vercel compatibility
+template_folder = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), 'templates')
+app = Flask(__name__, template_folder=template_folder)
 
 # Initialisation Supabase
 supabase = create_client(
