@@ -64,30 +64,21 @@ class Settings(BaseSettings):
         default=["1xbet", "bet365", "unibet", "williamhill"]
     )
 
-    # ── Multi-Sport v2.0 ──────────────────────────────────────
-    # Tous les sports couverts selon le Manifeste
+    # ── Multi-Sport v2.0 — Binary Only Markets ────────────────
+    # Sports prioritaires avec liquidité suffisante
     target_sports: list[str] = Field(default=[
-        # Football
-        "soccer_epl",
-        "soccer_ligue_1",
-        "soccer_spain_la_liga",
-        "soccer_germany_bundesliga",
-        "soccer_italy_serie_a",
-        "soccer_uefa_champs_league",
-        # Basketball
+        # Basketball (NBA - haute liquidité)
         "basketball_nba",
-        "basketball_euroleague",
-        # Tennis
+        # Tennis (ATP - binaire naturel)
         "tennis_atp_french_open",
-        "tennis_wta_french_open",
-        # Baseball
-        "baseball_mlb",
-        # Hockey
-        "icehockey_nhl",
-        # MMA
-        "mma_mixed_martial_arts",
-        # Volleyball (si disponible via API)
-        "volleyball_vnl",
+        "tennis_atp_us_open",
+        "tennis_atp_wimbledon",
+        # Football (UEFA - haute liquidité)
+        "soccer_uefa_champs_league",
+        "soccer_epl",
+        "soccer_spain_la_liga",
+        # Esports (LoL - croissance EV)
+        "esports_lol",
     ])
 
     # ── 1XBet Link Template ───────────────────────────────────
