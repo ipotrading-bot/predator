@@ -203,11 +203,16 @@ class BinarySynthesizer:
         return any(bm in market_key for bm in BinarySynthesizer.BINARY_MARKETS)
 
     @staticmethod
-    def compute_ev(true_prob: float, offered_odds: float) -> float:
+    def compute_ev(true_prob: float, offered_odds: float, commission: float = 0.0) -> float:
         """
-        EV = (prob_vraie × (cote - 1)) - (1 - prob_vraie)
+        EV = (prob_vraie × (cote_net - 1)) - (1 - prob_vraie)
+        
+        commission: Frais implicite du bookmaker soft (1XBet ~5-10%)
+        cote_net = offered_odds × (1 - commission)
         """
-        return true_prob * (offered_odds - 1) - (1 - true_prob)
+        # Déduction commission 1XBet (typiquement 5-10% sur les gains)
+        net_odds = offered_odds * (1 - commission)
+        return true_prob * (net_odds - 1) - (1 - true_prob)
 
     @staticmethod
     def best_binary_selection(

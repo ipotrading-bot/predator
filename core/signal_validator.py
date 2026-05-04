@@ -62,6 +62,34 @@ class GeminiValidator:
             system_instruction=self.SYSTEM_PROMPT,
         )
 
+    async def _fetch_news_context(self, event_name: str, sport: str) -> str:
+        """Récupère le contexte news pour un événement donné."""
+        try:
+            from api.news_client import news_client
+            import asyncio
+            
+            # Run async news fetch in sync context
+            loop = asyncio.new_event_loop()
+            asyncio.set_event_loop(loop)
+            news_items = loop.run_until_complete(
+                news_client.get_relevant_news(sport, None, hours=6)
+            )
+            loop.close()
+            
+            if news_items:
+                # Format top 3 news items
+                news_text = "\n".join([
+                    f"- {item['title']} ({item.get('source', 'N/A')})"
+                    for item in news_items[:3]
+                ])
+                return news_text
+        except ImportError:
+            pass
+        except Exception as e:
+            logger.debug(f"News fetch error: {e}")
+        
+        return "Aucune news spécifique détectée."
+
     async def validate(
         self,
         signal: PAIMSignal,
@@ -71,6 +99,10 @@ class GeminiValidator:
         recent_news: Optional[str] = None,
     ) -> ValidationResult:
         """Valide un signal PAIM avec le contexte Gemini."""
+        # Fetch news if not provided
+        if recent_news is None:
+            recent_news = await self._fetch_news_context(event_name, sport)
+        
         prompt = f"""
 SIGNAL À VALIDER :
 - Événement : {event_name} ({sport})

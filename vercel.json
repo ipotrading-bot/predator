@@ -1,6 +1,15 @@
 {
   "rewrites": [
+    { "source": "/api/scan", "destination": "/api/scan.py" },
+    { "source": "/api/signals", "destination": "/api/signals.py" },
+    { "source": "/api/audit", "destination": "/api/audit.py" },
+    { "source": "/api/health", "destination": "/api/health.py" },
     { "source": "/api/(.*)", "destination": "/api/index.py" },
     { "source": "/(.*)", "destination": "/api/index.py" }
-  ]
+  ],
+  "functions": {
+    "api/**/*.py": {
+      "maxDuration": 60
+    }
+  }
 }
