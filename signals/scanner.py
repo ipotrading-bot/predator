@@ -14,6 +14,7 @@ from config import settings
 from core.paim_engine import PAIMEngine, PAIMSignal, MarketOdds
 from core.risk_manager import RiskManager, SystemState
 from core.signal_validator import GeminiValidator
+from core.context import ContextAnalyzer, ContextSignal
 from data.odds_fetcher import OddsFetcher
 from data.supabase_client import SupabaseClient
 from signals.obfuscator import Obfuscator
@@ -77,22 +78,61 @@ class MarketScanner:
 
             validated_signals: list[tuple] = []
 
+            # Initialiser le ContextAnalyzer (Multi-LLM Pipeline)
+            ctx_analyzer = ContextAnalyzer()
+
             for event in events:
                 signals = await self._process_event(event, fetcher)
                 for sig, meta in signals:
                     result.signals_found += 1
 
+                    # ── COUCHE CONTEXTUELLE : Groq VPIN + NewsAPI + Sentiment ──
+                    ctx_signal = ContextSignal(
+                        event_name=meta.get("event_name", ""),
+                        sport_key=meta.get("sport", ""),
+                        selection=sig.selection,
+                        sharp_prob=sig.sharp_prob,
+                        soft_prob=sig.implied_prob_soft,
+                        ev_plus=sig.ev_plus,
+                        snr_ratio=sig.snr_ratio,
+                    )
+
+                    # Récupérer les cotes brutes pour l'analyse
+                    sharp_odds = [1.0 / sig.sharp_prob, 1.0 / (1.0 - sig.sharp_prob)] if sig.sharp_prob > 0 and sig.sharp_prob < 1 else [2.0, 2.0]
+                    soft_cote = 1.0 / sig.implied_prob_soft if sig.implied_prob_soft > 0 else 2.0
+                    soft_odds = [soft_cote, soft_cote]
+
+                    ctx_result = await ctx_analyzer.analyze(
+                        signal_data=ctx_signal,
+                        sharp_odds=sharp_odds,
+                        soft_odds=soft_odds,
+                    )
+
+                    # Doctrine : Si le contexte rejette → stop immédiat (pas de Gemini)
+                    if ctx_result.recommended_action == "reject":
+                        result.signals_rejected += 1
+                        reasons = []
+                        if ctx_result.has_critical_injury:
+                            reasons.append("blessure critique")
+                        logger.info(f"❌ Rejet contextuel ({', '.join(reasons)}) | {meta.get('event_name')}")
+                        continue
+
+                    # Opportunité : public_against → EV+ potentiellement plus élevée
+                    if ctx_result.public_against:
+                        logger.info(f"🎯 Pari contre la foule détecté: {meta.get('event_name')}")
+
+                    # ── VALIDATION IA (Gemini avec fallback Groq) ────────────
                     val = await self.validator.validate(
                         signal=sig,
                         event_name=meta.get("event_name", ""),
                         sport=meta.get("sport", ""),
                         match_time_iso=meta.get("commence_time", ""),
-                        recent_news=None,
+                        recent_news=" | ".join(ctx_result.news_headlines[:3]) if ctx_result.news_headlines else None,
                     )
 
                     if not val.is_approved or val.trap_detected:
                         result.signals_rejected += 1
-                        logger.info(f"❌ Signal rejeté: {val.context_summary}")
+                        logger.info(f"❌ Signal rejeté (IA): {val.context_summary}")
                         continue
 
                     ok, reason = self.risk.validate_stake(sig.recommended_stake)
