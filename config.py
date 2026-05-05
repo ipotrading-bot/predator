@@ -60,7 +60,7 @@ class Settings(BaseSettings):
     stake_rounding_base: int = Field(default=10)
 
     # ── Scan ──────────────────────────────────────────────────
-    scan_hours_ahead: int = Field(default=24)
+    scan_hours_ahead: int = Field(default=48)
 
     # ── Bookmakers ────────────────────────────────────────────
     sharp_books: list[str] = Field(
