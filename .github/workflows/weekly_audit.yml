@@ -1,0 +1,13 @@
+name: PAIM Weekly Audit
+on:
+  schedule:
+    - cron: '0 20 * * 0' # Dimanche 20:00 GMT
+  workflow_dispatch:
+
+jobs:
+  audit:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Trigger Weekly Report
+        run: |
+          curl -X GET "https://predator-two.vercel.app/api/audit/weekly"

@@ -1,0 +1,13 @@
+name: PAIM Daily Audit
+on:
+  schedule:
+    - cron: '0 0 * * *' # Quotidien à minuit
+  workflow_dispatch:
+
+jobs:
+  audit:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Trigger Settlement Audit
+        run: |
+          curl -X POST "https://predator-two.vercel.app/api/audit"

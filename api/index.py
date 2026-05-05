@@ -1,15 +1,22 @@
+from datetime import datetime, timedelta
 import os
 import requests
 from flask import Flask, jsonify, render_template_string
+from api.audit import run_settlement_audit
 from core.math_engine import calculate_shin_probabilities
 from core.validator import check_market_red_flags
 from core.context import get_market_news
+from supabase import create_client
+import google.generativeai as genai
 
 app = Flask(__name__)
 
 ODDS_API_KEY = os.environ.get("ODDS_API_KEY")
 TELEGRAM_TOKEN = os.environ.get("TELEGRAM_TOKEN")
 TELEGRAM_CHAT_ID = os.environ.get("TELEGRAM_CHAT_ID")
+SUPABASE_URL = os.environ.get("SUPABASE_URL")
+SUPABASE_KEY = os.environ.get("SUPABASE_KEY")
+supabase = create_client(SUPABASE_URL, SUPABASE_KEY) if SUPABASE_URL and SUPABASE_KEY else None
 
 # Style CSS "Quant-Elite"
 HTML_TEMPLATE = """
@@ -77,15 +84,45 @@ HTML_TEMPLATE = """
 
         <!-- Opportunity Grid -->
         <div id="screener-grid" class="grid grid-cols-1 gap-4">
-            <!-- Contenu dynamique -->
+            <!-- Dynamisé par JS -->
         </div>
     </div>
 
-    <footer class="max-w-6xl mx-auto mt-20 pt-6 border-t border-gray-900 text-center">
-        <p class="text-[10px] text-gray-600 uppercase tracking-widest">
-            Propriété Intellectuelle PAIM System | Algorithmic Information Arbitrage
-        </p>
-    </footer>
+    <script>
+        async function fetchAlphaSignals() {
+            const grid = document.getElementById('screener-grid');
+            try {
+                const response = await fetch('/api/data');
+                const signals = await response.json();
+                if (signals.length === 0) {
+                    grid.innerHTML = '<div class="p-10 text-center text-gray-600 uppercase tracking-widest">Aucun Alpha Spread détecté. Scan en cours...</div>';
+                    return;
+                }
+                grid.innerHTML = signals.map(signal => {
+                    const isPositive = signal.alpha_spread > 0.025;
+                    const spreadColor = isPositive ? 'text-blue-400' : 'text-red-400';
+                    return `
+                    <div class="glass p-6 rounded-sm card-alpha flex flex-col md:flex-row justify-between items-center gap-6 animate-fade-in">
+                        <div class="flex-1">
+                            <h3 class="text-xl font-bold text-white">${signal.match_name}</h3>
+                            <p class="text-sm text-green-400">Market: ${signal.market_type}</p>
+                        </div>
+                        <div class="flex gap-10 text-center">
+                            <div><div class="text-[10px] text-gray-500 uppercase">Alpha Spread</div>
+                            <div class="text-lg font-bold ${spreadColor}">+${(signal.alpha_spread * 100).toFixed(1)}%</div></div>
+                        </div>
+                        <div class="w-full md:w-64 p-3 bg-black/40 border border-green-900/30 rounded-sm">
+                            <p class="text-[11px] text-gray-300 italic">${signal.note_ia || 'Analyse en cours...'}</p>
+                        </div>
+                    </div>`;
+                }).join('');
+            } catch (error) {
+                grid.innerHTML = '<div class="p-10 text-center text-red-500">Erreur de connexion au flux.</div>';
+            }
+        }
+        fetchAlphaSignals();
+        setInterval(fetchAlphaSignals, 300000);
+    </script>
 </body>
 </html>
 """
@@ -94,104 +131,110 @@ HTML_TEMPLATE = """
 def index():
     return render_template_string(HTML_TEMPLATE)
 
+@app.route('/api/audit', methods=['POST'])
+def audit_settlement():
+    result = run_settlement_audit()
+    return jsonify(result)
+
+@app.route('/api/audit/weekly', methods=['GET'])
+def weekly_performance_audit():
+    if not supabase: return jsonify({"error": "Supabase non configuré"}), 500
+    
+    seven_days_ago = (datetime.now() - timedelta(days=7)).isoformat()
+    res = supabase.table('signals').select("*").gt('created_at', seven_days_ago).execute()
+    data = res.data
+
+    if not data:
+        return jsonify({"status": "error", "message": "Données insuffisantes pour l'audit."})
+
+    total_trades = len(data)
+    avg_clv = sum(s['alpha_spread'] for s in data) / total_trades
+    wins = len([s for s in data if s.get('result') == 1])
+    win_rate = (wins / total_trades) * 100
+
+    analysis_prompt = f"""
+    En tant qu'expert MIT en finance quantitative, analyse ce bilan hebdomadaire :
+    - Nombre de signaux : {total_trades}
+    - CLV Moyenne (Alpha capturé) : {avg_clv:.2%}
+    - Win Rate Réalisé : {win_rate:.1f}%
+    - Détail des sports : {[s['sport'] for s in data]}
+    
+    Identifie les biais : Quel sport performe le mieux ? La CLV est-elle en train de s'éroder ? 
+    Donne 3 recommandations strictes pour la semaine prochaine.
+    """
+    
+    model = genai.GenerativeModel('gemini-2.0-flash')
+    report_ai = model.generate_content(analysis_prompt).text
+
+    send_telegram_report(total_trades, avg_clv, win_rate, report_ai)
+    
+    return jsonify({"status": "success", "audit": "Rapport envoyé"})
+
+def send_telegram_report(total_trades, avg_clv, win_rate, report_ai):
+    if not TELEGRAM_TOKEN or not TELEGRAM_CHAT_ID: return
+    
+    message = f"📊 *PAIM STRATEGIC AUDIT*\n"
+    message += f"• *Volume:* {total_trades} Signaux\n"
+    message += f"• *Alpha Moyen:* {avg_clv:.2%}\n"
+    message += f"• *Win Rate:* {win_rate:.1f}%\n\n"
+    message += f"🧠 *ANALYSE IA:*\n{report_ai}"
+    
+    requests.post(f"https://api.telegram.org/bot{TELEGRAM_TOKEN}/sendMessage", 
+                  json={"chat_id": TELEGRAM_CHAT_ID, "text": message, "parse_mode": "Markdown"})
+
+@app.route('/api/data', methods=['GET'])
+def get_screener_data():
+    if not supabase: return jsonify({"error": "Supabase non configuré"}), 500
+    try:
+        response = supabase.table('signals').select("*").order('created_at', desc=True).limit(10).execute()
+        return jsonify(response.data)
+    except Exception as e:
+        return jsonify({"error": str(e)}), 500
+
 @app.route('/api/screener', methods=['GET'])
 def morning_screener():
-    if not ODDS_API_KEY:
-        return jsonify({"error": "Missing API Key"}), 500
+    if not ODDS_API_KEY: return jsonify({"error": "Missing API Key"}), 500
 
-    # 1. Fetch des marchés à 24h d'avance (upcoming)
-    url = f"https://api.the-odds-api.com/v4/sports/upcoming/odds/?apiKey={ODDS_API_KEY}&regions=eu,us&markets=h2h,spreads&oddsFormat=decimal"
+    url = f"https://api.the-odds-api.com/v4/sports/upcoming/odds/?apiKey={ODDS_API_KEY}&regions=eu,us&markets=h2h&oddsFormat=decimal"
     response = requests.get(url)
-    
-    if response.status_code != 200:
-        return jsonify({"error": "Failed to fetch odds"}), response.status_code
+    if response.status_code != 200: return jsonify({"error": "Failed to fetch odds"}), response.status_code
         
     matches = response.json()
     brief_items = []
     
     for match in matches:
-        # Critère 3 : Filtre de Liquidité
-        if match['sport_key'] not in ['basketball_nba', 'soccer_epl', 'soccer_uefa_champs_league', 'tennis_atp', 'baseball_mlb']:
-            continue
-            
-        home_team = match['home_team']
-        away_team = match['away_team']
-        match_name = f"{home_team} vs {away_team}"
-        
-        # Extraction des cotes Pinnacle (Sharp) et 1XBet (Soft)
+        if match['sport_key'] not in ['basketball_nba', 'soccer_epl', 'soccer_uefa_champs_league', 'tennis_atp', 'baseball_mlb']: continue
+        match_name = f"{match['home_team']} vs {match['away_team']}"
         pinnacle_book = next((b for b in match['bookmakers'] if b['key'] == 'pinnacle'), None)
         one_xbet_book = next((b for b in match['bookmakers'] if b['key'] == 'onexbet'), None)
-        
-        if not pinnacle_book or not one_xbet_book:
-            continue
-            
-        # Analyse du marché binaire H2H
+        if not pinnacle_book or not one_xbet_book: continue
         pinnacle_h2h = next((m for m in pinnacle_book['markets'] if m['key'] == 'h2h'), None)
         one_xbet_h2h = next((m for m in one_xbet_book['markets'] if m['key'] == 'h2h'), None)
-        
-        if not pinnacle_h2h or not one_xbet_h2h:
-            continue
+        if not pinnacle_h2h or not one_xbet_h2h: continue
             
         try:
             pinnacle_odds = [outcome['price'] for outcome in pinnacle_h2h['outcomes']]
-            one_xbet_odds = [outcome['price'] for outcome in one_xbet_h2h['outcomes']]
-            
-            if len(pinnacle_odds) != 2 or len(one_xbet_odds) != 2:
-                continue
-                
-            # Calcul du Prix Intrinsèque (Shin)
-            fair_probs = calculate_shin_probabilities(pinnacle_odds)
-            fair_prices = [1.0 / p for p in fair_probs]
+            fair_prices = [1.0/p for p in calculate_shin_probabilities(pinnacle_odds)]
             
             for i, outcome in enumerate(one_xbet_h2h['outcomes']):
                 cote_1xbet = outcome['price']
-                fair_price_pinnacle = fair_prices[i]
+                alpha_spread = (cote_1xbet - fair_prices[i]) / fair_prices[i]
                 
-                # Critère 1 : Le Spread d'Arbitrage Latent (Minimum 2.5%)
-                alpha_spread = (cote_1xbet - fair_price_pinnacle) / fair_price_pinnacle
-                
-                status_clv = "✅ Confirmé" if alpha_spread > 0.025 else "❌ Rejeté"
-                
-                # Lancement du Risk Flag IA
-                note_ia = "Non analysé"
                 if alpha_spread > 0.025:
                     news = get_market_news(match_name, match['sport_title'])
                     note_ia = check_market_red_flags(match_name, f"Moneyline {outcome['name']}. Contexte : {news}")
-                
-                brief_items.append({
-                    "sport": match['sport_title'],
-                    "match": match_name,
-                    "market": f"Moneyline {outcome['name']}",
-                    "fair_price": round(fair_price_pinnacle, 2),
-                    "price_1xbet": round(cote_1xbet, 2),
-                    "spread": f"+{round(alpha_spread * 100, 1)}%" if alpha_spread > 0 else f"{round(alpha_spread * 100, 1)}%",
-                    "clv": status_clv,
-                    "note_ia": note_ia,
-                    "valid": alpha_spread > 0.025
-                })
-        except Exception:
-            continue
+                    
+                    signal_data = {
+                        "match_name": match_name,
+                        "sport": match['sport_title'],
+                        "market_type": f"Moneyline {outcome['name']}",
+                        "fair_price": round(fair_prices[i], 2),
+                        "cote_1xbet": round(cote_1xbet, 2),
+                        "alpha_spread": round(alpha_spread, 4),
+                        "note_ia": note_ia
+                    }
+                    if supabase: supabase.table('signals').insert(signal_data).execute()
+                    brief_items.append(signal_data)
+        except Exception: continue
 
-    # 2. Formatage du "Morning Brief" Telegram
-    send_telegram_brief(brief_items)
     return jsonify({"status": "success", "items": brief_items})
-
-def send_telegram_brief(items):
-    if not TELEGRAM_TOKEN or not TELEGRAM_CHAT_ID:
-        return
-        
-    valid_items = [i for i in items if i['valid']]
-    
-    if not valid_items:
-        return
-    
-    message = f"📊 *PAIM SCREENER — 24h ADVANCE*\n"
-    message += f"🟢 Status : {len(valid_items)} Opportunités détectées\n\n"
-    
-    for idx, item in enumerate(valid_items[:5], 1):
-        message += f"[{idx}] 🏀 *{item['sport']} - {item['match']}*\n"
-        message += f"✔ {item['market']} | Spread : {item['spread']}\n"
-        message += f"⚠ IA : {item['note_ia'][:50]}...\n\n"
-
-    url = f"https://api.telegram.org/bot{TELEGRAM_TOKEN}/sendMessage"
-    requests.post(url, json={"chat_id": TELEGRAM_CHAT_ID, "text": message, "parse_mode": "Markdown"})
