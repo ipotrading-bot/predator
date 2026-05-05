@@ -221,7 +221,6 @@
         function marketTypeLabel(marketKey, sport) {
             if (!marketKey) return 'N/A';
             if (marketKey === 'h2h') {
-                // Binary moneyline sports
                 if (sport && sport.includes('soccer')) return 'Asian Handicap 0.0';
                 return 'Moneyline';
             }
@@ -252,96 +251,87 @@
         }
         function clearConsole() { document.getElementById('console-output').innerHTML = ''; }
 
-        // ── SCAN RÉEL — AUCUNE DONNÉE SIMULÉE ──────────────────────
-        async function triggerScan() {
-            clearConsole();
-            addLog('Initialisation du scan PAIM...', 'highlight');
+        // ── DASHBOARD PAIM (REMPLACE FETCHLIVESIGNALS) ──────────────
+        async function updateDashboard() {
+            const grid = document.getElementById('live-container');
+            
             try {
-                addLog('Ingestion des flux bookmakers...', 'info');
-                const res = await fetch('/api/scan', { method: 'POST', headers: { 'Content-Type': 'application/json' } });
-                if (!res.ok) {
-                    const text = await res.text();
-                    if (text.trim().startsWith('<')) throw new Error(`Réponse HTML (status ${res.status}) — API indisponible`);
-                    throw new Error(`HTTP ${res.status}: ${text.slice(0, 200)}`);
-                }
-                const data = await res.json();
-                addLog('Ingestion des flux bookmakers... OK', 'success');
-                
-                if (data.success) {
-                    addLog(`Analyse terminée: ${data.events_analyzed || 0} événements analysés`, 'info');
-                    if (data.signals_validated > 0) {
-                        addLog(`${data.signals_validated} signaux validés (EV+ ≥ 8%, SNR ≥ 3.0, Bernoulli Trial)`, 'success');
-                        addLog('Filtrage Bayésien Gemini Flash... Signal Validé', 'success');
-                        addLog('Calcul des stakes optimisés (Kelly Criterion)... OK', 'success');
-                        addLog('Envoi Ticket Telegram... OK', 'success');
-                        addLog(`Scan PAIM terminé. ${data.signals_validated} signaux validés.`, 'highlight');
-                    } else {
-                        addLog('Filtrage Bayésien Gemini Flash... Aucun signal qualifié', 'warning');
-                        addLog('Scan terminé. 0 signal validé (Seuil Alpha ≥ 8% non atteint)', 'highlight');
-                    }
-                } else {
-                    addLog(`Erreur scan: ${data.error || 'Échec inconnu'}`, 'error');
-                }
-            } catch (error) {
-                addLog(`Erreur API: ${error.message}`, 'error');
-                addLog('Scan PAIM interrompu — aucune donnée simulée', 'warning');
-            }
-            // Rafraîchir les signaux après le scan
-            fetchLiveSignals();
-            fetchStats();
-            fetchExposure();
-        }
+                const response = await fetch('/api/data');
+                const signals = await response.json();
 
-        // ── LIVE SIGNALS ────────────────────────────────────────────
-        async function fetchLiveSignals() {
-            try {
-                const res = await fetch('/api/signals/live');
-                const data = await res.json();
-                const container = document.getElementById('live-container');
-                
-                if (data && data.signals && data.signals.length > 0) {
-                    container.innerHTML = data.signals.map(s => {
-                        const evP = s.ev_plus ? (s.ev_plus * 100).toFixed(1) : '0.0';
-                        const sp = s.sharp_prob ? (s.sharp_prob * 100).toFixed(1) : '0.0';
-                        // SNR: if ai_context exists, show it; else "ANALYSING..."
-                        const snrDisplay = s.snr_ratio != null && s.snr_ratio > 0
-                            ? s.snr_ratio.toFixed(2)
-                            : (s.ai_context ? s.snr_ratio?.toFixed(2) || '0.00' : 'ANALYSING...');
-                        const snrClass = snrDisplay === 'ANALYSING...' ? 'text-yellow-400' : 'text-gray-600';
-                        const marketType = marketTypeLabel(s.market_key, s.sport);
-                        const matchTime = formatMatchTime(s.match_time);
-                        
-                        return `
-                        <div class="glass p-4 rounded text-xs signal-card glass-hover" onclick="openBet('${s.id}')">
-                            <div class="flex justify-between items-start mb-2">
-                                <span class="text-gray-500">${s.sport || 'N/A'}</span>
-                                <span class="text-green-400 font-bold">EV+ ${evP}%</span>
-                            </div>
-                            <div class="font-bold text-sm mb-1">${s.event_name || 'N/A'}</div>
-                            <div class="text-xs text-gray-500 mb-1">📅 ${matchTime} | ${marketType}</div>
-                            <div class="text-gray-400">${s.selection || 'N/A'} @ ${s.bookmaker_target || '1XBet'}</div>
-                            <div class="mt-2 flex justify-between">
-                                <span class="text-cyan-400 font-bold">Réussite: ${sp}%</span>
-                                <span class="text-yellow-400">Mise: ${s.recommended_stake || 0}€</span>
-                            </div>
-                            <div class="mt-2 flex justify-between text-xs">
-                                <span class="${snrClass}">SNR: ${snrDisplay}</span>
-                                <span class="text-gray-600">${s.selection ? s.selection.toUpperCase() : ''}</span>
-                            </div>
+                if (!Array.isArray(signals) || signals.length === 0) {
+                    grid.innerHTML = `
+                        <div class="col-span-full p-20 text-center border border-dashed border-green-900/50 rounded-sm">
+                            <p class="text-green-800 uppercase tracking-[0.2em] text-sm animate-pulse">
+                                📡 SCAN PAIM EN COURS : AUCUN ALPHA SPREAD > 2.5% DÉTECTÉ
+                            </p>
+                            <p class="text-[10px] text-gray-600 mt-2">PROCHAIN CYCLE AUTOMATIQUE : 06:00 GMT</p>
                         </div>`;
-                    }).join('');
-                } else {
-                    container.innerHTML = '<div class="col-span-3 glass p-8 rounded text-center text-gray-500">Aucun signal actif pour le moment</div>';
+                    return;
                 }
-            } catch (e) { console.error('fetchLiveSignals:', e); }
+
+                grid.innerHTML = signals.map(signal => {
+                    const spread = signal.alpha_spread ? (signal.alpha_spread * 100).toFixed(1) : "0.0";
+                    const date = signal.match_time ? new Date(signal.match_time).toLocaleString('fr-FR', {
+                        day: '2-digit', month: '2-digit', hour: '2-digit', minute: '2-digit', timeZone: 'UTC'
+                    }) : "Date N/A";
+
+                    return `
+                    <div class="glass p-6 rounded-sm card-alpha flex flex-col md:flex-row justify-between items-center gap-6 border-l-4 border-green-500 bg-white/5 mb-4">
+                        <div class="flex-1">
+                            <div class="flex items-center gap-3 mb-2">
+                                <span class="text-[10px] bg-green-900/30 text-green-400 px-2 py-0.5 rounded uppercase font-bold">${signal.sport || 'Sport'}</span>
+                                <span class="text-xs text-gray-500">${date} GMT</span>
+                            </div>
+                            <h3 class="text-xl font-bold text-white">${signal.match_name || 'Match Inconnu'}</h3>
+                            <p class="text-sm text-green-500/80 font-semibold">Market: ${signal.market_type || 'N/A'}</p>
+                        </div>
+                        
+                        <div class="flex gap-8 text-center">
+                            <div>
+                                <div class="text-[9px] text-gray-500 uppercase tracking-widest mb-1">Fair Price</div>
+                                <div class="text-lg font-bold text-gray-300">${signal.fair_price ? signal.fair_price.toFixed(2) : '0.00'}</div>
+                            </div>
+                            <div>
+                                <div class="text-[9px] text-gray-500 uppercase tracking-widest mb-1">1XBet Price</div>
+                                <div class="text-lg font-bold text-green-400">${signal.cote_1xbet ? signal.cote_1xbet.toFixed(2) : '0.00'}</div>
+                            </div>
+                            <div>
+                                <div class="text-[9px] text-gray-500 uppercase tracking-widest mb-1">Alpha Spread</div>
+                                <div class="text-lg font-bold text-blue-400">+${spread}%</div>
+                            </div>
+                        </div>
+
+                        <div class="w-full md:w-72 p-3 bg-black/60 border border-green-900/20 rounded-sm">
+                            <div class="text-[9px] text-gray-500 mb-1 uppercase font-bold">IA Risk Flag (Gemini)</div>
+                            <p class="text-[11px] text-gray-400 italic leading-tight">
+                                ${signal.note_ia || 'Analyse de risque non disponible.'}
+                            </p>
+                        </div>
+                    </div>
+                    `;
+                }).join('');
+
+            } catch (error) {
+                console.error("Erreur Dashboard:", error);
+                grid.innerHTML = '<div class="col-span-full p-10 text-red-500 text-center uppercase text-xs">⚠️ Erreur de liaison flux Supabase</div>';
+            }
         }
 
-        function openBet(id) {
-            window.open('https://1xbet.com/live', '_blank');
-            addLog(`Ouverture 1XBet pour signal ${id}`, 'info');
+        async function triggerScan() {
+            const btn = document.querySelector('button[onclick="triggerScan()"]');
+            btn.innerText = "SCANNING...";
+            btn.disabled = true;
+            try {
+                await fetch('/api/screener');
+                await updateDashboard();
+            } finally {
+                btn.innerText = "DÉCLENCHER SCAN PAIM (8H CYCLE)";
+                btn.disabled = false;
+            }
         }
 
-        // ── STATS ───────────────────────────────────────────────────
+        // ── STATS / LEDGER / AUDIT / TICKER / HEALTH / CHART (GARDIENS) ────────
         async function fetchStats() {
             try {
                 const res = await fetch('/api/stats');
@@ -355,7 +345,6 @@
             } catch (e) { console.error('fetchStats:', e); }
         }
 
-        // ── LEDGER ──────────────────────────────────────────────────
         async function fetchLedger() {
             try {
                 const res = await fetch('/api/ledger');
@@ -377,7 +366,6 @@
             } catch (e) { console.error('fetchLedger:', e); }
         }
 
-        // ── EXPOSURE ────────────────────────────────────────────────
         async function fetchExposure() {
             try {
                 const res = await fetch('/api/exposure');
@@ -389,7 +377,6 @@
             } catch (e) { console.error('fetchExposure:', e); }
         }
 
-        // ── AUDIT METRICS ──────────────────────────────────────────
         async function fetchAuditMetrics() {
             try {
                 const res = await fetch('/api/audit/metrics');
@@ -402,7 +389,6 @@
                     if (d.calmar_ratio != null) document.getElementById('calmar-ratio').textContent = d.calmar_ratio.toFixed(2);
                     if (d.current_win_streak != null) document.getElementById('win-streak').textContent = d.current_win_streak;
                     
-                    // Monthly performance (if available)
                     if (d.monthly_returns) {
                         const mp = document.getElementById('monthly-performance');
                         mp.innerHTML = Object.entries(d.monthly_returns).map(([m, v]) =>
@@ -413,7 +399,6 @@
             } catch (e) { console.error('fetchAuditMetrics:', e); }
         }
 
-        // ── TICKER ─────────────────────────────────────────────────
         async function fetchTicker() {
             try {
                 const res = await fetch('/api/ticker');
@@ -429,7 +414,6 @@
             } catch (e) { console.error('fetchTicker:', e); }
         }
 
-        // ── HEALTH ─────────────────────────────────────────────────
         async function fetchAPIHealth() {
             try {
                 const res = await fetch('/api/health');
@@ -451,7 +435,6 @@
             }
         }
 
-        // ── EQUITY CHART — données réelles depuis /api/equity-curve ──
         async function initEquityChart() {
             const ctx = document.getElementById('equity-chart').getContext('2d');
             try {
@@ -466,7 +449,6 @@
                         data.push(p.balance || 0);
                     });
                 } else {
-                    // Pas de données — afficher une ligne plate
                     const now = new Date();
                     for (let i = 30; i >= 0; i--) {
                         const date = new Date(now); date.setDate(date.getDate() - i);
@@ -519,10 +501,9 @@
             } catch (e) { console.error('initEquityChart:', e); }
         }
 
-        // ── INIT ────────────────────────────────────────────────────
         document.addEventListener('DOMContentLoaded', function() {
             showPage('control');
-            fetchLiveSignals();
+            updateDashboard();
             fetchLedger();
             fetchAPIHealth();
             fetchAuditMetrics();
@@ -530,7 +511,7 @@
             fetchStats();
             fetchTicker();
             
-            setInterval(fetchLiveSignals, 30000);
+            setInterval(updateDashboard, 60000);
             setInterval(fetchAPIHealth, 60000);
             setInterval(fetchExposure, 45000);
             setInterval(fetchTicker, 60000);

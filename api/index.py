@@ -191,6 +191,24 @@ def get_screener_data():
     except Exception as e:
         return jsonify({"error": str(e)}), 500
 
+@app.route('/api/test-seed', methods=['POST'])
+def test_seed():
+    if not supabase: return jsonify({"error": "Supabase non configuré"}), 500
+    test_signal = {
+        "match_name": "Real Madrid vs Bayern Munich",
+        "match_time": "2026-05-08T19:00:00Z",
+        "sport": "Soccer",
+        "market_type": "Moneyline",
+        "fair_price": 1.85,
+        "cote_1xbet": 2.05,
+        "alpha_spread": 0.108,
+        "is_elite_signal": True,
+        "status": "pending",
+        "note_ia": "✅ Signal fictif pour test Dashboard."
+    }
+    response = supabase.table('signals').insert(test_signal).execute()
+    return jsonify(response.data)
+
 @app.route('/api/screener', methods=['GET'])
 def morning_screener():
     if not ODDS_API_KEY: return jsonify({"error": "Missing API Key"}), 500
