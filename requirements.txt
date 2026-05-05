@@ -1,5 +1,6 @@
-# PREDATOR PAIM v2.0 — Dependencies
+# PREDATOR PAIM v2.1 — Centrale d'Intelligence de Marché
 # Optimized for Vercel (target < 50MB compressed)
+# PhD MIT — 5 couches : Groq → NewsAPI → Reddit → Perplexity → Gemini
 
 # ── Web Framework ──────────────────────────────────────────
 flask==3.0.3
@@ -33,3 +34,10 @@ fpdf2==2.7.9
 
 # ── News & RSS ────────────────────────────────────────────
 feedparser==6.0.11
+
+# ── QuantStats (Sharpe, Sortino, Drawdown, VaR) ──────────
+quantstats==0.0.62
+
+# ── Async Rate Limiting ───────────────────────────────────
+# aiolimiter gère le rate limiting distribué multi-source
+aiolimiter==0.1.1

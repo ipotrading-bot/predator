@@ -20,6 +20,8 @@ class Settings(BaseSettings):
     gemini_api_key: str = Field(..., alias="GEMINI_API_KEY")
     groq_api_key: str = Field(default="", alias="GROQ_API_KEY")
     news_api_key: str = Field(default="", alias="NEWS_API_KEY")
+    perplexity_api_key: str = Field(default="", alias="PERPLEXITY_API_KEY")
+    rapidapi_key: str = Field(default="", alias="RAPIDAPI_KEY")
     telegram_bot_token: str = Field(..., alias="TELEGRAM_BOT_TOKEN")
     telegram_chat_id: str = Field(..., alias="TELEGRAM_CHAT_ID")
 

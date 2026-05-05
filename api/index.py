@@ -1,246 +1,129 @@
-"""
-api/index.py — Vercel Serverless Flask Entry Point v2.1
-"""
-from flask import Flask, render_template, jsonify, request
-import os, sys, time
+import os
+import requests
+from flask import Flask, jsonify, render_template_string
+from core.math_engine import calculate_shin_probabilities
+from core.validator import check_market_red_flags
+from core.context import get_market_news
 
-ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
-sys.path.insert(0, ROOT)
+app = Flask(__name__)
 
-template_folder = os.path.join(ROOT, 'templates')
-app = Flask(__name__, template_folder=template_folder)
-app.config['JSON_SORT_KEYS'] = False
+ODDS_API_KEY = os.environ.get("ODDS_API_KEY")
+TELEGRAM_TOKEN = os.environ.get("TELEGRAM_TOKEN")
+TELEGRAM_CHAT_ID = os.environ.get("TELEGRAM_CHAT_ID")
 
+@app.route('/api/screener', methods=['GET'])
+def morning_screener():
+    if not ODDS_API_KEY:
+        return jsonify({"error": "Missing API Key"}), 500
 
-def get_supabase():
-    try:
-        from supabase import create_client
-        url = os.environ.get("SUPABASE_URL", "")
-        key = os.environ.get("SUPABASE_KEY", "")
-        if not url or not key:
-            return None
-        return create_client(url, key)
-    except Exception:
-        return None
-
-
-@app.after_request
-def cors(response):
-    response.headers['Access-Control-Allow-Origin'] = '*'
-    response.headers['Access-Control-Allow-Methods'] = 'GET, POST, OPTIONS'
-    response.headers['Access-Control-Allow-Headers'] = 'Content-Type, X-Predator-Secret'
-    return response
-
-
-@app.route('/', defaults={'path': ''}, methods=['OPTIONS'])
-@app.route('/<path:path>', methods=['OPTIONS'])
-def options_handler(path=''):
-    return jsonify({}), 204
-
-
-@app.route('/')
-def index():
-    return render_template('index.html')
-
-
-@app.route('/api/health')
-def get_health():
-    db = "online" if get_supabase() else "disconnected"
-    return jsonify({
-        "status": "ok",
-        "version": "2.1.0",
-        "timestamp": int(time.time()),
-        "db": db
-    })
-
-
-@app.route('/api/stats')
-def get_stats():
-    try:
-        supabase = get_supabase()
-        if not supabase:
-            raise Exception("Supabase non configuré")
-
-        res = supabase.table('signals').select('*').execute()
-        data = res.data or []
-        total = len(data)
-
-        # CORRECTIF : outcome est SMALLINT 1/0/-1, pas string 'win'
-        wins = sum(1 for s in data if s.get('outcome') == 1)
-        win_rate = (wins / total * 100) if total > 0 else 0
-
-        clv_vals = [s['clv_estimate'] for s in data if s.get('clv_estimate')]
-        clv_avg = (sum(clv_vals) / len(clv_vals)) if clv_vals else 0
-
-        total_profit = sum(s.get('profit_eur', 0) or 0 for s in data)
-        starting = float(os.environ.get("STARTING_BANKROLL", "10000"))
-
-        return jsonify({
-            "capital": round(starting + total_profit, 2),
-            "win_rate": round(win_rate, 1),
-            "clv_avg": round(clv_avg * 100, 2),
-            "roi_mensuel": round(total_profit / starting * 100, 1),
-            "total_signals": total,
-            "winning_signals": wins
-        })
-    except Exception as e:
-        return jsonify({
-            "error": str(e),
-            "capital": 10000, "win_rate": 0,
-            "clv_avg": 0, "roi_mensuel": 0,
-            "total_signals": 0, "winning_signals": 0
-        })
-
-
-@app.route('/api/signals/live')
-def get_live_signals():
-    try:
-        supabase = get_supabase()
-        if not supabase:
-            return jsonify({"signals": [], "count": 0})
-        res = (supabase.table('signals')
-               .select('*')
-               .eq('status', 'pending')
-               .order('ev_plus', desc=True)
-               .limit(9)
-               .execute())
-        return jsonify({"signals": res.data or [], "count": len(res.data or [])})
-    except Exception as e:
-        return jsonify({"signals": [], "count": 0, "error": str(e)})
-
-
-@app.route('/api/scan', methods=['POST', 'GET'])
-def trigger_scan():
-    import threading, asyncio
-    session = (request.json or {}).get('session', 'api')
-    box = {}
-
-    def run():
+    # 1. Fetch des marchés à 24h d'avance (upcoming)
+    url = f"https://api.the-odds-api.com/v4/sports/upcoming/odds/?apiKey={ODDS_API_KEY}&regions=eu,us&markets=h2h,spreads&oddsFormat=decimal"
+    response = requests.get(url)
+    
+    if response.status_code != 200:
+        return jsonify({"error": "Failed to fetch odds"}), response.status_code
+        
+    matches = response.json()
+    brief_items = []
+    
+    for match in matches:
+        # Critère 3 : Filtre de Liquidité (Exclusion des divisions inférieures / sports illiquides)
+        # On cible les ligues majeures définies par l'API
+        if match['sport_key'] not in ['basketball_nba', 'soccer_epl', 'soccer_uefa_champs_league', 'tennis_atp', 'baseball_mlb']:
+            continue
+            
+        home_team = match['home_team']
+        away_team = match['away_team']
+        match_name = f"{home_team} vs {away_team}"
+        
+        # Extraction des cotes Pinnacle (Sharp) et 1XBet (Soft)
+        pinnacle_book = next((b for b in match['bookmakers'] if b['key'] == 'pinnacle'), None)
+        one_xbet_book = next((b for b in match['bookmakers'] if b['key'] == 'onexbet'), None)
+        
+        if not pinnacle_book or not one_xbet_book:
+            continue
+            
+        # Analyse du marché binaire H2H
+        pinnacle_h2h = next((m for m in pinnacle_book['markets'] if m['key'] == 'h2h'), None)
+        one_xbet_h2h = next((m for m in one_xbet_book['markets'] if m['key'] == 'h2h'), None)
+        
+        if not pinnacle_h2h or not one_xbet_h2h:
+            continue
+            
         try:
-            loop = asyncio.new_event_loop()
-            asyncio.set_event_loop(loop)
-            from config import settings
-            from signals.scanner import MarketScanner
-            scanner = MarketScanner(bankroll=settings.starting_bankroll)
-            r = loop.run_until_complete(scanner.run_scan())
-            loop.close()
-            box['ok'] = {
-                "success": True,
-                "session": session,
-                "events_analyzed": r.events_analyzed,
-                "signals_validated": r.signals_validated,
-                "duration_seconds": round(r.duration_seconds, 2),
-                "timestamp": int(time.time())
-            }
-        except Exception as e:
-            box['err'] = str(e)
+            pinnacle_odds = [outcome['price'] for outcome in pinnacle_h2h['outcomes']]
+            one_xbet_odds = [outcome['price'] for outcome in one_xbet_h2h['outcomes']]
+            
+            if len(pinnacle_odds) != 2 or len(one_xbet_odds) != 2:
+                continue # On force la synthèse binaire (pas de 1N2)
+                
+            # Calcul du Prix Intrinsèque (Shin)
+            fair_probs = calculate_shin_probabilities(pinnacle_odds)
+            fair_prices = [1.0 / p for p in fair_probs]
+            
+            for i, outcome in enumerate(one_xbet_h2h['outcomes']):
+                cote_1xbet = outcome['price']
+                fair_price_pinnacle = fair_prices[i]
+                
+                # Critère 1 : Le Spread d'Arbitrage Latent (Minimum 2.5%)
+                alpha_spread = (cote_1xbet - fair_price_pinnacle) / fair_price_pinnacle
+                
+                status_clv = "✅ Confirmé" if alpha_spread > 0.025 else "❌ Rejeté (Spread trop faible)"
+                
+                # Lancement du Risk Flag IA uniquement si le critère mathématique est validé
+                note_ia = "Non analysé (Spread insuffisant)"
+                if alpha_spread > 0.025:
+                    news = get_market_news(match_name, match['sport_title'])
+                    note_ia = check_market_red_flags(match_name, f"Moneyline {outcome['name']}. Contexte : {news}")
+                
+                brief_items.append({
+                    "sport": match['sport_title'],
+                    "match": match_name,
+                    "market": f"Moneyline {outcome['name']}",
+                    "fair_price": round(fair_price_pinnacle, 2),
+                    "price_1xbet": round(cote_1xbet, 2),
+                    "spread": f"+{round(alpha_spread * 100, 1)}%" if alpha_spread > 0 else f"{round(alpha_spread * 100, 1)}%",
+                    "clv": status_clv,
+                    "note_ia": note_ia,
+                    "valid": alpha_spread > 0.025
+                })
+        except Exception:
+            continue
 
-    t = threading.Thread(target=run, daemon=True)
-    t.start()
-    t.join(timeout=55)
+    # 2. Formatage du \"Morning Brief\" Telegram
+    send_telegram_brief(brief_items)
+    return jsonify({"status": "success", "processed_items": len(brief_items)})
 
-    if 'ok' in box:
-        return jsonify(box['ok'])
-    if 'err' in box:
-        return jsonify({"success": False, "error": box['err']}), 500
-    return jsonify({"success": False, "error": "Scan timeout"}), 504
+def send_telegram_brief(items):
+    if not TELEGRAM_TOKEN or not TELEGRAM_CHAT_ID:
+        return
+        
+    valid_items = [i for i in items if i['valid']]
+    rejected_items = [i for i in items if not i['valid']][:2] # On en garde 2 pour l'exemple visuel
+    
+    message = f"📊 *PAIM SCREENER — 24h ADVANCE*\n"
+    message += f"🟢 Status : {len(valid_items)} Opportunités détectées | ⏱ Scan : 06:00 GMT\n\n"
+    
+    idx = 1
+    for item in valid_items:
+        message += f"[{idx}] 🏀 *{item['sport']} - {item['match']}*\n"
+        message += f"✔ Market : {item['market']}\n"
+        message += f"✔ Fair Price (Pinnacle) : {item['fair_price']}\n"
+        message += f"✔ 1XBet Price : {item['price_1xbet']}\n"
+        message += f"⚡ Alpha Spread : {item['spread']} | CLV : {item['clv']}\n"
+        message += f"⚠ Note IA : {item['note_ia']}\n\n"
+        idx += 1
+        
+    if rejected_items:
+        message += "━━━━━━━━━━━━━━━━━━━━\n"
+        message += "📉 *EXEMPLES DE REJETS DYNAMIQUES :*\n\n"
+        for item in rejected_items:
+            message += f"❌ *{item['match']}* ({item['market']})\n"
+            message += f"⚡ Alpha Spread : {item['spread']} | CLV : {item['clv']}\n\n"
 
+    url = f"https://api.telegram.org/bot{TELEGRAM_TOKEN}/sendMessage"
+    requests.post(url, json={"chat_id": TELEGRAM_CHAT_ID, "text": message, "parse_mode": "Markdown"})
 
-@app.route('/api/exposure')
-def get_current_exposure():
-    try:
-        supabase = get_supabase()
-        if not supabase:
-            raise Exception("DB not configured")
-        res = (supabase.table('signals')
-               .select('recommended_stake')
-               .eq('status', 'pending')
-               .execute())
-        data = res.data or []
-        exp = sum(s.get('recommended_stake', 0) or 0 for s in data)
-        starting = float(os.environ.get("STARTING_BANKROLL", "10000"))
-        return jsonify({
-            "total_exposure": round(exp, 2),
-            "active_positions": len(data),
-            "exposure_percentage": round(exp / starting * 100, 1)
-        })
-    except Exception as e:
-        return jsonify({"total_exposure": 0, "active_positions": 0,
-                        "exposure_percentage": 0, "error": str(e)})
-
-
-@app.route('/api/audit/metrics')
-def get_audit_metrics():
-    try:
-        from api.analytics import quant_analytics
-        return jsonify(quant_analytics.get_performance_report(days=30))
-    except Exception as e:
-        return jsonify({"error": str(e)})
-
-
-@app.route('/api/equity-curve')
-def get_equity_curve():
-    try:
-        supabase = get_supabase()
-        if not supabase:
-            raise Exception("DB not configured")
-        res = (supabase.table("bankroll_snapshots")
-               .select("timestamp,balance,roi,drawdown")
-               .order("timestamp")
-               .limit(200)
-               .execute())
-        return jsonify({"data": res.data or []})
-    except Exception as e:
-        return jsonify({"data": [], "error": str(e)})
-
-
-@app.route('/api/ledger')
-def get_ledger():
-    try:
-        supabase = get_supabase()
-        if not supabase:
-            raise Exception("DB not configured")
-        res = (supabase.table("signals")
-               .select("event_name,recommended_stake,ev_plus,outcome,profit_eur,created_at,selection")
-               .not_.is_("outcome", "null")
-               .order("created_at", desc=True)
-               .limit(50)
-               .execute())
-        om = {1: "WIN", 0: "LOSS", -1: "VOID"}
-        ledger = [{
-            "date": s.get("created_at", "")[:10],
-            "match": s.get("event_name", "N/A"),
-            "selection": s.get("selection", ""),
-            "stake": s.get("recommended_stake", 0),
-            "ev": round((s.get("ev_plus", 0) or 0) * 100, 1),
-            "result": om.get(s.get("outcome"), "N/A"),
-            "pnl": s.get("profit_eur", 0)
-        } for s in (res.data or [])]
-        return jsonify({"transactions": ledger})
-    except Exception as e:
-        return jsonify({"transactions": [], "error": str(e)})
-
-
-@app.route('/api/ticker')
-def get_market_ticker():
-    try:
-        from api.news_client import news_client
-        return jsonify({"items": news_client.get_ticker_items()})
-    except Exception as e:
-        return jsonify({"items": [], "error": str(e)})
-
-
-@app.route('/api/logs/recent')
-def get_recent_logs():
-    try:
-        from api.logger import get_scan_logger
-        lg = get_scan_logger()
-        return jsonify(lg.get_summary() if lg else {"steps": []})
-    except Exception as e:
-        return jsonify({"steps": [], "error": str(e)})
-
-
-# ── VERCEL : pas de handler() ici ────────────────────────────────────
-# @vercel/python détecte l'objet Flask 'app' automatiquement.
-# L'ancienne ligne "def handler(request): return app(request.environ, lambda *args: None)"
-# provoquait le 500 en détruisant start_response.
+@app.route('/', methods=['GET'])
+def index():
+    return "PAIM Morning Screener is active."

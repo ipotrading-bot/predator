@@ -1,0 +1,13 @@
+name: PAIM Morning Screener Trigger
+on:
+  schedule:
+    - cron: '0 6 * * *' # 06:00 GMT chaque jour
+  workflow_dispatch: # Permet un déclenchement manuel depuis GitHub
+
+jobs:
+  run_screener:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Execute PAIM Alpha Scan
+        run: |
+          curl -X GET "https://predator-two.vercel.app/api/screener"
