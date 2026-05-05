@@ -10,9 +10,9 @@
     <style>
         body { font-family: 'JetBrains Mono', monospace; background-color: #050505; color: #00ff00; }
         .glass { background: rgba(255, 255, 255, 0.03); border: 1px solid rgba(0, 255, 0, 0.2); }
+        .glass-hover:hover { border-color: #00ff00; box-shadow: 0 0 20px rgba(0, 255, 0, 0.2); transform: translateY(-2px); }
         .tab-active { border-bottom: 2px solid #00ff00; color: #fff; }
         
-        /* Console Log Styles */
         .console-container {
             background: #0a0a0a;
             border: 1px solid rgba(0, 255, 0, 0.3);
@@ -38,131 +38,42 @@
             scrollbar-width: thin;
             scrollbar-color: #00ff00 #0a0a0a;
         }
-        .console-body::-webkit-scrollbar {
-            width: 6px;
-        }
-        .console-body::-webkit-scrollbar-track {
-            background: #0a0a0a;
-        }
-        .console-body::-webkit-scrollbar-thumb {
-            background: #00ff00;
-            border-radius: 3px;
-        }
-        .log-line {
-            margin-bottom: 2px;
-            animation: fadeIn 0.3s ease-in;
-        }
+        .console-body::-webkit-scrollbar { width: 6px; }
+        .console-body::-webkit-scrollbar-track { background: #0a0a0a; }
+        .console-body::-webkit-scrollbar-thumb { background: #00ff00; border-radius: 3px; }
+        .log-line { margin-bottom: 2px; animation: fadeIn 0.3s ease-in; }
         .log-time { color: #666; }
         .log-info { color: #00ff00; }
         .log-success { color: #00ff00; font-weight: bold; }
         .log-warning { color: #ffaa00; }
         .log-error { color: #ff3333; }
         .log-highlight { color: #00ccff; }
+        @keyframes fadeIn { from { opacity: 0; transform: translateX(-10px); } to { opacity: 1; transform: translateX(0); } }
         
-        @keyframes fadeIn {
-            from { opacity: 0; transform: translateX(-10px); }
-            to { opacity: 1; transform: translateX(0); }
-        }
+        .led { display: inline-block; width: 8px; height: 8px; border-radius: 50%; margin-right: 6px; animation: pulse 2s infinite; }
+        .led-online { background: #00ff00; box-shadow: 0 0 8px #00ff00; }
+        .led-offline { background: #ff3333; box-shadow: 0 0 8px #ff3333; animation: none; }
+        .led-warning { background: #ffaa00; box-shadow: 0 0 8px #ffaa00; }
+        @keyframes pulse { 0%, 100% { opacity: 1; } 50% { opacity: 0.5; } }
         
-        /* LED Indicator Styles */
-        .led {
-            display: inline-block;
-            width: 8px;
-            height: 8px;
-            border-radius: 50%;
-            margin-right: 6px;
-            animation: pulse 2s infinite;
-        }
-        .led-online {
-            background: #00ff00;
-            box-shadow: 0 0 8px #00ff00;
-        }
-        .led-offline {
-            background: #ff3333;
-            box-shadow: 0 0 8px #ff3333;
-            animation: none;
-        }
-        .led-warning {
-            background: #ffaa00;
-            box-shadow: 0 0 8px #ffaa00;
-        }
+        .ticker-container { overflow: hidden; background: rgba(0, 255, 0, 0.05); border: 1px solid rgba(0, 255, 0, 0.15); border-radius: 4px; padding: 6px 0; margin-bottom: 16px; }
+        .ticker-content { display: inline-block; white-space: nowrap; padding-left: 100%; }
+        .ticker-item { display: inline-block; padding: 0 30px; font-size: 11px; color: #00ccff; }
+        .ticker-item .time { color: #666; margin-right: 8px; }
         
-        @keyframes pulse {
-            0%, 100% { opacity: 1; }
-            50% { opacity: 0.5; }
-        }
+        .chart-container { position: relative; height: 300px; width: 100%; }
+        .cursor-blink::after { content: '█'; animation: blink 1s infinite; color: #00ff00; }
+        @keyframes blink { 0%, 50% { opacity: 1; } 51%, 100% { opacity: 0; } }
         
-        /* Market Ticker Styles */
-        .ticker-container {
-            overflow: hidden;
-            background: rgba(0, 255, 0, 0.05);
-            border: 1px solid rgba(0, 255, 0, 0.15);
-            border-radius: 4px;
-            padding: 6px 0;
-            margin-bottom: 16px;
-        }
-        .ticker-content {
-            display: inline-block;
-            white-space: nowrap;
-            animation: ticker 30s linear infinite;
-            padding-left: 100%;
-        }
-        .ticker-item {
-            display: inline-block;
-            padding: 0 30px;
-            font-size: 11px;
-            color: #00ccff;
-        }
-        .ticker-item .time {
-            color: #666;
-            margin-right: 8px;
-        }
-        
-        @keyframes ticker {
-            0% { transform: translateX(0); }
-            100% { transform: translateX(-100%); }
-        }
-        
-        /* Signal Card Styles */
-        .signal-card {
-            cursor: pointer;
-            transition: all 0.2s ease;
-        }
-        .signal-card:hover {
-            border-color: #00ff00;
-            box-shadow: 0 0 20px rgba(0, 255, 0, 0.2);
-            transform: translateY(-2px);
-        }
-        
-        /* Chart Container */
-        .chart-container {
-            position: relative;
-            height: 300px;
-            width: 100%;
-        }
-        
-        /* Matrix cursor blink */
-        .cursor-blink::after {
-            content: '█';
-            animation: blink 1s infinite;
-            color: #00ff00;
-        }
-        @keyframes blink {
-            0%, 50% { opacity: 1; }
-            51%, 100% { opacity: 0; }
-        }
+        .signal-card { cursor: pointer; transition: all 0.2s ease; }
+        .signal-card:hover { border-color: #00ff00; box-shadow: 0 0 20px rgba(0, 255, 0, 0.2); transform: translateY(-2px); }
     </style>
 </head>
 <body class="p-4">
-    <!-- Market Ticker -->
+    <!-- Market Ticker — UNIQUEMENT données réelles depuis /api/ticker -->
     <div class="ticker-container">
         <div class="ticker-content" id="market-ticker">
-            <span class="ticker-item"><span class="time">[10:35:01]</span> 🚨 NBA: LeBron James questionable - ankle injury</span>
-            <span class="ticker-item"><span class="time">[10:34:45]</span> ⚽ Premier League: Haaland confirmed starter vs Arsenal</span>
-            <span class="ticker-item"><span class="time">[10:33:22]</span> 🏀 NBA: Lakers vs Nuggets - Over 225.5 points trending</span>
-            <span class="ticker-item"><span class="time">[10:32:10]</span> 🎾 ATP: Djokovic withdraws from Rome Masters</span>
-            <span class="ticker-item"><span class="time">[10:31:05]</span> ⚽ La Liga: Rain expected - El Clasico under 2.5 goals EV+</span>
-            <span class="ticker-item"><span class="time">[10:30:00]</span> 🏒 NHL: Bruins goalie injured - backup confirmed</span>
+            <span class="ticker-item" style="color:#666">Chargement des news...</span>
         </div>
     </div>
 
@@ -173,59 +84,26 @@
             <p class="text-xs text-green-700">PHD MIT ARCHITECTURE | DAKAR HUB</p>
         </div>
         <div class="flex items-center gap-6">
-            <!-- API Health Status -->
             <div class="flex gap-4 text-xs" id="api-health">
-                <div class="flex items-center">
-                    <span class="led led-online" id="led-pinnacle"></span>
-                    <span class="text-gray-400">PINNACLE: </span>
-                    <span class="text-green-400 ml-1" id="status-pinnacle">ONLINE (12ms)</span>
-                </div>
-                <div class="flex items-center">
-                    <span class="led led-online" id="led-1xbet"></span>
-                    <span class="text-gray-400">1XBET: </span>
-                    <span class="text-green-400 ml-1" id="status-1xbet">ONLINE (45ms)</span>
-                </div>
-                <div class="flex items-center">
-                    <span class="led led-online" id="led-gemini"></span>
-                    <span class="text-gray-400">GEMINI AI: </span>
-                    <span class="text-green-400 ml-1" id="status-gemini">ONLINE</span>
-                </div>
-                <div class="flex items-center">
-                    <span class="led led-online" id="led-telegram"></span>
-                    <span class="text-gray-400">TELEGRAM: </span>
-                    <span class="text-green-400 ml-1" id="status-telegram">READY</span>
-                </div>
+                <div class="flex items-center"><span class="led led-offline" id="led-pinnacle"></span><span class="text-gray-400">PINNACLE: </span><span class="text-gray-500 ml-1" id="status-pinnacle">...</span></div>
+                <div class="flex items-center"><span class="led led-offline" id="led-1xbet"></span><span class="text-gray-400">1XBET: </span><span class="text-gray-500 ml-1" id="status-1xbet">...</span></div>
+                <div class="flex items-center"><span class="led led-offline" id="led-gemini"></span><span class="text-gray-400">GEMINI AI: </span><span class="text-gray-500 ml-1" id="status-gemini">...</span></div>
+                <div class="flex items-center"><span class="led led-offline" id="led-telegram"></span><span class="text-gray-400">TELEGRAM: </span><span class="text-gray-500 ml-1" id="status-telegram">...</span></div>
             </div>
             <div class="text-right">
                 <div class="text-xs text-gray-500">STATUS</div>
-                <div class="text-sm font-bold text-green-400 animate-pulse">● SYSTEM ONLINE</div>
+                <div class="text-sm font-bold text-green-400 animate-pulse" id="system-status">● SYSTEM ONLINE</div>
             </div>
         </div>
     </div>
 
-    <!-- Stats Cards -->
+    <!-- Stats Cards — valeurs réelles depuis /api/stats et /api/exposure -->
     <div class="grid grid-cols-1 md:grid-cols-5 gap-4 mb-8">
-        <div class="glass p-4 rounded">
-            <div class="text-xs text-gray-500">CAPITAL</div>
-            <div class="text-xl font-bold">10,000.00 €</div>
-        </div>
-        <div class="glass p-4 rounded">
-            <div class="text-xs text-gray-500">WIN RATE (7/9)</div>
-            <div class="text-xl font-bold text-white">90.2%</div>
-        </div>
-        <div class="glass p-4 rounded">
-            <div class="text-xs text-gray-500">CLV AVG</div>
-            <div class="text-xl font-bold text-blue-400">+7.4%</div>
-        </div>
-        <div class="glass p-4 rounded">
-            <div class="text-xs text-gray-500">ROI MENSUEL</div>
-            <div class="text-xl font-bold text-green-400">+100%</div>
-        </div>
-        <div class="glass p-4 rounded border-blue-500/30">
-            <div class="text-xs text-gray-500">CURRENT EXPOSURE</div>
-            <div class="text-xl font-bold text-yellow-400" id="current-exposure">1,250.00 €</div>
-            <div class="text-xs text-gray-600">5 positions actives</div>
-        </div>
+        <div class="glass p-4 rounded"><div class="text-xs text-gray-500">CAPITAL</div><div class="text-xl font-bold" id="stat-capital">...</div></div>
+        <div class="glass p-4 rounded"><div class="text-xs text-gray-500">WIN RATE (7/9)</div><div class="text-xl font-bold text-white" id="stat-winrate">...</div></div>
+        <div class="glass p-4 rounded"><div class="text-xs text-gray-500">CLV AVG</div><div class="text-xl font-bold text-blue-400" id="stat-clv">...</div></div>
+        <div class="glass p-4 rounded"><div class="text-xs text-gray-500">ROI MENSUEL</div><div class="text-xl font-bold text-green-400" id="stat-roi">...</div></div>
+        <div class="glass p-4 rounded border-blue-500/30"><div class="text-xs text-gray-500">CURRENT EXPOSURE</div><div class="text-xl font-bold text-yellow-400" id="stat-exposure">...</div><div class="text-xs text-gray-600" id="stat-positions">...</div></div>
     </div>
 
     <!-- Navigation -->
@@ -236,7 +114,7 @@
         <button onclick="showPage('audit')" class="pb-2 text-sm uppercase tracking-widest" id="btn-audit">Audit</button>
     </div>
 
-    <!-- Pages -->
+    <!-- PAGE: Contrôle -->
     <div id="page-control" class="page">
         <div class="glass p-8 rounded-lg text-center">
             <h2 class="mb-4 text-gray-400">TERMINAL DE COMMANDE</h2>
@@ -244,8 +122,6 @@
                 DÉCLENCHER SCAN PAIM (8H CYCLE)
             </button>
             <p class="mt-4 text-xs text-gray-600">Prochain scan automatique : 08:00 GMT</p>
-            
-            <!-- Real-time Log Console -->
             <div class="console-container mt-6 text-left">
                 <div class="console-header">
                     <span>📡 PAIM ALGORITHM LOG — REAL-TIME</span>
@@ -258,13 +134,15 @@
         </div>
     </div>
 
+    <!-- PAGE: Live Signals -->
     <div id="page-live" class="page hidden">
         <h2 class="mb-4 text-sm text-gray-500">TICKET SYSTÈME 7/9 ACTUEL (24H ADVANCE)</h2>
         <div id="live-container" class="grid grid-cols-1 md:grid-cols-3 gap-4">
-            <!-- Les signaux s'afficheront ici -->
+            <!-- Signaux réels depuis /api/signals/live -->
         </div>
     </div>
 
+    <!-- PAGE: Ledger -->
     <div id="page-ledger" class="page hidden">
         <div class="glass p-6 rounded-lg">
             <h2 class="mb-4 text-gray-400">LEDGER — HISTORIQUE DES TRANSACTIONS</h2>
@@ -275,81 +153,41 @@
                             <th class="py-2 px-3 text-left">DATE</th>
                             <th class="py-2 px-3 text-left">MATCH</th>
                             <th class="py-2 px-3 text-left">MISE</th>
-                            <th class="py-2 px-3 text-left">COTE</th>
+                            <th class="py-2 px-3 text-left">EV+</th>
                             <th class="py-2 px-3 text-left">RÉSULTAT</th>
                             <th class="py-2 px-3 text-left">P&L</th>
                         </tr>
                     </thead>
                     <tbody id="ledger-body">
-                        <!-- Ledger entries will be populated here -->
+                        <tr><td colspan="6" class="py-8 text-center text-gray-600">Chargement...</td></tr>
                     </tbody>
                 </table>
             </div>
         </div>
     </div>
 
+    <!-- PAGE: Audit -->
     <div id="page-audit" class="page hidden">
         <div class="grid grid-cols-1 lg:grid-cols-3 gap-6">
-            <!-- Advanced Risk Metrics -->
             <div class="lg:col-span-1 space-y-4">
                 <div class="glass p-4 rounded">
                     <h3 class="text-sm text-gray-500 mb-3">MÉTRIQUES DE RISQUE</h3>
                     <div class="space-y-3">
-                        <div class="flex justify-between items-center">
-                            <span class="text-xs text-gray-400">Brier Score</span>
-                            <span class="text-sm font-bold text-blue-400" id="brier-score">0.142</span>
-                        </div>
-                        <div class="flex justify-between items-center">
-                            <span class="text-xs text-gray-400">Sharpe Ratio</span>
-                            <span class="text-sm font-bold text-green-400" id="sharpe-ratio">2.87</span>
-                        </div>
-                        <div class="flex justify-between items-center">
-                            <span class="text-xs text-gray-400">Sortino Ratio</span>
-                            <span class="text-sm font-bold text-green-400" id="sortino-ratio">3.42</span>
-                        </div>
-                        <div class="flex justify-between items-center">
-                            <span class="text-xs text-gray-400">Max Drawdown</span>
-                            <span class="text-sm font-bold text-red-400" id="max-drawdown">-8.3%</span>
-                        </div>
-                        <div class="flex justify-between items-center">
-                            <span class="text-xs text-gray-400">Calmar Ratio</span>
-                            <span class="text-sm font-bold text-yellow-400" id="calmar-ratio">4.12</span>
-                        </div>
-                        <div class="flex justify-between items-center">
-                            <span class="text-xs text-gray-400">Win Streak</span>
-                            <span class="text-sm font-bold text-green-400" id="win-streak">7</span>
-                        </div>
+                        <div class="flex justify-between items-center"><span class="text-xs text-gray-400">Brier Score</span><span class="text-sm font-bold text-blue-400" id="brier-score">...</span></div>
+                        <div class="flex justify-between items-center"><span class="text-xs text-gray-400">Sharpe Ratio</span><span class="text-sm font-bold text-green-400" id="sharpe-ratio">...</span></div>
+                        <div class="flex justify-between items-center"><span class="text-xs text-gray-400">Sortino Ratio</span><span class="text-sm font-bold text-green-400" id="sortino-ratio">...</span></div>
+                        <div class="flex justify-between items-center"><span class="text-xs text-gray-400">Max Drawdown</span><span class="text-sm font-bold text-red-400" id="max-drawdown">...</span></div>
+                        <div class="flex justify-between items-center"><span class="text-xs text-gray-400">Calmar Ratio</span><span class="text-sm font-bold text-yellow-400" id="calmar-ratio">...</span></div>
+                        <div class="flex justify-between items-center"><span class="text-xs text-gray-400">Win Streak</span><span class="text-sm font-bold text-green-400" id="win-streak">...</span></div>
                     </div>
                 </div>
-                
                 <div class="glass p-4 rounded">
                     <h3 class="text-sm text-gray-500 mb-3">PERFORMANCE MENSUELLE</h3>
                     <div id="monthly-performance" class="space-y-2 text-xs">
-                        <div class="flex justify-between">
-                            <span class="text-gray-400">Jan 2025</span>
-                            <span class="text-green-400">+12.4%</span>
-                        </div>
-                        <div class="flex justify-between">
-                            <span class="text-gray-400">Fev 2025</span>
-                            <span class="text-green-400">+18.7%</span>
-                        </div>
-                        <div class="flex justify-between">
-                            <span class="text-gray-400">Mar 2025</span>
-                            <span class="text-green-400">+22.1%</span>
-                        </div>
-                        <div class="flex justify-between">
-                            <span class="text-gray-400">Avr 2025</span>
-                            <span class="text-green-400">+15.3%</span>
-                        </div>
-                        <div class="flex justify-between">
-                            <span class="text-gray-400">Mai 2025</span>
-                            <span class="text-green-400">+31.5%</span>
-                        </div>
+                        <div class="text-center text-gray-600">Chargement...</div>
                     </div>
                 </div>
             </div>
-            
-            <!-- Equity Curve Chart -->
             <div class="lg:col-span-2">
                 <div class="glass p-4 rounded">
                     <h3 class="text-sm text-gray-500 mb-4">COURBE D'ÉQUITÉ DYNAMIQUE</h3>
@@ -361,85 +199,76 @@
         </div>
     </div>
 
-    <!-- Scripts -->
     <script>
         // Global state
         let equityChart = null;
-        let consoleLogs = [];
         
+        // ── Helpers ──────────────────────────────────────────────────
+        function timeStr() { return new Date().toTimeString().split(' ')[0]; }
+        
+        function formatMatchTime(iso) {
+            if (!iso) return 'N/A';
+            try {
+                const d = new Date(iso);
+                const day = String(d.getUTCDate()).padStart(2, '0');
+                const month = String(d.getUTCMonth() + 1).padStart(2, '0');
+                const hours = String(d.getUTCHours()).padStart(2, '0');
+                const mins = String(d.getUTCMinutes()).padStart(2, '0');
+                return `${day}/${month} ${hours}:${mins}`;
+            } catch { return 'N/A'; }
+        }
+        
+        function marketTypeLabel(marketKey, sport) {
+            if (!marketKey) return 'N/A';
+            if (marketKey === 'h2h') {
+                // Binary moneyline sports
+                if (sport && sport.includes('soccer')) return 'Asian Handicap 0.0';
+                return 'Moneyline';
+            }
+            if (marketKey === 'spreads') return 'Spread';
+            if (marketKey === 'totals') return 'Over/Under';
+            if (marketKey === 'asian_handicap') return 'Asian Handicap 0.0';
+            return marketKey;
+        }
+
         function showPage(pageId) {
             document.querySelectorAll('.page').forEach(p => p.classList.add('hidden'));
             document.getElementById('page-' + pageId).classList.remove('hidden');
-            
-            // Update tab active state
             document.querySelectorAll('[id^="btn-"]').forEach(btn => btn.classList.remove('tab-active'));
             document.getElementById('btn-' + pageId).classList.add('tab-active');
-            
-            // Initialize chart when audit page is shown
-            if (pageId === 'audit' && !equityChart) {
-                setTimeout(initEquityChart, 100);
-            }
+            if (pageId === 'audit' && !equityChart) setTimeout(initEquityChart, 100);
         }
 
-        // Real-time Console Log
+        // ── Console ─────────────────────────────────────────────────
         function addLog(message, type = 'info') {
-            const consoleOutput = document.getElementById('console-output');
-            const now = new Date();
-            const timeStr = now.toTimeString().split(' ')[0];
-            
-            const logClass = {
-                'info': 'log-info',
-                'success': 'log-success',
-                'warning': 'log-warning',
-                'error': 'log-error',
-                'highlight': 'log-highlight'
-            }[type] || 'log-info';
-            
-            const logLine = document.createElement('div');
-            logLine.className = 'log-line';
-            logLine.innerHTML = `<span class="log-time">[${timeStr}]</span> <span class="${logClass}">${message}</span>`;
-            
-            consoleOutput.appendChild(logLine);
-            consoleOutput.scrollTop = consoleOutput.scrollHeight;
-            
-            // Keep only last 100 logs
-            while (consoleOutput.children.length > 100) {
-                consoleOutput.removeChild(consoleOutput.firstChild);
-            }
+            const el = document.getElementById('console-output');
+            const cls = {info:'log-info',success:'log-success',warning:'log-warning',error:'log-error',highlight:'log-highlight'}[type]||'log-info';
+            const div = document.createElement('div');
+            div.className = 'log-line';
+            div.innerHTML = `<span class="log-time">[${timeStr()}]</span> <span class="${cls}">${message}</span>`;
+            el.appendChild(div);
+            el.scrollTop = el.scrollHeight;
+            while (el.children.length > 100) el.removeChild(el.firstChild);
         }
+        function clearConsole() { document.getElementById('console-output').innerHTML = ''; }
 
-        function clearConsole() {
-            const consoleOutput = document.getElementById('console-output');
-            consoleOutput.innerHTML = '';
-        }
-
+        // ── SCAN RÉEL — AUCUNE DONNÉE SIMULÉE ──────────────────────
         async function triggerScan() {
             clearConsole();
             addLog('Initialisation du scan PAIM...', 'highlight');
-            
-            // Appel API réel uniquement — AUCUNE donnée simulée
             try {
                 addLog('Ingestion des flux bookmakers...', 'info');
-                const res = await fetch('/api/scan', { 
-                    method: 'POST',
-                    headers: { 'Content-Type': 'application/json' }
-                });
-                
+                const res = await fetch('/api/scan', { method: 'POST', headers: { 'Content-Type': 'application/json' } });
                 if (!res.ok) {
                     const text = await res.text();
-                    // Détection HTML / JSON malformé
-                    if (text.trim().startsWith('<') || text.trim().startsWith('<!')) {
-                        throw new Error(`Réponse HTML reçue (status ${res.status}) — API non disponible ou endpoint incorrect`);
-                    }
+                    if (text.trim().startsWith('<')) throw new Error(`Réponse HTML (status ${res.status}) — API indisponible`);
                     throw new Error(`HTTP ${res.status}: ${text.slice(0, 200)}`);
                 }
-                
                 const data = await res.json();
                 addLog('Ingestion des flux bookmakers... OK', 'success');
                 
                 if (data.success) {
                     addLog(`Analyse terminée: ${data.events_analyzed || 0} événements analysés`, 'info');
-                    
                     if (data.signals_validated > 0) {
                         addLog(`${data.signals_validated} signaux validés (EV+ ≥ 8%, SNR ≥ 3.0, Bernoulli Trial)`, 'success');
                         addLog('Filtrage Bayésien Gemini Flash... Signal Validé', 'success');
@@ -448,7 +277,7 @@
                         addLog(`Scan PAIM terminé. ${data.signals_validated} signaux validés.`, 'highlight');
                     } else {
                         addLog('Filtrage Bayésien Gemini Flash... Aucun signal qualifié', 'warning');
-                        addLog(`Scan terminé. 0 signal validé (Seuil Alpha ≥ 8% non atteint)`, 'highlight');
+                        addLog('Scan terminé. 0 signal validé (Seuil Alpha ≥ 8% non atteint)', 'highlight');
                     }
                 } else {
                     addLog(`Erreur scan: ${data.error || 'Échec inconnu'}`, 'error');
@@ -457,8 +286,13 @@
                 addLog(`Erreur API: ${error.message}`, 'error');
                 addLog('Scan PAIM interrompu — aucune donnée simulée', 'warning');
             }
+            // Rafraîchir les signaux après le scan
+            fetchLiveSignals();
+            fetchStats();
+            fetchExposure();
         }
 
+        // ── LIVE SIGNALS ────────────────────────────────────────────
         async function fetchLiveSignals() {
             try {
                 const res = await fetch('/api/signals/live');
@@ -466,231 +300,226 @@
                 const container = document.getElementById('live-container');
                 
                 if (data && data.signals && data.signals.length > 0) {
-                    container.innerHTML = data.signals.map(signal => {
-                        // Calculate real success probability from sharp_prob
-                        const successProb = signal.sharp_prob ? (signal.sharp_prob * 100).toFixed(1) : '0.0';
-                        const evPlus = signal.ev_plus ? (signal.ev_plus * 100).toFixed(1) : '0.0';
+                    container.innerHTML = data.signals.map(s => {
+                        const evP = s.ev_plus ? (s.ev_plus * 100).toFixed(1) : '0.0';
+                        const sp = s.sharp_prob ? (s.sharp_prob * 100).toFixed(1) : '0.0';
+                        // SNR: if ai_context exists, show it; else "ANALYSING..."
+                        const snrDisplay = s.snr_ratio != null && s.snr_ratio > 0
+                            ? s.snr_ratio.toFixed(2)
+                            : (s.ai_context ? s.snr_ratio?.toFixed(2) || '0.00' : 'ANALYSING...');
+                        const snrClass = snrDisplay === 'ANALYSING...' ? 'text-yellow-400' : 'text-gray-600';
+                        const marketType = marketTypeLabel(s.market_key, s.sport);
+                        const matchTime = formatMatchTime(s.match_time);
                         
                         return `
-                        <div class="glass p-4 rounded text-xs signal-card" onclick="openBet('${signal.id}')">
+                        <div class="glass p-4 rounded text-xs signal-card glass-hover" onclick="openBet('${s.id}')">
                             <div class="flex justify-between items-start mb-2">
-                                <span class="text-gray-500">${signal.sport || 'N/A'}</span>
-                                <span class="text-green-400 font-bold">EV+ ${evPlus}%</span>
+                                <span class="text-gray-500">${s.sport || 'N/A'}</span>
+                                <span class="text-green-400 font-bold">EV+ ${evP}%</span>
                             </div>
-                            <div class="font-bold text-sm mb-1">${signal.event_name || 'N/A'}</div>
-                            <div class="text-gray-400">${signal.selection || 'N/A'} @ ${signal.bookmaker_target || '1XBet'}</div>
+                            <div class="font-bold text-sm mb-1">${s.event_name || 'N/A'}</div>
+                            <div class="text-xs text-gray-500 mb-1">📅 ${matchTime} | ${marketType}</div>
+                            <div class="text-gray-400">${s.selection || 'N/A'} @ ${s.bookmaker_target || '1XBet'}</div>
                             <div class="mt-2 flex justify-between">
-                                <span class="text-cyan-400 font-bold">Réussite: ${successProb}%</span>
-                                <span class="text-yellow-400">Mise: ${signal.recommended_stake || 0}€</span>
+                                <span class="text-cyan-400 font-bold">Réussite: ${sp}%</span>
+                                <span class="text-yellow-400">Mise: ${s.recommended_stake || 0}€</span>
                             </div>
                             <div class="mt-2 flex justify-between text-xs">
-                                <span class="text-gray-600">SNR: ${(signal.snr_ratio || 0).toFixed(2)}</span>
-                                <span class="text-gray-600">Match: ${signal.match_time || 'N/A'}</span>
+                                <span class="${snrClass}">SNR: ${snrDisplay}</span>
+                                <span class="text-gray-600">${s.selection ? s.selection.toUpperCase() : ''}</span>
                             </div>
-                        </div>
-                    `}).join('');
+                        </div>`;
+                    }).join('');
                 } else {
-                    container.innerHTML = '<div class="glass p-8 rounded text-center text-gray-500">Aucun signal actif pour le moment</div>';
+                    container.innerHTML = '<div class="col-span-3 glass p-8 rounded text-center text-gray-500">Aucun signal actif pour le moment</div>';
                 }
-            } catch (error) {
-                console.error('Error fetching signals:', error);
-            }
+            } catch (e) { console.error('fetchLiveSignals:', e); }
         }
 
-        function openBet(signalId) {
-            // Open 1XBet in new tab (in real implementation, would use actual affiliate link)
+        function openBet(id) {
             window.open('https://1xbet.com/live', '_blank');
-            addLog(`Ouverture 1XBet pour signal ${signalId}`, 'info');
+            addLog(`Ouverture 1XBet pour signal ${id}`, 'info');
         }
 
+        // ── STATS ───────────────────────────────────────────────────
+        async function fetchStats() {
+            try {
+                const res = await fetch('/api/stats');
+                const d = await res.json();
+                if (d && !d.error) {
+                    document.getElementById('stat-capital').textContent = (d.capital || 0).toLocaleString('fr-FR', {minimumFractionDigits:2}) + ' €';
+                    document.getElementById('stat-winrate').textContent = (d.win_rate || 0).toFixed(1) + '%';
+                    document.getElementById('stat-clv').textContent = (d.clv_avg >= 0 ? '+' : '') + (d.clv_avg || 0).toFixed(2) + '%';
+                    document.getElementById('stat-roi').textContent = (d.roi_mensuel >= 0 ? '+' : '') + (d.roi_mensuel || 0).toFixed(1) + '%';
+                }
+            } catch (e) { console.error('fetchStats:', e); }
+        }
+
+        // ── LEDGER ──────────────────────────────────────────────────
         async function fetchLedger() {
             try {
                 const res = await fetch('/api/ledger');
                 const data = await res.json();
                 const tbody = document.getElementById('ledger-body');
-                
                 if (data && data.transactions && data.transactions.length > 0) {
-                    tbody.innerHTML = data.transactions.map(entry => `
+                    tbody.innerHTML = data.transactions.map(e => `
                         <tr class="border-b border-gray-800 hover:bg-white/5">
-                            <td class="py-3 px-3 text-gray-400">${entry.date || 'N/A'}</td>
-                            <td class="py-3 px-3">${entry.match || 'N/A'}</td>
-                            <td class="py-3 px-3 text-yellow-400">${entry.stake || 0}€</td>
-                            <td class="py-3 px-3 text-blue-400">${entry.ev || 0}%</td>
-                            <td class="py-3 px-3 ${entry.result === 'WIN' ? 'text-green-400' : 'text-red-400'}">${entry.result || 'N/A'}</td>
-                            <td class="py-3 px-3 ${(entry.pnl || 0) >= 0 ? 'text-green-400' : 'text-red-400'} font-bold">${entry.pnl || 0}€</td>
-                        </tr>
-                    `).join('');
+                            <td class="py-3 px-3 text-gray-400">${e.date || 'N/A'}</td>
+                            <td class="py-3 px-3">${e.match || 'N/A'}${e.selection ? ' ('+e.selection+')' : ''}</td>
+                            <td class="py-3 px-3 text-yellow-400">${(e.stake || 0).toFixed(0)}€</td>
+                            <td class="py-3 px-3 text-blue-400">${(e.ev || 0).toFixed(1)}%</td>
+                            <td class="py-3 px-3 ${e.result === 'WIN' ? 'text-green-400' : e.result === 'LOSS' ? 'text-red-400' : 'text-gray-500'}">${e.result || 'N/A'}</td>
+                            <td class="py-3 px-3 ${(e.pnl || 0) >= 0 ? 'text-green-400' : 'text-red-400'} font-bold">${(e.pnl || 0).toFixed(2)}€</td>
+                        </tr>`).join('');
                 } else {
                     tbody.innerHTML = '<tr><td colspan="6" class="py-8 text-center text-gray-600">Aucune transaction enregistrée</td></tr>';
                 }
-            } catch (error) {
-                console.error('Error fetching ledger:', error);
-            }
+            } catch (e) { console.error('fetchLedger:', e); }
         }
 
-        function initEquityChart() {
-            const ctx = document.getElementById('equity-chart').getContext('2d');
-            
-            // Generate sample equity curve data
-            const labels = [];
-            const data = [];
-            let balance = 10000;
-            const now = new Date();
-            
-            for (let i = 30; i >= 0; i--) {
-                const date = new Date(now);
-                date.setDate(date.getDate() - i);
-                labels.push(date.toLocaleDateString('fr-FR', { day: '2-digit', month: '2-digit' }));
-                
-                // Simulate realistic equity curve with some volatility
-                const dailyReturn = (Math.random() - 0.35) * 0.08; // Slight positive bias
-                balance = balance * (1 + dailyReturn);
-                data.push(Math.round(balance * 100) / 100);
-            }
-            
-            const gradient = ctx.createLinearGradient(0, 0, 0, 300);
-            gradient.addColorStop(0, 'rgba(0, 255, 0, 0.3)');
-            gradient.addColorStop(1, 'rgba(0, 255, 0, 0.0)');
-            
-            equityChart = new Chart(ctx, {
-                type: 'line',
-                data: {
-                    labels: labels,
-                    datasets: [{
-                        label: 'Équity (€)',
-                        data: data,
-                        borderColor: '#00ff00',
-                        backgroundColor: gradient,
-                        borderWidth: 2,
-                        fill: true,
-                        tension: 0.4,
-                        pointRadius: 0,
-                        pointHoverRadius: 6,
-                        pointHoverBackgroundColor: '#00ff00',
-                        pointHoverBorderColor: '#fff',
-                        pointHoverBorderWidth: 2
-                    }]
-                },
-                options: {
-                    responsive: true,
-                    maintainAspectRatio: false,
-                    interaction: {
-                        mode: 'index',
-                        intersect: false,
-                    },
-                    plugins: {
-                        legend: {
-                            display: false
-                        },
-                        tooltip: {
-                            backgroundColor: 'rgba(0, 0, 0, 0.9)',
-                            titleColor: '#00ff00',
-                            bodyColor: '#fff',
-                            borderColor: 'rgba(0, 255, 0, 0.3)',
-                            borderWidth: 1,
-                            padding: 12,
-                            displayColors: false,
-                            callbacks: {
-                                label: function(context) {
-                                    return `Équity: ${context.parsed.y.toFixed(2)} €`;
-                                }
-                            }
-                        }
-                    },
-                    scales: {
-                        x: {
-                            grid: {
-                                color: 'rgba(0, 255, 0, 0.1)',
-                                drawBorder: false
-                            },
-                            ticks: {
-                                color: '#666',
-                                maxTicksLimit: 10
-                            }
-                        },
-                        y: {
-                            grid: {
-                                color: 'rgba(0, 255, 0, 0.1)',
-                                drawBorder: false
-                            },
-                            ticks: {
-                                color: '#666',
-                                callback: function(value) {
-                                    return value.toFixed(0) + '€';
-                                }
-                            }
-                        }
-                    }
-                }
-            });
-        }
-
-        async function fetchAPIHealth() {
+        // ── EXPOSURE ────────────────────────────────────────────────
+        async function fetchExposure() {
             try {
-                const res = await fetch('/api/health');
-                const data = await res.json();
-                
-                // Update health indicators based on response
-                if (data.status === 'ok') {
-                    updateHealthIndicator('pinnacle', true, Math.floor(Math.random() * 30) + 5);
-                    updateHealthIndicator('1xbet', true, Math.floor(Math.random() * 50) + 20);
-                    updateHealthIndicator('gemini', true, null);
-                    updateHealthIndicator('telegram', true, null);
+                const res = await fetch('/api/exposure');
+                const d = await res.json();
+                if (d && !d.error) {
+                    document.getElementById('stat-exposure').textContent = (d.total_exposure || 0).toLocaleString('fr-FR', {minimumFractionDigits:2}) + ' €';
+                    document.getElementById('stat-positions').textContent = (d.active_positions || 0) + ' positions actives';
                 }
-            } catch (error) {
-                console.error('Health check failed:', error);
-            }
+            } catch (e) { console.error('fetchExposure:', e); }
         }
 
-        function updateHealthIndicator(service, online, latency) {
-            const led = document.getElementById(`led-${service}`);
-            const status = document.getElementById(`status-${service}`);
-            
-            if (online) {
-                led.className = 'led led-online';
-                status.className = 'text-green-400 ml-1';
-                status.textContent = latency ? `ONLINE (${latency}ms)` : 'ONLINE';
-            } else {
-                led.className = 'led led-offline';
-                status.className = 'text-red-400 ml-1';
-                status.textContent = 'OFFLINE';
-            }
-        }
-
+        // ── AUDIT METRICS ──────────────────────────────────────────
         async function fetchAuditMetrics() {
             try {
                 const res = await fetch('/api/audit/metrics');
-                const data = await res.json();
-                
-                // Met à jour uniquement si des données réelles sont retournées
-                if (data && !data.error) {
-                    if (data.brier_score !== undefined) {
-                        document.getElementById('brier-score').textContent = data.brier_score.toFixed(3);
-                    }
-                    if (data.sharpe_ratio !== undefined) {
-                        document.getElementById('sharpe-ratio').textContent = data.sharpe_ratio.toFixed(2);
-                    }
-                    if (data.max_drawdown !== undefined) {
-                        document.getElementById('max-drawdown').textContent = `${Math.abs(data.max_drawdown) >= 0 ? '-' : ''}${Math.abs(data.max_drawdown).toFixed(1)}%`;
+                const d = await res.json();
+                if (d && !d.error) {
+                    if (d.brier_score != null) document.getElementById('brier-score').textContent = d.brier_score.toFixed(3);
+                    if (d.sharpe_ratio != null) document.getElementById('sharpe-ratio').textContent = d.sharpe_ratio.toFixed(2);
+                    if (d.sortino_ratio != null) document.getElementById('sortino-ratio').textContent = d.sortino_ratio.toFixed(2);
+                    if (d.max_drawdown != null) document.getElementById('max-drawdown').textContent = (d.max_drawdown >= 0 ? '-' : '') + Math.abs(d.max_drawdown).toFixed(1) + '%';
+                    if (d.calmar_ratio != null) document.getElementById('calmar-ratio').textContent = d.calmar_ratio.toFixed(2);
+                    if (d.current_win_streak != null) document.getElementById('win-streak').textContent = d.current_win_streak;
+                    
+                    // Monthly performance (if available)
+                    if (d.monthly_returns) {
+                        const mp = document.getElementById('monthly-performance');
+                        mp.innerHTML = Object.entries(d.monthly_returns).map(([m, v]) =>
+                            `<div class="flex justify-between"><span class="text-gray-400">${m}</span><span class="${v >= 0 ? 'text-green-400' : 'text-red-400'}">${v >= 0 ? '+' : ''}${v.toFixed(1)}%</span></div>`
+                        ).join('');
                     }
                 }
-            } catch (error) {
-                console.error('Error fetching audit metrics:', error);
-            }
+            } catch (e) { console.error('fetchAuditMetrics:', e); }
         }
 
-        async function fetchExposure() {
+        // ── TICKER ─────────────────────────────────────────────────
+        async function fetchTicker() {
             try {
-                // Simulate current exposure calculation
-                const exposure = (Math.random() * 2000 + 500).toFixed(2);
-                const positions = Math.floor(Math.random() * 5) + 3;
-                document.getElementById('current-exposure').textContent = `${parseFloat(exposure).toLocaleString('fr-FR', { minimumFractionDigits: 2 })} €`;
-            } catch (error) {
-                console.error('Error fetching exposure:', error);
+                const res = await fetch('/api/ticker');
+                const d = await res.json();
+                const el = document.getElementById('market-ticker');
+                if (d && d.items && d.items.length > 0) {
+                    el.innerHTML = d.items.map(i =>
+                        `<span class="ticker-item"><span class="time">[${i.time || ''}]</span> ${i.message || ''}</span>`
+                    ).join('');
+                } else {
+                    el.innerHTML = '<span class="ticker-item" style="color:#666">📡 En attente de news sportives...</span>';
+                }
+            } catch (e) { console.error('fetchTicker:', e); }
+        }
+
+        // ── HEALTH ─────────────────────────────────────────────────
+        async function fetchAPIHealth() {
+            try {
+                const res = await fetch('/api/health');
+                const d = await res.json();
+                if (d.status === 'ok') {
+                    document.querySelectorAll('[id^="led-"]').forEach(el => {
+                        el.className = 'led led-online';
+                    });
+                    document.querySelectorAll('[id^="status-"]').forEach(el => {
+                        el.className = 'text-green-400 ml-1';
+                        el.textContent = 'ONLINE';
+                    });
+                    document.getElementById('system-status').textContent = '● SYSTEM ONLINE';
+                }
+            } catch (e) {
+                document.querySelectorAll('[id^="led-"]').forEach(el => el.className = 'led led-offline');
+                document.getElementById('system-status').textContent = '● SYSTEM OFFLINE';
+                document.getElementById('system-status').className = 'text-sm font-bold text-red-400 animate-pulse';
             }
         }
 
-        // Initialize dashboard
+        // ── EQUITY CHART — données réelles depuis /api/equity-curve ──
+        async function initEquityChart() {
+            const ctx = document.getElementById('equity-chart').getContext('2d');
+            try {
+                const res = await fetch('/api/equity-curve');
+                const d = await res.json();
+                let labels = [], data = [];
+                
+                if (d && d.data && d.data.length > 0) {
+                    d.data.forEach(p => {
+                        const date = new Date(p.timestamp);
+                        labels.push(date.toLocaleDateString('fr-FR', { day: '2-digit', month: '2-digit' }));
+                        data.push(p.balance || 0);
+                    });
+                } else {
+                    // Pas de données — afficher une ligne plate
+                    const now = new Date();
+                    for (let i = 30; i >= 0; i--) {
+                        const date = new Date(now); date.setDate(date.getDate() - i);
+                        labels.push(date.toLocaleDateString('fr-FR', { day: '2-digit', month: '2-digit' }));
+                        data.push(10000);
+                    }
+                }
+                
+                const gradient = ctx.createLinearGradient(0, 0, 0, 300);
+                gradient.addColorStop(0, 'rgba(0, 255, 0, 0.3)');
+                gradient.addColorStop(1, 'rgba(0, 255, 0, 0.0)');
+                
+                equityChart = new Chart(ctx, {
+                    type: 'line',
+                    data: {
+                        labels: labels,
+                        datasets: [{
+                            label: 'Équity (€)',
+                            data: data,
+                            borderColor: '#00ff00',
+                            backgroundColor: gradient,
+                            borderWidth: 2,
+                            fill: true,
+                            tension: 0.4,
+                            pointRadius: 0,
+                            pointHoverRadius: 6,
+                            pointHoverBackgroundColor: '#00ff00',
+                            pointHoverBorderColor: '#fff',
+                            pointHoverBorderWidth: 2
+                        }]
+                    },
+                    options: {
+                        responsive: true, maintainAspectRatio: false,
+                        interaction: { mode: 'index', intersect: false },
+                        plugins: {
+                            legend: { display: false },
+                            tooltip: {
+                                backgroundColor: 'rgba(0,0,0,0.9)', titleColor: '#00ff00',
+                                bodyColor: '#fff', borderColor: 'rgba(0,255,0,0.3)',
+                                borderWidth: 1, padding: 12, displayColors: false,
+                                callbacks: { label: function(ctx) { return `Équity: ${ctx.parsed.y.toFixed(2)} €`; } }
+                            }
+                        },
+                        scales: {
+                            x: { grid: { color: 'rgba(0,255,0,0.1)', drawBorder: false }, ticks: { color: '#666', maxTicksLimit: 10 } },
+                            y: { grid: { color: 'rgba(0,255,0,0.1)', drawBorder: false }, ticks: { color: '#666', callback: v => v.toFixed(0) + '€' } }
+                        }
+                    }
+                });
+            } catch (e) { console.error('initEquityChart:', e); }
+        }
+
+        // ── INIT ────────────────────────────────────────────────────
         document.addEventListener('DOMContentLoaded', function() {
             showPage('control');
             fetchLiveSignals();
@@ -698,11 +527,13 @@
             fetchAPIHealth();
             fetchAuditMetrics();
             fetchExposure();
+            fetchStats();
+            fetchTicker();
             
-            // Refresh intervals
             setInterval(fetchLiveSignals, 30000);
             setInterval(fetchAPIHealth, 60000);
             setInterval(fetchExposure, 45000);
+            setInterval(fetchTicker, 60000);
         });
     </script>
 </body>

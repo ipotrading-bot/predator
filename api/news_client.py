@@ -299,17 +299,15 @@ class NewsClient:
     def get_ticker_items(self) -> list[dict]:
         """
         Format news for the market ticker display.
+        Retourne les news réelles du cache ou une liste vide.
+        AUCUNE donnée simulée — préférer dashboard vide que faux.
         """
-        # Return cached or sample items for immediate display
-        sample_items = [
-            {"time": "10:35:01", "message": "🚨 NBA: LeBron James questionable - ankle injury"},
-            {"time": "10:34:45", "message": "⚽ Premier League: Haaland confirmed starter vs Arsenal"},
-            {"time": "10:33:22", "message": "🏀 NBA: Lakers vs Nuggets - Over 225.5 points trending"},
-            {"time": "10:32:10", "message": "🎾 ATP: Djokovic withdraws from Rome Masters"},
-            {"time": "10:31:05", "message": "⚽ La Liga: Rain expected - El Clasico under 2.5 goals EV+"},
-            {"time": "10:30:00", "message": "🏒 NHL: Bruins goalie injured - backup confirmed"},
-        ]
-        return sample_items
+        # Vider le cache pour forcer un refresh des news réelles
+        self._cache.clear()
+        
+        # Rien n'est retourné ici — les news sont récupérées via /api/ticker
+        # qui appelle get_market_moving_news() en temps réel
+        return self._cache.get("ticker", [])
 
 
 # Singleton

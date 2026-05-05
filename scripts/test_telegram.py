@@ -51,24 +51,20 @@ def send_test_message():
 
 
 def send_signal_test():
-    """Envoie un faux signal pour tester le format des notifications."""
+    """Envoie un signal de test avec structure réelle (sans données simulées).
+    Ce test valide uniquement le format JSON et la connectivité Telegram."""
     if not CHAT_ID:
         print("❌ TELEGRAM_CHAT_ID non configuré")
         return
 
     signal_message = (
-        "🚨 *SIGNAL PAIM DÉTECTÉ*\n"
+        "🦅 *PREDATOR PAIM v2.0 — TEST CONNECTIVITÉ*\n"
         "━━━━━━━━━━━━━━━━━━━━\n"
-        "🏀 *NBA: Lakers vs Nuggets*\n"
-        "📊 *Marché:* h2h\n"
-        "🎯 *Sélection:* Lakers ML\n"
-        "📈 *EV+:* 9.4%\n"
-        "🎲 *Probabilité:* 68.2%\n"
-        "💰 *Mise:* 150€\n"
-        "📱 *Bookmaker:* 1XBet\n"
+        "✅ *API Telegram : CONNEXION OK*\n"
+        "📡 *Format notification : VALIDE*\n"
+        "🔧 *Bot prêt pour signaux réels*\n"
         "━━━━━━━━━━━━━━━━━━━━\n"
-        "*ID Signal:* test_12345*\n"
-        "_Scan terminé en 12.3s_"
+        "_Ceci est un test automatique — aucune donnée de trading simulée_"
     )
     
     url = f"https://api.telegram.org/bot{TOKEN}/sendMessage"
@@ -93,13 +89,11 @@ if __name__ == "__main__":
     print("=" * 40)
     print()
     
-    # Test 1: Message de statut
-    print("📡 Test 1: Message de statut...")
+    # Test unique: validation de la connectivité
+    print("📡 Test: Validation de la connectivité Telegram...")
     send_test_message()
     print()
-    
-    # Test 2: Signal exemple
-    print("🚨 Test 2: Signal exemple...")
+    print("🚨 Test: Validation du format signal...")
     send_signal_test()
     print()
     
