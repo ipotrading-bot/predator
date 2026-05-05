@@ -1,6 +1,11 @@
-import google.generativeai as genai
+"""
+api/gemini_client.py — DISABLED (Dead code)
+Remplacé par core/signal_validator.py (GeminiValidator avec fallback Groq + 429 cooldown)
+Conservé pour référence uniquement.
+"""
+from __future__ import annotations
 
-def get_gemini_client():
-    api_key = st.secrets["GEMINI_API_KEY"]
-    genai.configure(api_key=api_key)
-    return genai.GenerativeModel('gemini-1.5-flash')
+import logging
+
+logger = logging.getLogger(__name__)
+logger.warning("api/gemini_client.py est obsolète — utiliser core/signal_validator.py")

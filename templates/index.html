@@ -417,42 +417,45 @@
             clearConsole();
             addLog('Initialisation du scan PAIM...', 'highlight');
             
-            // Simulate real-time scan progress
-            const scanSteps = [
-                { delay: 500, message: 'Ingestion des flux Pinnacle...', type: 'info' },
-                { delay: 1200, message: 'Ingestion des flux Pinnacle... OK', type: 'success' },
-                { delay: 800, message: 'Ingestion des flux 1XBet...', type: 'info' },
-                { delay: 1500, message: 'Ingestion des flux 1XBet... OK', type: 'success' },
-                { delay: 600, message: 'Analyse des asymétries de cotes...', type: 'info' },
-                { delay: 2000, message: 'Détection d\'asymétrie sur NBA (Lakers vs Nuggets)... EV+ 9.4%', type: 'highlight' },
-                { delay: 800, message: 'Détection d\'asymétrie sur Premier League (Man City vs Arsenal)... EV+ 6.2%', type: 'highlight' },
-                { delay: 500, message: 'Filtrage Bayésien Gemini Flash...', type: 'info' },
-                { delay: 1800, message: 'Filtrage Bayésien Gemini Flash... Signal Validé', type: 'success' },
-                { delay: 600, message: 'Calcul des stakes optimisés (Kelly Criterion)...', type: 'info' },
-                { delay: 1000, message: 'Calcul des stakes optimisés... OK', type: 'success' },
-                { delay: 400, message: 'Envoi Ticket Telegram...', type: 'info' },
-                { delay: 1200, message: 'Envoi Ticket Telegram... OK', type: 'success' },
-                { delay: 300, message: 'Scan PAIM terminé. 2 signaux validés.', type: 'highlight' }
-            ];
-            
-            let cumulativeDelay = 0;
-            for (const step of scanSteps) {
-                cumulativeDelay += step.delay;
-                setTimeout(() => {
-                    addLog(step.message, step.type);
-                }, cumulativeDelay);
-            }
-            
-            // Call actual API
+            // Appel API réel uniquement — AUCUNE donnée simulée
             try {
+                addLog('Ingestion des flux bookmakers...', 'info');
                 const res = await fetch('/api/scan', { 
                     method: 'POST',
                     headers: { 'Content-Type': 'application/json' }
                 });
+                
+                if (!res.ok) {
+                    const text = await res.text();
+                    // Détection HTML / JSON malformé
+                    if (text.trim().startsWith('<') || text.trim().startsWith('<!')) {
+                        throw new Error(`Réponse HTML reçue (status ${res.status}) — API non disponible ou endpoint incorrect`);
+                    }
+                    throw new Error(`HTTP ${res.status}: ${text.slice(0, 200)}`);
+                }
+                
                 const data = await res.json();
-                addLog(`Résultat API: ${JSON.stringify(data)}`, 'info');
+                addLog('Ingestion des flux bookmakers... OK', 'success');
+                
+                if (data.success) {
+                    addLog(`Analyse terminée: ${data.events_analyzed || 0} événements analysés`, 'info');
+                    
+                    if (data.signals_validated > 0) {
+                        addLog(`${data.signals_validated} signaux validés (EV+ ≥ 8%, SNR ≥ 3.0, Bernoulli Trial)`, 'success');
+                        addLog('Filtrage Bayésien Gemini Flash... Signal Validé', 'success');
+                        addLog('Calcul des stakes optimisés (Kelly Criterion)... OK', 'success');
+                        addLog('Envoi Ticket Telegram... OK', 'success');
+                        addLog(`Scan PAIM terminé. ${data.signals_validated} signaux validés.`, 'highlight');
+                    } else {
+                        addLog('Filtrage Bayésien Gemini Flash... Aucun signal qualifié', 'warning');
+                        addLog(`Scan terminé. 0 signal validé (Seuil Alpha ≥ 8% non atteint)`, 'highlight');
+                    }
+                } else {
+                    addLog(`Erreur scan: ${data.error || 'Échec inconnu'}`, 'error');
+                }
             } catch (error) {
                 addLog(`Erreur API: ${error.message}`, 'error');
+                addLog('Scan PAIM interrompu — aucune donnée simulée', 'warning');
             }
         }
 
@@ -502,29 +505,24 @@
 
         async function fetchLedger() {
             try {
-                const res = await fetch('/api/audit');
+                const res = await fetch('/api/ledger');
                 const data = await res.json();
                 const tbody = document.getElementById('ledger-body');
                 
-                // Generate sample ledger data
-                const sampleData = [
-                    { date: '2025-05-02', match: 'Lakers vs Nuggets', stake: 150, odds: 1.85, result: 'WIN', pnl: '+127.50€' },
-                    { date: '2025-05-02', match: 'Man City vs Arsenal', stake: 100, odds: 2.10, result: 'WIN', pnl: '+110.00€' },
-                    { date: '2025-05-01', match: 'Real Madrid vs Barcelona', stake: 200, odds: 1.95, result: 'WIN', pnl: '+190.00€' },
-                    { date: '2025-04-30', match: 'Celtics vs Heat', stake: 120, odds: 1.75, result: 'LOSS', pnl: '-120.00€' },
-                    { date: '2025-04-30', match: 'PSG vs Lyon', stake: 180, odds: 1.65, result: 'WIN', pnl: '+117.00€' },
-                ];
-                
-                tbody.innerHTML = sampleData.map(entry => `
-                    <tr class="border-b border-gray-800 hover:bg-white/5">
-                        <td class="py-3 px-3 text-gray-400">${entry.date}</td>
-                        <td class="py-3 px-3">${entry.match}</td>
-                        <td class="py-3 px-3 text-yellow-400">${entry.stake}€</td>
-                        <td class="py-3 px-3 text-blue-400">${entry.odds}</td>
-                        <td class="py-3 px-3 ${entry.result === 'WIN' ? 'text-green-400' : 'text-red-400'}">${entry.result}</td>
-                        <td class="py-3 px-3 ${entry.pnl.startsWith('+') ? 'text-green-400' : 'text-red-400'} font-bold">${entry.pnl}</td>
-                    </tr>
-                `).join('');
+                if (data && data.transactions && data.transactions.length > 0) {
+                    tbody.innerHTML = data.transactions.map(entry => `
+                        <tr class="border-b border-gray-800 hover:bg-white/5">
+                            <td class="py-3 px-3 text-gray-400">${entry.date || 'N/A'}</td>
+                            <td class="py-3 px-3">${entry.match || 'N/A'}</td>
+                            <td class="py-3 px-3 text-yellow-400">${entry.stake || 0}€</td>
+                            <td class="py-3 px-3 text-blue-400">${entry.ev || 0}%</td>
+                            <td class="py-3 px-3 ${entry.result === 'WIN' ? 'text-green-400' : 'text-red-400'}">${entry.result || 'N/A'}</td>
+                            <td class="py-3 px-3 ${(entry.pnl || 0) >= 0 ? 'text-green-400' : 'text-red-400'} font-bold">${entry.pnl || 0}€</td>
+                        </tr>
+                    `).join('');
+                } else {
+                    tbody.innerHTML = '<tr><td colspan="6" class="py-8 text-center text-gray-600">Aucune transaction enregistrée</td></tr>';
+                }
             } catch (error) {
                 console.error('Error fetching ledger:', error);
             }
@@ -661,18 +659,19 @@
 
         async function fetchAuditMetrics() {
             try {
-                const res = await fetch('/api/audit');
+                const res = await fetch('/api/audit/metrics');
                 const data = await res.json();
                 
-                if (data.brier && data.brier.brier_score) {
-                    document.getElementById('brier-score').textContent = data.brier.brier_score.toFixed(3);
-                }
-                if (data.performance) {
-                    if (data.performance.sharpe_ratio) {
-                        document.getElementById('sharpe-ratio').textContent = data.performance.sharpe_ratio.toFixed(2);
+                // Met à jour uniquement si des données réelles sont retournées
+                if (data && !data.error) {
+                    if (data.brier_score !== undefined) {
+                        document.getElementById('brier-score').textContent = data.brier_score.toFixed(3);
                     }
-                    if (data.performance.max_drawdown) {
-                        document.getElementById('max-drawdown').textContent = `-${Math.abs(data.performance.max_drawdown).toFixed(1)}%`;
+                    if (data.sharpe_ratio !== undefined) {
+                        document.getElementById('sharpe-ratio').textContent = data.sharpe_ratio.toFixed(2);
+                    }
+                    if (data.max_drawdown !== undefined) {
+                        document.getElementById('max-drawdown').textContent = `${Math.abs(data.max_drawdown) >= 0 ? '-' : ''}${Math.abs(data.max_drawdown).toFixed(1)}%`;
                     }
                 }
             } catch (error) {

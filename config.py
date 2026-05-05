@@ -26,6 +26,7 @@ class Settings(BaseSettings):
     # ── Supabase ──────────────────────────────────────────────
     supabase_url: str = Field(..., alias="SUPABASE_URL")
     supabase_key: str = Field(..., alias="SUPABASE_KEY")
+    supabase_service_key: str = Field(default="", alias="SUPABASE_SERVICE_KEY")
 
     # ── Dashboard Security ────────────────────────────────────
     predator_secret: str = Field(default="", alias="PREDATOR_SECRET")

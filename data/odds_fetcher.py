@@ -72,7 +72,26 @@ class OddsFetcher:
         await self.rate_limiter.acquire()
         params["apiKey"] = self.api_key
         response = await self._client.get(f"{BASE_URL}{endpoint}", params=params)
-        response.raise_for_status()
+
+        # ── CORRECTIF #1 : Vérification stricte du statut HTTP ────────────
+        if response.status_code != 200:
+            logger.error(
+                f"❌ Erreur API {response.status_code} sur {endpoint}: "
+                f"{response.text[:200]}"
+            )
+            response.raise_for_status()
+
+        # ── CORRECTIF #2 : Détection de réponse HTML (Unexpected token <) ─
+        content_type = response.headers.get("content-type", "")
+        if "text/html" in content_type or response.text.strip().startswith("<"):
+            logger.error(
+                f"❌ Réponse HTML reçue au lieu de JSON sur {endpoint}: "
+                f"{response.text[:200]}"
+            )
+            raise ValueError(
+                f"Réponse HTML reçue (status={response.status_code}). "
+                f"Attendu JSON. Vérifiez l'URL et la clé API."
+            )
 
         self._remaining_requests = int(
             response.headers.get("x-requests-remaining", -1)

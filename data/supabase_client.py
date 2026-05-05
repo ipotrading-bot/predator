@@ -17,12 +17,21 @@ logger = logging.getLogger(__name__)
 
 
 class SupabaseClient:
-    """Wrapper Supabase pour l'audit complet du système Predator PAIM."""
+    """Wrapper Supabase pour l'audit complet du système Predator PAIM.
+    
+    Utilise la service_role_key (si disponible) pour contourner le RLS.
+    Fallback sur anon key si service_key non configurée.
+    """
 
     def __init__(self):
+        # Service key prioritaire pour bypass RLS (lecture/écriture complète)
+        _key = settings.supabase_service_key or settings.supabase_key
+        if settings.supabase_service_key:
+            logger.info("🔑 Supabase: service_role_key active (RLS bypass)")
         self._client: Client = create_client(
-            settings.supabase_url, settings.supabase_key
+            settings.supabase_url, _key
         )
+        self._use_service_key = bool(settings.supabase_service_key)
 
     # ── Signals ───────────────────────────────────────────────
 
