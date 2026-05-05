@@ -218,10 +218,11 @@ def morning_screener():
     if response.status_code != 200: return jsonify({"error": "Failed to fetch odds"}), response.status_code
         
     matches = response.json()
+    print(f'Matchs reçus de l API: {len(matches)}')
     brief_items = []
     
     for match in matches:
-        if match['sport_key'] not in ['basketball_nba', 'soccer_epl', 'soccer_uefa_champs_league', 'tennis_atp', 'baseball_mlb']: continue
+        # Filter supprimé pour test
         match_name = f"{match['home_team']} vs {match['away_team']}"
         pinnacle_book = next((b for b in match['bookmakers'] if b['key'] == 'pinnacle'), None)
         one_xbet_book = next((b for b in match['bookmakers'] if b['key'] == 'onexbet'), None)
@@ -238,7 +239,7 @@ def morning_screener():
                 cote_1xbet = outcome['price']
                 alpha_spread = (cote_1xbet - fair_prices[i]) / fair_prices[i]
                 
-                if alpha_spread > 0.025:
+                if alpha_spread > 0.001:
                     news = get_market_news(match_name, match['sport_title'])
                     note_ia = check_market_red_flags(match_name, f"Moneyline {outcome['name']}. Contexte : {news}")
                     
