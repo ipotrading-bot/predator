@@ -182,6 +182,21 @@ def send_telegram_report(total_trades, avg_clv, win_rate, report_ai):
     requests.post(f"https://api.telegram.org/bot{TELEGRAM_TOKEN}/sendMessage", 
                   json={"chat_id": TELEGRAM_CHAT_ID, "text": message, "parse_mode": "Markdown"})
 
+@app.route('/api/research', methods=['GET'])
+def get_research_data():
+    # Placeholder for research data (e.g., aggregated analytics)
+    return jsonify({"status": "success", "message": "Research data placeholder"})
+
+@app.route('/api/portfolio', methods=['GET'])
+def get_portfolio_data():
+    # Placeholder for portfolio data (e.g., exposure, risk)
+    return jsonify({"status": "success", "message": "Portfolio data placeholder"})
+
+@app.route('/api/sentiment', methods=['GET'])
+def get_sentiment_data():
+    # Placeholder for sentiment data (e.g., market sentiment)
+    return jsonify({"status": "success", "message": "Sentiment data placeholder"})
+
 @app.route('/api/data', methods=['GET'])
 def get_screener_data():
     if not supabase: return jsonify({"error": "Supabase non configuré"}), 500
@@ -190,6 +205,18 @@ def get_screener_data():
         return jsonify(response.data)
     except Exception as e:
         return jsonify({"error": str(e)}), 500
+
+@app.route('/api/research', methods=['GET'])
+def get_research():
+    return jsonify({"status": "ok", "message": "Research data placeholder"})
+
+@app.route('/api/portfolio', methods=['GET'])
+def get_portfolio():
+    return jsonify({"status": "ok", "message": "Portfolio data placeholder"})
+
+@app.route('/api/sentiment', methods=['GET'])
+def get_sentiment():
+    return jsonify({"status": "ok", "message": "Sentiment data placeholder"})
 
 @app.route('/api/test-seed', methods=['POST'])
 def test_seed():

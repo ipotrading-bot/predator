@@ -112,25 +112,37 @@
         <button onclick="showPage('live')" class="pb-2 text-sm uppercase tracking-widest" id="btn-live">Live Signals</button>
         <button onclick="showPage('ledger')" class="pb-2 text-sm uppercase tracking-widest" id="btn-ledger">Ledger</button>
         <button onclick="showPage('audit')" class="pb-2 text-sm uppercase tracking-widest" id="btn-audit">Audit</button>
+        <button onclick="showPage('research')" class="pb-2 text-sm uppercase tracking-widest" id="btn-research">Research</button>
+        <button onclick="showPage('portfolio')" class="pb-2 text-sm uppercase tracking-widest" id="btn-portfolio">Portfolio</button>
+        <button onclick="showPage('sentiment')" class="pb-2 text-sm uppercase tracking-widest" id="btn-sentiment">Sentiment</button>
     </div>
 
     <!-- PAGE: Contrôle -->
     <div id="page-control" class="page">
-        <div class="glass p-8 rounded-lg text-center">
-            <h2 class="mb-4 text-gray-400">TERMINAL DE COMMANDE</h2>
-            <button onclick="triggerScan()" class="bg-green-600 hover:bg-green-500 text-black font-bold py-4 px-8 rounded transition-all">
-                DÉCLENCHER SCAN PAIM (8H CYCLE)
-            </button>
-            <p class="mt-4 text-xs text-gray-600">Prochain scan automatique : 08:00 GMT</p>
-            <div class="console-container mt-6 text-left">
-                <div class="console-header">
-                    <span>📡 PAIM ALGORITHM LOG — REAL-TIME</span>
-                    <span class="cursor-blink" id="console-status">LIVE</span>
-                </div>
-                <div class="console-body" id="console-output">
-                    <div class="log-line"><span class="log-time">[--:--:--]</span> <span class="log-info">En attente du scan PAIM...</span></div>
-                </div>
-            </div>
+        <!-- ... existing content ... -->
+    </div>
+
+    <!-- PAGE: Research -->
+    <div id="page-research" class="page hidden">
+        <div class="glass p-6 rounded-lg">
+            <h2 class="mb-4 text-gray-400">RESEARCH — DATA API DASHBOARD</h2>
+            <div id="research-container" class="text-center py-10 text-gray-600">Chargement des données de recherche...</div>
+        </div>
+    </div>
+
+    <!-- PAGE: Portfolio -->
+    <div id="page-portfolio" class="page hidden">
+        <div class="glass p-6 rounded-lg">
+            <h2 class="mb-4 text-gray-400">PORTFOLIO — STAKING & RISQUE</h2>
+            <div id="portfolio-container" class="text-center py-10 text-gray-600">Chargement des données de portfolio...</div>
+        </div>
+    </div>
+
+    <!-- PAGE: Sentiment -->
+    <div id="page-sentiment" class="page hidden">
+        <div class="glass p-6 rounded-lg">
+            <h2 class="mb-4 text-gray-400">SENTIMENT — MARKET ANALYSIS</h2>
+            <div id="sentiment-container" class="text-center py-10 text-gray-600">Chargement des données de sentiment...</div>
         </div>
     </div>
 
@@ -236,6 +248,39 @@
             document.querySelectorAll('[id^="btn-"]').forEach(btn => btn.classList.remove('tab-active'));
             document.getElementById('btn-' + pageId).classList.add('tab-active');
             if (pageId === 'audit' && !equityChart) setTimeout(initEquityChart, 100);
+            if (pageId === 'research') fetchResearchData();
+            if (pageId === 'portfolio') fetchPortfolioData();
+            if (pageId === 'sentiment') fetchSentimentData();
+        }
+
+        async function fetchResearchData() {
+            const c = document.getElementById('research-container');
+            c.innerHTML = 'Chargement...';
+            try {
+                const res = await fetch('/api/research');
+                const d = await res.json();
+                c.innerHTML = `<pre class="text-xs text-green-500">${JSON.stringify(d, null, 2)}</pre>`;
+            } catch (e) { c.innerHTML = 'Erreur.'; }
+        }
+
+        async function fetchPortfolioData() {
+            const c = document.getElementById('portfolio-container');
+            c.innerHTML = 'Chargement...';
+            try {
+                const res = await fetch('/api/portfolio');
+                const d = await res.json();
+                c.innerHTML = `<pre class="text-xs text-yellow-400">${JSON.stringify(d, null, 2)}</pre>`;
+            } catch (e) { c.innerHTML = 'Erreur.'; }
+        }
+
+        async function fetchSentimentData() {
+            const c = document.getElementById('sentiment-container');
+            c.innerHTML = 'Chargement...';
+            try {
+                const res = await fetch('/api/sentiment');
+                const d = await res.json();
+                c.innerHTML = `<pre class="text-xs text-blue-400">${JSON.stringify(d, null, 2)}</pre>`;
+            } catch (e) { c.innerHTML = 'Erreur.'; }
         }
 
         // ── Console ─────────────────────────────────────────────────
