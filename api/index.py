@@ -1,36 +1,57 @@
 """
-api/index.py — Vercel Serverless Flask Entry Point
-PAIM Dashboard & API
+api/index.py — Vercel Serverless Flask Entry Point v2.1
 """
-from flask import Flask, render_template, jsonify, request, make_response
-import os
-import sys
-import time
-import random
+from flask import Flask, render_template, jsonify, request
+import os, sys, time
 
-# Ensure project root is in Python path
-sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+sys.path.insert(0, ROOT)
 
-# ── Flask App ──────────────────────────────────────────────────────────
-template_folder = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), 'templates')
+template_folder = os.path.join(ROOT, 'templates')
 app = Flask(__name__, template_folder=template_folder)
+app.config['JSON_SORT_KEYS'] = False
 
-# ── Supabase (lazy initialization to avoid import errors) ──────────────
+
 def get_supabase():
     try:
         from supabase import create_client
-        return create_client(
-            os.environ.get("SUPABASE_URL", ""),
-            os.environ.get("SUPABASE_KEY", "")
-        )
+        url = os.environ.get("SUPABASE_URL", "")
+        key = os.environ.get("SUPABASE_KEY", "")
+        if not url or not key:
+            return None
+        return create_client(url, key)
     except Exception:
         return None
 
-# ── Routes ─────────────────────────────────────────────────────────────
+
+@app.after_request
+def cors(response):
+    response.headers['Access-Control-Allow-Origin'] = '*'
+    response.headers['Access-Control-Allow-Methods'] = 'GET, POST, OPTIONS'
+    response.headers['Access-Control-Allow-Headers'] = 'Content-Type, X-Predator-Secret'
+    return response
+
+
+@app.route('/', defaults={'path': ''}, methods=['OPTIONS'])
+@app.route('/<path:path>', methods=['OPTIONS'])
+def options_handler(path=''):
+    return jsonify({}), 204
+
 
 @app.route('/')
 def index():
     return render_template('index.html')
+
+
+@app.route('/api/health')
+def get_health():
+    db = "online" if get_supabase() else "disconnected"
+    return jsonify({
+        "status": "ok",
+        "version": "2.1.0",
+        "timestamp": int(time.time()),
+        "db": db
+    })
 
 
 @app.route('/api/stats')
@@ -38,39 +59,36 @@ def get_stats():
     try:
         supabase = get_supabase()
         if not supabase:
-            raise Exception("Supabase not configured")
+            raise Exception("Supabase non configuré")
+
         res = supabase.table('signals').select('*').execute()
-        data = res.data
+        data = res.data or []
+        total = len(data)
 
-        total_signals = len(data)
-        winning_signals = len([s for s in data if s.get('outcome') == 'win'])
-        win_rate = (winning_signals / total_signals * 100) if total_signals > 0 else 0
+        # CORRECTIF : outcome est SMALLINT 1/0/-1, pas string 'win'
+        wins = sum(1 for s in data if s.get('outcome') == 1)
+        win_rate = (wins / total * 100) if total > 0 else 0
 
-        clv_values = [s.get('clv_estimate', 0) for s in data if s.get('clv_estimate')]
-        clv_avg = sum(clv_values) / len(clv_values) if clv_values else 0
+        clv_vals = [s['clv_estimate'] for s in data if s.get('clv_estimate')]
+        clv_avg = (sum(clv_vals) / len(clv_vals)) if clv_vals else 0
 
-        profit_values = [s.get('profit_eur', 0) for s in data if s.get('profit_eur')]
-        total_profit = sum(profit_values)
-
-        starting_bankroll = 10000
-        roi = (total_profit / starting_bankroll * 100) if starting_bankroll > 0 else 0
+        total_profit = sum(s.get('profit_eur', 0) or 0 for s in data)
+        starting = float(os.environ.get("STARTING_BANKROLL", "10000"))
 
         return jsonify({
-            "capital": starting_bankroll + total_profit,
+            "capital": round(starting + total_profit, 2),
             "win_rate": round(win_rate, 1),
-            "clv_avg": round(clv_avg, 1),
-            "roi_mensuel": round(roi, 1),
-            "total_signals": total_signals,
-            "winning_signals": winning_signals
+            "clv_avg": round(clv_avg * 100, 2),
+            "roi_mensuel": round(total_profit / starting * 100, 1),
+            "total_signals": total,
+            "winning_signals": wins
         })
-    except Exception:
+    except Exception as e:
         return jsonify({
-            "capital": 10000,
-            "win_rate": 90.2,
-            "clv_avg": 7.4,
-            "roi_mensuel": 100,
-            "total_signals": 0,
-            "winning_signals": 0
+            "error": str(e),
+            "capital": 10000, "win_rate": 0,
+            "clv_avg": 0, "roi_mensuel": 0,
+            "total_signals": 0, "winning_signals": 0
         })
 
 
@@ -79,54 +97,53 @@ def get_live_signals():
     try:
         supabase = get_supabase()
         if not supabase:
-            raise Exception("Supabase not configured")
-        res = supabase.table('signals')\
-            .select('*')\
-            .eq('status', 'pending')\
-            .order('ev_plus', desc=True)\
-            .limit(9)\
-            .execute()
-        return jsonify({"signals": res.data, "count": len(res.data)})
-    except Exception:
-        return jsonify({"signals": [], "count": 0})
-
-
-@app.route('/api/scan', methods=['POST'])
-def trigger_scan():
-    try:
-        from api.logger import create_scan_logger
-        scan_logger = create_scan_logger()
-        scan_logger.start("Initialisation du scan PAIM...")
-        scan_logger.complete("Scan PAIM terminé avec succès")
-
-        return jsonify({
-            "status": "success",
-            "message": "Scan PAIM activé",
-            "timestamp": int(time.time()),
-            "session": scan_logger.session_id,
-            "summary": scan_logger.get_summary()
-        })
+            return jsonify({"signals": [], "count": 0})
+        res = (supabase.table('signals')
+               .select('*')
+               .eq('status', 'pending')
+               .order('ev_plus', desc=True)
+               .limit(9)
+               .execute())
+        return jsonify({"signals": res.data or [], "count": len(res.data or [])})
     except Exception as e:
-        return jsonify({
-            "status": "error",
-            "message": str(e)
-        }), 500
+        return jsonify({"signals": [], "count": 0, "error": str(e)})
 
 
-@app.route('/api/health')
-def get_health():
-    return jsonify({
-        "status": "ok",
-        "version": "2.0.0",
-        "timestamp": int(time.time()),
-        "services": {
-            "pinnacle": {"status": "online", "latency_ms": random.randint(5, 30)},
-            "1xbet": {"status": "online", "latency_ms": random.randint(20, 60)},
-            "gemini": {"status": "online", "latency_ms": None},
-            "groq": {"status": "online", "latency_ms": random.randint(10, 50)},
-            "telegram": {"status": "ready", "latency_ms": None}
-        }
-    })
+@app.route('/api/scan', methods=['POST', 'GET'])
+def trigger_scan():
+    import threading, asyncio
+    session = (request.json or {}).get('session', 'api')
+    box = {}
+
+    def run():
+        try:
+            loop = asyncio.new_event_loop()
+            asyncio.set_event_loop(loop)
+            from config import settings
+            from signals.scanner import MarketScanner
+            scanner = MarketScanner(bankroll=settings.starting_bankroll)
+            r = loop.run_until_complete(scanner.run_scan())
+            loop.close()
+            box['ok'] = {
+                "success": True,
+                "session": session,
+                "events_analyzed": r.events_analyzed,
+                "signals_validated": r.signals_validated,
+                "duration_seconds": round(r.duration_seconds, 2),
+                "timestamp": int(time.time())
+            }
+        except Exception as e:
+            box['err'] = str(e)
+
+    t = threading.Thread(target=run, daemon=True)
+    t.start()
+    t.join(timeout=55)
+
+    if 'ok' in box:
+        return jsonify(box['ok'])
+    if 'err' in box:
+        return jsonify({"success": False, "error": box['err']}), 500
+    return jsonify({"success": False, "error": "Scan timeout"}), 504
 
 
 @app.route('/api/exposure')
@@ -134,43 +151,31 @@ def get_current_exposure():
     try:
         supabase = get_supabase()
         if not supabase:
-            raise Exception("Supabase not configured")
-        res = supabase.table('signals')\
-            .select('recommended_stake, status')\
-            .eq('status', 'pending')\
-            .execute()
-
-        total_exposure = sum(s.get('recommended_stake', 0) or 0 for s in res.data)
-        active_positions = len(res.data)
-
+            raise Exception("DB not configured")
+        res = (supabase.table('signals')
+               .select('recommended_stake')
+               .eq('status', 'pending')
+               .execute())
+        data = res.data or []
+        exp = sum(s.get('recommended_stake', 0) or 0 for s in data)
+        starting = float(os.environ.get("STARTING_BANKROLL", "10000"))
         return jsonify({
-            "total_exposure": round(total_exposure, 2),
-            "active_positions": active_positions,
-            "exposure_percentage": round(total_exposure / 10000 * 100, 1)
+            "total_exposure": round(exp, 2),
+            "active_positions": len(data),
+            "exposure_percentage": round(exp / starting * 100, 1)
         })
-    except Exception:
-        return jsonify({
-            "total_exposure": 1250.00,
-            "active_positions": 5,
-            "exposure_percentage": 12.5
-        })
+    except Exception as e:
+        return jsonify({"total_exposure": 0, "active_positions": 0,
+                        "exposure_percentage": 0, "error": str(e)})
 
 
 @app.route('/api/audit/metrics')
 def get_audit_metrics():
     try:
         from api.analytics import quant_analytics
-        report = quant_analytics.get_performance_report(days=30)
-        return jsonify(report)
-    except Exception:
-        return jsonify({
-            "brier_score": 0.142,
-            "sharpe_ratio": 2.87,
-            "sortino_ratio": 3.42,
-            "max_drawdown": -8.3,
-            "calmar_ratio": 4.12,
-            "win_streak": 7
-        })
+        return jsonify(quant_analytics.get_performance_report(days=30))
+    except Exception as e:
+        return jsonify({"error": str(e)})
 
 
 @app.route('/api/equity-curve')
@@ -178,29 +183,15 @@ def get_equity_curve():
     try:
         supabase = get_supabase()
         if not supabase:
-            raise Exception("Supabase not configured")
-        equity_res = supabase.table("bankroll_snapshots")\
-            .select("timestamp,balance,roi,drawdown")\
-            .order("timestamp", desc=False)\
-            .limit(200)\
-            .execute()
-        return jsonify({"data": equity_res.data})
-    except Exception:
-        import datetime
-        sample_data = []
-        balance = 10000
-        now = datetime.datetime.now()
-        for i in range(30, 0, -1):
-            date = now - datetime.timedelta(days=i)
-            daily_return = (random.random() - 0.35) * 0.08
-            balance = balance * (1 + daily_return)
-            sample_data.append({
-                "timestamp": date.isoformat(),
-                "balance": round(balance, 2),
-                "roi": round((balance - 10000) / 10000 * 100, 2),
-                "drawdown": round(random.uniform(-10, 0), 2)
-            })
-        return jsonify({"data": sample_data})
+            raise Exception("DB not configured")
+        res = (supabase.table("bankroll_snapshots")
+               .select("timestamp,balance,roi,drawdown")
+               .order("timestamp")
+               .limit(200)
+               .execute())
+        return jsonify({"data": res.data or []})
+    except Exception as e:
+        return jsonify({"data": [], "error": str(e)})
 
 
 @app.route('/api/ledger')
@@ -208,111 +199,48 @@ def get_ledger():
     try:
         supabase = get_supabase()
         if not supabase:
-            raise Exception("Supabase not configured")
-        res = supabase.table("signals")\
-            .select("event_name,recommended_stake,odds,outcome,profit_eur,created_at")\
-            .neq("outcome", None)\
-            .order("created_at", desc=True)\
-            .limit(50)\
-            .execute()
-
-        ledger = []
-        for signal in res.data:
-            ledger.append({
-                "date": signal.get("created_at", "")[:10],
-                "match": signal.get("event_name", "N/A"),
-                "stake": signal.get("recommended_stake", 0),
-                "odds": signal.get("odds", 0),
-                "result": signal.get("outcome", "N/A").upper(),
-                "pnl": signal.get("profit_eur", 0)
-            })
+            raise Exception("DB not configured")
+        res = (supabase.table("signals")
+               .select("event_name,recommended_stake,ev_plus,outcome,profit_eur,created_at,selection")
+               .not_.is_("outcome", "null")
+               .order("created_at", desc=True)
+               .limit(50)
+               .execute())
+        om = {1: "WIN", 0: "LOSS", -1: "VOID"}
+        ledger = [{
+            "date": s.get("created_at", "")[:10],
+            "match": s.get("event_name", "N/A"),
+            "selection": s.get("selection", ""),
+            "stake": s.get("recommended_stake", 0),
+            "ev": round((s.get("ev_plus", 0) or 0) * 100, 1),
+            "result": om.get(s.get("outcome"), "N/A"),
+            "pnl": s.get("profit_eur", 0)
+        } for s in (res.data or [])]
         return jsonify({"transactions": ledger})
-    except Exception:
-        return jsonify({"transactions": []})
+    except Exception as e:
+        return jsonify({"transactions": [], "error": str(e)})
 
 
 @app.route('/api/ticker')
 def get_market_ticker():
     try:
         from api.news_client import news_client
-        ticker_items = news_client.get_ticker_items()
-        return jsonify({"items": ticker_items})
-    except Exception:
-        return jsonify({
-            "items": [
-                {"time": "10:35:01", "message": "🚨 NBA: LeBron James questionable - ankle injury"},
-                {"time": "10:34:45", "message": "⚽ Premier League: Haaland confirmed starter vs Arsenal"},
-                {"time": "10:33:22", "message": "🏀 NBA: Lakers vs Nuggets - Over 225.5 points trending"},
-                {"time": "10:32:10", "message": "🎾 ATP: Djokovic withdraws from Rome Masters"},
-                {"time": "10:31:05", "message": "⚽ La Liga: Rain expected - El Clasico under 2.5 goals EV+"}
-            ]
-        })
-
-
-@app.route('/api/groq/status')
-def get_groq_status():
-    try:
-        from api.groq_client import groq_client
-        return jsonify(groq_client.get_stats())
+        return jsonify({"items": news_client.get_ticker_items()})
     except Exception as e:
-        return jsonify({"enabled": False, "error": str(e)})
-
-
-@app.route('/api/groq/filter', methods=['POST'])
-def groq_quick_filter():
-    try:
-        data = request.get_json()
-        if not data:
-            return jsonify({"error": "No signal data provided"}), 400
-        from api.groq_client import groq_client
-        result = groq_client.quick_filter(data)
-        return jsonify(result)
-    except Exception as e:
-        return jsonify({"error": str(e)}), 500
-
-
-@app.route('/api/report')
-def get_performance_report():
-    try:
-        from api.analytics import quant_analytics
-        days = request.args.get('days', 30, type=int)
-        report = quant_analytics.get_performance_report(days=days)
-        return jsonify(report)
-    except Exception as e:
-        return jsonify({"error": str(e)}), 500
-
-
-@app.route('/api/news')
-def get_news():
-    try:
-        from api.news_client import news_client
-        sport = request.args.get('sport', None)
-        team = request.args.get('team', None)
-        hours = request.args.get('hours', 24, type=int)
-
-        import asyncio
-        loop = asyncio.new_event_loop()
-        asyncio.set_event_loop(loop)
-        news = loop.run_until_complete(news_client.get_relevant_news(sport, team, hours))
-        loop.close()
-        return jsonify({"news": news})
-    except Exception as e:
-        return jsonify({"error": str(e)}), 500
+        return jsonify({"items": [], "error": str(e)})
 
 
 @app.route('/api/logs/recent')
 def get_recent_logs():
     try:
         from api.logger import get_scan_logger
-        logger = get_scan_logger()
-        if logger:
-            return jsonify(logger.get_summary())
-        return jsonify({"session_id": "none", "total_duration": 0, "total_steps": 0, "steps": []})
+        lg = get_scan_logger()
+        return jsonify(lg.get_summary() if lg else {"steps": []})
     except Exception as e:
-        return jsonify({"error": str(e)}), 500
+        return jsonify({"steps": [], "error": str(e)})
 
 
-# ── Vercel WSGI Handler ───────────────────────────────────────────────
-# This is required for Vercel to serve Flask apps
-def handler(request):
-    return app(request.environ, lambda *args: None)
+# ── VERCEL : pas de handler() ici ────────────────────────────────────
+# @vercel/python détecte l'objet Flask 'app' automatiquement.
+# L'ancienne ligne "def handler(request): return app(request.environ, lambda *args: None)"
+# provoquait le 500 en détruisant start_response.

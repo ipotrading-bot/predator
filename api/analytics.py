@@ -21,10 +21,23 @@ class QuantAnalytics:
     """Analytics engine using QuantStats methodology."""
     
     def __init__(self):
-        self.supabase = create_client(
-            os.environ.get("SUPABASE_URL", ""),
-            os.environ.get("SUPABASE_KEY", "")
-        )
+        self.supabase = None  # Lazy init
+    
+    def _get_supabase(self):
+        """Lazy initialize Supabase client."""
+        if self.supabase is not None:
+            return self.supabase
+        try:
+            from supabase import create_client
+            url = os.environ.get("SUPABASE_URL", "")
+            key = os.environ.get("SUPABASE_KEY", "")
+            if not url or not key:
+                self.supabase = None
+            else:
+                self.supabase = create_client(url, key)
+        except Exception:
+            self.supabase = None
+        return self.supabase
     
     def get_performance_report(self, days: int = 30) -> dict:
         """
@@ -34,12 +47,16 @@ class QuantAnalytics:
             dict: Métriques de performance style hedge fund
         """
         try:
+            supabase = self._get_supabase()
+            if not supabase:
+                return self._get_default_report()
+            
             # Fetch historical data from Supabase
             end_date = datetime.now()
             start_date = end_date - timedelta(days=days)
             
             # Get signals with outcomes
-            res = self.supabase.table("signals")\
+            res = supabase.table("signals")\
                 .select("created_at, recommended_stake, odds, outcome, profit_eur, ev_plus")\
                 .gte("created_at", start_date.isoformat())\
                 .not_.is_("outcome", None)\
@@ -61,12 +78,14 @@ class QuantAnalytics:
             
             # Daily returns for Sharpe/Sortino
             daily_returns = df.groupby(df["created_at"].dt.date)["profit"].sum()
-            daily_returns_pct = daily_returns / 10000  # Assuming 10k bankroll
+            starting_bankroll = float(os.environ.get("STARTING_BANKROLL", "10000"))
+            daily_returns_pct = daily_returns / starting_bankroll
             
             # Core metrics
             total_trades = len(df)
-            winning_trades = len(df[df["outcome"] == "win"])
-            losing_trades = len(df[df["outcome"] == "loss"])
+            # CORRECT: outcome is SMALLINT 1/0/-1, not string 'win'/'loss'
+            winning_trades = len(df[df["outcome"] == 1])
+            losing_trades = len(df[df["outcome"] == 0])
             win_rate = winning_trades / total_trades if total_trades > 0 else 0
             
             total_profit = df["profit"].sum()
@@ -252,10 +271,14 @@ class QuantAnalytics:
         return (max_dd * 100) if not np.isnan(max_dd) else 0
     
     def _calculate_streak(self, outcomes: pd.Series, target: str) -> int:
-        """Calcule la streak actuelle (win ou loss)."""
+        """
+        Calcule la streak actuelle (win ou loss).
+        target: 'win' → outcome == 1, 'loss' → outcome == 0
+        """
+        target_val = 1 if target == "win" else 0
         streak = 0
         for outcome in reversed(outcomes.tolist()):
-            if outcome == target:
+            if outcome == target_val:
                 streak += 1
             else:
                 break
@@ -276,7 +299,8 @@ class QuantAnalytics:
         # Convert EV+ to implied probability accuracy
         # This is a simplified calculation
         predicted_probs = 0.5 + (prob_df["ev_plus"] / 100)  # Rough conversion
-        actual_outcomes = (prob_df["outcome"] == "win").astype(int)
+        # CORRECT: outcome is SMALLINT 1/0/-1, not string 'win'
+        actual_outcomes = (prob_df["outcome"] == 1).astype(int)
         
         # Clip predictions to valid range
         predicted_probs = predicted_probs.clip(0, 1)
