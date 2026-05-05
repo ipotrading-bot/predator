@@ -9,8 +9,6 @@ import json
 import time
 from typing import Optional
 
-from groq import Groq
-
 from config import settings
 
 
@@ -22,7 +20,8 @@ class GroqClient:
             self.client = None
             self.enabled = False
             return
-        
+
+        from groq import Groq
         self.client = Groq(api_key=settings.groq_api_key)
         self.enabled = True
         self.model = settings.groq_model

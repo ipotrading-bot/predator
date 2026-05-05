@@ -5,14 +5,11 @@ Ingest des news sportives en temps réel pour le contexte des signaux.
 from __future__ import annotations
 
 import asyncio
-import feedparser
 import json
 import os
 import time
 from datetime import datetime, timedelta
 from typing import Optional
-
-import httpx
 
 from config import settings
 
@@ -158,6 +155,8 @@ class NewsClient:
         """Fetch news from NewsAPI.org."""
         if not self.news_api_key:
             return []
+
+        import httpx
         
         url = "https://newsapi.org/v2/everything"
         
@@ -209,6 +208,8 @@ class NewsClient:
     
     async def _fetch_rss_feeds(self, sport: str, team: str) -> list[dict]:
         """Fetch news from RSS feeds."""
+        import feedparser
+
         news_items = []
         
         for feed_url in self.rss_feeds:

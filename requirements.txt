@@ -1,6 +1,9 @@
 # PREDATOR PAIM v2.0 — Dependencies
 # Optimized for Vercel (target < 50MB compressed)
 
+# ── Web Framework ──────────────────────────────────────────
+flask==3.0.3
+
 # ── Core ──────────────────────────────────────────────────
 python-dotenv==1.0.1
 pydantic==2.7.1
@@ -18,11 +21,15 @@ supabase==2.5.0
 google-generativeai==0.7.2
 groq==0.9.0
 
-# ── Math Engine (Pure Python/Numpy - No Scipy) ────────────
-numpy==1.26.4
-
-# ── Telegram ──────────────────────────────────────────────
+# ── Python Telegram Bot ───────────────────────────────────
 python-telegram-bot==21.3
 
-# ── News & RSS (optional) ─────────────────────────────────
+# ── Math Engine ───────────────────────────────────────────
+numpy==1.26.4
+
+# ── Data & PDF ────────────────────────────────────────────
+pandas==2.2.2
+fpdf2==2.7.9
+
+# ── News & RSS ────────────────────────────────────────────
 feedparser==6.0.11
