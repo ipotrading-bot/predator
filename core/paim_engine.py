@@ -1,6 +1,8 @@
 """
-core/paim_engine.py — Moteur PAIM (5 piliers stochastiques)
-Lead Layer · Lag Layer · Bayesian Filter · Binary Synthesis · Dynamic Allocation
+core/paim_engine.py — Moteur PAIM v2.1 (Reconstruction Doctrinaire)
+5 piliers stochastiques : Shin · OU Lag · Bayesian SNR · Binary Synthesis · Kelly 0.25
+Seuls les Bernoulli Trials (issues binaires) sont traités.
+Tout signal avec EV+ < 8%, Sharp Prob < 60% ou SNR < 3.0 est rejeté.
 """
 from __future__ import annotations
 
@@ -28,19 +30,20 @@ class MarketOdds:
 
 @dataclass
 class PAIMSignal:
-    """Résultat complet d'un cycle PAIM."""
+    """Résultat complet d'un cycle PAIM — Bernoulli Trial uniquement."""
     event_id: str
     market_key: str
     selection: str            # 'home' | 'away'
     bookmaker_target: str     # où parier (Soft)
-    sharp_prob: float         # π issu de Pinnacle (Shin)
+    sharp_prob: float         # π issu de Pinnacle (Shin) — DOIT ÊTRE ∈ [0.60, 0.90]
     implied_prob_soft: float  # probabilité implicite du Soft
-    ev_plus: float            # Expected Value > 0
-    snr_ratio: float          # Signal-to-Noise Ratio
-    recommended_stake: float  # mise post-Kelly + Smart Staking
+    ev_plus: float            # Expected Value > 0 — DOIT ÊTRE > 8%
+    snr_ratio: float          # Signal-to-Noise Ratio — DOIT ÊTRE > 3.0
+    recommended_stake: float  # mise post-Kelly 0.25 + cap 3% bankroll
     clv_estimate: float       # Closing Line Value estimée
+    fair_price: float = 0.0   # 1 / sharp_prob (Prix juste Pinnacle)
     is_valid: bool = False    # validé par Bayesian Filter
-    ai_context: str = ""      # résumé contexte Gemini
+    ai_context: str = ""      # résumé contexte IA
 
     @property
     def label(self) -> str:
@@ -48,56 +51,39 @@ class PAIMSignal:
 
 
 # ═══════════════════════════════════════════════════════════════════
-# PILIER 1 — LEAD LAYER : Shin's Method
+# PILIER 1 — LEAD LAYER : Shin's Method (Pinnacle uniquement)
 # ═══════════════════════════════════════════════════════════════════
 
 class ShinDemarger:
     """
-    Extrait la probabilité 'vraie' (π) depuis les cotes bookmaker
+    Extrait la probabilité 'vraie' (π) depuis les cotes Pinnacle
     en décomposant la marge en composante insider (z) et markup.
     Méthode: Shin (1993) — 'Measuring the Incidence of Insider Trading'.
+    
+    Si Pinnacle n'est pas disponible → signal REJETÉ (retourne None).
     """
 
     @staticmethod
-    def deMargin_additive(odds: list[float]) -> list[float]:
-        """Démargeage additif simple (baseline rapide)."""
-        total_implied = sum(1 / o for o in odds)
-        return [1 / (o * total_implied) for o in odds]
-
-    @staticmethod
     def _bisection_root(func, a, b, tol=1e-8, max_iter=1000):
-        """
-        Méthode de la bisection pour trouver la racine d'une fonction.
-        Remplace scipy.optimize.brentq pour éviter la dépendance scipy.
-        """
         fa = func(a)
         fb = func(b)
-
         if fa * fb > 0:
-            raise ValueError(
-                f"La fonction ne change pas de signe sur [{a}, {b}]. "
-                f"f({a})={fa}, f({b})={fb}"
-            )
-
+            raise ValueError("Pas de racine sur l'intervalle")
         if fa == 0:
             return a
         if fb == 0:
             return b
-
         for _ in range(max_iter):
             c = (a + b) / 2.0
             fc = func(c)
-
             if abs(fc) < tol or (b - a) / 2.0 < tol:
                 return c
-
             if fa * fc < 0:
                 b = c
                 fb = fc
             else:
                 a = c
                 fa = fc
-
         return (a + b) / 2.0
 
     @staticmethod
@@ -105,14 +91,12 @@ class ShinDemarger:
         """
         Résolution numérique du paramètre z (proportion insider).
         Retourne (probabilités_vraies, z_insider_proportion).
-        Utilise la méthode de la bisection (pure Python) au lieu de scipy.
+        Échoue → fallback additif (mais signal marqué comme à risque).
         """
-        n = len(odds)
         implied = [1 / o for o in odds]
         total_margin = sum(implied)
 
         def shin_equation(z: float) -> float:
-            """f(z) = 0 selon la condition Shin."""
             if z <= 0 or z >= 1:
                 return float("inf")
             pis = []
@@ -127,7 +111,9 @@ class ShinDemarger:
         try:
             z = ShinDemarger._bisection_root(shin_equation, 1e-6, 0.2, tol=1e-8)
         except ValueError:
-            return ShinDemarger.deMargin_additive(odds), 0.0
+            # Fallback additif — signaux marqués à risque
+            total_implied = sum(implied)
+            return [qi / total_implied for qi in implied], 0.0
 
         probs = []
         for qi in implied:
@@ -155,21 +141,11 @@ class OULatencyModel:
         self.sigma = sigma
 
     def expected_convergence_time(self, gap: float) -> float:
-        """
-        Temps espéré (minutes) pour que le Soft comble `gap` d'inefficacité.
-        gap = |prob_sharp - prob_soft|
-        """
         if gap <= 0 or self.theta <= 0:
             return 0.0
         return -math.log(1 - min(gap / (self.sigma + 1e-9), 0.99)) / self.theta * 60
 
-    def inefficiency_score(
-        self, sharp_prob: float, soft_prob: float, dt_minutes: float
-    ) -> float:
-        """
-        Score d'inefficacité résiduelle après `dt_minutes` minutes.
-        Score ∈ [0, 1] — plus élevé = meilleure opportunité.
-        """
+    def inefficiency_score(self, sharp_prob: float, soft_prob: float, dt_minutes: float) -> float:
         gap = abs(sharp_prob - soft_prob)
         decay = math.exp(-self.theta * dt_minutes / 60)
         residual = gap * decay
@@ -184,9 +160,10 @@ class BayesianSNRFilter:
     """
     Filtre bayésien pour rejeter les Trap Lines.
     SNR = signal_strength / noise_floor
+    Seuil minimum : 3.0 (contre 1.5 dans la version déviante)
     """
 
-    def __init__(self, min_snr: float = 1.5):
+    def __init__(self, min_snr: float = 3.0):
         self.min_snr = min_snr
         self._history: list[tuple[float, float]] = []
 
@@ -197,13 +174,6 @@ class BayesianSNRFilter:
         n_confirming_books: int,
         volume_ratio: float = 1.0,
     ) -> float:
-        """
-        SNR composite basé sur:
-        - EV (force du signal)
-        - Volatilité des cotes (bruit)
-        - Nombre de bookmakers confirmant le mouvement
-        - Ratio volume sharp/soft
-        """
         if volatility <= 0:
             volatility = 0.001
         signal = ev * math.log1p(n_confirming_books) * volume_ratio
@@ -211,7 +181,6 @@ class BayesianSNRFilter:
         return signal / noise
 
     def update_brier(self, predicted_prob: float, outcome: int) -> float:
-        """Met à jour et retourne le Brier Score glissant (derniers 100 paris)."""
         self._history.append((predicted_prob, outcome))
         if len(self._history) > 100:
             self._history.pop(0)
@@ -223,38 +192,89 @@ class BayesianSNRFilter:
 
 
 # ═══════════════════════════════════════════════════════════════════
-# PILIER 4 — BINARY SYNTHESIS
+# PILIER 4 — BINARY SYNTHESIS (Bernoulli Trials uniquement)
 # ═══════════════════════════════════════════════════════════════════
 
 class BinarySynthesizer:
     """
     Transforme tout marché complexe en issue binaire.
-    Priorité: Asian Handicap 0.0, Moneyline, Over/Under.
+    - Moneyline (h2h) : pour NBA, Tennis, NHL — rejette les matchs à 3 issues
+    - Asian Handicap 0.0 / spreads : pour Soccer
+    - Totals (Over/Under) : pour tout sport
+    
+    REJETTE STRICTEMENT les marchés à 3 issues (1N2, 3-way moneyline).
+    Seuls les Bernoulli Trials (p(win) ∈ [0.60, 0.90]) sont conservés.
     """
 
+    # Marchés binaires autorisés
     BINARY_MARKETS = {"h2h", "spreads", "totals", "asian_handicap"}
-
-    @staticmethod
-    def is_binary_market(market_key: str) -> bool:
-        return any(bm in market_key for bm in BinarySynthesizer.BINARY_MARKETS)
+    
+    # Sports avec moneyline binaire (pas de 3-way)
+    BINARY_SPORTS = {
+        "basketball_nba",        # NBA Moneyline = binaire (pas de match nul)
+        "tennis_atp",            # Tennis = binaire
+        "tennis_atp_french_open",
+        "tennis_atp_us_open",
+        "tennis_atp_wimbledon",
+        "esports_lol",           # Esports = binaire
+        "nhl",                   # Hockey = binaire (règle pro)
+        "mma_mixed_martial_arts",# MMA = binaire
+    }
+    
+    # Sports qui nécessitent spreads/asian handicap (pas de moneyline 3-way directe)
+    SPREAD_SPORTS = {
+        "soccer_uefa_champs_league",
+        "soccer_epl",
+        "soccer_spain_la_liga",
+    }
 
     # Commission moyenne 1XBet sur les marchés binaires
     COMMISSION_1XBET = 0.035  # 3.5%
+
+    @staticmethod
+    def is_binary_market(market_key: str, sport_key: str = "") -> bool:
+        """
+        Vérifie si le marché est binaire et autorisé pour ce sport.
+        
+        Pour les sports BINARY_SPORTS: h2h uniquement (pas de 3-way)
+        Pour les sports SPREAD_SPORTS: spreads, totals, asian_handicap uniquement (pas de h2h)
+        """
+        is_binary_key = any(bm in market_key for bm in BinarySynthesizer.BINARY_MARKETS)
+        if not is_binary_key:
+            return False
+        
+        # Vérifier si le sport est dans les listes autorisées
+        is_binary_sport = any(s in sport_key for s in BinarySynthesizer.BINARY_SPORTS)
+        is_spread_sport = any(s in sport_key for s in BinarySynthesizer.SPREAD_SPORTS)
+        
+        if not is_binary_sport and not is_spread_sport:
+            return False
+        
+        # Pour sports binaires : h2h autorisé
+        if is_binary_sport and "h2h" in market_key:
+            return True
+        
+        # Pour sports spreads : h2h INTERDIT (3-way), only spreads/totals/asian_handicap
+        if is_spread_sport and "h2h" in market_key:
+            return False  # REJET : h2h soccer = 3-way (1N2)
+        
+        if is_spread_sport:
+            return True  # spreads, totals, asian_handicap OK
+        
+        # Pour les autres binary sports : spreads, totals OK
+        if is_binary_sport:
+            return True
+        
+        return False
 
     @staticmethod
     def compute_ev(true_prob: float, offered_odds: float, commission: float = 0.0) -> float:
         """
         EV_net = (prob_vraie × (cote_net - 1)) - (1 - prob_vraie)
         
-        Où cote_net = offered_odds × (1 - commission)
-        
-        commission: Frais implicite du bookmaker soft.
-        Par défaut: 3.5% pour 1XBet sur les marchés binaires.
-        
         Formule complète:
         EV_net = [Cote_Soft × (1 - Comm_Soft)] / Cote_Fair_Sharp - 1
         """
-        # Déduction commission bookmaker (défaut: 3.5% pour 1XBet)
         net_odds = offered_odds * (1.0 - commission)
         return true_prob * (net_odds - 1.0) - (1.0 - true_prob)
 
@@ -267,9 +287,6 @@ class BinarySynthesizer:
     ) -> tuple[str, float, float]:
         """
         Retourne (sélection, EV, cote_soft) pour la meilleure issue binaire.
-        
-        Args:
-            commission: Frais du bookmaker (3.5% pour 1XBet par défaut)
         """
         ev_home = BinarySynthesizer.compute_ev(sharp_probs[0], soft_odds_home, commission)
         ev_away = BinarySynthesizer.compute_ev(sharp_probs[1], soft_odds_away, commission)
@@ -280,28 +297,33 @@ class BinarySynthesizer:
 
 
 # ═══════════════════════════════════════════════════════════════════
-# PILIER 5 — DYNAMIC ALLOCATION : Fractional Kelly
+# PILIER 5 — DYNAMIC ALLOCATION : Fractional Kelly (0.25)
 # ═══════════════════════════════════════════════════════════════════
 
 class FractionalKelly:
     """
     Critère de Kelly fractionné (0.25) pour l'optimisation du capital.
     f* = (bp - q) / b  →  mise_kelly = f* × fraction × bankroll
+    
+    CAP STRICT : 3% de la bankroll max par pari (300€ sur 10k€)
     """
 
-    def __init__(self, fraction: float = 0.25):
+    def __init__(self, fraction: float = 0.25, max_stake_pct: float = 0.03):
         self.fraction = fraction
+        self.max_stake_pct = max_stake_pct
 
-    def kelly_stake(
-        self, true_prob: float, offered_odds: float, bankroll: float
-    ) -> float:
-        """Calcule la mise Kelly fractionnée en euros."""
+    def kelly_stake(self, true_prob: float, offered_odds: float, bankroll: float) -> float:
+        """Calcule la mise Kelly fractionnée en euros, plafonnée à max_stake_pct."""
         b = offered_odds - 1
         p = true_prob
         q = 1 - p
         f_star = (b * p - q) / b
         f_star = max(f_star, 0.0)
-        return f_star * self.fraction * bankroll
+        raw_stake = f_star * self.fraction * bankroll
+        
+        # Cap strict : jamais plus de max_stake_pct% de la bankroll
+        max_stake = bankroll * self.max_stake_pct
+        return min(raw_stake, max_stake)
 
     @staticmethod
     def smart_stake_round(stake: float, base: int = 10) -> float:
@@ -310,27 +332,39 @@ class FractionalKelly:
 
 
 # ═══════════════════════════════════════════════════════════════════
-# ORCHESTRATEUR PAIM
+# ORCHESTRATEUR PAIM — Pipeline Doctrinaire
 # ═══════════════════════════════════════════════════════════════════
 
 class PAIMEngine:
     """
     Orchestre les 5 piliers pour produire un PAIMSignal complet.
+    
+    Seuils doctrinaires (PhD MIT) :
+    - EV+ minimum : 8% (0.08)
+    - SNR minimum : 3.0 (contre 1.5 dans la version déviante)
+    - Sharp Prob : ∈ [0.60, 0.90] (Bernoulli Trial valide)
+    - Mise max : 3% de la bankroll
+    - Commission Soft : 3.5% (1XBet)
     """
 
     def __init__(
         self,
         kelly_fraction: float = 0.25,
         min_ev: float = 0.08,
-        min_snr: float = 1.5,
+        min_snr: float = 3.0,
+        min_sharp_prob: float = 0.60,
+        max_sharp_prob: float = 0.90,
+        max_stake_pct: float = 0.03,
         stake_base: int = 10,
     ):
         self.shin = ShinDemarger()
         self.ou = OULatencyModel()
         self.snr_filter = BayesianSNRFilter(min_snr=min_snr)
         self.synthesizer = BinarySynthesizer()
-        self.kelly = FractionalKelly(fraction=kelly_fraction)
+        self.kelly = FractionalKelly(fraction=kelly_fraction, max_stake_pct=max_stake_pct)
         self.min_ev = min_ev
+        self.min_sharp_prob = min_sharp_prob
+        self.max_sharp_prob = max_sharp_prob
         self.stake_base = stake_base
 
     def process(
@@ -340,35 +374,66 @@ class PAIMEngine:
         bankroll: float,
         dt_minutes: float = 0.0,
         n_confirming_books: int = 1,
+        sport_key: str = "",
     ) -> Optional[PAIMSignal]:
         """
         Pipeline complet : Sharp odds → PAIMSignal ou None si filtré.
+        
+        Étapes :
+        1. Lead Layer — Shin (Pinnacle uniquement)
+        2. Binary Synthesis — Filtre strict Bernoulli Trial
+        3. Sharp Prob Check — π ∈ [0.60, 0.90]
+        4. EV Check — EV+ ≥ 8%
+        5. Lag Layer — OU inefficiency score
+        6. Bayesian SNR — SNR ≥ 3.0
+        7. Kelly 0.25 — Mise avec cap 3% bankroll
         """
-        # 1. Lead Layer — Shin
+        # ═══════════════════════════════════════════════════════
+        # 1. Binary Synthesis — Filtre strict du marché
+        # ═══════════════════════════════════════════════════════
+        if not BinarySynthesizer.is_binary_market(soft.market_key, sport_key):
+            return None
+
+        # ═══════════════════════════════════════════════════════
+        # 2. Lead Layer — Shin (Pinnacle uniquement)
+        # ═══════════════════════════════════════════════════════
         sharp_odds = [sharp.outcome_home, sharp.outcome_away]
         sharp_probs, z_insider = self.shin.shin_probabilities(sharp_odds)
 
-        # 2. Binary Synthesis
-        if not BinarySynthesizer.is_binary_market(soft.market_key):
-            return None
-
+        # ═══════════════════════════════════════════════════════
+        # 3. Binary Synthesis — Meilleure sélection
+        # ═══════════════════════════════════════════════════════
         selection, ev, soft_cote = self.synthesizer.best_binary_selection(
             sharp_probs, soft.outcome_home, soft.outcome_away,
             commission=self.synthesizer.COMMISSION_1XBET  # 3.5% pour 1XBet
         )
 
+        # ═══════════════════════════════════════════════════════
+        # 4. Sharp Prob Check — π ∈ [0.60, 0.90]
+        # ═══════════════════════════════════════════════════════
+        sharp_prob = sharp_probs[0] if selection == "home" else sharp_probs[1]
+        
+        if sharp_prob < self.min_sharp_prob or sharp_prob > self.max_sharp_prob:
+            return None  # Probabilité hors Bernoulli Trial valide
+
+        # ═══════════════════════════════════════════════════════
+        # 5. EV Check — EV+ ≥ 8%
+        # ═══════════════════════════════════════════════════════
         if ev < self.min_ev:
             return None
 
-        # 3. Lag Layer — OU inefficiency
+        # ═══════════════════════════════════════════════════════
+        # 6. Lag Layer — OU inefficiency
+        # ═══════════════════════════════════════════════════════
         soft_implied = [1 / soft.outcome_home, 1 / soft.outcome_away]
         soft_prob = soft_implied[0] if selection == "home" else soft_implied[1]
-        sharp_prob = sharp_probs[0] if selection == "home" else sharp_probs[1]
 
         volatility = abs(sharp_prob - soft_prob) * 0.5 + 0.01
         ineff_score = self.ou.inefficiency_score(sharp_prob, soft_prob, dt_minutes)
 
-        # 4. Bayesian SNR Filter
+        # ═══════════════════════════════════════════════════════
+        # 7. Bayesian SNR Filter — SNR ≥ 3.0
+        # ═══════════════════════════════════════════════════════
         snr = self.snr_filter.compute_snr(
             ev=ev,
             volatility=volatility,
@@ -379,11 +444,14 @@ class PAIMEngine:
         if not self.snr_filter.is_valid_signal(snr):
             return None
 
-        # 5. Dynamic Allocation — Kelly
+        # ═══════════════════════════════════════════════════════
+        # 8. Dynamic Allocation — Kelly 0.25 + Cap 3%
+        # ═══════════════════════════════════════════════════════
         raw_stake = self.kelly.kelly_stake(sharp_prob, soft_cote, bankroll)
         stake = FractionalKelly.smart_stake_round(raw_stake, self.stake_base)
 
-        clv_estimate = ev * 0.7
+        clv_estimate = ev * 0.7  # CLV = 70% de l'EV
+        fair_price = 1.0 / sharp_prob if sharp_prob > 0 else 0.0
 
         return PAIMSignal(
             event_id=sharp.event_id,
@@ -396,5 +464,6 @@ class PAIMEngine:
             snr_ratio=snr,
             recommended_stake=stake,
             clv_estimate=clv_estimate,
+            fair_price=fair_price,
             is_valid=True,
         )

@@ -34,10 +34,11 @@ class Settings(BaseSettings):
     betterstack_token: str = Field(default="", alias="BETTERSTACK_TOKEN")
     betterstack_source_id: str = Field(default="", alias="BETTERSTACK_SOURCE_ID")
 
-    # ── PAIM Engine ───────────────────────────────────────────
-    min_ev_threshold: float = Field(default=0.08)
-    min_snr_ratio: float = Field(default=1.5)
+    # ── PAIM Engine (Seuils Doctrinaires PhD MIT) ─────────────
+    min_ev_threshold: float = Field(default=0.08, ge=0.05)
+    min_snr_ratio: float = Field(default=3.0, ge=1.5)
     kelly_fraction: float = Field(default=0.25)
+    max_single_stake_pct: float = Field(default=0.03)   # 3% max par pari
     max_drawdown_pct: float = Field(default=0.15)
     starting_bankroll: float = Field(default=10_000.0)
 
@@ -58,27 +59,29 @@ class Settings(BaseSettings):
 
     # ── Bookmakers ────────────────────────────────────────────
     sharp_books: list[str] = Field(
-        default=["pinnacle", "betfair_ex_eu"]
+        default=["pinnacle"]
     )
     soft_books: list[str] = Field(
         default=["1xbet", "bet365", "unibet", "williamhill"]
     )
 
-    # ── Multi-Sport v2.0 — Binary Only Markets ────────────────
-    # Sports prioritaires avec liquidité suffisante
+    # ── Multi-Sport v2.1 — Bernoulli Trials Uniquement ────────
+    # Sports binaires naturels (Moneyline : h2h)
+    # Tennis, NBA, NHL, Esports = binaires purs
+    # Soccer = Asian Handicap / Spreads uniquement (pas de 1N2)
     target_sports: list[str] = Field(default=[
-        # Basketball (NBA - haute liquidité)
+        # Basketball (NBA - haute liquidité, binaire)
         "basketball_nba",
         # Tennis (ATP - binaire naturel)
-        "tennis_atp_french_open",
-        "tennis_atp_us_open",
-        "tennis_atp_wimbledon",
-        # Football (UEFA - haute liquidité)
+        "tennis_atp",
+        # Hockey (NHL - binaire, pas de match nul pro)
+        "nhl",
+        # Esports (LoL - binaire)
+        "esports_lol",
+        # Football (UEFA - spreads/asian handicap uniquement)
         "soccer_uefa_champs_league",
         "soccer_epl",
         "soccer_spain_la_liga",
-        # Esports (LoL - croissance EV)
-        "esports_lol",
     ])
 
     # ── 1XBet Link Template ───────────────────────────────────

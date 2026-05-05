@@ -155,6 +155,7 @@ class MarketScanner:
                         soft=soft_odds,
                         bankroll=self.risk.current_bankroll,
                         n_confirming_books=2,
+                        sport_key=meta.get("sport", ""),
                     )
                     if signal:
                         signals.append((signal, meta))
