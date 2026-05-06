@@ -3,13 +3,18 @@ import os
 import requests
 from flask import Flask, jsonify, render_template_string
 from api.audit import run_settlement_audit
+from api.logger import create_scan_logger
 from core.math_engine import calculate_shin_probabilities
 from core.validator import check_market_red_flags
 from core.context import get_market_news
+from data.supabase_client import SupabaseClient
 from supabase import create_client
 import google.generativeai as genai
+from flask import Flask, jsonify, render_template_string, request
 
 app = Flask(__name__)
+
+db = SupabaseClient()
 
 ODDS_API_KEY = os.environ.get("ODDS_API_KEY")
 TELEGRAM_TOKEN = os.environ.get("TELEGRAM_TOKEN")
@@ -131,6 +136,19 @@ HTML_TEMPLATE = """
 def index():
     return render_template_string(HTML_TEMPLATE)
 
+@app.route('/api/search', methods=['GET'])
+def search_signals_api():
+    date = request.args.get('date')
+    time = request.args.get('time')
+    sport = request.args.get('sport')
+    results = db.search_signals(sport=sport, date=date, time=time)
+    return jsonify(results)
+
+@app.route('/api/info', methods=['GET'])
+def get_info_pages_api():
+    results = db.get_info_pages()
+    return jsonify(results)
+
 @app.route('/api/audit', methods=['POST'])
 def audit_settlement():
     result = run_settlement_audit()
@@ -241,25 +259,44 @@ def test_seed():
 
 @app.route('/api/screener', methods=['GET'])
 def morning_screener():
-    if not ODDS_API_KEY: return jsonify({"error": "Missing API Key"}), 500
+    logger = create_scan_logger()
+    logger.start("Starting morning screener scan")
+    
+    if not ODDS_API_KEY:
+        logger.error("Missing Odds API Key")
+        return jsonify({"error": "Missing API Key"}), 500
 
     url = f"https://api.the-odds-api.com/v4/sports/upcoming/odds/?apiKey={ODDS_API_KEY}&regions=eu,us&markets=h2h&oddsFormat=decimal"
-    response = requests.get(url)
-    if response.status_code != 200: return jsonify({"error": "Failed to fetch odds"}), response.status_code
+    logger.debug(f"Fetching odds from: {url}")
+    
+    try:
+        response = requests.get(url, timeout=30)
+        response.raise_for_status()
+    except Exception as e:
+        logger.error("Failed to fetch odds", exc=e)
+        return jsonify({"error": "Failed to fetch odds"}), 500
         
     matches = response.json()
-    print(f'Matchs reçus de l API: {len(matches)}')
+    logger.info(f"Received {len(matches)} matches from API")
     brief_items = []
     
     for match in matches:
-        # Filter supprimé pour test
         match_name = f"{match['home_team']} vs {match['away_team']}"
+        logger.debug(f"Processing match: {match_name}")
+        
         pinnacle_book = next((b for b in match['bookmakers'] if b['key'] == 'pinnacle'), None)
         one_xbet_book = next((b for b in match['bookmakers'] if b['key'] == 'onexbet'), None)
-        if not pinnacle_book or not one_xbet_book: continue
+        
+        if not pinnacle_book or not one_xbet_book:
+            logger.debug(f"Skipping match {match_name}: Missing bookmakers (Pinnacle/1xBet)")
+            continue
+            
         pinnacle_h2h = next((m for m in pinnacle_book['markets'] if m['key'] == 'h2h'), None)
         one_xbet_h2h = next((m for m in one_xbet_book['markets'] if m['key'] == 'h2h'), None)
-        if not pinnacle_h2h or not one_xbet_h2h: continue
+        
+        if not pinnacle_h2h or not one_xbet_h2h:
+            logger.debug(f"Skipping match {match_name}: Missing H2H market")
+            continue
             
         try:
             pinnacle_odds = [outcome['price'] for outcome in pinnacle_h2h['outcomes']]
@@ -267,9 +304,16 @@ def morning_screener():
             
             for i, outcome in enumerate(one_xbet_h2h['outcomes']):
                 cote_1xbet = outcome['price']
+                
+                # Validation check
+                if i >= len(fair_prices):
+                    logger.warning(f"Mismatch in outcomes for {match_name}")
+                    continue
+                    
                 alpha_spread = (cote_1xbet - fair_prices[i]) / fair_prices[i]
                 
                 if alpha_spread > 0.001:
+                    logger.info(f"Alpha spread detected for {match_name}: {alpha_spread:.2%}")
                     news = get_market_news(match_name, match['sport_title'])
                     note_ia = check_market_red_flags(match_name, f"Moneyline {outcome['name']}. Contexte : {news}")
                     
@@ -282,8 +326,18 @@ def morning_screener():
                         "alpha_spread": round(alpha_spread, 4),
                         "note_ia": note_ia
                     }
-                    if supabase: supabase.table('signals').insert(signal_data).execute()
+                    
+                    if supabase:
+                        try:
+                            supabase.table('signals').insert(signal_data).execute()
+                            logger.info(f"Signal inserted for {match_name}")
+                        except Exception as e:
+                            logger.error(f"Failed to insert signal for {match_name}", exc=e)
+                    
                     brief_items.append(signal_data)
-        except Exception: continue
+        except Exception as e:
+            logger.error(f"Error processing {match_name}", exc=e)
+            continue
 
+    logger.complete(f"Scan finished. Processed {len(brief_items)} signals.")
     return jsonify({"status": "success", "items": brief_items})

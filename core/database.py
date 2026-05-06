@@ -1,11 +1,43 @@
-from datetime import datetime
 import os
+import asyncio
 from supabase import create_client, Client
 
 # Initialisation avec la Service Role Key pour bypasser le RLS
 url: str = os.environ.get("SUPABASE_URL")
 key: str = os.environ.get("SUPABASE_KEY")
 supabase: Client = create_client(url, key)
+
+# Queue pour le batch processing
+signal_queue = asyncio.Queue()
+
+async def batch_processor():
+    """Worker asynchrone pour traiter les inserts par lots."""
+    while True:
+        batch = []
+        # Attendre le premier élément
+        item = await signal_queue.get()
+        batch.append(item)
+        
+        # Tenter de collecter jusqu'à 20 éléments supplémentaires sans bloquer
+        while len(batch) < 20:
+            try:
+                item = signal_queue.get_nowait()
+                batch.append(item)
+            except asyncio.QueueEmpty:
+                break
+        
+        # Ingestion en batch
+        try:
+            supabase.table("signals").insert(batch).execute()
+        except Exception as e:
+            print(f"Erreur d'insertion batch : {e}")
+        finally:
+            for _ in batch:
+                signal_queue.task_done()
+
+def enqueue_signal(payload: dict):
+    """Met un signal en queue pour ingestion asynchrone."""
+    signal_queue.put_nowait(payload)
 
 def insert_signal(payload: dict):
     """

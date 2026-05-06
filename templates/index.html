@@ -115,10 +115,27 @@
         <button onclick="showPage('research')" class="pb-2 text-sm uppercase tracking-widest" id="btn-research">Research</button>
         <button onclick="showPage('portfolio')" class="pb-2 text-sm uppercase tracking-widest" id="btn-portfolio">Portfolio</button>
         <button onclick="showPage('sentiment')" class="pb-2 text-sm uppercase tracking-widest" id="btn-sentiment">Sentiment</button>
+        <button onclick="showPage('info')" class="pb-2 text-sm uppercase tracking-widest" id="btn-info">Tips</button>
     </div>
 
     <!-- PAGE: Contrôle -->
     <div id="page-control" class="page">
+        <!-- Search Control Panel -->
+        <div class="glass p-6 rounded-lg mb-6">
+            <h3 class="text-sm text-gray-500 mb-4 uppercase">Recherche d'Alpha</h3>
+            <div class="flex gap-4 items-end">
+                <div class="flex-1">
+                    <label class="text-[10px] text-gray-600 block mb-1">DATE</label>
+                    <input type="date" id="search-date" class="w-full bg-black border border-green-900 text-white p-2 rounded text-sm">
+                </div>
+                <div class="flex-1">
+                    <label class="text-[10px] text-gray-600 block mb-1">SPORT</label>
+                    <input type="text" id="search-sport" placeholder="Ex: Soccer" class="w-full bg-black border border-green-900 text-white p-2 rounded text-sm">
+                </div>
+                <button onclick="performSearch()" class="bg-green-900 hover:bg-green-800 text-green-400 px-6 py-2 rounded text-sm font-bold">RECHERCHER</button>
+            </div>
+            <div id="search-results" class="mt-6"></div>
+        </div>
         <!-- ... existing content ... -->
     </div>
 
@@ -143,6 +160,14 @@
         <div class="glass p-6 rounded-lg">
             <h2 class="mb-4 text-gray-400">SENTIMENT — MARKET ANALYSIS</h2>
             <div id="sentiment-container" class="text-center py-10 text-gray-600">Chargement des données de sentiment...</div>
+        </div>
+    </div>
+
+    <!-- PAGE: Tips/Info -->
+    <div id="page-info" class="page hidden">
+        <div class="glass p-6 rounded-lg">
+            <h2 class="mb-4 text-gray-400">TIPS & INFO — ACADEMY</h2>
+            <div id="info-container" class="text-center py-10 text-gray-600">Chargement des tips...</div>
         </div>
     </div>
 
@@ -251,6 +276,47 @@
             if (pageId === 'research') fetchResearchData();
             if (pageId === 'portfolio') fetchPortfolioData();
             if (pageId === 'sentiment') fetchSentimentData();
+            if (pageId === 'info') fetchInfo();
+        }
+
+        async function performSearch() {
+            const date = document.getElementById('search-date').value;
+            const sport = document.getElementById('search-sport').value;
+            const container = document.getElementById('search-results');
+            container.innerHTML = 'Recherche en cours...';
+            try {
+                const url = `/api/search?date=${date}&sport=${encodeURIComponent(sport)}`;
+                const res = await fetch(url);
+                const results = await res.json();
+                if (results.length === 0) {
+                    container.innerHTML = '<p class="text-gray-500 text-sm">Aucun résultat trouvé.</p>';
+                    return;
+                }
+                container.innerHTML = `<pre class="text-xs text-green-500 max-h-40 overflow-auto">${JSON.stringify(results, null, 2)}</pre>`;
+            } catch (e) {
+                container.innerHTML = '<p class="text-red-500 text-sm">Erreur lors de la recherche.</p>';
+            }
+        }
+
+        async function fetchInfo() {
+            const container = document.getElementById('info-container');
+            container.innerHTML = 'Chargement...';
+            try {
+                const res = await fetch('/api/info');
+                const data = await res.json();
+                if (!data || data.length === 0) {
+                    container.innerHTML = '<p class="text-gray-500 text-sm">Aucune information disponible.</p>';
+                    return;
+                }
+                container.innerHTML = data.map(page => `
+                    <div class="mb-6 text-left border-b border-gray-800 pb-4">
+                        <h3 class="text-white font-bold mb-1">${page.title || 'Sans titre'}</h3>
+                        <p class="text-gray-400 text-xs">${page.content || 'Pas de contenu.'}</p>
+                    </div>
+                `).join('');
+            } catch (e) {
+                container.innerHTML = '<p class="text-red-500 text-sm">Erreur lors du chargement.</p>';
+            }
         }
 
         async function fetchResearchData() {

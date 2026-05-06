@@ -113,6 +113,31 @@ class SupabaseClient:
 
     # ── Dashboard Queries ─────────────────────────────────────
 
+    def search_signals(self, sport: Optional[str] = None, date: Optional[str] = None, time: Optional[str] = None) -> list[dict]:
+        """Recherche de signaux basée sur le sport, la date et l'heure."""
+        try:
+            query = self._client.table("signals").select("*")
+            if sport:
+                query = query.eq("sport", sport)
+            # Assuming event_time exists or we filter by match_time
+            if date:
+                # Basic date filtering
+                query = query.gte("match_time", f"{date}T00:00:00Z").lte("match_time", f"{date}T23:59:59Z")
+            response = query.execute()
+            return response.data or []
+        except Exception as e:
+            logger.error(f"Erreur search signals: {e}")
+            return []
+
+    def get_info_pages(self) -> list[dict]:
+        """Récupère le contenu des pages d'information."""
+        try:
+            response = self._client.table("info_pages").select("*").execute()
+            return response.data or []
+        except Exception as e:
+            logger.error(f"Erreur fetch info pages: {e}")
+            return []
+
     def get_performance_summary(self) -> dict:
         """Récupère les métriques globales pour le dashboard."""
         try:

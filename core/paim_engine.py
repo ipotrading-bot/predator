@@ -10,6 +10,8 @@ from __future__ import annotations
 from dataclasses import dataclass, field
 from typing import Optional
 import math
+from integrations.api_sports_client import ApiSportsClient
+from integrations.odds_api_client import OddsApiClient
 
 
 # ═══════════════════════════════════════════════════════════════════
@@ -86,6 +88,13 @@ class PAIMEngine:
     def __init__(self, kelly_fraction: float = 0.25, max_stake_pct: float = 0.03):
         self.kelly_fraction = kelly_fraction
         self.max_stake_pct = max_stake_pct
+        self.sports_client = ApiSportsClient()
+        self.odds_client = OddsApiClient()
+
+    async def fetch_odds_data(self, sport: str) -> dict:
+        """Fetches odds data for a given sport."""
+        async with self.odds_client:
+            return await self.odds_client.fetch_odds(sport)
 
     def compute_ev(self, sharp_prob: float, soft_odds: float) -> float:
         """

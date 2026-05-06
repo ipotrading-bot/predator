@@ -42,3 +42,4 @@ quantstats==0.0.62
 # aiolimiter gère le rate limiting distribué multi-source
 # aiolimiter==0.1.1 # Commented out due to build failure
 # Removed aiolimiter as it is not installable
+dogpile.cache==1.3.3
