@@ -47,15 +47,15 @@ class SupabaseClient:
         try:
             data = {
                 "event_id": signal.event_id,
-                "event_name": event_name,
+                "match_name": event_name,
                 "sport": sport,
                 "match_time": match_time_iso,
-                "market_key": signal.market_key,
+                "market_type": signal.market_key,
                 "selection": signal.selection,
                 "bookmaker_target": signal.bookmaker_target,
                 "sharp_prob": round(signal.sharp_prob, 5),
                 "implied_prob_soft": round(signal.implied_prob_soft, 5),
-                "ev_plus": round(signal.ev_plus, 5),
+                "alpha_spread": round(signal.ev_plus, 5),
                 "snr_ratio": round(signal.snr_ratio, 4),
                 "recommended_stake": signal.recommended_stake,
                 "clv_estimate": round(signal.clv_estimate, 5),

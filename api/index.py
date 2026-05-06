@@ -202,6 +202,9 @@ def get_screener_data():
     if not supabase: return jsonify({"error": "Supabase non configuré"}), 500
     try:
         response = supabase.table('signals').select("*").order('created_at', desc=True).limit(10).execute()
+        # LOGGING pour déboguer le schema mismatch
+        if response.data:
+            print(f"DEBUG: Schema des données (1er record): {list(response.data[0].keys())}")
         return jsonify(response.data)
     except Exception as e:
         return jsonify({"error": str(e)}), 500

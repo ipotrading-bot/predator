@@ -242,7 +242,7 @@ class MarketScanner:
                 )
 
                 # Persist Supabase
-                signal_id = self.db.insert_signal(
+                signal_id = await self.db.insert_signal(
                     signal=signal,
                     event_name=meta.get("event_name", ""),
                     sport=meta.get("sport", ""),

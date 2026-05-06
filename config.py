@@ -40,7 +40,7 @@ class Settings(BaseSettings):
     betterstack_source_id: str = Field(default="", alias="BETTERSTACK_SOURCE_ID")
 
     # ── PAIM Engine (Seuils Doctrinaires PhD MIT) ─────────────
-    min_ev_threshold: float = Field(default=0.08, ge=0.05)
+    min_ev_threshold: float = Field(default=0.01, ge=0.005)
     min_snr_ratio: float = Field(default=3.0, ge=1.5)
     kelly_fraction: float = Field(default=0.25)
     max_single_stake_pct: float = Field(default=0.03)   # 3% max par pari
