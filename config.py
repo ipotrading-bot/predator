@@ -41,6 +41,8 @@ class Settings(BaseSettings):
 
     # ── PAIM Engine (Seuils Doctrinaires PhD MIT) ─────────────
     min_ev_threshold: float = Field(default=0.01, ge=0.005)
+    alpha_display_min: float = Field(default=0.015)
+    alpha_elite_min: float = Field(default=0.025)
     min_snr_ratio: float = Field(default=3.0, ge=1.5)
     kelly_fraction: float = Field(default=0.25)
     max_single_stake_pct: float = Field(default=0.03)   # 3% max par pari
@@ -67,7 +69,7 @@ class Settings(BaseSettings):
         default=["pinnacle"]
     )
     soft_books: list[str] = Field(
-        default=["1xbet", "bet365", "unibet", "williamhill"]
+        default=["1xbet", "1xbit", "1xstavka", "bet365", "unibet", "williamhill"]
     )
 
     # ── Multi-Sport v2.1 — Bernoulli Trials Uniquement ────────
@@ -84,6 +86,12 @@ class Settings(BaseSettings):
         "soccer_epl",
         "soccer_spain_la_liga",
     ])
+
+    # ── Synonyms ──────────────────────────────────────────────
+    synonyms: dict[str, str] = Field(default={
+        "1xbet": "1xbit",
+        "1xstavka": "1xbet"
+    })
 
     # ── 1XBet Link Template ───────────────────────────────────
     # Template pour liens directs depuis le dashboard

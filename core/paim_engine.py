@@ -142,6 +142,36 @@ class PAIMEngine:
         """
         return (sharp_prob - implied_prob_soft) / implied_prob_soft
 
+    def to_binary_probs(self, odds_1n2: dict) -> dict:
+        """
+        Convertit les cotes 1N2 en probabilités de Double Chance.
+        Odds_1n2 : {'home': float, 'draw': float, 'away': float}
+        """
+        # Convert to implied probabilities
+        probs = {k: 1.0 / v for k, v in odds_1n2.items() if v > 0}
+        total = sum(probs.values())
+        if total == 0:
+            return {}
+
+        # Normalize probabilities
+        norm_probs = {k: v / total for k, v in probs.items()}
+
+        h = norm_probs.get('home', 0.0)
+        d = norm_probs.get('draw', 0.0)
+        a = norm_probs.get('away', 0.0)
+
+        return {
+            'home_or_draw': h + d,
+            'home_or_away': h + a,
+            'draw_or_away': d + a
+        }
+
+    def compute_confidence(self, alpha: float, liquidity_score: float, ia_score: float) -> float:
+        """
+        Calcule le score de confiance du signal (alpha 40%, liquidité 30%, IA 30%).
+        """
+        return (alpha * 0.4) + (liquidity_score * 0.3) + (ia_score * 0.3)
+
     def evaluate_signal(
         self,
         event_id: str,

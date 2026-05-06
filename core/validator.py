@@ -15,8 +15,7 @@ class GeminiValidator:
             raise ValueError("GEMINI_API_KEY manquante.")
         genai.configure(api_key=api_key)
         self.model = genai.GenerativeModel(
-            model_name="gemini-2.0-flash",
-            tools=[{"google_search": {}}]
+            model_name="gemini-2.0-flash"
         )
         logger.info("GeminiValidator initialisé.")
 

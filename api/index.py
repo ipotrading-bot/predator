@@ -1,7 +1,7 @@
 from datetime import datetime, timedelta
 import os
 import requests
-from flask import Flask, jsonify, render_template_string
+from flask import Flask, jsonify, render_template_string, request
 from api.audit import run_settlement_audit
 from api.logger import create_scan_logger
 from core.math_engine import calculate_shin_probabilities
@@ -10,9 +10,11 @@ from core.context import get_market_news
 from data.supabase_client import SupabaseClient
 from supabase import create_client
 import google.generativeai as genai
-from flask import Flask, jsonify, render_template_string, request
+from config import settings
 
 app = Flask(__name__)
+
+genai.configure(api_key=settings.gemini_api_key)
 
 db = SupabaseClient()
 
@@ -132,6 +134,36 @@ HTML_TEMPLATE = """
 </html>
 """
 
+def gemini_risk_check(event_name, market):
+    return check_market_red_flags(event_name, market)
+
+def _send_morning_brief():
+    if not supabase: return
+    
+    one_day_ago = (datetime.now() - timedelta(days=1)).isoformat()
+    res = supabase.table('signals').select("*").gt('created_at', one_day_ago).execute()
+    signals = res.data
+    
+    elite_signals = [s for s in signals if s.get('is_elite_signal')][:5]
+    display_signals = [s for s in signals if 0.015 <= s.get('alpha_spread', 0) <= 0.025]
+    
+    message = "🌅 *MORNING BRIEF PREDATOR PAIM*\n\n"
+    if not elite_signals and not display_signals:
+        message += "Marché trop efficient — capital préservé ✅"
+    else:
+        if elite_signals:
+            message += "🔥 *ELITE SIGNALS:*\n"
+            for s in elite_signals:
+                message += f"• {s['match_name']} — Alpha: {s.get('alpha_spread', 0):.2%}\n"
+            message += "\n"
+        if display_signals:
+            message += "📈 *DISPLAY SIGNALS (1.5-2.5%):*\n"
+            for s in display_signals:
+                message += f"• {s['match_name']} — Alpha: {s.get('alpha_spread', 0):.2%}\n"
+    
+    requests.post(f"https://api.telegram.org/bot{settings.telegram_bot_token}/sendMessage", 
+                  json={"chat_id": settings.telegram_chat_id, "text": message, "parse_mode": "Markdown"})
+
 @app.route('/', methods=['GET'])
 def index():
     return render_template_string(HTML_TEMPLATE)
@@ -201,19 +233,16 @@ def send_telegram_report(total_trades, avg_clv, win_rate, report_ai):
                   json={"chat_id": TELEGRAM_CHAT_ID, "text": message, "parse_mode": "Markdown"})
 
 @app.route('/api/research', methods=['GET'])
-def get_research_data():
-    # Placeholder for research data (e.g., aggregated analytics)
-    return jsonify({"status": "success", "message": "Research data placeholder"})
+def get_research():
+    return jsonify({"status": "ok", "message": "Research data placeholder"})
 
 @app.route('/api/portfolio', methods=['GET'])
-def get_portfolio_data():
-    # Placeholder for portfolio data (e.g., exposure, risk)
-    return jsonify({"status": "success", "message": "Portfolio data placeholder"})
+def get_portfolio():
+    return jsonify({"status": "ok", "message": "Portfolio data placeholder"})
 
 @app.route('/api/sentiment', methods=['GET'])
-def get_sentiment_data():
-    # Placeholder for sentiment data (e.g., market sentiment)
-    return jsonify({"status": "success", "message": "Sentiment data placeholder"})
+def get_sentiment():
+    return jsonify({"status": "ok", "message": "Sentiment data placeholder"})
 
 @app.route('/api/data', methods=['GET'])
 def get_screener_data():
@@ -226,18 +255,6 @@ def get_screener_data():
         return jsonify(response.data)
     except Exception as e:
         return jsonify({"error": str(e)}), 500
-
-@app.route('/api/research', methods=['GET'])
-def get_research():
-    return jsonify({"status": "ok", "message": "Research data placeholder"})
-
-@app.route('/api/portfolio', methods=['GET'])
-def get_portfolio():
-    return jsonify({"status": "ok", "message": "Portfolio data placeholder"})
-
-@app.route('/api/sentiment', methods=['GET'])
-def get_sentiment():
-    return jsonify({"status": "ok", "message": "Sentiment data placeholder"})
 
 @app.route('/api/test-seed', methods=['POST'])
 def test_seed():

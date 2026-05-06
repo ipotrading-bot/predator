@@ -10,6 +10,7 @@ from __future__ import annotations
 import asyncio
 import logging
 import time
+from datetime import datetime, timedelta, timezone
 from typing import Optional
 
 from config import settings
@@ -40,6 +41,18 @@ class MarketScanner:
         self._notifier: Optional[object] = None
 
     # ── Lazy loaders ──────────────────────────────────────────
+
+    def find_book(self, bookmakers: list[dict], keys: list[str]) -> Optional[dict]:
+        """Trouve un bookmaker parmi une liste de clés, en gérant les synonymes."""
+        for key in keys:
+            # Vérifier les synonymes dans la configuration
+            target_key = settings.synonyms.get(key, key)
+            
+            # Rechercher la clé ou son synonyme
+            book = next((b for b in bookmakers if b["key"] == target_key or b["key"] == key), None)
+            if book:
+                return book
+        return None
 
     def _get_groq(self):
         if self._groq is None:
@@ -121,10 +134,21 @@ class MarketScanner:
         away = event.get("away_team", "?")
         event_name = f"{home} vs {away}"
         sport = event.get("sport_title", "")
-        commence_time = event.get("commence_time", "")
+        commence_time_str = event.get("commence_time", "")
+        
+        # 24h filter
+        if commence_time_str:
+            try:
+                # ISO format usually ends in Z for UTC
+                commence_time = datetime.fromisoformat(commence_time_str.replace("Z", "+00:00"))
+                now = datetime.now(timezone.utc)
+                if commence_time > now + timedelta(hours=24):
+                    return []
+            except ValueError:
+                logger.warning(f"Format de date invalide pour event {event_id}: {commence_time_str}")
 
         bookmakers = event.get("bookmakers", [])
-        pinnacle = next((b for b in bookmakers if b["key"] == "pinnacle"), None)
+        pinnacle = self.find_book(bookmakers, ["pinnacle", "betfair"])
         if not pinnacle:
             return []
 
