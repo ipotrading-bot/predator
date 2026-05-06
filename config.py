@@ -77,10 +77,6 @@ class Settings(BaseSettings):
     target_sports: list[str] = Field(default=[
         # Basketball (NBA - haute liquidité, binaire)
         "basketball_nba",
-        # Tennis (ATP - binaire naturel)
-        "tennis_atp",
-        # Hockey (NHL - binaire, pas de match nul pro)
-        "nhl",
         # Esports (LoL - binaire)
         "esports_lol",
         # Football (UEFA - spreads/asian handicap uniquement)
