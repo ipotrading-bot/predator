@@ -485,20 +485,53 @@
         let currentSignals = [];
         let selectedSignal = null;
         
-        // ── Sport Labels ────────────────────────────────────────────
+        // ── Sport Labels & Icons (Multi-Sport v3.5) ──────────────────
+        const SPORT_ICONS = {
+            'basketball_nba': '🏀',
+            'basketball_wnba': '🏀',
+            'basketball_euroleague': '🏀',
+            'tennis_atp': '🎾',
+            'tennis_wta': '🎾',
+            'baseball_mlb': '⚾',
+            'esports_lol': '🎮',
+            'esports_lol_msi': '🎮',
+            'soccer_uefa_champs_league': '⚽',
+            'soccer_epl': '⚽',
+            'soccer_spain_la_liga': '⚽',
+            'soccer_germany_bundesliga': '⚽',
+            'soccer_italy_serie_a': '⚽',
+            'soccer_france_ligue_one': '⚽',
+            'soccer': '⚽',
+            'basketball': '🏀',
+            'tennis': '🎾',
+            'baseball': '⚾',
+            'esports': '🎮',
+        };
+        
         const SPORT_LABELS = {
             'basketball_nba': 'NBA',
             'basketball_wnba': 'WNBA',
-            'tennis_atp': 'Tennis',
+            'basketball_euroleague': 'Euroleague',
+            'tennis_atp': 'ATP',
+            'tennis_wta': 'WTA',
+            'baseball_mlb': 'MLB',
             'esports_lol': 'LoL',
+            'esports_lol_msi': 'MSI',
             'soccer_uefa_champs_league': 'UCL',
             'soccer_epl': 'EPL',
             'soccer_spain_la_liga': 'La Liga',
+            'soccer_germany_bundesliga': 'Bundesliga',
+            'soccer_italy_serie_a': 'Serie A',
+            'soccer_france_ligue_one': 'Ligue 1',
             'soccer': 'Soccer'
         };
         
+        function getSportIcon(sport) {
+            return SPORT_ICONS[sport] || SPORT_ICONS[sport?.split('_')[0]] || '📊';
+        }
+        
         function getSportLabel(sport) {
-            return SPORT_LABELS[sport] || sport?.split('_')[0]?.toUpperCase() || 'SPORT';
+            return SPORT_LABELS[sport] || sport?.split('_').slice(1).join(' ').toUpperCase() || 'SPORT';
         }
         
         // ── Format Time ─────────────────────────────────────────────
@@ -550,18 +583,29 @@
                     const matchTime = formatTime(signal.match_time);
                     const matchName = signal.match_name || 'Match Inconnu';
                     
+                    const sportIcon = getSportIcon(signal.sport);
+                    
                     return `
                         <div class="signal-card ${isElite ? 'elite' : ''}" onclick="openDrawer('${signal.id || signal.event_id}')">
-                            <div class="flex justify-between items-start mb-2">
-                                <span class="text-xs font-mono tracking-wider" style="color: var(--text-muted);">
-                                    ${sportLabel} | ${matchTime}
+                            <div class="flex justify-between items-start mb-3">
+                                <div class="flex items-center gap-2">
+                                    <span class="text-lg">${sportIcon}</span>
+                                    <span class="text-xs font-mono tracking-wider" style="color: var(--text-muted);">
+                                        ${sportLabel}
+                                    </span>
+                                </div>
+                                <span class="text-xs font-mono" style="color: var(--text-muted);">
+                                    ${matchTime}
                                 </span>
                             </div>
-                            <h3 class="text-base font-medium leading-tight" style="color: var(--text-primary);">
+                            <h3 class="text-base font-medium leading-tight mb-3" style="color: var(--text-primary);">
                                 ${matchName}
                             </h3>
-                            <div class="alpha-value ${alpha < 0 ? 'negative' : ''}">
-                                ${alpha >= 0 ? '+' : ''}${alphaPct}%
+                            <div class="flex items-end justify-between">
+                                <div class="alpha-value ${alpha < 0 ? 'negative' : ''}">
+                                    ${alpha >= 0 ? '+' : ''}${alphaPct}%
+                                </div>
+                                ${isElite ? '<span style="font-size: 10px; color: var(--elite-gold); text-transform: uppercase; letter-spacing: 0.1em;">🔥 Elite</span>' : ''}
                             </div>
                         </div>
                     `;
@@ -589,8 +633,9 @@
             const isElite = alpha >= 0.025;
             
             // Header
-            document.getElementById('drawer-sport-time').textContent = 
-                `${getSportLabel(s.sport)} | ${formatTime(s.match_time)}`;
+            const drawerIcon = getSportIcon(s.sport);
+            document.getElementById('drawer-sport-time').innerHTML = 
+                `<span style="font-size: 14px; margin-right: 4px;">${drawerIcon}</span> ${getSportLabel(s.sport)} <span style="color: var(--text-muted);">|</span> ${formatTime(s.match_time)}`;
             document.getElementById('drawer-match-name').textContent = s.match_name || 'Match Inconnu';
             
             // Odds

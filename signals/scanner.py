@@ -228,11 +228,14 @@ class MarketScanner:
         start = time.monotonic()
         result = ScanResult()
 
+        # Compter les sports configurés
+        sport_count = len(settings.target_sports)
         logger.info(
-            f"🦅 Scan v3.1 | bankroll={self.bankroll:,.0f}€ "
-            f"| EV+ min={self.engine.min_ev_threshold:.1%} "
+            f"🦅 Scan v3.5 Multi-Sport | {sport_count} sports | bankroll={self.bankroll:,.0f}€ "
+            f"| EV+ min={self.engine.min_ev_threshold:.1%} (dynamique par sport) "
             f"| fenêtre={SCAN_WINDOW_HOURS}h"
         )
+        logger.info(f"   Sports: {', '.join(settings.target_sports[:5])}{'...' if sport_count > 5 else ''}")
 
         try:
             async with OddsFetcher() as fetcher:
@@ -395,6 +398,11 @@ class MarketScanner:
 
                     bm_name = _get_soft_bm_name(bookmakers)
 
+                    # ── Seuil Alpha dynamique par Sport ─────────
+                    sport_threshold = settings.alpha_thresholds.get(
+                        sport, settings.alpha_thresholds.get('default', 0.020)
+                    )
+
                     # ── Filtre PAIM ────────────────────────────
                     signal = self.engine.evaluate_signal(
                         event_id=event_id,
@@ -404,7 +412,7 @@ class MarketScanner:
                         sharp_prob=sharp_prob,
                         soft_odds=soft_odds_val,
                         bankroll=self.bankroll,
-                        min_ev=self.engine.min_ev_threshold,
+                        min_ev=sport_threshold,  # Seuil dynamique par sport
                         min_snr=settings.min_snr_ratio,
                     )
                     if signal is None:

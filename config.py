@@ -74,24 +74,56 @@ class Settings(BaseSettings):
                  "bet365", "unibet", "williamhill"]
     )
 
-    # ── Multi-Sport v3.0 (MIT Portfolio d'Alpha) ──────────────
-    # Basketball (NBA + WNBA): Haute liquidité, Load Management lag
-    # Tennis ATP: Pas de nul, impact météo/altitude sous-estimé
-    # Esports (LoL): Marché jeune, Draft inefficience
-    # Soccer: Asian Handicap 0.0 uniquement (pas de 1N2)
+    # ── Multi-Sport v3.5 (MIT Portfolio d'Alpha Global) ─────────
+    # Diversification: NBA Playoffs, Tennis Masters, MLB, Euroleague, LoL MSI
+    # Doctrine: Le seul "free lunch" en finance est la diversification
     target_sports: list[str] = Field(default=[
-        # Basketball — ROI de la Statistique (>100 possessions)
-        "basketball_nba",
-        "basketball_wnba",        # Fenêtre nuit Dakar (marchés US)
-        # Tennis ATP — Arbitrage de surface pur
-        "tennis_atp",
-        # Esports — Gisement de Latence (Draft inefficience)
-        "esports_lol",
-        # Soccer — Protection du Capital (AH 0.0)
+        # ═══════════════════════════════════════════════════════════
+        # BASKETBALL — Haute liquidité, Playoffs = Alpha maximal
+        # ═══════════════════════════════════════════════════════════
+        "basketball_nba",           # Playoffs: cotes volatiles
+        "basketball_wnba",          # Fenêtre nuit Dakar
+        "basketball_euroleague",    # Final Four = inefficiences
+        # ═══════════════════════════════════════════════════════════
+        # TENNIS — Masters Madrid/Rome (Mai), météo/altitude sous-estimée
+        # ═══════════════════════════════════════════════════════════
+        "tennis_atp",               # Masters 1000
+        "tennis_wta",               # Circuit féminin
+        # ═══════════════════════════════════════════════════════════
+        # BASEBALL — MLB: Très prévisible, volume élevé
+        # ═══════════════════════════════════════════════════════════
+        "baseball_mlb",             # Saison régulière + playoffs
+        # ═══════════════════════════════════════════════════════════
+        # ESPORTS — MSI (Mai), Draft inefficience maximale
+        # ═══════════════════════════════════════════════════════════
+        "esports_lol",              # MSI 2026 / Tournois majeurs
+        "esports_lol_msi",          # Mid-Season Invitational
+        # ═══════════════════════════════════════════════════════════
+        # SOCCER — Protection du Capital (Asian Handicap 0.0)
+        # ═══════════════════════════════════════════════════════════
         "soccer_uefa_champs_league",
         "soccer_epl",
         "soccer_spain_la_liga",
+        "soccer_germany_bundesliga",
+        "soccer_italy_serie_a",
+        "soccer_france_ligue_one",
     ])
+
+    # ── Seuils Alpha par Sport (ajustement dynamique) ──────────
+    # NBA: 2.0% (volume stable), Foot: 2.5% (marché efficient)
+    alpha_thresholds: dict[str, float] = Field(default={
+        "basketball_nba": 0.020,
+        "basketball_wnba": 0.020,
+        "basketball_euroleague": 0.020,
+        "tennis_atp": 0.020,
+        "tennis_wta": 0.020,
+        "baseball_mlb": 0.018,
+        "esports_lol": 0.015,
+        "esports_lol_msi": 0.015,
+        "soccer_epl": 0.025,
+        "soccer_uefa_champs_league": 0.025,
+        "default": 0.020,
+    })
 
     # ── Synonyms ──────────────────────────────────────────────
     synonyms: dict[str, str] = Field(default={
