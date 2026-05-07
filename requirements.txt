@@ -1,9 +1,29 @@
-# PREDATOR PAIM v3.0 — Optimisé pour Vercel (build < 30s)
-# Suppression de scipy, pandas, aiolimiter pour garantir le déploiement
+# PREDATOR PAIM v3.0 — Dépendances Minimales Vercel
+# Build target: < 30s, Bundle: < 50MB
+# Audit PhD MIT : toutes les libs nécessaires à l'import sont listées
+
+# ── Config ────────────────────────────────────────────────────
+pydantic>=2.0.0
+pydantic-settings>=2.0.0
+python-dotenv>=1.0.0
+
+# ── Web ───────────────────────────────────────────────────────
 flask>=3.0.0
 requests>=2.31.0
+
+# ── Math ──────────────────────────────────────────────────────
 numpy>=1.26.0
+
+# ── Database ──────────────────────────────────────────────────
 supabase>=2.0.0
+
+# ── AI ────────────────────────────────────────────────────────
 google-generativeai>=0.7.0
 groq>=0.9.0
-python-dotenv>=1.0.0
+
+# ── Telegram ──────────────────────────────────────────────────
+python-telegram-bot>=21.0
+
+# ── HTTP Async ────────────────────────────────────────────────
+httpx>=0.27.0
+tenacity>=8.0.0
