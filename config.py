@@ -69,19 +69,23 @@ class Settings(BaseSettings):
         default=["pinnacle"]
     )
     soft_books: list[str] = Field(
-        default=["1xbet", "1xbit", "1xstavka", "bet365", "unibet", "williamhill"]
+        default=["onexbet", "1xbet", "1xbit", "1xstavka", "bet365", "unibet", "williamhill"]
     )
 
-    # ── Multi-Sport v2.1 — Bernoulli Trials Uniquement ────────
-    # Sports binaires naturels (Moneyline : h2h)
-    # Tennis, NBA, NHL, Esports = binaires purs
-    # Soccer = Asian Handicap / Spreads uniquement (pas de 1N2)
+    # ── Multi-Sport v3.0 (MIT Portfolio d'Alpha) ──────────────
+    # Basketball (NBA + WNBA): Haute liquidité, Load Management lag
+    # Tennis ATP: Pas de nul, impact météo/altitude sous-estimé
+    # Esports (LoL): Marché jeune, Draft inefficience
+    # Soccer: Asian Handicap 0.0 uniquement (pas de 1N2)
     target_sports: list[str] = Field(default=[
-        # Basketball (NBA - haute liquidité, binaire)
+        # Basketball — ROI de la Statistique (>100 possessions)
         "basketball_nba",
-        # Esports (LoL - binaire)
+        "basketball_wnba",        # Fenêtre nuit Dakar (marchés US)
+        # Tennis ATP — Arbitrage de surface pur
+        "tennis_atp",
+        # Esports — Gisement de Latence (Draft inefficience)
         "esports_lol",
-        # Football (UEFA - spreads/asian handicap uniquement)
+        # Soccer — Protection du Capital (AH 0.0)
         "soccer_uefa_champs_league",
         "soccer_epl",
         "soccer_spain_la_liga",
