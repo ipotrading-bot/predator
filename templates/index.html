@@ -97,13 +97,52 @@
         </div>
     </div>
 
+    <!-- CLV Counter Banner — indicateur de réussite n°1 -->
+    <div class="glass mb-4 px-5 py-3 rounded flex items-center justify-between" id="clv-banner">
+        <div class="flex items-center gap-3">
+            <span class="text-xs text-gray-500 uppercase tracking-widest">CLV — 10 derniers signaux</span>
+            <span class="text-lg font-bold text-blue-400" id="clv-counter-value">...</span>
+            <span class="text-xs text-gray-600" id="clv-counter-count"></span>
+        </div>
+        <div class="flex items-center gap-2">
+            <span class="text-[10px] text-gray-600 uppercase">Indicateur n°1 de performance</span>
+            <span id="clv-verdict" class="text-xs font-bold px-2 py-0.5 rounded"></span>
+        </div>
+    </div>
+
     <!-- Stats Cards — valeurs réelles depuis /api/stats et /api/exposure -->
-    <div class="grid grid-cols-1 md:grid-cols-5 gap-4 mb-8">
+    <div class="grid grid-cols-1 md:grid-cols-5 gap-4 mb-6">
         <div class="glass p-4 rounded"><div class="text-xs text-gray-500">CAPITAL</div><div class="text-xl font-bold" id="stat-capital">...</div></div>
         <div class="glass p-4 rounded"><div class="text-xs text-gray-500">WIN RATE (7/9)</div><div class="text-xl font-bold text-white" id="stat-winrate">...</div></div>
-        <div class="glass p-4 rounded"><div class="text-xs text-gray-500">CLV AVG</div><div class="text-xl font-bold text-blue-400" id="stat-clv">...</div></div>
+        <div class="glass p-4 rounded"><div class="text-xs text-gray-500">CLV AVG (ALL)</div><div class="text-xl font-bold text-blue-400" id="stat-clv">...</div></div>
         <div class="glass p-4 rounded"><div class="text-xs text-gray-500">ROI MENSUEL</div><div class="text-xl font-bold text-green-400" id="stat-roi">...</div></div>
         <div class="glass p-4 rounded border-blue-500/30"><div class="text-xs text-gray-500">CURRENT EXPOSURE</div><div class="text-xl font-bold text-yellow-400" id="stat-exposure">...</div><div class="text-xs text-gray-600" id="stat-positions">...</div></div>
+    </div>
+
+    <!-- Market Heatmap + Bouton Test API -->
+    <div class="grid grid-cols-1 md:grid-cols-3 gap-4 mb-8">
+        <!-- Heatmap -->
+        <div class="md:col-span-2 glass p-4 rounded">
+            <div class="flex justify-between items-center mb-3">
+                <h3 class="text-xs text-gray-500 uppercase tracking-widest">📊 Market Heatmap — Alpha moyen / sport (24h)</h3>
+                <span class="text-[10px] text-gray-700">Vert = marché chaud | Gris = marché froid</span>
+            </div>
+            <div id="heatmap-grid" class="grid grid-cols-2 md:grid-cols-4 gap-2">
+                <div class="text-center text-gray-700 text-xs col-span-full py-4">Chargement...</div>
+            </div>
+        </div>
+        <!-- Test API -->
+        <div class="glass p-4 rounded flex flex-col justify-between">
+            <div>
+                <h3 class="text-xs text-gray-500 uppercase tracking-widest mb-3">🔌 Connexion The-Odds-API</h3>
+                <div id="api-test-result" class="text-xs text-gray-600 mb-4 min-h-[40px]">Cliquez pour tester la connexion.</div>
+            </div>
+            <button onclick="testAPIConnection()"
+                id="btn-test-api"
+                class="w-full bg-black border border-green-900 hover:border-green-500 text-green-400 hover:text-green-300 px-4 py-2 rounded text-xs font-bold uppercase tracking-widest transition-all">
+                ▶ TEST API + QUOTA
+            </button>
+        </div>
     </div>
 
     <!-- Navigation -->
@@ -336,6 +375,10 @@
                             </div>
                             <h3 class="text-xl font-bold text-white">${signal.match_name || 'Match Inconnu'}</h3>
                             <p class="text-sm text-green-500/80 font-semibold">Market: ${signal.market_type || 'N/A'}</p>
+                            <!-- Sources Badge -->
+                            <div class="mt-2 flex flex-wrap gap-1" id="sources-${signal.id || Math.random()}">
+                                ${renderSourcesBadge(signal.sources_validated || '')}
+                            </div>
                         </div>
                         
                         <div class="flex gap-8 text-center">
@@ -356,7 +399,7 @@
                         <div class="w-full md:w-72 p-3 bg-black/60 border border-green-900/20 rounded-sm">
                             <div class="text-[9px] text-gray-500 mb-1 uppercase font-bold">IA Risk Flag (Gemini)</div>
                             <p class="text-[11px] text-gray-400 italic leading-tight">
-                                ${signal.note_ia || 'Analyse de risque non disponible.'}
+                                ${signal.note_ia || signal.ai_context || 'Analyse de risque non disponible.'}
                             </p>
                         </div>
                     </div>
@@ -561,12 +604,150 @@
             fetchExposure();
             fetchStats();
             fetchTicker();
+            fetchCLVCounter();
+            fetchHeatmap();
             
             setInterval(updateDashboard, 60000);
             setInterval(fetchAPIHealth, 60000);
             setInterval(fetchExposure, 45000);
             setInterval(fetchTicker, 60000);
+            setInterval(fetchCLVCounter, 120000);
+            setInterval(fetchHeatmap, 120000);
         });
+
+        // ── Sources Badge renderer ───────────────────────────────
+        function renderSourcesBadge(sourcesStr) {
+            if (!sourcesStr) return '<span class="text-[9px] text-gray-700">Sources: N/A</span>';
+            const parts = sourcesStr.split(' | ');
+            return parts.map(p => {
+                const isOk = p.startsWith('✅');
+                const label = p.replace('✅ ', '').replace('⚠️ ', '');
+                const cls = isOk
+                    ? 'bg-green-900/30 text-green-400 border border-green-800/40'
+                    : 'bg-gray-900/30 text-gray-600 border border-gray-800/40';
+                return `<span class="text-[9px] px-1.5 py-0.5 rounded ${cls}">${isOk ? '✅' : '⚠️'} ${label}</span>`;
+            }).join('');
+        }
+
+        // ── CLV Counter ──────────────────────────────────────────────
+        async function fetchCLVCounter() {
+            try {
+                const res = await fetch('/api/clv-counter');
+                const d = await res.json();
+                const val = d.clv_avg || 0;
+                const count = d.count || 0;
+
+                document.getElementById('clv-counter-value').textContent =
+                    (val >= 0 ? '+' : '') + val.toFixed(2) + '%';
+                document.getElementById('clv-counter-count').textContent =
+                    count > 0 ? `(${count} signaux)` : '(aucun signal settled)';
+
+                const verdict = document.getElementById('clv-verdict');
+                if (count === 0) {
+                    verdict.textContent = 'EN ATTENTE';
+                    verdict.className = 'text-xs font-bold px-2 py-0.5 rounded bg-gray-800 text-gray-500';
+                } else if (val > 0) {
+                    verdict.textContent = '✅ BOT GAGNANT';
+                    verdict.className = 'text-xs font-bold px-2 py-0.5 rounded bg-green-900/40 text-green-400';
+                } else {
+                    verdict.textContent = '⚠️ AJUSTER FILTRES';
+                    verdict.className = 'text-xs font-bold px-2 py-0.5 rounded bg-red-900/40 text-red-400';
+                }
+            } catch (e) { console.error('fetchCLVCounter:', e); }
+        }
+
+        // ── Market Heatmap ───────────────────────────────────────────
+        const SPORT_LABELS = {
+            'basketball_nba': 'NBA',
+            'basketball_wnba': 'WNBA',
+            'tennis_atp': 'Tennis ATP',
+            'esports_lol': 'LoL Esports',
+            'soccer_uefa_champs_league': 'UCL',
+            'soccer_epl': 'EPL',
+            'soccer_spain_la_liga': 'La Liga',
+        };
+
+        async function fetchHeatmap() {
+            const grid = document.getElementById('heatmap-grid');
+            try {
+                const res = await fetch('/api/heatmap');
+                const d = await res.json();
+                const heatmap = d.heatmap || {};
+
+                // Afficher tous les sports cibles, même ceux sans données
+                const allSports = Object.keys(SPORT_LABELS);
+                const entries = allSports.map(sport => ({
+                    sport,
+                    label: SPORT_LABELS[sport],
+                    alpha: heatmap[sport] ?? null,
+                }));
+
+                if (entries.every(e => e.alpha === null)) {
+                    grid.innerHTML = `
+                        <div class="col-span-full text-center text-gray-700 text-xs py-4">
+                            Aucun signal dans les dernières 24h — marché froid
+                        </div>`;
+                    return;
+                }
+
+                grid.innerHTML = entries.map(({ label, alpha }) => {
+                    const hasData = alpha !== null;
+                    const hot = hasData && alpha >= 1.5;
+                    const warm = hasData && alpha >= 0.8 && alpha < 1.5;
+
+                    const borderColor = hot ? 'border-green-500/60' : warm ? 'border-yellow-600/40' : 'border-gray-800';
+                    const textColor = hot ? 'text-green-400' : warm ? 'text-yellow-500' : 'text-gray-600';
+                    const bgColor = hot ? 'bg-green-900/20' : warm ? 'bg-yellow-900/10' : 'bg-black/20';
+                    const indicator = hot ? '🔥' : warm ? '📈' : '❄️';
+                    const alphaText = hasData ? (alpha >= 0 ? '+' : '') + alpha.toFixed(1) + '%' : 'N/A';
+
+                    return `
+                        <div class="border ${borderColor} ${bgColor} rounded p-2 text-center">
+                            <div class="text-[9px] text-gray-500 mb-1 truncate">${label}</div>
+                            <div class="text-sm font-bold ${textColor}">${alphaText}</div>
+                            <div class="text-[10px] mt-0.5">${indicator}</div>
+                        </div>`;
+                }).join('');
+
+            } catch (e) {
+                grid.innerHTML = '<div class="col-span-full text-center text-gray-700 text-xs py-4">Erreur chargement heatmap</div>';
+                console.error('fetchHeatmap:', e);
+            }
+        }
+
+        // ── Test API Connection ──────────────────────────────────────
+        async function testAPIConnection() {
+            const btn = document.getElementById('btn-test-api');
+            const result = document.getElementById('api-test-result');
+
+            btn.textContent = '⏳ TEST EN COURS...';
+            btn.disabled = true;
+            result.textContent = 'Connexion à The-Odds-API...';
+            result.className = 'text-xs text-gray-500 mb-4 min-h-[40px]';
+
+            try {
+                const res = await fetch('/api/test-connection');
+                const d = await res.json();
+
+                if (d.status === 'connected') {
+                    result.textContent = d.message;
+                    result.className = 'text-xs text-green-400 mb-4 min-h-[40px]';
+                    // Mettre à jour le LED Pinnacle
+                    document.getElementById('led-pinnacle').className = 'led led-online';
+                    document.getElementById('status-pinnacle').textContent = 'ONLINE';
+                    document.getElementById('status-pinnacle').className = 'text-green-400 ml-1';
+                } else {
+                    result.textContent = d.message;
+                    result.className = 'text-xs text-red-400 mb-4 min-h-[40px]';
+                }
+            } catch (e) {
+                result.textContent = '❌ Erreur réseau — vérifiez la connexion';
+                result.className = 'text-xs text-red-400 mb-4 min-h-[40px]';
+            } finally {
+                btn.textContent = '▶ TEST API + QUOTA';
+                btn.disabled = false;
+            }
+        }
     </script>
 </body>
 </html>

@@ -42,6 +42,7 @@ class SupabaseClient:
         sport: str,
         match_time_iso: str,
         ai_context: str = "",
+        sources_badge: str = "",
     ) -> Optional[str]:
         """Insère un signal validé. Retourne l'UUID généré."""
         try:
@@ -51,7 +52,7 @@ class SupabaseClient:
                 "sport": sport,
                 "match_time": match_time_iso,
                 "market_type": signal.market_key,
-                "selection": signal.selection,
+                "selection": signal.bookmaker_target,
                 "bookmaker_target": signal.bookmaker_target,
                 "sharp_prob": round(signal.sharp_prob, 5),
                 "implied_prob_soft": round(signal.implied_prob_soft, 5),
@@ -60,12 +61,13 @@ class SupabaseClient:
                 "recommended_stake": signal.recommended_stake,
                 "clv_estimate": round(signal.clv_estimate, 5),
                 "ai_context": ai_context,
+                "sources_validated": sources_badge,
                 "status": "pending",
                 "created_at": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()),
             }
             response = self._client.table("signals").insert(data).execute()
             record_id = response.data[0]["id"] if response.data else None
-            logger.info(f"✅ Signal inséré: {record_id} | {event_name}")
+            logger.info(f"✅ Signal inséré: {record_id} | {event_name} | {sources_badge}")
             return record_id
         except Exception as e:
             logger.error(f"Erreur insert signal: {e}")

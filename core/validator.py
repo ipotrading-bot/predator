@@ -29,13 +29,22 @@ class GeminiValidator:
         GeminiValidator._call_count += 1
         logger.info(f"Gemini API call #{GeminiValidator._call_count} pour {match_name} / {market}")
         
+        # Prompt PhD MIT — Impact quantitatif + Alpha Decay
         prompt = (
-            f"Analyse l'événement sportif à venir : {match_name} pour le marché {market}. "
-            f"Recherche sur le web les actualités des 12 dernières heures. "
-            f"Y a-t-il une blessure de dernière minute d'un joueur clé, un changement d'entraîneur subit, "
-            f"ou des conditions météo extrêmes ? "
-            f"Si un risque majeur est détecté, résume-le en une phrase courte commençant par '🚨 RED FLAG : '. "
-            f"Si aucun risque n'est détecté, réponds strictement par '✅ Aucun risque majeur détecté.'"
+            f"En tant qu'expert en analyse de données sportives et pricing de marchés, "
+            f"évalue l'événement : {match_name} pour le marché {market}.\n\n"
+            f"Recherche sur le web les actualités des 4 dernières heures UNIQUEMENT.\n\n"
+            f"CRITÈRES D'ÉVALUATION :\n"
+            f"1. BLESSURE : Si un joueur clé est absent, estime l'impact en points de spread (NBA/NFL) "
+            f"ou en probabilité de victoire (Soccer/Tennis). Une absence > 2 points d'impact = RED FLAG.\n"
+            f"2. TIMING : Si la news a plus de 4 heures, elle est DÉJÀ INTÉGRÉE dans le prix. Ne la signale PAS.\n"
+            f"3. MÉTÉO : Conditions extrêmes (pluie forte, vent >40km/h) uniquement pour sports outdoor.\n"
+            f"4. LINEUP : Changement d'entraîneur ou rotation majeure confirmée dans les 2 dernières heures.\n\n"
+            f"RÉPONSE ATTENDUE :\n"
+            f"- Si impact quantifiable > 2 points OU news < 4h avec impact majeur : "
+            f"'🚨 RED FLAG : [raison courte + impact estimé]'\n"
+            f"- Sinon : '✅ Aucun risque majeur détecté. News déjà intégrée dans le pricing.'\n\n"
+            f"Sois CONSERVATEUR. Un faux positif coûte moins cher qu'un faux négatif."
         )
 
         try:

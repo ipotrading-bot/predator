@@ -262,3 +262,107 @@ def audit_settlement():
 @app.route('/api/healthcheck')
 def healthcheck():
     return jsonify({"status": "ok", "version": "3.0.0", "ts": int(datetime.now().timestamp())})
+
+
+# ── Market Heatmap (Alpha moyen par sport) ────────────────────────
+
+@app.route('/api/heatmap')
+def get_market_heatmap():
+    """Retourne l'Alpha moyen par sport sur les dernières 24h."""
+    try:
+        from datetime import timedelta
+        cutoff = (datetime.now() - timedelta(hours=24)).isoformat()
+        
+        signals = db._client.table("signals").select("sport, alpha_spread").gte("created_at", cutoff).execute()
+        data = signals.data or []
+        
+        if not data:
+            return jsonify({"heatmap": {}})
+        
+        # Grouper par sport
+        sport_alphas = {}
+        for sig in data:
+            sport = sig.get("sport", "unknown")
+            alpha = sig.get("alpha_spread", 0)
+            if sport not in sport_alphas:
+                sport_alphas[sport] = []
+            sport_alphas[sport].append(alpha)
+        
+        # Calculer moyenne par sport
+        heatmap = {
+            sport: round(sum(alphas) / len(alphas) * 100, 2)
+            for sport, alphas in sport_alphas.items()
+        }
+        
+        return jsonify({"heatmap": heatmap})
+    except Exception as e:
+        logger.error(f"Erreur heatmap: {e}")
+        return jsonify({"heatmap": {}})
+
+
+# ── CLV Counter (10 derniers signaux) ─────────────────────────────
+
+@app.route('/api/clv-counter')
+def get_clv_counter():
+    """Retourne la CLV moyenne des 10 derniers signaux settled."""
+    try:
+        signals = (
+            db._client.table("signals")
+            .select("clv_estimate")
+            .eq("status", "settled")
+            .order("settled_at", desc=True)
+            .limit(10)
+            .execute()
+        )
+        data = signals.data or []
+        
+        if not data:
+            return jsonify({"clv_avg": 0, "count": 0})
+        
+        clv_values = [s.get("clv_estimate", 0) for s in data if s.get("clv_estimate") is not None]
+        clv_avg = sum(clv_values) / len(clv_values) if clv_values else 0
+        
+        return jsonify({
+            "clv_avg": round(clv_avg * 100, 2),  # en %
+            "count": len(clv_values)
+        })
+    except Exception as e:
+        logger.error(f"Erreur CLV counter: {e}")
+        return jsonify({"clv_avg": 0, "count": 0})
+
+
+# ── API Test (quota + connexion) ──────────────────────────────────
+
+@app.route('/api/test-connection')
+def test_api_connection():
+    """Teste la connexion The-Odds-API et retourne le quota restant."""
+    try:
+        import requests
+        from config import settings
+        
+        url = "https://api.the-odds-api.com/v4/sports"
+        params = {"apiKey": settings.odds_api_key}
+        
+        response = requests.get(url, params=params, timeout=10)
+        
+        if response.status_code == 200:
+            remaining = response.headers.get("x-requests-remaining", "?")
+            used = response.headers.get("x-requests-used", "?")
+            
+            return jsonify({
+                "status": "connected",
+                "quota_remaining": remaining,
+                "quota_used": used,
+                "message": f"✅ API connectée | {remaining} requêtes restantes"
+            })
+        else:
+            return jsonify({
+                "status": "error",
+                "message": f"❌ Erreur API {response.status_code}"
+            }), 500
+            
+    except Exception as e:
+        return jsonify({
+            "status": "error",
+            "message": f"❌ Connexion échouée: {str(e)}"
+        }), 500
