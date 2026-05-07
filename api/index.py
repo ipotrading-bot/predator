@@ -19,6 +19,18 @@ app = Flask(__name__)
 
 db = SupabaseClient()
 
+# Chercher 1XBet avec gestion des synonymes
+BOOKMAKER_SYNONYMS = ['onexbet', '1xbet', '1x_bet', '1xbit']
+
+
+def _find_1xbet(bookmakers: list[dict]) -> list[dict]:
+    """Trouve 1XBet parmi les bookmakers, avec gestion des synonymes."""
+    for bm in bookmakers:
+        if bm.get("key", "").lower() in BOOKMAKER_SYNONYMS:
+            return bm.get("markets", [])
+    return []
+
+
 ODDS_API_KEY = os.environ.get("ODDS_API_KEY")
 SUPABASE_URL = os.environ.get("SUPABASE_URL")
 SUPABASE_KEY = os.environ.get("SUPABASE_KEY")
