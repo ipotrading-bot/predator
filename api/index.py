@@ -17,8 +17,6 @@ from core.notifications import TelegramNotifier
 
 app = Flask(__name__)
 
-genai.configure(api_key=settings.gemini_api_key)
-
 db = SupabaseClient()
 
 ODDS_API_KEY = os.environ.get("ODDS_API_KEY")
