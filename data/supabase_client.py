@@ -35,7 +35,7 @@ class SupabaseClient:
 
     # ── Signals ───────────────────────────────────────────────
 
-    async def insert_signal(
+    def insert_signal(
         self,
         signal: PAIMSignal,
         event_name: str,
@@ -44,7 +44,7 @@ class SupabaseClient:
         ai_context: str = "",
         sources_badge: str = "",
     ) -> Optional[str]:
-        """Insère un signal validé. Retourne l'UUID généré."""
+        """Insère un signal validé. Retourne l'UUID généré. (SDK synchrone)"""
         try:
             # Calculer fair_price et cote_1xbet
             fair_price = round(1.0 / signal.sharp_prob, 3) if signal.sharp_prob > 0 else None
@@ -93,14 +93,14 @@ class SupabaseClient:
 
     # ── Results ───────────────────────────────────────────────
 
-    async def update_result(
+    def update_result(
         self,
         signal_id: str,
         outcome: int,        # 1 = gagné, 0 = perdu, -1 = void
         profit_eur: float,
         closing_odds: Optional[float] = None,
     ) -> None:
-        """Met à jour le résultat post-match et calcule le CLV réel."""
+        """Met à jour le résultat post-match et calcule le CLV réel. (SDK synchrone)"""
         try:
             update_data: dict = {
                 "outcome": outcome,
@@ -118,7 +118,7 @@ class SupabaseClient:
 
     # ── Bankroll Snapshots ────────────────────────────────────
 
-    async def insert_bankroll_snapshot(
+    def insert_bankroll_snapshot(
         self, balance: float, drawdown: float, roi: float
     ) -> None:
         try:

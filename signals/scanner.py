@@ -534,7 +534,8 @@ class MarketScanner:
             signal = dossier.signal
             meta   = dossier.meta
             try:
-                signal_id = await self.db.insert_signal(
+                # insert_signal est maintenant synchrone (SDK supabase-py v2)
+                signal_id = self.db.insert_signal(
                     signal=signal,
                     event_name=meta["event_name"],
                     sport=meta["sport"],
