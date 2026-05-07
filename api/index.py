@@ -247,9 +247,51 @@ def test_seed():
 @app.route('/api/data')
 def get_data():
     try:
+        from datetime import datetime, timedelta
+        
         db = get_db()
-        signals = db._client.table("signals").select("*").eq("status", "pending").order("created_at", desc=True).limit(50).execute()
+        
+        # ═══════════════════════════════════════════════════════════════════
+        # FILTRES STRICTS — Doctrines 48h + Binary Synthesis
+        # ═══════════════════════════════════════════════════════════════════
+        
+        # 1. Filtre temporel: uniquement matchs dans les prochaines 48h
+        now = datetime.now()
+        cutoff_time = (now + timedelta(hours=48)).isoformat()
+        
+        signals = db._client.table("signals")\
+            .select("*")\
+            .eq("status", "pending")\
+            .lte("match_time", cutoff_time)\
+            .order("created_at", desc=True)\
+            .limit(50)\
+            .execute()
+        
         data = signals.data or []
+        
+        # Filtre additionnel: exclure matchs déjà passés (match_time < now)
+        data = [sig for sig in data if sig.get("match_time") and sig["match_time"] > now.isoformat()]
+        
+        # 2. Filtre Binary Synthesis côté API (double protection)
+        # Exclure Draw + cotes invalides
+        filtered_data = []
+        for sig in data:
+            selection = sig.get("selection", "").lower()
+            
+            # Rejet si Draw/Nul
+            if any(forbidden in selection for forbidden in ["draw", "nul", "match nul"]):
+                logger.warning(f"🚫 API FILTER: Signal Draw rejeté: {sig.get('match_name')}")
+                continue
+            
+            # Rejet si cote_1xbet = 0 ou null
+            cote = sig.get("cote_1xbet")
+            if not cote or cote <= 1.0:
+                logger.debug(f"🚫 API FILTER: Cote invalide rejetée: {sig.get('match_name')}")
+                continue
+            
+            filtered_data.append(sig)
+        
+        data = filtered_data
 
         # Enrichir chaque signal avec les champs calculés manquants
         for sig in data:
