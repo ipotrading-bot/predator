@@ -125,6 +125,61 @@ def screener():
         return jsonify({"status": "error", "message": str(e)}), 500
 
 
+# ── Rotation Scan — PhD MIT Protocol (Rate Limiting) ──────────
+
+@app.route('/api/rotation-scan')
+def rotation_scan():
+    """
+    Protocole de Rotation de Scan — Un sport à la fois.
+    
+    Respecte le Rate Limiting The-Odds-API (15 RPM max).
+    Appelé par GitHub Actions toutes les 4-5 minutes.
+    Cycle complet: ~70 minutes pour 14 sports.
+    
+    Returns:
+        JSON avec le sport scanné, signaux trouvés, état rotation
+    """
+    try:
+        from core.rotation_engine import execute_rotation_scan
+        
+        result = execute_rotation_scan()
+        return jsonify(result)
+        
+    except Exception as e:
+        logger.error(f"❌ Erreur rotation scan: {traceback.format_exc()}")
+        return jsonify({
+            "status": "error",
+            "message": str(e),
+            "protocol": "PhD MIT Rotation Engine v3.6"
+        }), 500
+
+
+@app.route('/api/rotation-status')
+def rotation_status():
+    """
+    Retourne l'état actuel de la rotation.
+    
+    Returns:
+        JSON avec last_index, next_sport, scan_count, watchlist
+    """
+    try:
+        from core.rotation_engine import get_rotation_summary
+        
+        summary = get_rotation_summary()
+        return jsonify({
+            "status": "ok",
+            "protocol": "PhD MIT Rotation Engine v3.6",
+            **summary
+        })
+        
+    except Exception as e:
+        logger.error(f"❌ Erreur rotation status: {e}")
+        return jsonify({
+            "status": "error",
+            "message": str(e)
+        }), 500
+
+
 # ── Route test seed (données factices pour valider le frontend) ──
 
 @app.route('/api/test-seed')

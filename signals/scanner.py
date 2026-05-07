@@ -290,6 +290,73 @@ class MarketScanner:
         return result
 
     # ─────────────────────────────────────────────────────────────
+    # Rotation de Scan — Un sport à la fois (Rate Limiting)
+    # ─────────────────────────────────────────────────────────────
+
+    async def run_single_sport_scan(self, sport_key: str) -> ScanResult:
+        """
+        Scan un SEUL sport (protocole rotation PhD MIT).
+        
+        Appelé par GitHub Actions toutes les 5 minutes.
+        Respecte le Rate Limiting: 15 RPM max, ~288 requêtes/jour.
+        
+        Args:
+            sport_key: Clé The-Odds-API (ex: 'basketball_nba')
+            
+        Returns:
+            ScanResult: Résultat du scan pour ce sport uniquement
+        """
+        start = time.monotonic()
+        result = ScanResult()
+        
+        logger.info(
+            f"🎯 ROTATION SCAN | Sport: {sport_key} | "
+            f"bankroll={self.bankroll:,.0f}€ | EV+ min dynamique"
+        )
+        
+        try:
+            async with OddsFetcher() as fetcher:
+                events = await fetcher.fetch_odds_for_sport(sport_key)
+            
+            # ── Filtre 48h ────────────────────────────────────
+            events = [
+                e for e in events
+                if _is_within_window(e.get("commence_time", ""), SCAN_WINDOW_HOURS)
+            ]
+            
+            result.events_analyzed = len(events)
+            logger.info(f"📡 {sport_key}: {len(events)} événements dans la fenêtre")
+            
+            if not events:
+                result.duration_seconds = round(time.monotonic() - start, 2)
+                return result
+            
+            news_cache = await self._prefetch_news(events)
+            dossiers: list[ArbitrageDossier] = []
+            
+            for event in events:
+                event_dossiers = await self._process_event(event, news_cache)
+                result.signals_found += len(event_dossiers)
+                for d in event_dossiers:
+                    result.signals_validated += 1
+                    dossiers.append(d)
+            
+            result.signals_rejected = result.signals_found - result.signals_validated
+            
+            if dossiers:
+                await self._persist_and_notify(dossiers)
+            
+        except Exception as e:
+            logger.error(f"❌ Erreur scan {sport_key}: {e}", exc_info=True)
+        
+        result.duration_seconds = round(time.monotonic() - start, 2)
+        logger.info(
+            f"✅ Rotation {sport_key} terminée | "
+            f"{result.signals_validated} signaux | {result.duration_seconds}s"
+        )
+        return result
+
+    # ─────────────────────────────────────────────────────────────
     # Pré-fetch news
     # ─────────────────────────────────────────────────────────────
 
