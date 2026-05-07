@@ -485,45 +485,85 @@
         let currentSignals = [];
         let selectedSignal = null;
         
-        // ── Sport Labels & Icons (Multi-Sport v3.5) ──────────────────
+        // ── Sport Labels & Icons (MIT Alpha Watchlist v3.6) ────────
+        // Mapping complet des clés The-Odds-API avec icônes emoji
         const SPORT_ICONS = {
+            // ═══ BASKETBALL ═══
             'basketball_nba': '🏀',
-            'basketball_wnba': '🏀',
             'basketball_euroleague': '🏀',
-            'tennis_atp': '🎾',
-            'tennis_wta': '🎾',
-            'baseball_mlb': '⚾',
-            'esports_lol': '🎮',
-            'esports_lol_msi': '🎮',
-            'soccer_uefa_champs_league': '⚽',
-            'soccer_epl': '⚽',
-            'soccer_spain_la_liga': '⚽',
-            'soccer_germany_bundesliga': '⚽',
-            'soccer_italy_serie_a': '⚽',
-            'soccer_france_ligue_one': '⚽',
-            'soccer': '⚽',
+            'basketball_ncaab': '🏀',
+            'basketball_spain_liga_acb': '🏀',
+            'basketball_wnba': '🏀',
             'basketball': '🏀',
-            'tennis': '🎾',
+            // ═══ TENNIS ═══
+            'tennis_atp_french_open': '🎾',
+            'tennis_atp_wimbledon': '🎾',
+            'tennis_atp_us_open': '🎾',
+            'tennis_atp_aus_open': '�',
+            'tennis_atp_masters_1000': '🎾',
+            'tennis_wta': '🎾',
+            'tennis_atp': '🎾',
+            'tennis': '�',
+            // ═══ SOCCER ═══
+            'soccer_epl': '⚽',
+            'soccer_uefa_champs_league': '⚽',
+            'soccer_uefa_europa_league': '⚽',
+            'soccer_germany_bundesliga': '⚽',
+            'soccer_spain_la_liga': '⚽',
+            'soccer_italy_serie_a': '⚽',
+            'soccer_france_ligue_1': '⚽',
+            'soccer': '⚽',
+            // ═══ ESPORTS ═══
+            'esports_lol': '🎮',
+            'esports_lol_msi': '�',
+            'esports_lol_lpl': '🎮',
+            'esports_lol_lck': '🎮',
+            'esports_csgo_esl_pro_league': '🎯',
+            'esports_dota2_ti': '🎯',
+            'esports': '�',
+            // ═══ AUTRES ═══
+            'baseball_mlb': '⚾',
             'baseball': '⚾',
-            'esports': '🎮',
+            'icehockey_nhl': '🏒',
+            'icehockey': '🏒',
+            'mma_mixed_martial_arts': '🥊',
+            'mma': '🥊',
         };
         
         const SPORT_LABELS = {
+            // ═══ BASKETBALL ═══
             'basketball_nba': 'NBA',
-            'basketball_wnba': 'WNBA',
             'basketball_euroleague': 'Euroleague',
-            'tennis_atp': 'ATP',
+            'basketball_ncaab': 'NCAAB',
+            'basketball_spain_liga_acb': 'ACB',
+            'basketball_wnba': 'WNBA',
+            // ═══ TENNIS ═══
+            'tennis_atp_french_open': 'Roland Garros',
+            'tennis_atp_wimbledon': 'Wimbledon',
+            'tennis_atp_us_open': 'US Open',
+            'tennis_atp_aus_open': 'Aus Open',
+            'tennis_atp_masters_1000': 'Masters 1000',
             'tennis_wta': 'WTA',
-            'baseball_mlb': 'MLB',
+            'tennis_atp': 'ATP',
+            // ═══ SOCCER ═══
+            'soccer_epl': 'EPL',
+            'soccer_uefa_champs_league': 'UCL',
+            'soccer_uefa_europa_league': 'UEL',
+            'soccer_germany_bundesliga': 'Bundesliga',
+            'soccer_spain_la_liga': 'La Liga',
+            'soccer_italy_serie_a': 'Serie A',
+            'soccer_france_ligue_1': 'Ligue 1',
+            // ═══ ESPORTS ═══
             'esports_lol': 'LoL',
             'esports_lol_msi': 'MSI',
-            'soccer_uefa_champs_league': 'UCL',
-            'soccer_epl': 'EPL',
-            'soccer_spain_la_liga': 'La Liga',
-            'soccer_germany_bundesliga': 'Bundesliga',
-            'soccer_italy_serie_a': 'Serie A',
-            'soccer_france_ligue_one': 'Ligue 1',
-            'soccer': 'Soccer'
+            'esports_lol_lpl': 'LPL China',
+            'esports_lol_lck': 'LCK Korea',
+            'esports_csgo_esl_pro_league': 'CS:GO ESL',
+            'esports_dota2_ti': 'Dota 2 TI',
+            // ═══ AUTRES ═══
+            'baseball_mlb': 'MLB',
+            'icehockey_nhl': 'NHL',
+            'mma_mixed_martial_arts': 'UFC/MMA',
         };
         
         function getSportIcon(sport) {

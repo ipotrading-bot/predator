@@ -74,54 +74,96 @@ class Settings(BaseSettings):
                  "bet365", "unibet", "williamhill"]
     )
 
-    # ── Multi-Sport v3.5 (MIT Portfolio d'Alpha Global) ─────────
-    # Diversification: NBA Playoffs, Tennis Masters, MLB, Euroleague, LoL MSI
-    # Doctrine: Le seul "free lunch" en finance est la diversification
+    # ── Multi-Sport v3.6 (MIT Alpha Watchlist - The-Odds-API Official Keys) ─
+    # Gisements d'Alpha classés par potentiel de rentabilité
+    # Source: nomenclature technique officielle The-Odds-API
     target_sports: list[str] = Field(default=[
-        # ═══════════════════════════════════════════════════════════
-        # BASKETBALL — Haute liquidité, Playoffs = Alpha maximal
-        # ═══════════════════════════════════════════════════════════
-        "basketball_nba",           # Playoffs: cotes volatiles
-        "basketball_wnba",          # Fenêtre nuit Dakar
-        "basketball_euroleague",    # Final Four = inefficiences
-        # ═══════════════════════════════════════════════════════════
-        # TENNIS — Masters Madrid/Rome (Mai), météo/altitude sous-estimée
-        # ═══════════════════════════════════════════════════════════
-        "tennis_atp",               # Masters 1000
-        "tennis_wta",               # Circuit féminin
-        # ═══════════════════════════════════════════════════════════
-        # BASEBALL — MLB: Très prévisible, volume élevé
-        # ═══════════════════════════════════════════════════════════
-        "baseball_mlb",             # Saison régulière + playoffs
-        # ═══════════════════════════════════════════════════════════
-        # ESPORTS — MSI (Mai), Draft inefficience maximale
-        # ═══════════════════════════════════════════════════════════
-        "esports_lol",              # MSI 2026 / Tournois majeurs
-        "esports_lol_msi",          # Mid-Season Invitational
-        # ═══════════════════════════════════════════════════════════
-        # SOCCER — Protection du Capital (Asian Handicap 0.0)
-        # ═══════════════════════════════════════════════════════════
-        "soccer_uefa_champs_league",
-        "soccer_epl",
-        "soccer_spain_la_liga",
-        "soccer_germany_bundesliga",
-        "soccer_italy_serie_a",
-        "soccer_france_ligue_one",
+        # ════════════════════════════════════════════════════════════
+        # 1. BASKETBALL — Priorité Alpha MAXIMALE (Lag Layer efficace)
+        #    Fréquence des points = cotes volatiles = inefficiences
+        # ════════════════════════════════════════════════════════════
+        "basketball_nba",              # NBA USA — Cible n°1 institutionnelle
+        "basketball_euroleague",         # Euroleague Europe — Final Four
+        "basketball_ncaab",            # NCAA Basket US — March Madness
+        "basketball_spain_liga_acb",     # Liga ACB Espagne
+        "basketball_wnba",             # WNBA — Fenêtre nuit Dakar
+        # ════════════════════════════════════════════════════════════
+        # 2. TENNIS — Zéro Nul (Binary Synthesis Sniper Strategy)
+        #    Deux issues uniquement = modèle Shin optimal
+        # ════════════════════════════════════════════════════════════
+        "tennis_atp_french_open",        # Roland Garros (Mai-Juin)
+        "tennis_atp_wimbledon",          # Wimbledon (Juillet)
+        "tennis_atp_us_open",            # US Open (Août-Sept)
+        "tennis_atp_aus_open",            # Australian Open (Janvier)
+        "tennis_atp_masters_1000",        # Madrid, Rome, etc.
+        "tennis_wta",                    # Circuit WTA féminin
+        # ════════════════════════════════════════════════════════════
+        # 3. SOCCER — Ligues Majeures (Liquidité Haute, Asian Handicap 0.0)
+        #    Protection du Capital sur marchés efficientes
+        # ════════════════════════════════════════════════════════════
+        "soccer_epl",                    # Premier League Angleterre
+        "soccer_uefa_champs_league",     # Champions League
+        "soccer_uefa_europa_league",     # Europa League
+        "soccer_germany_bundesliga",     # Bundesliga Allemagne
+        "soccer_spain_la_liga",          # La Liga Espagne
+        "soccer_italy_serie_a",          # Serie A Italie
+        "soccer_france_ligue_1",         # Ligue 1 France (underscore)
+        # ════════════════════════════════════════════════════════════
+        # 4. ESPORTS — Gisement de Latence MAXIMALE
+        #    1XBet erreurs fréquentes = Alpha brutal
+        # ════════════════════════════════════════════════════════════
+        "esports_lol",                   # LoL générique
+        "esports_lol_msi",               # Mid-Season Invitational
+        "esports_lol_lpl",               # League of Legends Chine
+        "esports_lol_lck",               # League of Legends Corée
+        "esports_csgo_esl_pro_league",   # Counter-Strike ESL
+        "esports_dota2_ti",              # Dota 2 The International
+        # ════════════════════════════════════════════════════════════
+        # 5. SPORTS US & COMBAT — Diversification
+        #    Shin Method optimal sur baseball, volatilité MMA
+        # ════════════════════════════════════════════════════════════
+        "baseball_mlb",                  # MLB — Très prévisible
+        "icehockey_nhl",                 # NHL Hockey sur glace
+        "mma_mixed_martial_arts",        # UFC / MMA
     ])
 
     # ── Seuils Alpha par Sport (ajustement dynamique) ──────────
-    # NBA: 2.0% (volume stable), Foot: 2.5% (marché efficient)
+    # Basket: 2.0% | Tennis: 2.0% | Esports: 1.5% (latence max)
+    # Soccer: 2.5% (marché efficient) | MLB: 1.8% | NHL/MMA: 2.0%
     alpha_thresholds: dict[str, float] = Field(default={
+        # ═══ BASKETBALL ═══
         "basketball_nba": 0.020,
-        "basketball_wnba": 0.020,
         "basketball_euroleague": 0.020,
-        "tennis_atp": 0.020,
+        "basketball_ncaab": 0.020,
+        "basketball_spain_liga_acb": 0.020,
+        "basketball_wnba": 0.020,
+        # ═══ TENNIS ═══
+        "tennis_atp_french_open": 0.020,
+        "tennis_atp_wimbledon": 0.020,
+        "tennis_atp_us_open": 0.020,
+        "tennis_atp_aus_open": 0.020,
+        "tennis_atp_masters_1000": 0.020,
         "tennis_wta": 0.020,
-        "baseball_mlb": 0.018,
-        "esports_lol": 0.015,
-        "esports_lol_msi": 0.015,
+        # ═══ SOCCER ═══
         "soccer_epl": 0.025,
         "soccer_uefa_champs_league": 0.025,
+        "soccer_uefa_europa_league": 0.025,
+        "soccer_germany_bundesliga": 0.025,
+        "soccer_spain_la_liga": 0.025,
+        "soccer_italy_serie_a": 0.025,
+        "soccer_france_ligue_1": 0.025,
+        # ═══ ESPORTS (Seuil bas = latence maximale) ═══
+        "esports_lol": 0.015,
+        "esports_lol_msi": 0.015,
+        "esports_lol_lpl": 0.015,
+        "esports_lol_lck": 0.015,
+        "esports_csgo_esl_pro_league": 0.015,
+        "esports_dota2_ti": 0.015,
+        # ═══ AUTRES ═══
+        "baseball_mlb": 0.018,
+        "icehockey_nhl": 0.020,
+        "mma_mixed_martial_arts": 0.020,
+        # ═══ DEFAULT ═══
         "default": 0.020,
     })
 
