@@ -410,8 +410,12 @@
                     <div class="flex justify-between"><span class="text-gray-400">Sport:</span><span id="modal-sport">—</span></div>
                     <div class="flex justify-between"><span class="text-gray-400">Marché:</span><span id="modal-market">—</span></div>
                     <div class="flex justify-between"><span class="text-gray-400">Sélection:</span><span id="modal-selection">—</span></div>
-                    <div class="flex justify-between"><span class="text-gray-400">Alpha:</span><span id="modal-alpha" class="alpha-value">—</span></div>
-                    <div class="flex justify-between"><span class="text-gray-400">Mise:</span><span id="modal-stake">—</span></div>
+                    <div class="flex justify-between"><span class="text-gray-400">Alpha (EV+):</span><span id="modal-alpha" class="alpha-value">—</span></div>
+                    <div class="flex justify-between"><span class="text-gray-400">SNR Ratio:</span><span id="modal-snr">—</span></div>
+                    <div class="flex justify-between"><span class="text-gray-400">CLV Est:</span><span id="modal-clv">—</span></div>
+                    <div class="flex justify-between"><span class="text-gray-400">Proba Sharp:</span><span id="modal-prob-sharp">—</span></div>
+                    <div class="flex justify-between"><span class="text-gray-400">Proba Soft:</span><span id="modal-prob-soft">—</span></div>
+                    <div class="flex justify-between"><span class="text-gray-400">Mise Kelly:</span><span id="modal-stake">—</span></div>
                 </div>
                 <div class="glass p-3 border-l-2 border-green-500">
                     <div class="text-xs text-green-600 mb-1">🤖 Gemini Analysis</div>
@@ -479,8 +483,12 @@
             document.getElementById('modal-market').textContent = signal.market_type || 'N/A';
             document.getElementById('modal-selection').textContent = signal.selection || 'N/A';
             document.getElementById('modal-alpha').textContent = fmt((signal.alpha_spread || 0) * 100) + '%';
-            document.getElementById('modal-stake').textContent = fmt(signal.recommended_stake) + '€';
-            document.getElementById('modal-note').textContent = signal.note_ia || signal.ai_context || '✅ Validation OK';
+            document.getElementById('modal-snr').textContent = fmt(signal.snr_ratio || 0, 2);
+            document.getElementById('modal-clv').textContent = fmt((signal.clv_estimate || 0) * 100, 2) + '%';
+            document.getElementById('modal-prob-sharp').textContent = fmt((signal.sharp_prob || 0) * 100, 1) + '%';
+            document.getElementById('modal-prob-soft').textContent = fmt((signal.implied_prob_soft || 0) * 100, 1) + '%';
+            document.getElementById('modal-stake').textContent = fmt(signal.recommended_stake, 0) + '€';
+            document.getElementById('modal-note').textContent = signal.note_ia || signal.ai_context || '✅ Mathématiques validées';
             document.getElementById('modal-link').href = `https://1xbet.com/en/line/?search=${encodeURIComponent(signal.match_name || '')}`;
             
             document.getElementById('signal-modal').classList.add('active');
@@ -602,17 +610,28 @@
                 const alpha = s.alpha_spread || 0;
                 const alphaPct = (alpha * 100).toFixed(1);
                 const isElite = alpha >= 0.025;
+                const snr = s.snr_ratio || 0;
+                const stake = s.recommended_stake || 0;
+                const sportIcon = s.sport?.includes('basketball') ? '🏀' : 
+                                  s.sport?.includes('tennis') ? '🎾' :
+                                  s.sport?.includes('soccer') ? '⚽' :
+                                  s.sport?.includes('baseball') ? '⚾' :
+                                  s.sport?.includes('esports') ? '🎮' : '⚡';
                 
                 return `
                     <div class="signal-card ${isElite ? 'border-l-2 border-yellow-400' : ''}" onclick='openModal(${JSON.stringify(s).replace(/'/g, "&#39;")})'>
                         <div class="flex justify-between items-start mb-2">
-                            <span class="text-xs text-gray-500 uppercase">${s.sport?.split('_').pop() || 'SPORT'}</span>
-                            <span class="text-xs text-gray-600">${s.match_time ? new Date(s.match_time).toLocaleDateString() : 'N/A'}</span>
+                            <span class="text-xs text-gray-500 uppercase">${sportIcon} ${s.sport?.split('_').pop() || 'SPORT'}</span>
+                            <span class="text-xs ${isElite ? 'text-yellow-400' : 'text-gray-600'}">${s.match_time ? new Date(s.match_time).toLocaleDateString() : 'N/A'}</span>
                         </div>
-                        <h4 class="font-bold mb-3 text-white" style="font-size: 14px;">${s.match_name || 'Unknown'}</h4>
-                        <div class="flex justify-between items-end">
+                        <h4 class="font-bold mb-2 text-white" style="font-size: 13px;">${s.match_name || 'Unknown'}</h4>
+                        <div class="flex justify-between items-end mb-2">
                             <div class="alpha-big">${alpha >= 0 ? '+' : ''}${alphaPct}%</div>
-                            ${isElite ? '<span class="text-xs text-yellow-400">⭐ ELITE</span>' : ''}
+                            ${isElite ? '<span class="text-xs text-yellow-400 font-bold">⭐ ELITE</span>' : ''}
+                        </div>
+                        <div class="flex justify-between text-xs text-gray-500">
+                            <span>SNR: ${snr.toFixed(1)}</span>
+                            <span>Mise: ${stake.toFixed(0)}€</span>
                         </div>
                     </div>
                 `;

@@ -393,9 +393,10 @@ class MarketScanner:
         if not bookmakers:
             return []
 
-        # Probabilités sharp via Shin Method
-        sharp_odds = self._extract_sharp_odds(bookmakers)
+        # Probabilités sharp via Shin Method (avec garde-fou binaire)
+        sharp_odds = self._extract_sharp_odds(bookmakers, sport=sport)
         if not sharp_odds:
+            logger.debug(f"⏭️ Pas de sharp odds binaires pour {event_name}")
             return []
 
         # Vérifier qu'au moins un soft book est présent dans cet événement
@@ -591,28 +592,74 @@ class MarketScanner:
     # Extraction sharp odds (Shin Method)
     # ─────────────────────────────────────────────────────────────
 
-    def _extract_sharp_odds(self, bookmakers: list[dict]) -> dict[str, float]:
+    def _extract_sharp_odds(self, bookmakers: list[dict], sport: str = "") -> dict[str, float]:
+        """
+        Extrait les probabilités sharp via Shin Method.
+        
+        GARDE-FOU BINAIRE STRICT:
+        - Rejette si != 2 outcomes (doctrine Zéro Nul)
+        - Rejette si un outcome s'appelle "Draw"
+        - Pour soccer: uniquement spreads (pas h2h)
+        """
         for bm in bookmakers:
             if bm.get("key", "").lower() not in [s.lower() for s in settings.sharp_books]:
                 continue
-            for market in bm.get("markets", []):
+            
+            markets = bm.get("markets", [])
+            
+            # Pour soccer: privilégier spreads (AH 0.0), rejeter h2h
+            if "soccer" in sport:
+                for market in markets:
+                    if market.get("key") != "spreads":
+                        continue
+                    outcomes = market.get("outcomes", [])
+                    # Doctine binaire: exactement 2 issues
+                    if len(outcomes) != 2:
+                        continue
+                    # Vérification: pas de Draw
+                    if any(o.get("name", "").lower() == "draw" for o in outcomes):
+                        continue
+                    raw_odds = [o["price"] for o in outcomes if o.get("price", 0) > 1.0]
+                    if len(raw_odds) != 2:
+                        continue
+                    try:
+                        shin_probs = calculate_shin_probabilities(raw_odds)
+                    except Exception as e:
+                        logger.warning(f"Shin échoué: {e}")
+                        continue
+                    return {outcomes[i]["name"]: shin_probs[i] for i in range(2)}
+            
+            # Pour autres sports (NBA, Tennis, etc.): h2h est OK (naturellement binaire)
+            for market in markets:
                 if market.get("key") != "h2h":
                     continue
                 outcomes = market.get("outcomes", [])
-                if len(outcomes) < 2:
+                
+                # ═══════════════════════════════════════════════════════════════════
+                # DOCTRINE BINAIRE STRICTE: exactement 2 outcomes
+                # ═══════════════════════════════════════════════════════════════════
+                if len(outcomes) != 2:
+                    logger.debug(f"🚫 Shin: Rejet marché {len(outcomes)} issues")
                     continue
+                
+                # Vérification: aucun outcome ne doit s'appeler "Draw"
+                if any(o.get("name", "").lower() == "draw" for o in outcomes):
+                    logger.warning(f"🚫 Shin: Rejet marché avec Draw")
+                    continue
+                
                 raw_odds = [o["price"] for o in outcomes if o.get("price", 0) > 1.0]
-                if len(raw_odds) < 2:
+                if len(raw_odds) != 2:
                     continue
+                
                 try:
                     shin_probs = calculate_shin_probabilities(raw_odds)
                 except Exception as e:
                     logger.warning(f"Shin échoué: {e}")
                     continue
-                return {
-                    outcomes[i]["name"]: shin_probs[i]
-                    for i in range(min(len(outcomes), len(shin_probs)))
-                }
+                
+                # Mapping nom -> probabilité (ordre préservé)
+                return {outcomes[0]["name"]: shin_probs[0], outcomes[1]["name"]: shin_probs[1]}
+        
         return {}
 
     # ─────────────────────────────────────────────────────────────

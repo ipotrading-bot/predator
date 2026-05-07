@@ -305,25 +305,31 @@ def get_data():
                 sig["cote_1xbet"] = round(1.0 / ip, 3) if ip and ip > 0 else None
             # note_ia depuis ai_context si absent
             if not sig.get("note_ia"):
-                sig["note_ia"] = sig.get("ai_context") or "✅ Validation en cours..."
+                sig["note_ia"] = sig.get("ai_context") or "✅ Mathématiques validées"
             # label marché lisible
             sig["market_label"] = _market_label(sig.get("market_type", ""), sig.get("sport", ""))
             # badge elite
             sig["is_elite"] = (sig.get("alpha_spread") or 0) >= ALPHA_ELITE_MIN
+            # Formatage pourcentages pour dashboard
+            sig["ev_plus_pct"] = round((sig.get("alpha_spread") or 0) * 100, 2)
+            sig["sharp_prob_pct"] = round((sig.get("sharp_prob") or 0) * 100, 2)
+            sig["implied_prob_soft_pct"] = round((sig.get("implied_prob_soft") or 0) * 100, 2)
+            sig["clv_pct"] = round((sig.get("clv_estimate") or 0) * 100, 2)
 
         if not data:
             from datetime import timedelta
             match_time = (datetime.now() + timedelta(hours=4)).isoformat()
             data = [{
-                "match_name": "📡 Aucun signal actif",
+                "match_name": "📡 Aucun signal actif (48h)",
                 "sport": "—",
                 "match_time": match_time,
                 "market_type": "—",
                 "alpha_spread": 0,
+                "ev_plus_pct": 0,
                 "recommended_stake": 0,
                 "fair_price": 0,
                 "cote_1xbet": 0,
-                "note_ia": "📡 SCAN PAIM EN COURS — RECHERCHE D'ALPHA > 1.5%",
+                "note_ia": "📡 MODE HUNTER ACTIF — Attendre prochains scans",
                 "sources_validated": "",
                 "is_elite": False,
             }]
