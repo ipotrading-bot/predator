@@ -25,9 +25,12 @@ def get_db() -> SupabaseClient:
         _db = SupabaseClient()
     return _db
 
-# Seuil de détection : 1.5% display, 2.5% elite
-ALPHA_DISPLAY_MIN = 0.015
-ALPHA_ELITE_MIN   = 0.025
+# ═══════════════════════════════════════════════════════════════════
+# MODE HUNTER 48h — Full Spectrum (PhD MIT Emergency Protocol)
+# Seuil de détection : 1.0% display (saturé), 2.5% elite (qualité)
+# ═══════════════════════════════════════════════════════════════════
+ALPHA_DISPLAY_MIN = 0.010  # 1.0% — Affiche tout le flux
+ALPHA_ELITE_MIN   = 0.025  # 2.5% — Alerte ELITE seulement
 
 
 def _market_label(market_key: str, sport: str) -> str:
@@ -464,4 +467,106 @@ def test_api_connection():
         return jsonify({
             "status": "error",
             "message": f"❌ Connexion échouée: {str(e)}"
+        }), 500
+
+
+# ═══════════════════════════════════════════════════════════════════
+# MODE HUNTER 48h — Full Spectrum Multi-Sport (Emergency Protocol)
+# ═══════════════════════════════════════════════════════════════════
+
+# Sports prioritaires pour le mode Hunter (saturation)
+HUNTER_SPORTS = [
+    'basketball_nba',           # 🏀 Playoffs - Priorité Alpha MAX
+    'tennis_atp_masters_1000',  # 🎾 Rome/Madrid
+    'soccer_epl',               # ⚽ Matchs fin de saison
+    'soccer_uefa_champs_league', # ⚽ UCL
+    'soccer_spain_la_liga',     # ⚽ La Liga
+    'baseball_mlb',             # ⚾ MLB très prévisible
+    'esports_lol_msi',          # 🎮 MSI LoL
+]
+
+
+@app.route('/api/hunter-scan', methods=['POST'])
+def hunter_scan():
+    """
+    MODE HUNTER 48h — Débridage total du moteur PAIM.
+    
+    Actions:
+    1. 🗑️ Purge tous les anciens signaux de Supabase
+    2. 🎯 Scan saturation des 7 sports majeurs (48h window)
+    3. ⚡ Shin Method sur chaque sport
+    4. 📊 Seuil 1.0% (affichage), 2.5% (ELITE)
+    
+    Returns:
+        JSON avec résultat du scan et compte de signaux
+    """
+    try:
+        import asyncio
+        from signals.scanner import MarketScanner
+        from config import settings
+        
+        logger.info("🚨 MODE HUNTER ACTIVÉ — Saturation Multi-Sport 48h")
+        
+        # ── ÉTAPE 1: PURGE DES ANCIENS SIGNAUX ─────────────────────────
+        try:
+            db = get_db()
+            # Supprime tous les signaux pending (pas les settled/history)
+            result = db._client.table("signals").delete().eq("status", "pending").execute()
+            logger.info(f"🗑️ Purge: {len(result.data or [])} anciens signaux supprimés")
+        except Exception as e:
+            logger.warning(f"⚠️ Purge partielle: {e}")
+        
+        # ── ÉTAPE 2: SCAN SATURATION MULTI-SPORT ──────────────────────
+        scanner = MarketScanner(bankroll=settings.starting_bankroll)
+        scanner.engine.min_ev_threshold = ALPHA_DISPLAY_MIN  # 1.0%
+        
+        all_signals = []
+        scan_results = []
+        
+        for sport in HUNTER_SPORTS:
+            try:
+                logger.info(f"🎯 Chasse sur {sport}...")
+                
+                loop = asyncio.new_event_loop()
+                result = loop.run_until_complete(scanner.run_single_sport_scan(sport))
+                loop.close()
+                
+                scan_results.append({
+                    "sport": sport,
+                    "events": result.events_analyzed,
+                    "signals": result.signals_validated
+                })
+                
+                logger.info(f"✅ {sport}: {result.signals_validated} signaux")
+                
+            except Exception as e:
+                logger.error(f"❌ Erreur {sport}: {e}")
+                scan_results.append({"sport": sport, "error": str(e)})
+        
+        # ── ÉTAPE 3: RÉSUMÉ ─────────────────────────────────────────
+        total_signals = sum(r.get("signals", 0) for r in scan_results if "signals" in r)
+        elite_signals = sum(1 for s in all_signals if (s.alpha_spread or 0) >= ALPHA_ELITE_MIN)
+        
+        logger.info(f"🎯 HUNTER COMPLET: {total_signals} signaux trouvés ({elite_signals} ELITE)")
+        
+        return jsonify({
+            "status": "success",
+            "mode": "HUNTER_48H",
+            "protocol": "PhD MIT Emergency v4.0",
+            "sports_scanned": len(HUNTER_SPORTS),
+            "total_signals": total_signals,
+            "elite_signals": elite_signals,
+            "threshold_display": f"{ALPHA_DISPLAY_MIN*100:.1f}%",
+            "threshold_elite": f"{ALPHA_ELITE_MIN*100:.1f}%",
+            "scan_details": scan_results,
+            "window": "48h",
+            "next_action": "Attendre 5-10 min puis rafraîchir /api/data"
+        })
+        
+    except Exception as e:
+        logger.error(f"❌ Erreur Hunter Mode: {e}", exc_info=True)
+        return jsonify({
+            "status": "error",
+            "mode": "HUNTER_48H",
+            "error": str(e)
         }), 500
