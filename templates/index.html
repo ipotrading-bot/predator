@@ -107,16 +107,13 @@
     </div>
 
     <!-- Navigation -->
-    <div class="flex space-x-8 mb-6 border-b border-gray-900">
-        <button onclick="showPage('control')" class="pb-2 text-sm uppercase tracking-widest" id="btn-control">Contrôle</button>
-        <button onclick="showPage('live')" class="pb-2 text-sm uppercase tracking-widest" id="btn-live">Live Signals</button>
-        <button onclick="showPage('ledger')" class="pb-2 text-sm uppercase tracking-widest" id="btn-ledger">Ledger</button>
-        <button onclick="showPage('audit')" class="pb-2 text-sm uppercase tracking-widest" id="btn-audit">Audit</button>
-        <button onclick="showPage('research')" class="pb-2 text-sm uppercase tracking-widest" id="btn-research">Research</button>
-        <button onclick="showPage('portfolio')" class="pb-2 text-sm uppercase tracking-widest" id="btn-portfolio">Portfolio</button>
-        <button onclick="showPage('sentiment')" class="pb-2 text-sm uppercase tracking-widest" id="btn-sentiment">Sentiment</button>
-        <button onclick="showPage('info')" class="pb-2 text-sm uppercase tracking-widest" id="btn-info">Tips</button>
-    </div>
+        <div class="flex space-x-8 mb-6 border-b border-gray-900">
+            <button onclick="showPage('control')" class="pb-2 text-sm uppercase tracking-widest" id="btn-control">Contrôle</button>
+            <button onclick="showPage('live')" class="pb-2 text-sm uppercase tracking-widest" id="btn-live">Live Signals</button>
+            <button onclick="showPage('ledger')" class="pb-2 text-sm uppercase tracking-widest" id="btn-ledger">Ledger</button>
+            <button onclick="showPage('audit')" class="pb-2 text-sm uppercase tracking-widest" id="btn-audit">Audit</button>
+            <button onclick="showPage('info')" class="pb-2 text-sm uppercase tracking-widest" id="btn-info">Tips</button>
+        </div>
 
     <!-- PAGE: Contrôle -->
     <div id="page-control" class="page">
@@ -137,30 +134,6 @@
             <div id="search-results" class="mt-6"></div>
         </div>
         <!-- ... existing content ... -->
-    </div>
-
-    <!-- PAGE: Research -->
-    <div id="page-research" class="page hidden">
-        <div class="glass p-6 rounded-lg">
-            <h2 class="mb-4 text-gray-400">RESEARCH — DATA API DASHBOARD</h2>
-            <div id="research-container" class="text-center py-10 text-gray-600">Chargement des données de recherche...</div>
-        </div>
-    </div>
-
-    <!-- PAGE: Portfolio -->
-    <div id="page-portfolio" class="page hidden">
-        <div class="glass p-6 rounded-lg">
-            <h2 class="mb-4 text-gray-400">PORTFOLIO — STAKING & RISQUE</h2>
-            <div id="portfolio-container" class="text-center py-10 text-gray-600">Chargement des données de portfolio...</div>
-        </div>
-    </div>
-
-    <!-- PAGE: Sentiment -->
-    <div id="page-sentiment" class="page hidden">
-        <div class="glass p-6 rounded-lg">
-            <h2 class="mb-4 text-gray-400">SENTIMENT — MARKET ANALYSIS</h2>
-            <div id="sentiment-container" class="text-center py-10 text-gray-600">Chargement des données de sentiment...</div>
-        </div>
     </div>
 
     <!-- PAGE: Tips/Info -->
@@ -273,9 +246,6 @@
             document.querySelectorAll('[id^="btn-"]').forEach(btn => btn.classList.remove('tab-active'));
             document.getElementById('btn-' + pageId).classList.add('tab-active');
             if (pageId === 'audit' && !equityChart) setTimeout(initEquityChart, 100);
-            if (pageId === 'research') fetchResearchData();
-            if (pageId === 'portfolio') fetchPortfolioData();
-            if (pageId === 'sentiment') fetchSentimentData();
             if (pageId === 'info') fetchInfo();
         }
 
@@ -317,36 +287,6 @@
             } catch (e) {
                 container.innerHTML = '<p class="text-red-500 text-sm">Erreur lors du chargement.</p>';
             }
-        }
-
-        async function fetchResearchData() {
-            const c = document.getElementById('research-container');
-            c.innerHTML = 'Chargement...';
-            try {
-                const res = await fetch('/api/research');
-                const d = await res.json();
-                c.innerHTML = `<pre class="text-xs text-green-500">${JSON.stringify(d, null, 2)}</pre>`;
-            } catch (e) { c.innerHTML = 'Erreur.'; }
-        }
-
-        async function fetchPortfolioData() {
-            const c = document.getElementById('portfolio-container');
-            c.innerHTML = 'Chargement...';
-            try {
-                const res = await fetch('/api/portfolio');
-                const d = await res.json();
-                c.innerHTML = `<pre class="text-xs text-yellow-400">${JSON.stringify(d, null, 2)}</pre>`;
-            } catch (e) { c.innerHTML = 'Erreur.'; }
-        }
-
-        async function fetchSentimentData() {
-            const c = document.getElementById('sentiment-container');
-            c.innerHTML = 'Chargement...';
-            try {
-                const res = await fetch('/api/sentiment');
-                const d = await res.json();
-                c.innerHTML = `<pre class="text-xs text-blue-400">${JSON.stringify(d, null, 2)}</pre>`;
-            } catch (e) { c.innerHTML = 'Erreur.'; }
         }
 
         // ── Console ─────────────────────────────────────────────────

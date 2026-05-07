@@ -112,6 +112,57 @@ class TelegramNotifier:
         except Exception as e:
             logger.error(f"Erreur Telegram ticket système: {e}")
 
+    async def send_audit_report(self, total_trades: int, avg_clv: float, win_rate: float, report_ai: str) -> None:
+        """Envoie le rapport d'audit stratégique."""
+        if not self.enabled:
+            logger.warning("Telegram disabled — audit report not sent")
+            return
+
+        message = f"📊 *PAIM STRATEGIC AUDIT*\n"
+        message += f"• *Volume:* {total_trades} Signaux\n"
+        message += f"• *Alpha Moyen:* {avg_clv:.2%}\n"
+        message += f"• *Win Rate:* {win_rate:.1f}%\n\n"
+        message += f"🧠 *ANALYSE IA:*\n{report_ai}"
+        
+        try:
+            await self.bot.send_message(
+                chat_id=self.chat_id,
+                text=message,
+                parse_mode=ParseMode.MARKDOWN,
+            )
+            logger.info("📨 Audit Telegram envoyé.")
+        except Exception as e:
+            logger.error(f"Erreur audit Telegram: {e}")
+
+    async def send_morning_brief(self, elite_signals: list, display_signals: list) -> None:
+        """Envoie le briefing matinal."""
+        if not self.enabled:
+            return
+
+        message = "🌅 *MORNING BRIEF PREDATOR PAIM*\n\n"
+        if not elite_signals and not display_signals:
+            message += "Marché trop efficient — capital préservé ✅"
+        else:
+            if elite_signals:
+                message += "🔥 *ELITE SIGNALS:*\n"
+                for s in elite_signals:
+                    message += f"• {s['match_name']} — Alpha: {s.get('alpha_spread', 0):.2%}\n"
+                message += "\n"
+            if display_signals:
+                message += "📈 *DISPLAY SIGNALS (1.5-2.5%):*\n"
+                for s in display_signals:
+                    message += f"• {s['match_name']} — Alpha: {s.get('alpha_spread', 0):.2%}\n"
+        
+        try:
+            await self.bot.send_message(
+                chat_id=self.chat_id,
+                text=message,
+                parse_mode=ParseMode.MARKDOWN,
+            )
+            logger.info("📨 Brief matinal envoyé.")
+        except Exception as e:
+            logger.error(f"Erreur brief Telegram: {e}")
+
     async def send_killswitch_alert(self, drawdown: float, balance: float) -> None:
         """Alerte critique Kill-Switch."""
         if not self.enabled:

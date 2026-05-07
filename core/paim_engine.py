@@ -10,6 +10,7 @@ from __future__ import annotations
 from dataclasses import dataclass, field
 from typing import Optional
 import math
+from datetime import datetime, timedelta
 from integrations.api_sports_client import ApiSportsClient
 from integrations.odds_api_client import OddsApiClient
 
@@ -95,6 +96,12 @@ class PAIMEngine:
         """Fetches odds data for a given sport."""
         async with self.odds_client:
             return await self.odds_client.fetch_odds(sport)
+
+    @staticmethod
+    def fetch_weekly_data(supabase_client):
+        seven_days_ago = (datetime.now() - timedelta(days=7)).isoformat()
+        res = supabase_client.table('signals').select("*").gt('created_at', seven_days_ago).execute()
+        return res.data
 
     def compute_ev(self, sharp_prob: float, soft_odds: float) -> float:
         """
@@ -211,3 +218,40 @@ class PAIMEngine:
             recommended_stake=stake,
             is_elite=(ev >= 0.15),
         )
+
+    @staticmethod
+    def run_weekly_audit(data: list[dict]):
+        """Calcule les métriques hebdomadaires."""
+        if not data:
+            return None
+        
+        total_trades = len(data)
+        avg_clv = sum(s['alpha_spread'] for s in data) / total_trades
+        wins = len([s for s in data if s.get('result') == 1])
+        win_rate = (wins / total_trades) * 100
+        
+        return {
+            "total_trades": total_trades,
+            "avg_clv": avg_clv,
+            "win_rate": win_rate
+        }
+
+    @staticmethod
+    def get_ai_analysis(total_trades, avg_clv, win_rate, sports_list):
+        """Génère l'analyse IA via Gemini."""
+        import google.generativeai as genai
+        from config import settings
+        
+        analysis_prompt = f"""
+        En tant qu'expert MIT en finance quantitative, analyse ce bilan hebdomadaire :
+        - Nombre de signaux : {total_trades}
+        - CLV Moyenne (Alpha capturé) : {avg_clv:.2%}
+        - Win Rate Réalisé : {win_rate:.1f}%
+        - Détail des sports : {sports_list}
+        
+        Identifie les biais : Quel sport performe le mieux ? La CLV est-elle en train de s'éroder ? 
+        Donne 3 recommandations strictes pour la semaine prochaine.
+        """
+        
+        model = genai.GenerativeModel('gemini-2.0-flash')
+        return model.generate_content(analysis_prompt).text
