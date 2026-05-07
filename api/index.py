@@ -30,6 +30,21 @@ ALPHA_DISPLAY_MIN = 0.015
 ALPHA_ELITE_MIN   = 0.025
 
 
+def _market_label(market_key: str, sport: str) -> str:
+    """Retourne un label lisible pour le type de marché."""
+    if not market_key:
+        return "N/A"
+    if market_key == "h2h":
+        if "soccer" in sport:
+            return "Draw No Bet"
+        return "Moneyline"
+    if market_key == "spreads":
+        return "Asian Handicap"
+    if market_key == "totals":
+        return "Over/Under"
+    return market_key.upper()
+
+
 # ── Route principale ──────────────────────────────────────────
 
 @app.route('/')
@@ -180,15 +195,19 @@ def get_data():
 
         # Enrichir chaque signal avec les champs calculés manquants
         for sig in data:
-            # fair_price depuis sharp_prob si absent
-            if not sig.get("fair_price") and sig.get("sharp_prob"):
-                sig["fair_price"] = round(1.0 / sig["sharp_prob"], 3)
-            # cote_1xbet depuis implied_prob_soft si absent
-            if not sig.get("cote_1xbet") and sig.get("implied_prob_soft"):
-                sig["cote_1xbet"] = round(1.0 / sig["implied_prob_soft"], 3)
+            # fair_price depuis sharp_prob si absent ou nul
+            if not sig.get("fair_price") or sig["fair_price"] == 0:
+                sp = sig.get("sharp_prob")
+                sig["fair_price"] = round(1.0 / sp, 3) if sp and sp > 0 else None
+            # cote_1xbet depuis implied_prob_soft si absent ou nul
+            if not sig.get("cote_1xbet") or sig["cote_1xbet"] == 0:
+                ip = sig.get("implied_prob_soft")
+                sig["cote_1xbet"] = round(1.0 / ip, 3) if ip and ip > 0 else None
             # note_ia depuis ai_context si absent
-            if not sig.get("note_ia") and sig.get("ai_context"):
-                sig["note_ia"] = sig["ai_context"]
+            if not sig.get("note_ia"):
+                sig["note_ia"] = sig.get("ai_context") or "✅ Validation en cours..."
+            # label marché lisible
+            sig["market_label"] = _market_label(sig.get("market_type", ""), sig.get("sport", ""))
             # badge elite
             sig["is_elite"] = (sig.get("alpha_spread") or 0) >= ALPHA_ELITE_MIN
 

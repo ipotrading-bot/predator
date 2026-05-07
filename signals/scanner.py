@@ -261,7 +261,22 @@ class MarketScanner:
                 if market_key not in ("h2h", "spreads"):
                     continue
 
-                for outcome in market.get("outcomes", []):
+                raw_outcomes = market.get("outcomes", [])
+
+                # ── Binary Synthesis : Soccer h2h → Draw No Bet ───
+                # Le h2h soccer a 3 issues (Home/Draw/Away).
+                # On convertit en DNB : retire le nul, recalcule les cotes binaires.
+                if market_key == "h2h" and "soccer" in sport:
+                    dnb_outcomes = _apply_draw_no_bet(raw_outcomes)
+                    if not dnb_outcomes:
+                        continue
+                    outcomes_to_process = dnb_outcomes
+                    effective_market_key = "dnb"
+                else:
+                    outcomes_to_process = raw_outcomes
+                    effective_market_key = market_key
+
+                for outcome in outcomes_to_process:
                     selection = outcome.get("name", "")
                     soft_odds_val = outcome.get("price", 0.0)
                     if soft_odds_val <= 1.0:
@@ -274,7 +289,7 @@ class MarketScanner:
                     # ── Étape 1 : Filtre mathématique PAIM ────────
                     signal = self.engine.evaluate_signal(
                         event_id=event_id,
-                        market_key=market_key,
+                        market_key=effective_market_key,
                         selection=selection,
                         bookmaker_target=bm_key_norm,
                         sharp_prob=sharp_prob,
@@ -311,7 +326,7 @@ class MarketScanner:
                     # ── Étape 3 : Pré-filtre Groq ─────────────────
                     groq_result = await groq_client.quick_filter({
                         "sport": sport,
-                        "market_key": market_key,
+                        "market_key": effective_market_key,
                         "selection": selection,
                         "ev_plus": round(signal.ev_plus * 100, 2),
                         "sharp_prob": round(signal.sharp_prob * 100, 2),
@@ -357,7 +372,7 @@ class MarketScanner:
                     # Contexte enrichi : news + Perplexity → Gemini
                     enriched_context = _build_gemini_context(
                         event_name=event_name,
-                        market_key=market_key,
+                        market_key=effective_market_key,
                         signal=signal,
                         news_impact=news_impact,
                         perplexity_summary=dossier.perplexity_summary,
@@ -485,25 +500,67 @@ def _build_gemini_context(
 ) -> str:
     """
     Construit le contexte enrichi pour le prompt Gemini Chain-of-Thought.
-    Perplexity fournit les faits bruts → Gemini synthétise.
+    Court et précis — évite les timeouts Gemini.
     """
-    news_section = "Aucune news récente détectée."
+    news_section = "Aucune news récente."
     if news_impact and news_impact.top_headlines:
-        news_section = "\n".join(f"- {h}" for h in news_impact.top_headlines[:3])
+        news_section = news_impact.top_headlines[0][:100]
 
-    perp_section = perplexity_summary or "Vérification Perplexity non disponible."
+    perp_section = (perplexity_summary or "Non vérifié.")[:120]
 
     return (
-        f"{event_name} | Marché: {market_key}\n\n"
-        f"DONNÉES QUANTITATIVES :\n"
-        f"- EV+ détecté : {signal.ev_plus:.2%}\n"
-        f"- Prob. Sharp (Pinnacle) : {signal.sharp_prob:.3f}\n"
-        f"- Prob. Soft (1xBet) : {signal.implied_prob_soft:.3f}\n"
-        f"- SNR : {signal.snr_ratio:.2f}\n\n"
-        f"CONTEXTE PERPLEXITY (faits bruts < 6h) :\n{perp_section}\n\n"
-        f"HEADLINES NEWSAPI (< 6h) :\n{news_section}\n\n"
-        f"QUESTION : L'Alpha de {signal.ev_plus:.2%} est-il une erreur de pricing "
-        f"de 1XBet ou est-il justifié par les informations ci-dessus ? "
-        f"Si justifié par une blessure/absence, c'est un RED FLAG (déjà dans le prix). "
-        f"Si c'est une inefficience pure de marché, valide le signal."
+        f"{event_name} | {market_key.upper()}\n"
+        f"EV+={signal.ev_plus:.2%} | Sharp={signal.sharp_prob:.3f} | Soft={signal.implied_prob_soft:.3f}\n"
+        f"Perplexity: {perp_section}\n"
+        f"News: {news_section}\n"
+        f"L'Alpha est-il une inefficience pure ou justifié par une blessure ?"
     )
+
+
+def _apply_draw_no_bet(outcomes: list[dict]) -> list[dict]:
+    """
+    Convertit les cotes h2h 1N2 en Draw No Bet (DNB).
+
+    Formule DNB :
+      Cote_DNB_Home = Cote_Home / (1 - 1/Cote_Draw)
+      Cote_DNB_Away = Cote_Away / (1 - 1/Cote_Draw)
+
+    Retourne une liste de 2 outcomes (Home DNB, Away DNB).
+    Retourne [] si les cotes sont invalides ou si le nul est introuvable.
+    """
+    home_outcome = next((o for o in outcomes if o.get("name") not in ("Draw",) and outcomes.index(o) == 0), None)
+    draw_outcome = next((o for o in outcomes if o.get("name") == "Draw"), None)
+    away_outcome = next((o for o in outcomes if o.get("name") not in ("Draw",) and outcomes.index(o) != 0), None)
+
+    # Fallback : chercher par position si noms non standards
+    if not draw_outcome and len(outcomes) == 3:
+        draw_outcome = outcomes[1]
+    if not home_outcome and len(outcomes) >= 1:
+        home_outcome = outcomes[0]
+    if not away_outcome and len(outcomes) >= 3:
+        away_outcome = outcomes[2]
+
+    if not all([home_outcome, draw_outcome, away_outcome]):
+        return []
+
+    try:
+        cote_home = float(home_outcome["price"])
+        cote_draw = float(draw_outcome["price"])
+        cote_away = float(away_outcome["price"])
+    except (KeyError, ValueError, TypeError):
+        return []
+
+    if cote_draw <= 1.0 or cote_home <= 1.0 or cote_away <= 1.0:
+        return []
+
+    draw_prob = 1.0 / cote_draw
+    if draw_prob >= 1.0:
+        return []
+
+    dnb_home = round(cote_home / (1.0 - draw_prob), 3)
+    dnb_away = round(cote_away / (1.0 - draw_prob), 3)
+
+    return [
+        {"name": home_outcome["name"], "price": dnb_home},
+        {"name": away_outcome["name"], "price": dnb_away},
+    ]
