@@ -570,3 +570,96 @@ def hunter_scan():
             "mode": "HUNTER_48H",
             "error": str(e)
         }), 500
+
+
+# ═══════════════════════════════════════════════════════════════════
+# DOCTRINE BINARY SYNTHESIS — Outils de Maintenance
+# ═══════════════════════════════════════════════════════════════════
+
+@app.route('/api/purge-draw-signals', methods=['POST'])
+def purge_draw_signals():
+    """
+    Nettoie la base de données de tous les signaux contenant 'Draw'.
+    Doctrine Zéro Nul: le match nul est strictement interdit.
+    
+    Returns:
+        JSON avec nombre de signaux supprimés
+    """
+    try:
+        db = get_db()
+        
+        # Récupérer tous les signaux pending
+        response = db._client.table("signals").select("id, selection, match_name").eq("status", "pending").execute()
+        signals = response.data or []
+        
+        # Filtrer ceux avec Draw
+        draw_signals = [s for s in signals if s.get("selection", "").lower().startswith("draw")]
+        
+        deleted_count = 0
+        for sig in draw_signals:
+            try:
+                db._client.table("signals").delete().eq("id", sig["id"]).execute()
+                deleted_count += 1
+                logger.info(f"🗑️ Supprimé signal Draw: {sig.get('match_name')} | {sig.get('selection')}")
+            except Exception as e:
+                logger.error(f"❌ Erreur suppression {sig.get('id')}: {e}")
+        
+        return jsonify({
+            "status": "success",
+            "doctrine": "BINARY SYNTHESIS v4.1",
+            "action": "PURGE_DRAW_SIGNALS",
+            "scanned": len(signals),
+            "deleted": deleted_count,
+            "message": f"🚫 {deleted_count} signaux 'Draw' supprimés. Base nettoyée."
+        })
+        
+    except Exception as e:
+        logger.error(f"❌ Erreur purge: {e}")
+        return jsonify({
+            "status": "error",
+            "error": str(e)
+        }), 500
+
+
+@app.route('/api/binary-audit')
+def binary_audit():
+    """
+    Audit de conformité binaire — vérifie qu'aucun signal Draw n'existe.
+    
+    Returns:
+        JSON avec statut de conformité
+    """
+    try:
+        db = get_db()
+        
+        # Vérifier les signaux pending
+        response = db._client.table("signals").select("id, selection, match_name, sport").eq("status", "pending").execute()
+        signals = response.data or []
+        
+        violations = []
+        for sig in signals:
+            sel = sig.get("selection", "").lower()
+            if any(forbidden in sel for forbidden in ["draw", "nul", "match nul"]):
+                violations.append({
+                    "id": sig.get("id"),
+                    "match": sig.get("match_name"),
+                    "selection": sig.get("selection"),
+                    "sport": sig.get("sport")
+                })
+        
+        return jsonify({
+            "status": "ok",
+            "doctrine": "BINARY SYNTHESIS v4.1",
+            "compliant": len(violations) == 0,
+            "total_signals": len(signals),
+            "violations_count": len(violations),
+            "violations": violations,
+            "message": "✅ Conforme binaire" if len(violations) == 0 else f"🚫 {len(violations)} violations détectées"
+        })
+        
+    except Exception as e:
+        logger.error(f"❌ Erreur audit: {e}")
+        return jsonify({
+            "status": "error",
+            "error": str(e)
+        }), 500

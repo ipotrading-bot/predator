@@ -422,17 +422,38 @@ class MarketScanner:
                     continue
 
                 raw_outcomes = sharp_market.get("outcomes", [])
-
-                # ── Binary Synthesis Soccer: 1N2 → Double Chance ─────
-                if sharp_market_key == "h2h" and "soccer" in sport:
-                    dc_outcomes = _apply_double_chance(raw_outcomes)
-                    if not dc_outcomes:
+                
+                # ═══════════════════════════════════════════════════════════════════
+                # DOCTRINE BINARY SYNTHESIS STRICTE (PhD MIT Protocol v4.1)
+                # Rejeter TOUT marché avec 3 issues (incluant Draw)
+                # Uniquement Bernoulli Trials: Pile ou Face mathématique
+                # ═══════════════════════════════════════════════════════════════════
+                
+                # Étape 1: Vérification binaire stricte
+                if len(raw_outcomes) == 3:
+                    # Marché 1N2 détecté - Rejet immédiat selon doctrine Zéro Nul
+                    logger.debug(f"🚫 BINARY VIOLATION: {event_name} | Marché 1N2 à 3 issues rejeté")
+                    continue
+                
+                if len(raw_outcomes) != 2:
+                    # Ni binaire, ni trinaire - marché exotique, on skip
+                    logger.debug(f"🚫 Marché non-binaire: {event_name} | {len(raw_outcomes)} issues")
+                    continue
+                
+                # Étape 2: Pour Soccer, privilégier spreads (AH 0.0) uniquement
+                if "soccer" in sport and sharp_market_key == "h2h":
+                    # Soccer en h2h = risque de nul caché, on préfère spreads
+                    logger.debug(f"🚫 SOCCER H2H rejeté: {event_name} | Utiliser spreads AH 0.0")
+                    continue
+                
+                # Étape 3: Vérification finale - aucun outcome ne doit être "Draw"
+                for outcome in raw_outcomes:
+                    if outcome.get("name", "").lower() in ("draw", "nul", "match nul"):
+                        logger.warning(f"🚫 DRAW DETECTED: {event_name} | Marché rejeté")
                         continue
-                    outcomes_to_process = dc_outcomes
-                    effective_market_key = "double_chance"
-                else:
-                    outcomes_to_process = raw_outcomes
-                    effective_market_key = sharp_market_key
+                
+                outcomes_to_process = raw_outcomes
+                effective_market_key = sharp_market_key
 
                 for outcome in outcomes_to_process:
                     selection    = outcome.get("name", "")
@@ -443,17 +464,11 @@ class MarketScanner:
                     # ── Fuzzy soft odds lookup ─────────────────
                     # Cherche la cote chez n'importe quel soft book
                     # avec fallback h2h si le marché principal est absent
-                    if effective_market_key == "double_chance":
-                        # Double Chance: calculer la cote à partir des H2H
-                        soft_odds_val = _get_double_chance_soft_odds(
-                            bookmakers, selection, raw_outcomes
-                        )
-                    else:
-                        soft_odds_val = _get_soft_odds(
-                            bookmakers,
-                            market_key=effective_market_key,
-                            selection=selection,
-                        )
+                    soft_odds_val = _get_soft_odds(
+                        bookmakers,
+                        market_key=effective_market_key,
+                        selection=selection,
+                    )
 
                     # ── Data Integrity : rejeter si cote soft invalide ──
                     if not soft_odds_val or soft_odds_val <= 1.0:
@@ -608,6 +623,22 @@ class MarketScanner:
         for dossier in dossiers:
             signal = dossier.signal
             meta   = dossier.meta
+            
+            # ═══════════════════════════════════════════════════════════════════
+            # ASSERTION BINAIRE STRICTE (PhD MIT Protocol v4.1)
+            # Dernière ligne de défense: rejeter tout signal contenant "Draw"
+            # ═══════════════════════════════════════════════════════════════════
+            selection_lower = signal.selection.lower()
+            if any(forbidden in selection_lower for forbidden in ["draw", "nul", "match nul"]):
+                logger.error(f"🚫 BINARY ASSERTION FAILED: {meta.get('event_name')} | "
+                           f"Sélection='{signal.selection}' | Signal REJETÉ")
+                continue
+            
+            # Vérification supplémentaire: le marché doit être binaire
+            if signal.market_key not in ("h2h", "spreads"):
+                logger.warning(f"🚫 Marché non-binaire rejeté: {signal.market_key}")
+                continue
+            
             try:
                 # insert_signal est maintenant synchrone (SDK supabase-py v2)
                 signal_id = self.db.insert_signal(
@@ -653,123 +684,15 @@ def _build_gemini_context(
     )
 
 
-def _apply_double_chance(outcomes: list[dict]) -> list[dict]:
-    """
-    Convertit les cotes 1N2 en Double Chance mathématique.
-    Double Chance 1X (Home + Draw), Double Chance X2 (Draw + Away), Double Chance 12 (Home + Away)
-    """
-    if len(outcomes) != 3:
-        return []
-
-    home = next((o for o in outcomes if o.get("name") in ("Home", "Team1")), None)
-    draw = next((o for o in outcomes if o.get("name") == "Draw"), None)
-    away = next((o for o in outcomes if o.get("name") in ("Away", "Team2")), None)
-
-    # Fallback: utiliser l'index si les noms ne matchent pas
-    if not home and len(outcomes) > 0:
-        home = outcomes[0]
-    if not draw and len(outcomes) > 1:
-        draw = outcomes[1]
-    if not away and len(outcomes) > 2:
-        away = outcomes[2]
-
-    if not all([home, draw, away]):
-        return []
-
-    try:
-        c_home = float(home["price"])
-        c_draw = float(draw["price"])
-        c_away = float(away["price"])
-    except (KeyError, ValueError, TypeError):
-        return []
-
-    if c_home <= 1.0 or c_draw <= 1.0 or c_away <= 1.0:
-        return []
-
-    # Probabilités implicites
-    p_home = 1.0 / c_home
-    p_draw = 1.0 / c_draw
-    p_away = 1.0 / c_away
-
-    # Cotes Double Chance = 1 / (somme des probas)
-    # Double Chance 1X: Home ou Draw
-    dc_1x_price = round(1.0 / (p_home + p_draw), 3) if (p_home + p_draw) > 0 else 0
-    # Double Chance X2: Draw ou Away
-    dc_x2_price = round(1.0 / (p_draw + p_away), 3) if (p_draw + p_away) > 0 else 0
-    # Double Chance 12: Home ou Away (pas de nul)
-    dc_12_price = round(1.0 / (p_home + p_away), 3) if (p_home + p_away) > 0 else 0
-
-    return [
-        {"name": f"{home.get('name', 'Home')} or Draw", "price": dc_1x_price, "dc_type": "1X"},
-        {"name": f"Draw or {away.get('name', 'Away')}", "price": dc_x2_price, "dc_type": "X2"},
-        {"name": f"{home.get('name', 'Home')} or {away.get('name', 'Away')}", "price": dc_12_price, "dc_type": "12"},
-    ]
-
-
-def _get_double_chance_soft_odds(
-    bookmakers: list[dict], selection: str, sharp_raw_outcomes: list[dict]
-) -> Optional[float]:
-    """
-    Calcule la cote Double Chance pour le soft book à partir de la cote H2H.
-    selection doit contenir '1X', 'X2', ou '12'.
-    """
-    # Identifier le type de DC
-    dc_type = None
-    if "1X" in selection or "or Draw" in selection:
-        dc_type = "1X"
-    elif "X2" in selection or "Draw or" in selection:
-        dc_type = "X2"
-    elif "12" in selection:
-        dc_type = "12"
-
-    if not dc_type:
-        return None
-
-    # Extraire les noms des équipes
-    home_name = None
-    away_name = None
-    for o in sharp_raw_outcomes:
-        name = o.get("name", "")
-        if name == "Draw":
-            continue
-        if home_name is None:
-            home_name = name
-        else:
-            away_name = name
-
-    # Chercher les cotes H2H du soft book
-    for bm in bookmakers:
-        if not _is_soft_book(bm.get("key", "")):
-            continue
-        for market in bm.get("markets", []):
-            if market.get("key") != "h2h":
-                continue
-            home_odds = None
-            away_odds = None
-            draw_odds = None
-            for outcome in market.get("outcomes", []):
-                name = outcome.get("name", "")
-                price = outcome.get("price", 0.0)
-                if name == home_name:
-                    home_odds = price
-                elif name == away_name:
-                    away_odds = price
-                elif name == "Draw":
-                    draw_odds = price
-
-            if not all([home_odds, away_odds, draw_odds]):
-                continue
-
-            # Calculer la cote DC
-            p_home = 1.0 / home_odds
-            p_away = 1.0 / away_odds
-            p_draw = 1.0 / draw_odds
-
-            if dc_type == "1X":
-                return round(1.0 / (p_home + p_draw), 3)
-            elif dc_type == "X2":
-                return round(1.0 / (p_draw + p_away), 3)
-            else:  # 12
-                return round(1.0 / (p_home + p_away), 3)
-
-    return None
+# ═══════════════════════════════════════════════════════════════════
+# OBSOLÈTE: Fonctions Double Chance supprimées (Binary Synthesis v4.1)
+# 
+# La doctrine Zéro Nul interdit strictement tout traitement du match nul.
+# Les marchés 1N2 sont rejetés dès la détection (len(outcomes) == 3).
+# 
+# Pour le Soccer: uniquement Asian Handicap 0.0 (spreads) autorisé.
+# Pour NBA/Tennis/NHL: h2h naturellement binaire (2 outcomes).
+# 
+# Les fonctions _apply_double_chance() et _get_double_chance_soft_odds()
+# ont été supprimées conformément au protocole PhD MIT v4.1.
+# ═══════════════════════════════════════════════════════════════════
