@@ -3,783 +3,666 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>PREDATOR PAIM v2.0 | Terminal</title>
+    <title>PREDATOR PAIM v3.5 | High-Frequency Terminal</title>
     <script src="https://cdn.tailwindcss.com"></script>
-    <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
-    <link href="https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@400;700&display=swap" rel="stylesheet">
+    <link href="https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@300;400;500;700&family=Inter:wght@300;400;500;600;700&display=swap" rel="stylesheet">
     <style>
-        body { font-family: 'JetBrains Mono', monospace; background-color: #050505; color: #00ff00; }
-        .glass { background: rgba(255, 255, 255, 0.03); border: 1px solid rgba(0, 255, 0, 0.2); }
-        .glass-hover:hover { border-color: #00ff00; box-shadow: 0 0 20px rgba(0, 255, 0, 0.2); transform: translateY(-2px); }
-        .tab-active { border-bottom: 2px solid #00ff00; color: #fff; }
+        :root {
+            --bg-primary: #050505;
+            --bg-card: #0a0a0a;
+            --border-subtle: rgba(255, 255, 255, 0.06);
+            --border-accent: rgba(0, 200, 255, 0.3);
+            --text-primary: #ffffff;
+            --text-secondary: rgba(255, 255, 255, 0.5);
+            --text-muted: rgba(255, 255, 255, 0.3);
+            --alpha-glow: #00d4ff;
+            --alpha-dim: rgba(0, 212, 255, 0.1);
+            --elite-gold: #ffd700;
+        }
         
-        .console-container {
-            background: #0a0a0a;
-            border: 1px solid rgba(0, 255, 0, 0.3);
-            border-radius: 4px;
+        * { box-sizing: border-box; }
+        
+        body {
+            font-family: 'Inter', sans-serif;
+            background-color: var(--bg-primary);
+            color: var(--text-primary);
+            margin: 0;
+            min-height: 100vh;
+            overflow-x: hidden;
+        }
+        
+        .font-mono { font-family: 'JetBrains Mono', monospace; }
+        
+        /* ── Grid Layout ───────────────────────────────────────────── */
+        .terminal-grid {
+            display: grid;
+            grid-template-columns: repeat(auto-fill, minmax(280px, 1fr));
+            gap: 1px;
+            background: var(--border-subtle);
+        }
+        
+        /* ── Signal Card (Vue Radar) ──────────────────────────────── */
+        .signal-card {
+            background: var(--bg-card);
+            border: 1px solid transparent;
+            padding: 20px;
+            cursor: pointer;
+            transition: all 0.2s cubic-bezier(0.4, 0, 0.2, 1);
+            position: relative;
             overflow: hidden;
         }
-        .console-header {
-            background: rgba(0, 255, 0, 0.1);
-            padding: 8px 12px;
-            font-size: 11px;
-            color: #00ff00;
-            border-bottom: 1px solid rgba(0, 255, 0, 0.2);
+        
+        .signal-card::before {
+            content: '';
+            position: absolute;
+            top: 0;
+            left: 0;
+            right: 0;
+            height: 2px;
+            background: linear-gradient(90deg, transparent, var(--alpha-glow), transparent);
+            opacity: 0;
+            transition: opacity 0.3s ease;
+        }
+        
+        .signal-card:hover {
+            background: #0f0f0f;
+            border-color: var(--border-accent);
+            transform: translateY(-1px);
+            box-shadow: 0 4px 24px rgba(0, 212, 255, 0.08);
+        }
+        
+        .signal-card:hover::before {
+            opacity: 1;
+        }
+        
+        .signal-card.elite::after {
+            content: 'ELITE';
+            position: absolute;
+            top: 8px;
+            right: 8px;
+            font-size: 9px;
+            font-weight: 700;
+            letter-spacing: 0.1em;
+            color: var(--elite-gold);
+            border: 1px solid rgba(255, 215, 0, 0.3);
+            padding: 2px 6px;
+            background: rgba(255, 215, 0, 0.05);
+        }
+        
+        /* ── Alpha Display ────────────────────────────────────────── */
+        .alpha-value {
+            font-family: 'JetBrains Mono', monospace;
+            font-size: 32px;
+            font-weight: 300;
+            color: var(--alpha-glow);
+            text-shadow: 0 0 20px rgba(0, 212, 255, 0.4);
+            line-height: 1;
+            margin-top: 12px;
+        }
+        
+        .alpha-value.negative {
+            color: #ff4757;
+            text-shadow: 0 0 20px rgba(255, 71, 87, 0.3);
+        }
+        
+        /* ── Side Drawer (Vue Quant) ─────────────────────────────── */
+        .drawer-overlay {
+            position: fixed;
+            inset: 0;
+            background: rgba(0, 0, 0, 0.6);
+            backdrop-filter: blur(4px);
+            opacity: 0;
+            visibility: hidden;
+            transition: all 0.3s ease;
+            z-index: 998;
+        }
+        
+        .drawer-overlay.active {
+            opacity: 1;
+            visibility: visible;
+        }
+        
+        .side-drawer {
+            position: fixed;
+            top: 0;
+            right: 0;
+            width: 100%;
+            max-width: 480px;
+            height: 100vh;
+            background: #080808;
+            border-left: 1px solid var(--border-subtle);
+            transform: translateX(100%);
+            transition: transform 0.35s cubic-bezier(0.4, 0, 0.2, 1);
+            z-index: 999;
+            overflow-y: auto;
+            display: flex;
+            flex-direction: column;
+        }
+        
+        .side-drawer.active {
+            transform: translateX(0);
+        }
+        
+        .drawer-header {
+            padding: 24px;
+            border-bottom: 1px solid var(--border-subtle);
+            display: flex;
+            justify-content: space-between;
+            align-items: flex-start;
+        }
+        
+        .drawer-body {
+            flex: 1;
+            padding: 24px;
+        }
+        
+        .drawer-footer {
+            padding: 24px;
+            border-top: 1px solid var(--border-subtle);
+            background: rgba(0, 0, 0, 0.3);
+        }
+        
+        /* ── Odds Comparison ─────────────────────────────────────── */
+        .odds-comparison {
+            display: grid;
+            grid-template-columns: 1fr auto 1fr;
+            gap: 16px;
+            align-items: center;
+            padding: 20px;
+            background: rgba(255, 255, 255, 0.02);
+            border: 1px solid var(--border-subtle);
+            border-radius: 4px;
+            margin: 16px 0;
+        }
+        
+        .odds-box {
+            text-align: center;
+        }
+        
+        .odds-label {
+            font-size: 10px;
+            text-transform: uppercase;
+            letter-spacing: 0.1em;
+            color: var(--text-muted);
+            margin-bottom: 4px;
+        }
+        
+        .odds-value {
+            font-family: 'JetBrains Mono', monospace;
+            font-size: 28px;
+            font-weight: 500;
+            color: var(--text-primary);
+        }
+        
+        .odds-value.pinnacle { color: #888; }
+        .odds-value.soft { color: var(--alpha-glow); }
+        
+        .odds-arrow {
+            color: var(--alpha-glow);
+            font-size: 20px;
+        }
+        
+        /* ── Risk Flag ────────────────────────────────────────────── */
+        .risk-flag {
+            padding: 16px;
+            background: rgba(0, 212, 255, 0.03);
+            border-left: 3px solid var(--alpha-glow);
+            margin: 16px 0;
+        }
+        
+        .risk-flag-title {
+            font-size: 10px;
+            text-transform: uppercase;
+            letter-spacing: 0.1em;
+            color: var(--alpha-glow);
+            margin-bottom: 8px;
+        }
+        
+        .risk-flag-content {
+            font-size: 13px;
+            line-height: 1.6;
+            color: var(--text-secondary);
+        }
+        
+        /* ── Action Button ───────────────────────────────────────── */
+        .btn-primary {
+            width: 100%;
+            padding: 16px 24px;
+            background: linear-gradient(135deg, rgba(0, 212, 255, 0.15), rgba(0, 212, 255, 0.05));
+            border: 1px solid var(--border-accent);
+            color: var(--alpha-glow);
+            font-family: 'Inter', sans-serif;
+            font-size: 12px;
+            font-weight: 600;
+            letter-spacing: 0.15em;
+            text-transform: uppercase;
+            cursor: pointer;
+            transition: all 0.2s ease;
+            text-decoration: none;
+            display: inline-block;
+            text-align: center;
+        }
+        
+        .btn-primary:hover {
+            background: linear-gradient(135deg, rgba(0, 212, 255, 0.25), rgba(0, 212, 255, 0.1));
+            border-color: var(--alpha-glow);
+            box-shadow: 0 0 30px rgba(0, 212, 255, 0.15);
+        }
+        
+        /* ── Header ──────────────────────────────────────────────── */
+        .terminal-header {
+            padding: 16px 24px;
+            border-bottom: 1px solid var(--border-subtle);
             display: flex;
             justify-content: space-between;
             align-items: center;
+            background: rgba(0, 0, 0, 0.5);
+            backdrop-filter: blur(10px);
+            position: sticky;
+            top: 0;
+            z-index: 100;
         }
-        .console-body {
-            padding: 12px;
-            height: 200px;
-            overflow-y: auto;
-            font-size: 12px;
-            line-height: 1.6;
-            scrollbar-width: thin;
-            scrollbar-color: #00ff00 #0a0a0a;
+        
+        .status-indicator {
+            display: inline-flex;
+            align-items: center;
+            gap: 8px;
+            font-size: 11px;
+            letter-spacing: 0.05em;
         }
-        .console-body::-webkit-scrollbar { width: 6px; }
-        .console-body::-webkit-scrollbar-track { background: #0a0a0a; }
-        .console-body::-webkit-scrollbar-thumb { background: #00ff00; border-radius: 3px; }
-        .log-line { margin-bottom: 2px; animation: fadeIn 0.3s ease-in; }
-        .log-time { color: #666; }
-        .log-info { color: #00ff00; }
-        .log-success { color: #00ff00; font-weight: bold; }
-        .log-warning { color: #ffaa00; }
-        .log-error { color: #ff3333; }
-        .log-highlight { color: #00ccff; }
-        @keyframes fadeIn { from { opacity: 0; transform: translateX(-10px); } to { opacity: 1; transform: translateX(0); } }
         
-        .led { display: inline-block; width: 8px; height: 8px; border-radius: 50%; margin-right: 6px; animation: pulse 2s infinite; }
-        .led-online { background: #00ff00; box-shadow: 0 0 8px #00ff00; }
-        .led-offline { background: #ff3333; box-shadow: 0 0 8px #ff3333; animation: none; }
-        .led-warning { background: #ffaa00; box-shadow: 0 0 8px #ffaa00; }
-        @keyframes pulse { 0%, 100% { opacity: 1; } 50% { opacity: 0.5; } }
+        .status-dot {
+            width: 6px;
+            height: 6px;
+            border-radius: 50%;
+            background: #00ff88;
+            box-shadow: 0 0 8px #00ff88;
+            animation: pulse 2s infinite;
+        }
         
-        .ticker-container { overflow: hidden; background: rgba(0, 255, 0, 0.05); border: 1px solid rgba(0, 255, 0, 0.15); border-radius: 4px; padding: 6px 0; margin-bottom: 16px; }
-        .ticker-content { display: inline-block; white-space: nowrap; padding-left: 100%; }
-        .ticker-item { display: inline-block; padding: 0 30px; font-size: 11px; color: #00ccff; }
-        .ticker-item .time { color: #666; margin-right: 8px; }
+        @keyframes pulse {
+            0%, 100% { opacity: 1; }
+            50% { opacity: 0.4; }
+        }
         
-        .chart-container { position: relative; height: 300px; width: 100%; }
-        .cursor-blink::after { content: '█'; animation: blink 1s infinite; color: #00ff00; }
-        @keyframes blink { 0%, 50% { opacity: 1; } 51%, 100% { opacity: 0; } }
+        /* ── Empty State ─────────────────────────────────────────── */
+        .empty-state {
+            grid-column: 1 / -1;
+            padding: 80px 40px;
+            text-align: center;
+            color: var(--text-muted);
+        }
         
-        .signal-card { cursor: pointer; transition: all 0.2s ease; }
-        .signal-card:hover { border-color: #00ff00; box-shadow: 0 0 20px rgba(0, 255, 0, 0.2); transform: translateY(-2px); }
+        .empty-state-icon {
+            font-size: 48px;
+            margin-bottom: 16px;
+            opacity: 0.3;
+        }
+        
+        /* ── Close Button ───────────────────────────────────────── */
+        .btn-close {
+            width: 32px;
+            height: 32px;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            background: transparent;
+            border: 1px solid var(--border-subtle);
+            color: var(--text-secondary);
+            cursor: pointer;
+            transition: all 0.2s ease;
+            font-size: 18px;
+        }
+        
+        .btn-close:hover {
+            border-color: var(--text-primary);
+            color: var(--text-primary);
+        }
+        
+        /* ── Detail Row ──────────────────────────────────────────── */
+        .detail-row {
+            display: flex;
+            justify-content: space-between;
+            padding: 12px 0;
+            border-bottom: 1px solid var(--border-subtle);
+        }
+        
+        .detail-row:last-child {
+            border-bottom: none;
+        }
+        
+        .detail-label {
+            font-size: 11px;
+            text-transform: uppercase;
+            letter-spacing: 0.1em;
+            color: var(--text-muted);
+        }
+        
+        .detail-value {
+            font-family: 'JetBrains Mono', monospace;
+            font-size: 13px;
+            color: var(--text-primary);
+        }
+        
+        /* ── Scrollbar ───────────────────────────────────────────── */
+        ::-webkit-scrollbar {
+            width: 6px;
+        }
+        
+        ::-webkit-scrollbar-track {
+            background: var(--bg-primary);
+        }
+        
+        ::-webkit-scrollbar-thumb {
+            background: var(--border-subtle);
+            border-radius: 3px;
+        }
+        
+        ::-webkit-scrollbar-thumb:hover {
+            background: rgba(255, 255, 255, 0.1);
+        }
+        
+        /* ── Responsive ───────────────────────────────────────────── */
+        @media (max-width: 640px) {
+            .terminal-grid {
+                grid-template-columns: 1fr;
+            }
+            
+            .side-drawer {
+                max-width: 100%;
+            }
+            
+            .alpha-value {
+                font-size: 28px;
+            }
+        }
     </style>
 </head>
-<body class="p-4">
-    <!-- Market Ticker — UNIQUEMENT données réelles depuis /api/ticker -->
-    <div class="ticker-container">
-        <div class="ticker-content" id="market-ticker">
-            <span class="ticker-item" style="color:#666">Chargement des news...</span>
-        </div>
-    </div>
-
+<body>
     <!-- Header -->
-    <div class="flex justify-between items-center mb-6 border-b border-green-900 pb-4">
+    <header class="terminal-header">
         <div>
-            <h1 class="text-2xl font-bold tracking-tighter">🦅 PREDATOR PAIM <span class="text-xs font-normal text-gray-500">v2.0 QUANT SYSTEM</span></h1>
-            <p class="text-xs text-green-700">PHD MIT ARCHITECTURE | DAKAR HUB</p>
+            <h1 class="font-mono text-sm tracking-wider" style="color: var(--text-primary);">
+                PREDATOR <span style="color: var(--alpha-glow);">PAIM</span> v3.5
+            </h1>
+            <p class="text-xs mt-1" style="color: var(--text-muted);">High-Frequency Terminal • MIT Quant Architecture</p>
         </div>
-        <div class="flex items-center gap-6">
-            <div class="flex gap-4 text-xs" id="api-health">
-                <div class="flex items-center"><span class="led led-offline" id="led-pinnacle"></span><span class="text-gray-400">PINNACLE: </span><span class="text-gray-500 ml-1" id="status-pinnacle">...</span></div>
-                <div class="flex items-center"><span class="led led-offline" id="led-1xbet"></span><span class="text-gray-400">1XBET: </span><span class="text-gray-500 ml-1" id="status-1xbet">...</span></div>
-                <div class="flex items-center"><span class="led led-offline" id="led-gemini"></span><span class="text-gray-400">GEMINI AI: </span><span class="text-gray-500 ml-1" id="status-gemini">...</span></div>
-                <div class="flex items-center"><span class="led led-offline" id="led-telegram"></span><span class="text-gray-400">TELEGRAM: </span><span class="text-gray-500 ml-1" id="status-telegram">...</span></div>
-            </div>
-            <div class="text-right">
-                <div class="text-xs text-gray-500">STATUS</div>
-                <div class="text-sm font-bold text-green-400 animate-pulse" id="system-status">● SYSTEM ONLINE</div>
-            </div>
+        <div class="status-indicator" style="color: var(--text-secondary);">
+            <span class="status-dot"></span>
+            <span class="font-mono">SYSTEM ONLINE</span>
         </div>
-    </div>
+    </header>
 
-    <!-- CLV Counter Banner — indicateur de réussite n°1 -->
-    <div class="glass mb-4 px-5 py-3 rounded flex items-center justify-between" id="clv-banner">
-        <div class="flex items-center gap-3">
-            <span class="text-xs text-gray-500 uppercase tracking-widest">CLV — 10 derniers signaux</span>
-            <span class="text-lg font-bold text-blue-400" id="clv-counter-value">...</span>
-            <span class="text-xs text-gray-600" id="clv-counter-count"></span>
+    <!-- Main Grid (Vue Radar) -->
+    <main id="signal-grid" class="terminal-grid">
+        <div class="empty-state">
+            <div class="empty-state-icon">📡</div>
+            <p class="font-mono text-sm">SCANNING MARKETS...</p>
+            <p class="text-xs mt-2" style="color: var(--text-muted);">Recherche d'Alpha > 1.5%</p>
         </div>
-        <div class="flex items-center gap-2">
-            <span class="text-[10px] text-gray-600 uppercase">Indicateur n°1 de performance</span>
-            <span id="clv-verdict" class="text-xs font-bold px-2 py-0.5 rounded"></span>
-        </div>
-    </div>
+    </main>
 
-    <!-- Stats Cards — valeurs réelles depuis /api/stats et /api/exposure -->
-    <div class="grid grid-cols-1 md:grid-cols-5 gap-4 mb-6">
-        <div class="glass p-4 rounded"><div class="text-xs text-gray-500">CAPITAL</div><div class="text-xl font-bold" id="stat-capital">...</div></div>
-        <div class="glass p-4 rounded"><div class="text-xs text-gray-500">WIN RATE (7/9)</div><div class="text-xl font-bold text-white" id="stat-winrate">...</div></div>
-        <div class="glass p-4 rounded"><div class="text-xs text-gray-500">CLV AVG (ALL)</div><div class="text-xl font-bold text-blue-400" id="stat-clv">...</div></div>
-        <div class="glass p-4 rounded"><div class="text-xs text-gray-500">ROI MENSUEL</div><div class="text-xl font-bold text-green-400" id="stat-roi">...</div></div>
-        <div class="glass p-4 rounded border-blue-500/30"><div class="text-xs text-gray-500">CURRENT EXPOSURE</div><div class="text-xl font-bold text-yellow-400" id="stat-exposure">...</div><div class="text-xs text-gray-600" id="stat-positions">...</div></div>
-    </div>
+    <!-- Drawer Overlay -->
+    <div id="drawer-overlay" class="drawer-overlay" onclick="closeDrawer()"></div>
 
-    <!-- Market Heatmap + Bouton Test API -->
-    <div class="grid grid-cols-1 md:grid-cols-3 gap-4 mb-8">
-        <!-- Heatmap -->
-        <div class="md:col-span-2 glass p-4 rounded">
-            <div class="flex justify-between items-center mb-3">
-                <h3 class="text-xs text-gray-500 uppercase tracking-widest">📊 Market Heatmap — Alpha moyen / sport (24h)</h3>
-                <span class="text-[10px] text-gray-700">Vert = marché chaud | Gris = marché froid</span>
-            </div>
-            <div id="heatmap-grid" class="grid grid-cols-2 md:grid-cols-4 gap-2">
-                <div class="text-center text-gray-700 text-xs col-span-full py-4">Chargement...</div>
-            </div>
-        </div>
-        <!-- Test API -->
-        <div class="glass p-4 rounded flex flex-col justify-between">
+    <!-- Side Drawer (Vue Quant) -->
+    <aside id="side-drawer" class="side-drawer">
+        <div class="drawer-header">
             <div>
-                <h3 class="text-xs text-gray-500 uppercase tracking-widest mb-3">🔌 Connexion The-Odds-API</h3>
-                <div id="api-test-result" class="text-xs text-gray-600 mb-4 min-h-[40px]">Cliquez pour tester la connexion.</div>
+                <div class="text-xs font-mono mb-1" style="color: var(--alpha-glow);" id="drawer-sport-time">—</div>
+                <h2 class="text-lg font-semibold" id="drawer-match-name">—</h2>
             </div>
-            <button onclick="testAPIConnection()"
-                id="btn-test-api"
-                class="w-full bg-black border border-green-900 hover:border-green-500 text-green-400 hover:text-green-300 px-4 py-2 rounded text-xs font-bold uppercase tracking-widest transition-all">
-                ▶ TEST API + QUOTA
-            </button>
+            <button class="btn-close" onclick="closeDrawer()">×</button>
         </div>
-    </div>
-
-    <!-- Navigation -->
-        <div class="flex space-x-8 mb-6 border-b border-gray-900">
-            <button onclick="showPage('control')" class="pb-2 text-sm uppercase tracking-widest" id="btn-control">Contrôle</button>
-            <button onclick="showPage('live')" class="pb-2 text-sm uppercase tracking-widest" id="btn-live">Live Signals</button>
-            <button onclick="showPage('ledger')" class="pb-2 text-sm uppercase tracking-widest" id="btn-ledger">Ledger</button>
-            <button onclick="showPage('audit')" class="pb-2 text-sm uppercase tracking-widest" id="btn-audit">Audit</button>
-            <button onclick="showPage('info')" class="pb-2 text-sm uppercase tracking-widest" id="btn-info">Tips</button>
-        </div>
-
-    <!-- PAGE: Contrôle -->
-    <div id="page-control" class="page">
-        <!-- Search Control Panel -->
-        <div class="glass p-6 rounded-lg mb-6">
-            <h3 class="text-sm text-gray-500 mb-4 uppercase">Recherche d'Alpha</h3>
-            <div class="flex gap-4 items-end">
-                <div class="flex-1">
-                    <label class="text-[10px] text-gray-600 block mb-1">DATE</label>
-                    <input type="date" id="search-date" class="w-full bg-black border border-green-900 text-white p-2 rounded text-sm">
+        
+        <div class="drawer-body">
+            <!-- Odds Comparison -->
+            <div class="odds-comparison">
+                <div class="odds-box">
+                    <div class="odds-label">Fair Price</div>
+                    <div class="odds-value pinnacle" id="drawer-fair-price">—</div>
                 </div>
-                <div class="flex-1">
-                    <label class="text-[10px] text-gray-600 block mb-1">SPORT</label>
-                    <input type="text" id="search-sport" placeholder="Ex: Soccer" class="w-full bg-black border border-green-900 text-white p-2 rounded text-sm">
-                </div>
-                <button onclick="performSearch()" class="bg-green-900 hover:bg-green-800 text-green-400 px-6 py-2 rounded text-sm font-bold">RECHERCHER</button>
-            </div>
-            <div id="search-results" class="mt-6"></div>
-        </div>
-        <!-- ... existing content ... -->
-    </div>
-
-    <!-- PAGE: Tips/Info -->
-    <div id="page-info" class="page hidden">
-        <div class="glass p-6 rounded-lg">
-            <h2 class="mb-4 text-gray-400">TIPS & INFO — ACADEMY</h2>
-            <div id="info-container" class="text-center py-10 text-gray-600">Chargement des tips...</div>
-        </div>
-    </div>
-
-    <!-- PAGE: Live Signals -->
-    <div id="page-live" class="page hidden">
-        <h2 class="mb-4 text-sm text-gray-500">TICKET SYSTÈME 7/9 ACTUEL (24H ADVANCE)</h2>
-        <div id="live-container" class="grid grid-cols-1 md:grid-cols-3 gap-4">
-            <!-- Signaux réels depuis /api/signals/live -->
-        </div>
-    </div>
-
-    <!-- PAGE: Ledger -->
-    <div id="page-ledger" class="page hidden">
-        <div class="glass p-6 rounded-lg">
-            <h2 class="mb-4 text-gray-400">LEDGER — HISTORIQUE DES TRANSACTIONS</h2>
-            <div class="overflow-x-auto">
-                <table class="w-full text-xs">
-                    <thead class="text-gray-500 border-b border-gray-800">
-                        <tr>
-                            <th class="py-2 px-3 text-left">DATE</th>
-                            <th class="py-2 px-3 text-left">MATCH</th>
-                            <th class="py-2 px-3 text-left">MISE</th>
-                            <th class="py-2 px-3 text-left">EV+</th>
-                            <th class="py-2 px-3 text-left">RÉSULTAT</th>
-                            <th class="py-2 px-3 text-left">P&L</th>
-                        </tr>
-                    </thead>
-                    <tbody id="ledger-body">
-                        <tr><td colspan="6" class="py-8 text-center text-gray-600">Chargement...</td></tr>
-                    </tbody>
-                </table>
-            </div>
-        </div>
-    </div>
-
-    <!-- PAGE: Audit -->
-    <div id="page-audit" class="page hidden">
-        <div class="grid grid-cols-1 lg:grid-cols-3 gap-6">
-            <div class="lg:col-span-1 space-y-4">
-                <div class="glass p-4 rounded">
-                    <h3 class="text-sm text-gray-500 mb-3">MÉTRIQUES DE RISQUE</h3>
-                    <div class="space-y-3">
-                        <div class="flex justify-between items-center"><span class="text-xs text-gray-400">Brier Score</span><span class="text-sm font-bold text-blue-400" id="brier-score">...</span></div>
-                        <div class="flex justify-between items-center"><span class="text-xs text-gray-400">Sharpe Ratio</span><span class="text-sm font-bold text-green-400" id="sharpe-ratio">...</span></div>
-                        <div class="flex justify-between items-center"><span class="text-xs text-gray-400">Sortino Ratio</span><span class="text-sm font-bold text-green-400" id="sortino-ratio">...</span></div>
-                        <div class="flex justify-between items-center"><span class="text-xs text-gray-400">Max Drawdown</span><span class="text-sm font-bold text-red-400" id="max-drawdown">...</span></div>
-                        <div class="flex justify-between items-center"><span class="text-xs text-gray-400">Calmar Ratio</span><span class="text-sm font-bold text-yellow-400" id="calmar-ratio">...</span></div>
-                        <div class="flex justify-between items-center"><span class="text-xs text-gray-400">Win Streak</span><span class="text-sm font-bold text-green-400" id="win-streak">...</span></div>
-                    </div>
-                </div>
-                <div class="glass p-4 rounded">
-                    <h3 class="text-sm text-gray-500 mb-3">PERFORMANCE MENSUELLE</h3>
-                    <div id="monthly-performance" class="space-y-2 text-xs">
-                        <div class="text-center text-gray-600">Chargement...</div>
-                    </div>
+                <div class="odds-arrow">→</div>
+                <div class="odds-box">
+                    <div class="odds-label">1XBet Price</div>
+                    <div class="odds-value soft" id="drawer-soft-price">—</div>
                 </div>
             </div>
-            <div class="lg:col-span-2">
-                <div class="glass p-4 rounded">
-                    <h3 class="text-sm text-gray-500 mb-4">COURBE D'ÉQUITÉ DYNAMIQUE</h3>
-                    <div class="chart-container">
-                        <canvas id="equity-chart"></canvas>
-                    </div>
+            
+            <!-- Market Info -->
+            <div style="margin: 24px 0;">
+                <div class="detail-row">
+                    <span class="detail-label">Marché</span>
+                    <span class="detail-value" id="drawer-market">—</span>
+                </div>
+                <div class="detail-row">
+                    <span class="detail-label">Sélection</span>
+                    <span class="detail-value" id="drawer-selection">—</span>
+                </div>
+                <div class="detail-row">
+                    <span class="detail-label">Alpha Spread</span>
+                    <span class="detail-value font-mono" style="color: var(--alpha-glow);" id="drawer-alpha">—</span>
+                </div>
+                <div class="detail-row">
+                    <span class="detail-label">Mise Conseillée</span>
+                    <span class="detail-value font-mono" id="drawer-stake">—</span>
+                </div>
+                <div class="detail-row">
+                    <span class="detail-label">SNR Ratio</span>
+                    <span class="detail-value font-mono" id="drawer-snr">—</span>
+                </div>
+                <div class="detail-row">
+                    <span class="detail-label">CLV Est.</span>
+                    <span class="detail-value font-mono" id="drawer-clv">—</span>
                 </div>
             </div>
+            
+            <!-- Risk Flag IA -->
+            <div class="risk-flag">
+                <div class="risk-flag-title">🤖 IA Risk Analysis</div>
+                <div class="risk-flag-content" id="drawer-ia-note">—</div>
+            </div>
+            
+            <!-- Sources -->
+            <div style="margin-top: 20px;">
+                <div class="text-xs uppercase tracking-wider mb-3" style="color: var(--text-muted);">Sources Validées</div>
+                <div id="drawer-sources" class="flex flex-wrap gap-2"></div>
+            </div>
         </div>
-    </div>
+        
+        <div class="drawer-footer">
+            <a id="btn-place-bet" href="#" target="_blank" class="btn-primary">
+                Placer le Pari sur 1XBet →
+            </a>
+            <p class="text-xs mt-3 text-center" style="color: var(--text-muted);">
+                Ouvre 1XBet dans un nouvel onglet. Recherchez le match manuellement.
+            </p>
+        </div>
+    </aside>
 
     <script>
-        // Global state
-        let equityChart = null;
+        // ── State ───────────────────────────────────────────────────
+        let currentSignals = [];
+        let selectedSignal = null;
         
-        // ── Helpers ──────────────────────────────────────────────────
-        function timeStr() { return new Date().toTimeString().split(' ')[0]; }
+        // ── Sport Labels ────────────────────────────────────────────
+        const SPORT_LABELS = {
+            'basketball_nba': 'NBA',
+            'basketball_wnba': 'WNBA',
+            'tennis_atp': 'Tennis',
+            'esports_lol': 'LoL',
+            'soccer_uefa_champs_league': 'UCL',
+            'soccer_epl': 'EPL',
+            'soccer_spain_la_liga': 'La Liga',
+            'soccer': 'Soccer'
+        };
         
-        function formatMatchTime(iso) {
-            if (!iso) return 'N/A';
+        function getSportLabel(sport) {
+            return SPORT_LABELS[sport] || sport?.split('_')[0]?.toUpperCase() || 'SPORT';
+        }
+        
+        // ── Format Time ─────────────────────────────────────────────
+        function formatTime(iso) {
+            if (!iso) return '—';
             try {
                 const d = new Date(iso);
-                const day = String(d.getUTCDate()).padStart(2, '0');
-                const month = String(d.getUTCMonth() + 1).padStart(2, '0');
-                const hours = String(d.getUTCHours()).padStart(2, '0');
-                const mins = String(d.getUTCMinutes()).padStart(2, '0');
-                return `${day}/${month} ${hours}:${mins}`;
-            } catch { return 'N/A'; }
+                const dd = String(d.getUTCDate()).padStart(2, '0');
+                const mm = String(d.getUTCMonth() + 1).padStart(2, '0');
+                const hh = String(d.getUTCHours()).padStart(2, '0');
+                const mn = String(d.getUTCMinutes()).padStart(2, '0');
+                return `${dd}/${mm} ${hh}:${mn}`;
+            } catch { return '—'; }
         }
         
-        function marketTypeLabel(marketKey, sport) {
-            if (!marketKey) return 'N/A';
-            if (marketKey === 'h2h') {
-                if (sport && sport.includes('soccer')) return 'Asian Handicap 0.0';
-                return 'Moneyline';
-            }
-            if (marketKey === 'spreads') return 'Spread';
-            if (marketKey === 'totals') return 'Over/Under';
-            if (marketKey === 'asian_handicap') return 'Asian Handicap 0.0';
-            return marketKey;
-        }
-
-        function showPage(pageId) {
-            document.querySelectorAll('.page').forEach(p => p.classList.add('hidden'));
-            document.getElementById('page-' + pageId).classList.remove('hidden');
-            document.querySelectorAll('[id^="btn-"]').forEach(btn => btn.classList.remove('tab-active'));
-            document.getElementById('btn-' + pageId).classList.add('tab-active');
-            if (pageId === 'audit' && !equityChart) setTimeout(initEquityChart, 100);
-            if (pageId === 'info') fetchInfo();
-        }
-
-        async function performSearch() {
-            const date = document.getElementById('search-date').value;
-            const sport = document.getElementById('search-sport').value;
-            const container = document.getElementById('search-results');
-            container.innerHTML = 'Recherche en cours...';
-            try {
-                const url = `/api/search?date=${date}&sport=${encodeURIComponent(sport)}`;
-                const res = await fetch(url);
-                const results = await res.json();
-                if (results.length === 0) {
-                    container.innerHTML = '<p class="text-gray-500 text-sm">Aucun résultat trouvé.</p>';
-                    return;
-                }
-                container.innerHTML = `<pre class="text-xs text-green-500 max-h-40 overflow-auto">${JSON.stringify(results, null, 2)}</pre>`;
-            } catch (e) {
-                container.innerHTML = '<p class="text-red-500 text-sm">Erreur lors de la recherche.</p>';
-            }
-        }
-
-        async function fetchInfo() {
-            const container = document.getElementById('info-container');
-            container.innerHTML = 'Chargement...';
-            try {
-                const res = await fetch('/api/info');
-                const data = await res.json();
-                if (!data || data.length === 0) {
-                    container.innerHTML = '<p class="text-gray-500 text-sm">Aucune information disponible.</p>';
-                    return;
-                }
-                container.innerHTML = data.map(page => `
-                    <div class="mb-6 text-left border-b border-gray-800 pb-4">
-                        <h3 class="text-white font-bold mb-1">${page.title || 'Sans titre'}</h3>
-                        <p class="text-gray-400 text-xs">${page.content || 'Pas de contenu.'}</p>
-                    </div>
-                `).join('');
-            } catch (e) {
-                container.innerHTML = '<p class="text-red-500 text-sm">Erreur lors du chargement.</p>';
-            }
-        }
-
-        // ── Console ─────────────────────────────────────────────────
-        function addLog(message, type = 'info') {
-            const el = document.getElementById('console-output');
-            const cls = {info:'log-info',success:'log-success',warning:'log-warning',error:'log-error',highlight:'log-highlight'}[type]||'log-info';
-            const div = document.createElement('div');
-            div.className = 'log-line';
-            div.innerHTML = `<span class="log-time">[${timeStr()}]</span> <span class="${cls}">${message}</span>`;
-            el.appendChild(div);
-            el.scrollTop = el.scrollHeight;
-            while (el.children.length > 100) el.removeChild(el.firstChild);
-        }
-        function clearConsole() { document.getElementById('console-output').innerHTML = ''; }
-
-        // ── DASHBOARD PAIM (REMPLACE FETCHLIVESIGNALS) ──────────────
-        async function updateDashboard() {
-            const grid = document.getElementById('live-container');
+        // ── Fetch Alpha Signals ─────────────────────────────────────
+        async function fetchAlphaSignals() {
+            const grid = document.getElementById('signal-grid');
             
             try {
                 const response = await fetch('/api/data');
                 const signals = await response.json();
-
-                if (!Array.isArray(signals) || signals.length === 0) {
+                
+                // Filtrage: ignorer les signaux avec cote_1xbet = 0 ou null
+                currentSignals = (Array.isArray(signals) ? signals : []).filter(s => {
+                    const cote = s.cote_1xbet || 0;
+                    return cote > 0 && cote !== null && cote !== undefined;
+                });
+                
+                if (currentSignals.length === 0) {
                     grid.innerHTML = `
-                        <div class="col-span-full p-20 text-center border border-dashed border-green-900/50 rounded-sm">
-                            <p class="text-green-800 uppercase tracking-[0.2em] text-sm animate-pulse">
-                                📡 SCAN PAIM EN COURS : AUCUN ALPHA SPREAD > 2.5% DÉTECTÉ
-                            </p>
-                            <p class="text-[10px] text-gray-600 mt-2">PROCHAIN CYCLE AUTOMATIQUE : 06:00 GMT</p>
-                        </div>`;
+                        <div class="empty-state">
+                            <div class="empty-state-icon">📡</div>
+                            <p class="font-mono text-sm">AUCUN SIGNAL ACTIF</p>
+                            <p class="text-xs mt-2" style="color: var(--text-muted);">Scan PAIM en cours — Prochain cycle: 06:00 GMT</p>
+                        </div>
+                    `;
                     return;
                 }
-
-                grid.innerHTML = signals.map(signal => {
+                
+                // Trier par alpha décroissant
+                currentSignals.sort((a, b) => (b.alpha_spread || 0) - (a.alpha_spread || 0));
+                
+                grid.innerHTML = currentSignals.map(signal => {
                     const alpha = signal.alpha_spread || 0;
-                    const spread = (alpha * 100).toFixed(1);
+                    const alphaPct = (alpha * 100).toFixed(1);
                     const isElite = alpha >= 0.025;
-                    const borderColor = isElite ? 'border-blue-400' : 'border-green-500';
-                    const alphaColor = isElite ? 'text-blue-400' : 'text-green-400';
-
-                    const date = signal.match_time
-                        ? (() => {
-                            const d = new Date(signal.match_time);
-                            const dd = String(d.getUTCDate()).padStart(2,'0');
-                            const mm = String(d.getUTCMonth()+1).padStart(2,'0');
-                            const hh = String(d.getUTCHours()).padStart(2,'0');
-                            const mn = String(d.getUTCMinutes()).padStart(2,'0');
-                            return `${dd}/${mm} ${hh}:${mn}`;
-                          })()
-                        : 'N/A';
-
-                    // Cotes — jamais 0.00 ni NaN
-                    const fairPrice = (signal.fair_price && signal.fair_price > 0)
-                        ? signal.fair_price.toFixed(2)
-                        : (signal.sharp_prob && signal.sharp_prob > 0
-                            ? (1/signal.sharp_prob).toFixed(2) : '—');
-                    const cote1xbet = (signal.cote_1xbet && signal.cote_1xbet > 0)
-                        ? signal.cote_1xbet.toFixed(2)
-                        : (signal.implied_prob_soft && signal.implied_prob_soft > 0
-                            ? (1/signal.implied_prob_soft).toFixed(2) : '—');
-
-                    const marketLabel = signal.market_label
-                        || (signal.market_type === 'h2h' && (signal.sport||'').includes('soccer') ? 'Draw No Bet'
-                        : signal.market_type === 'h2h' ? 'Moneyline'
-                        : signal.market_type === 'spreads' ? 'Asian Handicap'
-                        : signal.market_type || 'N/A');
-
-                    const noteIA = signal.note_ia || signal.ai_context || '✅ Validation en cours...';
-                    const eliteBadge = isElite ? '<span class="text-[9px] bg-blue-900/40 text-blue-400 border border-blue-700/40 px-1.5 py-0.5 rounded ml-1">⭐ ELITE</span>' : '';
-
+                    const sportLabel = getSportLabel(signal.sport);
+                    const matchTime = formatTime(signal.match_time);
+                    const matchName = signal.match_name || 'Match Inconnu';
+                    
                     return `
-                    <div class="glass p-5 rounded-sm flex flex-col md:flex-row justify-between items-start gap-5 border-l-4 ${borderColor} bg-white/5 mb-4">
-                        <div class="flex-1 min-w-0">
-                            <div class="flex items-center gap-2 mb-1 flex-wrap">
-                                <span class="text-[10px] bg-green-900/30 text-green-400 px-2 py-0.5 rounded uppercase font-bold">${signal.sport || '—'}</span>
-                                <span class="text-xs text-gray-500">${date} GMT</span>
-                                ${eliteBadge}
+                        <div class="signal-card ${isElite ? 'elite' : ''}" onclick="openDrawer('${signal.id || signal.event_id}')">
+                            <div class="flex justify-between items-start mb-2">
+                                <span class="text-xs font-mono tracking-wider" style="color: var(--text-muted);">
+                                    ${sportLabel} | ${matchTime}
+                                </span>
                             </div>
-                            <h3 class="text-lg font-bold text-white truncate">${signal.match_name || 'Match Inconnu'}</h3>
-                            <p class="text-xs text-green-600 font-semibold mt-0.5">${marketLabel} | ${signal.selection || '—'} @ ${cote1xbet}</p>
-                            <div class="mt-2 flex flex-wrap gap-1">
-                                ${renderSourcesBadge(signal.sources_validated || '')}
-                            </div>
-                        </div>
-
-                        <div class="flex gap-6 text-center shrink-0">
-                            <div>
-                                <div class="text-[9px] text-gray-500 uppercase tracking-widest mb-1">Fair Price</div>
-                                <div class="text-lg font-bold text-gray-300">${fairPrice}</div>
-                                <div class="text-[9px] text-gray-600">Pinnacle</div>
-                            </div>
-                            <div>
-                                <div class="text-[9px] text-gray-500 uppercase tracking-widest mb-1">1XBet Price</div>
-                                <div class="text-lg font-bold text-green-400">${cote1xbet}</div>
-                                <div class="text-[9px] text-gray-600">Soft Book</div>
-                            </div>
-                            <div>
-                                <div class="text-[9px] text-gray-500 uppercase tracking-widest mb-1">Alpha</div>
-                                <div class="text-lg font-bold ${alphaColor}">+${spread}%</div>
-                                <div class="text-[9px] ${isElite ? 'text-blue-600' : 'text-gray-600'}">${isElite ? 'ELITE' : 'DISPLAY'}</div>
+                            <h3 class="text-base font-medium leading-tight" style="color: var(--text-primary);">
+                                ${matchName}
+                            </h3>
+                            <div class="alpha-value ${alpha < 0 ? 'negative' : ''}">
+                                ${alpha >= 0 ? '+' : ''}${alphaPct}%
                             </div>
                         </div>
-
-                        <div class="w-full md:w-64 p-3 bg-black/60 border border-green-900/20 rounded-sm shrink-0">
-                            <div class="text-[9px] text-gray-500 mb-1 uppercase font-bold">IA Risk Flag</div>
-                            <p class="text-[11px] text-gray-400 italic leading-tight">${noteIA}</p>
-                        </div>
-                    </div>
                     `;
                 }).join('');
-
+                
             } catch (error) {
-                console.error("Erreur Dashboard:", error);
-                grid.innerHTML = '<div class="col-span-full p-10 text-red-500 text-center uppercase text-xs">⚠️ Erreur de liaison flux Supabase</div>';
+                console.error('Error fetching signals:', error);
+                grid.innerHTML = `
+                    <div class="empty-state">
+                        <div class="empty-state-icon">⚠️</div>
+                        <p class="font-mono text-sm">CONNEXION ERREUR</p>
+                        <p class="text-xs mt-2" style="color: var(--text-muted);">Impossible de récupérer les signaux</p>
+                    </div>
+                `;
             }
         }
-
-        async function triggerScan() {
-            const btn = document.querySelector('button[onclick="triggerScan()"]');
-            btn.innerText = "SCANNING...";
-            btn.disabled = true;
-            try {
-                await fetch('/api/screener');
-                await updateDashboard();
-            } finally {
-                btn.innerText = "DÉCLENCHER SCAN PAIM (8H CYCLE)";
-                btn.disabled = false;
-            }
-        }
-
-        // ── STATS / LEDGER / AUDIT / TICKER / HEALTH / CHART (GARDIENS) ────────
-        async function fetchStats() {
-            try {
-                const res = await fetch('/api/stats');
-                const d = await res.json();
-                if (d && !d.error) {
-                    document.getElementById('stat-capital').textContent = (d.capital || 0).toLocaleString('fr-FR', {minimumFractionDigits:2}) + ' €';
-                    document.getElementById('stat-winrate').textContent = (d.win_rate || 0).toFixed(1) + '%';
-                    document.getElementById('stat-clv').textContent = (d.clv_avg >= 0 ? '+' : '') + (d.clv_avg || 0).toFixed(2) + '%';
-                    document.getElementById('stat-roi').textContent = (d.roi_mensuel >= 0 ? '+' : '') + (d.roi_mensuel || 0).toFixed(1) + '%';
-                }
-            } catch (e) { console.error('fetchStats:', e); }
-        }
-
-        async function fetchLedger() {
-            try {
-                const res = await fetch('/api/ledger');
-                const data = await res.json();
-                const tbody = document.getElementById('ledger-body');
-                if (data && data.transactions && data.transactions.length > 0) {
-                    tbody.innerHTML = data.transactions.map(e => `
-                        <tr class="border-b border-gray-800 hover:bg-white/5">
-                            <td class="py-3 px-3 text-gray-400">${e.date || 'N/A'}</td>
-                            <td class="py-3 px-3">${e.match || 'N/A'}${e.selection ? ' ('+e.selection+')' : ''}</td>
-                            <td class="py-3 px-3 text-yellow-400">${(e.stake || 0).toFixed(0)}€</td>
-                            <td class="py-3 px-3 text-blue-400">${(e.ev || 0).toFixed(1)}%</td>
-                            <td class="py-3 px-3 ${e.result === 'WIN' ? 'text-green-400' : e.result === 'LOSS' ? 'text-red-400' : 'text-gray-500'}">${e.result || 'N/A'}</td>
-                            <td class="py-3 px-3 ${(e.pnl || 0) >= 0 ? 'text-green-400' : 'text-red-400'} font-bold">${(e.pnl || 0).toFixed(2)}€</td>
-                        </tr>`).join('');
-                } else {
-                    tbody.innerHTML = '<tr><td colspan="6" class="py-8 text-center text-gray-600">Aucune transaction enregistrée</td></tr>';
-                }
-            } catch (e) { console.error('fetchLedger:', e); }
-        }
-
-        async function fetchExposure() {
-            try {
-                const res = await fetch('/api/exposure');
-                const d = await res.json();
-                if (d && !d.error) {
-                    document.getElementById('stat-exposure').textContent = (d.total_exposure || 0).toLocaleString('fr-FR', {minimumFractionDigits:2}) + ' €';
-                    document.getElementById('stat-positions').textContent = (d.active_positions || 0) + ' positions actives';
-                }
-            } catch (e) { console.error('fetchExposure:', e); }
-        }
-
-        async function fetchAuditMetrics() {
-            try {
-                const res = await fetch('/api/audit/metrics');
-                const d = await res.json();
-                if (d && !d.error) {
-                    if (d.brier_score != null) document.getElementById('brier-score').textContent = d.brier_score.toFixed(3);
-                    if (d.sharpe_ratio != null) document.getElementById('sharpe-ratio').textContent = d.sharpe_ratio.toFixed(2);
-                    if (d.sortino_ratio != null) document.getElementById('sortino-ratio').textContent = d.sortino_ratio.toFixed(2);
-                    if (d.max_drawdown != null) document.getElementById('max-drawdown').textContent = (d.max_drawdown >= 0 ? '-' : '') + Math.abs(d.max_drawdown).toFixed(1) + '%';
-                    if (d.calmar_ratio != null) document.getElementById('calmar-ratio').textContent = d.calmar_ratio.toFixed(2);
-                    if (d.current_win_streak != null) document.getElementById('win-streak').textContent = d.current_win_streak;
-                    
-                    if (d.monthly_returns) {
-                        const mp = document.getElementById('monthly-performance');
-                        mp.innerHTML = Object.entries(d.monthly_returns).map(([m, v]) =>
-                            `<div class="flex justify-between"><span class="text-gray-400">${m}</span><span class="${v >= 0 ? 'text-green-400' : 'text-red-400'}">${v >= 0 ? '+' : ''}${v.toFixed(1)}%</span></div>`
-                        ).join('');
-                    }
-                }
-            } catch (e) { console.error('fetchAuditMetrics:', e); }
-        }
-
-        async function fetchTicker() {
-            try {
-                const res = await fetch('/api/ticker');
-                const d = await res.json();
-                const el = document.getElementById('market-ticker');
-                if (d && d.items && d.items.length > 0) {
-                    el.innerHTML = d.items.map(i =>
-                        `<span class="ticker-item"><span class="time">[${i.time || ''}]</span> ${i.message || ''}</span>`
-                    ).join('');
-                } else {
-                    el.innerHTML = '<span class="ticker-item" style="color:#666">📡 En attente de news sportives...</span>';
-                }
-            } catch (e) { console.error('fetchTicker:', e); }
-        }
-
-        async function fetchAPIHealth() {
-            try {
-                const res = await fetch('/api/health');
-                const d = await res.json();
-                if (d.status === 'ok') {
-                    document.querySelectorAll('[id^="led-"]').forEach(el => {
-                        el.className = 'led led-online';
-                    });
-                    document.querySelectorAll('[id^="status-"]').forEach(el => {
-                        el.className = 'text-green-400 ml-1';
-                        el.textContent = 'ONLINE';
-                    });
-                    document.getElementById('system-status').textContent = '● SYSTEM ONLINE';
-                }
-            } catch (e) {
-                document.querySelectorAll('[id^="led-"]').forEach(el => el.className = 'led led-offline');
-                document.getElementById('system-status').textContent = '● SYSTEM OFFLINE';
-                document.getElementById('system-status').className = 'text-sm font-bold text-red-400 animate-pulse';
-            }
-        }
-
-        async function initEquityChart() {
-            const ctx = document.getElementById('equity-chart').getContext('2d');
-            try {
-                const res = await fetch('/api/equity-curve');
-                const d = await res.json();
-                let labels = [], data = [];
-                
-                if (d && d.data && d.data.length > 0) {
-                    d.data.forEach(p => {
-                        const date = new Date(p.timestamp);
-                        labels.push(date.toLocaleDateString('fr-FR', { day: '2-digit', month: '2-digit' }));
-                        data.push(p.balance || 0);
-                    });
-                } else {
-                    const now = new Date();
-                    for (let i = 30; i >= 0; i--) {
-                        const date = new Date(now); date.setDate(date.getDate() - i);
-                        labels.push(date.toLocaleDateString('fr-FR', { day: '2-digit', month: '2-digit' }));
-                        data.push(10000);
-                    }
-                }
-                
-                const gradient = ctx.createLinearGradient(0, 0, 0, 300);
-                gradient.addColorStop(0, 'rgba(0, 255, 0, 0.3)');
-                gradient.addColorStop(1, 'rgba(0, 255, 0, 0.0)');
-                
-                equityChart = new Chart(ctx, {
-                    type: 'line',
-                    data: {
-                        labels: labels,
-                        datasets: [{
-                            label: 'Équity (€)',
-                            data: data,
-                            borderColor: '#00ff00',
-                            backgroundColor: gradient,
-                            borderWidth: 2,
-                            fill: true,
-                            tension: 0.4,
-                            pointRadius: 0,
-                            pointHoverRadius: 6,
-                            pointHoverBackgroundColor: '#00ff00',
-                            pointHoverBorderColor: '#fff',
-                            pointHoverBorderWidth: 2
-                        }]
-                    },
-                    options: {
-                        responsive: true, maintainAspectRatio: false,
-                        interaction: { mode: 'index', intersect: false },
-                        plugins: {
-                            legend: { display: false },
-                            tooltip: {
-                                backgroundColor: 'rgba(0,0,0,0.9)', titleColor: '#00ff00',
-                                bodyColor: '#fff', borderColor: 'rgba(0,255,0,0.3)',
-                                borderWidth: 1, padding: 12, displayColors: false,
-                                callbacks: { label: function(ctx) { return `Équity: ${ctx.parsed.y.toFixed(2)} €`; } }
-                            }
-                        },
-                        scales: {
-                            x: { grid: { color: 'rgba(0,255,0,0.1)', drawBorder: false }, ticks: { color: '#666', maxTicksLimit: 10 } },
-                            y: { grid: { color: 'rgba(0,255,0,0.1)', drawBorder: false }, ticks: { color: '#666', callback: v => v.toFixed(0) + '€' } }
-                        }
-                    }
-                });
-            } catch (e) { console.error('initEquityChart:', e); }
-        }
-
-        document.addEventListener('DOMContentLoaded', function() {
-            showPage('control');
-            updateDashboard();
-            fetchLedger();
-            fetchAPIHealth();
-            fetchAuditMetrics();
-            fetchExposure();
-            fetchStats();
-            fetchTicker();
-            fetchCLVCounter();
-            fetchHeatmap();
+        
+        // ── Open Drawer ─────────────────────────────────────────────
+        function openDrawer(signalId) {
+            selectedSignal = currentSignals.find(s => (s.id || s.event_id) === signalId);
+            if (!selectedSignal) return;
             
-            setInterval(updateDashboard, 60000);
-            setInterval(fetchAPIHealth, 60000);
-            setInterval(fetchExposure, 45000);
-            setInterval(fetchTicker, 60000);
-            setInterval(fetchCLVCounter, 120000);
-            setInterval(fetchHeatmap, 120000);
-        });
-
-        // ── Sources Badge renderer ───────────────────────────────
-        function renderSourcesBadge(sourcesStr) {
-            if (!sourcesStr) return '<span class="text-[9px] text-gray-700">Sources: N/A</span>';
-            const parts = sourcesStr.split(' | ');
-            return parts.map(p => {
-                const isOk = p.startsWith('✅');
-                const label = p.replace('✅ ', '').replace('⚠️ ', '');
-                const cls = isOk
-                    ? 'bg-green-900/30 text-green-400 border border-green-800/40'
-                    : 'bg-gray-900/30 text-gray-600 border border-gray-800/40';
-                return `<span class="text-[9px] px-1.5 py-0.5 rounded ${cls}">${isOk ? '✅' : '⚠️'} ${label}</span>`;
-            }).join('');
-        }
-
-        // ── CLV Counter ──────────────────────────────────────────────
-        async function fetchCLVCounter() {
-            try {
-                const res = await fetch('/api/clv-counter');
-                const d = await res.json();
-                const val = d.clv_avg || 0;
-                const count = d.count || 0;
-
-                document.getElementById('clv-counter-value').textContent =
-                    (val >= 0 ? '+' : '') + val.toFixed(2) + '%';
-                document.getElementById('clv-counter-count').textContent =
-                    count > 0 ? `(${count} signaux)` : '(aucun signal settled)';
-
-                const verdict = document.getElementById('clv-verdict');
-                if (count === 0) {
-                    verdict.textContent = 'EN ATTENTE';
-                    verdict.className = 'text-xs font-bold px-2 py-0.5 rounded bg-gray-800 text-gray-500';
-                } else if (val > 0) {
-                    verdict.textContent = '✅ BOT GAGNANT';
-                    verdict.className = 'text-xs font-bold px-2 py-0.5 rounded bg-green-900/40 text-green-400';
-                } else {
-                    verdict.textContent = '⚠️ AJUSTER FILTRES';
-                    verdict.className = 'text-xs font-bold px-2 py-0.5 rounded bg-red-900/40 text-red-400';
-                }
-            } catch (e) { console.error('fetchCLVCounter:', e); }
-        }
-
-        // ── Market Heatmap ───────────────────────────────────────────
-        const SPORT_LABELS = {
-            'basketball_nba': 'NBA',
-            'basketball_wnba': 'WNBA',
-            'tennis_atp': 'Tennis ATP',
-            'esports_lol': 'LoL Esports',
-            'soccer_uefa_champs_league': 'UCL',
-            'soccer_epl': 'EPL',
-            'soccer_spain_la_liga': 'La Liga',
-        };
-
-        async function fetchHeatmap() {
-            const grid = document.getElementById('heatmap-grid');
-            try {
-                const res = await fetch('/api/heatmap');
-                const d = await res.json();
-                const heatmap = d.heatmap || {};
-
-                // Afficher tous les sports cibles, même ceux sans données
-                const allSports = Object.keys(SPORT_LABELS);
-                const entries = allSports.map(sport => ({
-                    sport,
-                    label: SPORT_LABELS[sport],
-                    alpha: heatmap[sport] ?? null,
-                }));
-
-                if (entries.every(e => e.alpha === null)) {
-                    grid.innerHTML = `
-                        <div class="col-span-full text-center text-gray-700 text-xs py-4">
-                            Aucun signal dans les dernières 24h — marché froid
-                        </div>`;
-                    return;
-                }
-
-                grid.innerHTML = entries.map(({ label, alpha }) => {
-                    const hasData = alpha !== null;
-                    const hot = hasData && alpha >= 1.5;
-                    const warm = hasData && alpha >= 0.8 && alpha < 1.5;
-
-                    const borderColor = hot ? 'border-green-500/60' : warm ? 'border-yellow-600/40' : 'border-gray-800';
-                    const textColor = hot ? 'text-green-400' : warm ? 'text-yellow-500' : 'text-gray-600';
-                    const bgColor = hot ? 'bg-green-900/20' : warm ? 'bg-yellow-900/10' : 'bg-black/20';
-                    const indicator = hot ? '🔥' : warm ? '📈' : '❄️';
-                    const alphaText = hasData ? (alpha >= 0 ? '+' : '') + alpha.toFixed(1) + '%' : 'N/A';
-
-                    return `
-                        <div class="border ${borderColor} ${bgColor} rounded p-2 text-center">
-                            <div class="text-[9px] text-gray-500 mb-1 truncate">${label}</div>
-                            <div class="text-sm font-bold ${textColor}">${alphaText}</div>
-                            <div class="text-[10px] mt-0.5">${indicator}</div>
-                        </div>`;
+            const s = selectedSignal;
+            const alpha = s.alpha_spread || 0;
+            const isElite = alpha >= 0.025;
+            
+            // Header
+            document.getElementById('drawer-sport-time').textContent = 
+                `${getSportLabel(s.sport)} | ${formatTime(s.match_time)}`;
+            document.getElementById('drawer-match-name').textContent = s.match_name || 'Match Inconnu';
+            
+            // Odds
+            const fairPrice = s.fair_price > 0 ? s.fair_price.toFixed(2) : 
+                (s.sharp_prob > 0 ? (1/s.sharp_prob).toFixed(2) : '—');
+            const softPrice = s.cote_1xbet > 0 ? s.cote_1xbet.toFixed(2) : 
+                (s.implied_prob_soft > 0 ? (1/s.implied_prob_soft).toFixed(2) : '—');
+            
+            document.getElementById('drawer-fair-price').textContent = fairPrice;
+            document.getElementById('drawer-soft-price').textContent = softPrice;
+            
+            // Details
+            const marketLabel = s.market_label || 
+                (s.market_type === 'h2h' && s.sport?.includes('soccer') ? 'Asian Handicap 0.0' :
+                s.market_type === 'h2h' ? 'Moneyline' :
+                s.market_type === 'spreads' ? 'Asian Handicap' :
+                s.market_type || 'N/A');
+            
+            document.getElementById('drawer-market').textContent = marketLabel;
+            document.getElementById('drawer-selection').textContent = s.selection || '—';
+            document.getElementById('drawer-alpha').textContent = `${alpha >= 0 ? '+' : ''}${(alpha * 100).toFixed(2)}% ${isElite ? '⭐ ELITE' : ''}`;
+            document.getElementById('drawer-stake').textContent = s.recommended_stake ? `${s.recommended_stake.toFixed(0)} €` : '—';
+            document.getElementById('drawer-snr').textContent = s.snr_ratio ? s.snr_ratio.toFixed(2) : '—';
+            document.getElementById('drawer-clv').textContent = s.clv_estimate ? `${(s.clv_estimate * 100).toFixed(2)}%` : '—';
+            
+            // IA Note
+            const iaNote = s.note_ia || s.ai_context || '✅ Analyse technique validée (Math-Only)';
+            document.getElementById('drawer-ia-note').textContent = iaNote;
+            
+            // Sources
+            const sourcesContainer = document.getElementById('drawer-sources');
+            if (s.sources_validated) {
+                const parts = s.sources_validated.split(' | ');
+                sourcesContainer.innerHTML = parts.map(p => {
+                    const isOk = p.startsWith('✅');
+                    const label = p.replace('✅ ', '').replace('⚠️ ', '');
+                    return `<span class="text-[10px] px-2 py-1 rounded border ${isOk ? 'border-green-800 text-green-400 bg-green-900/20' : 'border-gray-800 text-gray-500 bg-gray-900/20'}">${isOk ? '✓' : '○'} ${label}</span>`;
                 }).join('');
-
-            } catch (e) {
-                grid.innerHTML = '<div class="col-span-full text-center text-gray-700 text-xs py-4">Erreur chargement heatmap</div>';
-                console.error('fetchHeatmap:', e);
+            } else {
+                sourcesContainer.innerHTML = '<span class="text-[10px] text-gray-600">Aucune source validée</span>';
             }
+            
+            // 1XBet Link
+            const btn = document.getElementById('btn-place-bet');
+            const teams = (s.match_name || '').split(' vs ');
+            const searchQuery = encodeURIComponent(s.match_name || '');
+            btn.href = `https://1xbet.com/en/line/?search=${searchQuery}`;
+            
+            // Show drawer
+            document.getElementById('drawer-overlay').classList.add('active');
+            document.getElementById('side-drawer').classList.add('active');
+            document.body.style.overflow = 'hidden';
         }
-
-        // ── Test API Connection ──────────────────────────────────────
-        async function testAPIConnection() {
-            const btn = document.getElementById('btn-test-api');
-            const result = document.getElementById('api-test-result');
-
-            btn.textContent = '⏳ TEST EN COURS...';
-            btn.disabled = true;
-            result.textContent = 'Connexion à The-Odds-API...';
-            result.className = 'text-xs text-gray-500 mb-4 min-h-[40px]';
-
-            try {
-                const res = await fetch('/api/test-connection');
-                const d = await res.json();
-
-                if (d.status === 'connected') {
-                    result.textContent = d.message;
-                    result.className = 'text-xs text-green-400 mb-4 min-h-[40px]';
-                    // Mettre à jour le LED Pinnacle
-                    document.getElementById('led-pinnacle').className = 'led led-online';
-                    document.getElementById('status-pinnacle').textContent = 'ONLINE';
-                    document.getElementById('status-pinnacle').className = 'text-green-400 ml-1';
-                } else {
-                    result.textContent = d.message;
-                    result.className = 'text-xs text-red-400 mb-4 min-h-[40px]';
-                }
-            } catch (e) {
-                result.textContent = '❌ Erreur réseau — vérifiez la connexion';
-                result.className = 'text-xs text-red-400 mb-4 min-h-[40px]';
-            } finally {
-                btn.textContent = '▶ TEST API + QUOTA';
-                btn.disabled = false;
-            }
+        
+        // ── Close Drawer ────────────────────────────────────────────
+        function closeDrawer() {
+            document.getElementById('drawer-overlay').classList.remove('active');
+            document.getElementById('side-drawer').classList.remove('active');
+            document.body.style.overflow = '';
+            selectedSignal = null;
         }
+        
+        // ── Keyboard Navigation ───────────────────────────────────
+        document.addEventListener('keydown', (e) => {
+            if (e.key === 'Escape') closeDrawer();
+        });
+        
+        // ── Init ────────────────────────────────────────────────────
+        document.addEventListener('DOMContentLoaded', () => {
+            fetchAlphaSignals();
+            setInterval(fetchAlphaSignals, 60000); // Refresh every 60s
+        });
     </script>
 </body>
 </html>
