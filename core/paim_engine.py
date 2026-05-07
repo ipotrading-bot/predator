@@ -208,7 +208,7 @@ class PAIMEngine:
             snr_ratio=snr,
             clv_estimate=clv,
             recommended_stake=stake,
-            is_elite=(ev >= 0.15),
+            is_elite=(ev >= 0.025),
         )
 
     @staticmethod
@@ -235,7 +235,7 @@ class PAIMEngine:
             import google.generativeai as genai
             from config import settings
 
-            genai.configure(api_key=settings.gemini_api_key)
+            # genai.configure déjà initialisé au niveau module dans validator.py
             analysis_prompt = (
                 f"En tant qu'expert MIT en finance quantitative, analyse ce bilan hebdomadaire :\n"
                 f"- Nombre de signaux : {total_trades}\n"

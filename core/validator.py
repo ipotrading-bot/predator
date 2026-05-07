@@ -5,6 +5,18 @@ from google.api_core.exceptions import ResourceExhausted
 
 logger = logging.getLogger(__name__)
 
+# Configuration unique au niveau module (une seule fois)
+GEMINI_API_KEY = os.environ.get("GEMINI_API_KEY")
+if GEMINI_API_KEY:
+    try:
+        genai.configure(api_key=GEMINI_API_KEY)
+        logger.info("✅ Gemini API configurée au niveau module")
+    except Exception as e:
+        logger.warning(f"⚠️ Gemini configure warning: {e}")
+else:
+    logger.warning("⚠️ GEMINI_API_KEY non définie")
+
+
 class GeminiValidator:
     _instance = None
     _call_count = 0
@@ -13,7 +25,7 @@ class GeminiValidator:
         api_key = os.environ.get("GEMINI_API_KEY")
         if not api_key:
             raise ValueError("GEMINI_API_KEY manquante.")
-        genai.configure(api_key=api_key)
+        # genai.configure déjà fait au niveau module
         self.model = genai.GenerativeModel(
             model_name="gemini-2.0-flash",
             generation_config={"max_output_tokens": 80, "temperature": 0.1},
