@@ -250,8 +250,10 @@ class MarketScanner:
 
         for bm in bookmakers:
             bm_key = bm.get("key", "")
-            bm_key_norm = settings.synonyms.get(bm_key, bm_key)
-            if bm_key_norm not in settings.soft_books:
+            # Normalisation insensible à la casse + synonymes
+            bm_key_lower = bm_key.lower()
+            bm_key_norm = settings.synonyms.get(bm_key_lower, bm_key_lower)
+            if bm_key_norm not in [s.lower() for s in settings.soft_books]:
                 continue
 
             for market in bm.get("markets", []):

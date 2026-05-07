@@ -40,9 +40,9 @@ class Settings(BaseSettings):
     betterstack_source_id: str = Field(default="", alias="BETTERSTACK_SOURCE_ID")
 
     # ── PAIM Engine (Seuils Doctrinaires PhD MIT) ─────────────
-    min_ev_threshold: float = Field(default=0.01, ge=0.005)
-    alpha_display_min: float = Field(default=0.015)
-    alpha_elite_min: float = Field(default=0.025)
+    min_ev_threshold: float = Field(default=0.015, ge=0.005)  # 1.5% display min
+    alpha_display_min: float = Field(default=0.015)            # 1.5% → affiché
+    alpha_elite_min: float = Field(default=0.025)              # 2.5% → ELITE
     min_snr_ratio: float = Field(default=3.0, ge=1.5)
     kelly_fraction: float = Field(default=0.25)
     max_single_stake_pct: float = Field(default=0.03)   # 3% max par pari
@@ -69,7 +69,9 @@ class Settings(BaseSettings):
         default=["pinnacle"]
     )
     soft_books: list[str] = Field(
-        default=["onexbet", "1xbet", "1xbit", "1xstavka", "bet365", "unibet", "williamhill"]
+        # Toutes les variantes 1XBet reconnues (insensible à la casse géré dans le scanner)
+        default=["onexbet", "1xbet", "1xbit", "1xstavka", "1x_bet",
+                 "bet365", "unibet", "williamhill"]
     )
 
     # ── Multi-Sport v3.0 (MIT Portfolio d'Alpha) ──────────────

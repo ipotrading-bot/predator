@@ -46,14 +46,21 @@ class SupabaseClient:
     ) -> Optional[str]:
         """Insère un signal validé. Retourne l'UUID généré."""
         try:
+            # Calculer fair_price et cote_1xbet pour le dashboard
+            fair_price = round(1.0 / signal.sharp_prob, 3) if signal.sharp_prob > 0 else 0.0
+            cote_1xbet = round(1.0 / signal.implied_prob_soft, 3) if signal.implied_prob_soft > 0 else 0.0
+
             data = {
                 "event_id": signal.event_id,
                 "match_name": event_name,
                 "sport": sport,
                 "match_time": match_time_iso,
                 "market_type": signal.market_key,
-                "selection": signal.bookmaker_target,
+                "selection": signal.selection,        # ✅ nom de l'outcome (équipe/joueur)
                 "bookmaker_target": signal.bookmaker_target,
+                "fair_price": fair_price,
+                "cote_1xbet": cote_1xbet,
+                "note_ia": ai_context,
                 "sharp_prob": round(signal.sharp_prob, 5),
                 "implied_prob_soft": round(signal.implied_prob_soft, 5),
                 "alpha_spread": round(signal.ev_plus, 5),
@@ -62,6 +69,7 @@ class SupabaseClient:
                 "clv_estimate": round(signal.clv_estimate, 5),
                 "ai_context": ai_context,
                 "sources_validated": sources_badge,
+                "is_elite": signal.ev_plus >= 0.025,
                 "status": "pending",
                 "created_at": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()),
             }

@@ -1,7 +1,8 @@
 """
-api/index.py — Predator PAIM v3.0 (Mode Diagnostic Screener)
+api/index.py — Predator PAIM v3.0
 Flask application déployée sur Vercel.
 """
+import logging
 import os
 import sys
 import json
@@ -10,13 +11,23 @@ from datetime import datetime
 from flask import Flask, render_template, jsonify, request
 from data.supabase_client import SupabaseClient
 
+logger = logging.getLogger(__name__)
+
 # ── Configuration Vercel ──────────────────────────────────────
 template_dir = os.path.abspath(os.path.join(os.path.dirname(__file__), '..', 'templates'))
 app = Flask(__name__, template_folder=template_dir)
-db = SupabaseClient()
 
-# ── Seuil abaissé pour test (0.5% au lieu de 2.5%) ────────────
-TEST_THRESHOLD = 0.005  # 0.5%
+# Lazy-init DB — évite crash si Supabase non configuré au démarrage Vercel
+_db = None
+def get_db() -> SupabaseClient:
+    global _db
+    if _db is None:
+        _db = SupabaseClient()
+    return _db
+
+# Seuil de détection : 1.5% display, 2.5% elite
+ALPHA_DISPLAY_MIN = 0.015
+ALPHA_ELITE_MIN   = 0.025
 
 
 # ── Route principale ──────────────────────────────────────────
@@ -42,23 +53,26 @@ def health():
     except Exception as e:
         config_ok = False
 
-    # Tester connexion Supabase
     supabase_ok = False
     try:
-        s = db._client.table("signals").select("count", count="exact").limit(1).execute()
+        db = get_db()
+        db._client.table("signals").select("count", count="exact").limit(1).execute()
         supabase_ok = True
-    except:
+    except Exception:
         pass
 
     return jsonify({
         "status": "ok",
         "config_loaded": config_ok,
         "supabase_connected": supabase_ok,
-        "test_threshold": TEST_THRESHOLD,
+        "alpha_display_min": ALPHA_DISPLAY_MIN,
+        "alpha_elite_min": ALPHA_ELITE_MIN,
         "env_vars": {
-            "ODDS_API_KEY": "SET" if os.environ.get("ODDS_API_KEY") else "MISSING",
-            "SUPABASE_URL": "SET" if os.environ.get("SUPABASE_URL") else "MISSING",
-            "GEMINI_API_KEY": "SET" if os.environ.get("GEMINI_API_KEY") else "MISSING",
+            "ODDS_API_KEY":    "SET" if os.environ.get("ODDS_API_KEY") else "MISSING",
+            "SUPABASE_URL":    "SET" if os.environ.get("SUPABASE_URL") else "MISSING",
+            "GEMINI_API_KEY":  "SET" if os.environ.get("GEMINI_API_KEY") else "MISSING",
+            "GROQ_API_KEY":    "SET" if os.environ.get("GROQ_API_KEY") else "MISSING",
+            "NEWS_API_KEY":    "SET" if os.environ.get("NEWS_API_KEY") else "MISSING",
         }
     })
 
@@ -67,42 +81,32 @@ def health():
 
 @app.route('/api/screener')
 def screener():
-    """Route de scan avec logs de debug et seuil abaissé."""
+    """Déclenche un scan PAIM complet."""
     try:
         from config import settings
         from signals.scanner import MarketScanner
         import asyncio
 
-        print(f"DEBUG: Démarrage scan avec seuil min_ev={TEST_THRESHOLD}")
-        print(f"DEBUG: API Key présente: {bool(settings.odds_api_key)}")
-        print(f"DEBUG: Sports cibles: {settings.target_sports}")
-        print(f"DEBUG: Books sharp: {settings.sharp_books}")
-        print(f"DEBUG: Books soft: {settings.soft_books}")
-        print(f"DEBUG: Synonyms config: {settings.synonyms}")
-
-        # Scanner avec bankroll normale, seuil forcé bas
-        scanner = MarketScanner(bankroll=10000)
-        # Forcer le seuil à 0.5%
-        scanner.engine.min_ev_threshold = TEST_THRESHOLD
+        scanner = MarketScanner(bankroll=settings.starting_bankroll)
+        # Seuil abaissé à 1.5% pour le display (2.5% pour elite)
+        scanner.engine.min_ev_threshold = ALPHA_DISPLAY_MIN
 
         loop = asyncio.new_event_loop()
         result = loop.run_until_complete(scanner.run_scan())
         loop.close()
 
         result_data = result.__dict__ if hasattr(result, '__dict__') else {}
-        print(f"DEBUG: Scan terminé: {json.dumps(result_data, default=str)}")
-
         return jsonify({
             "status": "success",
             "result": result_data,
-            "threshold_used": TEST_THRESHOLD
+            "threshold_used": ALPHA_DISPLAY_MIN
         })
 
     except ImportError as e:
-        print(f"DEBUG IMPORT ERROR: {e}")
+        logger.error(f"ImportError screener: {e}")
         return jsonify({"status": "error", "message": f"ImportError: {str(e)}"}), 500
     except Exception as e:
-        print(f"DEBUG SCAN ERROR: {traceback.format_exc()}")
+        logger.error(f"Erreur screener: {traceback.format_exc()}")
         return jsonify({"status": "error", "message": str(e)}), 500
 
 
@@ -170,41 +174,65 @@ def test_seed():
 @app.route('/api/data')
 def get_data():
     try:
+        db = get_db()
         signals = db._client.table("signals").select("*").eq("status", "pending").order("created_at", desc=True).limit(50).execute()
         data = signals.data or []
+
+        # Enrichir chaque signal avec les champs calculés manquants
+        for sig in data:
+            # fair_price depuis sharp_prob si absent
+            if not sig.get("fair_price") and sig.get("sharp_prob"):
+                sig["fair_price"] = round(1.0 / sig["sharp_prob"], 3)
+            # cote_1xbet depuis implied_prob_soft si absent
+            if not sig.get("cote_1xbet") and sig.get("implied_prob_soft"):
+                sig["cote_1xbet"] = round(1.0 / sig["implied_prob_soft"], 3)
+            # note_ia depuis ai_context si absent
+            if not sig.get("note_ia") and sig.get("ai_context"):
+                sig["note_ia"] = sig["ai_context"]
+            # badge elite
+            sig["is_elite"] = (sig.get("alpha_spread") or 0) >= ALPHA_ELITE_MIN
+
         if not data:
-            # Fallback: retourner les test-seed si la BD est vide
-            from datetime import datetime, timedelta
+            from datetime import timedelta
             match_time = (datetime.now() + timedelta(hours=4)).isoformat()
             data = [{
-                "match_name": "Lakers vs Celtics",
-                "sport": "basketball_nba",
+                "match_name": "📡 Aucun signal actif",
+                "sport": "—",
                 "match_time": match_time,
-                "market_type": "h2h",
-                "alpha_spread": 0.031,
-                "recommended_stake": 30,
-                "fair_price": 1.85,
-                "cote_1xbet": 2.10,
-                "note_ia": "✅ Test - Aucun signal réel pour le moment. Seuil abaissé à 0.5%."
+                "market_type": "—",
+                "alpha_spread": 0,
+                "recommended_stake": 0,
+                "fair_price": 0,
+                "cote_1xbet": 0,
+                "note_ia": "📡 SCAN PAIM EN COURS — RECHERCHE D'ALPHA > 1.5%",
+                "sources_validated": "",
+                "is_elite": False,
             }]
         return jsonify(data)
     except Exception as e:
+        logger.error(f"Erreur /api/data: {e}")
         return jsonify([])
 
 
 @app.route('/api/stats')
 def get_stats():
     try:
+        db = get_db()
         summary = db.get_performance_summary()
-        capital = 10000
-        total_profit = summary.get("total_profit", 0)
+        from config import settings
+        capital = settings.starting_bankroll
+        total_profit = summary.get("total_profit", 0) or 0
+        win_rate = (summary.get("win_rate", 0) or 0) * 100
+        clv_avg = (summary.get("clv_avg", 0) or 0) * 100
+        roi = (total_profit / capital * 100) if capital > 0 else 0
         return jsonify({
-            "capital": capital + total_profit,
-            "win_rate": (summary.get("win_rate", 0) or 0) * 100,
-            "clv_avg": (summary.get("clv_avg", 0) or 0) * 100,
-            "roi_mensuel": (total_profit / capital * 100) if capital > 0 else 0
+            "capital": round(capital + total_profit, 2),
+            "win_rate": round(win_rate, 1),
+            "clv_avg": round(clv_avg, 2),
+            "roi_mensuel": round(roi, 1),
         })
-    except:
+    except Exception as e:
+        logger.error(f"Erreur /api/stats: {e}")
         return jsonify({"capital": 10000, "win_rate": 0, "clv_avg": 0, "roi_mensuel": 0})
 
 
@@ -240,15 +268,25 @@ def get_audit_metrics():
 @app.route('/api/search')
 def search_signals_api():
     date = request.args.get('date')
-    time = request.args.get('time')
+    time_param = request.args.get('time')
     sport = request.args.get('sport')
-    results = db.search_signals(sport=sport, date=date, time=time)
+    try:
+        db = get_db()
+        results = db.search_signals(sport=sport, date=date, time=time_param)
+    except Exception as e:
+        logger.error(f"Erreur /api/search: {e}")
+        results = []
     return jsonify(results)
 
 
 @app.route('/api/info')
 def get_info_pages_api():
-    results = db.get_info_pages()
+    try:
+        db = get_db()
+        results = db.get_info_pages()
+    except Exception as e:
+        logger.error(f"Erreur /api/info: {e}")
+        results = []
     return jsonify(results)
 
 
@@ -268,32 +306,24 @@ def healthcheck():
 
 @app.route('/api/heatmap')
 def get_market_heatmap():
-    """Retourne l'Alpha moyen par sport sur les dernières 24h."""
     try:
         from datetime import timedelta
+        db = get_db()
         cutoff = (datetime.now() - timedelta(hours=24)).isoformat()
-        
         signals = db._client.table("signals").select("sport, alpha_spread").gte("created_at", cutoff).execute()
         data = signals.data or []
-        
         if not data:
             return jsonify({"heatmap": {}})
-        
-        # Grouper par sport
-        sport_alphas = {}
+        sport_alphas: dict = {}
         for sig in data:
             sport = sig.get("sport", "unknown")
-            alpha = sig.get("alpha_spread", 0)
-            if sport not in sport_alphas:
-                sport_alphas[sport] = []
-            sport_alphas[sport].append(alpha)
-        
-        # Calculer moyenne par sport
+            alpha = sig.get("alpha_spread")
+            if alpha is not None and isinstance(alpha, (int, float)):
+                sport_alphas.setdefault(sport, []).append(float(alpha))
         heatmap = {
             sport: round(sum(alphas) / len(alphas) * 100, 2)
-            for sport, alphas in sport_alphas.items()
+            for sport, alphas in sport_alphas.items() if alphas
         }
-        
         return jsonify({"heatmap": heatmap})
     except Exception as e:
         logger.error(f"Erreur heatmap: {e}")
@@ -304,8 +334,8 @@ def get_market_heatmap():
 
 @app.route('/api/clv-counter')
 def get_clv_counter():
-    """Retourne la CLV moyenne des 10 derniers signaux settled."""
     try:
+        db = get_db()
         signals = (
             db._client.table("signals")
             .select("clv_estimate")
@@ -315,17 +345,12 @@ def get_clv_counter():
             .execute()
         )
         data = signals.data or []
-        
-        if not data:
-            return jsonify({"clv_avg": 0, "count": 0})
-        
-        clv_values = [s.get("clv_estimate", 0) for s in data if s.get("clv_estimate") is not None]
+        clv_values = [
+            float(s["clv_estimate"]) for s in data
+            if s.get("clv_estimate") is not None
+        ]
         clv_avg = sum(clv_values) / len(clv_values) if clv_values else 0
-        
-        return jsonify({
-            "clv_avg": round(clv_avg * 100, 2),  # en %
-            "count": len(clv_values)
-        })
+        return jsonify({"clv_avg": round(clv_avg * 100, 2), "count": len(clv_values)})
     except Exception as e:
         logger.error(f"Erreur CLV counter: {e}")
         return jsonify({"clv_avg": 0, "count": 0})

@@ -231,19 +231,21 @@ class PAIMEngine:
     @staticmethod
     def get_ai_analysis(total_trades, avg_clv, win_rate, sports_list):
         """Génère l'analyse IA via Gemini."""
-        import google.generativeai as genai
-        from config import settings
-        
-        analysis_prompt = f"""
-        En tant qu'expert MIT en finance quantitative, analyse ce bilan hebdomadaire :
-        - Nombre de signaux : {total_trades}
-        - CLV Moyenne (Alpha capturé) : {avg_clv:.2%}
-        - Win Rate Réalisé : {win_rate:.1f}%
-        - Détail des sports : {sports_list}
-        
-        Identifie les biais : Quel sport performe le mieux ? La CLV est-elle en train de s'éroder ? 
-        Donne 3 recommandations strictes pour la semaine prochaine.
-        """
-        
-        model = genai.GenerativeModel('gemini-2.0-flash')
-        return model.generate_content(analysis_prompt).text
+        try:
+            import google.generativeai as genai
+            from config import settings
+
+            genai.configure(api_key=settings.gemini_api_key)
+            analysis_prompt = (
+                f"En tant qu'expert MIT en finance quantitative, analyse ce bilan hebdomadaire :\n"
+                f"- Nombre de signaux : {total_trades}\n"
+                f"- CLV Moyenne (Alpha capturé) : {avg_clv:.2%}\n"
+                f"- Win Rate Réalisé : {win_rate:.1f}%\n"
+                f"- Détail des sports : {sports_list}\n\n"
+                f"Identifie les biais : Quel sport performe le mieux ? La CLV est-elle en train de s'éroder ?\n"
+                f"Donne 3 recommandations strictes pour la semaine prochaine."
+            )
+            model = genai.GenerativeModel("gemini-2.0-flash")
+            return model.generate_content(analysis_prompt).text
+        except Exception as e:
+            return f"Analyse IA indisponible: {e}"
