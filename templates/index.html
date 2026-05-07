@@ -3,7 +3,7 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>PREDATOR PAIM v3.5 | High-Frequency Terminal</title>
+    <title>PREDATOR PAIM v3.6 | Dashboard Reconstruit</title>
     <script src="https://cdn.tailwindcss.com"></script>
     <link href="https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@300;400;500;700&family=Inter:wght@300;400;500;600;700&display=swap" rel="stylesheet">
     <style>
@@ -16,101 +16,84 @@
             --text-secondary: rgba(255, 255, 255, 0.5);
             --text-muted: rgba(255, 255, 255, 0.3);
             --alpha-glow: #00d4ff;
-            --alpha-dim: rgba(0, 212, 255, 0.1);
             --elite-gold: #ffd700;
+            --error-red: #ff4757;
         }
         
-        * { box-sizing: border-box; }
+        * { box-sizing: border-box; margin: 0; padding: 0; }
         
         body {
             font-family: 'Inter', sans-serif;
-            background-color: var(--bg-primary);
+            background: var(--bg-primary);
             color: var(--text-primary);
-            margin: 0;
             min-height: 100vh;
-            overflow-x: hidden;
         }
         
         .font-mono { font-family: 'JetBrains Mono', monospace; }
         
-        /* ── Grid Layout ───────────────────────────────────────────── */
-        .terminal-grid {
-            display: grid;
-            grid-template-columns: repeat(auto-fill, minmax(280px, 1fr));
-            gap: 1px;
-            background: var(--border-subtle);
+        /* Loading Animation */
+        .loading-pulse {
+            animation: pulse 2s cubic-bezier(0.4, 0, 0.6, 1) infinite;
         }
         
-        /* ── Signal Card (Vue Radar) ──────────────────────────────── */
+        @keyframes pulse {
+            0%, 100% { opacity: 1; }
+            50% { opacity: .5; }
+        }
+        
+        .loading-bar {
+            height: 2px;
+            background: linear-gradient(90deg, var(--alpha-glow), transparent);
+            animation: loading 1.5s ease-in-out infinite;
+        }
+        
+        @keyframes loading {
+            0% { transform: translateX(-100%); }
+            100% { transform: translateX(100%); }
+        }
+        
+        /* Grid */
+        .signal-grid {
+            display: grid;
+            grid-template-columns: repeat(auto-fill, minmax(300px, 1fr));
+            gap: 1px;
+            background: var(--border-subtle);
+            min-height: calc(100vh - 60px);
+        }
+        
+        /* Cards */
         .signal-card {
             background: var(--bg-card);
             border: 1px solid transparent;
-            padding: 20px;
+            padding: 24px;
             cursor: pointer;
-            transition: all 0.2s cubic-bezier(0.4, 0, 0.2, 1);
+            transition: all 0.2s ease;
             position: relative;
-            overflow: hidden;
-        }
-        
-        .signal-card::before {
-            content: '';
-            position: absolute;
-            top: 0;
-            left: 0;
-            right: 0;
-            height: 2px;
-            background: linear-gradient(90deg, transparent, var(--alpha-glow), transparent);
-            opacity: 0;
-            transition: opacity 0.3s ease;
         }
         
         .signal-card:hover {
             background: #0f0f0f;
             border-color: var(--border-accent);
-            transform: translateY(-1px);
-            box-shadow: 0 4px 24px rgba(0, 212, 255, 0.08);
+            box-shadow: 0 0 30px rgba(0, 212, 255, 0.1);
         }
         
-        .signal-card:hover::before {
-            opacity: 1;
+        .signal-card.elite {
+            border-left: 3px solid var(--elite-gold);
         }
         
-        .signal-card.elite::after {
-            content: 'ELITE';
-            position: absolute;
-            top: 8px;
-            right: 8px;
-            font-size: 9px;
-            font-weight: 700;
-            letter-spacing: 0.1em;
-            color: var(--elite-gold);
-            border: 1px solid rgba(255, 215, 0, 0.3);
-            padding: 2px 6px;
-            background: rgba(255, 215, 0, 0.05);
-        }
-        
-        /* ── Alpha Display ────────────────────────────────────────── */
-        .alpha-value {
+        .alpha-display {
             font-family: 'JetBrains Mono', monospace;
-            font-size: 32px;
+            font-size: 36px;
             font-weight: 300;
             color: var(--alpha-glow);
-            text-shadow: 0 0 20px rgba(0, 212, 255, 0.4);
-            line-height: 1;
-            margin-top: 12px;
+            text-shadow: 0 0 20px rgba(0, 212, 255, 0.3);
         }
         
-        .alpha-value.negative {
-            color: #ff4757;
-            text-shadow: 0 0 20px rgba(255, 71, 87, 0.3);
-        }
-        
-        /* ── Side Drawer (Vue Quant) ─────────────────────────────── */
+        /* Drawer */
         .drawer-overlay {
             position: fixed;
             inset: 0;
-            background: rgba(0, 0, 0, 0.6);
-            backdrop-filter: blur(4px);
+            background: rgba(0,0,0,0.7);
             opacity: 0;
             visibility: hidden;
             transition: all 0.3s ease;
@@ -132,621 +115,348 @@
             background: #080808;
             border-left: 1px solid var(--border-subtle);
             transform: translateX(100%);
-            transition: transform 0.35s cubic-bezier(0.4, 0, 0.2, 1);
+            transition: transform 0.3s ease;
             z-index: 999;
             overflow-y: auto;
-            display: flex;
-            flex-direction: column;
         }
         
         .side-drawer.active {
             transform: translateX(0);
         }
         
-        .drawer-header {
-            padding: 24px;
-            border-bottom: 1px solid var(--border-subtle);
-            display: flex;
-            justify-content: space-between;
-            align-items: flex-start;
-        }
-        
-        .drawer-body {
-            flex: 1;
-            padding: 24px;
-        }
-        
-        .drawer-footer {
-            padding: 24px;
-            border-top: 1px solid var(--border-subtle);
-            background: rgba(0, 0, 0, 0.3);
-        }
-        
-        /* ── Odds Comparison ─────────────────────────────────────── */
-        .odds-comparison {
-            display: grid;
-            grid-template-columns: 1fr auto 1fr;
-            gap: 16px;
-            align-items: center;
-            padding: 20px;
-            background: rgba(255, 255, 255, 0.02);
-            border: 1px solid var(--border-subtle);
-            border-radius: 4px;
-            margin: 16px 0;
-        }
-        
-        .odds-box {
+        /* Error State */
+        .error-state {
+            grid-column: 1 / -1;
+            padding: 100px 40px;
             text-align: center;
         }
         
-        .odds-label {
-            font-size: 10px;
-            text-transform: uppercase;
-            letter-spacing: 0.1em;
-            color: var(--text-muted);
-            margin-bottom: 4px;
+        .error-state h2 {
+            color: var(--error-red);
+            font-size: 24px;
+            margin-bottom: 16px;
         }
         
-        .odds-value {
-            font-family: 'JetBrains Mono', monospace;
-            font-size: 28px;
-            font-weight: 500;
-            color: var(--text-primary);
-        }
-        
-        .odds-value.pinnacle { color: #888; }
-        .odds-value.soft { color: var(--alpha-glow); }
-        
-        .odds-arrow {
-            color: var(--alpha-glow);
-            font-size: 20px;
-        }
-        
-        /* ── Risk Flag ────────────────────────────────────────────── */
-        .risk-flag {
-            padding: 16px;
-            background: rgba(0, 212, 255, 0.03);
-            border-left: 3px solid var(--alpha-glow);
-            margin: 16px 0;
-        }
-        
-        .risk-flag-title {
-            font-size: 10px;
-            text-transform: uppercase;
-            letter-spacing: 0.1em;
-            color: var(--alpha-glow);
-            margin-bottom: 8px;
-        }
-        
-        .risk-flag-content {
-            font-size: 13px;
-            line-height: 1.6;
-            color: var(--text-secondary);
-        }
-        
-        /* ── Action Button ───────────────────────────────────────── */
-        .btn-primary {
-            width: 100%;
-            padding: 16px 24px;
-            background: linear-gradient(135deg, rgba(0, 212, 255, 0.15), rgba(0, 212, 255, 0.05));
-            border: 1px solid var(--border-accent);
-            color: var(--alpha-glow);
-            font-family: 'Inter', sans-serif;
-            font-size: 12px;
-            font-weight: 600;
-            letter-spacing: 0.15em;
-            text-transform: uppercase;
-            cursor: pointer;
-            transition: all 0.2s ease;
-            text-decoration: none;
-            display: inline-block;
-            text-align: center;
-        }
-        
-        .btn-primary:hover {
-            background: linear-gradient(135deg, rgba(0, 212, 255, 0.25), rgba(0, 212, 255, 0.1));
-            border-color: var(--alpha-glow);
-            box-shadow: 0 0 30px rgba(0, 212, 255, 0.15);
-        }
-        
-        /* ── Header ──────────────────────────────────────────────── */
-        .terminal-header {
-            padding: 16px 24px;
-            border-bottom: 1px solid var(--border-subtle);
-            display: flex;
-            justify-content: space-between;
-            align-items: center;
-            background: rgba(0, 0, 0, 0.5);
-            backdrop-filter: blur(10px);
-            position: sticky;
-            top: 0;
-            z-index: 100;
-        }
-        
-        .status-indicator {
-            display: inline-flex;
-            align-items: center;
-            gap: 8px;
-            font-size: 11px;
-            letter-spacing: 0.05em;
-        }
-        
-        .status-dot {
-            width: 6px;
-            height: 6px;
-            border-radius: 50%;
-            background: #00ff88;
-            box-shadow: 0 0 8px #00ff88;
-            animation: pulse 2s infinite;
-        }
-        
-        @keyframes pulse {
-            0%, 100% { opacity: 1; }
-            50% { opacity: 0.4; }
-        }
-        
-        /* ── Empty State ─────────────────────────────────────────── */
+        /* Empty State */
         .empty-state {
             grid-column: 1 / -1;
-            padding: 80px 40px;
+            padding: 100px 40px;
             text-align: center;
             color: var(--text-muted);
         }
         
         .empty-state-icon {
-            font-size: 48px;
-            margin-bottom: 16px;
-            opacity: 0.3;
+            font-size: 64px;
+            margin-bottom: 24px;
+            opacity: 0.4;
         }
         
-        /* ── Close Button ───────────────────────────────────────── */
-        .btn-close {
-            width: 32px;
-            height: 32px;
-            display: flex;
-            align-items: center;
-            justify-content: center;
-            background: transparent;
-            border: 1px solid var(--border-subtle);
-            color: var(--text-secondary);
+        /* Button */
+        .btn-primary {
+            width: 100%;
+            padding: 16px;
+            background: rgba(0, 212, 255, 0.1);
+            border: 1px solid var(--border-accent);
+            color: var(--alpha-glow);
+            font-size: 12px;
+            font-weight: 600;
+            letter-spacing: 0.1em;
+            text-transform: uppercase;
             cursor: pointer;
             transition: all 0.2s ease;
-            font-size: 18px;
+            text-decoration: none;
+            display: block;
+            text-align: center;
         }
         
-        .btn-close:hover {
-            border-color: var(--text-primary);
-            color: var(--text-primary);
+        .btn-primary:hover {
+            background: rgba(0, 212, 255, 0.2);
+            border-color: var(--alpha-glow);
         }
         
-        /* ── Detail Row ──────────────────────────────────────────── */
-        .detail-row {
-            display: flex;
-            justify-content: space-between;
-            padding: 12px 0;
-            border-bottom: 1px solid var(--border-subtle);
+        /* Status indicators */
+        .status-dot {
+            width: 8px;
+            height: 8px;
+            border-radius: 50%;
+            background: #00ff88;
+            box-shadow: 0 0 10px #00ff88;
+            animation: blink 2s infinite;
         }
         
-        .detail-row:last-child {
-            border-bottom: none;
+        @keyframes blink {
+            0%, 100% { opacity: 1; }
+            50% { opacity: 0.3; }
         }
         
-        .detail-label {
-            font-size: 11px;
-            text-transform: uppercase;
-            letter-spacing: 0.1em;
-            color: var(--text-muted);
-        }
-        
-        .detail-value {
-            font-family: 'JetBrains Mono', monospace;
-            font-size: 13px;
-            color: var(--text-primary);
-        }
-        
-        /* ── Scrollbar ───────────────────────────────────────────── */
-        ::-webkit-scrollbar {
-            width: 6px;
-        }
-        
-        ::-webkit-scrollbar-track {
-            background: var(--bg-primary);
-        }
-        
-        ::-webkit-scrollbar-thumb {
-            background: var(--border-subtle);
-            border-radius: 3px;
-        }
-        
-        ::-webkit-scrollbar-thumb:hover {
-            background: rgba(255, 255, 255, 0.1);
-        }
-        
-        /* ── Responsive ───────────────────────────────────────────── */
-        @media (max-width: 640px) {
-            .terminal-grid {
-                grid-template-columns: 1fr;
-            }
-            
-            .side-drawer {
-                max-width: 100%;
-            }
-            
-            .alpha-value {
-                font-size: 28px;
-            }
-        }
+        .status-dot.error { background: var(--error-red); box-shadow: 0 0 10px var(--error-red); }
+        .status-dot.loading { background: var(--alpha-glow); animation: blink 1s infinite; }
     </style>
 </head>
 <body>
     <!-- Header -->
-    <header class="terminal-header">
+    <header style="padding: 16px 24px; border-bottom: 1px solid var(--border-subtle); display: flex; justify-content: space-between; align-items: center; background: rgba(0,0,0,0.8); position: sticky; top: 0; z-index: 100;">
         <div>
-            <h1 class="font-mono text-sm tracking-wider" style="color: var(--text-primary);">
-                PREDATOR <span style="color: var(--alpha-glow);">PAIM</span> v3.5
+            <h1 style="font-size: 16px; font-weight: 600; letter-spacing: 0.05em;">
+                PREDATOR <span style="color: var(--alpha-glow);">PAIM</span> v3.6
             </h1>
-            <p class="text-xs mt-1" style="color: var(--text-muted);">High-Frequency Terminal • MIT Quant Architecture</p>
+            <p style="font-size: 11px; color: var(--text-muted); margin-top: 4px;">
+                Dashboard Reconstruit • <span id="connection-status">Connexion...</span>
+            </p>
         </div>
-        <div class="status-indicator" style="color: var(--text-secondary);">
-            <span class="status-dot"></span>
-            <span class="font-mono">SYSTEM ONLINE</span>
+        <div style="display: flex; align-items: center; gap: 12px;">
+            <span id="status-indicator" class="status-dot loading"></span>
+            <span style="font-size: 11px; color: var(--text-secondary);">SYSTEM</span>
         </div>
     </header>
 
-    <!-- Main Grid (Vue Radar) -->
-    <main id="signal-grid" class="terminal-grid">
-        <div class="empty-state">
+    <!-- Loading Bar -->
+    <div id="loading-bar" class="loading-bar" style="display: block;"></div>
+
+    <!-- Main Grid -->
+    <main id="signal-grid" class="signal-grid">
+        <!-- Loading State -->
+        <div class="empty-state loading-pulse">
             <div class="empty-state-icon">📡</div>
-            <p class="font-mono text-sm">SCANNING MARKETS...</p>
-            <p class="text-xs mt-2" style="color: var(--text-muted);">Recherche d'Alpha > 1.5%</p>
+            <p class="font-mono" style="font-size: 14px;">INITIALISATION DU TERMINAL...</p>
+            <p style="font-size: 11px; color: var(--text-muted); margin-top: 8px;">Connexion à Supabase en cours</p>
         </div>
     </main>
 
     <!-- Drawer Overlay -->
     <div id="drawer-overlay" class="drawer-overlay" onclick="closeDrawer()"></div>
 
-    <!-- Side Drawer (Vue Quant) -->
+    <!-- Side Drawer -->
     <aside id="side-drawer" class="side-drawer">
-        <div class="drawer-header">
+        <div style="padding: 24px; border-bottom: 1px solid var(--border-subtle); display: flex; justify-content: space-between; align-items: flex-start;">
             <div>
-                <div class="text-xs font-mono mb-1" style="color: var(--alpha-glow);" id="drawer-sport-time">—</div>
-                <h2 class="text-lg font-semibold" id="drawer-match-name">—</h2>
+                <div id="drawer-sport" style="font-size: 12px; color: var(--alpha-glow); margin-bottom: 4px;">—</div>
+                <h2 id="drawer-match" style="font-size: 18px; font-weight: 600;">—</h2>
             </div>
-            <button class="btn-close" onclick="closeDrawer()">×</button>
+            <button onclick="closeDrawer()" style="width: 32px; height: 32px; background: transparent; border: 1px solid var(--border-subtle); color: var(--text-secondary); cursor: pointer; font-size: 20px;">×</button>
         </div>
         
-        <div class="drawer-body">
-            <!-- Odds Comparison -->
-            <div class="odds-comparison">
-                <div class="odds-box">
-                    <div class="odds-label">Fair Price</div>
-                    <div class="odds-value pinnacle" id="drawer-fair-price">—</div>
+        <div style="padding: 24px;">
+            <!-- Odds -->
+            <div style="display: grid; grid-template-columns: 1fr auto 1fr; gap: 16px; padding: 20px; background: rgba(255,255,255,0.02); border: 1px solid var(--border-subtle); border-radius: 4px; margin-bottom: 24px;">
+                <div style="text-align: center;">
+                    <div style="font-size: 10px; text-transform: uppercase; color: var(--text-muted); margin-bottom: 4px;">Fair Price</div>
+                    <div id="drawer-fair" style="font-family: 'JetBrains Mono'; font-size: 28px; color: #888;">—</div>
                 </div>
-                <div class="odds-arrow">→</div>
-                <div class="odds-box">
-                    <div class="odds-label">1XBet Price</div>
-                    <div class="odds-value soft" id="drawer-soft-price">—</div>
-                </div>
-            </div>
-            
-            <!-- Market Info -->
-            <div style="margin: 24px 0;">
-                <div class="detail-row">
-                    <span class="detail-label">Marché</span>
-                    <span class="detail-value" id="drawer-market">—</span>
-                </div>
-                <div class="detail-row">
-                    <span class="detail-label">Sélection</span>
-                    <span class="detail-value" id="drawer-selection">—</span>
-                </div>
-                <div class="detail-row">
-                    <span class="detail-label">Alpha Spread</span>
-                    <span class="detail-value font-mono" style="color: var(--alpha-glow);" id="drawer-alpha">—</span>
-                </div>
-                <div class="detail-row">
-                    <span class="detail-label">Mise Conseillée</span>
-                    <span class="detail-value font-mono" id="drawer-stake">—</span>
-                </div>
-                <div class="detail-row">
-                    <span class="detail-label">SNR Ratio</span>
-                    <span class="detail-value font-mono" id="drawer-snr">—</span>
-                </div>
-                <div class="detail-row">
-                    <span class="detail-label">CLV Est.</span>
-                    <span class="detail-value font-mono" id="drawer-clv">—</span>
+                <div style="color: var(--alpha-glow); font-size: 20px; display: flex; align-items: center;">→</div>
+                <div style="text-align: center;">
+                    <div style="font-size: 10px; text-transform: uppercase; color: var(--text-muted); margin-bottom: 4px;">1XBet</div>
+                    <div id="drawer-soft" style="font-family: 'JetBrains Mono'; font-size: 28px; color: var(--alpha-glow);">—</div>
                 </div>
             </div>
             
-            <!-- Risk Flag IA -->
-            <div class="risk-flag">
-                <div class="risk-flag-title">🤖 IA Risk Analysis</div>
-                <div class="risk-flag-content" id="drawer-ia-note">—</div>
+            <!-- Details -->
+            <div style="margin-bottom: 24px;">
+                <div style="display: flex; justify-content: space-between; padding: 12px 0; border-bottom: 1px solid var(--border-subtle);">
+                    <span style="font-size: 11px; text-transform: uppercase; color: var(--text-muted);">Alpha</span>
+                    <span id="drawer-alpha" style="font-family: 'JetBrains Mono'; color: var(--alpha-glow);">—</span>
+                </div>
+                <div style="display: flex; justify-content: space-between; padding: 12px 0; border-bottom: 1px solid var(--border-subtle);">
+                    <span style="font-size: 11px; text-transform: uppercase; color: var(--text-muted);">Mise</span>
+                    <span id="drawer-stake" style="font-family: 'JetBrains Mono';">—</span>
+                </div>
+                <div style="display: flex; justify-content: space-between; padding: 12px 0; border-bottom: 1px solid var(--border-subtle);">
+                    <span style="font-size: 11px; text-transform: uppercase; color: var(--text-muted);">Marché</span>
+                    <span id="drawer-market">—</span>
+                </div>
+                <div style="display: flex; justify-content: space-between; padding: 12px 0; border-bottom: 1px solid var(--border-subtle);">
+                    <span style="font-size: 11px; text-transform: uppercase; color: var(--text-muted);">Sélection</span>
+                    <span id="drawer-selection">—</span>
+                </div>
             </div>
             
-            <!-- Sources -->
-            <div style="margin-top: 20px;">
-                <div class="text-xs uppercase tracking-wider mb-3" style="color: var(--text-muted);">Sources Validées</div>
-                <div id="drawer-sources" class="flex flex-wrap gap-2"></div>
+            <!-- IA Note -->
+            <div style="padding: 16px; background: rgba(0, 212, 255, 0.03); border-left: 3px solid var(--alpha-glow); margin-bottom: 24px;">
+                <div style="font-size: 10px; text-transform: uppercase; color: var(--alpha-glow); margin-bottom: 8px;">🤖 Analyse IA</div>
+                <p id="drawer-note" style="font-size: 13px; color: var(--text-secondary); line-height: 1.5;">—</p>
             </div>
-        </div>
-        
-        <div class="drawer-footer">
-            <a id="btn-place-bet" href="#" target="_blank" class="btn-primary">
-                Placer le Pari sur 1XBet →
+            
+            <!-- CTA -->
+            <a id="drawer-link" href="#" target="_blank" class="btn-primary">
+                Placer sur 1XBet →
             </a>
-            <p class="text-xs mt-3 text-center" style="color: var(--text-muted);">
-                Ouvre 1XBet dans un nouvel onglet. Recherchez le match manuellement.
-            </p>
         </div>
     </aside>
 
     <script>
-        // ── State ───────────────────────────────────────────────────
-        let currentSignals = [];
-        let selectedSignal = null;
+        // Configuration
+        const API_BASE = window.location.origin;
         
-        // ── Sport Labels & Icons (MIT Alpha Watchlist v3.6) ────────
-        // Mapping complet des clés The-Odds-API avec icônes emoji
+        // Sport mappings
         const SPORT_ICONS = {
-            // ═══ BASKETBALL ═══
-            'basketball_nba': '🏀',
-            'basketball_euroleague': '🏀',
-            'basketball_ncaab': '🏀',
-            'basketball_spain_liga_acb': '🏀',
-            'basketball_wnba': '🏀',
-            'basketball': '🏀',
-            // ═══ TENNIS ═══
-            'tennis_atp_french_open': '🎾',
-            'tennis_atp_wimbledon': '🎾',
-            'tennis_atp_us_open': '🎾',
-            'tennis_atp_aus_open': '�',
-            'tennis_atp_masters_1000': '🎾',
-            'tennis_wta': '🎾',
-            'tennis_atp': '🎾',
-            'tennis': '�',
-            // ═══ SOCCER ═══
-            'soccer_epl': '⚽',
-            'soccer_uefa_champs_league': '⚽',
-            'soccer_uefa_europa_league': '⚽',
-            'soccer_germany_bundesliga': '⚽',
-            'soccer_spain_la_liga': '⚽',
-            'soccer_italy_serie_a': '⚽',
-            'soccer_france_ligue_1': '⚽',
-            'soccer': '⚽',
-            // ═══ ESPORTS ═══
-            'esports_lol': '🎮',
-            'esports_lol_msi': '�',
-            'esports_lol_lpl': '🎮',
-            'esports_lol_lck': '🎮',
-            'esports_csgo_esl_pro_league': '🎯',
-            'esports_dota2_ti': '🎯',
-            'esports': '�',
-            // ═══ AUTRES ═══
-            'baseball_mlb': '⚾',
-            'baseball': '⚾',
-            'icehockey_nhl': '🏒',
-            'icehockey': '🏒',
-            'mma_mixed_martial_arts': '🥊',
-            'mma': '🥊',
+            'basketball_nba': '🏀', 'basketball_euroleague': '🏀', 'basketball_ncaab': '🏀',
+            'tennis_atp': '🎾', 'tennis_wta': '🎾', 'tennis_atp_french_open': '🎾',
+            'soccer_epl': '⚽', 'soccer_uefa_champs_league': '⚽', 'soccer_germany_bundesliga': '⚽',
+            'esports_lol': '🎮', 'esports_lol_msi': '🎮', 'esports_lol_lck': '🎮',
+            'baseball_mlb': '⚾', 'icehockey_nhl': '🏒', 'mma_mixed_martial_arts': '🥊'
         };
         
-        const SPORT_LABELS = {
-            // ═══ BASKETBALL ═══
-            'basketball_nba': 'NBA',
-            'basketball_euroleague': 'Euroleague',
-            'basketball_ncaab': 'NCAAB',
-            'basketball_spain_liga_acb': 'ACB',
-            'basketball_wnba': 'WNBA',
-            // ═══ TENNIS ═══
-            'tennis_atp_french_open': 'Roland Garros',
-            'tennis_atp_wimbledon': 'Wimbledon',
-            'tennis_atp_us_open': 'US Open',
-            'tennis_atp_aus_open': 'Aus Open',
-            'tennis_atp_masters_1000': 'Masters 1000',
-            'tennis_wta': 'WTA',
-            'tennis_atp': 'ATP',
-            // ═══ SOCCER ═══
-            'soccer_epl': 'EPL',
-            'soccer_uefa_champs_league': 'UCL',
-            'soccer_uefa_europa_league': 'UEL',
-            'soccer_germany_bundesliga': 'Bundesliga',
-            'soccer_spain_la_liga': 'La Liga',
-            'soccer_italy_serie_a': 'Serie A',
-            'soccer_france_ligue_1': 'Ligue 1',
-            // ═══ ESPORTS ═══
-            'esports_lol': 'LoL',
-            'esports_lol_msi': 'MSI',
-            'esports_lol_lpl': 'LPL China',
-            'esports_lol_lck': 'LCK Korea',
-            'esports_csgo_esl_pro_league': 'CS:GO ESL',
-            'esports_dota2_ti': 'Dota 2 TI',
-            // ═══ AUTRES ═══
-            'baseball_mlb': 'MLB',
-            'icehockey_nhl': 'NHL',
-            'mma_mixed_martial_arts': 'UFC/MMA',
+        const SPORT_NAMES = {
+            'basketball_nba': 'NBA', 'basketball_euroleague': 'Euroleague',
+            'tennis_atp': 'ATP', 'soccer_epl': 'EPL', 'soccer_uefa_champs_league': 'UCL',
+            'esports_lol': 'LoL', 'baseball_mlb': 'MLB'
         };
         
-        function getSportIcon(sport) {
-            return SPORT_ICONS[sport] || SPORT_ICONS[sport?.split('_')[0]] || '📊';
+        let signals = [];
+        
+        function getIcon(sport) {
+            return SPORT_ICONS[sport] || '📊';
         }
         
-        function getSportLabel(sport) {
-            return SPORT_LABELS[sport] || sport?.split('_').slice(1).join(' ').toUpperCase() || 'SPORT';
+        function getName(sport) {
+            return SPORT_NAMES[sport] || sport?.split('_').pop()?.toUpperCase() || 'SPORT';
         }
         
-        // ── Format Time ─────────────────────────────────────────────
         function formatTime(iso) {
             if (!iso) return '—';
             try {
                 const d = new Date(iso);
-                const dd = String(d.getUTCDate()).padStart(2, '0');
-                const mm = String(d.getUTCMonth() + 1).padStart(2, '0');
-                const hh = String(d.getUTCHours()).padStart(2, '0');
-                const mn = String(d.getUTCMinutes()).padStart(2, '0');
-                return `${dd}/${mm} ${hh}:${mn}`;
+                return `${String(d.getUTCDate()).padStart(2,'0')}/${String(d.getUTCMonth()+1).padStart(2,'0')} ${String(d.getUTCHours()).padStart(2,'0')}:${String(d.getUTCMinutes()).padStart(2,'0')}`;
             } catch { return '—'; }
         }
         
-        // ── Fetch Alpha Signals ─────────────────────────────────────
-        async function fetchAlphaSignals() {
+        // Status update
+        function setStatus(status, message) {
+            const dot = document.getElementById('status-indicator');
+            const text = document.getElementById('connection-status');
+            dot.className = 'status-dot ' + status;
+            text.textContent = message;
+        }
+        
+        // Fetch signals
+        async function loadSignals() {
             const grid = document.getElementById('signal-grid');
             
             try {
-                const response = await fetch('/api/data');
-                const signals = await response.json();
+                setStatus('loading', 'Chargement...');
                 
-                // Filtrage: ignorer les signaux avec cote_1xbet = 0 ou null
-                currentSignals = (Array.isArray(signals) ? signals : []).filter(s => {
-                    const cote = s.cote_1xbet || 0;
-                    return cote > 0 && cote !== null && cote !== undefined;
+                const response = await fetch(`${API_BASE}/api/data`, {
+                    method: 'GET',
+                    headers: { 'Accept': 'application/json' }
                 });
                 
-                if (currentSignals.length === 0) {
+                if (!response.ok) {
+                    throw new Error(`HTTP ${response.status}: ${response.statusText}`);
+                }
+                
+                const data = await response.json();
+                signals = Array.isArray(data) ? data.filter(s => s.cote_1xbet > 0) : [];
+                
+                document.getElementById('loading-bar').style.display = 'none';
+                
+                if (signals.length === 0) {
                     grid.innerHTML = `
                         <div class="empty-state">
                             <div class="empty-state-icon">📡</div>
-                            <p class="font-mono text-sm">AUCUN SIGNAL ACTIF</p>
-                            <p class="text-xs mt-2" style="color: var(--text-muted);">Scan PAIM en cours — Prochain cycle: 06:00 GMT</p>
+                            <p class="font-mono" style="font-size: 14px;">AUCUN SIGNAL ACTIF</p>
+                            <p style="font-size: 11px; color: var(--text-muted); margin-top: 8px;">
+                                Scan rotationnel en cours — Prochain cycle dans ~5 min
+                            </p>
+                            <p style="font-size: 10px; color: var(--text-muted); margin-top: 16px;">
+                                API: ${API_BASE}
+                            </p>
                         </div>
                     `;
+                    setStatus('error', 'Aucun signal');
                     return;
                 }
                 
-                // Trier par alpha décroissant
-                currentSignals.sort((a, b) => (b.alpha_spread || 0) - (a.alpha_spread || 0));
+                // Sort by alpha
+                signals.sort((a, b) => (b.alpha_spread || 0) - (a.alpha_spread || 0));
                 
-                grid.innerHTML = currentSignals.map(signal => {
-                    const alpha = signal.alpha_spread || 0;
-                    const alphaPct = (alpha * 100).toFixed(1);
+                // Render
+                grid.innerHTML = signals.map(s => {
+                    const alpha = s.alpha_spread || 0;
+                    const pct = (alpha * 100).toFixed(1);
                     const isElite = alpha >= 0.025;
-                    const sportLabel = getSportLabel(signal.sport);
-                    const matchTime = formatTime(signal.match_time);
-                    const matchName = signal.match_name || 'Match Inconnu';
-                    
-                    const sportIcon = getSportIcon(signal.sport);
+                    const id = s.id || s.event_id || Math.random().toString(36);
                     
                     return `
-                        <div class="signal-card ${isElite ? 'elite' : ''}" onclick="openDrawer('${signal.id || signal.event_id}')">
-                            <div class="flex justify-between items-start mb-3">
-                                <div class="flex items-center gap-2">
-                                    <span class="text-lg">${sportIcon}</span>
-                                    <span class="text-xs font-mono tracking-wider" style="color: var(--text-muted);">
-                                        ${sportLabel}
+                        <div class="signal-card ${isElite ? 'elite' : ''}" onclick="openDrawer('${id}')">
+                            <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 12px;">
+                                <div style="display: flex; align-items: center; gap: 8px;">
+                                    <span style="font-size: 20px;">${getIcon(s.sport)}</span>
+                                    <span style="font-size: 11px; text-transform: uppercase; color: var(--text-muted); letter-spacing: 0.05em;">
+                                        ${getName(s.sport)}
                                     </span>
                                 </div>
-                                <span class="text-xs font-mono" style="color: var(--text-muted);">
-                                    ${matchTime}
+                                <span style="font-size: 11px; font-family: 'JetBrains Mono'; color: var(--text-muted);">
+                                    ${formatTime(s.match_time)}
                                 </span>
                             </div>
-                            <h3 class="text-base font-medium leading-tight mb-3" style="color: var(--text-primary);">
-                                ${matchName}
+                            <h3 style="font-size: 15px; font-weight: 500; margin-bottom: 16px; line-height: 1.3;">
+                                ${s.match_name || 'Match Inconnu'}
                             </h3>
-                            <div class="flex items-end justify-between">
-                                <div class="alpha-value ${alpha < 0 ? 'negative' : ''}">
-                                    ${alpha >= 0 ? '+' : ''}${alphaPct}%
-                                </div>
-                                ${isElite ? '<span style="font-size: 10px; color: var(--elite-gold); text-transform: uppercase; letter-spacing: 0.1em;">🔥 Elite</span>' : ''}
+                            <div style="display: flex; justify-content: space-between; align-items: flex-end;">
+                                <div class="alpha-display">${alpha >= 0 ? '+' : ''}${pct}%</div>
+                                ${isElite ? '<span style="font-size: 10px; color: var(--elite-gold); text-transform: uppercase;">🔥 Elite</span>' : ''}
                             </div>
                         </div>
                     `;
                 }).join('');
                 
+                setStatus('', `${signals.length} signaux actifs`);
+                
             } catch (error) {
-                console.error('Error fetching signals:', error);
+                console.error('Error:', error);
+                document.getElementById('loading-bar').style.display = 'none';
                 grid.innerHTML = `
-                    <div class="empty-state">
+                    <div class="error-state">
                         <div class="empty-state-icon">⚠️</div>
-                        <p class="font-mono text-sm">CONNEXION ERREUR</p>
-                        <p class="text-xs mt-2" style="color: var(--text-muted);">Impossible de récupérer les signaux</p>
+                        <h2>ERREUR DE CONNEXION</h2>
+                        <p style="font-size: 13px; color: var(--text-muted); margin-bottom: 16px;">
+                            ${error.message}
+                        </p>
+                        <button onclick="location.reload()" style="padding: 12px 24px; background: rgba(255,255,255,0.1); border: 1px solid var(--border-subtle); color: var(--text-primary); cursor: pointer; font-size: 12px;">
+                            🔄 Recharger
+                        </button>
                     </div>
                 `;
+                setStatus('error', 'Erreur API');
             }
         }
         
-        // ── Open Drawer ─────────────────────────────────────────────
-        function openDrawer(signalId) {
-            selectedSignal = currentSignals.find(s => (s.id || s.event_id) === signalId);
-            if (!selectedSignal) return;
+        // Drawer functions
+        function openDrawer(id) {
+            const s = signals.find(sig => (sig.id || sig.event_id) === id);
+            if (!s) return;
             
-            const s = selectedSignal;
-            const alpha = s.alpha_spread || 0;
-            const isElite = alpha >= 0.025;
-            
-            // Header
-            const drawerIcon = getSportIcon(s.sport);
-            document.getElementById('drawer-sport-time').innerHTML = 
-                `<span style="font-size: 14px; margin-right: 4px;">${drawerIcon}</span> ${getSportLabel(s.sport)} <span style="color: var(--text-muted);">|</span> ${formatTime(s.match_time)}`;
-            document.getElementById('drawer-match-name').textContent = s.match_name || 'Match Inconnu';
-            
-            // Odds
-            const fairPrice = s.fair_price > 0 ? s.fair_price.toFixed(2) : 
-                (s.sharp_prob > 0 ? (1/s.sharp_prob).toFixed(2) : '—');
-            const softPrice = s.cote_1xbet > 0 ? s.cote_1xbet.toFixed(2) : 
-                (s.implied_prob_soft > 0 ? (1/s.implied_prob_soft).toFixed(2) : '—');
-            
-            document.getElementById('drawer-fair-price').textContent = fairPrice;
-            document.getElementById('drawer-soft-price').textContent = softPrice;
-            
-            // Details
-            const marketLabel = s.market_label || 
-                (s.market_type === 'h2h' && s.sport?.includes('soccer') ? 'Asian Handicap 0.0' :
-                s.market_type === 'h2h' ? 'Moneyline' :
-                s.market_type === 'spreads' ? 'Asian Handicap' :
-                s.market_type || 'N/A');
-            
-            document.getElementById('drawer-market').textContent = marketLabel;
+            document.getElementById('drawer-sport').innerHTML = `${getIcon(s.sport)} ${getName(s.sport)} | ${formatTime(s.match_time)}`;
+            document.getElementById('drawer-match').textContent = s.match_name || '—';
+            document.getElementById('drawer-fair').textContent = s.fair_price?.toFixed(2) || '—';
+            document.getElementById('drawer-soft').textContent = s.cote_1xbet?.toFixed(2) || '—';
+            document.getElementById('drawer-alpha').textContent = `${((s.alpha_spread || 0) * 100).toFixed(2)}%`;
+            document.getElementById('drawer-stake').textContent = s.recommended_stake ? `${s.recommended_stake.toFixed(0)}€` : '—';
+            document.getElementById('drawer-market').textContent = s.market_type || '—';
             document.getElementById('drawer-selection').textContent = s.selection || '—';
-            document.getElementById('drawer-alpha').textContent = `${alpha >= 0 ? '+' : ''}${(alpha * 100).toFixed(2)}% ${isElite ? '⭐ ELITE' : ''}`;
-            document.getElementById('drawer-stake').textContent = s.recommended_stake ? `${s.recommended_stake.toFixed(0)} €` : '—';
-            document.getElementById('drawer-snr').textContent = s.snr_ratio ? s.snr_ratio.toFixed(2) : '—';
-            document.getElementById('drawer-clv').textContent = s.clv_estimate ? `${(s.clv_estimate * 100).toFixed(2)}%` : '—';
+            document.getElementById('drawer-note').textContent = s.note_ia || s.ai_context || '✅ Analyse validée';
+            document.getElementById('drawer-link').href = `https://1xbet.com/en/line/?search=${encodeURIComponent(s.match_name || '')}`;
             
-            // IA Note
-            const iaNote = s.note_ia || s.ai_context || '✅ Analyse technique validée (Math-Only)';
-            document.getElementById('drawer-ia-note').textContent = iaNote;
-            
-            // Sources
-            const sourcesContainer = document.getElementById('drawer-sources');
-            if (s.sources_validated) {
-                const parts = s.sources_validated.split(' | ');
-                sourcesContainer.innerHTML = parts.map(p => {
-                    const isOk = p.startsWith('✅');
-                    const label = p.replace('✅ ', '').replace('⚠️ ', '');
-                    return `<span class="text-[10px] px-2 py-1 rounded border ${isOk ? 'border-green-800 text-green-400 bg-green-900/20' : 'border-gray-800 text-gray-500 bg-gray-900/20'}">${isOk ? '✓' : '○'} ${label}</span>`;
-                }).join('');
-            } else {
-                sourcesContainer.innerHTML = '<span class="text-[10px] text-gray-600">Aucune source validée</span>';
-            }
-            
-            // 1XBet Link
-            const btn = document.getElementById('btn-place-bet');
-            const teams = (s.match_name || '').split(' vs ');
-            const searchQuery = encodeURIComponent(s.match_name || '');
-            btn.href = `https://1xbet.com/en/line/?search=${searchQuery}`;
-            
-            // Show drawer
             document.getElementById('drawer-overlay').classList.add('active');
             document.getElementById('side-drawer').classList.add('active');
-            document.body.style.overflow = 'hidden';
         }
         
-        // ── Close Drawer ────────────────────────────────────────────
         function closeDrawer() {
             document.getElementById('drawer-overlay').classList.remove('active');
             document.getElementById('side-drawer').classList.remove('active');
-            document.body.style.overflow = '';
-            selectedSignal = null;
         }
         
-        // ── Keyboard Navigation ───────────────────────────────────
+        // Keyboard
         document.addEventListener('keydown', (e) => {
             if (e.key === 'Escape') closeDrawer();
         });
         
-        // ── Init ────────────────────────────────────────────────────
+        // Init
         document.addEventListener('DOMContentLoaded', () => {
-            fetchAlphaSignals();
-            setInterval(fetchAlphaSignals, 60000); // Refresh every 60s
+            console.log('🦅 PAIM Dashboard v3.6 — Initialisation...');
+            console.log('API Base:', API_BASE);
+            loadSignals();
+            setInterval(loadSignals, 30000); // Refresh every 30s
         });
     </script>
 </body>
