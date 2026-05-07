@@ -65,6 +65,21 @@ def _normalize_bm_key(bm_key: str) -> str:
     return settings.synonyms.get(key, key)
 
 
+def find_book(bookmakers: list[dict], keys: list[str]) -> Optional[dict]:
+    """
+    Cherche un bookmaker dans la liste par ses clés (avec synonymes).
+    Retourne le premier bookmaker matché ou None.
+    """
+    # Normaliser toutes les clés recherchées avec synonymes
+    normalized_keys = {_normalize_bm_key(k) for k in keys}
+    for bm in bookmakers:
+        bm_key = bm.get("key", "").lower().strip()
+        normalized_bm = _normalize_bm_key(bm_key)
+        if normalized_bm in normalized_keys:
+            return bm
+    return None
+
+
 def _is_within_window(commence_time_iso: str, hours: int = SCAN_WINDOW_HOURS) -> bool:
     """
     Retourne True si le match commence dans les prochaines `hours` heures.
@@ -150,6 +165,7 @@ class ArbitrageDossier:
     groq_confidence: float = 0.0
     perplexity_summary: str = ""
     gemini_context: str = ""
+    liquidity_score: float = 0.0  # 0-1 score de liquidité
 
     @property
     def sources_count(self) -> int:
@@ -165,6 +181,26 @@ class ArbitrageDossier:
         if self.perplexity_ok: parts.append("✅ Perplexity")
         if self.gemini_ok:  parts.append("✅ Gemini")
         return " | ".join(parts) if parts else "⚠️ Non validé"
+
+    @property
+    def confidence_score(self) -> int:
+        """
+        Confidence Score 0-100 :
+        - alpha (EV+) : 40%
+        - liquidité : 30%
+        - IA (Groq confidence) : 30%
+        """
+        # Alpha score: max 1.5% → 100, min 0.015 → 0
+        alpha_pct = min(self.signal.ev_plus / 0.015, 1.0) * 100 if self.signal else 0
+        alpha_component = min(alpha_pct * 0.4, 40)  # plafonné à 40
+
+        # Liquidité score (0-100) → 30%
+        liq_component = min(self.liquidity_score * 100 * 0.3, 30)
+
+        # IA score (groq_confidence 0-1) → 30%
+        ia_component = min(self.groq_confidence * 100 * 0.3, 30)
+
+        return int(round(alpha_component + liq_component + ia_component))
 
     @property
     def is_consensus(self) -> bool:
