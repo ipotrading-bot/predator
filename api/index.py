@@ -17,6 +17,12 @@ from core.notifications import TelegramNotifier
 
 app = Flask(__name__)
 
+# Configure Gemini AI lazily (only when needed, not at import)
+try:
+    genai.configure(api_key=settings.gemini_api_key)
+except Exception:
+    pass  # Will fail gracefully when used
+
 db = SupabaseClient()
 
 # Chercher 1XBet avec gestion des synonymes
@@ -294,14 +300,31 @@ def weekly_performance_audit():
         audit['total_trades'], audit['avg_clv'], audit['win_rate'], [s['sport'] for s in data]
     )
 
-    asyncio.run(TelegramNotifier().send_audit_report(
-        audit['total_trades'], audit['avg_clv'], audit['win_rate'], report_ai
-    ))
+    # Use sync send instead of asyncio.run to avoid Vercel event loop conflicts
+    try:
+        import asyncio
+        loop = asyncio.new_event_loop()
+        loop.run_until_complete(TelegramNotifier().send_audit_report(
+            audit['total_trades'], audit['avg_clv'], audit['win_rate'], report_ai
+        ))
+        loop.close()
+    except Exception:
+        pass  # Telegram notification non-bloquant
 
     return jsonify({"status": "success", "audit": "Rapport envoyé"})
 
 
 @app.route('/api/screener', methods=['GET'])
 def morning_screener():
-    result = asyncio.run(MarketScanner().run_scan())
-    return jsonify({"status": "success", "result": result.__dict__})
+    try:
+        result = asyncio.run(MarketScanner().run_scan())
+        return jsonify({"status": "success", "result": result.__dict__})
+    except RuntimeError:
+        # Fallback for Vercel where event loop is already running
+        import asyncio
+        loop = asyncio.new_event_loop()
+        result = loop.run_until_complete(MarketScanner().run_scan())
+        loop.close()
+        return jsonify({"status": "success", "result": result.__dict__})
+    except Exception as e:
+        return jsonify({"status": "error", "message": str(e)}), 500
