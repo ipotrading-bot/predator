@@ -70,7 +70,7 @@ class Settings(BaseSettings):
     )
     soft_books: list[str] = Field(
         # Toutes les variantes 1XBet reconnues (insensible à la casse géré dans le scanner)
-        default=["onexbet", "1xbet", "1xbit", "1xstavka", "1x_bet",
+        default=["onexbet", "1xbet", "1xbit", "1xstavka", "1x_bet", "oneexbet",
                  "bet365", "unibet", "williamhill"]
     )
 
@@ -100,6 +100,7 @@ class Settings(BaseSettings):
         "1xbit":    "onexbet",
         "1xstavka": "onexbet",
         "1x_bet":   "onexbet",
+        "oneexbet": "onexbet",
     })
 
     # ── 1XBet Link Template ───────────────────────────────────
