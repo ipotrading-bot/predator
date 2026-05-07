@@ -1,14 +1,39 @@
 import os
 import asyncio
+import logging
+from typing import Optional
 from supabase import create_client, Client
 
-# Initialisation avec la Service Role Key pour bypasser le RLS
-url: str = os.environ.get("SUPABASE_URL")
-key: str = os.environ.get("SUPABASE_KEY")
-supabase: Client = create_client(url, key)
+logger = logging.getLogger(__name__)
 
 # Queue pour le batch processing
 signal_queue = asyncio.Queue()
+
+# Lazy-loaded Supabase client — évite crash à l'import si pas d'env vars
+_supabase_instance: Optional[Client] = None
+
+
+def _get_supabase() -> Optional[Client]:
+    """Retourne le client Supabase (lazy init). Retourne None si non configuré."""
+    global _supabase_instance
+    if _supabase_instance is None:
+        url = os.environ.get("SUPABASE_URL")
+        key = os.environ.get("SUPABASE_KEY")
+        if url and key:
+            _supabase_instance = create_client(url, key)
+        else:
+            logger.warning("SUPABASE_URL ou SUPABASE_KEY manquant — DB non disponible")
+    return _supabase_instance
+
+
+# Compatibilité ascendante : certaines parties importent 'supabase' comme variable
+def supabase():
+    """Retourne le client Supabase. Appelable comme supabase.table(...)"""
+    client = _get_supabase()
+    if client is None:
+        raise RuntimeError("Supabase non configuré. Vérifiez SUPABASE_URL et SUPABASE_KEY.")
+    return client
+
 
 async def batch_processor():
     """Worker asynchrone pour traiter les inserts par lots."""
@@ -28,16 +53,20 @@ async def batch_processor():
         
         # Ingestion en batch
         try:
-            supabase.table("signals").insert(batch).execute()
+            sb = _get_supabase()
+            if sb:
+                sb.table("signals").insert(batch).execute()
         except Exception as e:
             print(f"Erreur d'insertion batch : {e}")
         finally:
             for _ in batch:
                 signal_queue.task_done()
 
+
 def enqueue_signal(payload: dict):
     """Met un signal en queue pour ingestion asynchrone."""
     signal_queue.put_nowait(payload)
+
 
 def insert_signal(payload: dict):
     """
@@ -45,11 +74,15 @@ def insert_signal(payload: dict):
     Le client utilise la service_role_key pour garantir l'écriture.
     """
     try:
-        response = supabase.table("signals").insert(payload).execute()
+        sb = _get_supabase()
+        if not sb:
+            return None
+        response = sb.table("signals").insert(payload).execute()
         return response
     except Exception as e:
         print(f"Erreur d'insertion : {e}")
         return None
+
 
 def update_signal_settlement(signal_id: str, outcome: int, closing_price: float):
     """
@@ -59,15 +92,15 @@ def update_signal_settlement(signal_id: str, outcome: int, closing_price: float)
     closing_price: float (Cote de clôture Pinnacle)
     """
     try:
-        # Préparation du payload aligné sur la DB réelle
+        sb = _get_supabase()
+        if not sb:
+            return None
         payload = {
             "result": outcome,
-            "clv": closing_price, # On utilise 'clv' (float8) identifié en DB
+            "clv": closing_price,
             "status": "settled" if outcome is not None else "void"
         }
-        
-        # L'UUID doit être passé en string, Supabase gère le cast
-        response = supabase.table("signals").update(payload).eq("id", signal_id).execute()
+        response = sb.table("signals").update(payload).eq("id", signal_id).execute()
         return response
     except Exception as e:
         print(f"🚨 Erreur Settlement (PhD Audit) : {e}")

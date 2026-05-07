@@ -1,17 +1,25 @@
 import os
 import requests
+import logging
 from datetime import datetime, timezone
-from core.database import supabase
+from core.database import _get_supabase
 
+logger = logging.getLogger(__name__)
 ODDS_API_KEY = os.environ.get("ODDS_API_KEY")
+
 
 def run_settlement_audit():
     """
     Récupère les matchs terminés, vérifie les scores et met à jour l'Alpha final.
     """
+    sb = _get_supabase()
+    if not sb:
+        logger.warning("Supabase non configuré — audit impossible")
+        return {"status": "error", "message": "Supabase non configuré"}
+
     # 1. Extraire les signaux en attente dont l'heure est passée
     now = datetime.now(timezone.utc).isoformat()
-    res = supabase.table("signals").select("*").eq("status", "pending").lt("match_time", now).execute()
+    res = sb.table("signals").select("*").eq("status", "pending").lt("match_time", now).execute()
     pending_signals = res.data
 
     if not pending_signals:
