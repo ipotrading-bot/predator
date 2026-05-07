@@ -612,12 +612,8 @@ def hunter_scan():
         })
         
     except Exception as e:
-        logger.error(f"❌ Erreur Hunter Mode: {e}", exc_info=True)
-        return jsonify({
-            "status": "error",
-            "mode": "HUNTER_48H",
-            "error": str(e)
-        }), 500
+        logger.error(f"Erreur debug: {e}")
+        return jsonify({"error": str(e)}), 500
 
 
 # ═══════════════════════════════════════════════════════════════════
