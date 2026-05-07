@@ -15,7 +15,8 @@ class GeminiValidator:
             raise ValueError("GEMINI_API_KEY manquante.")
         genai.configure(api_key=api_key)
         self.model = genai.GenerativeModel(
-            model_name="gemini-2.0-flash"
+            model_name="gemini-2.0-flash",
+            generation_config={"max_output_tokens": 80, "temperature": 0.1},
         )
         logger.info("GeminiValidator initialisé.")
 

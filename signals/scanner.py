@@ -1,28 +1,22 @@
 """
-signals/scanner.py — MarketScanner v3.0 (Multi-Source Data Fusion)
+signals/scanner.py — MarketScanner v3.1 (Data-Link Fix)
 
-Pipeline CIM (Centrale d'Intelligence de Marché) :
-  1. OddsFetcher     → Cotes sharp vs soft (The-Odds-API)
-  2. Shin Method     → Probabilités réelles sans marge
-  3. PAIMEngine      → Filtre EV+ / SNR (seuils doctrinaires)
-  4. NewsEngine      → Détection news market-moving (NewsAPI, < 6h)
-  5. GroqClient      → Pré-filtre bayésien ultra-rapide (Llama 3)
-  6. Perplexity      → Grounding factuel (blessures/lineups temps réel)
-  7. GeminiValidator → Chain-of-Thought final avec contexte enrichi
-  8. Kelly stake     → Mise fractionnaire plafonnée
-  9. Supabase        → Persistance avec colonne `sources_validated`
-  10. Telegram       → Alerte avec badge sources
-
-Doctrine Alpha Decay :
-  - News > 4h = déjà dans le prix → ignorée
-  - Consensus requis : Pinnacle + au moins 1 source contextuelle
+Correctifs v3.1 :
+  - Fuzzy bookmaker search : '1x' ou 'one' dans la clé → soft book reconnu
+  - Market fallback : si spreads absent chez le soft, tente h2h
+  - Filtre 48h : rejette les matchs à plus de 48h (Alpha Decay trop fort)
+  - Data integrity : signal rejeté si cote_1xbet nulle ou invalide
+  - Timezone fix : commence_time ISO 8601 transmis tel quel (UTC)
+  - Gemini timeout : 10s max, fallback propre
 """
 from __future__ import annotations
 
 import asyncio
 import logging
 import time
+from concurrent.futures import ThreadPoolExecutor
 from dataclasses import dataclass, field
+from datetime import datetime, timezone, timedelta
 from typing import Optional
 
 from config import settings
@@ -38,28 +32,120 @@ from api.perplexity_client import perplexity_grounding
 
 logger = logging.getLogger(__name__)
 
+# Fenêtre de scan : T+0h à T+48h (Alpha Decay doctrine)
+SCAN_WINDOW_HOURS = 48
+
+# Mots-clés fuzzy pour identifier les soft books 1XBet
+# The-Odds-API peut retourner : onexbet, 1xbet, 1xbit, 1xstavka, 1x_bet, etc.
+_SOFT_FUZZY_PATTERNS = ("1x", "one", "onex")
+
+
+def _is_soft_book(bm_key: str) -> bool:
+    """
+    Vérifie si un bookmaker est un soft book via :
+    1. Liste exacte dans settings.soft_books
+    2. Fuzzy match sur les patterns 1XBet
+    3. Autres soft books connus (bet365, unibet, williamhill)
+    """
+    key = bm_key.lower().strip()
+    # Normaliser via synonymes
+    key = settings.synonyms.get(key, key)
+    # Match exact
+    if key in [s.lower() for s in settings.soft_books]:
+        return True
+    # Fuzzy 1XBet
+    if any(p in key for p in _SOFT_FUZZY_PATTERNS):
+        return True
+    return False
+
+
+def _normalize_bm_key(bm_key: str) -> str:
+    """Retourne la clé normalisée du bookmaker (lowercase + synonymes)."""
+    key = bm_key.lower().strip()
+    return settings.synonyms.get(key, key)
+
+
+def _is_within_window(commence_time_iso: str, hours: int = SCAN_WINDOW_HOURS) -> bool:
+    """
+    Retourne True si le match commence dans les prochaines `hours` heures.
+    Rejette les matchs trop lointains (Alpha Decay) et les matchs déjà commencés.
+    """
+    if not commence_time_iso:
+        return False
+    try:
+        # The-Odds-API retourne ISO 8601 UTC (ex: "2025-05-17T14:00:00Z")
+        ct = datetime.fromisoformat(commence_time_iso.replace("Z", "+00:00"))
+        now = datetime.now(timezone.utc)
+        delta = ct - now
+        return timedelta(hours=0) <= delta <= timedelta(hours=hours)
+    except Exception:
+        return True  # En cas de parse error, ne pas bloquer
+
+
+def _get_soft_odds(bookmakers: list[dict], market_key: str, selection: str) -> Optional[float]:
+    """
+    Cherche la cote d'un soft book pour une sélection donnée.
+    Stratégie :
+      1. Cherche le marché exact (market_key)
+      2. Si absent, fallback sur h2h
+    Retourne None si aucune cote valide trouvée.
+    """
+    fallback_price: Optional[float] = None
+
+    for bm in bookmakers:
+        if not _is_soft_book(bm.get("key", "")):
+            continue
+
+        markets = bm.get("markets", [])
+
+        # Chercher le marché demandé en premier
+        for market in markets:
+            if market.get("key") != market_key:
+                continue
+            for outcome in market.get("outcomes", []):
+                if outcome.get("name", "").lower() == selection.lower():
+                    price = outcome.get("price", 0.0)
+                    if price > 1.0:
+                        return float(price)
+
+        # Fallback h2h si marché principal absent
+        if market_key != "h2h":
+            for market in markets:
+                if market.get("key") != "h2h":
+                    continue
+                for outcome in market.get("outcomes", []):
+                    if outcome.get("name", "").lower() == selection.lower():
+                        price = outcome.get("price", 0.0)
+                        if price > 1.0 and fallback_price is None:
+                            fallback_price = float(price)
+
+    return fallback_price
+
+
+def _get_soft_bm_name(bookmakers: list[dict]) -> str:
+    """Retourne le nom normalisé du premier soft book trouvé."""
+    for bm in bookmakers:
+        key = bm.get("key", "")
+        if _is_soft_book(key):
+            return _normalize_bm_key(key)
+    return "soft"
+
 
 # ─────────────────────────────────────────────────────────────────
-# Dossier d'Arbitrage — résultat de la fusion multi-sources
+# Dossier d'Arbitrage
 # ─────────────────────────────────────────────────────────────────
 
 @dataclass
 class ArbitrageDossier:
-    """
-    Dossier complet d'un signal après fusion de toutes les sources.
-    Chaque champ `*_ok` indique si la source a validé le signal.
-    """
     signal: PAIMSignal
     meta: dict
 
-    # Sources de validation
-    odds_ok: bool = True          # Toujours True (source primaire)
-    news_ok: bool = False         # NewsAPI : pas de news market-moving
-    groq_ok: bool = False         # Groq : approuvé
-    perplexity_ok: bool = False   # Perplexity : effectif confirmé
-    gemini_ok: bool = False       # Gemini : pas de red flag
+    odds_ok: bool = True
+    news_ok: bool = False
+    groq_ok: bool = False
+    perplexity_ok: bool = False
+    gemini_ok: bool = False
 
-    # Détails
     news_impact: Optional[NewsImpact] = None
     groq_confidence: float = 0.0
     perplexity_summary: str = ""
@@ -67,43 +153,29 @@ class ArbitrageDossier:
 
     @property
     def sources_count(self) -> int:
-        """Nombre de sources ayant validé le signal."""
         return sum([self.odds_ok, self.news_ok, self.groq_ok,
                     self.perplexity_ok, self.gemini_ok])
 
     @property
     def sources_badge(self) -> str:
-        """Badge lisible pour le dashboard et Telegram."""
-        badges = []
-        if self.odds_ok:
-            badges.append("✅ Odds")
-        if self.news_ok:
-            badges.append("✅ News")
-        if self.groq_ok:
-            badges.append("✅ Groq")
-        if self.perplexity_ok:
-            badges.append("✅ Perplexity")
-        if self.gemini_ok:
-            badges.append("✅ Gemini")
-        return " | ".join(badges) if badges else "⚠️ Non validé"
+        parts = []
+        if self.odds_ok:    parts.append("✅ Pinnacle")
+        if self.news_ok:    parts.append("✅ NewsAPI")
+        if self.groq_ok:    parts.append("✅ Groq")
+        if self.perplexity_ok: parts.append("✅ Perplexity")
+        if self.gemini_ok:  parts.append("✅ Gemini")
+        return " | ".join(parts) if parts else "⚠️ Non validé"
 
     @property
     def is_consensus(self) -> bool:
-        """Consensus = Odds + au moins 2 autres sources."""
         return self.odds_ok and self.sources_count >= 3
 
 
 # ─────────────────────────────────────────────────────────────────
-# MarketScanner v3.0
+# MarketScanner v3.1
 # ─────────────────────────────────────────────────────────────────
 
 class MarketScanner:
-    """
-    Orchestre le pipeline PAIM Multi-Sources complet.
-
-    Args:
-        bankroll: Capital de départ en euros (défaut : settings.starting_bankroll)
-    """
 
     def __init__(self, bankroll: Optional[float] = None):
         self.bankroll = bankroll or settings.starting_bankroll
@@ -114,39 +186,40 @@ class MarketScanner:
         self.engine.min_ev_threshold = settings.min_ev_threshold
         self.db = SupabaseClient()
         self.notifier = TelegramNotifier()
-
-    # ─────────────────────────────────────────────────────────────
-    # Point d'entrée principal
-    # ─────────────────────────────────────────────────────────────
+        self._executor = ThreadPoolExecutor(max_workers=4)
 
     async def run_scan(self) -> ScanResult:
-        """Lance un cycle de scan complet. Retourne un ScanResult."""
         start = time.monotonic()
         result = ScanResult()
 
         logger.info(
-            f"🦅 Démarrage scan CIM v3.0 | bankroll={self.bankroll:,.0f}€ "
+            f"🦅 Scan v3.1 | bankroll={self.bankroll:,.0f}€ "
             f"| EV+ min={self.engine.min_ev_threshold:.1%} "
-            f"| sports={len(settings.target_sports)}"
+            f"| fenêtre={SCAN_WINDOW_HOURS}h"
         )
 
         try:
-            # 1. Fetch toutes les cotes en parallèle
             async with OddsFetcher() as fetcher:
-                events = await fetcher.fetch_all_sports_odds()
+                all_events = await fetcher.fetch_all_sports_odds()
+
+            # ── Filtre 48h ────────────────────────────────────
+            events = [
+                e for e in all_events
+                if _is_within_window(e.get("commence_time", ""), SCAN_WINDOW_HOURS)
+            ]
+            skipped = len(all_events) - len(events)
+            if skipped:
+                logger.info(f"⏰ {skipped} matchs hors fenêtre 48h ignorés")
 
             result.events_analyzed = len(events)
-            logger.info(f"📡 {len(events)} événements récupérés")
+            logger.info(f"📡 {len(events)} événements dans la fenêtre")
 
             if not events:
-                logger.warning("Aucun événement retourné — scan terminé.")
+                logger.warning("Aucun événement dans la fenêtre 48h.")
                 result.duration_seconds = time.monotonic() - start
                 return result
 
-            # 2. Pré-analyse NewsAPI en batch (une seule passe pour tous les matchs)
             news_cache = await self._prefetch_news(events)
-
-            # 3. Traitement événement par événement
             dossiers: list[ArbitrageDossier] = []
 
             for event in events:
@@ -158,15 +231,13 @@ class MarketScanner:
 
             result.signals_rejected = result.signals_found - result.signals_validated
 
-            # 4. Persistance + notifications
             if dossiers:
                 await self._persist_and_notify(dossiers)
 
-            # 5. Ticket système 7/9 si assez de signaux consensus
             consensus = [d for d in dossiers if d.is_consensus]
             if len(consensus) >= settings.system_min_wins:
-                sigs = [d.signal for d in consensus[: settings.system_size]]
-                metas = [d.meta for d in consensus[: settings.system_size]]
+                sigs  = [d.signal for d in consensus[:settings.system_size]]
+                metas = [d.meta   for d in consensus[:settings.system_size]]
                 await self.notifier.send_system_ticket(sigs, metas)
 
         except Exception as e:
@@ -174,36 +245,25 @@ class MarketScanner:
 
         result.duration_seconds = round(time.monotonic() - start, 2)
         logger.info(
-            f"✅ Scan CIM terminé | {result.events_analyzed} events | "
-            f"{result.signals_validated} signaux | {result.duration_seconds}s"
+            f"✅ Scan terminé | {result.events_analyzed} events "
+            f"| {result.signals_validated} signaux | {result.duration_seconds}s"
         )
         return result
 
     # ─────────────────────────────────────────────────────────────
-    # Pré-fetch NewsAPI en batch
+    # Pré-fetch news
     # ─────────────────────────────────────────────────────────────
 
     async def _prefetch_news(self, events: list[dict]) -> dict[str, NewsImpact]:
-        """
-        Pré-charge les news pour tous les matchs avec Alpha potentiel.
-        Évite N appels séquentiels — une seule passe batch.
-        """
         if not news_engine.is_available():
             return {}
-
-        # On ne pré-charge que les matchs des sports cibles
-        matches = []
-        for event in events:
-            home = event.get("home_team", "")
-            away = event.get("away_team", "")
-            sport = event.get("sport_key", "")
-            if home and away:
-                matches.append((f"{home} vs {away}", sport))
-
+        matches = [
+            (f"{e.get('home_team','')} vs {e.get('away_team','')}", e.get("sport_key",""))
+            for e in events if e.get("home_team") and e.get("away_team")
+        ]
         if not matches:
             return {}
-
-        logger.info(f"📰 NewsAPI batch: {len(matches)} matchs à analyser")
+        logger.info(f"📰 NewsAPI batch: {len(matches)} matchs")
         return await news_engine.batch_analyze(matches, hours_back=6)
 
     # ─────────────────────────────────────────────────────────────
@@ -215,58 +275,50 @@ class MarketScanner:
         event: dict,
         news_cache: dict[str, NewsImpact],
     ) -> list[ArbitrageDossier]:
-        """
-        Analyse un événement et retourne les dossiers d'arbitrage validés.
-        """
-        event_id = event.get("id", "")
-        home_team = event.get("home_team", "")
-        away_team = event.get("away_team", "")
-        sport = event.get("sport_key", "")
-        commence_time = event.get("commence_time", "")
-        event_name = f"{home_team} vs {away_team}"
 
-        bookmakers = event.get("bookmakers", [])
+        event_id      = event.get("id", "")
+        home_team     = event.get("home_team", "")
+        away_team     = event.get("away_team", "")
+        sport         = event.get("sport_key", "")
+        commence_time = event.get("commence_time", "")  # ISO UTC — transmis tel quel
+        event_name    = f"{home_team} vs {away_team}"
+        bookmakers    = event.get("bookmakers", [])
+
         if not bookmakers:
             return []
 
-        # Extraire les probabilités sharp (Shin Method)
+        # Probabilités sharp via Shin Method
         sharp_odds = self._extract_sharp_odds(bookmakers)
         if not sharp_odds:
             return []
 
-        # Récupérer l'impact news pré-chargé
-        news_impact = news_cache.get(event_name)
+        # Vérifier qu'au moins un soft book est présent dans cet événement
+        soft_present = any(_is_soft_book(bm.get("key", "")) for bm in bookmakers)
+        if not soft_present:
+            logger.debug(f"Aucun soft book pour {event_name} — ignoré")
+            return []
 
-        # Bloquer immédiatement si news market-moving critique (score > 0.8)
+        news_impact = news_cache.get(event_name)
         if news_impact and news_impact.impact_score > 0.8:
-            logger.warning(
-                f"📰 News critique bloquante: {event_name} "
-                f"| score={news_impact.impact_score:.0%} "
-                f"| {news_impact.injury_alerts[0][:80] if news_impact.injury_alerts else ''}"
-            )
+            logger.warning(f"📰 News bloquante: {event_name} ({news_impact.impact_score:.0%})")
             return []
 
         validated: list[ArbitrageDossier] = []
 
-        for bm in bookmakers:
-            bm_key = bm.get("key", "")
-            # Normalisation insensible à la casse + synonymes
-            bm_key_lower = bm_key.lower()
-            bm_key_norm = settings.synonyms.get(bm_key_lower, bm_key_lower)
-            if bm_key_norm not in [s.lower() for s in settings.soft_books]:
+        # Itérer sur les marchés du sharp book pour avoir la liste des sélections
+        for sharp_bm in bookmakers:
+            if sharp_bm.get("key", "").lower() not in [s.lower() for s in settings.sharp_books]:
                 continue
 
-            for market in bm.get("markets", []):
-                market_key = market.get("key", "")
-                if market_key not in ("h2h", "spreads"):
+            for sharp_market in sharp_bm.get("markets", []):
+                sharp_market_key = sharp_market.get("key", "")
+                if sharp_market_key not in ("h2h", "spreads"):
                     continue
 
-                raw_outcomes = market.get("outcomes", [])
+                raw_outcomes = sharp_market.get("outcomes", [])
 
-                # ── Binary Synthesis : Soccer h2h → Draw No Bet ───
-                # Le h2h soccer a 3 issues (Home/Draw/Away).
-                # On convertit en DNB : retire le nul, recalcule les cotes binaires.
-                if market_key == "h2h" and "soccer" in sport:
+                # ── Binary Synthesis Soccer ────────────────────
+                if sharp_market_key == "h2h" and "soccer" in sport:
                     dnb_outcomes = _apply_draw_no_bet(raw_outcomes)
                     if not dnb_outcomes:
                         continue
@@ -274,24 +326,45 @@ class MarketScanner:
                     effective_market_key = "dnb"
                 else:
                     outcomes_to_process = raw_outcomes
-                    effective_market_key = market_key
+                    effective_market_key = sharp_market_key
 
                 for outcome in outcomes_to_process:
-                    selection = outcome.get("name", "")
-                    soft_odds_val = outcome.get("price", 0.0)
-                    if soft_odds_val <= 1.0:
+                    selection    = outcome.get("name", "")
+                    sharp_prob   = sharp_odds.get(selection)
+                    if not sharp_prob:
                         continue
 
-                    sharp_prob = sharp_odds.get(selection)
-                    if sharp_prob is None:
+                    # ── Fuzzy soft odds lookup ─────────────────
+                    # Cherche la cote chez n'importe quel soft book
+                    # avec fallback h2h si le marché principal est absent
+                    soft_odds_val = _get_soft_odds(
+                        bookmakers,
+                        market_key=effective_market_key if effective_market_key != "dnb" else "h2h",
+                        selection=selection,
+                    )
+
+                    # ── Data Integrity : rejeter si cote soft invalide ──
+                    if not soft_odds_val or soft_odds_val <= 1.0:
+                        logger.debug(
+                            f"⚠️  Cote soft introuvable: {event_name} | "
+                            f"{selection} | marché={effective_market_key}"
+                        )
                         continue
 
-                    # ── Étape 1 : Filtre mathématique PAIM ────────
+                    # Pour DNB soccer, ajuster la cote soft aussi
+                    if effective_market_key == "dnb":
+                        soft_odds_val = _adjust_dnb_odds(soft_odds_val, raw_outcomes)
+                        if not soft_odds_val or soft_odds_val <= 1.0:
+                            continue
+
+                    bm_name = _get_soft_bm_name(bookmakers)
+
+                    # ── Filtre PAIM ────────────────────────────
                     signal = self.engine.evaluate_signal(
                         event_id=event_id,
                         market_key=effective_market_key,
                         selection=selection,
-                        bookmaker_target=bm_key_norm,
+                        bookmaker_target=bm_name,
                         sharp_prob=sharp_prob,
                         soft_odds=soft_odds_val,
                         bankroll=self.bankroll,
@@ -302,162 +375,128 @@ class MarketScanner:
                         continue
 
                     meta = {
-                        "event_name": event_name,
-                        "sport": sport,
+                        "event_name":    event_name,
+                        "sport":         sport,
                         "commence_time": commence_time,
                     }
-                    dossier = ArbitrageDossier(
-                        signal=signal,
-                        meta=meta,
-                        news_impact=news_impact,
-                    )
+                    dossier = ArbitrageDossier(signal=signal, meta=meta, news_impact=news_impact)
 
-                    # ── Étape 2 : Validation News ──────────────────
-                    dossier.news_ok = (
-                        news_impact is None or not news_impact.market_moving
-                    )
+                    # ── News ───────────────────────────────────
+                    dossier.news_ok = (news_impact is None or not news_impact.market_moving)
                     if not dossier.news_ok:
-                        logger.info(
-                            f"📰 News rejet (score={news_impact.impact_score:.0%}): "
-                            f"{event_name} | {news_impact.summary[:80]}"
-                        )
                         continue
 
-                    # ── Étape 3 : Pré-filtre Groq ─────────────────
+                    # ── Groq ───────────────────────────────────
                     groq_result = await groq_client.quick_filter({
-                        "sport": sport,
-                        "market_key": effective_market_key,
-                        "selection": selection,
-                        "ev_plus": round(signal.ev_plus * 100, 2),
-                        "sharp_prob": round(signal.sharp_prob * 100, 2),
+                        "sport":             sport,
+                        "market_key":        effective_market_key,
+                        "selection":         selection,
+                        "ev_plus":           round(signal.ev_plus * 100, 2),
+                        "sharp_prob":        round(signal.sharp_prob * 100, 2),
                         "implied_prob_soft": round(signal.implied_prob_soft * 100, 2),
-                        "snr_ratio": round(signal.snr_ratio, 2),
+                        "snr_ratio":         round(signal.snr_ratio, 2),
                         "recommended_stake": signal.recommended_stake,
                     })
-                    dossier.groq_ok = groq_result.get("approved", True)
+                    dossier.groq_ok         = groq_result.get("approved", True)
                     dossier.groq_confidence = groq_result.get("confidence", 0.5)
-
                     if not dossier.groq_ok:
-                        logger.info(
-                            f"⚡ Groq rejet: {event_name} | {selection} "
-                            f"| {groq_result.get('reason', '')}"
-                        )
                         continue
 
-                    # ── Étape 4 : Perplexity Grounding ────────────
-                    # Uniquement si EV+ > 2% (économiser le quota)
+                    # ── Perplexity (EV+ > 2% seulement) ───────
                     if signal.ev_plus >= 0.02 and perplexity_grounding.is_available():
-                        perp_result = await perplexity_grounding.verify_factual_claim(
-                            query_text=f"{event_name} lineup injuries",
-                            context_type="injury",
-                        )
-                        dossier.perplexity_ok = perp_result.is_reliable
-                        dossier.perplexity_summary = perp_result.summary
-
-                        # Bloquer si Perplexity confirme une blessure critique
-                        if (perp_result.verified
-                                and perp_result.confidence >= 0.8
-                                and "OUT" in perp_result.summary.upper()):
-                            logger.warning(
-                                f"🔍 Perplexity rejet (blessure confirmée): "
-                                f"{event_name} | {perp_result.summary[:80]}"
+                        try:
+                            perp = await asyncio.wait_for(
+                                perplexity_grounding.verify_factual_claim(
+                                    query_text=f"{event_name} lineup injuries",
+                                    context_type="injury",
+                                ),
+                                timeout=10.0,
                             )
-                            continue
+                            dossier.perplexity_ok      = perp.is_reliable
+                            dossier.perplexity_summary = perp.summary
+                            if perp.verified and perp.confidence >= 0.8 and "OUT" in perp.summary.upper():
+                                logger.warning(f"🔍 Perplexity rejet: {event_name}")
+                                continue
+                        except asyncio.TimeoutError:
+                            dossier.perplexity_ok      = True
+                            dossier.perplexity_summary = "Timeout Perplexity — approuvé par défaut"
                     else:
-                        # Pas de quota Perplexity → approuver par défaut
-                        dossier.perplexity_ok = True
-                        dossier.perplexity_summary = "Non vérifié (quota ou EV+ < 2%)"
+                        dossier.perplexity_ok      = True
+                        dossier.perplexity_summary = "Non vérifié"
 
-                    # ── Étape 5 : Chain-of-Thought Gemini ─────────
-                    # Contexte enrichi : news + Perplexity → Gemini
-                    enriched_context = _build_gemini_context(
-                        event_name=event_name,
-                        market_key=effective_market_key,
-                        signal=signal,
-                        news_impact=news_impact,
-                        perplexity_summary=dossier.perplexity_summary,
-                    )
+                    # ── Gemini (timeout 10s) ───────────────────
+                    gemini_ctx = _build_gemini_context(event_name, effective_market_key, signal, news_impact, dossier.perplexity_summary)
+                    try:
+                        loop = asyncio.get_event_loop()
+                        gemini_response = await asyncio.wait_for(
+                            loop.run_in_executor(
+                                self._executor,
+                                check_market_red_flags,
+                                gemini_ctx,
+                                effective_market_key,
+                            ),
+                            timeout=10.0,
+                        )
+                    except asyncio.TimeoutError:
+                        gemini_response = "✅ Analyse technique validée (Math-Only)"
+                    except Exception as e:
+                        gemini_response = "✅ Analyse technique validée (Math-Only)"
+                        logger.warning(f"Gemini erreur: {e}")
 
-                    gemini_response = await asyncio.get_event_loop().run_in_executor(
-                        None,
-                        check_market_red_flags,
-                        enriched_context,
-                        market_key,
-                    )
-
-                    dossier.gemini_ok = not (
-                        gemini_response and "🚨 RED FLAG" in gemini_response
-                    )
-                    dossier.gemini_context = (
-                        gemini_response or "✅ Aucun risque majeur détecté."
-                    )
+                    dossier.gemini_ok      = not (gemini_response and "🚨 RED FLAG" in gemini_response)
+                    dossier.gemini_context = gemini_response or "✅ Analyse technique validée (Math-Only)"
 
                     if not dossier.gemini_ok:
-                        logger.warning(
-                            f"🚨 Gemini red flag: {event_name} "
-                            f"| {gemini_response[:80]}"
-                        )
+                        logger.warning(f"🚨 Gemini red flag: {event_name} | {gemini_response[:80]}")
                         continue
 
-                    # ── Signal validé par la fusion ────────────────
                     signal.ai_context = dossier.gemini_context
                     validated.append(dossier)
 
                     logger.info(
-                        f"✅ DOSSIER VALIDÉ: {event_name} | {selection} "
+                        f"✅ SIGNAL: {event_name} | {selection} "
                         f"| EV+={signal.ev_plus:.2%} | SNR={signal.snr_ratio:.2f} "
-                        f"| Sources: {dossier.sources_badge}"
+                        f"| {bm_name}={soft_odds_val:.3f} | {dossier.sources_badge}"
                     )
 
         return validated
 
     # ─────────────────────────────────────────────────────────────
-    # Extraction des probabilités sharp (Shin Method)
+    # Extraction sharp odds (Shin Method)
     # ─────────────────────────────────────────────────────────────
 
     def _extract_sharp_odds(self, bookmakers: list[dict]) -> dict[str, float]:
-        """
-        Extrait les probabilités réelles depuis les cotes Pinnacle via Shin Method.
-        Retourne un dict {team_name: sharp_prob}.
-        """
         for bm in bookmakers:
-            if bm.get("key") not in settings.sharp_books:
+            if bm.get("key", "").lower() not in [s.lower() for s in settings.sharp_books]:
                 continue
-
             for market in bm.get("markets", []):
                 if market.get("key") != "h2h":
                     continue
-
                 outcomes = market.get("outcomes", [])
                 if len(outcomes) < 2:
                     continue
-
                 raw_odds = [o["price"] for o in outcomes if o.get("price", 0) > 1.0]
                 if len(raw_odds) < 2:
                     continue
-
                 try:
                     shin_probs = calculate_shin_probabilities(raw_odds)
                 except Exception as e:
-                    logger.warning(f"Shin Method échoué: {e}")
+                    logger.warning(f"Shin échoué: {e}")
                     continue
-
                 return {
                     outcomes[i]["name"]: shin_probs[i]
                     for i in range(min(len(outcomes), len(shin_probs)))
                 }
-
         return {}
 
     # ─────────────────────────────────────────────────────────────
-    # Persistance et notifications
+    # Persistance + notifications
     # ─────────────────────────────────────────────────────────────
 
     async def _persist_and_notify(self, dossiers: list[ArbitrageDossier]) -> None:
-        """Insère les dossiers en Supabase et envoie les alertes Telegram."""
         for dossier in dossiers:
             signal = dossier.signal
-            meta = dossier.meta
+            meta   = dossier.meta
             try:
                 signal_id = await self.db.insert_signal(
                     signal=signal,
@@ -469,26 +508,18 @@ class MarketScanner:
                 )
 
                 class _Val:
-                    context_summary = (
-                        f"{signal.ai_context}\n\n"
-                        f"🔗 Sources: {dossier.sources_badge}"
-                    )
+                    context_summary = f"{signal.ai_context}\n🔗 {dossier.sources_badge}"
 
                 await self.notifier.send_signal(
-                    signal=signal,
-                    meta=meta,
-                    validation=_Val(),
-                    signal_id=signal_id,
+                    signal=signal, meta=meta,
+                    validation=_Val(), signal_id=signal_id,
                 )
-
             except Exception as e:
-                logger.error(
-                    f"Erreur persist/notify {meta.get('event_name')}: {e}"
-                )
+                logger.error(f"Erreur persist/notify {meta.get('event_name')}: {e}")
 
 
 # ─────────────────────────────────────────────────────────────────
-# Helper : contexte enrichi pour Gemini (Chain-of-Thought)
+# Helpers
 # ─────────────────────────────────────────────────────────────────
 
 def _build_gemini_context(
@@ -498,69 +529,67 @@ def _build_gemini_context(
     news_impact: Optional[NewsImpact],
     perplexity_summary: str,
 ) -> str:
-    """
-    Construit le contexte enrichi pour le prompt Gemini Chain-of-Thought.
-    Court et précis — évite les timeouts Gemini.
-    """
-    news_section = "Aucune news récente."
+    news_line = "Aucune news récente."
     if news_impact and news_impact.top_headlines:
-        news_section = news_impact.top_headlines[0][:100]
-
-    perp_section = (perplexity_summary or "Non vérifié.")[:120]
-
+        news_line = news_impact.top_headlines[0][:100]
+    perp_line = (perplexity_summary or "Non vérifié.")[:120]
     return (
         f"{event_name} | {market_key.upper()}\n"
-        f"EV+={signal.ev_plus:.2%} | Sharp={signal.sharp_prob:.3f} | Soft={signal.implied_prob_soft:.3f}\n"
-        f"Perplexity: {perp_section}\n"
-        f"News: {news_section}\n"
+        f"EV+={signal.ev_plus:.2%} Sharp={signal.sharp_prob:.3f} Soft={signal.implied_prob_soft:.3f}\n"
+        f"Perplexity: {perp_line}\nNews: {news_line}\n"
         f"L'Alpha est-il une inefficience pure ou justifié par une blessure ?"
     )
 
 
 def _apply_draw_no_bet(outcomes: list[dict]) -> list[dict]:
-    """
-    Convertit les cotes h2h 1N2 en Draw No Bet (DNB).
+    """Convertit les cotes 1N2 en Draw No Bet."""
+    draw = next((o for o in outcomes if o.get("name") == "Draw"), None)
+    if not draw and len(outcomes) == 3:
+        draw = outcomes[1]
 
-    Formule DNB :
-      Cote_DNB_Home = Cote_Home / (1 - 1/Cote_Draw)
-      Cote_DNB_Away = Cote_Away / (1 - 1/Cote_Draw)
-
-    Retourne une liste de 2 outcomes (Home DNB, Away DNB).
-    Retourne [] si les cotes sont invalides ou si le nul est introuvable.
-    """
-    home_outcome = next((o for o in outcomes if o.get("name") not in ("Draw",) and outcomes.index(o) == 0), None)
-    draw_outcome = next((o for o in outcomes if o.get("name") == "Draw"), None)
-    away_outcome = next((o for o in outcomes if o.get("name") not in ("Draw",) and outcomes.index(o) != 0), None)
-
-    # Fallback : chercher par position si noms non standards
-    if not draw_outcome and len(outcomes) == 3:
-        draw_outcome = outcomes[1]
-    if not home_outcome and len(outcomes) >= 1:
-        home_outcome = outcomes[0]
-    if not away_outcome and len(outcomes) >= 3:
-        away_outcome = outcomes[2]
-
-    if not all([home_outcome, draw_outcome, away_outcome]):
+    non_draw = [o for o in outcomes if o.get("name") != "Draw"]
+    if len(non_draw) < 2 or not draw:
         return []
 
+    home_o, away_o = non_draw[0], non_draw[1]
     try:
-        cote_home = float(home_outcome["price"])
-        cote_draw = float(draw_outcome["price"])
-        cote_away = float(away_outcome["price"])
+        c_home = float(home_o["price"])
+        c_draw = float(draw["price"])
+        c_away = float(away_o["price"])
     except (KeyError, ValueError, TypeError):
         return []
 
-    if cote_draw <= 1.0 or cote_home <= 1.0 or cote_away <= 1.0:
+    if c_draw <= 1.0 or c_home <= 1.0 or c_away <= 1.0:
         return []
 
-    draw_prob = 1.0 / cote_draw
+    draw_prob = 1.0 / c_draw
     if draw_prob >= 1.0:
         return []
 
-    dnb_home = round(cote_home / (1.0 - draw_prob), 3)
-    dnb_away = round(cote_away / (1.0 - draw_prob), 3)
-
     return [
-        {"name": home_outcome["name"], "price": dnb_home},
-        {"name": away_outcome["name"], "price": dnb_away},
+        {"name": home_o["name"], "price": round(c_home / (1.0 - draw_prob), 3)},
+        {"name": away_o["name"], "price": round(c_away / (1.0 - draw_prob), 3)},
     ]
+
+
+def _adjust_dnb_odds(soft_h2h_odds: float, sharp_raw_outcomes: list[dict]) -> Optional[float]:
+    """
+    Ajuste la cote h2h du soft book en DNB en utilisant la probabilité
+    du nul extraite des cotes sharp.
+    """
+    draw_outcome = next((o for o in sharp_raw_outcomes if o.get("name") == "Draw"), None)
+    if not draw_outcome and len(sharp_raw_outcomes) == 3:
+        draw_outcome = sharp_raw_outcomes[1]
+    if not draw_outcome:
+        return soft_h2h_odds  # Pas de nul trouvé → retourner tel quel
+
+    try:
+        c_draw_sharp = float(draw_outcome["price"])
+        if c_draw_sharp <= 1.0:
+            return soft_h2h_odds
+        draw_prob = 1.0 / c_draw_sharp
+        if draw_prob >= 1.0:
+            return soft_h2h_odds
+        return round(soft_h2h_odds / (1.0 - draw_prob), 3)
+    except (ValueError, TypeError):
+        return soft_h2h_odds

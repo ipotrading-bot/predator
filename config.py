@@ -95,8 +95,11 @@ class Settings(BaseSettings):
 
     # ── Synonyms ──────────────────────────────────────────────
     synonyms: dict[str, str] = Field(default={
-        "1xbet": "1xbit",
-        "1xstavka": "1xbet"
+        # Normaliser toutes les variantes 1XBet vers "onexbet"
+        "1xbet":    "onexbet",
+        "1xbit":    "onexbet",
+        "1xstavka": "onexbet",
+        "1x_bet":   "onexbet",
     })
 
     # ── 1XBet Link Template ───────────────────────────────────
