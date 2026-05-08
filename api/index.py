@@ -633,13 +633,8 @@ def test_odds_api():
     try:
         import requests
         from config import settings
-        from datetime import datetime, timedelta
         
         sport = request.args.get('sport', 'basketball_nba')
-        
-        # Paramètres API
-        now = datetime.now()
-        cutoff = now + timedelta(hours=48)
         
         url = f"https://api.the-odds-api.com/v4/sports/{sport}/odds"
         params = {
@@ -648,8 +643,6 @@ def test_odds_api():
             "markets": "h2h",
             "oddsFormat": "decimal",
             "dateFormat": "iso",
-            "commenceTimeFrom": now.isoformat(),
-            "commenceTimeTo": cutoff.isoformat(),
         }
         
         logger.info(f"🔍 Test API direct: {sport}")
@@ -666,13 +659,29 @@ def test_odds_api():
         
         events = response.json()
         
-        if not events:
+        # Filtrer les événements dans les 48h côté Python
+        from datetime import datetime, timedelta
+        now = datetime.now()
+        cutoff = now + timedelta(hours=48)
+        
+        filtered_events = []
+        for evt in events:
+            commence_time = evt.get("commence_time", "")
+            if commence_time:
+                try:
+                    evt_time = datetime.fromisoformat(commence_time.replace('Z', '+00:00'))
+                    if now <= evt_time <= cutoff:
+                        filtered_events.append(evt)
+                except:
+                    filtered_events.append(evt)  # Si erreur parsing, on garde
+        
+        if not filtered_events:
             return jsonify({
                 "status": "no_data",
                 "sport": sport,
                 "message": "Aucun événement trouvé dans les 48h",
+                "total_raw": len(events),
                 "api_quota_remaining": response.headers.get("x-requests-remaining", "?"),
-                "params": params
             })
         
         # Analyser les données reçues
@@ -680,7 +689,7 @@ def test_odds_api():
         events_with_soft = 0
         sample_events = []
         
-        for evt in events[:5]:  # Premier 5 pour l'exemple
+        for evt in filtered_events[:5]:  # Premier 5 pour l'exemple
             bookmakers = evt.get("bookmakers", [])
             has_pinnacle = any("pinnacle" in bm.get("key", "").lower() for bm in bookmakers)
             has_soft = any(any(s in bm.get("key", "").lower() for s in ["1xbet", "onexbet", "bet365"]) for bm in bookmakers)
@@ -702,13 +711,14 @@ def test_odds_api():
         return jsonify({
             "status": "success",
             "sport": sport,
-            "total_events": len(events),
+            "total_events_48h": len(filtered_events),
+            "total_raw": len(events),
             "events_with_pinnacle": events_with_sharp,
             "events_with_soft": events_with_soft,
             "api_quota_remaining": response.headers.get("x-requests-remaining", "?"),
             "api_quota_used": response.headers.get("x-requests-used", "?"),
             "sample_events": sample_events,
-            "message": f"✅ {len(events)} événements trouvés, {events_with_sharp} avec Pinnacle, {events_with_soft} avec soft book"
+            "message": f"✅ {len(filtered_events)} événements 48h, {events_with_sharp} avec Pinnacle, {events_with_soft} avec soft"
         })
         
     except Exception as e:
