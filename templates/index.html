@@ -2,314 +2,126 @@
 <html lang="fr">
 <head>
     <meta charset="UTF-8">
-    <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>PREDATOR PAIM v5.0 | Terminal Quant — Perfection Institutionnelle</title>
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+    <title>PREDATOR PAIM v2.0 | Terminal</title>
     <script src="https://cdn.tailwindcss.com"></script>
-    <link href="https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@300;400;500;700&display=swap" rel="stylesheet">
+    <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+    <link href="https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@400;700&display=swap" rel="stylesheet">
     <style>
-        * {
-            margin: 0;
-            padding: 0;
-            box-sizing: border-box;
-        }
+        :root { --paim-green: #00ff00; --paim-dark: #050505; }
+        body { font-family: 'JetBrains Mono', monospace; background-color: var(--paim-dark); color: var(--paim-green); }
+        .glass { background: rgba(255, 255, 255, 0.03); border: 1px solid rgba(0, 255, 0, 0.15); }
+        .tab-active { border-bottom: 3px solid var(--paim-green); color: #fff; }
         
-        body {
-            font-family: 'JetBrains Mono', monospace;
-            background-color: #050505;
-            color: #00ff00;
-            min-height: 100vh;
-            overflow-x: hidden;
-        }
+        /* Tactical Navigation */
+        .nav-scroll { -ms-overflow-style: none; scrollbar-width: none; overflow-x: auto; display: flex; white-space: nowrap; }
+        .nav-scroll::-webkit-scrollbar { display: none; }
+        .nav-item { min-width: 100px; text-align: center; padding: 12px 16px; min-height: 44px; display: flex; align-items: center; justify-content: center; font-weight: bold; }
+
+        .console-container { background: #0a0a0a; border: 1px solid rgba(0, 255, 0, 0.2); border-radius: 4px; overflow: hidden; }
+        .console-header { background: rgba(0, 255, 0, 0.05); padding: 8px 12px; font-size: 10px; border-bottom: 1px solid rgba(0, 255, 0, 0.1); display: flex; justify-content: space-between; }
+        .console-body { padding: 10px; height: 150px; overflow-y: auto; font-size: 11px; line-height: 1.4; scrollbar-width: thin; scrollbar-color: var(--paim-green) #0a0a0a; }
         
-        /* LED Indicators */
-        .led {
-            display: inline-block;
-            width: 8px;
-            height: 8px;
-            border-radius: 50%;
-            margin-right: 6px;
-            animation: pulse 2s infinite;
-        }
+        .ticker-container { overflow: hidden; background: rgba(0, 255, 0, 0.02); border-bottom: 1px solid rgba(0, 255, 0, 0.1); padding: 4px 0; }
+        .ticker-content { display: inline-block; white-space: nowrap; animation: ticker 30s linear infinite; }
+        @keyframes ticker { 0% { transform: translateX(0); } 100% { transform: translateX(-50%); } }
         
-        .led-green {
-            background: #00ff00;
-            box-shadow: 0 0 8px #00ff00;
-        }
+        .led { display: inline-block; width: 6px; height: 6px; border-radius: 50%; margin-right: 4px; }
+        .led-online { background: var(--paim-green); box-shadow: 0 0 5px var(--paim-green); }
+        .led-offline { background: #ff3333; }
         
-        .led-red {
-            background: #ff3333;
-            box-shadow: 0 0 8px #ff3333;
-            animation: none;
-        }
+        .log-time { color: #555; }
+        .log-success { color: var(--paim-green); font-weight: bold; }
+        .log-error { color: #ff3333; }
         
-        .led-yellow {
-            background: #ffaa00;
-            box-shadow: 0 0 8px #ffaa00;
-        }
-        
-        @keyframes pulse {
-            0%, 100% { opacity: 1; }
-            50% { opacity: 0.4; }
-        }
-        
-        /* Glass Cards */
-        .glass {
-            background: rgba(0, 255, 0, 0.03);
-            border: 1px solid rgba(0, 255, 0, 0.2);
-            border-radius: 4px;
-        }
-        
-        .glass:hover {
-            border-color: rgba(0, 255, 0, 0.4);
-            box-shadow: 0 0 20px rgba(0, 255, 0, 0.1);
-        }
-        
-        /* Alpha Display */
-        .alpha-value {
-            color: #00d4ff;
-            text-shadow: 0 0 10px rgba(0, 212, 255, 0.5);
-        }
-        
-        /* Console */
-        .console {
-            background: #0a0a0a;
-            border: 1px solid rgba(0, 255, 0, 0.2);
-            font-family: 'JetBrains Mono', monospace;
-            font-size: 11px;
-            line-height: 1.6;
-        }
-        
-        .console-line {
-            padding: 2px 8px;
-            border-bottom: 1px solid rgba(0, 255, 0, 0.05);
-        }
-        
-        .console-time {
-            color: #666;
-            margin-right: 8px;
-        }
-        
-        /* Heatmap */
-        .heatmap-cell {
-            padding: 8px;
-            text-align: center;
-            border: 1px solid rgba(0, 255, 0, 0.1);
-            transition: all 0.2s ease;
-        }
-        
-        .heatmap-cell:hover {
-            border-color: rgba(0, 255, 0, 0.4);
-        }
-        
-        .heatmap-hot {
-            background: rgba(0, 255, 0, 0.1);
-            color: #00ff00;
-        }
-        
-        .heatmap-warm {
-            background: rgba(255, 170, 0, 0.1);
-            color: #ffaa00;
-        }
-        
-        .heatmap-cold {
-            background: rgba(100, 100, 100, 0.1);
-            color: #666;
-        }
-        
-        /* Signal Cards */
-        .signal-card {
-            background: rgba(0, 255, 0, 0.02);
-            border: 1px solid rgba(0, 255, 0, 0.15);
-            border-radius: 4px;
-            padding: 16px;
-            cursor: pointer;
-            transition: all 0.2s ease;
-        }
-        
-        .signal-card:hover {
-            border-color: #00d4ff;
-            box-shadow: 0 0 20px rgba(0, 212, 255, 0.15);
-            transform: translateY(-2px);
-        }
-        
-        .signal-card .alpha-big {
-            font-size: 28px;
-            font-weight: 300;
-            color: #00d4ff;
-            text-shadow: 0 0 15px rgba(0, 212, 255, 0.4);
-        }
-        
-        /* Modal */
-        .modal-overlay {
-            position: fixed;
-            inset: 0;
-            background: rgba(0, 0, 0, 0.8);
-            display: none;
-            justify-content: center;
-            align-items: center;
-            z-index: 1000;
-        }
-        
-        .modal-overlay.active {
-            display: flex;
-        }
-        
-        .modal-content {
-            background: #0a0a0a;
-            border: 1px solid rgba(0, 255, 0, 0.3);
-            border-radius: 8px;
-            width: 90%;
-            max-width: 500px;
-            max-height: 80vh;
-            overflow-y: auto;
-        }
-        
-        /* Tabs */
-        .tab {
-            padding: 12px 24px;
-            cursor: pointer;
-            border-bottom: 2px solid transparent;
-            transition: all 0.2s ease;
-            font-size: 12px;
-            text-transform: uppercase;
-            letter-spacing: 0.1em;
-        }
-        
-        .tab:hover {
-            color: #fff;
-        }
-        
-        .tab.active {
-            border-bottom-color: #00ff00;
-            color: #fff;
-        }
-        
-        .tab-content {
-            display: none;
-        }
-        
-        .tab-content.active {
-            display: block;
-        }
-        
-        /* Scrollbar */
-        ::-webkit-scrollbar {
-            width: 6px;
-            height: 6px;
-        }
-        
-        ::-webkit-scrollbar-track {
-            background: #050505;
-        }
-        
-        ::-webkit-scrollbar-thumb {
-            background: rgba(0, 255, 0, 0.3);
-            border-radius: 3px;
-        }
-        
-        ::-webkit-scrollbar-thumb:hover {
-            background: rgba(0, 255, 0, 0.5);
+        /* Mobile Adjustments */
+        @media (max-width: 768px) {
+            .kpi-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; }
+            .kpi-full { grid-column: span 2; }
+            .signal-card-mobile { padding: 12px; margin-bottom: 8px; }
+            .alpha-tag { position: absolute; top: 12px; right: 12px; font-size: 16px; font-weight: 800; }
+            .modal-fullscreen { position: fixed; top: 0; left: 0; width: 100%; height: 100%; z-index: 100; background: var(--paim-dark); padding: 20px; display: flex; flex-direction: column; }
         }
     </style>
 </head>
-<body class="p-4">
+<body class="p-2 md:p-4 text-xs md:text-sm">
     <!-- Market Ticker -->
-    <div class="ticker-container">
+    <div class="ticker-container mb-4">
         <div class="ticker-content" id="market-ticker">
-            <span class="ticker-item" style="color:#666">Chargement des news...</span>
+            <span class="px-4 text-blue-400">[LIVE] Scan PAIM actif...</span>
+            <span class="px-4 text-blue-400">[DATA] Flux Supabase synchronisé...</span>
         </div>
     </div>
 
     <!-- Header -->
-    <div class="flex justify-between items-center mb-6 border-b border-green-900 pb-4">
+    <div class="flex flex-col md:flex-row justify-between items-start md:items-center mb-6 border-b border-green-900/30 pb-4 gap-4">
         <div>
-            <h1 class="text-2xl font-bold tracking-tighter">🦅 PREDATOR PAIM <span class="text-xs font-normal text-gray-500">v2.0 QUANT SYSTEM</span></h1>
-            <p class="text-xs text-green-700">PHD MIT ARCHITECTURE | DAKAR HUB</p>
+            <h1 class="text-lg md:text-2xl font-bold tracking-tighter">🦅 PREDATOR <span class="text-xs font-normal text-gray-500">v5.2 MOBILE</span></h1>
+            <div class="flex items-center gap-2 mt-1">
+                <span class="text-[9px] bg-green-900/20 text-green-700 px-1 rounded">DAKAR HUB</span>
+                <span class="text-[9px] text-blue-600" id="quota-display">API: --/500</span>
+            </div>
         </div>
-        <div class="flex items-center gap-6">
-            <div class="flex gap-4 text-xs" id="api-health">
-                <div class="flex items-center"><span class="led led-offline" id="led-pinnacle"></span><span class="text-gray-400">PINNACLE: </span><span class="text-gray-500 ml-1" id="status-pinnacle">...</span></div>
-                <div class="flex items-center"><span class="led led-offline" id="led-1xbet"></span><span class="text-gray-400">1XBET: </span><span class="text-gray-500 ml-1" id="status-1xbet">...</span></div>
-                <div class="flex items-center"><span class="led led-offline" id="led-gemini"></span><span class="text-gray-400">GEMINI AI: </span><span class="text-gray-500 ml-1" id="status-gemini">...</span></div>
-                <div class="flex items-center"><span class="led led-offline" id="led-telegram"></span><span class="text-gray-400">TELEGRAM: </span><span class="text-gray-500 ml-1" id="status-telegram">...</span></div>
-                <div class="flex items-center ml-4 border-l border-green-900/50 pl-4"><span class="text-gray-400 uppercase text-[10px]">API QUOTA: </span><span class="text-blue-400 ml-1 font-bold" id="quota-display">--/500</span></div>
+        <div class="flex flex-wrap gap-3 items-center">
+            <div class="flex gap-2 text-[10px]" id="api-health">
+                <div class="flex items-center"><span class="led led-offline" id="led-pinnacle"></span><span class="text-gray-500">PIN</span></div>
+                <div class="flex items-center"><span class="led led-offline" id="led-1xbet"></span><span class="text-gray-500">1XB</span></div>
+                <div class="flex items-center"><span class="led led-offline" id="led-telegram"></span><span class="text-gray-500">TG</span></div>
             </div>
             <div class="text-right">
-                <div class="text-xs text-gray-500">STATUS</div>
-                <div class="text-sm font-bold text-green-400 animate-pulse" id="system-status">● SYSTEM ONLINE</div>
+                <div class="text-[10px] font-bold text-green-400 animate-pulse" id="system-status">● ONLINE</div>
             </div>
         </div>
     </div>
 
     <!-- Stats Cards -->
-    <div class="grid grid-cols-1 md:grid-cols-5 gap-4 mb-8">
-        <div class="glass p-4 rounded"><div class="text-xs text-gray-500">CAPITAL</div><div class="text-xl font-bold" id="stat-capital">...</div></div>
-        <div class="glass p-4 rounded"><div class="text-xs text-gray-500">WIN RATE (7/9)</div><div class="text-xl font-bold text-white" id="stat-winrate">...</div></div>
-        <div class="glass p-4 rounded"><div class="text-xs text-gray-500">CLV AVG</div><div class="text-xl font-bold text-blue-400" id="stat-clv">...</div></div>
-        <div class="glass p-4 rounded"><div class="text-xs text-gray-500">ROI MENSUEL</div><div class="text-xl font-bold text-green-400" id="stat-roi">...</div></div>
-        <div class="glass p-4 rounded border-blue-500/30">
-            <div class="text-xs text-gray-500">RISQUE CLUSTER</div>
-            <div class="text-xl font-bold" id="risk-cluster">...</div>
-            <div class="text-xs text-gray-600" id="risk-percentage">...</div>
+    <div class="kpi-grid md:grid-cols-5 gap-2 md:gap-4 mb-6">
+        <div class="glass p-3 rounded"><div class="text-[10px] text-gray-500">CAPITAL</div><div class="text-base md:text-xl font-bold" id="stat-capital">...</div></div>
+        <div class="glass p-3 rounded"><div class="text-[10px] text-gray-500">WIN RATE</div><div class="text-base md:text-xl font-bold text-white" id="stat-winrate">...</div></div>
+        <div class="glass p-3 rounded"><div class="text-[10px] text-gray-500">CLV AVG</div><div class="text-base md:text-xl font-bold text-blue-400" id="stat-clv">...</div></div>
+        <div class="glass p-3 rounded"><div class="text-[10px] text-gray-500">ROI</div><div class="text-base md:text-xl font-bold text-green-400" id="stat-roi">...</div></div>
+        <div class="glass p-3 rounded border-blue-500/20 kpi-full">
+            <div class="flex justify-between items-center">
+                <span class="text-[10px] text-gray-500">RISQUE CLUSTER</span>
+                <span class="text-[10px] text-gray-600" id="risk-percentage">...</span>
+            </div>
+            <div class="text-sm md:text-lg font-bold" id="risk-cluster">...</div>
         </div>
     </div>
 
-    <!-- Navigation -->
-    <div class="flex space-x-8 mb-6 border-b border-gray-900">
-        <button onclick="showPage('control')" class="pb-2 text-sm uppercase tracking-widest" id="btn-control">Contrôle</button>
-        <button onclick="showPage('live')" class="pb-2 text-sm uppercase tracking-widest" id="btn-live">Live Signals</button>
-        <button onclick="showPage('ledger')" class="pb-2 text-sm uppercase tracking-widest" id="btn-ledger">Ledger</button>
-        <button onclick="showPage('audit')" class="pb-2 text-sm uppercase tracking-widest" id="btn-audit">Audit</button>
-        <button onclick="showPage('info')" class="pb-2 text-sm uppercase tracking-widest" id="btn-info">Tips</button>
+    <!-- Tactical Navigation -->
+    <div class="nav-scroll border-b border-gray-900 mb-6">
+        <button onclick="showPage('control')" class="nav-item uppercase text-[11px] tracking-widest" id="btn-control">Contrôle</button>
+        <button onclick="showPage('live')" class="nav-item uppercase text-[11px] tracking-widest" id="btn-live">Live</button>
+        <button onclick="showPage('ledger')" class="nav-item uppercase text-[11px] tracking-widest" id="btn-ledger">Ledger</button>
+        <button onclick="showPage('audit')" class="nav-item uppercase text-[11px] tracking-widest" id="btn-audit">Audit</button>
     </div>
 
     <!-- PAGE: Contrôle -->
     <div id="page-control" class="page">
-        <!-- Control Panel -->
-        <div class="glass p-6 rounded-lg mb-8">
-            <div class="flex justify-between items-center mb-4">
-                <h2 class="text-sm text-gray-500 uppercase tracking-widest">Opérations de Scan</h2>
-                <div class="flex gap-2">
-                    <button onclick="clearConsole()" class="text-[10px] text-gray-600 hover:text-gray-400">CLEAR CONSOLE</button>
-                </div>
-            </div>
+        <div class="flex flex-col gap-4">
+            <button onclick="triggerScan()" class="w-full bg-green-900/20 active:bg-green-900/40 border border-green-500/30 text-green-400 font-bold py-4 rounded-sm transition-all uppercase tracking-widest text-xs min-h-[50px]">
+                DÉCLENCHER SCAN PAIM
+            </button>
             
-            <div class="grid grid-cols-1 md:grid-cols-2 gap-6">
+            <div class="grid grid-cols-1 md:grid-cols-2 gap-4">
+                <!-- Heatmap / Temperature -->
+                <div class="glass p-4 rounded-sm" id="market-temp-container">
+                    <h3 class="text-[10px] text-gray-500 uppercase mb-3">Température Marché</h3>
+                    <div id="market-temperature" class="grid grid-cols-2 gap-2">
+                        <!-- Dynamic content -->
+                    </div>
+                </div>
+
+                <!-- Terminal -->
                 <div class="console-container">
                     <div class="console-header">
                         <span>TERMINAL DE LOGS</span>
-                        <span class="animate-pulse">● LIVE</span>
+                        <button onclick="clearConsole()" class="text-gray-600">CLEAR</button>
                     </div>
                     <div class="console-body" id="console-output">
-                        <div class="log-line"><span class="log-time">[12:00:00]</span> <span class="log-info">Système Predator PAIM initialisé...</span></div>
+                        <div class="log-line"><span class="log-time">[12:00]</span> <span class="log-info">PAIM initialisé...</span></div>
                     </div>
-                </div>
-                
-                <div class="flex flex-col justify-center gap-4">
-                    <button onclick="triggerScan()" class="w-full bg-green-900/20 hover:bg-green-900/40 border border-green-500/50 text-green-400 font-bold py-4 rounded-sm transition-all uppercase tracking-widest text-sm">
-                        DÉCLENCHER SCAN PAIM (8H CYCLE)
-                    </button>
-                    <div class="grid grid-cols-2 gap-4">
-                        <div class="glass p-3 rounded-sm text-center">
-                            <div class="text-[10px] text-gray-500 mb-1">LATENCE API</div>
-                            <div class="text-sm font-bold text-blue-400">618 ms</div>
-                        </div>
-                        <div class="glass p-3 rounded-sm text-center">
-                            <div class="text-[10px] text-gray-500 mb-1">NODE REGION</div>
-                            <div class="text-sm font-bold text-gray-400">iad1 (USA)</div>
-                        </div>
-                    </div>
-                </div>
-            </div>
-        </div>
-
-        <!-- Search Control Panel -->
-        <div class="glass p-6 rounded-lg mb-6">
-            <h3 class="text-sm text-gray-500 mb-4 uppercase">Recherche d'Alpha</h3>
-            <div class="flex gap-4 items-end">
-                <div class="flex-1">
-                    <label class="text-[10px] text-gray-600 block mb-1">DATE</label>
-                    <input type="date" id="search-date" class="w-full bg-black border border-green-900 text-white p-2 rounded text-sm">
                 </div>
             </div>
         </div>
@@ -317,215 +129,130 @@
 
     <!-- PAGE: Live Signals -->
     <div id="page-live" class="page hidden">
-        <h2 class="mb-4 text-sm text-gray-500">TICKET SYSTÈME 7/9 ACTUEL (24H ADVANCE)</h2>
-        <div id="live-container" class="grid grid-cols-1 md:grid-cols-3 gap-4">
-            <!-- Signaux réels -->
-        </div>
-        
-        <!-- Live Signals Tab -->
-        <div id="tab-live" class="tab-content">
-            <div id="signal-grid" class="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
-                <!-- Signal cards injected here -->
-                <div class="text-center py-12 text-gray-600">
-                    <p class="text-4xl mb-4">📡</p>
-                    <p>Aucun signal actif. Scan en cours...</p>
-                </div>
-            </div>
-        </div>
-        
-        <!-- Ledger Tab -->
-        <div id="tab-ledger" class="tab-content">
-            <div class="glass p-4">
-                <table class="w-full text-xs">
-                    <thead class="text-gray-500 border-b border-green-900/20">
-                        <tr>
-                            <th class="py-2 text-left">DATE</th>
-                            <th class="py-2 text-left">MATCH</th>
-                            <th class="py-2 text-left">MISE</th>
-                            <th class="py-2 text-left">EV</th>
-                            <th class="py-2 text-left">RÉSULTAT</th>
-                        </tr>
-                    </thead>
-                    <tbody id="ledger-body">
-                        <tr>
-                            <td colspan="5" class="py-8 text-center text-gray-600">Aucune transaction</td>
-                        </tr>
-                    </tbody>
-                </table>
-            </div>
-        </div>
-        
-        <!-- Audit Tab -->
-        <div id="tab-audit" class="tab-content">
-            <div class="grid grid-cols-2 gap-4">
-                <div class="glass p-4">
-                    <h4 class="text-xs uppercase text-gray-500 mb-3">Métriques de Risque</h4>
-                    <div class="space-y-2">
-                        <div class="flex justify-between"><span class="text-gray-400">Brier Score</span><span id="audit-brier">N/A</span></div>
-                        <div class="flex justify-between"><span class="text-gray-400">Sharpe Ratio</span><span id="audit-sharpe">N/A</span></div>
-                        <div class="flex justify-between"><span class="text-gray-400">Max Drawdown</span><span id="audit-drawdown">N/A</span></div>
-                    </div>
-                </div>
-                <div class="glass p-4">
-                    <h4 class="text-xs uppercase text-gray-500 mb-3">Performance</h4>
-                    <div id="audit-chart" class="h-32 flex items-center justify-center text-gray-600">
-                        [Graphique d'équité]
-                    </div>
-                </div>
-            </div>
-        </div>
-    </main>
-
-    <!-- Modal -->
-    <div id="signal-modal" class="modal-overlay" onclick="closeModal(event)">
-        <div class="modal-content" onclick="event.stopPropagation()">
-            <div class="flex justify-between items-center p-4 border-b border-green-900/30">
-                <h3 id="modal-title" class="text-lg font-bold">Signal Details</h3>
-                <button onclick="closeModal()" class="text-2xl text-gray-500 hover:text-white">&times;</button>
-            </div>
-            <div class="p-4 space-y-4">
-                <div class="grid grid-cols-2 gap-4">
-                    <div class="glass p-3 text-center">
-                        <div class="text-xs text-gray-500">Fair Price</div>
-                        <div id="modal-fair" class="text-xl font-bold">—</div>
-                    </div>
-                    <div class="glass p-3 text-center">
-                        <div class="text-xs text-gray-500">1XBet</div>
-                        <div id="modal-soft" class="text-xl font-bold alpha-value">—</div>
-                    </div>
-                </div>
-                <div class="space-y-2 text-sm">
-                    <div class="flex justify-between"><span class="text-gray-400">Sport:</span><span id="modal-sport">—</span></div>
-                    <div class="flex justify-between"><span class="text-gray-400">Marché:</span><span id="modal-market">—</span></div>
-                    <div class="flex justify-between"><span class="text-gray-400">Sélection:</span><span id="modal-selection">—</span></div>
-                    <div class="flex justify-between"><span class="text-gray-400">Bookmaker:</span><span id="modal-bookmaker" class="text-blue-400">—</span></div>
-                    <div class="flex justify-between"><span class="text-gray-400">Alpha (EV+):</span><span id="modal-alpha" class="alpha-value">—</span></div>
-                    <div class="flex justify-between"><span class="text-gray-400">SNR Ratio:</span><span id="modal-snr">—</span></div>
-                    <div class="flex justify-between"><span class="text-gray-400">CLV Est:</span><span id="modal-clv">—</span></div>
-                    <div class="flex justify-between"><span class="text-gray-400">Proba Sharp:</span><span id="modal-prob-sharp">—</span></div>
-                    <div class="flex justify-between"><span class="text-gray-400">Proba Soft:</span><span id="modal-prob-soft">—</span></div>
-                    <div class="flex justify-between"><span class="text-gray-400">Mise Kelly:</span><span id="modal-stake">—</span></div>
-                </div>
-                <div class="glass p-3 border-l-2 border-green-500">
-                    <div class="text-xs text-green-600 mb-1">🤖 Analyse IA</div>
-                    <p id="modal-note" class="text-sm text-gray-400">—</p>
-                </div>
-                <a id="modal-link" href="#" target="_blank" class="block w-full py-3 text-center bg-blue-900/30 border border-blue-600 text-blue-400 hover:bg-blue-900/50 transition-all rounded font-bold">
-                    🎯 PARIER sur <span id="modal-link-bm">1XBet</span> →
-                </a>
-            </div>
+        <div id="live-container" class="flex flex-col gap-2">
+            <!-- Signal cards -->
         </div>
     </div>
 
-    <!-- PAGE: Tips/Info -->
-    <div id="page-info" class="page hidden">
-        <div class="glass p-6 rounded-lg">
-            <h2 class="mb-4 text-gray-400">TIPS & INFO — ACADEMY</h2>
-            <div id="info-container" class="text-center py-10 text-gray-600">Chargement des tips...</div>
+    <!-- Signal Detail Modal -->
+    <div id="detail-modal" class="hidden modal-fullscreen">
+        <div class="flex-1 overflow-y-auto" id="modal-content">
+            <!-- Content here -->
         </div>
+        <button onclick="closeModal()" class="w-full bg-red-900/20 text-red-500 font-bold py-5 rounded mt-4 uppercase tracking-tighter text-sm">
+            Fermer le Terminal
+        </button>
     </div>
 
     <script>
-        let equityChart = null;
-        
-        function timeStr() { return new Date().toTimeString().split(' ')[0]; }
-        
+        let currentSignals = [];
+
         function showPage(pageId) {
             document.querySelectorAll('.page').forEach(p => p.classList.add('hidden'));
             document.getElementById('page-' + pageId).classList.remove('hidden');
-            document.querySelectorAll('[id^="btn-"]').forEach(btn => btn.classList.remove('tab-active'));
+            document.querySelectorAll('.nav-item').forEach(btn => btn.classList.remove('tab-active'));
             document.getElementById('btn-' + pageId).classList.add('tab-active');
-            if (pageId === 'audit' && !equityChart) setTimeout(initEquityChart, 100);
-            if (pageId === 'info') fetchInfo();
         }
 
-        async function triggerScan() {
-            const btn = document.querySelector('button[onclick="triggerScan()"]');
-            btn.innerText = "SCANNING...";
-            btn.disabled = true;
-            try {
-                const res = await fetch('/api/screener');
-                const data = await res.json();
-                
-                if (data.status === "success") {
-                    const analyzed = data.result.events_analyzed || 0;
-                    addLog(`Scan effectué : ${analyzed} matchs analysés`, 'success');
-                    
-                    if (data.api_quota && data.api_quota.remaining_requests !== -1) {
-                        document.getElementById('quota-display').textContent = `${data.api_quota.remaining_requests}/500`;
-                    }
-                }
-                
-                await updateDashboard();
-            } catch (e) {
-                addLog(`Erreur lors du scan: ${e.message}`, 'error');
-            } finally {
-                btn.innerText = "DÉCLENCHER SCAN PAIM (8H CYCLE)";
-                btn.disabled = false;
-            }
+        function addLog(message, type = 'info') {
+            const el = document.getElementById('console-output');
+            const cls = {success:'log-success', error:'log-error'}[type] || 'log-info';
+            const div = document.createElement('div');
+            div.className = 'log-line';
+            div.innerHTML = `<span class="log-time">[${new Date().toLocaleTimeString('fr-FR', {hour:'2-digit', minute:'2-digit'})}]</span> <span class="${cls}">${message}</span>`;
+            el.appendChild(div);
+            el.scrollTop = el.scrollHeight;
         }
+
+        function clearConsole() { document.getElementById('console-output').innerHTML = ''; }
 
         async function updateDashboard() {
             const grid = document.getElementById('live-container');
+            const tempContainer = document.getElementById('market-temperature');
+            
             try {
-                const response = await fetch('/api/data');
-                const data = await response.json();
-                const signals = data.signals || [];
-                const marketTemperature = data.market_temperature || {};
+                const res = await fetch('/api/data');
+                const data = await res.json();
+                currentSignals = data.signals || [];
+                const temp = data.market_temperature || {};
 
-                if (!Array.isArray(signals) || signals.length === 0) {
-                    let marketTempHtml = `<p class="text-green-800 uppercase tracking-[0.2em] text-sm animate-pulse mb-2">📡 SCAN PAIM EN COURS : AUCUN ALPHA SPREAD > 2.5% DÉTECTÉ</p><p class="text-[10px] text-gray-600 mb-4">PROCHAIN CYCLE AUTOMATIQUE : 06:00 GMT</p>`;
-                    if (Object.keys(marketTemperature).length > 0) {
-                        marketTempHtml += `<div class="text-left mt-4"><h4 class="text-xs text-gray-500 mb-2">TEMPÉRATURE DU MARCHÉ:</h4>`;
-                        for (const sport in marketTemperature) {
-                            const alpha = marketTemperature[sport];
-                            const snowflake = alpha < 1.0 ? ' ❄️' : '';
-                            marketTempHtml += `<p class="text-sm text-gray-400">${sport.replace(/_/g, ' ').toUpperCase()}: <span class="text-blue-400">${alpha.toFixed(1)}%</span>${snowflake}</p>`;
-                        }
-                        marketTempHtml += `</div>`;
-                    }
-                    grid.innerHTML = `<div class="col-span-full p-10 text-center border border-dashed border-green-900/50 rounded-sm">${marketTempHtml}</div>`;
+                // Update Temperature
+                tempContainer.innerHTML = Object.entries(temp).map(([sport, alpha]) => `
+                    <div class="glass p-2 rounded text-[10px]">
+                        <div class="text-gray-500">${sport.split('_')[1]?.toUpperCase() || sport}</div>
+                        <div class="text-blue-400 font-bold">${alpha.toFixed(1)}% ${alpha < 1 ? '❄️' : '🔥'}</div>
+                    </div>
+                `).join('');
+
+                // Update Signals
+                if (currentSignals.length === 0) {
+                    grid.innerHTML = '<div class="p-10 text-center text-gray-700 uppercase">Aucun Alpha > 2.5%</div>';
                     return;
                 }
 
-                grid.innerHTML = signals.map(signal => {
-                    const spread = signal.alpha_spread ? (signal.alpha_spread * 100).toFixed(1) : "0.0";
-                    const date = signal.match_time ? new Date(signal.match_time).toLocaleString('fr-FR', {day:'2-digit', month:'2-digit', hour:'2-digit', minute:'2-digit', timeZone:'UTC'}) : "Date N/A";
-                    return `
-                    <div class="glass p-6 rounded-sm card-alpha flex flex-col md:flex-row justify-between items-center gap-6 border-l-4 border-green-500 bg-white/5 mb-4">
-                        <div class="flex-1">
-                            <div class="flex items-center gap-3 mb-2">
-                                <span class="text-[10px] bg-green-900/30 text-green-400 px-2 py-0.5 rounded uppercase font-bold">${signal.sport || 'Sport'}</span>
-                                <span class="text-xs text-gray-500">${date} GMT</span>
-                            </div>
-                            <h3 class="text-xl font-bold text-white">${signal.match_name || 'Match Inconnu'}</h3>
-                            <p class="text-sm text-green-500/80 font-semibold">Market: ${signal.market_type || 'N/A'}</p>
-                        </div>
-                        <div class="flex gap-8 text-center">
-                            <div><div class="text-[9px] text-gray-500 uppercase tracking-widest mb-1">Fair Price</div><div class="text-lg font-bold text-gray-300">${signal.fair_price ? signal.fair_price.toFixed(2) : '0.00'}</div></div>
-                            <div><div class="text-[9px] text-gray-500 uppercase tracking-widest mb-1">1XBet Price</div><div class="text-lg font-bold text-green-400">${signal.cote_1xbet ? signal.cote_1xbet.toFixed(2) : '0.00'}</div></div>
-                            <div><div class="text-[9px] text-gray-500 uppercase tracking-widest mb-1">Alpha Spread</div><div class="text-lg font-bold text-blue-400">+${spread}%</div></div>
-                        </div>
-                        <div class="w-full md:w-72 p-3 bg-black/60 border border-green-900/20 rounded-sm">
-                            <div class="text-[9px] text-gray-500 mb-1 uppercase font-bold">IA Risk Flag (Gemini)</div>
-                            <p class="text-[11px] text-gray-400 italic leading-tight">${signal.note_ia || 'Analyse de risque non disponible.'}</p>
-                        </div>
-                    </div>`;
-                }).join('');
-            } catch (error) {
-                grid.innerHTML = '<div class="col-span-full p-10 text-red-500 text-center uppercase text-xs">⚠️ Erreur de liaison flux Supabase</div>';
+                grid.innerHTML = currentSignals.map((s, idx) => `
+                    <div onclick="openModal(${idx})" class="glass p-4 rounded-sm relative signal-card-mobile active:bg-white/5 border-l-2 border-green-500">
+                        <div class="text-[9px] text-green-700 font-bold uppercase mb-1">${s.sport}</div>
+                        <div class="text-sm font-bold text-white max-w-[80%]">${s.match_name}</div>
+                        <div class="text-[10px] text-gray-500 mt-1">${s.market_type} @ ${s.cote_1xbet}</div>
+                        <div class="alpha-tag text-blue-400">+${(s.alpha_spread * 100).toFixed(1)}%</div>
+                    </div>
+                `).join('');
+
+            } catch (e) {
+                console.error(e);
             }
         }
 
-        async function fetchStats() {
+        function openModal(idx) {
+            const s = currentSignals[idx];
+            const modal = document.getElementById('detail-modal');
+            const content = document.getElementById('modal-content');
+            
+            content.innerHTML = `
+                <div class="border-b border-green-900/30 pb-4 mb-6">
+                    <h2 class="text-xl font-bold text-white">${s.match_name}</h2>
+                    <p class="text-blue-500 text-sm font-bold">${s.sport.toUpperCase()} | ALPHA: ${(s.alpha_spread * 100).toFixed(2)}%</p>
+                </div>
+                
+                <div class="grid grid-cols-2 gap-4 mb-8">
+                    <div class="glass p-4 rounded">
+                        <p class="text-[10px] text-gray-500 mb-1 uppercase">Cote Soft</p>
+                        <p class="text-2xl font-bold text-green-400">${s.cote_1xbet}</p>
+                    </div>
+                    <div class="glass p-4 rounded">
+                        <p class="text-[10px] text-gray-500 mb-1 uppercase">Fair Price</p>
+                        <p class="text-2xl font-bold text-gray-400">${s.fair_price?.toFixed(2)}</p>
+                    </div>
+                </div>
+
+                <div class="glass p-4 rounded mb-6">
+                    <h3 class="text-xs text-gray-500 uppercase mb-2">IA Context (Gemini)</h3>
+                    <p class="text-sm text-gray-300 italic">${s.note_ia || 'Analyse non disponible'}</p>
+                </div>
+
+                <a href="#" class="block w-full bg-blue-600 text-white text-center py-4 rounded font-bold uppercase tracking-widest">
+                    Ouvrir sur 1XBet
+                </a>
+            `;
+            modal.classList.remove('hidden');
+        }
+
+        function closeModal() { document.getElementById('detail-modal').classList.add('hidden'); }
+
+        async function triggerScan() {
+            addLog("Démarrage du scan global...", "info");
             try {
-                const res = await fetch('/api/stats');
-                const d = await res.json();
-                document.getElementById('stat-capital').textContent = (d.capital || 0).toLocaleString('fr-FR', {minimumFractionDigits:2}) + ' €';
-                document.getElementById('stat-winrate').textContent = (d.win_rate || 0).toFixed(1) + '%';
-                document.getElementById('stat-clv').textContent = (d.clv_avg >= 0 ? '+' : '') + (d.clv_avg || 0).toFixed(2) + '%';
-                document.getElementById('stat-roi').textContent = (d.roi_mensuel >= 0 ? '+' : '') + (d.roi_mensuel || 0).toFixed(1) + '%';
-            } catch (e) {}
+                const res = await fetch('/api/screener');
+                const data = await res.json();
+                if (data.status === "success") {
+                    addLog(`Scan terminé: ${data.result.events_analyzed} événements`, "success");
+                    if (data.api_quota) document.getElementById('quota-display').textContent = `API: ${data.api_quota.remaining_requests}/500`;
+                }
+                updateDashboard();
+            } catch (e) {
+                addLog("Erreur critique pendant le scan", "error");
+            }
         }
 
         async function fetchExposure() {
@@ -534,48 +261,29 @@
                 const d = await res.json();
                 const rcEl = document.getElementById('risk-cluster');
                 rcEl.textContent = d.risk_cluster || 'SÉCURISÉ';
-                if (d.risk_cluster === 'CRITIQUE') rcEl.className = 'text-xl font-bold text-red-500';
-                else if (d.risk_cluster === 'ÉLEVÉ') rcEl.className = 'text-xl font-bold text-yellow-500';
-                else rcEl.className = 'text-xl font-bold text-green-400';
-                document.getElementById('risk-percentage').textContent = `${d.risk_percentage || 0}% (${(d.total_exposure || 0).toFixed(2)} €)`;
+                rcEl.className = d.risk_cluster === 'CRITIQUE' ? 'text-sm md:text-lg font-bold text-red-500' : 'text-sm md:text-lg font-bold text-green-400';
+                document.getElementById('risk-percentage').textContent = `${d.risk_percentage || 0}%`;
             } catch (e) {}
         }
 
-        function addLog(message, type = 'info') {
-            const el = document.getElementById('console-output');
-            const cls = {info:'log-info',success:'log-success',warning:'log-warning',error:'log-error',highlight:'log-highlight'}[type]||'log-info';
-            const div = document.createElement('div');
-            div.className = 'log-line';
-            div.innerHTML = `<span class="log-time">[${timeStr()}]</span> <span class="${cls}">${message}</span>`;
-            el.appendChild(div);
-            el.scrollTop = el.scrollHeight;
-        }
-
-        function clearConsole() { document.getElementById('console-output').innerHTML = ''; }
-
-        async function fetchAPIHealth() {
+        async function fetchStats() {
             try {
-                const res = await fetch('/api/health');
+                const res = await fetch('/api/stats');
                 const d = await res.json();
-                if (d.status === 'ok') {
-                    document.querySelectorAll('[id^="led-"]').forEach(el => el.className = 'led led-online');
-                    document.querySelectorAll('[id^="status-"]').forEach(el => { el.className = 'text-green-400 ml-1'; el.textContent = 'ONLINE'; });
-                }
-                
-            } catch (e) {
-                document.querySelectorAll('[id^="led-"]').forEach(el => el.className = 'led led-offline');
-            }
+                document.getElementById('stat-capital').textContent = (d.capital || 0).toFixed(0) + '€';
+                document.getElementById('stat-winrate').textContent = (d.win_rate || 0).toFixed(1) + '%';
+                document.getElementById('stat-clv').textContent = (d.clv_avg || 0).toFixed(2) + '%';
+                document.getElementById('stat-roi').textContent = (d.roi_mensuel || 0).toFixed(1) + '%';
+            } catch (e) {}
         }
 
         document.addEventListener('DOMContentLoaded', () => {
             showPage('control');
             updateDashboard();
-            fetchStats();
             fetchExposure();
-            fetchAPIHealth();
+            fetchStats();
             setInterval(updateDashboard, 60000);
-            setInterval(fetchExposure, 45000);
-            setInterval(fetchAPIHealth, 60000);
+            setInterval(fetchExposure, 30000);
         });
     </script>
 </body>
