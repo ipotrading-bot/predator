@@ -13,8 +13,7 @@
         .glass { background: rgba(255, 255, 255, 0.03); border: 1px solid rgba(0, 255, 0, 0.15); }
         .tab-active { border-bottom: 3px solid var(--paim-green); color: #fff; }
         
-        /* Tactical Navigation */
-        .nav-scroll { -ms-overflow-style: none; scrollbar-width: none; overflow-x: auto; display: flex; white-space: nowrap; }
+        .nav-scroll { -ms-overflow-style: none; scrollbar-width: none; overflow-x: auto; display: flex; white-space: nowrap; border-bottom: 1px solid #111; }
         .nav-scroll::-webkit-scrollbar { display: none; }
         .nav-item { min-width: 100px; text-align: center; padding: 12px 16px; min-height: 44px; display: flex; align-items: center; justify-content: center; font-weight: bold; }
 
@@ -34,11 +33,15 @@
         .log-success { color: var(--paim-green); font-weight: bold; }
         .log-error { color: #ff3333; }
         
-        /* Mobile Adjustments */
+        @media (min-width: 769px) {
+            .kpi-grid { display: grid; grid-template-columns: repeat(5, 1fr); gap: 16px; }
+            .console-body { height: 300px; }
+            .signal-list { display: grid; grid-template-columns: repeat(3, 1fr); gap: 16px; }
+        }
         @media (max-width: 768px) {
             .kpi-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; }
             .kpi-full { grid-column: span 2; }
-            .signal-card-mobile { padding: 12px; margin-bottom: 8px; }
+            .signal-card-mobile { padding: 12px; margin-bottom: 8px; position: relative; }
             .alpha-tag { position: absolute; top: 12px; right: 12px; font-size: 16px; font-weight: 800; }
             .modal-fullscreen { position: fixed; top: 0; left: 0; width: 100%; height: 100%; z-index: 100; background: var(--paim-dark); padding: 20px; display: flex; flex-direction: column; }
         }
@@ -58,8 +61,8 @@
         <div>
             <h1 class="text-lg md:text-2xl font-bold tracking-tighter">🦅 PREDATOR <span class="text-xs font-normal text-gray-500">v5.2 MOBILE</span></h1>
             <div class="flex items-center gap-2 mt-1">
-                <span class="text-[9px] bg-green-900/20 text-green-700 px-1 rounded">DAKAR HUB</span>
-                <span class="text-[9px] text-blue-600" id="quota-display">API: --/500</span>
+                <span class="text-[9px] bg-green-900/20 text-green-700 px-1 rounded uppercase">Dakar Hub</span>
+                <span class="text-[9px] text-blue-600 font-bold" id="quota-display">API: --/500</span>
             </div>
         </div>
         <div class="flex flex-wrap gap-3 items-center">
@@ -75,14 +78,14 @@
     </div>
 
     <!-- Stats Cards -->
-    <div class="kpi-grid md:grid-cols-5 gap-2 md:gap-4 mb-6">
+    <div class="kpi-grid mb-6">
         <div class="glass p-3 rounded"><div class="text-[10px] text-gray-500">CAPITAL</div><div class="text-base md:text-xl font-bold" id="stat-capital">...</div></div>
         <div class="glass p-3 rounded"><div class="text-[10px] text-gray-500">WIN RATE</div><div class="text-base md:text-xl font-bold text-white" id="stat-winrate">...</div></div>
         <div class="glass p-3 rounded"><div class="text-[10px] text-gray-500">CLV AVG</div><div class="text-base md:text-xl font-bold text-blue-400" id="stat-clv">...</div></div>
         <div class="glass p-3 rounded"><div class="text-[10px] text-gray-500">ROI</div><div class="text-base md:text-xl font-bold text-green-400" id="stat-roi">...</div></div>
         <div class="glass p-3 rounded border-blue-500/20 kpi-full">
             <div class="flex justify-between items-center">
-                <span class="text-[10px] text-gray-500">RISQUE CLUSTER</span>
+                <span class="text-[10px] text-gray-500 uppercase">Risque Cluster</span>
                 <span class="text-[10px] text-gray-600" id="risk-percentage">...</span>
             </div>
             <div class="text-sm md:text-lg font-bold" id="risk-cluster">...</div>
@@ -90,7 +93,7 @@
     </div>
 
     <!-- Tactical Navigation -->
-    <div class="nav-scroll border-b border-gray-900 mb-6">
+    <div class="nav-scroll mb-6">
         <button onclick="showPage('control')" class="nav-item uppercase text-[11px] tracking-widest" id="btn-control">Contrôle</button>
         <button onclick="showPage('live')" class="nav-item uppercase text-[11px] tracking-widest" id="btn-live">Live</button>
         <button onclick="showPage('ledger')" class="nav-item uppercase text-[11px] tracking-widest" id="btn-ledger">Ledger</button>
@@ -106,9 +109,9 @@
             
             <div class="grid grid-cols-1 md:grid-cols-2 gap-4">
                 <!-- Heatmap / Temperature -->
-                <div class="glass p-4 rounded-sm" id="market-temp-container">
+                <div class="glass p-4 rounded-sm">
                     <h3 class="text-[10px] text-gray-500 uppercase mb-3">Température Marché</h3>
-                    <div id="market-temperature" class="grid grid-cols-2 gap-2">
+                    <div id="market-temperature" class="grid grid-cols-2 md:grid-cols-3 gap-2">
                         <!-- Dynamic content -->
                     </div>
                 </div>
@@ -129,7 +132,7 @@
 
     <!-- PAGE: Live Signals -->
     <div id="page-live" class="page hidden">
-        <div id="live-container" class="flex flex-col gap-2">
+        <div id="live-container" class="signal-list">
             <!-- Signal cards -->
         </div>
     </div>
@@ -176,45 +179,39 @@
                 currentSignals = data.signals || [];
                 const temp = data.market_temperature || {};
 
-                // Update Temperature
                 tempContainer.innerHTML = Object.entries(temp).map(([sport, alpha]) => `
                     <div class="glass p-2 rounded text-[10px]">
-                        <div class="text-gray-500">${sport.split('_')[1]?.toUpperCase() || sport}</div>
+                        <div class="text-gray-500 uppercase truncate">${sport.includes('_') ? sport.split('_')[1] : sport}</div>
                         <div class="text-blue-400 font-bold">${alpha.toFixed(1)}% ${alpha < 1 ? '❄️' : '🔥'}</div>
                     </div>
                 `).join('');
 
-                // Update Signals
                 if (currentSignals.length === 0) {
-                    grid.innerHTML = '<div class="p-10 text-center text-gray-700 uppercase">Aucun Alpha > 2.5%</div>';
+                    grid.innerHTML = '<div class="col-span-full p-10 text-center text-gray-700 uppercase">Aucun Alpha > 2.5%</div>';
                     return;
                 }
 
                 grid.innerHTML = currentSignals.map((s, idx) => `
-                    <div onclick="openModal(${idx})" class="glass p-4 rounded-sm relative signal-card-mobile active:bg-white/5 border-l-2 border-green-500">
+                    <div onclick="openModal(${idx})" class="glass p-4 rounded-sm relative signal-card-mobile active:bg-white/5 border-l-2 border-green-500 cursor-pointer">
                         <div class="text-[9px] text-green-700 font-bold uppercase mb-1">${s.sport}</div>
-                        <div class="text-sm font-bold text-white max-w-[80%]">${s.match_name}</div>
+                        <div class="text-sm font-bold text-white max-w-[80%] truncate">${s.match_name}</div>
                         <div class="text-[10px] text-gray-500 mt-1">${s.market_type} @ ${s.cote_1xbet}</div>
                         <div class="alpha-tag text-blue-400">+${(s.alpha_spread * 100).toFixed(1)}%</div>
                     </div>
                 `).join('');
 
-            } catch (e) {
-                console.error(e);
-            }
+            } catch (e) { console.error(e); }
         }
 
         function openModal(idx) {
             const s = currentSignals[idx];
             const modal = document.getElementById('detail-modal');
             const content = document.getElementById('modal-content');
-            
             content.innerHTML = `
                 <div class="border-b border-green-900/30 pb-4 mb-6">
                     <h2 class="text-xl font-bold text-white">${s.match_name}</h2>
-                    <p class="text-blue-500 text-sm font-bold">${s.sport.toUpperCase()} | ALPHA: ${(s.alpha_spread * 100).toFixed(2)}%</p>
+                    <p class="text-blue-500 text-sm font-bold uppercase">${s.sport} | ALPHA: ${(s.alpha_spread * 100).toFixed(2)}%</p>
                 </div>
-                
                 <div class="grid grid-cols-2 gap-4 mb-8">
                     <div class="glass p-4 rounded">
                         <p class="text-[10px] text-gray-500 mb-1 uppercase">Cote Soft</p>
@@ -225,15 +222,11 @@
                         <p class="text-2xl font-bold text-gray-400">${s.fair_price?.toFixed(2)}</p>
                     </div>
                 </div>
-
                 <div class="glass p-4 rounded mb-6">
-                    <h3 class="text-xs text-gray-500 uppercase mb-2">IA Context (Gemini)</h3>
+                    <h3 class="text-xs text-gray-500 uppercase mb-2">IA Context</h3>
                     <p class="text-sm text-gray-300 italic">${s.note_ia || 'Analyse non disponible'}</p>
                 </div>
-
-                <a href="#" class="block w-full bg-blue-600 text-white text-center py-4 rounded font-bold uppercase tracking-widest">
-                    Ouvrir sur 1XBet
-                </a>
+                <a href="#" class="block w-full bg-blue-600 text-white text-center py-4 rounded font-bold uppercase tracking-widest">Ouvrir sur 1XBet</a>
             `;
             modal.classList.remove('hidden');
         }
@@ -250,9 +243,7 @@
                     if (data.api_quota) document.getElementById('quota-display').textContent = `API: ${data.api_quota.remaining_requests}/500`;
                 }
                 updateDashboard();
-            } catch (e) {
-                addLog("Erreur critique pendant le scan", "error");
-            }
+            } catch (e) { addLog("Erreur critique pendant le scan", "error"); }
         }
 
         async function fetchExposure() {
@@ -261,7 +252,9 @@
                 const d = await res.json();
                 const rcEl = document.getElementById('risk-cluster');
                 rcEl.textContent = d.risk_cluster || 'SÉCURISÉ';
-                rcEl.className = d.risk_cluster === 'CRITIQUE' ? 'text-sm md:text-lg font-bold text-red-500' : 'text-sm md:text-lg font-bold text-green-400';
+                rcEl.className = d.risk_cluster === 'CRITIQUE' ? 'text-sm md:text-lg font-bold text-red-500' : 
+                                d.risk_cluster === 'ÉLEVÉ' ? 'text-sm md:text-lg font-bold text-yellow-500' : 
+                                'text-sm md:text-lg font-bold text-green-400';
                 document.getElementById('risk-percentage').textContent = `${d.risk_percentage || 0}%`;
             } catch (e) {}
         }
@@ -277,13 +270,25 @@
             } catch (e) {}
         }
 
+        async function fetchAPIHealth() {
+            try {
+                const res = await fetch('/api/health');
+                const d = await res.json();
+                if (d.status === 'ok') {
+                    document.querySelectorAll('[id^="led-"]').forEach(el => el.className = 'led led-online');
+                }
+            } catch (e) { document.querySelectorAll('[id^="led-"]').forEach(el => el.className = 'led led-offline'); }
+        }
+
         document.addEventListener('DOMContentLoaded', () => {
             showPage('control');
             updateDashboard();
             fetchExposure();
             fetchStats();
+            fetchAPIHealth();
             setInterval(updateDashboard, 60000);
             setInterval(fetchExposure, 30000);
+            setInterval(fetchAPIHealth, 60000);
         });
     </script>
 </body>
