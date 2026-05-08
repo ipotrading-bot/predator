@@ -617,6 +617,106 @@ def hunter_scan():
 
 
 # ═══════════════════════════════════════════════════════════════════
+# DIAGNOSTIC — Test API The-Odds-API en direct
+# ═══════════════════════════════════════════════════════════════════
+
+@app.route('/api/test-odds-api')
+def test_odds_api():
+    """
+    Test direct de l'API The-Odds-API pour voir si des données sont disponibles.
+    Retourne les matchs bruts trouvés pour basketball_nba (sport test).
+    """
+    try:
+        import requests
+        from config import settings
+        from datetime import datetime, timedelta
+        
+        sport = request.args.get('sport', 'basketball_nba')
+        
+        # Paramètres API
+        now = datetime.now()
+        cutoff = now + timedelta(hours=48)
+        
+        url = f"https://api.the-odds-api.com/v4/sports/{sport}/odds"
+        params = {
+            "apiKey": settings.odds_api_key,
+            "regions": "eu",
+            "markets": "h2h",
+            "oddsFormat": "decimal",
+            "dateFormat": "iso",
+            "commenceTimeFrom": now.isoformat(),
+            "commenceTimeTo": cutoff.isoformat(),
+        }
+        
+        logger.info(f"🔍 Test API direct: {sport}")
+        
+        response = requests.get(url, params=params, timeout=15)
+        
+        if response.status_code != 200:
+            return jsonify({
+                "status": "error",
+                "api_status": response.status_code,
+                "message": f"API erreur {response.status_code}",
+                "response": response.text[:500]
+            }), 500
+        
+        events = response.json()
+        
+        if not events:
+            return jsonify({
+                "status": "no_data",
+                "sport": sport,
+                "message": "Aucun événement trouvé dans les 48h",
+                "api_quota_remaining": response.headers.get("x-requests-remaining", "?"),
+                "params": params
+            })
+        
+        # Analyser les données reçues
+        events_with_sharp = 0
+        events_with_soft = 0
+        sample_events = []
+        
+        for evt in events[:5]:  # Premier 5 pour l'exemple
+            bookmakers = evt.get("bookmakers", [])
+            has_pinnacle = any("pinnacle" in bm.get("key", "").lower() for bm in bookmakers)
+            has_soft = any(any(s in bm.get("key", "").lower() for s in ["1xbet", "onexbet", "bet365"]) for bm in bookmakers)
+            
+            if has_pinnacle:
+                events_with_sharp += 1
+            if has_soft:
+                events_with_soft += 1
+            
+            sample_events.append({
+                "match": f"{evt.get('home_team')} vs {evt.get('away_team')}",
+                "time": evt.get("commence_time"),
+                "bookmakers_count": len(bookmakers),
+                "has_pinnacle": has_pinnacle,
+                "has_soft": has_soft,
+                "bookies": [bm.get("key") for bm in bookmakers[:3]]
+            })
+        
+        return jsonify({
+            "status": "success",
+            "sport": sport,
+            "total_events": len(events),
+            "events_with_pinnacle": events_with_sharp,
+            "events_with_soft": events_with_soft,
+            "api_quota_remaining": response.headers.get("x-requests-remaining", "?"),
+            "api_quota_used": response.headers.get("x-requests-used", "?"),
+            "sample_events": sample_events,
+            "message": f"✅ {len(events)} événements trouvés, {events_with_sharp} avec Pinnacle, {events_with_soft} avec soft book"
+        })
+        
+    except Exception as e:
+        logger.error(f"Erreur test API: {e}")
+        return jsonify({
+            "status": "error",
+            "error": str(e),
+            "trace": str(e.__traceback__)
+        }), 500
+
+
+# ═══════════════════════════════════════════════════════════════════
 # DOCTRINE BINARY SYNTHESIS — Outils de Maintenance
 # ═══════════════════════════════════════════════════════════════════
 
