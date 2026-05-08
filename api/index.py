@@ -579,20 +579,24 @@ def hunter_scan():
                 result = loop.run_until_complete(scanner.run_single_sport_scan(sport))
                 loop.close()
                 
+                # 🔧 CORRECTION: Accumuler les signaux trouvés
+                all_signals.extend(result.signals)
+                
                 scan_results.append({
                     "sport": sport,
                     "events": result.events_analyzed,
-                    "signals": result.signals_validated
+                    "signals": result.signals_validated,
+                    "signals_found": len(result.signals)
                 })
                 
-                logger.info(f"✅ {sport}: {result.signals_validated} signaux")
+                logger.info(f"✅ {sport}: {result.signals_validated} signaux validés / {len(result.signals)} trouvés")
                 
             except Exception as e:
                 logger.error(f"❌ Erreur {sport}: {e}")
                 scan_results.append({"sport": sport, "error": str(e)})
         
         # ── ÉTAPE 3: RÉSUMÉ ─────────────────────────────────────────
-        total_signals = sum(r.get("signals", 0) for r in scan_results if "signals" in r)
+        total_signals = len(all_signals)
         elite_signals = sum(1 for s in all_signals if (s.alpha_spread or 0) >= ALPHA_ELITE_MIN)
         
         logger.info(f"🎯 HUNTER COMPLET: {total_signals} signaux trouvés ({elite_signals} ELITE)")

@@ -340,6 +340,9 @@ class MarketScanner:
                 for d in event_dossiers:
                     result.signals_validated += 1
                     dossiers.append(d)
+                    # 🔧 CORRECTION: Accumuler les signaux pour l'API Hunter
+                    if d.signal:
+                        result.signals.append(d.signal)
             
             result.signals_rejected = result.signals_found - result.signals_validated
             

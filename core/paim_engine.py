@@ -72,6 +72,7 @@ class ScanResult:
     signals_rejected: int = 0
     duration_seconds: float = 0.0
     session_name: str = "auto"
+    signals: list[PAIMSignal] = field(default_factory=list)  # 🔧 Liste des signaux trouvés
 
 
 # ═══════════════════════════════════════════════════════════════════
