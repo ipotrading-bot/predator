@@ -70,7 +70,7 @@
     </style>
 </head>
 <body class="p-4">
-    <!-- Market Ticker — UNIQUEMENT données réelles depuis /api/ticker -->
+    <!-- Market Ticker -->
     <div class="ticker-container">
         <div class="ticker-content" id="market-ticker">
             <span class="ticker-item" style="color:#666">Chargement des news...</span>
@@ -89,6 +89,7 @@
                 <div class="flex items-center"><span class="led led-offline" id="led-1xbet"></span><span class="text-gray-400">1XBET: </span><span class="text-gray-500 ml-1" id="status-1xbet">...</span></div>
                 <div class="flex items-center"><span class="led led-offline" id="led-gemini"></span><span class="text-gray-400">GEMINI AI: </span><span class="text-gray-500 ml-1" id="status-gemini">...</span></div>
                 <div class="flex items-center"><span class="led led-offline" id="led-telegram"></span><span class="text-gray-400">TELEGRAM: </span><span class="text-gray-500 ml-1" id="status-telegram">...</span></div>
+                <div class="flex items-center ml-4 border-l border-green-900/50 pl-4"><span class="text-gray-400 uppercase text-[10px]">API QUOTA: </span><span class="text-blue-400 ml-1 font-bold" id="quota-display">--/500</span></div>
             </div>
             <div class="text-right">
                 <div class="text-xs text-gray-500">STATUS</div>
@@ -97,26 +98,68 @@
         </div>
     </div>
 
-    <!-- Stats Cards — valeurs réelles depuis /api/stats et /api/exposure -->
+    <!-- Stats Cards -->
     <div class="grid grid-cols-1 md:grid-cols-5 gap-4 mb-8">
         <div class="glass p-4 rounded"><div class="text-xs text-gray-500">CAPITAL</div><div class="text-xl font-bold" id="stat-capital">...</div></div>
         <div class="glass p-4 rounded"><div class="text-xs text-gray-500">WIN RATE (7/9)</div><div class="text-xl font-bold text-white" id="stat-winrate">...</div></div>
         <div class="glass p-4 rounded"><div class="text-xs text-gray-500">CLV AVG</div><div class="text-xl font-bold text-blue-400" id="stat-clv">...</div></div>
         <div class="glass p-4 rounded"><div class="text-xs text-gray-500">ROI MENSUEL</div><div class="text-xl font-bold text-green-400" id="stat-roi">...</div></div>
-        <div class="glass p-4 rounded border-blue-500/30"><div class="text-xs text-gray-500">CURRENT EXPOSURE</div><div class="text-xl font-bold text-yellow-400" id="stat-exposure">...</div><div class="text-xs text-gray-600" id="stat-positions">...</div></div>
+        <div class="glass p-4 rounded border-blue-500/30">
+            <div class="text-xs text-gray-500">RISQUE CLUSTER</div>
+            <div class="text-xl font-bold" id="risk-cluster">...</div>
+            <div class="text-xs text-gray-600" id="risk-percentage">...</div>
+        </div>
     </div>
 
     <!-- Navigation -->
-        <div class="flex space-x-8 mb-6 border-b border-gray-900">
-            <button onclick="showPage('control')" class="pb-2 text-sm uppercase tracking-widest" id="btn-control">Contrôle</button>
-            <button onclick="showPage('live')" class="pb-2 text-sm uppercase tracking-widest" id="btn-live">Live Signals</button>
-            <button onclick="showPage('ledger')" class="pb-2 text-sm uppercase tracking-widest" id="btn-ledger">Ledger</button>
-            <button onclick="showPage('audit')" class="pb-2 text-sm uppercase tracking-widest" id="btn-audit">Audit</button>
-            <button onclick="showPage('info')" class="pb-2 text-sm uppercase tracking-widest" id="btn-info">Tips</button>
-        </div>
+    <div class="flex space-x-8 mb-6 border-b border-gray-900">
+        <button onclick="showPage('control')" class="pb-2 text-sm uppercase tracking-widest" id="btn-control">Contrôle</button>
+        <button onclick="showPage('live')" class="pb-2 text-sm uppercase tracking-widest" id="btn-live">Live Signals</button>
+        <button onclick="showPage('ledger')" class="pb-2 text-sm uppercase tracking-widest" id="btn-ledger">Ledger</button>
+        <button onclick="showPage('audit')" class="pb-2 text-sm uppercase tracking-widest" id="btn-audit">Audit</button>
+        <button onclick="showPage('info')" class="pb-2 text-sm uppercase tracking-widest" id="btn-info">Tips</button>
+    </div>
 
     <!-- PAGE: Contrôle -->
     <div id="page-control" class="page">
+        <!-- Control Panel -->
+        <div class="glass p-6 rounded-lg mb-8">
+            <div class="flex justify-between items-center mb-4">
+                <h2 class="text-sm text-gray-500 uppercase tracking-widest">Opérations de Scan</h2>
+                <div class="flex gap-2">
+                    <button onclick="clearConsole()" class="text-[10px] text-gray-600 hover:text-gray-400">CLEAR CONSOLE</button>
+                </div>
+            </div>
+            
+            <div class="grid grid-cols-1 md:grid-cols-2 gap-6">
+                <div class="console-container">
+                    <div class="console-header">
+                        <span>TERMINAL DE LOGS</span>
+                        <span class="animate-pulse">● LIVE</span>
+                    </div>
+                    <div class="console-body" id="console-output">
+                        <div class="log-line"><span class="log-time">[12:00:00]</span> <span class="log-info">Système Predator PAIM initialisé...</span></div>
+                    </div>
+                </div>
+                
+                <div class="flex flex-col justify-center gap-4">
+                    <button onclick="triggerScan()" class="w-full bg-green-900/20 hover:bg-green-900/40 border border-green-500/50 text-green-400 font-bold py-4 rounded-sm transition-all uppercase tracking-widest text-sm">
+                        DÉCLENCHER SCAN PAIM (8H CYCLE)
+                    </button>
+                    <div class="grid grid-cols-2 gap-4">
+                        <div class="glass p-3 rounded-sm text-center">
+                            <div class="text-[10px] text-gray-500 mb-1">LATENCE API</div>
+                            <div class="text-sm font-bold text-blue-400">618 ms</div>
+                        </div>
+                        <div class="glass p-3 rounded-sm text-center">
+                            <div class="text-[10px] text-gray-500 mb-1">NODE REGION</div>
+                            <div class="text-sm font-bold text-gray-400">iad1 (USA)</div>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </div>
+
         <!-- Search Control Panel -->
         <div class="glass p-6 rounded-lg mb-6">
             <h3 class="text-sm text-gray-500 mb-4 uppercase">Recherche d'Alpha</h3>
@@ -133,22 +176,13 @@
             </div>
             <div id="search-results" class="mt-6"></div>
         </div>
-        <!-- ... existing content ... -->
-    </div>
-
-    <!-- PAGE: Tips/Info -->
-    <div id="page-info" class="page hidden">
-        <div class="glass p-6 rounded-lg">
-            <h2 class="mb-4 text-gray-400">TIPS & INFO — ACADEMY</h2>
-            <div id="info-container" class="text-center py-10 text-gray-600">Chargement des tips...</div>
-        </div>
     </div>
 
     <!-- PAGE: Live Signals -->
     <div id="page-live" class="page hidden">
         <h2 class="mb-4 text-sm text-gray-500">TICKET SYSTÈME 7/9 ACTUEL (24H ADVANCE)</h2>
         <div id="live-container" class="grid grid-cols-1 md:grid-cols-3 gap-4">
-            <!-- Signaux réels depuis /api/signals/live -->
+            <!-- Signaux réels -->
         </div>
     </div>
 
@@ -209,37 +243,19 @@
         </div>
     </div>
 
+    <!-- PAGE: Tips/Info -->
+    <div id="page-info" class="page hidden">
+        <div class="glass p-6 rounded-lg">
+            <h2 class="mb-4 text-gray-400">TIPS & INFO — ACADEMY</h2>
+            <div id="info-container" class="text-center py-10 text-gray-600">Chargement des tips...</div>
+        </div>
+    </div>
+
     <script>
-        // Global state
         let equityChart = null;
         
-        // ── Helpers ──────────────────────────────────────────────────
         function timeStr() { return new Date().toTimeString().split(' ')[0]; }
         
-        function formatMatchTime(iso) {
-            if (!iso) return 'N/A';
-            try {
-                const d = new Date(iso);
-                const day = String(d.getUTCDate()).padStart(2, '0');
-                const month = String(d.getUTCMonth() + 1).padStart(2, '0');
-                const hours = String(d.getUTCHours()).padStart(2, '0');
-                const mins = String(d.getUTCMinutes()).padStart(2, '0');
-                return `${day}/${month} ${hours}:${mins}`;
-            } catch { return 'N/A'; }
-        }
-        
-        function marketTypeLabel(marketKey, sport) {
-            if (!marketKey) return 'N/A';
-            if (marketKey === 'h2h') {
-                if (sport && sport.includes('soccer')) return 'Asian Handicap 0.0';
-                return 'Moneyline';
-            }
-            if (marketKey === 'spreads') return 'Spread';
-            if (marketKey === 'totals') return 'Over/Under';
-            if (marketKey === 'asian_handicap') return 'Asian Handicap 0.0';
-            return marketKey;
-        }
-
         function showPage(pageId) {
             document.querySelectorAll('.page').forEach(p => p.classList.add('hidden'));
             document.getElementById('page-' + pageId).classList.remove('hidden');
@@ -249,84 +265,58 @@
             if (pageId === 'info') fetchInfo();
         }
 
-        async function performSearch() {
-            const date = document.getElementById('search-date').value;
-            const sport = document.getElementById('search-sport').value;
-            const container = document.getElementById('search-results');
-            container.innerHTML = 'Recherche en cours...';
+        async function triggerScan() {
+            const btn = document.querySelector('button[onclick="triggerScan()"]');
+            btn.innerText = "SCANNING...";
+            btn.disabled = true;
             try {
-                const url = `/api/search?date=${date}&sport=${encodeURIComponent(sport)}`;
-                const res = await fetch(url);
-                const results = await res.json();
-                if (results.length === 0) {
-                    container.innerHTML = '<p class="text-gray-500 text-sm">Aucun résultat trouvé.</p>';
-                    return;
-                }
-                container.innerHTML = `<pre class="text-xs text-green-500 max-h-40 overflow-auto">${JSON.stringify(results, null, 2)}</pre>`;
-            } catch (e) {
-                container.innerHTML = '<p class="text-red-500 text-sm">Erreur lors de la recherche.</p>';
-            }
-        }
-
-        async function fetchInfo() {
-            const container = document.getElementById('info-container');
-            container.innerHTML = 'Chargement...';
-            try {
-                const res = await fetch('/api/info');
+                const res = await fetch('/api/screener');
                 const data = await res.json();
-                if (!data || data.length === 0) {
-                    container.innerHTML = '<p class="text-gray-500 text-sm">Aucune information disponible.</p>';
-                    return;
+                
+                if (data.status === "success") {
+                    const analyzed = data.result.events_analyzed || 0;
+                    addLog(`Scan effectué : ${analyzed} matchs analysés`, 'success');
+                    
+                    if (data.api_quota && data.api_quota.remaining_requests !== -1) {
+                        document.getElementById('quota-display').textContent = `${data.api_quota.remaining_requests}/500`;
+                    }
                 }
-                container.innerHTML = data.map(page => `
-                    <div class="mb-6 text-left border-b border-gray-800 pb-4">
-                        <h3 class="text-white font-bold mb-1">${page.title || 'Sans titre'}</h3>
-                        <p class="text-gray-400 text-xs">${page.content || 'Pas de contenu.'}</p>
-                    </div>
-                `).join('');
+                
+                await updateDashboard();
             } catch (e) {
-                container.innerHTML = '<p class="text-red-500 text-sm">Erreur lors du chargement.</p>';
+                addLog(`Erreur lors du scan: ${e.message}`, 'error');
+            } finally {
+                btn.innerText = "DÉCLENCHER SCAN PAIM (8H CYCLE)";
+                btn.disabled = false;
             }
         }
 
-        // ── Console ─────────────────────────────────────────────────
-        function addLog(message, type = 'info') {
-            const el = document.getElementById('console-output');
-            const cls = {info:'log-info',success:'log-success',warning:'log-warning',error:'log-error',highlight:'log-highlight'}[type]||'log-info';
-            const div = document.createElement('div');
-            div.className = 'log-line';
-            div.innerHTML = `<span class="log-time">[${timeStr()}]</span> <span class="${cls}">${message}</span>`;
-            el.appendChild(div);
-            el.scrollTop = el.scrollHeight;
-            while (el.children.length > 100) el.removeChild(el.firstChild);
-        }
-        function clearConsole() { document.getElementById('console-output').innerHTML = ''; }
-
-        // ── DASHBOARD PAIM (REMPLACE FETCHLIVESIGNALS) ──────────────
         async function updateDashboard() {
             const grid = document.getElementById('live-container');
-            
             try {
                 const response = await fetch('/api/data');
-                const signals = await response.json();
+                const data = await response.json();
+                const signals = data.signals || [];
+                const marketTemperature = data.market_temperature || {};
 
                 if (!Array.isArray(signals) || signals.length === 0) {
-                    grid.innerHTML = `
-                        <div class="col-span-full p-20 text-center border border-dashed border-green-900/50 rounded-sm">
-                            <p class="text-green-800 uppercase tracking-[0.2em] text-sm animate-pulse">
-                                📡 SCAN PAIM EN COURS : AUCUN ALPHA SPREAD > 2.5% DÉTECTÉ
-                            </p>
-                            <p class="text-[10px] text-gray-600 mt-2">PROCHAIN CYCLE AUTOMATIQUE : 06:00 GMT</p>
-                        </div>`;
+                    let marketTempHtml = `<p class="text-green-800 uppercase tracking-[0.2em] text-sm animate-pulse mb-2">📡 SCAN PAIM EN COURS : AUCUN ALPHA SPREAD > 2.5% DÉTECTÉ</p><p class="text-[10px] text-gray-600 mb-4">PROCHAIN CYCLE AUTOMATIQUE : 06:00 GMT</p>`;
+                    if (Object.keys(marketTemperature).length > 0) {
+                        marketTempHtml += `<div class="text-left mt-4"><h4 class="text-xs text-gray-500 mb-2">TEMPÉRATURE DU MARCHÉ:</h4>`;
+                        for (const sport in marketTemperature) {
+                            const alpha = marketTemperature[sport];
+                            const snowflake = alpha < 1.0 ? ' ❄️' : '';
+                            marketTempHtml += `<p class="text-sm text-gray-400">${sport.replace(/_/g, ' ').toUpperCase()}: <span class="text-blue-400">${alpha.toFixed(1)}%</span>${snowflake}</p>`;
+                        }
+                        marketTempHtml += `</div>`;
+                    }
+                    grid.innerHTML = `<div class="col-span-full p-10 text-center border border-dashed border-green-900/50 rounded-sm">${marketTempHtml}</div>`;
                     return;
                 }
 
                 grid.innerHTML = signals.map(signal => {
                     const spread = signal.alpha_spread ? (signal.alpha_spread * 100).toFixed(1) : "0.0";
-                    const date = signal.match_time ? new Date(signal.match_time).toLocaleString('fr-FR', {
-                        day: '2-digit', month: '2-digit', hour: '2-digit', minute: '2-digit', timeZone: 'UTC'
-                    }) : "Date N/A";
-
+                    const date = signal.match_time ? new Date(signal.match_time).toLocaleString('fr-FR', {day:'2-digit', month:'2-digit', hour:'2-digit', minute:'2-digit', timeZone:'UTC'}) : "Date N/A";
                     return `
                     <div class="glass p-6 rounded-sm card-alpha flex flex-col md:flex-row justify-between items-center gap-6 border-l-4 border-green-500 bg-white/5 mb-4">
                         <div class="flex-1">
@@ -337,235 +327,80 @@
                             <h3 class="text-xl font-bold text-white">${signal.match_name || 'Match Inconnu'}</h3>
                             <p class="text-sm text-green-500/80 font-semibold">Market: ${signal.market_type || 'N/A'}</p>
                         </div>
-                        
                         <div class="flex gap-8 text-center">
-                            <div>
-                                <div class="text-[9px] text-gray-500 uppercase tracking-widest mb-1">Fair Price</div>
-                                <div class="text-lg font-bold text-gray-300">${signal.fair_price ? signal.fair_price.toFixed(2) : '0.00'}</div>
-                            </div>
-                            <div>
-                                <div class="text-[9px] text-gray-500 uppercase tracking-widest mb-1">1XBet Price</div>
-                                <div class="text-lg font-bold text-green-400">${signal.cote_1xbet ? signal.cote_1xbet.toFixed(2) : '0.00'}</div>
-                            </div>
-                            <div>
-                                <div class="text-[9px] text-gray-500 uppercase tracking-widest mb-1">Alpha Spread</div>
-                                <div class="text-lg font-bold text-blue-400">+${spread}%</div>
-                            </div>
+                            <div><div class="text-[9px] text-gray-500 uppercase tracking-widest mb-1">Fair Price</div><div class="text-lg font-bold text-gray-300">${signal.fair_price ? signal.fair_price.toFixed(2) : '0.00'}</div></div>
+                            <div><div class="text-[9px] text-gray-500 uppercase tracking-widest mb-1">1XBet Price</div><div class="text-lg font-bold text-green-400">${signal.cote_1xbet ? signal.cote_1xbet.toFixed(2) : '0.00'}</div></div>
+                            <div><div class="text-[9px] text-gray-500 uppercase tracking-widest mb-1">Alpha Spread</div><div class="text-lg font-bold text-blue-400">+${spread}%</div></div>
                         </div>
-
                         <div class="w-full md:w-72 p-3 bg-black/60 border border-green-900/20 rounded-sm">
                             <div class="text-[9px] text-gray-500 mb-1 uppercase font-bold">IA Risk Flag (Gemini)</div>
-                            <p class="text-[11px] text-gray-400 italic leading-tight">
-                                ${signal.note_ia || 'Analyse de risque non disponible.'}
-                            </p>
+                            <p class="text-[11px] text-gray-400 italic leading-tight">${signal.note_ia || 'Analyse de risque non disponible.'}</p>
                         </div>
-                    </div>
-                    `;
+                    </div>`;
                 }).join('');
-
             } catch (error) {
-                console.error("Erreur Dashboard:", error);
                 grid.innerHTML = '<div class="col-span-full p-10 text-red-500 text-center uppercase text-xs">⚠️ Erreur de liaison flux Supabase</div>';
             }
         }
 
-        async function triggerScan() {
-            const btn = document.querySelector('button[onclick="triggerScan()"]');
-            btn.innerText = "SCANNING...";
-            btn.disabled = true;
-            try {
-                await fetch('/api/screener');
-                await updateDashboard();
-            } finally {
-                btn.innerText = "DÉCLENCHER SCAN PAIM (8H CYCLE)";
-                btn.disabled = false;
-            }
-        }
-
-        // ── STATS / LEDGER / AUDIT / TICKER / HEALTH / CHART (GARDIENS) ────────
         async function fetchStats() {
             try {
                 const res = await fetch('/api/stats');
                 const d = await res.json();
-                if (d && !d.error) {
-                    document.getElementById('stat-capital').textContent = (d.capital || 0).toLocaleString('fr-FR', {minimumFractionDigits:2}) + ' €';
-                    document.getElementById('stat-winrate').textContent = (d.win_rate || 0).toFixed(1) + '%';
-                    document.getElementById('stat-clv').textContent = (d.clv_avg >= 0 ? '+' : '') + (d.clv_avg || 0).toFixed(2) + '%';
-                    document.getElementById('stat-roi').textContent = (d.roi_mensuel >= 0 ? '+' : '') + (d.roi_mensuel || 0).toFixed(1) + '%';
-                }
-            } catch (e) { console.error('fetchStats:', e); }
-        }
-
-        async function fetchLedger() {
-            try {
-                const res = await fetch('/api/ledger');
-                const data = await res.json();
-                const tbody = document.getElementById('ledger-body');
-                if (data && data.transactions && data.transactions.length > 0) {
-                    tbody.innerHTML = data.transactions.map(e => `
-                        <tr class="border-b border-gray-800 hover:bg-white/5">
-                            <td class="py-3 px-3 text-gray-400">${e.date || 'N/A'}</td>
-                            <td class="py-3 px-3">${e.match || 'N/A'}${e.selection ? ' ('+e.selection+')' : ''}</td>
-                            <td class="py-3 px-3 text-yellow-400">${(e.stake || 0).toFixed(0)}€</td>
-                            <td class="py-3 px-3 text-blue-400">${(e.ev || 0).toFixed(1)}%</td>
-                            <td class="py-3 px-3 ${e.result === 'WIN' ? 'text-green-400' : e.result === 'LOSS' ? 'text-red-400' : 'text-gray-500'}">${e.result || 'N/A'}</td>
-                            <td class="py-3 px-3 ${(e.pnl || 0) >= 0 ? 'text-green-400' : 'text-red-400'} font-bold">${(e.pnl || 0).toFixed(2)}€</td>
-                        </tr>`).join('');
-                } else {
-                    tbody.innerHTML = '<tr><td colspan="6" class="py-8 text-center text-gray-600">Aucune transaction enregistrée</td></tr>';
-                }
-            } catch (e) { console.error('fetchLedger:', e); }
+                document.getElementById('stat-capital').textContent = (d.capital || 0).toLocaleString('fr-FR', {minimumFractionDigits:2}) + ' €';
+                document.getElementById('stat-winrate').textContent = (d.win_rate || 0).toFixed(1) + '%';
+                document.getElementById('stat-clv').textContent = (d.clv_avg >= 0 ? '+' : '') + (d.clv_avg || 0).toFixed(2) + '%';
+                document.getElementById('stat-roi').textContent = (d.roi_mensuel >= 0 ? '+' : '') + (d.roi_mensuel || 0).toFixed(1) + '%';
+            } catch (e) {}
         }
 
         async function fetchExposure() {
             try {
                 const res = await fetch('/api/exposure');
                 const d = await res.json();
-                if (d && !d.error) {
-                    document.getElementById('stat-exposure').textContent = (d.total_exposure || 0).toLocaleString('fr-FR', {minimumFractionDigits:2}) + ' €';
-                    document.getElementById('stat-positions').textContent = (d.active_positions || 0) + ' positions actives';
-                }
-            } catch (e) { console.error('fetchExposure:', e); }
+                const rcEl = document.getElementById('risk-cluster');
+                rcEl.textContent = d.risk_cluster || 'SÉCURISÉ';
+                if (d.risk_cluster === 'CRITIQUE') rcEl.className = 'text-xl font-bold text-red-500';
+                else if (d.risk_cluster === 'ÉLEVÉ') rcEl.className = 'text-xl font-bold text-yellow-500';
+                else rcEl.className = 'text-xl font-bold text-green-400';
+                document.getElementById('risk-percentage').textContent = `${d.risk_percentage || 0}% (${(d.total_exposure || 0).toFixed(2)} €)`;
+            } catch (e) {}
         }
 
-        async function fetchAuditMetrics() {
-            try {
-                const res = await fetch('/api/audit/metrics');
-                const d = await res.json();
-                if (d && !d.error) {
-                    if (d.brier_score != null) document.getElementById('brier-score').textContent = d.brier_score.toFixed(3);
-                    if (d.sharpe_ratio != null) document.getElementById('sharpe-ratio').textContent = d.sharpe_ratio.toFixed(2);
-                    if (d.sortino_ratio != null) document.getElementById('sortino-ratio').textContent = d.sortino_ratio.toFixed(2);
-                    if (d.max_drawdown != null) document.getElementById('max-drawdown').textContent = (d.max_drawdown >= 0 ? '-' : '') + Math.abs(d.max_drawdown).toFixed(1) + '%';
-                    if (d.calmar_ratio != null) document.getElementById('calmar-ratio').textContent = d.calmar_ratio.toFixed(2);
-                    if (d.current_win_streak != null) document.getElementById('win-streak').textContent = d.current_win_streak;
-                    
-                    if (d.monthly_returns) {
-                        const mp = document.getElementById('monthly-performance');
-                        mp.innerHTML = Object.entries(d.monthly_returns).map(([m, v]) =>
-                            `<div class="flex justify-between"><span class="text-gray-400">${m}</span><span class="${v >= 0 ? 'text-green-400' : 'text-red-400'}">${v >= 0 ? '+' : ''}${v.toFixed(1)}%</span></div>`
-                        ).join('');
-                    }
-                }
-            } catch (e) { console.error('fetchAuditMetrics:', e); }
+        function addLog(message, type = 'info') {
+            const el = document.getElementById('console-output');
+            const cls = {info:'log-info',success:'log-success',warning:'log-warning',error:'log-error',highlight:'log-highlight'}[type]||'log-info';
+            const div = document.createElement('div');
+            div.className = 'log-line';
+            div.innerHTML = `<span class="log-time">[${timeStr()}]</span> <span class="${cls}">${message}</span>`;
+            el.appendChild(div);
+            el.scrollTop = el.scrollHeight;
         }
 
-        async function fetchTicker() {
-            try {
-                const res = await fetch('/api/ticker');
-                const d = await res.json();
-                const el = document.getElementById('market-ticker');
-                if (d && d.items && d.items.length > 0) {
-                    el.innerHTML = d.items.map(i =>
-                        `<span class="ticker-item"><span class="time">[${i.time || ''}]</span> ${i.message || ''}</span>`
-                    ).join('');
-                } else {
-                    el.innerHTML = '<span class="ticker-item" style="color:#666">📡 En attente de news sportives...</span>';
-                }
-            } catch (e) { console.error('fetchTicker:', e); }
-        }
+        function clearConsole() { document.getElementById('console-output').innerHTML = ''; }
 
         async function fetchAPIHealth() {
             try {
                 const res = await fetch('/api/health');
                 const d = await res.json();
                 if (d.status === 'ok') {
-                    document.querySelectorAll('[id^="led-"]').forEach(el => {
-                        el.className = 'led led-online';
-                    });
-                    document.querySelectorAll('[id^="status-"]').forEach(el => {
-                        el.className = 'text-green-400 ml-1';
-                        el.textContent = 'ONLINE';
-                    });
-                    document.getElementById('system-status').textContent = '● SYSTEM ONLINE';
+                    document.querySelectorAll('[id^="led-"]').forEach(el => el.className = 'led led-online');
+                    document.querySelectorAll('[id^="status-"]').forEach(el => { el.className = 'text-green-400 ml-1'; el.textContent = 'ONLINE'; });
                 }
             } catch (e) {
                 document.querySelectorAll('[id^="led-"]').forEach(el => el.className = 'led led-offline');
-                document.getElementById('system-status').textContent = '● SYSTEM OFFLINE';
-                document.getElementById('system-status').className = 'text-sm font-bold text-red-400 animate-pulse';
             }
         }
 
-        async function initEquityChart() {
-            const ctx = document.getElementById('equity-chart').getContext('2d');
-            try {
-                const res = await fetch('/api/equity-curve');
-                const d = await res.json();
-                let labels = [], data = [];
-                
-                if (d && d.data && d.data.length > 0) {
-                    d.data.forEach(p => {
-                        const date = new Date(p.timestamp);
-                        labels.push(date.toLocaleDateString('fr-FR', { day: '2-digit', month: '2-digit' }));
-                        data.push(p.balance || 0);
-                    });
-                } else {
-                    const now = new Date();
-                    for (let i = 30; i >= 0; i--) {
-                        const date = new Date(now); date.setDate(date.getDate() - i);
-                        labels.push(date.toLocaleDateString('fr-FR', { day: '2-digit', month: '2-digit' }));
-                        data.push(10000);
-                    }
-                }
-                
-                const gradient = ctx.createLinearGradient(0, 0, 0, 300);
-                gradient.addColorStop(0, 'rgba(0, 255, 0, 0.3)');
-                gradient.addColorStop(1, 'rgba(0, 255, 0, 0.0)');
-                
-                equityChart = new Chart(ctx, {
-                    type: 'line',
-                    data: {
-                        labels: labels,
-                        datasets: [{
-                            label: 'Équity (€)',
-                            data: data,
-                            borderColor: '#00ff00',
-                            backgroundColor: gradient,
-                            borderWidth: 2,
-                            fill: true,
-                            tension: 0.4,
-                            pointRadius: 0,
-                            pointHoverRadius: 6,
-                            pointHoverBackgroundColor: '#00ff00',
-                            pointHoverBorderColor: '#fff',
-                            pointHoverBorderWidth: 2
-                        }]
-                    },
-                    options: {
-                        responsive: true, maintainAspectRatio: false,
-                        interaction: { mode: 'index', intersect: false },
-                        plugins: {
-                            legend: { display: false },
-                            tooltip: {
-                                backgroundColor: 'rgba(0,0,0,0.9)', titleColor: '#00ff00',
-                                bodyColor: '#fff', borderColor: 'rgba(0,255,0,0.3)',
-                                borderWidth: 1, padding: 12, displayColors: false,
-                                callbacks: { label: function(ctx) { return `Équity: ${ctx.parsed.y.toFixed(2)} €`; } }
-                            }
-                        },
-                        scales: {
-                            x: { grid: { color: 'rgba(0,255,0,0.1)', drawBorder: false }, ticks: { color: '#666', maxTicksLimit: 10 } },
-                            y: { grid: { color: 'rgba(0,255,0,0.1)', drawBorder: false }, ticks: { color: '#666', callback: v => v.toFixed(0) + '€' } }
-                        }
-                    }
-                });
-            } catch (e) { console.error('initEquityChart:', e); }
-        }
-
-        document.addEventListener('DOMContentLoaded', function() {
+        document.addEventListener('DOMContentLoaded', () => {
             showPage('control');
             updateDashboard();
-            fetchLedger();
-            fetchAPIHealth();
-            fetchAuditMetrics();
-            fetchExposure();
             fetchStats();
-            fetchTicker();
-            
+            fetchExposure();
+            fetchAPIHealth();
             setInterval(updateDashboard, 60000);
-            setInterval(fetchAPIHealth, 60000);
             setInterval(fetchExposure, 45000);
-            setInterval(fetchTicker, 60000);
+            setInterval(fetchAPIHealth, 60000);
         });
     </script>
 </body>

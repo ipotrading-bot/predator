@@ -30,12 +30,9 @@ class GeminiValidator:
         logger.info(f"Gemini API call #{GeminiValidator._call_count} pour {match_name} / {market}")
         
         prompt = (
-            f"Analyse l'événement sportif à venir : {match_name} pour le marché {market}. "
-            f"Recherche sur le web les actualités des 12 dernières heures. "
-            f"Y a-t-il une blessure de dernière minute d'un joueur clé, un changement d'entraîneur subit, "
-            f"ou des conditions météo extrêmes ? "
-            f"Si un risque majeur est détecté, résume-le en une phrase courte commençant par '🚨 RED FLAG : '. "
-            f"Si aucun risque n'est détecté, réponds strictement par '✅ Aucun risque majeur détecté.'"
+            f"En tant qu'expert en analyse de données sportives, évalue l'impact de cette news sur le spread. "
+            f"Si l'absence du joueur X vaut plus de 2 points en NBA, augmente l'indice de confiance. "
+            f"Si la news est déjà vieille de plus de 4h, considère qu'elle est déjà intégrée dans le prix."
         )
 
         try:

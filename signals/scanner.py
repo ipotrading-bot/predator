@@ -35,6 +35,7 @@ class MarketScanner:
             max_stake_pct=settings.max_single_stake_pct,
         )
         self.db = SupabaseClient()
+        self.fetcher = OddsFetcher()  # Initialiser l'instance OddsFetcher ici
 
         # Clients optionnels (lazy)
         self._groq: Optional[object] = None
@@ -74,6 +75,21 @@ class MarketScanner:
                 self._notifier = False
         return self._notifier if self._notifier else None
 
+    def _get_betfair_odds(
+        self, bookmakers: list[dict], market_key: str, selection_name: str
+    ) -> Optional[float]:
+        """Trouve la cote pour une sélection donnée chez Betfair Exchange."""
+        betfair_book = self.find_book(bookmakers, ["betfair_exchange"])
+        if not betfair_book:
+            return None
+
+        for market in betfair_book.get("markets", []):
+            if market.get("key") == market_key:
+                for outcome in market.get("outcomes", []):
+                    if outcome.get("name") == selection_name:
+                        return outcome.get("price")
+        return None
+
     # ── Scan principal ────────────────────────────────────────
 
     async def run_scan(self) -> ScanResult:
@@ -84,7 +100,7 @@ class MarketScanner:
         logger.info("🔍 Démarrage scan MarketScanner...")
 
         try:
-            async with OddsFetcher() as fetcher:
+            async with self.fetcher as fetcher:
                 events = await fetcher.fetch_all_sports_odds()
 
             result.events_analyzed = len(events)
@@ -189,6 +205,17 @@ class MarketScanner:
                     sharp_p = sharp_probs[i]
                     soft_odds_val = soft_out.get("price", 0)
                     selection_name = soft_out.get("name", f"outcome_{i}")
+
+                    # Check Betfair Exchange confirmation
+                    betfair_odds = self._get_betfair_odds(bookmakers, mkey, selection_name)
+                    if betfair_odds is None:
+                        logger.debug(f"Betfair odds non trouvées pour {event_name} / {mkey} / {selection_name}")
+                        continue
+
+                    # Consensus Sharp: Betfair Exchange doit confirmer la tendance (cote plus basse que le soft book)
+                    if not (betfair_odds < soft_odds_val):
+                        logger.debug(f"Betfair ({betfair_odds}) ne confirme pas la tendance du soft book ({soft_odds_val}) pour {event_name} / {mkey} / {selection_name}")
+                        continue
 
                     signal = self.engine.evaluate_signal(
                         event_id=event_id,

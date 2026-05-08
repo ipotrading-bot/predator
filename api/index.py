@@ -92,10 +92,12 @@ def screener():
         result_data = result.__dict__ if hasattr(result, '__dict__') else {}
         print(f"DEBUG: Scan terminé: {json.dumps(result_data, default=str)}")
 
+        quota_status = scanner.fetcher.get_quota_status()
         return jsonify({
             "status": "success",
             "result": result_data,
-            "threshold_used": TEST_THRESHOLD
+            "threshold_used": TEST_THRESHOLD,
+            "api_quota": quota_status
         })
 
     except ImportError as e:
@@ -170,13 +172,35 @@ def test_seed():
 @app.route('/api/data')
 def get_data():
     try:
-        signals = db._client.table("signals").select("*").eq("status", "pending").order("created_at", desc=True).limit(50).execute()
-        data = signals.data or []
-        if not data:
-            # Fallback: retourner les test-seed si la BD est vide
+        # Fetch all signals for market temperature calculation
+        all_signals_response = db._client.table("signals").select("sport,alpha_spread").execute()
+        all_signals = all_signals_response.data or []
+
+        # Calculate market temperature (average alpha per sport)
+        market_temperature = {}
+        sport_alphas = {}
+        for signal in all_signals:
+            sport = signal.get("sport")
+            alpha = signal.get("alpha_spread")
+            if sport and alpha is not None:
+                if sport not in sport_alphas:
+                    sport_alphas[sport] = []
+                sport_alphas[sport].append(alpha)
+        
+        for sport, alphas in sport_alphas.items():
+            if alphas:
+                avg_alpha = sum(alphas) / len(alphas)
+                market_temperature[sport] = round(avg_alpha * 100, 1)
+
+        # Fetch pending signals for the dashboard
+        pending_signals_response = db._client.table("signals").select("*").eq("status", "pending").order("created_at", desc=True).limit(50).execute()
+        pending_signals = pending_signals_response.data or []
+
+        if not pending_signals:
+            # Fallback: retourner les test-seed si la BD est vide (only if no real pending signals)
             from datetime import datetime, timedelta
             match_time = (datetime.now() + timedelta(hours=4)).isoformat()
-            data = [{
+            pending_signals = [{
                 "match_name": "Lakers vs Celtics",
                 "sport": "basketball_nba",
                 "match_time": match_time,
@@ -187,9 +211,11 @@ def get_data():
                 "cote_1xbet": 2.10,
                 "note_ia": "✅ Test - Aucun signal réel pour le moment. Seuil abaissé à 0.5%."
             }]
-        return jsonify(data)
+        
+        return jsonify({"signals": pending_signals, "market_temperature": market_temperature})
     except Exception as e:
-        return jsonify([])
+        print(f"DEBUG DATA FETCH ERROR: {traceback.format_exc()}")
+        return jsonify({"signals": [], "market_temperature": {}})
 
 
 @app.route('/api/stats')
@@ -215,7 +241,33 @@ def get_ledger():
 
 @app.route('/api/exposure')
 def get_exposure():
-    return jsonify({"total_exposure": 0, "active_positions": 0})
+    capital = 10000 # Use the same capital value as in get_stats
+    try:
+        # Fetch signals with status 'bet_placed' or 'active'
+        active_signals_response = db._client.table("signals").select("recommended_stake").in_("status", ["bet_placed", "active"]).execute()
+        active_signals = active_signals_response.data or []
+
+        total_exposure = sum(s.get("recommended_stake", 0) for s in active_signals)
+
+        if total_exposure == 0:
+            risk_cluster_status = "SÉCURISÉ"
+            risk_percentage = 0.0
+        else:
+            risk_percentage = (total_exposure / capital) * 100
+            # Define thresholds for CRITICAL, ÉLEVÉ, MODÉRÉ, FAIBLE
+            if risk_percentage > 25:
+                risk_cluster_status = "CRITIQUE"
+            elif risk_percentage > 10:
+                risk_cluster_status = "ÉLEVÉ"
+            elif risk_percentage > 2:
+                risk_cluster_status = "MODÉRÉ"
+            else:
+                risk_cluster_status = "FAIBLE"
+
+        return jsonify({"risk_cluster": risk_cluster_status, "total_exposure": total_exposure, "risk_percentage": round(risk_percentage, 2)})
+    except Exception as e:
+        print(f"DEBUG EXPOSURE ERROR: {traceback.format_exc()}")
+        return jsonify({"risk_cluster": "ERREUR", "total_exposure": 0, "risk_percentage": 0.0})
 
 
 @app.route('/api/ticker')
