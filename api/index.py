@@ -510,6 +510,135 @@ def get_clv_counter():
         return jsonify({"clv_avg": 0, "count": 0})
 
 
+# ═══════════════════════════════════════════════════════════════════
+# ALPHA DECAY TRACKER (PAIM v5.0 Perfection)
+# ═══════════════════════════════════════════════════════════════════
+
+@app.route('/api/alpha-decay/<signal_id>')
+def get_alpha_decay(signal_id: str):
+    """
+    Retourne les métriques de dégradation Alpha pour un signal.
+    Urgency status: 🟢 STABLE | 🟡 MODÉRÉ | 🔥 CRITIQUE
+    """
+    try:
+        from core.alpha_decay import get_decay_tracker
+        
+        tracker = get_decay_tracker()
+        metrics = tracker.get_decay_metrics(signal_id)
+        
+        if not metrics:
+            return jsonify({
+                "signal_id": signal_id,
+                "status": "insufficient_data",
+                "message": "Pas assez d'historique (min 2 snapshots requis)"
+            })
+        
+        return jsonify({
+            "signal_id": metrics.signal_id,
+            "current_ev_pct": round(metrics.current_ev * 100, 2),
+            "initial_ev_pct": round(metrics.initial_ev * 100, 2),
+            "decay_rate_per_hour": metrics.decay_rate,
+            "half_life_minutes": metrics.half_life_minutes,
+            "urgency_status": metrics.urgency_status,
+            "stability_score": metrics.stability_score,
+            "snapshots_count": metrics.snapshots_count,
+            "action_recommendation": metrics.action_recommendation,
+            "minutes_until_expiry": metrics.minutes_until_expiry,
+        })
+    except Exception as e:
+        logger.error(f"Erreur Alpha Decay: {e}")
+        return jsonify({"error": str(e)}), 500
+
+
+@app.route('/api/risk-cluster')
+def get_risk_cluster():
+    """
+    Analyse la corrélation de portefeuille et retourne les warnings.
+    Règles: Max 20% capital/sport, Max 10% capital/ligue
+    """
+    try:
+        from collections import defaultdict
+        
+        db = get_db()
+        
+        # Récupérer signaux pending
+        response = db._client.table("signals")\
+            .select("sport, alpha_spread, recommended_stake")\
+            .eq("status", "pending")\
+            .execute()
+        
+        signals = response.data or []
+        
+        if not signals:
+            return jsonify({
+                "status": "ok",
+                "total_exposure": 0,
+                "warnings": [],
+                "clusters": {}
+            })
+        
+        # Analyse par sport
+        sport_exposure = defaultdict(lambda: {"count": 0, "stake": 0, "alpha": 0})
+        
+        for sig in signals:
+            sport = sig.get("sport", "unknown")
+            stake = sig.get("recommended_stake", 0) or 0
+            alpha = sig.get("alpha_spread", 0) or 0
+            
+            sport_exposure[sport]["count"] += 1
+            sport_exposure[sport]["stake"] += stake
+            sport_exposure[sport]["alpha"] += alpha
+        
+        # Vérifier seuils
+        from config import settings
+        total_bankroll = settings.starting_bankroll
+        
+        warnings = []
+        clusters = {}
+        
+        for sport, data in sport_exposure.items():
+            stake_pct = data["stake"] / total_bankroll
+            count = data["count"]
+            
+            clusters[sport] = {
+                "signal_count": count,
+                "total_stake": round(data["stake"], 2),
+                "avg_alpha": round(data["alpha"] / count * 100, 2) if count > 0 else 0,
+                "capital_pct": round(stake_pct * 100, 2)
+            }
+            
+            # Règles de diversification
+            if stake_pct > 0.20:
+                warnings.append({
+                    "level": "critical",
+                    "sport": sport,
+                    "message": f"🔥 {sport}: {stake_pct:.1%} capital exposé (max 20%)",
+                    "action": "DIVERSIFIER IMMÉDIATEMENT"
+                })
+            elif count > 3:
+                warnings.append({
+                    "level": "warning",
+                    "sport": sport,
+                    "message": f"⚠️ {sport}: {count} signaux (risque cluster)",
+                    "action": "SURVEILLER CORRÉLATION"
+                })
+        
+        total_exposure = sum(d["stake"] for d in sport_exposure.values())
+        
+        return jsonify({
+            "status": "warning" if warnings else "ok",
+            "total_exposure": round(total_exposure, 2),
+            "exposure_pct": round(total_exposure / total_bankroll * 100, 2),
+            "warnings": warnings,
+            "clusters": clusters,
+            "max_recommended": round(total_bankroll * 0.20, 2),
+        })
+        
+    except Exception as e:
+        logger.error(f"Erreur Risk Cluster: {e}")
+        return jsonify({"error": str(e)}), 500
+
+
 # ── API Test (quota + connexion) ──────────────────────────────────
 
 @app.route('/api/test-connection')

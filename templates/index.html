@@ -3,7 +3,7 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>PREDATOR PAIM v4.0 | Terminal Quant</title>
+    <title>PREDATOR PAIM v5.0 | Terminal Quant — Perfection Institutionnelle</title>
     <script src="https://cdn.tailwindcss.com"></script>
     <link href="https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@300;400;500;700&display=swap" rel="stylesheet">
     <style>
@@ -218,7 +218,7 @@
         <div class="flex items-center gap-4">
             <div class="text-2xl">🦖</div>
             <div>
-                <h1 class="text-lg font-bold tracking-wider">PREDATOR PAIM <span class="text-xs font-normal text-gray-500">v2.0</span></h1>
+                <h1 class="text-lg font-bold tracking-wider">PREDATOR PAIM <span class="text-xs font-normal text-gray-500">v5.0</span></h1>
                 <p class="text-xs text-green-700">PHD MIT ARCHITECTURE</p>
             </div>
         </div>
@@ -242,6 +242,22 @@
             </div>
         </div>
     </header>
+
+    <!-- 1.5 HEALTH & RISK MONITOR (PAIM v5.0) -->
+    <section id="health-bar" class="px-6 py-2 border-b border-green-900/20 bg-black/30 hidden">
+        <div class="flex justify-between items-center text-xs">
+            <div class="flex items-center gap-4">
+                <span class="text-gray-500">LATENCE API:</span>
+                <span id="latency-ms" class="text-green-400">-- ms</span>
+                <span class="text-gray-500">|</span>
+                <span class="text-gray-500">RISQUE CLUSTER:</span>
+                <span id="risk-status" class="text-green-400">DIVERSIFIÉ</span>
+            </div>
+            <div id="risk-warnings" class="flex gap-2">
+                <!-- Warnings dynamiques -->
+            </div>
+        </div>
+    </section>
 
     <!-- 2. KPI BAR -->
     <section class="grid grid-cols-5 gap-4 px-6 py-4 border-b border-green-900/30">
@@ -550,9 +566,58 @@
                 // Update LEDs
                 updateLEDs(true);
                 
+                // Update Risk Cluster & Health Monitor (PAIM v5.0)
+                updateRiskCluster();
+                
             } catch (error) {
                 addLog(`Erreur: ${error.message}`, 'error');
                 updateLEDs(false);
+            }
+        }
+
+        // ═══════════════════════════════════════════════════════════════
+        // RISK CLUSTER & HEALTH MONITOR (PAIM v5.0)
+        // ═══════════════════════════════════════════════════════════════
+        
+        async function updateRiskCluster() {
+            try {
+                const start = performance.now();
+                const response = await fetch('/api/risk-cluster');
+                const latency = Math.round(performance.now() - start);
+                
+                const data = await response.json();
+                
+                // Update Health Bar visibility
+                const healthBar = document.getElementById('health-bar');
+                healthBar.classList.remove('hidden');
+                
+                // Latence API
+                const latencyEl = document.getElementById('latency-ms');
+                latencyEl.textContent = `${latency} ms`;
+                latencyEl.className = latency < 500 ? 'text-green-400' : 
+                                      latency < 1500 ? 'text-yellow-400' : 'text-red-400';
+                
+                // Risk Status
+                const riskStatus = document.getElementById('risk-status');
+                const riskWarnings = document.getElementById('risk-warnings');
+                
+                if (data.warnings && data.warnings.length > 0) {
+                    const critical = data.warnings.some(w => w.level === 'critical');
+                    riskStatus.textContent = critical ? '⚠️ CRITIQUE' : '⚡ ATTENTION';
+                    riskStatus.className = critical ? 'text-red-400 font-bold' : 'text-yellow-400';
+                    
+                    // Afficher warnings
+                    riskWarnings.innerHTML = data.warnings.map(w => 
+                        `<span class="px-2 py-1 rounded text-xs ${w.level === 'critical' ? 'bg-red-900/50 text-red-400 border border-red-600' : 'bg-yellow-900/30 text-yellow-400 border border-yellow-600'}">${w.message}</span>`
+                    ).join('');
+                } else {
+                    riskStatus.textContent = '✅ DIVERSIFIÉ';
+                    riskStatus.className = 'text-green-400';
+                    riskWarnings.innerHTML = `<span class="text-xs text-gray-500">Exposition: ${data.exposure_pct || 0}% (max 20%/sport)</span>`;
+                }
+                
+            } catch (e) {
+                console.error('Risk cluster error:', e);
             }
         }
 
@@ -687,7 +752,7 @@
 
         // Init
         document.addEventListener('DOMContentLoaded', () => {
-            addLog('Système PAIM v4.0 initialisé', 'success');
+            addLog('Système PAIM v5.0 Perfection Institutionnelle initialisé', 'success');
             refreshAll();
             setInterval(refreshAll, 30000); // Refresh every 30s
         });
