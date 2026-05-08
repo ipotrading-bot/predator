@@ -1,13 +1,53 @@
 name: PAIM Weekly Audit
+
 on:
   schedule:
-    - cron: '0 20 * * 0' # Dimanche 20:00 GMT
+    - cron: '0 20 * * 0'  # Dimanche 20:00 UTC
   workflow_dispatch:
 
 jobs:
   audit:
     runs-on: ubuntu-latest
+    timeout-minutes: 10
+
     steps:
-      - name: Trigger Weekly Report
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Setup Python 3.11
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+          cache: "pip"
+
+      - name: Install dependencies
         run: |
-          curl -X GET "https://predator-two.vercel.app/api/audit/weekly"
+          pip install --upgrade pip
+          pip install -r requirements.txt
+
+      - name: Configure environment
+        run: |
+          echo "ODDS_API_KEY=${{ secrets.ODDS_API_KEY }}"               >> $GITHUB_ENV
+          echo "GEMINI_API_KEY=${{ secrets.GEMINI_API_KEY }}"           >> $GITHUB_ENV
+          echo "TELEGRAM_BOT_TOKEN=${{ secrets.TELEGRAM_BOT_TOKEN }}"   >> $GITHUB_ENV
+          echo "TELEGRAM_CHAT_ID=${{ secrets.TELEGRAM_CHAT_ID }}"       >> $GITHUB_ENV
+          echo "SUPABASE_URL=${{ secrets.SUPABASE_URL }}"               >> $GITHUB_ENV
+          echo "SUPABASE_KEY=${{ secrets.SUPABASE_SERVICE_KEY }}"       >> $GITHUB_ENV
+          echo "GROQ_API_KEY=${{ secrets.GROQ_API_KEY }}"               >> $GITHUB_ENV
+
+      - name: Run weekly audit
+        run: python scripts/weekly_audit.py
+        env:
+          PYTHONUNBUFFERED: "1"
+          PYTHONPATH: "."
+
+      - name: Notify Telegram on failure
+        if: failure()
+        run: |
+          curl -s -X POST "https://api.telegram.org/bot${{ secrets.TELEGRAM_BOT_TOKEN }}/sendMessage" \
+            -H "Content-Type: application/json" \
+            -d '{
+              "chat_id": "${{ secrets.TELEGRAM_CHAT_ID }}",
+              "text": "🚨 *PREDATOR PAIM — Audit hebdo ÉCHOUÉ*\nRun: [${{ github.run_number }}](${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }})",
+              "parse_mode": "Markdown"
+            }'

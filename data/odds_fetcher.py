@@ -122,6 +122,23 @@ class OddsFetcher:
             params["bookmakers"] = ",".join(bookmakers)
         return await self._get(f"/sports/{sport}/odds/", params)
 
+    async def fetch_odds_for_sport(self, sport: str) -> list[dict]:
+        """
+        Récupère les cotes pour UN sport spécifique (protocole rotation).
+        
+        Args:
+            sport: Clé The-Odds-API (ex: 'basketball_nba')
+            
+        Returns:
+            list[dict]: Liste des événements avec cotes
+        """
+        all_books = settings.sharp_books + settings.soft_books
+        return await self.fetch_odds(
+            sport=sport,
+            markets="h2h,spreads,totals",
+            bookmakers=all_books,
+        )
+
     async def fetch_all_sports_odds(self) -> list[dict]:
         """Scan complet de tous les sports cibles en parallèle."""
         all_books = settings.sharp_books + settings.soft_books

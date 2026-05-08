@@ -3,70 +3,213 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>PREDATOR PAIM v2.0 | Terminal</title>
+    <title>PREDATOR PAIM v5.0 | Terminal Quant — Perfection Institutionnelle</title>
     <script src="https://cdn.tailwindcss.com"></script>
-    <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
-    <link href="https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@400;700&display=swap" rel="stylesheet">
+    <link href="https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@300;400;500;700&display=swap" rel="stylesheet">
     <style>
-        body { font-family: 'JetBrains Mono', monospace; background-color: #050505; color: #00ff00; }
-        .glass { background: rgba(255, 255, 255, 0.03); border: 1px solid rgba(0, 255, 0, 0.2); }
-        .glass-hover:hover { border-color: #00ff00; box-shadow: 0 0 20px rgba(0, 255, 0, 0.2); transform: translateY(-2px); }
-        .tab-active { border-bottom: 2px solid #00ff00; color: #fff; }
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+        }
         
-        .console-container {
+        body {
+            font-family: 'JetBrains Mono', monospace;
+            background-color: #050505;
+            color: #00ff00;
+            min-height: 100vh;
+            overflow-x: hidden;
+        }
+        
+        /* LED Indicators */
+        .led {
+            display: inline-block;
+            width: 8px;
+            height: 8px;
+            border-radius: 50%;
+            margin-right: 6px;
+            animation: pulse 2s infinite;
+        }
+        
+        .led-green {
+            background: #00ff00;
+            box-shadow: 0 0 8px #00ff00;
+        }
+        
+        .led-red {
+            background: #ff3333;
+            box-shadow: 0 0 8px #ff3333;
+            animation: none;
+        }
+        
+        .led-yellow {
+            background: #ffaa00;
+            box-shadow: 0 0 8px #ffaa00;
+        }
+        
+        @keyframes pulse {
+            0%, 100% { opacity: 1; }
+            50% { opacity: 0.4; }
+        }
+        
+        /* Glass Cards */
+        .glass {
+            background: rgba(0, 255, 0, 0.03);
+            border: 1px solid rgba(0, 255, 0, 0.2);
+            border-radius: 4px;
+        }
+        
+        .glass:hover {
+            border-color: rgba(0, 255, 0, 0.4);
+            box-shadow: 0 0 20px rgba(0, 255, 0, 0.1);
+        }
+        
+        /* Alpha Display */
+        .alpha-value {
+            color: #00d4ff;
+            text-shadow: 0 0 10px rgba(0, 212, 255, 0.5);
+        }
+        
+        /* Console */
+        .console {
+            background: #0a0a0a;
+            border: 1px solid rgba(0, 255, 0, 0.2);
+            font-family: 'JetBrains Mono', monospace;
+            font-size: 11px;
+            line-height: 1.6;
+        }
+        
+        .console-line {
+            padding: 2px 8px;
+            border-bottom: 1px solid rgba(0, 255, 0, 0.05);
+        }
+        
+        .console-time {
+            color: #666;
+            margin-right: 8px;
+        }
+        
+        /* Heatmap */
+        .heatmap-cell {
+            padding: 8px;
+            text-align: center;
+            border: 1px solid rgba(0, 255, 0, 0.1);
+            transition: all 0.2s ease;
+        }
+        
+        .heatmap-cell:hover {
+            border-color: rgba(0, 255, 0, 0.4);
+        }
+        
+        .heatmap-hot {
+            background: rgba(0, 255, 0, 0.1);
+            color: #00ff00;
+        }
+        
+        .heatmap-warm {
+            background: rgba(255, 170, 0, 0.1);
+            color: #ffaa00;
+        }
+        
+        .heatmap-cold {
+            background: rgba(100, 100, 100, 0.1);
+            color: #666;
+        }
+        
+        /* Signal Cards */
+        .signal-card {
+            background: rgba(0, 255, 0, 0.02);
+            border: 1px solid rgba(0, 255, 0, 0.15);
+            border-radius: 4px;
+            padding: 16px;
+            cursor: pointer;
+            transition: all 0.2s ease;
+        }
+        
+        .signal-card:hover {
+            border-color: #00d4ff;
+            box-shadow: 0 0 20px rgba(0, 212, 255, 0.15);
+            transform: translateY(-2px);
+        }
+        
+        .signal-card .alpha-big {
+            font-size: 28px;
+            font-weight: 300;
+            color: #00d4ff;
+            text-shadow: 0 0 15px rgba(0, 212, 255, 0.4);
+        }
+        
+        /* Modal */
+        .modal-overlay {
+            position: fixed;
+            inset: 0;
+            background: rgba(0, 0, 0, 0.8);
+            display: none;
+            justify-content: center;
+            align-items: center;
+            z-index: 1000;
+        }
+        
+        .modal-overlay.active {
+            display: flex;
+        }
+        
+        .modal-content {
             background: #0a0a0a;
             border: 1px solid rgba(0, 255, 0, 0.3);
-            border-radius: 4px;
-            overflow: hidden;
-        }
-        .console-header {
-            background: rgba(0, 255, 0, 0.1);
-            padding: 8px 12px;
-            font-size: 11px;
-            color: #00ff00;
-            border-bottom: 1px solid rgba(0, 255, 0, 0.2);
-            display: flex;
-            justify-content: space-between;
-            align-items: center;
-        }
-        .console-body {
-            padding: 12px;
-            height: 200px;
+            border-radius: 8px;
+            width: 90%;
+            max-width: 500px;
+            max-height: 80vh;
             overflow-y: auto;
-            font-size: 12px;
-            line-height: 1.6;
-            scrollbar-width: thin;
-            scrollbar-color: #00ff00 #0a0a0a;
         }
-        .console-body::-webkit-scrollbar { width: 6px; }
-        .console-body::-webkit-scrollbar-track { background: #0a0a0a; }
-        .console-body::-webkit-scrollbar-thumb { background: #00ff00; border-radius: 3px; }
-        .log-line { margin-bottom: 2px; animation: fadeIn 0.3s ease-in; }
-        .log-time { color: #666; }
-        .log-info { color: #00ff00; }
-        .log-success { color: #00ff00; font-weight: bold; }
-        .log-warning { color: #ffaa00; }
-        .log-error { color: #ff3333; }
-        .log-highlight { color: #00ccff; }
-        @keyframes fadeIn { from { opacity: 0; transform: translateX(-10px); } to { opacity: 1; transform: translateX(0); } }
         
-        .led { display: inline-block; width: 8px; height: 8px; border-radius: 50%; margin-right: 6px; animation: pulse 2s infinite; }
-        .led-online { background: #00ff00; box-shadow: 0 0 8px #00ff00; }
-        .led-offline { background: #ff3333; box-shadow: 0 0 8px #ff3333; animation: none; }
-        .led-warning { background: #ffaa00; box-shadow: 0 0 8px #ffaa00; }
-        @keyframes pulse { 0%, 100% { opacity: 1; } 50% { opacity: 0.5; } }
+        /* Tabs */
+        .tab {
+            padding: 12px 24px;
+            cursor: pointer;
+            border-bottom: 2px solid transparent;
+            transition: all 0.2s ease;
+            font-size: 12px;
+            text-transform: uppercase;
+            letter-spacing: 0.1em;
+        }
         
-        .ticker-container { overflow: hidden; background: rgba(0, 255, 0, 0.05); border: 1px solid rgba(0, 255, 0, 0.15); border-radius: 4px; padding: 6px 0; margin-bottom: 16px; }
-        .ticker-content { display: inline-block; white-space: nowrap; padding-left: 100%; }
-        .ticker-item { display: inline-block; padding: 0 30px; font-size: 11px; color: #00ccff; }
-        .ticker-item .time { color: #666; margin-right: 8px; }
+        .tab:hover {
+            color: #fff;
+        }
         
-        .chart-container { position: relative; height: 300px; width: 100%; }
-        .cursor-blink::after { content: '█'; animation: blink 1s infinite; color: #00ff00; }
-        @keyframes blink { 0%, 50% { opacity: 1; } 51%, 100% { opacity: 0; } }
+        .tab.active {
+            border-bottom-color: #00ff00;
+            color: #fff;
+        }
         
-        .signal-card { cursor: pointer; transition: all 0.2s ease; }
-        .signal-card:hover { border-color: #00ff00; box-shadow: 0 0 20px rgba(0, 255, 0, 0.2); transform: translateY(-2px); }
+        .tab-content {
+            display: none;
+        }
+        
+        .tab-content.active {
+            display: block;
+        }
+        
+        /* Scrollbar */
+        ::-webkit-scrollbar {
+            width: 6px;
+            height: 6px;
+        }
+        
+        ::-webkit-scrollbar-track {
+            background: #050505;
+        }
+        
+        ::-webkit-scrollbar-thumb {
+            background: rgba(0, 255, 0, 0.3);
+            border-radius: 3px;
+        }
+        
+        ::-webkit-scrollbar-thumb:hover {
+            background: rgba(0, 255, 0, 0.5);
+        }
     </style>
 </head>
 <body class="p-4">
@@ -168,13 +311,7 @@
                     <label class="text-[10px] text-gray-600 block mb-1">DATE</label>
                     <input type="date" id="search-date" class="w-full bg-black border border-green-900 text-white p-2 rounded text-sm">
                 </div>
-                <div class="flex-1">
-                    <label class="text-[10px] text-gray-600 block mb-1">SPORT</label>
-                    <input type="text" id="search-sport" placeholder="Ex: Soccer" class="w-full bg-black border border-green-900 text-white p-2 rounded text-sm">
-                </div>
-                <button onclick="performSearch()" class="bg-green-900 hover:bg-green-800 text-green-400 px-6 py-2 rounded text-sm font-bold">RECHERCHER</button>
             </div>
-            <div id="search-results" class="mt-6"></div>
         </div>
     </div>
 
@@ -184,61 +321,98 @@
         <div id="live-container" class="grid grid-cols-1 md:grid-cols-3 gap-4">
             <!-- Signaux réels -->
         </div>
-    </div>
-
-    <!-- PAGE: Ledger -->
-    <div id="page-ledger" class="page hidden">
-        <div class="glass p-6 rounded-lg">
-            <h2 class="mb-4 text-gray-400">LEDGER — HISTORIQUE DES TRANSACTIONS</h2>
-            <div class="overflow-x-auto">
+        
+        <!-- Live Signals Tab -->
+        <div id="tab-live" class="tab-content">
+            <div id="signal-grid" class="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
+                <!-- Signal cards injected here -->
+                <div class="text-center py-12 text-gray-600">
+                    <p class="text-4xl mb-4">📡</p>
+                    <p>Aucun signal actif. Scan en cours...</p>
+                </div>
+            </div>
+        </div>
+        
+        <!-- Ledger Tab -->
+        <div id="tab-ledger" class="tab-content">
+            <div class="glass p-4">
                 <table class="w-full text-xs">
-                    <thead class="text-gray-500 border-b border-gray-800">
+                    <thead class="text-gray-500 border-b border-green-900/20">
                         <tr>
-                            <th class="py-2 px-3 text-left">DATE</th>
-                            <th class="py-2 px-3 text-left">MATCH</th>
-                            <th class="py-2 px-3 text-left">MISE</th>
-                            <th class="py-2 px-3 text-left">EV+</th>
-                            <th class="py-2 px-3 text-left">RÉSULTAT</th>
-                            <th class="py-2 px-3 text-left">P&L</th>
+                            <th class="py-2 text-left">DATE</th>
+                            <th class="py-2 text-left">MATCH</th>
+                            <th class="py-2 text-left">MISE</th>
+                            <th class="py-2 text-left">EV</th>
+                            <th class="py-2 text-left">RÉSULTAT</th>
                         </tr>
                     </thead>
                     <tbody id="ledger-body">
-                        <tr><td colspan="6" class="py-8 text-center text-gray-600">Chargement...</td></tr>
+                        <tr>
+                            <td colspan="5" class="py-8 text-center text-gray-600">Aucune transaction</td>
+                        </tr>
                     </tbody>
                 </table>
             </div>
         </div>
-    </div>
-
-    <!-- PAGE: Audit -->
-    <div id="page-audit" class="page hidden">
-        <div class="grid grid-cols-1 lg:grid-cols-3 gap-6">
-            <div class="lg:col-span-1 space-y-4">
-                <div class="glass p-4 rounded">
-                    <h3 class="text-sm text-gray-500 mb-3">MÉTRIQUES DE RISQUE</h3>
-                    <div class="space-y-3">
-                        <div class="flex justify-between items-center"><span class="text-xs text-gray-400">Brier Score</span><span class="text-sm font-bold text-blue-400" id="brier-score">...</span></div>
-                        <div class="flex justify-between items-center"><span class="text-xs text-gray-400">Sharpe Ratio</span><span class="text-sm font-bold text-green-400" id="sharpe-ratio">...</span></div>
-                        <div class="flex justify-between items-center"><span class="text-xs text-gray-400">Sortino Ratio</span><span class="text-sm font-bold text-green-400" id="sortino-ratio">...</span></div>
-                        <div class="flex justify-between items-center"><span class="text-xs text-gray-400">Max Drawdown</span><span class="text-sm font-bold text-red-400" id="max-drawdown">...</span></div>
-                        <div class="flex justify-between items-center"><span class="text-xs text-gray-400">Calmar Ratio</span><span class="text-sm font-bold text-yellow-400" id="calmar-ratio">...</span></div>
-                        <div class="flex justify-between items-center"><span class="text-xs text-gray-400">Win Streak</span><span class="text-sm font-bold text-green-400" id="win-streak">...</span></div>
+        
+        <!-- Audit Tab -->
+        <div id="tab-audit" class="tab-content">
+            <div class="grid grid-cols-2 gap-4">
+                <div class="glass p-4">
+                    <h4 class="text-xs uppercase text-gray-500 mb-3">Métriques de Risque</h4>
+                    <div class="space-y-2">
+                        <div class="flex justify-between"><span class="text-gray-400">Brier Score</span><span id="audit-brier">N/A</span></div>
+                        <div class="flex justify-between"><span class="text-gray-400">Sharpe Ratio</span><span id="audit-sharpe">N/A</span></div>
+                        <div class="flex justify-between"><span class="text-gray-400">Max Drawdown</span><span id="audit-drawdown">N/A</span></div>
                     </div>
                 </div>
-                <div class="glass p-4 rounded">
-                    <h3 class="text-sm text-gray-500 mb-3">PERFORMANCE MENSUELLE</h3>
-                    <div id="monthly-performance" class="space-y-2 text-xs">
-                        <div class="text-center text-gray-600">Chargement...</div>
+                <div class="glass p-4">
+                    <h4 class="text-xs uppercase text-gray-500 mb-3">Performance</h4>
+                    <div id="audit-chart" class="h-32 flex items-center justify-center text-gray-600">
+                        [Graphique d'équité]
                     </div>
                 </div>
             </div>
-            <div class="lg:col-span-2">
-                <div class="glass p-4 rounded">
-                    <h3 class="text-sm text-gray-500 mb-4">COURBE D'ÉQUITÉ DYNAMIQUE</h3>
-                    <div class="chart-container">
-                        <canvas id="equity-chart"></canvas>
+        </div>
+    </main>
+
+    <!-- Modal -->
+    <div id="signal-modal" class="modal-overlay" onclick="closeModal(event)">
+        <div class="modal-content" onclick="event.stopPropagation()">
+            <div class="flex justify-between items-center p-4 border-b border-green-900/30">
+                <h3 id="modal-title" class="text-lg font-bold">Signal Details</h3>
+                <button onclick="closeModal()" class="text-2xl text-gray-500 hover:text-white">&times;</button>
+            </div>
+            <div class="p-4 space-y-4">
+                <div class="grid grid-cols-2 gap-4">
+                    <div class="glass p-3 text-center">
+                        <div class="text-xs text-gray-500">Fair Price</div>
+                        <div id="modal-fair" class="text-xl font-bold">—</div>
+                    </div>
+                    <div class="glass p-3 text-center">
+                        <div class="text-xs text-gray-500">1XBet</div>
+                        <div id="modal-soft" class="text-xl font-bold alpha-value">—</div>
                     </div>
                 </div>
+                <div class="space-y-2 text-sm">
+                    <div class="flex justify-between"><span class="text-gray-400">Sport:</span><span id="modal-sport">—</span></div>
+                    <div class="flex justify-between"><span class="text-gray-400">Marché:</span><span id="modal-market">—</span></div>
+                    <div class="flex justify-between"><span class="text-gray-400">Sélection:</span><span id="modal-selection">—</span></div>
+                    <div class="flex justify-between"><span class="text-gray-400">Bookmaker:</span><span id="modal-bookmaker" class="text-blue-400">—</span></div>
+                    <div class="flex justify-between"><span class="text-gray-400">Alpha (EV+):</span><span id="modal-alpha" class="alpha-value">—</span></div>
+                    <div class="flex justify-between"><span class="text-gray-400">SNR Ratio:</span><span id="modal-snr">—</span></div>
+                    <div class="flex justify-between"><span class="text-gray-400">CLV Est:</span><span id="modal-clv">—</span></div>
+                    <div class="flex justify-between"><span class="text-gray-400">Proba Sharp:</span><span id="modal-prob-sharp">—</span></div>
+                    <div class="flex justify-between"><span class="text-gray-400">Proba Soft:</span><span id="modal-prob-soft">—</span></div>
+                    <div class="flex justify-between"><span class="text-gray-400">Mise Kelly:</span><span id="modal-stake">—</span></div>
+                </div>
+                <div class="glass p-3 border-l-2 border-green-500">
+                    <div class="text-xs text-green-600 mb-1">🤖 Analyse IA</div>
+                    <p id="modal-note" class="text-sm text-gray-400">—</p>
+                </div>
+                <a id="modal-link" href="#" target="_blank" class="block w-full py-3 text-center bg-blue-900/30 border border-blue-600 text-blue-400 hover:bg-blue-900/50 transition-all rounded font-bold">
+                    🎯 PARIER sur <span id="modal-link-bm">1XBet</span> →
+                </a>
             </div>
         </div>
     </div>
@@ -387,6 +561,7 @@
                     document.querySelectorAll('[id^="led-"]').forEach(el => el.className = 'led led-online');
                     document.querySelectorAll('[id^="status-"]').forEach(el => { el.className = 'text-green-400 ml-1'; el.textContent = 'ONLINE'; });
                 }
+                
             } catch (e) {
                 document.querySelectorAll('[id^="led-"]').forEach(el => el.className = 'led led-offline');
             }

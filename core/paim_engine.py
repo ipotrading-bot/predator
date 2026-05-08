@@ -72,6 +72,7 @@ class ScanResult:
     signals_rejected: int = 0
     duration_seconds: float = 0.0
     session_name: str = "auto"
+    signals: list[PAIMSignal] = field(default_factory=list)  # 🔧 Liste des signaux trouvés
 
 
 # ═══════════════════════════════════════════════════════════════════
@@ -186,10 +187,47 @@ class PAIMEngine:
         """
         Évalue et retourne un PAIMSignal si les seuils sont respectés.
         Retourne None si le signal ne passe pas les filtres doctrinaires.
+        
+        GARDES-FOUS ANTI-ABERRATIONS (PhD MIT v4.2):
+        - EV max 25% (au-delà = erreur de mapping)
+        - Cohérence probabilités (sharp ne peut pas être 2x > implied)
         """
+        import logging
+        logger = logging.getLogger(__name__)
+        
         implied_prob_soft = 1.0 / soft_odds if soft_odds > 0 else 0.0
         ev = self.compute_ev(sharp_prob, soft_odds)
         snr = self.compute_snr(sharp_prob, implied_prob_soft)
+
+        # ═══════════════════════════════════════════════════════════════════
+        # GARDE-FOU 1: Rejet EV aberrant (>25% = bug de mapping)
+        # ═══════════════════════════════════════════════════════════════════
+        if ev > 0.25:
+            logger.error(
+                f"🚫 EV ABERRANT REJETÉ: {event_id} | {selection} | "
+                f"EV={ev:.1%} | sharp_prob={sharp_prob:.3f} | soft_odds={soft_odds:.2f} | "
+                f"ERREUR: Mapping issue probable (comparaison d'issues différentes)"
+            )
+            return None
+        
+        # ═══════════════════════════════════════════════════════════════════
+        # GARDE-FOU 2: Cohérence probabilités (écart max 2x)
+        # Si sharp_prob > 2 * implied_prob_soft, c'est une erreur de matching
+        # ═══════════════════════════════════════════════════════════════════
+        if sharp_prob > 2.0 * implied_prob_soft:
+            logger.error(
+                f"🚫 PROBA INCOHERENTE: {event_id} | {selection} | "
+                f"sharp={sharp_prob:.3f} >> implied={implied_prob_soft:.3f} | "
+                f"ERREUR: Issues probablement inversées ou mismatchées"
+            )
+            return None
+        
+        # ═══════════════════════════════════════════════════════════════════
+        # GARDE-FOU 3: EV négatif ou nul après calcul
+        # ═══════════════════════════════════════════════════════════════════
+        if ev <= 0 or not math.isfinite(ev):
+            logger.debug(f"⏭️ EV négatif: {selection} | EV={ev:.2%}")
+            return None
 
         if ev < min_ev or snr < min_snr:
             return None
@@ -208,7 +246,7 @@ class PAIMEngine:
             snr_ratio=snr,
             clv_estimate=clv,
             recommended_stake=stake,
-            is_elite=(ev >= 0.15),
+            is_elite=(ev >= 0.025),
         )
 
     @staticmethod
@@ -231,19 +269,21 @@ class PAIMEngine:
     @staticmethod
     def get_ai_analysis(total_trades, avg_clv, win_rate, sports_list):
         """Génère l'analyse IA via Gemini."""
-        import google.generativeai as genai
-        from config import settings
-        
-        analysis_prompt = f"""
-        En tant qu'expert MIT en finance quantitative, analyse ce bilan hebdomadaire :
-        - Nombre de signaux : {total_trades}
-        - CLV Moyenne (Alpha capturé) : {avg_clv:.2%}
-        - Win Rate Réalisé : {win_rate:.1f}%
-        - Détail des sports : {sports_list}
-        
-        Identifie les biais : Quel sport performe le mieux ? La CLV est-elle en train de s'éroder ? 
-        Donne 3 recommandations strictes pour la semaine prochaine.
-        """
-        
-        model = genai.GenerativeModel('gemini-2.0-flash')
-        return model.generate_content(analysis_prompt).text
+        try:
+            import google.generativeai as genai
+            from config import settings
+
+            # genai.configure déjà initialisé au niveau module dans validator.py
+            analysis_prompt = (
+                f"En tant qu'expert MIT en finance quantitative, analyse ce bilan hebdomadaire :\n"
+                f"- Nombre de signaux : {total_trades}\n"
+                f"- CLV Moyenne (Alpha capturé) : {avg_clv:.2%}\n"
+                f"- Win Rate Réalisé : {win_rate:.1f}%\n"
+                f"- Détail des sports : {sports_list}\n\n"
+                f"Identifie les biais : Quel sport performe le mieux ? La CLV est-elle en train de s'éroder ?\n"
+                f"Donne 3 recommandations strictes pour la semaine prochaine."
+            )
+            model = genai.GenerativeModel("gemini-2.0-flash")
+            return model.generate_content(analysis_prompt).text
+        except Exception as e:
+            return f"Analyse IA indisponible: {e}"

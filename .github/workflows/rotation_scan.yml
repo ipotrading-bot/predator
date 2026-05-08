@@ -1,0 +1,143 @@
+# ═══════════════════════════════════════════════════════════════════════
+# PREDATOR PAIM v3.6 — Protocole de Rotation de Scan (PhD MIT)
+# State-Based Scanning — Rate Limiting Optimization
+# ═══════════════════════════════════════════════════════════════════════
+#
+# Doctrine: Une seule requête lourde toutes les 4-5 minutes
+# Limite: 15 RPM max (The-Odds-API) → ~288 requêtes/jour
+# Cycle complet: 14 sports × 5 min = ~70 minutes
+#
+# Architecture Serverless (Vercel) + Supabase State Management
+# ═══════════════════════════════════════════════════════════════════════
+
+name: 🔄 PAIM Rotation Scan — PhD MIT Protocol
+
+on:
+  schedule:
+    # Toutes les 5 minutes — Cycle de 14 sports = scan complet toutes les 70 min
+    - cron: '*/5 * * * *'
+  
+  workflow_dispatch:
+    inputs:
+      force_sport:
+        description: 'Forcer un sport spécifique (optionnel)'
+        required: false
+        default: ''
+
+env:
+  # Configuration critique — ne pas modifier
+  ROTATION_API_URL: ${{ secrets.VERCEL_URL || 'https://predator-two.vercel.app' }}
+  API_SECRET: ${{ secrets.API_SECRET_KEY }}
+  MAX_RETRIES: 3
+  RETRY_DELAY: 10
+
+jobs:
+  # ═══════════════════════════════════════════════════════════════════
+  # JOB: Rotation Scan — Un sport à la fois
+  # ═══════════════════════════════════════════════════════════════════
+  rotation-scan:
+    name: 🎯 Scan Sport #{matrix.index}
+    runs-on: ubuntu-latest
+    timeout-minutes: 2  # Timeout court pour Vercel serverless
+    
+    steps:
+      # ── Step 1: Checkout ─────────────────────────────────────────
+      - name: 📥 Checkout Repository
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 1
+      
+      # ── Step 2: Setup Python ───────────────────────────────────
+      - name: 🐍 Setup Python 3.11
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+      
+      # ── Step 3: Trigger Rotation Scan ──────────────────────────
+      - name: 🔄 Trigger Rotation Scan
+        id: rotation_scan
+        run: |
+          echo "🎯 Lancement du scan rotationnel PAIM v3.6"
+          echo "⏱️  Timestamp: $(date -u '+%Y-%m-%d %H:%M:%S UTC')"
+          echo "🔗 API Endpoint: $ROTATION_API_URL/api/rotation-scan"
+          
+          # Appel API avec retry logic
+          for i in $(seq 1 ${{ env.MAX_RETRIES }}); do
+            echo "🔄 Tentative $i/$MAX_RETRIES..."
+            
+            HTTP_CODE=$(curl -s -o response.json -w "%{http_code}" \
+              -X GET "$ROTATION_API_URL/api/rotation-scan" \
+              -H "Authorization: Bearer $API_SECRET" \
+              -H "Content-Type: application/json" \
+              --max-time 30 \
+              --retry 0)
+            
+            echo "📡 HTTP Status: $HTTP_CODE"
+            
+            if [ "$HTTP_CODE" = "200" ]; then
+              echo "✅ Scan réussi"
+              cat response.json | jq '.' || cat response.json
+              exit 0
+            elif [ "$HTTP_CODE" = "429" ]; then
+              echo "⏳ Rate Limit atteint, attente ${RETRY_DELAY}s..."
+              sleep $RETRY_DELAY
+            else
+              echo "⚠️ Erreur HTTP $HTTP_CODE"
+              cat response.json || echo "(pas de réponse)"
+              sleep $RETRY_DELAY
+            fi
+          done
+          
+          echo "❌ Échec après $MAX_RETRIES tentatives"
+          exit 1
+      
+      # ── Step 4: Log Results ───────────────────────────────────
+      - name: 📊 Log Scan Results
+        if: always()
+        run: |
+          echo "═══════════════════════════════════════════════════"
+          echo "📋 RÉSULTAT DU SCAN ROTATIONNEL"
+          echo "═══════════════════════════════════════════════════"
+          
+          if [ -f response.json ]; then
+            echo "📡 Réponse API:"
+            cat response.json | jq '.' 2>/dev/null || cat response.json
+            
+            # Extraction métriques si succès
+            SPORT=$(cat response.json | jq -r '.sport_scanned // "N/A"')
+            SIGNALS=$(cat response.json | jq -r '.signals_found // "0"')
+            STATUS=$(cat response.json | jq -r '.status // "unknown"')
+            
+            echo ""
+            echo "🎯 Sport scanné: $SPORT"
+            echo "📈 Signaux trouvés: $SIGNALS"
+            echo "✅ Status: $STATUS"
+          else
+            echo "⚠️ Pas de fichier réponse"
+          fi
+          
+          echo "═══════════════════════════════════════════════════"
+      
+      # ── Step 5: Check Rotation Status ───────────────────────────
+      - name: 🔍 Check Rotation State
+        if: success()
+        run: |
+          echo "📡 Récupération de l'état de rotation..."
+          
+          curl -s -X GET "$ROTATION_API_URL/api/rotation-status" \
+            -H "Authorization: Bearer $API_SECRET" \
+            -H "Content-Type: application/json" \
+            | jq '.' || echo "⚠️ Impossible de récupérer l'état"
+
+  # ═══════════════════════════════════════════════════════════════════
+  # JOB: Health Check (toutes les 30 minutes)
+  # ═══════════════════════════════════════════════════════════════════
+  health-check:
+    name: 💓 Health Check
+    runs-on: ubuntu-latest
+    if: github.event.schedule == '*/30 * * * *'  # Toutes les 30 min uniquement
+    
+    steps:
+      - name: 🔍 API Health Check
+        run: |
+          curl -s "$ROTATION_API_URL/api/health" | jq '.' || echo "⚠️ Health check failed"

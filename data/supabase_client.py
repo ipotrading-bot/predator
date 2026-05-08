@@ -35,37 +35,57 @@ class SupabaseClient:
 
     # ── Signals ───────────────────────────────────────────────
 
-    async def insert_signal(
+    def insert_signal(
         self,
         signal: PAIMSignal,
         event_name: str,
         sport: str,
         match_time_iso: str,
         ai_context: str = "",
+        sources_badge: str = "",
     ) -> Optional[str]:
-        """Insère un signal validé. Retourne l'UUID généré."""
+        """Insère un signal validé. Retourne l'UUID généré. (SDK synchrone)"""
         try:
+            # Calculer fair_price et cote_1xbet
+            fair_price = round(1.0 / signal.sharp_prob, 3) if signal.sharp_prob > 0 else None
+            cote_1xbet = round(1.0 / signal.implied_prob_soft, 3) if signal.implied_prob_soft > 0 else None
+
+            # ── Data Integrity : ne pas insérer si cote soft invalide ──
+            if not cote_1xbet or cote_1xbet <= 1.0:
+                logger.warning(f"⚠️  Signal rejeté (cote_1xbet invalide): {event_name}")
+                return None
+
+            # ── Timezone fix : s'assurer que match_time est ISO UTC ──
+            match_time = match_time_iso
+            if match_time and not match_time.endswith("Z") and "+" not in match_time:
+                match_time = match_time + "Z"
+
             data = {
-                "event_id": signal.event_id,
-                "match_name": event_name,
-                "sport": sport,
-                "match_time": match_time_iso,
-                "market_type": signal.market_key,
-                "selection": signal.selection,
-                "bookmaker_target": signal.bookmaker_target,
-                "sharp_prob": round(signal.sharp_prob, 5),
+                "event_id":          signal.event_id,
+                "match_name":        event_name,
+                "sport":             sport,
+                "match_time":        match_time,
+                "market_type":       signal.market_key,
+                "selection":         signal.selection,
+                "bookmaker_target":  signal.bookmaker_target,
+                "fair_price":        fair_price,
+                "cote_1xbet":        cote_1xbet,
+                "note_ia":           ai_context or "✅ Analyse technique validée (Math-Only)",
+                "sharp_prob":        round(signal.sharp_prob, 5),
                 "implied_prob_soft": round(signal.implied_prob_soft, 5),
-                "alpha_spread": round(signal.ev_plus, 5),
-                "snr_ratio": round(signal.snr_ratio, 4),
+                "alpha_spread":      round(signal.ev_plus, 5),
+                "snr_ratio":         round(signal.snr_ratio, 4),
                 "recommended_stake": signal.recommended_stake,
-                "clv_estimate": round(signal.clv_estimate, 5),
-                "ai_context": ai_context,
-                "status": "pending",
-                "created_at": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()),
+                "clv_estimate":      round(signal.clv_estimate, 5),
+                "ai_context":        ai_context or "✅ Analyse technique validée (Math-Only)",
+                "sources_validated": sources_badge,
+                "is_elite":          signal.ev_plus >= 0.025,
+                "status":            "pending",
+                "created_at":        time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()),
             }
             response = self._client.table("signals").insert(data).execute()
             record_id = response.data[0]["id"] if response.data else None
-            logger.info(f"✅ Signal inséré: {record_id} | {event_name}")
+            logger.info(f"✅ Signal inséré: {record_id} | {event_name} | fair={fair_price} | 1xbet={cote_1xbet}")
             return record_id
         except Exception as e:
             logger.error(f"Erreur insert signal: {e}")
@@ -73,14 +93,14 @@ class SupabaseClient:
 
     # ── Results ───────────────────────────────────────────────
 
-    async def update_result(
+    def update_result(
         self,
         signal_id: str,
         outcome: int,        # 1 = gagné, 0 = perdu, -1 = void
         profit_eur: float,
         closing_odds: Optional[float] = None,
     ) -> None:
-        """Met à jour le résultat post-match et calcule le CLV réel."""
+        """Met à jour le résultat post-match et calcule le CLV réel. (SDK synchrone)"""
         try:
             update_data: dict = {
                 "outcome": outcome,
@@ -98,7 +118,7 @@ class SupabaseClient:
 
     # ── Bankroll Snapshots ────────────────────────────────────
 
-    async def insert_bankroll_snapshot(
+    def insert_bankroll_snapshot(
         self, balance: float, drawdown: float, roi: float
     ) -> None:
         try:
