@@ -621,6 +621,54 @@ def hunter_scan():
 
 
 # ═══════════════════════════════════════════════════════════════════
+# GEMINI ORACLE ENDPOINT — Test direct du fallback AI
+# ═══════════════════════════════════════════════════════════════════
+
+@app.route('/api/test-gemini-oracle')
+def test_gemini_oracle():
+    """
+    Test direct du Gemini Oracle pour recherche de cotes.
+    Ne consomme pas de quota The-Odds-API.
+    """
+    try:
+        from core.gemini_search import GeminiOracle
+        
+        home = request.args.get('home', 'Manchester City')
+        away = request.args.get('away', 'Real Madrid')
+        sport = request.args.get('sport', 'soccer')
+        
+        oracle = GeminiOracle()
+        result = oracle.search_odds(home, away, sport)
+        
+        if not result:
+            return jsonify({
+                "status": "no_data",
+                "message": "Gemini n'a pas trouvé de cotes",
+                "match": f"{home} vs {away}"
+            })
+        
+        return jsonify({
+            "status": "success",
+            "match": f"{result.home_team} vs {result.away_team}",
+            "pinnacle": {
+                "home": result.pinnacle_home,
+                "away": result.pinnacle_away
+            },
+            "onexbet": {
+                "home": result.onexbet_home,
+                "away": result.onexbet_away
+            },
+            "match_time": result.match_time,
+            "confidence": result.confidence,
+            "source": result.source
+        })
+        
+    except Exception as e:
+        logger.error(f"Erreur test Gemini Oracle: {e}")
+        return jsonify({"status": "error", "error": str(e)}), 500
+
+
+# ═══════════════════════════════════════════════════════════════════
 # DIAGNOSTIC — Test API The-Odds-API en direct
 # ═══════════════════════════════════════════════════════════════════
 

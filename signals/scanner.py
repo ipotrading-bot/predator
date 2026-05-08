@@ -25,6 +25,7 @@ from core.news_engine import news_engine, NewsImpact
 from core.notifications import TelegramNotifier
 from core.paim_engine import PAIMEngine, PAIMSignal, ScanResult
 from core.validator import check_market_red_flags
+from core.gemini_search import GeminiOracle, GeminiOddsResult  # 🔮 Fallback Oracle
 from data.odds_fetcher import OddsFetcher
 from data.supabase_client import SupabaseClient
 from api.groq_client import groq_client
@@ -709,6 +710,116 @@ class MarketScanner:
                 )
             except Exception as e:
                 logger.error(f"Erreur persist/notify {meta.get('event_name')}: {e}")
+
+    # ═══════════════════════════════════════════════════════════════════
+    # GEMINI ORACLE FALLBACK — Quand The-Odds-API est vide/épuisée
+    # ═══════════════════════════════════════════════════════════════════
+
+    async def _try_gemini_fallback(
+        self,
+        home_team: str,
+        away_team: str,
+        sport: str,
+        commence_time: str,
+    ) -> Optional[ArbitrageDossier]:
+        """
+        Fallback ultime: utilise Gemini Search Grounding pour trouver des cotes
+        quand The-Odds-API ne retourne rien (quotas épuisés ou pas de données).
+        
+        Returns:
+            ArbitrageDossier si cotes trouvées et EV+ valide, None sinon
+        """
+        try:
+            logger.info(f"🔮 GEMINI ORACLE: Recherche cotes pour {home_team} vs {away_team}")
+            
+            oracle = GeminiOracle()
+            odds_result = oracle.search_odds(home_team, away_team, sport)
+            
+            if not odds_result:
+                logger.debug(f"Gemini: Aucune cote trouvée pour {home_team} vs {away_team}")
+                return None
+            
+            # Vérifier qu'on a les cotes nécessaires
+            if not (odds_result.pinnacle_home and odds_result.onexbet_home):
+                logger.debug(f"Gemini: Cotes incomplètes Pinnacle/1XBet")
+                return None
+            
+            # Calcul Shin Method sur cotes Gemini
+            pin_odds = [odds_result.pinnacle_home, odds_result.pinnacle_away]
+            xbet_odds = [odds_result.onexbet_home, odds_result.onexbet_away]
+            
+            try:
+                pin_probs = calculate_shin_probabilities(pin_odds)
+            except Exception as e:
+                logger.warning(f"Shin échoué sur cotes Gemini: {e}")
+                return None
+            
+            # Déterminer la sélection (comparer sharp vs soft)
+            home_ev = pin_probs[0] * odds_result.onexbet_home - 1.0
+            away_ev = pin_probs[1] * odds_result.onexbet_away - 1.0
+            
+            if home_ev > away_ev and home_ev > 0:
+                selection = home_team
+                soft_odds = odds_result.onexbet_home
+                sharp_prob = pin_probs[0]
+                ev = home_ev
+            elif away_ev > 0:
+                selection = away_team
+                soft_odds = odds_result.onexbet_away
+                sharp_prob = pin_probs[1]
+                ev = away_ev
+            else:
+                logger.debug(f"Gemini: Pas d'EV+ positif")
+                return None
+            
+            # Vérifier seuil EV+ min
+            min_ev = getattr(self.engine, 'min_ev_threshold', 0.015)
+            if ev < min_ev:
+                logger.debug(f"Gemini: EV {ev:.2%} < seuil {min_ev:.2%}")
+                return None
+            
+            # Calculer métriques PAIM
+            implied_soft = 1.0 / soft_odds
+            snr = sharp_prob / implied_soft if implied_soft > 0 else 0
+            
+            if snr < 3.0:  # SNR min doctrinal
+                logger.debug(f"Gemini: SNR {snr:.1f} < 3.0")
+                return None
+            
+            # Créer le signal PAIM
+            signal = PAIMSignal(
+                event_id=f"gemini_{home_team[:10]}_{away_team[:10]}_{int(time.time())}",
+                market_key="h2h",
+                selection=selection,
+                bookmaker_target="onexbet",
+                sharp_prob=sharp_prob,
+                implied_prob_soft=implied_soft,
+                ev_plus=ev,
+                snr_ratio=snr,
+                clv_estimate=ev * 0.3,  # Estimation conservative
+                recommended_stake=min(ev * self.bankroll * 0.25, self.bankroll * 0.03),
+                ai_context=f"🔮 Source: Gemini Search Grounding (confiance: {odds_result.confidence:.0%})",
+                is_elite=ev >= 0.025,
+            )
+            
+            # Créer le dossier
+            dossier = ArbitrageDossier(
+                signal=signal,
+                liquidity_score=0.5,  # Moyenne car source AI
+                odds_ok=True,
+                perplexity_ok=True,
+                news_ok=False,
+                groq_confidence=odds_result.confidence,
+            )
+            
+            logger.info(f"✅ GEMINI SIGNAL: {home_team} vs {away_team} | "
+                       f"Selection: {selection} | EV: {ev:.2%} | Source: AI Grounding")
+            
+            return dossier
+            
+        except Exception as e:
+            logger.error(f"Erreur Gemini fallback: {e}")
+            return None
 
 
 # ─────────────────────────────────────────────────────────────────
