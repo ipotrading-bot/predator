@@ -69,9 +69,19 @@ class Settings(BaseSettings):
         default=["pinnacle"]
     )
     soft_books: list[str] = Field(
-        # Toutes les variantes 1XBet reconnues (insensible à la casse géré dans le scanner)
-        default=["onexbet", "1xbet", "1xbit", "1xstavka", "1x_bet", "oneexbet",
-                 "bet365", "unibet", "williamhill"]
+        # Panel diversifié de soft books pour maximiser l'Alpha
+        # Classement par vulnérabilité algorithmique (PhD MIT Risk Management)
+        default=[
+            # ═══ Groupe 1XBet (Clones stratégiques) ═══
+            "onexbet", "1xbet", "1xbit", "1xstavka", "1x_bet", "oneexbet",
+            "melbet", "22bet", "linebet",  # Clones moteur 1XBet
+            # ═══ Groupe Majeur (Liquidité haute) ═══
+            "bet365", "unibet", "williamhill", "bwin",
+            # ═══ Groupe Crypto (Haute vélocité) ═══
+            "stake", "bcgame",
+            # ═══ Groupe Asie/Europe ═══
+            "betway", "paddypower", "fortunabet",
+        ]
     )
 
     # ── Multi-Sport v3.6 (MIT Alpha Watchlist - The-Odds-API Official Keys) ─

@@ -48,6 +48,30 @@ def _market_label(market_key: str, sport: str) -> str:
     return market_key.upper()
 
 
+def _get_bookmaker_badge(bm_key: str) -> dict:
+    """
+    Retourne un badge stylisé pour le bookmaker.
+    Permet au dashboard d'afficher visuellement la source de l'Alpha.
+    """
+    key = bm_key.lower()
+    badges = {
+        "bet365": {"name": "Bet365", "color": "#1e88e5", "icon": "🏛️"},
+        "unibet": {"name": "Unibet", "color": "#43a047", "icon": "🎯"},
+        "williamhill": {"name": "William Hill", "color": "#e53935", "icon": "👑"},
+        "bwin": {"name": "Bwin", "color": "#fb8c00", "icon": "⚽"},
+        "stake": {"name": "Stake", "color": "#8e24aa", "icon": "🎰"},
+        "bcgame": {"name": "BC.Game", "color": "#00acc1", "icon": "🎲"},
+        "betway": {"name": "Betway", "color": "#1e88e5", "icon": "🎮"},
+        "paddypower": {"name": "Paddy Power", "color": "#43a047", "icon": "☘️"},
+        "melbet": {"name": "Melbet", "color": "#e53935", "icon": "🔴"},
+        "22bet": {"name": "22Bet", "color": "#fb8c00", "icon": "🟠"},
+        "linebet": {"name": "Linebet", "color": "#8e24aa", "icon": "🟣"},
+        "onexbet": {"name": "1XBet", "color": "#2e7d32", "icon": "🟢"},
+        "1xbet": {"name": "1XBet", "color": "#2e7d32", "icon": "🟢"},
+    }
+    return badges.get(key, {"name": bm_key.capitalize(), "color": "#757575", "icon": "📊"})
+
+
 # ── Route principale ──────────────────────────────────────────
 
 @app.route('/')
@@ -315,6 +339,11 @@ def get_data():
             sig["sharp_prob_pct"] = round((sig.get("sharp_prob") or 0) * 100, 2)
             sig["implied_prob_soft_pct"] = round((sig.get("implied_prob_soft") or 0) * 100, 2)
             sig["clv_pct"] = round((sig.get("clv_estimate") or 0) * 100, 2)
+            # Alias générique pour cote (legacy: cote_1xbet)
+            sig["cote_soft"] = sig.get("cote_1xbet")
+            sig["bookmaker"] = sig.get("bookmaker_target", "soft")
+            # Badge bookmaker pour UI
+            sig["bookmaker_badge"] = _get_bookmaker_badge(sig.get("bookmaker_target", ""))
 
         if not data:
             from datetime import timedelta

@@ -98,21 +98,32 @@ def _is_within_window(commence_time_iso: str, hours: int = SCAN_WINDOW_HOURS) ->
         return True  # En cas de parse error, ne pas bloquer
 
 
-def _get_soft_odds(bookmakers: list[dict], market_key: str, selection: str) -> Optional[float]:
+def _get_best_soft_odds(
+    bookmakers: list[dict], 
+    market_key: str, 
+    selection: str
+) -> tuple[Optional[float], str]:
     """
-    Cherche la cote d'un soft book pour une sélection donnée.
-    Stratégie :
-      1. Cherche le marché exact (market_key)
-      2. Si absent, fallback sur h2h
-    Retourne None si aucune cote valide trouvée.
+    🔮 BEST-PRICE LOGIC (Multi-Bookmaker v4.3)
+    
+    Compare les cotes de TOUS les soft books et retourne:
+    - La cote la PLUS HAUTE (meilleur EV+)
+    - Le nom du bookmaker qui l'offre
+    
+    Stratégie PhD MIT: Maximiser l'Alpha en diversifiant les sources.
     """
+    best_price: Optional[float] = None
+    best_bm: str = "soft"
     fallback_price: Optional[float] = None
+    fallback_bm: str = "soft"
 
     for bm in bookmakers:
-        if not _is_soft_book(bm.get("key", "")):
+        bm_key = bm.get("key", "")
+        if not _is_soft_book(bm_key):
             continue
 
         markets = bm.get("markets", [])
+        bm_normalized = _normalize_bm_key(bm_key)
 
         # Chercher le marché demandé en premier
         for market in markets:
@@ -122,10 +133,13 @@ def _get_soft_odds(bookmakers: list[dict], market_key: str, selection: str) -> O
                 if outcome.get("name", "").lower() == selection.lower():
                     price = outcome.get("price", 0.0)
                     if price > 1.0:
-                        return float(price)
+                        # 🔥 Best-Price: garder la cote la plus haute
+                        if best_price is None or price > best_price:
+                            best_price = float(price)
+                            best_bm = bm_normalized
 
         # Fallback h2h si marché principal absent
-        if market_key != "h2h":
+        if market_key != "h2h" and best_price is None:
             for market in markets:
                 if market.get("key") != "h2h":
                     continue
@@ -134,12 +148,25 @@ def _get_soft_odds(bookmakers: list[dict], market_key: str, selection: str) -> O
                         price = outcome.get("price", 0.0)
                         if price > 1.0 and fallback_price is None:
                             fallback_price = float(price)
+                            fallback_bm = bm_normalized
 
-    return fallback_price
+    # Retourner best_price sinon fallback
+    if best_price is not None:
+        return (best_price, best_bm)
+    return (fallback_price, fallback_bm)
+
+
+# ═══════════════════════════════════════════════════════════════════
+# OBSOLÈTE: _get_soft_odds remplacé par _get_best_soft_odds (v4.3)
+# ═══════════════════════════════════════════════════════════════════
+def _get_soft_odds(bookmakers: list[dict], market_key: str, selection: str) -> Optional[float]:
+    """Legacy - utiliser _get_best_soft_odds pour le meilleur prix."""
+    price, _ = _get_best_soft_odds(bookmakers, market_key, selection)
+    return price
 
 
 def _get_soft_bm_name(bookmakers: list[dict]) -> str:
-    """Retourne le nom normalisé du premier soft book trouvé."""
+    """Retourne le nom du premier soft book trouvé (legacy)."""
     for bm in bookmakers:
         key = bm.get("key", "")
         if _is_soft_book(key):
@@ -466,10 +493,9 @@ class MarketScanner:
                     if not sharp_prob:
                         continue
 
-                    # ── Fuzzy soft odds lookup ─────────────────
-                    # Cherche la cote chez n'importe quel soft book
-                    # avec fallback h2h si le marché principal est absent
-                    soft_odds_val = _get_soft_odds(
+                    # ── BEST-PRICE Multi-Bookmaker Logic ──────
+                    # Compare tous les softs et choisit le meilleur EV+
+                    soft_odds_val, bm_name = _get_best_soft_odds(
                         bookmakers,
                         market_key=effective_market_key,
                         selection=selection,
@@ -482,8 +508,8 @@ class MarketScanner:
                             f"{selection} | marché={effective_market_key}"
                         )
                         continue
-
-                    bm_name = _get_soft_bm_name(bookmakers)
+                    
+                    logger.debug(f"💰 Best-Price: {bm_name} @ {soft_odds_val} pour {selection}")
 
                     # ── Seuil Alpha dynamique par Sport ─────────
                     sport_threshold = settings.alpha_thresholds.get(
