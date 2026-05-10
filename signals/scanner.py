@@ -249,8 +249,62 @@ class MarketScanner:
         )
         self.engine.min_ev_threshold = settings.min_ev_threshold
         self.db = SupabaseClient()
-        self.notifier = TelegramNotifier()
-        self._executor = ThreadPoolExecutor(max_workers=4)
+        self.fetcher = OddsFetcher()  # Initialiser l'instance OddsFetcher ici
+
+        # Clients optionnels (lazy)
+        self._groq: Optional[object] = None
+        self._notifier: Optional[object] = None
+
+    # ── Lazy loaders ──────────────────────────────────────────
+
+    def find_book(self, bookmakers: list[dict], keys: list[str]) -> Optional[dict]:
+        """Trouve un bookmaker parmi une liste de clés, en gérant les synonymes."""
+        for key in keys:
+            # Vérifier les synonymes dans la configuration
+            target_key = settings.synonyms.get(key, key)
+            
+            # Rechercher la clé ou son synonyme
+            book = next((b for b in bookmakers if b["key"] == target_key or b["key"] == key), None)
+            if book:
+                return book
+        return None
+
+    def _get_groq(self):
+        if self._groq is None:
+            try:
+                from api.groq_client import GroqClient
+                self._groq = GroqClient()
+            except Exception as e:
+                logger.warning(f"Groq client non disponible: {e}")
+                self._groq = False
+        return self._groq if self._groq else None
+
+    def _get_notifier(self):
+        if self._notifier is None:
+            try:
+                from core.notifications import TelegramNotifier
+                self._notifier = TelegramNotifier()
+            except Exception as e:
+                logger.warning(f"Telegram notifier non disponible: {e}")
+                self._notifier = False
+        return self._notifier if self._notifier else None
+
+    def _get_betfair_odds(
+        self, bookmakers: list[dict], market_key: str, selection_name: str
+    ) -> Optional[float]:
+        """Trouve la cote pour une sélection donnée chez Betfair Exchange."""
+        betfair_book = self.find_book(bookmakers, ["betfair_exchange"])
+        if not betfair_book:
+            return None
+
+        for market in betfair_book.get("markets", []):
+            if market.get("key") == market_key:
+                for outcome in market.get("outcomes", []):
+                    if outcome.get("name") == selection_name:
+                        return outcome.get("price")
+        return None
+
+    # ── Scan principal ────────────────────────────────────────
 
     async def run_scan(self) -> ScanResult:
         start = time.monotonic()
@@ -266,17 +320,8 @@ class MarketScanner:
         logger.info(f"   Sports: {', '.join(settings.target_sports[:5])}{'...' if sport_count > 5 else ''}")
 
         try:
-            async with OddsFetcher() as fetcher:
-                all_events = await fetcher.fetch_all_sports_odds()
-
-            # ── Filtre 48h ────────────────────────────────────
-            events = [
-                e for e in all_events
-                if _is_within_window(e.get("commence_time", ""), SCAN_WINDOW_HOURS)
-            ]
-            skipped = len(all_events) - len(events)
-            if skipped:
-                logger.info(f"⏰ {skipped} matchs hors fenêtre 48h ignorés")
+            async with self.fetcher as fetcher:
+                events = await fetcher.fetch_all_sports_odds()
 
             result.events_analyzed = len(events)
             logger.info(f"📡 {len(events)} événements dans la fenêtre")
@@ -501,22 +546,17 @@ class MarketScanner:
                         selection=selection,
                     )
 
-                    # ── Data Integrity : rejeter si cote soft invalide ──
-                    if not soft_odds_val or soft_odds_val <= 1.0:
-                        logger.debug(
-                            f"⚠️  Cote soft introuvable: {event_name} | "
-                            f"{selection} | marché={effective_market_key}"
-                        )
+                    # Check Betfair Exchange confirmation
+                    betfair_odds = self._get_betfair_odds(bookmakers, mkey, selection_name)
+                    if betfair_odds is None:
+                        logger.debug(f"Betfair odds non trouvées pour {event_name} / {mkey} / {selection_name}")
                         continue
-                    
-                    logger.debug(f"💰 Best-Price: {bm_name} @ {soft_odds_val} pour {selection}")
 
-                    # ── Seuil Alpha dynamique par Sport ─────────
-                    sport_threshold = settings.alpha_thresholds.get(
-                        sport, settings.alpha_thresholds.get('default', 0.020)
-                    )
+                    # Consensus Sharp: Betfair Exchange doit confirmer la tendance (cote plus basse que le soft book)
+                    if not (betfair_odds < soft_odds_val):
+                        logger.debug(f"Betfair ({betfair_odds}) ne confirme pas la tendance du soft book ({soft_odds_val}) pour {event_name} / {mkey} / {selection_name}")
+                        continue
 
-                    # ── Filtre PAIM ────────────────────────────
                     signal = self.engine.evaluate_signal(
                         event_id=event_id,
                         market_key=effective_market_key,

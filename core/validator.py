@@ -44,11 +44,9 @@ class GeminiValidator:
 
         # Prompt court et précis — évite les timeouts et les erreurs de quota
         prompt = (
-            f"Match: {match_name} | Marché: {market}\n"
-            f"Recherche les news des 4 DERNIÈRES HEURES UNIQUEMENT.\n"
-            f"Y a-t-il une blessure confirmée d'un joueur clé (impact > 2pts NBA ou >10% win prob soccer) ?\n"
-            f"Si OUI : réponds '🚨 RED FLAG : [raison en 1 phrase]'\n"
-            f"Si NON ou news > 4h : réponds '✅ Aucun risque majeur détecté.'"
+            f"En tant qu'expert en analyse de données sportives, évalue l'impact de cette news sur le spread. "
+            f"Si l'absence du joueur X vaut plus de 2 points en NBA, augmente l'indice de confiance. "
+            f"Si la news est déjà vieille de plus de 4h, considère qu'elle est déjà intégrée dans le prix."
         )
 
         try:
