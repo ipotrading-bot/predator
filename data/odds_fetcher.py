@@ -64,18 +64,21 @@ class OddsFetcher:
     def fetch_upcoming_odds(self) -> list[dict]:
         """
         Endpoint Global: /sports/upcoming/odds/
-        Un seul appel API pour TOUS les sports — économie de quota maximale.
-        Régions eu+us pour couverture maximale des bookmakers.
+        IMPORTANT: Cet endpoint n'accepte PAS le paramètre 'bookmakers' en même temps
+        que 'regions'. On utilise uniquement regions=eu,us et on filtre en Python.
+        On ajoute commenceTimeTo pour ne récupérer que les 48h à venir.
         """
-        all_books = settings.sharp_books + settings.soft_books
+        now = datetime.now(timezone.utc)
+        cutoff_48h = (now + timedelta(hours=48)).strftime("%Y-%m-%dT%H:%M:%SZ")
+
         params = {
             "regions": "eu,us",
             "markets": "h2h,spreads,totals",
-            "bookmakers": ",".join(all_books),
             "oddsFormat": "decimal",
+            "commenceTimeTo": cutoff_48h,
         }
 
-        logger.info("🚀 UPCOMING GLOBAL: 1 appel API pour tous les sports")
+        logger.info(f"🚀 UPCOMING GLOBAL: 1 appel API | fenêtre jusqu'à {cutoff_48h}")
         events = self._get("/sports/upcoming/odds/", params)
 
         if events:
@@ -86,17 +89,19 @@ class OddsFetcher:
                 f"{with_bm} avec bookmakers | quota restant: {self._remaining_requests}"
             )
         else:
-            logger.warning("[DEBUG] 0 events — quota épuisé ou aucun match disponible")
+            logger.warning("[DEBUG] 0 events — quota épuisé ou aucun match dans les 48h")
 
         return events
 
     def fetch_sport_odds(self, sport: str) -> list[dict]:
-        """Endpoint par sport pour la rotation (protocole rate-limit)."""
+        """
+        Endpoint par sport pour la rotation (protocole rate-limit).
+        Utilise bookmakers= sur l'endpoint /sports/{sport}/odds/ (supporté ici).
+        """
         all_books = settings.sharp_books + settings.soft_books
         params = {
-            "regions": "eu,us",
-            "markets": "h2h,spreads,totals",
             "bookmakers": ",".join(all_books),
+            "markets": "h2h,spreads,totals",
             "oddsFormat": "decimal",
         }
         return self._get(f"/sports/{sport}/odds/", params)

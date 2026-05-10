@@ -322,8 +322,14 @@ class MarketScanner:
         try:
             events = self.fetcher.fetch_upcoming_odds()
 
+            # Filtre 48h (sécurité côté Python, commenceTimeTo déjà envoyé à l'API)
+            events = [
+                e for e in events
+                if _is_within_window(e.get("commence_time", ""), SCAN_WINDOW_HOURS)
+            ]
+
             result.events_analyzed = len(events)
-            logger.info(f"📡 {len(events)} événements dans la fenêtre")
+            logger.info(f"📡 {len(events)} événements dans la fenêtre 48h")
 
             if not events:
                 logger.warning("Aucun événement dans la fenêtre 48h.")

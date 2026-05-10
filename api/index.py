@@ -119,6 +119,46 @@ def health():
     })
 
 
+# ── Debug Events — Diagnostic direct API ──────────────────────
+
+@app.route('/api/debug-events')
+def debug_events():
+    """
+    Appelle l'API The-Odds-API directement et retourne les événements bruts.
+    Permet de diagnostiquer pourquoi le scanner trouve 0 signaux.
+    """
+    try:
+        from data.odds_fetcher import OddsFetcher
+        fetcher = OddsFetcher()
+        events = fetcher.fetch_upcoming_odds()
+
+        summary = []
+        for e in events[:30]:  # max 30 pour lisibilité
+            bms = [b.get("key") for b in e.get("bookmakers", [])]
+            summary.append({
+                "match": f"{e.get('home_team')} vs {e.get('away_team')}",
+                "sport": e.get("sport_key"),
+                "commence": e.get("commence_time"),
+                "bookmakers": bms,
+                "has_pinnacle": "pinnacle" in bms,
+                "has_betfair": "betfair_ex_back" in bms,
+                "has_1xbet": any("1x" in b or "onex" in b for b in bms),
+                "markets": [
+                    {"key": m.get("key"), "outcomes": len(m.get("outcomes", []))}
+                    for bm in e.get("bookmakers", []) for m in bm.get("markets", [])
+                ][:5],
+            })
+
+        return jsonify({
+            "total_events": len(events),
+            "quota": fetcher.get_quota_status(),
+            "events": summary,
+        })
+    except Exception as e:
+        logger.error(f"Erreur debug-events: {e}")
+        return jsonify({"error": str(e)}), 500
+
+
 # ── Screener avec logs de debug ───────────────────────────────
 
 @app.route('/api/screener')
