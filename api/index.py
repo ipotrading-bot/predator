@@ -129,11 +129,17 @@ def screener():
         from signals.scanner import MarketScanner
         import asyncio
 
-        # ── Étape 1 : Vider les signaux pending (résidus null) ──────────
+        # ── Étape 1 : Vider les signaux pending (résidus null + Draw) ──────────
         try:
             db = get_db()
             cleared = db.clear_signals()
             logger.info(f"🗑️ Screener: {cleared} signaux anciens supprimés avant scan")
+            # Purger les résidus Draw (violation Binary Synthesis doctrine)
+            for draw_word in ("draw", "nul", "match nul"):
+                try:
+                    db._client.table("signals").delete().ilike("selection", draw_word).execute()
+                except Exception:
+                    pass
         except Exception as e:
             logger.warning(f"clear_signals non critique: {e}")
 
@@ -165,6 +171,33 @@ def screener():
             "duration_seconds": result.duration_seconds,
         }
         logger.info(f"✅ Screener: {result.signals_validated} signaux | {result.events_analyzed} events")
+
+        # ── Morning Brief Telegram (même si 0 signaux) ──────────────
+        import asyncio as _aio
+        try:
+            from core.notifications import TelegramNotifier
+            _notifier = TelegramNotifier()
+            if _notifier.enabled:
+                async def _brief():
+                    n = result.signals_validated
+                    icon = "🔥" if n >= 3 else ("✅" if n > 0 else "🌫️")
+                    msg = (
+                        f"{icon} *PREDATOR PAIM — Scan terminé*\n"
+                        f"📊 Événements analysés: `{result.events_analyzed}`\n"
+                        f"🎯 Signaux validés: `{n}`\n"
+                        f"⏱️ Durée: `{result.duration_seconds}s`\n"
+                        f"{'💰 Signaux disponibles sur le dashboard.' if n > 0 else '🌫️ Marché efficient — capital préservé.'}"
+                    )
+                    await _notifier.bot.send_message(
+                        chat_id=_notifier.chat_id, text=msg, parse_mode="Markdown"
+                    )
+                _loop = _aio.new_event_loop()
+                try:
+                    _loop.run_until_complete(_brief())
+                finally:
+                    _loop.close()
+        except Exception as _te:
+            logger.warning(f"Morning Brief Telegram non critique: {_te}")
 
         return jsonify({
             "status": "success",
@@ -309,10 +342,12 @@ def get_data():
         )
         signals = response.data or []
 
-        # Filtrer les lignes nulles/incomplètes
+        _DRAW_WORDS = {"draw", "nul", "match nul"}
         valid = [
             s for s in signals
-            if s.get("match_name") and s.get("alpha_spread") is not None
+            if s.get("match_name")
+            and s.get("alpha_spread") is not None
+            and str(s.get("selection", "")).lower() not in _DRAW_WORDS
         ]
 
         return jsonify({"signals": valid, "count": len(valid)})
@@ -434,6 +469,35 @@ def audit_settlement():
 @app.route('/api/healthcheck')
 def healthcheck():
     return jsonify({"status": "ok", "version": "3.0.0", "ts": int(datetime.now().timestamp())})
+
+
+@app.route('/api/test-telegram')
+def test_telegram():
+    """Teste la connectivité Telegram et envoie un message de diagnostic."""
+    import asyncio
+    try:
+        from core.notifications import TelegramNotifier
+        notifier = TelegramNotifier()
+        if not notifier.enabled:
+            return jsonify({"status": "disabled", "message": "Telegram non configuré (token ou chat_id manquant)"})
+
+        async def _send():
+            await notifier.bot.send_message(
+                chat_id=notifier.chat_id,
+                text="🦅 *PREDATOR PAIM* — Test Telegram OK ✅\n_Système opérationnel._",
+                parse_mode="Markdown",
+            )
+
+        loop = asyncio.new_event_loop()
+        try:
+            loop.run_until_complete(_send())
+        finally:
+            loop.close()
+
+        return jsonify({"status": "sent", "message": "Message Telegram envoyé avec succès"})
+    except Exception as e:
+        logger.error(f"Erreur test-telegram: {e}")
+        return jsonify({"status": "error", "message": str(e)}), 500
 
 
 # ── Market Heatmap (Alpha moyen par sport) ────────────────────────

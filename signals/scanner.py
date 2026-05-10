@@ -293,7 +293,7 @@ class MarketScanner:
         self, bookmakers: list[dict], market_key: str, selection_name: str
     ) -> Optional[float]:
         """Trouve la cote pour une sélection donnée chez Betfair Exchange."""
-        betfair_book = self.find_book(bookmakers, ["betfair_exchange"])
+        betfair_book = self.find_book(bookmakers, ["betfair_ex_back"])
         if not betfair_book:
             return None
 
@@ -535,11 +535,10 @@ class MarketScanner:
                     continue
                 
                 # Étape 3: Vérification finale - aucun outcome ne doit être "Draw"
-                for outcome in raw_outcomes:
-                    if outcome.get("name", "").lower() in ("draw", "nul", "match nul"):
-                        logger.warning(f"🚫 DRAW DETECTED: {event_name} | Marché rejeté")
-                        continue
-                
+                if any(o.get("name", "").lower() in ("draw", "nul", "match nul") for o in raw_outcomes):
+                    logger.warning(f"🚫 DRAW DETECTED: {event_name} | Marché rejeté (Binary Synthesis)")
+                    continue
+
                 outcomes_to_process = raw_outcomes
                 effective_market_key = sharp_market_key
 
@@ -753,7 +752,7 @@ class MarketScanner:
             return sharp
         
         # Pinnacle absent → fallback multi-bookmaker
-        fallback_bm_keys = ["betfair_exchange", "bet365", "unibet", "williamhill"]
+        fallback_bm_keys = ["betfair_ex_back", "bet365", "unibet", "williamhill"]
         collected_odds = []
         
         for bm in bookmakers:
