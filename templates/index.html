@@ -210,6 +210,169 @@
         ::-webkit-scrollbar-thumb:hover {
             background: rgba(0, 255, 0, 0.5);
         }
+        
+        /* ═══════════════════════════════════════════════════════════════════
+           RESPONSIVE MOBILE OPTIMIZATION (PAIM v5.0 Mobile)
+           ═══════════════════════════════════════════════════════════════════ */
+        
+        /* Tablettes et petits écrans */
+        @media (max-width: 1024px) {
+            .signal-card {
+                padding: 12px;
+            }
+            .signal-card .alpha-big {
+                font-size: 22px;
+            }
+            .heatmap-cell {
+                padding: 8px 4px;
+            }
+        }
+        
+        /* Smartphones */
+        @media (max-width: 768px) {
+            /* Header compact */
+            header {
+                padding: 8px 12px;
+            }
+            header h1 {
+                font-size: 14px;
+            }
+            header .text-xs {
+                font-size: 9px;
+            }
+            
+            /* LED plus petits */
+            .led {
+                width: 6px;
+                height: 6px;
+                margin-right: 3px;
+            }
+            
+            /* Health bar ultra-compact */
+            #health-bar {
+                padding: 4px 12px;
+                font-size: 9px;
+            }
+            #health-bar .gap-4 {
+                gap: 8px;
+            }
+            
+            /* KPI Bar: 2 colonnes sur mobile */
+            #kpi-bar {
+                grid-template-columns: repeat(2, 1fr) !important;
+                gap: 8px !important;
+                padding: 8px 12px !important;
+            }
+            #kpi-bar .glass {
+                padding: 8px;
+            }
+            #kpi-bar .text-xl {
+                font-size: 14px;
+            }
+            #kpi-bar .text-xs {
+                font-size: 8px;
+            }
+            
+            /* Heatmap: 2 colonnes */
+            #heatmap-grid {
+                grid-template-columns: repeat(2, 1fr) !important;
+            }
+            .heatmap-cell {
+                padding: 6px;
+                min-height: 60px;
+            }
+            .heatmap-cell .text-lg {
+                font-size: 14px;
+            }
+            
+            /* Console masquée sur mobile pour gagner de la place */
+            #console-panel {
+                display: none;
+            }
+            
+            /* Heatmap prend toute la largeur */
+            #heatmap-section {
+                width: 100% !important;
+                height: 200px !important;
+            }
+            
+            /* Signal cards pleine largeur */
+            #signal-grid {
+                grid-template-columns: 1fr !important;
+                gap: 8px !important;
+                padding: 0 12px;
+            }
+            
+            .signal-card {
+                padding: 12px;
+            }
+            .signal-card h4 {
+                font-size: 13px !important;
+            }
+            .signal-card .alpha-big {
+                font-size: 24px;
+            }
+            
+            /* Modal plein écran sur mobile */
+            .modal-content {
+                width: 100%;
+                max-width: none;
+                height: 100vh;
+                max-height: 100vh;
+                border-radius: 0;
+            }
+            
+            /* Onglets plus compacts */
+            .tab {
+                padding: 8px 12px;
+                font-size: 10px;
+            }
+            
+            /* Bouton action plus grand pour touch */
+            #modal-link {
+                padding: 16px;
+                font-size: 16px;
+            }
+            
+            /* Texte général plus lisible */
+            body {
+                font-size: 12px;
+            }
+            .text-xs {
+                font-size: 10px;
+            }
+        }
+        
+        /* Très petits écrans */
+        @media (max-width: 375px) {
+            #kpi-bar {
+                grid-template-columns: 1fr !important;
+            }
+            
+            header .flex.items-center {
+                gap: 8px;
+            }
+            
+            .signal-card .alpha-big {
+                font-size: 20px;
+            }
+        }
+        
+        /* Touch targets plus grands sur mobile */
+        @media (hover: none) and (pointer: coarse) {
+            .signal-card {
+                min-height: 80px;
+            }
+            .tab {
+                min-height: 44px;
+                display: flex;
+                align-items: center;
+            }
+            button, a {
+                min-height: 44px;
+                min-width: 44px;
+            }
+        }
     </style>
 </head>
 <body class="text-sm">
@@ -260,7 +423,7 @@
     </section>
 
     <!-- 2. KPI BAR -->
-    <section class="grid grid-cols-5 gap-4 px-6 py-4 border-b border-green-900/30">
+    <section id="kpi-bar" class="grid grid-cols-5 gap-4 px-6 py-4 border-b border-green-900/30">
         <div class="glass p-4">
             <div class="text-xs text-gray-500 mb-1">CAPITAL</div>
             <div class="text-xl font-bold" id="kpi-capital">10,000.00 €</div>
@@ -284,8 +447,8 @@
     </section>
 
     <!-- 3. MIDDLE SECTION -->
-    <section class="flex px-6 py-4 gap-4" style="height: 300px;">
-        <!-- Heatmap (70%) -->
+    <section id="heatmap-section" class="flex px-6 py-4 gap-4" style="height: 300px;">
+        <!-- Heatmap (70% desktop, 100% mobile) -->
         <div class="glass flex flex-col" style="width: 70%;">
             <div class="flex justify-between items-center p-3 border-b border-green-900/20">
                 <h3 class="text-xs uppercase tracking-wider text-gray-400">Market Heatmap — Alpha par Sport (24h)</h3>
@@ -314,8 +477,8 @@
             </div>
         </div>
         
-        <!-- Console (30%) -->
-        <div class="console flex flex-col" style="width: 30%;">
+        <!-- Console (30%) - Masquée sur mobile -->
+        <div id="console-panel" class="console flex flex-col" style="width: 30%;">
             <div class="flex justify-between items-center p-2 border-b border-green-900/20 bg-green-900/10">
                 <span class="text-xs uppercase tracking-wider">Console PAIM</span>
                 <span class="text-xs text-gray-500">Auto-scroll</span>
@@ -330,20 +493,20 @@
     </section>
 
     <!-- 4. NAVIGATION -->
-    <nav class="flex px-6 border-b border-green-900/30">
-        <div class="tab active" onclick="showTab('control')">Contrôle</div>
-        <div class="tab" onclick="showTab('live')">Live Signals</div>
-        <div class="tab" onclick="showTab('ledger')">Ledger</div>
-        <div class="tab" onclick="showTab('audit')">Audit</div>
+    <nav class="flex px-4 md:px-6 border-b border-green-900/30 overflow-x-auto">
+        <div class="tab active flex-shrink-0" onclick="showTab(this, 'control')">📊 Contrôle</div>
+        <div class="tab flex-shrink-0" onclick="showTab(this, 'live')">⚡ Signaux</div>
+        <div class="tab flex-shrink-0" onclick="showTab(this, 'ledger')">📒 Ledger</div>
+        <div class="tab flex-shrink-0" onclick="showTab(this, 'audit')">🔍 Audit</div>
     </nav>
 
     <!-- 5. TAB CONTENT -->
-    <main class="px-6 py-4">
+    <main class="px-3 md:px-6 py-4">
         <!-- Control Tab -->
         <div id="tab-control" class="tab-content active">
-            <div class="glass p-6 text-center">
+            <div class="glass p-4 md:p-6 text-center">
                 <h3 class="text-lg mb-4">Panneau de Contrôle</h3>
-                <button onclick="triggerScan()" class="px-8 py-3 bg-green-900/30 border border-green-600 text-green-400 hover:bg-green-900/50 transition-all rounded">
+                <button onclick="triggerScan()" class="w-full md:w-auto px-8 py-4 bg-green-900/30 border border-green-600 text-green-400 hover:bg-green-900/50 transition-all rounded font-bold">
                     ▶ DÉCLENCHER SCAN PAIM
                 </button>
                 <p class="text-xs text-gray-500 mt-4">Cycle automatique: toutes les 5 minutes</p>
@@ -352,7 +515,7 @@
         
         <!-- Live Signals Tab -->
         <div id="tab-live" class="tab-content">
-            <div id="signal-grid" class="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
+            <div id="signal-grid" class="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-3 md:gap-4">
                 <!-- Signal cards injected here -->
                 <div class="text-center py-12 text-gray-600">
                     <p class="text-4xl mb-4">📡</p>
@@ -405,7 +568,7 @@
     </main>
 
     <!-- Modal -->
-    <div id="signal-modal" class="modal-overlay" onclick="closeModal(event)">
+    <div id="signal-modal" class="modal-overlay" onclick="closeModal(this)">
         <div class="modal-content" onclick="event.stopPropagation()">
             <div class="flex justify-between items-center p-4 border-b border-green-900/30">
                 <h3 id="modal-title" class="text-lg font-bold">Signal Details</h3>
@@ -483,11 +646,11 @@
         }
 
         // Tab switching
-        function showTab(tabId) {
+        function showTab(element, tabId) {
             document.querySelectorAll('.tab').forEach(t => t.classList.remove('active'));
             document.querySelectorAll('.tab-content').forEach(c => c.classList.remove('active'));
             
-            event.target.classList.add('active');
+            element.classList.add('active');
             document.getElementById('tab-' + tabId).classList.add('active');
         }
 
@@ -531,9 +694,12 @@
             document.getElementById('signal-modal').classList.add('active');
         }
 
-        function closeModal(e) {
-            if (!e || e.target.id === 'signal-modal') {
-                document.getElementById('signal-modal').classList.remove('active');
+        function closeModal(el) {
+            // Si el est l'élément modal lui-même (quand appelé via onclick sur le modal)
+            // ou si c'est un event (quand appelé via event bubbling)
+            const modal = document.getElementById('signal-modal');
+            if (!el || el.id === 'signal-modal' || (el.target && el.target.id === 'signal-modal')) {
+                modal.classList.remove('active');
             }
         }
 
