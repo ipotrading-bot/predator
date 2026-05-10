@@ -43,7 +43,7 @@ class Settings(BaseSettings):
     min_ev_threshold: float = Field(default=0.010, ge=0.005)  # 1.0% display min (Mode Hunter)
     alpha_display_min: float = Field(default=0.010)            # 1.0% → affiché (baisse pour flux)
     alpha_elite_min: float = Field(default=0.025)              # 2.5% → ELITE gold border
-    min_snr_ratio: float = Field(default=1.5, ge=0.5)
+    min_snr_ratio: float = Field(default=0.5, ge=0.1)
     kelly_fraction: float = Field(default=0.25)
     max_single_stake_pct: float = Field(default=0.03)   # 3% max par pari
     max_drawdown_pct: float = Field(default=0.15)
@@ -142,39 +142,39 @@ class Settings(BaseSettings):
     # Soccer: 2.5% (marché efficient) | MLB: 1.8% | NHL/MMA: 2.0%
     alpha_thresholds: dict[str, float] = Field(default={
         # ═══ BASKETBALL ═══
-        "basketball_nba": 0.020,
-        "basketball_euroleague": 0.020,
-        "basketball_ncaab": 0.020,
-        "basketball_spain_liga_acb": 0.020,
-        "basketball_wnba": 0.020,
+        "basketball_nba": 0.010,
+        "basketball_euroleague": 0.010,
+        "basketball_ncaab": 0.010,
+        "basketball_spain_liga_acb": 0.010,
+        "basketball_wnba": 0.010,
         # ═══ TENNIS ═══
-        "tennis_atp_french_open": 0.020,
-        "tennis_atp_wimbledon": 0.020,
-        "tennis_atp_us_open": 0.020,
-        "tennis_atp_aus_open": 0.020,
-        "tennis_atp_masters_1000": 0.020,
-        "tennis_wta": 0.020,
+        "tennis_atp_french_open": 0.010,
+        "tennis_atp_wimbledon": 0.010,
+        "tennis_atp_us_open": 0.010,
+        "tennis_atp_aus_open": 0.010,
+        "tennis_atp_masters_1000": 0.010,
+        "tennis_wta": 0.010,
         # ═══ SOCCER ═══
-        "soccer_epl": 0.025,
-        "soccer_uefa_champs_league": 0.025,
-        "soccer_uefa_europa_league": 0.025,
-        "soccer_germany_bundesliga": 0.025,
-        "soccer_spain_la_liga": 0.025,
-        "soccer_italy_serie_a": 0.025,
-        "soccer_france_ligue_1": 0.025,
-        # ═══ ESPORTS (Seuil bas = latence maximale) ═══
-        "esports_lol": 0.015,
-        "esports_lol_msi": 0.015,
-        "esports_lol_lpl": 0.015,
-        "esports_lol_lck": 0.015,
-        "esports_csgo_esl_pro_league": 0.015,
-        "esports_dota2_ti": 0.015,
+        "soccer_epl": 0.010,
+        "soccer_uefa_champs_league": 0.010,
+        "soccer_uefa_europa_league": 0.010,
+        "soccer_germany_bundesliga": 0.010,
+        "soccer_spain_la_liga": 0.010,
+        "soccer_italy_serie_a": 0.010,
+        "soccer_france_ligue_1": 0.010,
+        # ═══ ESPORTS ═══
+        "esports_lol": 0.010,
+        "esports_lol_msi": 0.010,
+        "esports_lol_lpl": 0.010,
+        "esports_lol_lck": 0.010,
+        "esports_csgo_esl_pro_league": 0.010,
+        "esports_dota2_ti": 0.010,
         # ═══ AUTRES ═══
-        "baseball_mlb": 0.018,
-        "icehockey_nhl": 0.020,
-        "mma_mixed_martial_arts": 0.020,
+        "baseball_mlb": 0.010,
+        "icehockey_nhl": 0.010,
+        "mma_mixed_martial_arts": 0.010,
         # ═══ DEFAULT ═══
-        "default": 0.020,
+        "default": 0.010,
     })
 
     # ── Synonyms ──────────────────────────────────────────────

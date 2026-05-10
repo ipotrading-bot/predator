@@ -135,6 +135,43 @@ class OddsFetcher:
             logger.error(f"Erreur nettoyage signaux: {e}")
             return 0
 
+    def fetch_all_upcoming(self) -> list[dict]:
+        """
+        Stratégie double:
+        1. Essaie l'endpoint global /sports/upcoming/odds/
+        2. Si 0 résultats → fallback parallèle par sport (ThreadPoolExecutor)
+        """
+        events = self.fetch_upcoming_odds()
+        if events:
+            return events
+
+        logger.warning("⚠️ Global endpoint vide → fallback scan parallèle par sport")
+        return self._parallel_sport_scan(settings.target_sports[:10])
+
+    def _parallel_sport_scan(self, sports: list[str]) -> list[dict]:
+        """Scan N sports en parallèle (ThreadPoolExecutor, max 3 workers)."""
+        from concurrent.futures import ThreadPoolExecutor, as_completed
+        all_events: list[dict] = []
+
+        with ThreadPoolExecutor(max_workers=3) as ex:
+            futures = {ex.submit(self.fetch_sport_odds, s): s for s in sports}
+            for fut in as_completed(futures, timeout=30):
+                try:
+                    all_events.extend(fut.result() or [])
+                except Exception as e:
+                    logger.warning(f"Scan sport échoué: {futures[fut]} — {e}")
+
+        seen: set[str] = set()
+        unique: list[dict] = []
+        for e in all_events:
+            eid = e.get("id", "")
+            if eid and eid not in seen:
+                seen.add(eid)
+                unique.append(e)
+
+        logger.info(f"🔄 Parallel scan: {len(unique)} événements uniques ({len(sports)} sports)")
+        return unique
+
     def get_quota_status(self) -> dict:
         return {
             "remaining_requests": self._remaining_requests,

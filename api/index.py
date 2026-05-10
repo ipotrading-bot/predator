@@ -511,6 +511,69 @@ def healthcheck():
     return jsonify({"status": "ok", "version": "3.0.0", "ts": int(datetime.now().timestamp())})
 
 
+@app.route('/api/oracle')
+def gemini_oracle():
+    """
+    Oracle Gemini v6.0 — Détection proactive des inefficiences de marché.
+    Analyse les événements disponibles et identifie les plus prometteurs.
+    """
+    try:
+        from data.odds_fetcher import OddsFetcher
+        import google.generativeai as genai
+        from config import settings as cfg
+
+        fetcher = OddsFetcher()
+        events = fetcher.fetch_all_upcoming()
+
+        if not events:
+            return jsonify({"oracle": [], "message": "Aucun événement disponible", "total": 0})
+
+        # Préparer le résumé des événements pour Gemini
+        event_list = []
+        for e in events[:40]:
+            bm_keys = [b.get("key", "") for b in e.get("bookmakers", [])]
+            event_list.append({
+                "match": f"{e.get('home_team','?')} vs {e.get('away_team','?')}",
+                "sport": e.get("sport_key", ""),
+                "time": e.get("commence_time", ""),
+                "books": bm_keys[:6],
+            })
+
+        prompt = f"""Tu es un analyste expert en value betting quantitatif.
+
+Voici {len(event_list)} matchs disponibles dans les 48h:
+{chr(10).join(f"- {e['match']} ({e['sport']}) — Books: {e['books']}" for e in event_list[:25])}
+
+Identifie les 5 matchs avec le plus fort potentiel d'inefficience de marché basé sur:
+1. Sport avec marchés moins efficients (esports, NBA nuit, tennis ITF)
+2. Présence de bookmakers sharp ET soft dans la même cote
+3. Matchs où l'écart public/sharp est historiquement élevé
+
+Réponds en JSON strict:
+[{{"match": "...", "sport": "...", "reason": "...", "side": "...", "confidence": 0.0-1.0}}]
+Retourne UNIQUEMENT le JSON, pas de texte autour."""
+
+        genai.configure(api_key=cfg.gemini_api_key)
+        model = genai.GenerativeModel("gemini-2.0-flash-exp")
+        resp = model.generate_content(prompt)
+        text = resp.text.strip()
+
+        # Extraire le JSON de la réponse
+        import json as _json, re as _re
+        json_match = _re.search(r'\[.*?\]', text, _re.DOTALL)
+        oracle_signals = _json.loads(json_match.group()) if json_match else []
+
+        return jsonify({
+            "oracle": oracle_signals,
+            "total_events_analyzed": len(events),
+            "quota": fetcher.get_quota_status(),
+        })
+
+    except Exception as e:
+        logger.error(f"Erreur Oracle: {e}")
+        return jsonify({"oracle": [], "error": str(e)}), 500
+
+
 @app.route('/api/test-telegram')
 def test_telegram():
     """Teste la connectivité Telegram et envoie un message de diagnostic."""

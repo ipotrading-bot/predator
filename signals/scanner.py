@@ -320,9 +320,9 @@ class MarketScanner:
         logger.info(f"   Sports: {', '.join(settings.target_sports[:5])}{'...' if sport_count > 5 else ''}")
 
         try:
-            events = self.fetcher.fetch_upcoming_odds()
+            events = self.fetcher.fetch_all_upcoming()
 
-            # Filtre 48h (sécurité côté Python, commenceTimeTo déjà envoyé à l'API)
+            # Filtre 48h (double sécurité côté Python)
             events = [
                 e for e in events
                 if _is_within_window(e.get("commence_time", ""), SCAN_WINDOW_HOURS)
@@ -485,11 +485,10 @@ class MarketScanner:
         if not bookmakers:
             return []
 
-        # Probabilités sharp via Shin Method avec fallback multi-bookmaker
-        # 🔧 v5.5: Utiliser _extract_market_odds_with_fallback pour les cotes manquantes
-        sharp_odds = self._extract_market_odds_with_fallback(bookmakers, sport=sport)
+        # v6.0: Extraction hiérarchique — Pinnacle/Betfair → DNB soccer → Consensus fallback
+        sharp_odds, effective_market_key = self._get_reference_odds(bookmakers, sport)
         if not sharp_odds:
-            logger.debug(f"⏭️ Pas de sharp odds binaires pour {event_name}")
+            logger.debug(f"⏭️ Aucune référence fair price pour {event_name}")
             return []
 
         # Vérifier qu'au moins un soft book est présent dans cet événement
@@ -503,169 +502,127 @@ class MarketScanner:
             logger.warning(f"📰 News bloquante: {event_name} ({news_impact.impact_score:.0%})")
             return []
 
+        # ─────────────────────────────────────────────────────────
+        # v6.0: Itération directe sur les sélections du fair price
+        # Plus de dépendance à la présence de Pinnacle dans bookmakers
+        # ─────────────────────────────────────────────────────────
         validated: list[ArbitrageDossier] = []
+        meta = {"event_name": event_name, "sport": sport, "commence_time": commence_time}
 
-        # Itérer sur les marchés du sharp book pour avoir la liste des sélections
-        for sharp_bm in bookmakers:
-            if sharp_bm.get("key", "").lower() not in [s.lower() for s in settings.sharp_books]:
+        for selection, sharp_prob in sharp_odds.items():
+            if not sharp_prob or sharp_prob <= 0 or sharp_prob >= 1:
                 continue
 
-            for sharp_market in sharp_bm.get("markets", []):
-                sharp_market_key = sharp_market.get("key", "")
-                if sharp_market_key not in ("h2h", "spreads", "totals"):
-                    continue
+            # BEST-PRICE: essaie le marché de référence, puis h2h en fallback
+            soft_odds_val, bm_name = _get_best_soft_odds(
+                bookmakers, market_key=effective_market_key, selection=selection
+            )
+            if not soft_odds_val and effective_market_key != "h2h":
+                soft_odds_val, bm_name = _get_best_soft_odds(
+                    bookmakers, market_key="h2h", selection=selection
+                )
+            if not soft_odds_val:
+                continue
 
-                raw_outcomes = sharp_market.get("outcomes", [])
-                
-                # ═══════════════════════════════════════════════════════════════════
-                # DOCTRINE BINARY SYNTHESIS STRICTE (PhD MIT Protocol v4.1)
-                # Rejeter TOUT marché avec 3 issues (incluant Draw)
-                # Uniquement Bernoulli Trials: Pile ou Face mathématique
-                # ═══════════════════════════════════════════════════════════════════
-                
-                # Étape 1: Vérification binaire stricte
-                if len(raw_outcomes) == 3:
-                    # Marché 1N2 détecté - Rejet immédiat selon doctrine Zéro Nul
-                    logger.debug(f"🚫 BINARY VIOLATION: {event_name} | Marché 1N2 à 3 issues rejeté")
-                    continue
-                
-                if len(raw_outcomes) != 2:
-                    # Ni binaire, ni trinaire - marché exotique, on skip
-                    logger.debug(f"🚫 Marché non-binaire: {event_name} | {len(raw_outcomes)} issues")
-                    continue
-                
-                # Étape 2: Pour Soccer, privilégier spreads (AH 0.0) uniquement
-                if "soccer" in sport and sharp_market_key == "h2h":
-                    # Soccer en h2h = risque de nul caché, on préfère spreads
-                    logger.debug(f"🚫 SOCCER H2H rejeté: {event_name} | Utiliser spreads AH 0.0")
-                    continue
-                
-                # Étape 3: Vérification finale - aucun outcome ne doit être "Draw"
-                if any(o.get("name", "").lower() in ("draw", "nul", "match nul") for o in raw_outcomes):
-                    logger.warning(f"🚫 DRAW DETECTED: {event_name} | Marché rejeté (Binary Synthesis)")
-                    continue
+            # Seuil EV par sport (1% baseline)
+            alpha_floor = settings.alpha_thresholds.get(
+                sport, settings.alpha_thresholds.get("default", 0.010)
+            )
+            sport_threshold = min(self.engine.min_ev_threshold, alpha_floor)
 
-                outcomes_to_process = raw_outcomes
-                effective_market_key = sharp_market_key
+            signal = self.engine.evaluate_signal(
+                event_id=event_id,
+                market_key=effective_market_key,
+                selection=selection,
+                bookmaker_target=bm_name,
+                sharp_prob=sharp_prob,
+                soft_odds=soft_odds_val,
+                bankroll=self.bankroll,
+                min_ev=sport_threshold,
+                min_snr=settings.min_snr_ratio,
+            )
+            if signal is None:
+                continue
 
-                for outcome in outcomes_to_process:
-                    selection    = outcome.get("name", "")
-                    sharp_prob   = sharp_odds.get(selection)
-                    if not sharp_prob:
-                        continue
+            dossier = ArbitrageDossier(signal=signal, meta=meta, news_impact=news_impact)
+            dossier.news_ok = (news_impact is None or not news_impact.market_moving)
+            if not dossier.news_ok:
+                continue
 
-                    # ── BEST-PRICE Multi-Bookmaker Logic ──────
-                    # Compare tous les softs et choisit le meilleur EV+
-                    soft_odds_val, bm_name = _get_best_soft_odds(
-                        bookmakers,
-                        market_key=effective_market_key,
-                        selection=selection,
+            # ── Groq — ADVISORY (score, ne bloque plus) ───────
+            try:
+                groq_result = await groq_client.quick_filter({
+                    "sport":             sport,
+                    "market_key":        effective_market_key,
+                    "selection":         selection,
+                    "ev_plus":           round(signal.ev_plus * 100, 2),
+                    "sharp_prob":        round(signal.sharp_prob * 100, 2),
+                    "implied_prob_soft": round(signal.implied_prob_soft * 100, 2),
+                    "snr_ratio":         round(signal.snr_ratio, 2),
+                    "recommended_stake": signal.recommended_stake,
+                })
+                dossier.groq_ok         = groq_result.get("approved", True)
+                dossier.groq_confidence = groq_result.get("confidence", 0.5)
+                if not dossier.groq_ok:
+                    logger.info(f"ℹ️ Groq advisory: {event_name} — signal conservé")
+            except Exception:
+                dossier.groq_ok = True
+                dossier.groq_confidence = 0.5
+
+            # ── Perplexity (EV+ > 2% seulement, hard block si 0.9+) ──
+            if signal.ev_plus >= 0.02 and perplexity_grounding.is_available():
+                try:
+                    perp = await asyncio.wait_for(
+                        perplexity_grounding.verify_factual_claim(
+                            query_text=f"{event_name} lineup injuries",
+                            context_type="injury",
+                        ),
+                        timeout=8.0,
                     )
-
-                    # Seuil: respecte l'override engine.min_ev_threshold (plancher 1%)
-                    alpha_floor = settings.alpha_thresholds.get(
-                        sport, settings.alpha_thresholds.get("default", 0.020)
-                    )
-                    sport_threshold = min(self.engine.min_ev_threshold, alpha_floor)
-                    
-                    signal = self.engine.evaluate_signal(
-                        event_id=event_id,
-                        market_key=effective_market_key,
-                        selection=selection,
-                        bookmaker_target=bm_name,
-                        sharp_prob=sharp_prob,
-                        soft_odds=soft_odds_val,
-                        bankroll=self.bankroll,
-                        min_ev=sport_threshold,  # Seuil dynamique par sport
-                        min_snr=settings.min_snr_ratio,
-                    )
-                    if signal is None:
+                    dossier.perplexity_ok      = perp.is_reliable
+                    dossier.perplexity_summary = perp.summary
+                    if perp.verified and perp.confidence >= 0.9 and "OUT" in perp.summary.upper():
+                        logger.warning(f"🔍 Perplexity block (confiance 90%+): {event_name}")
                         continue
+                except asyncio.TimeoutError:
+                    dossier.perplexity_ok      = True
+                    dossier.perplexity_summary = "Timeout"
+            else:
+                dossier.perplexity_ok      = True
+                dossier.perplexity_summary = "N/A"
 
-                    meta = {
-                        "event_name":    event_name,
-                        "sport":         sport,
-                        "commence_time": commence_time,
-                    }
-                    dossier = ArbitrageDossier(signal=signal, meta=meta, news_impact=news_impact)
+            # ── Gemini — ADVISORY (ne bloque plus) ────────────
+            gemini_ctx = _build_gemini_context(
+                event_name, effective_market_key, signal, news_impact,
+                dossier.perplexity_summary
+            )
+            try:
+                loop = asyncio.get_event_loop()
+                gemini_response = await asyncio.wait_for(
+                    loop.run_in_executor(
+                        self._executor,
+                        check_market_red_flags,
+                        gemini_ctx,
+                        effective_market_key,
+                    ),
+                    timeout=8.0,
+                )
+            except Exception:
+                gemini_response = "✅ Math-Only"
 
-                    # ── News ───────────────────────────────────
-                    dossier.news_ok = (news_impact is None or not news_impact.market_moving)
-                    if not dossier.news_ok:
-                        continue
+            dossier.gemini_ok      = not ("🚨 RED FLAG" in (gemini_response or ""))
+            dossier.gemini_context = gemini_response or "✅ Math-Only"
+            if not dossier.gemini_ok:
+                logger.info(f"ℹ️ Gemini advisory: {event_name} — signal conservé")
 
-                    # ── Groq ───────────────────────────────────
-                    groq_result = await groq_client.quick_filter({
-                        "sport":             sport,
-                        "market_key":        effective_market_key,
-                        "selection":         selection,
-                        "ev_plus":           round(signal.ev_plus * 100, 2),
-                        "sharp_prob":        round(signal.sharp_prob * 100, 2),
-                        "implied_prob_soft": round(signal.implied_prob_soft * 100, 2),
-                        "snr_ratio":         round(signal.snr_ratio, 2),
-                        "recommended_stake": signal.recommended_stake,
-                    })
-                    dossier.groq_ok         = groq_result.get("approved", True)
-                    dossier.groq_confidence = groq_result.get("confidence", 0.5)
-                    if not dossier.groq_ok:
-                        continue
+            signal.ai_context = dossier.gemini_context
+            validated.append(dossier)
 
-                    # ── Perplexity (EV+ > 2% seulement) ───────
-                    if signal.ev_plus >= 0.02 and perplexity_grounding.is_available():
-                        try:
-                            perp = await asyncio.wait_for(
-                                perplexity_grounding.verify_factual_claim(
-                                    query_text=f"{event_name} lineup injuries",
-                                    context_type="injury",
-                                ),
-                                timeout=10.0,
-                            )
-                            dossier.perplexity_ok      = perp.is_reliable
-                            dossier.perplexity_summary = perp.summary
-                            if perp.verified and perp.confidence >= 0.8 and "OUT" in perp.summary.upper():
-                                logger.warning(f"🔍 Perplexity rejet: {event_name}")
-                                continue
-                        except asyncio.TimeoutError:
-                            dossier.perplexity_ok      = True
-                            dossier.perplexity_summary = "Timeout Perplexity — approuvé par défaut"
-                    else:
-                        dossier.perplexity_ok      = True
-                        dossier.perplexity_summary = "Non vérifié"
-
-                    # ── Gemini (timeout 10s) ───────────────────
-                    gemini_ctx = _build_gemini_context(event_name, effective_market_key, signal, news_impact, dossier.perplexity_summary)
-                    try:
-                        loop = asyncio.get_event_loop()
-                        gemini_response = await asyncio.wait_for(
-                            loop.run_in_executor(
-                                self._executor,
-                                check_market_red_flags,
-                                gemini_ctx,
-                                effective_market_key,
-                            ),
-                            timeout=10.0,
-                        )
-                    except asyncio.TimeoutError:
-                        gemini_response = "✅ Analyse technique validée (Math-Only)"
-                    except Exception as e:
-                        gemini_response = "✅ Analyse technique validée (Math-Only)"
-                        logger.warning(f"Gemini erreur: {e}")
-
-                    dossier.gemini_ok      = not (gemini_response and "🚨 RED FLAG" in gemini_response)
-                    dossier.gemini_context = gemini_response or "✅ Analyse technique validée (Math-Only)"
-
-                    if not dossier.gemini_ok:
-                        logger.warning(f"🚨 Gemini red flag: {event_name} | {gemini_response[:80]}")
-                        continue
-
-                    signal.ai_context = dossier.gemini_context
-                    validated.append(dossier)
-
-                    logger.info(
-                        f"✅ SIGNAL: {event_name} | {selection} "
-                        f"| EV+={signal.ev_plus:.2%} | SNR={signal.snr_ratio:.2f} "
-                        f"| {bm_name}={soft_odds_val:.3f} | {dossier.sources_badge}"
-                    )
+            logger.info(
+                f"✅ SIGNAL v6: {event_name} | {selection} "
+                f"| EV+={signal.ev_plus:.2%} | {bm_name}={soft_odds_val:.2f} "
+                f"| marché={effective_market_key}"
+            )
 
         return validated
 
@@ -673,122 +630,119 @@ class MarketScanner:
     # Extraction sharp odds (Shin Method)
     # ─────────────────────────────────────────────────────────────
 
-    def _extract_sharp_odds(self, bookmakers: list[dict], sport: str = "") -> dict[str, float]:
+    def _get_reference_odds(
+        self, bookmakers: list[dict], sport: str
+    ) -> tuple[dict[str, float], str]:
         """
-        Extrait les probabilités sharp via Shin Method.
-        
-        GARDE-FOU BINAIRE STRICT:
-        - Rejette si != 2 outcomes (doctrine Zéro Nul)
-        - Rejette si un outcome s'appelle "Draw"
-        - Pour soccer: uniquement spreads (pas h2h)
-        - Supporte: h2h, spreads, totals (Over/Under binaires)
+        v6.0 — Extraction hiérarchique des fair prices (Shin Method).
+
+        Ordre de priorité :
+        1. Pinnacle/Betfair spreads (soccer AH 0.0, binaire natif)
+        2. Pinnacle/Betfair h2h → DNB normalization (soccer 3-way → H vs A)
+        3. Pinnacle/Betfair h2h ou totals (NBA, Tennis, MLB — déjà binaire)
+        4. Consensus Betfair/bet365/unibet/williamhill (si aucun sharp présent)
+
+        Returns:
+            (odds_dict: {selection: fair_prob}, market_key: str)
         """
+        is_soccer = "soccer" in sport
+        sharp_book_keys = [s.lower() for s in settings.sharp_books]
+
+        # ── Priorité 1 & 2 : Sharp books ─────────────────────────
         for bm in bookmakers:
-            if bm.get("key", "").lower() not in [s.lower() for s in settings.sharp_books]:
+            if bm.get("key", "").lower() not in sharp_book_keys:
                 continue
-            
             markets = bm.get("markets", [])
-            
-            # Pour soccer: privilégier spreads (AH 0.0), rejeter h2h
-            if "soccer" in sport:
+
+            if is_soccer:
+                # 1a: Spreads AH (binaire nativement)
                 for market in markets:
                     if market.get("key") != "spreads":
                         continue
-                    outcomes = market.get("outcomes", [])
-                    # Doctine binaire: exactement 2 issues
-                    if len(outcomes) != 2:
-                        continue
-                    # Vérification: pas de Draw
-                    if any(o.get("name", "").lower() == "draw" for o in outcomes):
-                        continue
-                    raw_odds = [o["price"] for o in outcomes if o.get("price", 0) > 1.0]
-                    if len(raw_odds) != 2:
-                        continue
-                    try:
-                        shin_probs = calculate_shin_probabilities(raw_odds)
-                    except Exception as e:
-                        logger.warning(f"Shin échoué: {e}")
-                        continue
-                    return {outcomes[i]["name"]: shin_probs[i] for i in range(2)}
-            
-            # Pour autres sports (NBA, Tennis, etc.): h2h puis totals
-            for market in markets:
-                if market.get("key") not in ("h2h", "totals"):
-                    continue
-                outcomes = market.get("outcomes", [])
-                
-                # ═══════════════════════════════════════════════════════════════════
-                # DOCTRINE BINAIRE STRICTE: exactement 2 outcomes
-                # ═══════════════════════════════════════════════════════════════════
-                if len(outcomes) != 2:
-                    logger.debug(f"🚫 Shin: Rejet marché {len(outcomes)} issues")
-                    continue
-                
-                # Vérification: aucun outcome ne doit s'appeler "Draw"
-                if any(o.get("name", "").lower() == "draw" for o in outcomes):
-                    logger.warning(f"🚫 Shin: Rejet marché avec Draw")
-                    continue
-                
-                raw_odds = [o["price"] for o in outcomes if o.get("price", 0) > 1.0]
-                if len(raw_odds) != 2:
-                    continue
-                
-                try:
-                    shin_probs = calculate_shin_probabilities(raw_odds)
-                except Exception as e:
-                    logger.warning(f"Shin échoué: {e}")
-                    continue
-                
-                # Mapping nom -> probabilité (ordre préservé)
-                return {outcomes[0]["name"]: shin_probs[0], outcomes[1]["name"]: shin_probs[1]}
-        
-        return {}
+                    non_draw = [
+                        o for o in market.get("outcomes", [])
+                        if "draw" not in o.get("name", "").lower() and o.get("price", 0) > 1.0
+                    ]
+                    if len(non_draw) >= 2:
+                        try:
+                            probs = calculate_shin_probabilities([o["price"] for o in non_draw[:2]])
+                            return ({non_draw[i]["name"]: probs[i] for i in range(2)}, "spreads")
+                        except Exception:
+                            pass
 
-    def _extract_market_odds_with_fallback(self, bookmakers: list[dict], sport: str = "") -> dict[str, float]:
-        """
-        🔧 Pinnacle Fallback v5.5
-        Si Shin Method échoue sur Pinnacle (cotes manquantes),
-        prend la MOYENNE des 3 plus gros bookmakers comme Fair Price.
-        
-        Fallback ordre: Betfair > bet365 > unibet > williamhill
-        """
-        # Essayer Pinnacle Shin d'abord
-        sharp = self._extract_sharp_odds(bookmakers, sport)
-        if sharp:
-            return sharp
-        
-        # Pinnacle absent → fallback multi-bookmaker
-        fallback_bm_keys = ["betfair_ex_back", "bet365", "unibet", "williamhill"]
-        collected_odds = []
-        
+                # 1b: H2H → DNB (Shin 3-way puis normalisation H/A)
+                for market in markets:
+                    if market.get("key") != "h2h":
+                        continue
+                    outcomes = [o for o in market.get("outcomes", []) if o.get("price", 0) > 1.0]
+                    if len(outcomes) >= 2:
+                        try:
+                            probs = calculate_shin_probabilities([o["price"] for o in outcomes])
+                            non_draw_pairs = [
+                                (outcomes[i]["name"], probs[i]) for i in range(len(outcomes))
+                                if "draw" not in outcomes[i].get("name", "").lower()
+                            ]
+                            if len(non_draw_pairs) >= 2:
+                                total = sum(p for _, p in non_draw_pairs)
+                                if total > 0:
+                                    dnb = {n: p / total for n, p in non_draw_pairs[:2]}
+                                    logger.info(f"🔧 Soccer DNB: {list(dnb.keys())}")
+                                    return (dnb, "h2h")
+                        except Exception:
+                            pass
+            else:
+                # Non-soccer: h2h (NBA, Tennis) ou totals (Over/Under)
+                for market in markets:
+                    if market.get("key") not in ("h2h", "totals"):
+                        continue
+                    non_draw = [
+                        o for o in market.get("outcomes", [])
+                        if "draw" not in o.get("name", "").lower() and o.get("price", 0) > 1.0
+                    ]
+                    if len(non_draw) >= 2:
+                        try:
+                            probs = calculate_shin_probabilities([o["price"] for o in non_draw[:2]])
+                            return ({non_draw[i]["name"]: probs[i] for i in range(2)}, market.get("key", "h2h"))
+                        except Exception:
+                            pass
+
+        # ── Priorité 3 : Consensus fallback (sans Pinnacle) ──────
+        fallback_keys = {"betfair_ex_back", "bet365", "unibet", "williamhill", "bwin"}
+        collected: list[tuple[list, list]] = []
+        outcome_names: Optional[list[str]] = None
+        mkey_used = "h2h"
+
         for bm in bookmakers:
-            bm_key = bm.get("key", "").lower()
-            if bm_key not in [k.lower() for k in fallback_bm_keys]:
+            if bm.get("key", "").lower() not in fallback_keys:
                 continue
-            
             for market in bm.get("markets", []):
-                if market.get("key") not in ("h2h", "spreads", "totals"):
+                mkey = market.get("key", "")
+                if mkey not in ("h2h", "spreads"):
                     continue
-                outcomes = market.get("outcomes", [])
-                if len(outcomes) != 2:
-                    continue
-                raw = [o["price"] for o in outcomes if o.get("price", 0) > 1.0]
-                if len(raw) == 2:
-                    collected_odds.append((outcomes, raw))
-                    break  # Un marché par bookmaker suffit
-        
-        if len(collected_odds) >= 2:
-            # Prendre la moyenne des cotes comme référence Fair Price
-            avg_odds = [sum(o[1][i] for o in collected_odds) / len(collected_odds) for i in (0, 1)]
-            outcomes = collected_odds[0][0]
+                non_draw = [
+                    o for o in market.get("outcomes", [])
+                    if "draw" not in o.get("name", "").lower() and o.get("price", 0) > 1.0
+                ]
+                if len(non_draw) >= 2:
+                    raw = [o["price"] for o in non_draw[:2]]
+                    collected.append((non_draw[:2], raw))
+                    mkey_used = mkey
+                    if outcome_names is None:
+                        outcome_names = [o["name"] for o in non_draw[:2]]
+                    break
+            if len(collected) >= 3:
+                break
+
+        if len(collected) >= 2 and outcome_names:
+            avg = [sum(c[1][i] for c in collected) / len(collected) for i in range(2)]
             try:
-                shin_probs = calculate_shin_probabilities(avg_odds)
-                logger.info(f"🔧 FALLBACK Fair Price: moyenne de {len(collected_odds)} bookmakers")
-                return {outcomes[0]["name"]: shin_probs[0], outcomes[1]["name"]: shin_probs[1]}
+                probs = calculate_shin_probabilities(avg)
+                logger.info(f"🔧 Consensus {len(collected)} bookmakers → fair price ({mkey_used})")
+                return ({outcome_names[i]: probs[i] for i in range(2)}, mkey_used)
             except Exception:
                 pass
-        
-        return {}
+
+        return ({}, "h2h")
 
     # ─────────────────────────────────────────────────────────────
     # Persistance + notifications
