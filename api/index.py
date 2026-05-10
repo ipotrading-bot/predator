@@ -225,6 +225,24 @@ def screener():
         except Exception as e:
             logger.warning(f"clear_signals non critique: {e}")
 
+        # ── Étape 1b : Quota Guard — bloque si quota critique ──────────
+        try:
+            import requests as _rq
+            _qr = _rq.get(
+                "https://api.the-odds-api.com/v4/sports",
+                params={"apiKey": os.environ.get("ODDS_API_KEY","")},
+                timeout=5,
+            )
+            _remaining = int(_qr.headers.get("x-requests-remaining", 999))
+            if _remaining < 3:
+                return jsonify({
+                    "status": "quota_guard",
+                    "message": f"⛔ Quota API épuisé ({_remaining} requête(s) restante(s)). Réinitialisation mensuelle requise.",
+                    "remaining": _remaining,
+                })
+        except Exception:
+            pass
+
         # ── Étape 2 : Scan global upcoming (1% seuil display) ──────────
         scanner = MarketScanner(bankroll=settings.starting_bankroll)
         scanner.engine.min_ev_threshold = ALPHA_DISPLAY_MIN  # 1.0%

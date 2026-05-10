@@ -707,7 +707,7 @@ class MarketScanner:
                             pass
 
         # ── Priorité 3 : Consensus fallback (sans Pinnacle) ──────
-        fallback_keys = {"betfair_ex_back", "bet365", "unibet", "williamhill", "bwin"}
+        fallback_keys = {"betfair_ex_eu", "betfair_ex_back", "bet365", "unibet", "williamhill", "bwin"}
         collected: list[tuple[list, list]] = []
         outcome_names: Optional[list[str]] = None
         mkey_used = "h2h"
