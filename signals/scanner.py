@@ -34,11 +34,11 @@ from api.perplexity_client import perplexity_grounding
 logger = logging.getLogger(__name__)
 
 # Fenêtre de scan : T+0h à T+48h (Alpha Decay doctrine)
-SCAN_WINDOW_HOURS = 12
+SCAN_WINDOW_HOURS = 48
 
 # Mots-clés fuzzy pour identifier les soft books 1XBet
 # The-Odds-API peut retourner : onexbet, 1xbet, 1xbit, 1xstavka, 1x_bet, etc.
-_SOFT_FUZZY_PATTERNS = ("1x", "one", "onex")
+_SOFT_FUZZY_PATTERNS = ("1x", "one", "onex", "1xbet")
 
 
 def _is_soft_book(bm_key: str) -> bool:
@@ -332,6 +332,15 @@ class MarketScanner:
                 result.duration_seconds = time.monotonic() - start
                 return result
 
+            # 🔧 Nettoyage des signaux expirés (matchs passés ou >48h)
+            try:
+                cleaned = await OddsFetcher.cleanup_expired_signals(self.db)
+
+                if cleaned > 0:
+                    logger.info(f"🧹 Interface nettoyée: {cleaned} signaux expirés supprimés")
+            except Exception as clean_e:
+                logger.warning(f"Nettoyage non critique: {clean_e}")
+
             news_cache = await self._prefetch_news(events)
             dossiers: list[ArbitrageDossier] = []
 
@@ -363,6 +372,7 @@ class MarketScanner:
             f"✅ Scan terminé | {result.events_analyzed} events "
             f"| {result.signals_validated} signaux | {result.duration_seconds}s"
         )
+        logger.info(f"[DEBUG] {result.events_analyzed} matchs reçus de l API, {result.signals_found} matchs binaires identifiés, {result.signals_validated} matchs validés > 1%")
         return result
 
     # ─────────────────────────────────────────────────────────────
@@ -433,6 +443,7 @@ class MarketScanner:
             f"✅ Rotation {sport_key} terminée | "
             f"{result.signals_validated} signaux | {result.duration_seconds}s"
         )
+        logger.info(f"[DEBUG] {result.events_analyzed} matchs reçus de l API, {result.signals_found} matchs binaires identifiés, {result.signals_validated} matchs validés > 1%")
         return result
 
     # ─────────────────────────────────────────────────────────────

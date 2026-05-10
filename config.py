@@ -66,7 +66,7 @@ class Settings(BaseSettings):
 
     # ── Bookmakers ────────────────────────────────────────────
     sharp_books: list[str] = Field(
-        default=["pinnacle"]
+        default=["pinnacle", "betfair_ex_back"]
     )
     soft_books: list[str] = Field(
         # Panel diversifié de soft books pour maximiser l'Alpha

@@ -1,6 +1,9 @@
 """
-data/odds_fetcher.py — Récupération des cotes via The-Odds-API
+data/odds_fetcher.py — Récupération des cotes via The-Odds-API v5.5
 Rate limiter intégré : 15 RPM max (1 req / 4s)
+
+Mode "Upcoming Global" — Un seul appel API pour TOUS les sports.
+Réécriture totale pour débloquer le moteur de scan.
 """
 from __future__ import annotations
 
@@ -41,10 +44,14 @@ class RateLimiter:
 
 class OddsFetcher:
     """
-    Client async pour The-Odds-API avec:
-    - Rate limiting (15 RPM)
-    - Retry exponentiel
-    - Parsing vers MarketOdds
+    Client async pour The-Odds-API v5.5 — Mode Upcoming Global.
+    
+    Changements v5.5:
+    - Un seul appel à l'endpoint `upcoming` au lieu de 30+ appels par sport
+    - Retourne TOUS les sports, TOUS les marchés (h2h, spreads, totals)
+    - Filtrage temporel délégué au scanner
+    - Log de diagnostic X/Y/Z pour le dashboard
+    - Nettoyage des signaux expirés
     """
 
     def __init__(self):
@@ -73,7 +80,6 @@ class OddsFetcher:
         params["apiKey"] = self.api_key
         response = await self._client.get(f"{BASE_URL}{endpoint}", params=params)
 
-        # ── CORRECTIF #1 : Vérification stricte du statut HTTP ────────────
         if response.status_code != 200:
             logger.error(
                 f"❌ Erreur API {response.status_code} sur {endpoint}: "
@@ -81,7 +87,6 @@ class OddsFetcher:
             )
             response.raise_for_status()
 
-        # ── CORRECTIF #2 : Détection de réponse HTML (Unexpected token <) ─
         content_type = response.headers.get("content-type", "")
         if "text/html" in content_type or response.text.strip().startswith("<"):
             logger.error(
@@ -102,7 +107,7 @@ class OddsFetcher:
         logger.debug(f"API quota restant: {self._remaining_requests} requêtes")
         return response.json()
 
-    # ── Endpoints ─────────────────────────────────────────────
+    # ── Endpoint UPCOMING (unique, tous sports) ────────────────
 
     async def fetch_odds(
         self,
@@ -125,12 +130,6 @@ class OddsFetcher:
     async def fetch_odds_for_sport(self, sport: str) -> list[dict]:
         """
         Récupère les cotes pour UN sport spécifique (protocole rotation).
-        
-        Args:
-            sport: Clé The-Odds-API (ex: 'basketball_nba')
-            
-        Returns:
-            list[dict]: Liste des événements avec cotes
         """
         all_books = settings.sharp_books + settings.soft_books
         return await self.fetch_odds(
@@ -140,26 +139,84 @@ class OddsFetcher:
         )
 
     async def fetch_all_sports_odds(self) -> list[dict]:
-        """Scan complet de tous les sports cibles en parallèle."""
+        """
+        🚀 MODE UPCOMING GLOBAL v5.5 — Un seul appel pour TOUS les sports.
+        
+        Utilise l'endpoint /sports/upcoming/odds/ qui retourne tous les matchs
+        à venir dans toutes les disciplines, dans une seule réponse JSON.
+        
+        Avantages:
+        - 1 requête API au lieu de 30+
+        - Pas de trous entre les sports
+        - Consomme 1/30ème du quota
+        - Détecte automatiquement les nouveaux sports
+        
+        Returns:
+            list[dict]: Tous les événements upcoming avec cotes
+        """
         all_books = settings.sharp_books + settings.soft_books
-
-        tasks = [
-            self.fetch_odds(
-                sport=sport,
-                markets="h2h,spreads,totals",
-                bookmakers=all_books,
+        
+        logger.info("🚀 UPCOMING GLOBAL: 1 appel API pour tous les sports")
+        
+        events = await self.fetch_odds(
+            sport="upcoming",
+            markets="h2h,spreads,totals",
+            bookmakers=all_books,
+            regions="eu,us",  # Les deux régions pour max couverture
+        )
+        
+        # Log de diagnostic
+        if events:
+            sports_found = set(e.get("sport_key", "unknown") for e in events)
+            # Compter les événements binaires potentiels (ceux avec bookmakers)
+            with_bookmakers = sum(1 for e in events if e.get("bookmakers"))
+            logger.info(
+                f"[DEBUG] {len(events)} matchs reçus de l'API | "
+                f"{len(sports_found)} sports détectés | "
+                f"{with_bookmakers} avec bookmakers"
             )
-            for sport in settings.target_sports
-        ]
-        results = await asyncio.gather(*tasks, return_exceptions=True)
-
-        events = []
-        for sport, result in zip(settings.target_sports, results):
-            if isinstance(result, Exception):
-                logger.error(f"Erreur fetch {sport}: {result}")
-            else:
-                events.extend(result)
+            logger.info(f"[DEBUG] Sports: {', '.join(sorted(sports_found)[:10])}{'...' if len(sports_found) > 10 else ''}")
+        else:
+            logger.warning("[DEBUG] 0 matchs reçus de l'API — clé API ou quota invalide")
+        
         return events
+
+    # ── Nettoyage Supabase ─────────────────────────────────────
+
+    @staticmethod
+    async def cleanup_expired_signals(supabase_client) -> int:
+        """
+        🔧 NETTOYAGE v5.5
+        Supprime les signaux expirés (plus de 48h dans le futur ou date passée).
+        
+        Returns:
+            int: Nombre de signaux supprimés
+        """
+        try:
+            from datetime import datetime, timezone, timedelta
+            now = datetime.now(timezone.utc)
+            cutoff = (now - timedelta(hours=1)).isoformat()  # Matchs commencés il y a >1h
+            future = (now + timedelta(hours=48)).isoformat()  # Matchs à plus de 48h
+            
+            # Supprimer les matchs passés
+            res_past = supabase_client.table('signals')\
+                .delete()\
+                .lt('match_time', cutoff)\
+                .execute()
+            
+            # Supprimer les matchs trop lointains
+            res_future = supabase_client.table('signals')\
+                .delete()\
+                .gt('match_time', future)\
+                .execute()
+            
+            total = len(res_past.data or []) + len(res_future.data or [])
+            if total > 0:
+                logger.info(f"🧹 Nettoyage: {total} signaux expirés supprimés")
+            return total
+        except Exception as e:
+            logger.error(f"Erreur nettoyage signaux: {e}")
+            return 0
 
     # ── Parsing ───────────────────────────────────────────────
 
