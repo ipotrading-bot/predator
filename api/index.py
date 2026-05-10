@@ -144,7 +144,7 @@ def screener():
         return jsonify({
             "status": "success",
             "result": result_data,
-            "threshold_used": TEST_THRESHOLD,
+            "threshold_used": ALPHA_DISPLAY_MIN,
             "api_quota": quota_status
         })
 
@@ -275,6 +275,7 @@ def test_seed():
 @app.route('/api/data')
 def get_data():
     try:
+        db = get_db()
         # Fetch all signals for market temperature calculation
         all_signals_response = db._client.table("signals").select("sport,alpha_spread").execute()
         all_signals = all_signals_response.data or []
@@ -355,6 +356,7 @@ def get_ledger():
 def get_exposure():
     capital = 10000 # Use the same capital value as in get_stats
     try:
+        db = get_db()
         # Fetch signals with status 'bet_placed' or 'active'
         active_signals_response = db._client.table("signals").select("recommended_stake").in_("status", ["bet_placed", "active"]).execute()
         active_signals = active_signals_response.data or []

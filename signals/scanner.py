@@ -250,6 +250,7 @@ class MarketScanner:
         self.engine.min_ev_threshold = settings.min_ev_threshold
         self.db = SupabaseClient()
         self.fetcher = OddsFetcher()  # Initialiser l'instance OddsFetcher ici
+        self._executor = ThreadPoolExecutor(max_workers=2)
 
         # Clients optionnels (lazy)
         self._groq: Optional[object] = None
@@ -350,7 +351,9 @@ class MarketScanner:
             if len(consensus) >= settings.system_min_wins:
                 sigs  = [d.signal for d in consensus[:settings.system_size]]
                 metas = [d.meta   for d in consensus[:settings.system_size]]
-                await self.notifier.send_system_ticket(sigs, metas)
+                notifier = self._get_notifier()
+                if notifier:
+                    await notifier.send_system_ticket(sigs, metas)
 
         except Exception as e:
             logger.critical(f"❌ Erreur critique scan: {e}", exc_info=True)
@@ -547,16 +550,19 @@ class MarketScanner:
                     )
 
                     # Check Betfair Exchange confirmation
-                    betfair_odds = self._get_betfair_odds(bookmakers, mkey, selection_name)
+                    betfair_odds = self._get_betfair_odds(bookmakers, effective_market_key, selection)
                     if betfair_odds is None:
-                        logger.debug(f"Betfair odds non trouvées pour {event_name} / {mkey} / {selection_name}")
+                        logger.debug(f"Betfair odds non trouvées pour {event_name} / {effective_market_key} / {selection}")
                         continue
 
                     # Consensus Sharp: Betfair Exchange doit confirmer la tendance (cote plus basse que le soft book)
                     if not (betfair_odds < soft_odds_val):
-                        logger.debug(f"Betfair ({betfair_odds}) ne confirme pas la tendance du soft book ({soft_odds_val}) pour {event_name} / {mkey} / {selection_name}")
+                        logger.debug(f"Betfair ({betfair_odds}) ne confirme pas la tendance du soft book ({soft_odds_val}) pour {event_name} / {effective_market_key} / {selection}")
                         continue
 
+                    # Seuil dynamique par sport (fallback au seuil global)
+                    sport_threshold = settings.alpha_thresholds.get(sport, settings.alpha_thresholds.get("default", settings.min_ev_threshold))
+                    
                     signal = self.engine.evaluate_signal(
                         event_id=event_id,
                         market_key=effective_market_key,
@@ -770,10 +776,12 @@ class MarketScanner:
                 class _Val:
                     context_summary = f"{signal.ai_context}\n🔗 {dossier.sources_badge}"
 
-                await self.notifier.send_signal(
-                    signal=signal, meta=meta,
-                    validation=_Val(), signal_id=signal_id,
-                )
+                notifier = self._get_notifier()
+                if notifier:
+                    await notifier.send_signal(
+                        signal=signal, meta=meta,
+                        validation=_Val(), signal_id=signal_id,
+                    )
             except Exception as e:
                 logger.error(f"Erreur persist/notify {meta.get('event_name')}: {e}")
 
