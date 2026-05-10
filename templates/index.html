@@ -3,562 +3,115 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
-    <title>PREDATOR PAIM v5.3 | Terminal</title>
+    <title>PREDATOR PAIM v5.5</title>
     <script src="https://cdn.tailwindcss.com"></script>
-    <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
-    <link href="https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@400;700&display=swap" rel="stylesheet">
     <style>
-        :root { --paim-green: #00ff00; --paim-dark: #050505; }
-        body { font-family: 'JetBrains Mono', monospace; background-color: var(--paim-dark); color: var(--paim-green); }
-        .glass { background: rgba(255, 255, 255, 0.03); border: 1px solid rgba(0, 255, 0, 0.15); }
-        .tab-active { border-bottom: 3px solid var(--paim-green); color: #fff; }
-        
-        .nav-scroll { -ms-overflow-style: none; scrollbar-width: none; overflow-x: auto; display: flex; white-space: nowrap; border-bottom: 1px solid #111; }
-        .nav-scroll::-webkit-scrollbar { display: none; }
-        .nav-item { min-width: 100px; text-align: center; padding: 12px 16px; min-height: 44px; display: flex; align-items: center; justify-content: center; font-weight: bold; }
-
-        .console-container { background: #0a0a0a; border: 1px solid rgba(0, 255, 0, 0.2); border-radius: 4px; overflow: hidden; }
-        .console-header { background: rgba(0, 255, 0, 0.05); padding: 8px 12px; font-size: 10px; border-bottom: 1px solid rgba(0, 255, 0, 0.1); display: flex; justify-content: space-between; }
-        .console-body { padding: 10px; height: 150px; overflow-y: auto; font-size: 11px; line-height: 1.4; scrollbar-width: thin; scrollbar-color: var(--paim-green) #0a0a0a; }
-        
-        .ticker-container { overflow: hidden; background: rgba(0, 255, 0, 0.02); border-bottom: 1px solid rgba(0, 255, 0, 0.1); padding: 4px 0; }
-        .ticker-content { display: inline-block; white-space: nowrap; animation: ticker 30s linear infinite; }
-        @keyframes ticker { 0% { transform: translateX(0); } 100% { transform: translateX(-50%); } }
-        
-        .led { display: inline-block; width: 6px; height: 6px; border-radius: 50%; margin-right: 4px; }
-        .led-online { background: var(--paim-green); box-shadow: 0 0 5px var(--paim-green); }
-        .led-offline { background: #ff3333; }
-        
-        .log-time { color: #555; }
-        .log-success { color: var(--paim-green); font-weight: bold; }
-        .log-error { color: #ff3333; }
-
-        /* Fix 3: True Mobile Layout */
-        @media (min-width: 769px) {
-            .kpi-grid { display: grid; grid-template-columns: repeat(5, 1fr); gap: 16px; }
-            .console-body { height: 300px; }
-            .signal-list { display: grid; grid-template-columns: repeat(3, 1fr); gap: 16px; }
-        }
-        @media (max-width: 768px) {
-            /* Force single column grid on mobile */
-            .signal-list { 
-                display: grid !important; 
-                grid-template-columns: 1fr !important; 
-                gap: 8px; 
-            }
-            .kpi-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; }
-            .kpi-full { grid-column: span 2; }
-            .signal-card-mobile { padding: 12px; margin-bottom: 8px; position: relative; }
-            .alpha-tag { position: absolute; top: 12px; right: 12px; font-size: 16px; font-weight: 800; }
-            .modal-fullscreen { position: fixed; top: 0; left: 0; width: 100%; height: 100%; z-index: 100; background: var(--paim-dark); padding: 20px; display: flex; flex-direction: column; }
-            
-            /* Sticky bottom button in modal */
-            .modal-sticky-bottom { 
-                position: sticky; 
-                bottom: 0; 
-                background: var(--paim-dark); 
-                padding: 12px 0 0 0;
-                margin-top: auto;
-            }
-
-            /* Remove unnecessary green borders on mobile cards */
-            .glass { border-width: 0; border-top: 1px solid rgba(0, 255, 0, 0.08); }
-            
-            /* Console hidden by default on mobile - Fix 5 */
-            .console-mobile-hidden { display: none; }
-            .console-mobile-visible { display: block; }
-            
-            .logs-toggle-btn {
-                position: fixed;
-                bottom: 16px;
-                right: 16px;
-                z-index: 50;
-                background: #0a0a0a;
-                border: 1px solid rgba(0, 255, 0, 0.3);
-                color: var(--paim-green);
-                padding: 8px 16px;
-                border-radius: 4px;
-                font-size: 9px;
-                font-family: 'JetBrains Mono', monospace;
-                cursor: pointer;
-                text-transform: uppercase;
-                letter-spacing: 1px;
-            }
-        }
-        
-        /* ═══════════════════════════════════════════════════════════════════
-           RESPONSIVE MOBILE OPTIMIZATION (PAIM v5.0 Mobile)
-           ═══════════════════════════════════════════════════════════════════ */
-        
-        /* Tablettes et petits écrans */
-        @media (max-width: 1024px) {
-            .signal-card {
-                padding: 12px;
-            }
-            .signal-card .alpha-big {
-                font-size: 22px;
-            }
-            .heatmap-cell {
-                padding: 8px 4px;
-            }
-        }
-        
-        /* Smartphones */
-        @media (max-width: 768px) {
-            /* Header compact */
-            header {
-                padding: 8px 12px;
-            }
-            header h1 {
-                font-size: 14px;
-            }
-            header .text-xs {
-                font-size: 9px;
-            }
-            
-            /* LED plus petits */
-            .led {
-                width: 6px;
-                height: 6px;
-                margin-right: 3px;
-            }
-            
-            /* Health bar ultra-compact */
-            #health-bar {
-                padding: 4px 12px;
-                font-size: 9px;
-            }
-            #health-bar .gap-4 {
-                gap: 8px;
-            }
-            
-            /* KPI Bar: 2 colonnes sur mobile */
-            #kpi-bar {
-                grid-template-columns: repeat(2, 1fr) !important;
-                gap: 8px !important;
-                padding: 8px 12px !important;
-            }
-            #kpi-bar .glass {
-                padding: 8px;
-            }
-            #kpi-bar .text-xl {
-                font-size: 14px;
-            }
-            #kpi-bar .text-xs {
-                font-size: 8px;
-            }
-            
-            /* Heatmap: 2 colonnes */
-            #heatmap-grid {
-                grid-template-columns: repeat(2, 1fr) !important;
-            }
-            .heatmap-cell {
-                padding: 6px;
-                min-height: 60px;
-            }
-            .heatmap-cell .text-lg {
-                font-size: 14px;
-            }
-            
-            /* Console masquée sur mobile pour gagner de la place */
-            #console-panel {
-                display: none;
-            }
-            
-            /* Heatmap prend toute la largeur */
-            #heatmap-section {
-                width: 100% !important;
-                height: 200px !important;
-            }
-            
-            /* Signal cards pleine largeur */
-            #signal-grid {
-                grid-template-columns: 1fr !important;
-                gap: 8px !important;
-                padding: 0 12px;
-            }
-            
-            .signal-card {
-                padding: 12px;
-            }
-            .signal-card h4 {
-                font-size: 13px !important;
-            }
-            .signal-card .alpha-big {
-                font-size: 24px;
-            }
-            
-            /* Modal plein écran sur mobile */
-            .modal-content {
-                width: 100%;
-                max-width: none;
-                height: 100vh;
-                max-height: 100vh;
-                border-radius: 0;
-            }
-            
-            /* Onglets plus compacts */
-            .tab {
-                padding: 8px 12px;
-                font-size: 10px;
-            }
-            
-            /* Bouton action plus grand pour touch */
-            #modal-link {
-                padding: 16px;
-                font-size: 16px;
-            }
-            
-            /* Texte général plus lisible */
-            body {
-                font-size: 12px;
-            }
-            .text-xs {
-                font-size: 10px;
-            }
-        }
-        
-        /* Très petits écrans */
-        @media (max-width: 375px) {
-            #kpi-bar {
-                grid-template-columns: 1fr !important;
-            }
-            
-            header .flex.items-center {
-                gap: 8px;
-            }
-            
-            .signal-card .alpha-big {
-                font-size: 20px;
-            }
-        }
-        
-        /* Touch targets plus grands sur mobile */
-        @media (hover: none) and (pointer: coarse) {
-            .signal-card {
-                min-height: 80px;
-            }
-            .tab {
-                min-height: 44px;
-                display: flex;
-                align-items: center;
-            }
-            button, a {
-                min-height: 44px;
-                min-width: 44px;
-            }
-        }
+        body { background-color: #050505; color: #00ff00; font-family: monospace; }
+        .card { background: #111; border: 1px solid #222; border-left: 4px solid #00ff00; }
+        .modal { display: none; position: fixed; inset: 0; background: rgba(0,0,0,0.9); z-index: 50; padding: 20px; }
+        .alpha-value { color: #60a5fa; font-weight: bold; }
     </style>
 </head>
-<body class="p-2 md:p-4 text-xs md:text-sm">
-    <!-- Market Ticker -->
-    <div class="ticker-container mb-4">
-        <div class="ticker-content" id="market-ticker">
-            <span class="px-4 text-blue-400">[LIVE] Scan PAIM actif...</span>
-            <span class="px-4 text-blue-400">[DATA] Flux Supabase synchronisé...</span>
-        </div>
+<body class="p-2 md:p-6">
+    <!-- Header Simple -->
+    <div class="flex justify-between items-center mb-6 border-b border-green-900 pb-2">
+        <h1 class="text-lg font-bold">🦅 PREDATOR <span class="text-white">PAIM</span></h1>
+        <div id="api-status" class="text-[10px] text-green-500">● SYSTEM ONLINE</div>
     </div>
 
-    <!-- Header -->
-    <div class="flex flex-col md:flex-row justify-between items-start md:items-center mb-6 border-b border-green-900/30 pb-4 gap-4">
-        <div>
-            <h1 class="text-lg md:text-2xl font-bold tracking-tighter">🦅 PREDATOR <span class="text-xs font-normal text-gray-500">v5.3 MOBILE</span></h1>
-            <div class="flex items-center gap-2 mt-1">
-                <span class="text-[9px] bg-green-900/20 text-green-700 px-1 rounded uppercase">Dakar Hub</span>
-                <span class="text-[9px] text-blue-600 font-bold" id="quota-display">API: --/500</span>
-            </div>
-        </div>
-        <div class="flex flex-wrap gap-3 items-center">
-            <div class="flex gap-2 text-[10px]" id="api-health">
-                <div class="flex items-center"><span class="led led-offline" id="led-pinnacle"></span><span class="text-gray-500">PIN</span></div>
-                <div class="flex items-center"><span class="led led-offline" id="led-1xbet"></span><span class="text-gray-500">1XB</span></div>
-                <div class="flex items-center"><span class="led led-offline" id="led-telegram"></span><span class="text-gray-500">TG</span></div>
-            </div>
-            <div class="text-right">
-                <div class="text-[10px] font-bold text-green-400 animate-pulse" id="system-status">● ONLINE</div>
-            </div>
-        </div>
+    <!-- KPIs Mobile-First -->
+    <div class="grid grid-cols-2 md:grid-cols-4 gap-2 mb-6">
+        <div class="card p-2 text-center"><div class="text-[9px] text-gray-500">CAPITAL</div><div class="text-sm font-bold">10000€</div></div>
+        <div id="win-rate" class="card p-2 text-center"><div class="text-[9px] text-gray-500">WIN RATE</div><div class="text-sm font-bold">0.0%</div></div>
+        <div id="clv-avg" class="card p-2 text-center"><div class="text-[9px] text-gray-500">CLV AVG</div><div class="text-sm font-bold">+0.0%</div></div>
+        <div class="card p-2 text-center col-span-2 md:col-span-1"><div class="text-[9px] text-gray-500">STATUS</div><div class="text-sm font-bold">SÉCURISÉ</div></div>
     </div>
 
-    <!-- Stats Cards -->
-    <div class="kpi-grid mb-6">
-        <div class="glass p-3 rounded"><div class="text-[10px] text-gray-500">CAPITAL</div><div class="text-base md:text-xl font-bold" id="stat-capital">...</div></div>
-        <div class="glass p-3 rounded"><div class="text-[10px] text-gray-500">WIN RATE</div><div class="text-base md:text-xl font-bold text-white" id="stat-winrate">...</div></div>
-        <div class="glass p-3 rounded"><div class="text-[10px] text-gray-500">CLV AVG</div><div class="text-base md:text-xl font-bold text-blue-400" id="stat-clv">...</div></div>
-        <div class="glass p-3 rounded"><div class="text-[10px] text-gray-500">ROI</div><div class="text-base md:text-xl font-bold text-green-400" id="stat-roi">...</div></div>
-        <div class="glass p-3 rounded border-blue-500/20 kpi-full">
-            <div class="flex justify-between items-center">
-                <span class="text-[10px] text-gray-500 uppercase">Risque Cluster</span>
-                <span class="text-[10px] text-gray-600" id="risk-percentage">...</span>
-            </div>
-            <div class="text-sm md:text-lg font-bold" id="risk-cluster">...</div>
-        </div>
+    <!-- Navigation -->
+    <div class="flex gap-4 mb-4 text-xs font-bold border-b border-gray-800 pb-2 overflow-x-auto">
+        <button onclick="loadSignals()" class="text-white border-b-2 border-green-500 pb-1">LIVE SIGNALS</button>
+        <button onclick="alert('Bientôt disponible')" class="text-gray-500">LEDGER</button>
+        <button onclick="runScan()" class="bg-green-900 text-green-400 px-2 rounded">FORCE SCAN</button>
     </div>
 
-    <!-- Tactical Navigation -->
-    <div class="nav-scroll mb-6">
-        <button onclick="showPage('control')" class="nav-item uppercase text-[11px] tracking-widest" id="btn-control">Contrôle</button>
-        <button onclick="showPage('live')" class="nav-item uppercase text-[11px] tracking-widest" id="btn-live">Live</button>
-        <button onclick="showPage('ledger')" class="nav-item uppercase text-[11px] tracking-widest" id="btn-ledger">Ledger</button>
-        <button onclick="showPage('audit')" class="nav-item uppercase text-[11px] tracking-widest" id="btn-audit">Audit</button>
+    <!-- Grid de Signaux -->
+    <div id="signals-grid" class="grid grid-cols-1 gap-3">
+        <div class="text-center p-10 text-gray-600">Initialisation du flux...</div>
     </div>
 
-    <!-- PAGE: Contrôle -->
-    <div id="page-control" class="page">
-        <div class="flex flex-col gap-4">
-            <button onclick="triggerScan()" class="w-full bg-green-900/20 active:bg-green-900/40 border border-green-500/30 text-green-400 font-bold py-4 rounded-sm transition-all uppercase tracking-widest text-xs min-h-[50px]">
-                DÉCLENCHER SCAN PAIM
-            </button>
-            
-            <div class="grid grid-cols-1 md:grid-cols-2 gap-4">
-                <!-- Heatmap / Temperature -->
-                <div class="glass p-4 rounded-sm">
-                    <h3 class="text-[10px] text-gray-500 uppercase mb-3">Température Marché</h3>
-                    <div id="market-temperature" class="grid grid-cols-2 md:grid-cols-3 gap-2">
-                        <!-- Dynamic content -->
-                    </div>
+    <!-- Modale de Détail -->
+    <div id="detail-modal" class="modal flex-col justify-center items-center">
+        <div class="bg-[#111] border border-green-500 p-6 w-full max-w-md rounded-sm">
+            <h2 id="m-title" class="text-xl font-bold text-white mb-4"></h2>
+            <div class="grid grid-cols-2 gap-4 mb-6">
+                <div class="bg-black p-3 border border-gray-800">
+                    <div class="text-[10px] text-gray-500">FAIR PRICE</div>
+                    <div id="m-fair" class="text-lg font-bold"></div>
                 </div>
-
-                <!-- Terminal / Console - Fix 5: Hidden on mobile by default -->
-                <div class="console-container" id="console-container">
-                    <div class="console-header">
-                        <span>TERMINAL DE LOGS</span>
-                        <button onclick="clearConsole()" class="text-gray-600">CLEAR</button>
-                    </div>
-                    <div class="console-body" id="console-output">
-                        <div class="log-line"><span class="log-time">[12:00]</span> <span class="log-info">PAIM initialisé...</span></div>
-                    </div>
+                <div class="bg-black p-3 border border-gray-800">
+                    <div class="text-[10px] text-gray-500">1XBET</div>
+                    <div id="m-soft" class="text-lg font-bold text-green-400"></div>
                 </div>
             </div>
+            <div class="mb-6">
+                <div class="text-[10px] text-gray-500 mb-1">IA RISK FLAG</div>
+                <div id="m-ia" class="text-xs italic text-gray-300 bg-black p-2 border border-gray-900"></div>
+            </div>
+            <button id="m-link" class="w-full bg-blue-600 text-white font-bold py-3 mb-3">OUVRIR SUR 1XBET</button>
+            <button onclick="closeModal()" class="w-full bg-red-900/30 text-red-500 py-2 text-xs">FERMER</button>
         </div>
     </div>
-
-    <!-- PAGE: Live Signals -->
-    <div id="page-live" class="page hidden">
-        <div id="live-container" class="signal-list">
-            <!-- Signal cards -->
-        </div>
-    </div>
-
-    <!-- Signal Detail Modal - Fix 3: Sticky bottom button -->
-    <div id="detail-modal" class="hidden modal-fullscreen">
-        <div class="flex-1 overflow-y-auto" id="modal-content">
-            <!-- Content here -->
-        </div>
-        <div class="modal-sticky-bottom">
-            <button onclick="closeModal()" class="w-full bg-red-900/20 text-red-500 font-bold py-5 rounded mt-4 uppercase tracking-tighter text-sm">
-                Fermer le Terminal
-            </button>
-        </div>
-    </div>
-
-    <!-- Fix 5: Console toggle button for mobile -->
-    <button id="logs-toggle-btn" class="logs-toggle-btn hidden" onclick="toggleConsole()">LOGS</button>
 
     <script>
-        let currentSignals = [];
-        let consoleVisible = false;
-
-        function showPage(pageId) {
-            document.querySelectorAll('.page').forEach(p => p.classList.add('hidden'));
-            document.getElementById('page-' + pageId).classList.remove('hidden');
-            document.querySelectorAll('.nav-item').forEach(btn => btn.classList.remove('tab-active'));
-            document.getElementById('btn-' + pageId).classList.add('tab-active');
-        }
-
-        function addLog(message, type = 'info') {
-            const el = document.getElementById('console-output');
-            const cls = {success:'log-success', error:'log-error'}[type] || 'log-info';
-            const div = document.createElement('div');
-            div.className = 'log-line';
-            div.innerHTML = `<span class="log-time">[${new Date().toLocaleTimeString('fr-FR', {hour:'2-digit', minute:'2-digit'})}]</span> <span class="${cls}">${message}</span>`;
-            el.appendChild(div);
-            el.scrollTop = el.scrollHeight;
-        }
-
-        function clearConsole() { document.getElementById('console-output').innerHTML = ''; }
-
-        // Fix 5: Toggle console visibility on mobile
-        function toggleConsole() {
-            const container = document.getElementById('console-container');
-            const btn = document.getElementById('logs-toggle-btn');
-            consoleVisible = !consoleVisible;
-            if (consoleVisible) {
-                container.classList.remove('console-mobile-hidden');
-                container.classList.add('console-mobile-visible');
-                btn.textContent = 'CACHER';
-            } else {
-                container.classList.remove('console-mobile-visible');
-                container.classList.add('console-mobile-hidden');
-                btn.textContent = 'LOGS';
-            }
-        }
-
-        function initConsoleMobile() {
-            const isMobile = window.innerWidth <= 768;
-            const btn = document.getElementById('logs-toggle-btn');
-            const container = document.getElementById('console-container');
-            if (isMobile) {
-                btn.classList.remove('hidden');
-                container.classList.add('console-mobile-hidden');
-                container.classList.remove('console-mobile-visible');
-                consoleVisible = false;
-            } else {
-                btn.classList.add('hidden');
-                container.classList.remove('console-mobile-hidden', 'console-mobile-visible');
-            }
-        }
-
-        async function updateDashboard() {
-            const grid = document.getElementById('live-container');
-            const tempContainer = document.getElementById('market-temperature');
-            
+        async function loadSignals() {
+            const grid = document.getElementById('signals-grid');
             try {
                 const res = await fetch('/api/data');
                 const data = await res.json();
-                currentSignals = data.signals || [];
-                const temp = data.market_temperature || {};
+                
+                // Extract signals array from API response (wraps in { signals: [...] })
+                const signals = (data.signals || data || []);
 
-                tempContainer.innerHTML = Object.entries(temp).map(([sport, alpha]) => `
-                    <div class="glass p-2 rounded text-[10px]">
-                        <div class="text-gray-500 uppercase truncate">${sport.includes('_') ? sport.split('_')[1] : sport}</div>
-                        <div class="text-blue-400 font-bold">${alpha.toFixed(1)}% ${alpha < 1 ? '❄️' : '🔥'}</div>
-                    </div>
-                `).join('');
-
-                // Fix 1: Filter out ghost cards - skip signals with null/incomplete data
-                const validSignals = currentSignals.filter(s => {
-                    return s && s.match_name && s.match_name !== 'null' && s.match_name.trim() !== '';
-                });
-                currentSignals = validSignals;
-
-                if (currentSignals.length === 0) {
-                    grid.innerHTML = '<div class="col-span-full p-10 text-center text-gray-700 uppercase">Aucun Alpha > 2.5%</div>';
+                if (!signals || signals.length === 0) {
+                    grid.innerHTML = '<div class="text-center p-10 text-gray-700">AUCUN ALPHA DÉTECTÉ</div>';
                     return;
                 }
 
-                // Fix 4: Doctrine Check - soccer + h2h warning
-                grid.innerHTML = currentSignals.map((s, idx) => {
-                    const isNonBinaire = s.sport && s.sport.toLowerCase() === 'soccer' && s.market_type && s.market_type.toLowerCase() === 'h2h';
-                    return `
-                    <div onclick="openModal(${idx})" class="glass p-4 rounded relative signal-card-mobile active:bg-white/5 border-l-2 border-green-500 cursor-pointer">
-                        <div class="text-[9px] text-green-700 font-bold uppercase mb-1">${s.sport || 'N/A'}</div>
-                        <div class="text-sm font-bold text-white max-w-[80%] truncate">${s.match_name}</div>
-                        <div class="text-[10px] text-gray-500 mt-1">${s.market_type || 'N/A'} @ ${s.cote_1xbet || '0.00'}</div>
-                        ${isNonBinaire ? '<div class="text-[10px] text-orange-400 font-bold mt-1">⚠️ MARCHÉ NON-BINAIRE</div>' : ''}
-                        <div class="alpha-tag text-blue-400">+${(s.alpha_spread * 100).toFixed(1)}%</div>
+                grid.innerHTML = signals.filter(s => s.match_name && s.match_name !== 'null').map(s => `
+                    <div class="card p-4 flex justify-between items-center" onclick='openModal(${JSON.stringify(s)})'>
+                        <div>
+                            <div class="text-[10px] text-gray-500">${s.sport || 'N/A'} | ${s.match_time ? s.match_time.substring(5,16) : 'N/A'}</div>
+                            <div class="text-sm font-bold text-white">${s.match_name}</div>
+                        </div>
+                        <div class="text-right">
+                            <div class="text-[10px] text-gray-500 uppercase">Alpha</div>
+                            <div class="alpha-value">+${(s.alpha_spread * 100).toFixed(1)}%</div>
+                        </div>
                     </div>
-                    `;
-                }).join('');
-
-            } catch (e) { console.error(e); }
+                `).join('');
+            } catch (e) { grid.innerHTML = '<div class="text-red-500">Erreur de chargement</div>'; }
         }
 
-        // Fix 2: Fix undefined in Detail Panel - exact property names with fallbacks
-        function openModal(idx) {
-            const s = currentSignals[idx];
-            if (!s) {
-                addLog("Erreur: Signal introuvable", "error");
-                return;
-            }
-            const modal = document.getElementById('detail-modal');
-            const content = document.getElementById('modal-content');
-            
-            // Fix 4: Doctrine check in modal detail
-            const isNonBinaire = s.sport && s.sport.toLowerCase() === 'soccer' && s.market_type && s.market_type.toLowerCase() === 'h2h';
-            const doctrineWarning = isNonBinaire ? `
-                <div class="glass p-3 rounded mb-4 border-l-2 border-orange-500">
-                    <p class="text-[11px] text-orange-400 font-bold">⚠️ MARCHÉ NON-BINAIRE</p>
-                    <p class="text-[10px] text-gray-500">Le marché H2H (Head-to-Head) sur le soccer est non-binaire. Vérifiez les 3 voies possibles.</p>
-                </div>
-            ` : '';
-
-            content.innerHTML = `
-                <div class="border-b border-green-900/30 pb-4 mb-6">
-                    <h2 class="text-xl font-bold text-white">${s.match_name || 'Match Inconnu'}</h2>
-                    <p class="text-blue-500 text-sm font-bold uppercase">${s.sport || 'N/A'} | ALPHA: ${(s.alpha_spread * 100).toFixed(2)}%</p>
-                </div>
-                ${doctrineWarning}
-                <div class="grid grid-cols-2 gap-4 mb-8">
-                    <div class="glass p-4 rounded">
-                        <p class="text-[10px] text-gray-500 mb-1 uppercase">Cote Soft (1XBET)</p>
-                        <p class="text-2xl font-bold text-green-400">${s.cote_1xbet || '0.00'}</p>
-                    </div>
-                    <div class="glass p-4 rounded">
-                        <p class="text-[10px] text-gray-500 mb-1 uppercase">Fair Price</p>
-                        <p class="text-2xl font-bold text-gray-400">${s.fair_price ? s.fair_price.toFixed(2) : '0.00'}</p>
-                    </div>
-                </div>
-                <div class="glass p-4 rounded mb-6">
-                    <h3 class="text-xs text-gray-500 uppercase mb-2">IA Context</h3>
-                    <p class="text-sm text-gray-300 italic">${s.note_ia || 'Analyse non disponible'}</p>
-                </div>
-                <a href="${s.match_url || '#'}" target="_blank" class="block w-full bg-blue-600 text-white text-center py-4 rounded font-bold uppercase tracking-widest">Ouvrir sur 1XBet</a>
-            `;
-            modal.classList.remove('hidden');
+        function openModal(s) {
+            document.getElementById('m-title').innerText = s.match_name;
+            document.getElementById('m-fair').innerText = s.fair_price || '0.00';
+            document.getElementById('m-soft').innerText = s.cote_1xbet || '0.00';
+            document.getElementById('m-ia').innerText = s.note_ia || 'Analyse non disponible';
+            document.getElementById('detail-modal').style.display = 'flex';
         }
 
-        function closeModal() { document.getElementById('detail-modal').classList.add('hidden'); }
+        function closeModal() { document.getElementById('detail-modal').style.display = 'none'; }
 
-        async function triggerScan() {
-            addLog("Démarrage du scan global...", "info");
-            try {
-                const res = await fetch('/api/screener');
-                const data = await res.json();
-                if (data.status === "success") {
-                    addLog(`Scan terminé: ${data.result.events_analyzed} événements`, "success");
-                    if (data.api_quota) document.getElementById('quota-display').textContent = `API: ${data.api_quota.remaining_requests}/500`;
-                }
-                updateDashboard();
-            } catch (e) { addLog("Erreur critique pendant le scan", "error"); }
+        async function runScan() {
+            const btn = event.target;
+            btn.innerText = "SCANNING...";
+            await fetch('/api/screener');
+            loadSignals();
+            btn.innerText = "FORCE SCAN";
         }
 
-        async function fetchExposure() {
-            try {
-                const res = await fetch('/api/exposure');
-                const d = await res.json();
-                const rcEl = document.getElementById('risk-cluster');
-                rcEl.textContent = d.risk_cluster || 'SÉCURISÉ';
-                rcEl.className = d.risk_cluster === 'CRITIQUE' ? 'text-sm md:text-lg font-bold text-red-500' : 
-                                d.risk_cluster === 'ÉLEVÉ' ? 'text-sm md:text-lg font-bold text-yellow-500' : 
-                                'text-sm md:text-lg font-bold text-green-400';
-                document.getElementById('risk-percentage').textContent = `${d.risk_percentage || 0}%`;
-            } catch (e) {}
-        }
-
-        async function fetchStats() {
-            try {
-                const res = await fetch('/api/stats');
-                const d = await res.json();
-                document.getElementById('stat-capital').textContent = (d.capital || 0).toFixed(0) + '€';
-                document.getElementById('stat-winrate').textContent = (d.win_rate || 0).toFixed(1) + '%';
-                document.getElementById('stat-clv').textContent = (d.clv_avg || 0).toFixed(2) + '%';
-                document.getElementById('stat-roi').textContent = (d.roi_mensuel || 0).toFixed(1) + '%';
-            } catch (e) {}
-        }
-
-        async function fetchAPIHealth() {
-            try {
-                const res = await fetch('/api/health');
-                const d = await res.json();
-                if (d.status === 'ok') {
-                    document.querySelectorAll('[id^="led-"]').forEach(el => el.className = 'led led-online');
-                }
-            } catch (e) { document.querySelectorAll('[id^="led-"]').forEach(el => el.className = 'led led-offline'); }
-        }
-
-        document.addEventListener('DOMContentLoaded', () => {
-            showPage('control');
-            updateDashboard();
-            fetchExposure();
-            fetchStats();
-            fetchAPIHealth();
-            initConsoleMobile();
-            setInterval(updateDashboard, 60000);
-            setInterval(fetchExposure, 30000);
-            setInterval(fetchAPIHealth, 60000);
-            window.addEventListener('resize', initConsoleMobile);
-        });
+        loadSignals();
+        setInterval(loadSignals, 60000);
     </script>
 </body>
 </html>
