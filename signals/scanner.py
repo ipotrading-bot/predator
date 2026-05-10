@@ -22,7 +22,6 @@ from typing import Optional
 from config import settings
 from core.math_engine import calculate_shin_probabilities
 from core.news_engine import news_engine, NewsImpact
-from core.notifications import TelegramNotifier
 from core.paim_engine import PAIMEngine, PAIMSignal, ScanResult
 from core.validator import check_market_red_flags
 from core.gemini_search import GeminiOracle, GeminiOddsResult  # 🔮 Fallback Oracle
