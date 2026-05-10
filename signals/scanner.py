@@ -321,8 +321,7 @@ class MarketScanner:
         logger.info(f"   Sports: {', '.join(settings.target_sports[:5])}{'...' if sport_count > 5 else ''}")
 
         try:
-            async with self.fetcher as fetcher:
-                events = await fetcher.fetch_all_sports_odds()
+            events = self.fetcher.fetch_upcoming_odds()
 
             result.events_analyzed = len(events)
             logger.info(f"📡 {len(events)} événements dans la fenêtre")
@@ -332,12 +331,11 @@ class MarketScanner:
                 result.duration_seconds = time.monotonic() - start
                 return result
 
-            # 🔧 Nettoyage des signaux expirés (matchs passés ou >48h)
+            # Nettoyage des signaux expirés (matchs passés ou >48h)
             try:
-                cleaned = await OddsFetcher.cleanup_expired_signals(self.db)
-
+                cleaned = OddsFetcher.cleanup_expired_signals(self.db)
                 if cleaned > 0:
-                    logger.info(f"🧹 Interface nettoyée: {cleaned} signaux expirés supprimés")
+                    logger.info(f"🧹 {cleaned} signaux expirés supprimés")
             except Exception as clean_e:
                 logger.warning(f"Nettoyage non critique: {clean_e}")
 
@@ -401,10 +399,9 @@ class MarketScanner:
         )
         
         try:
-            async with OddsFetcher() as fetcher:
-                events = await fetcher.fetch_odds_for_sport(sport_key)
-            
-            # ── Filtre 48h ────────────────────────────────────
+            events = self.fetcher.fetch_sport_odds(sport_key)
+
+            # Filtre 48h
             events = [
                 e for e in events
                 if _is_within_window(e.get("commence_time", ""), SCAN_WINDOW_HOURS)
@@ -561,19 +558,11 @@ class MarketScanner:
                         selection=selection,
                     )
 
-                    # Check Betfair Exchange confirmation
-                    betfair_odds = self._get_betfair_odds(bookmakers, effective_market_key, selection)
-                    if betfair_odds is None:
-                        logger.debug(f"Betfair odds non trouvées pour {event_name} / {effective_market_key} / {selection}")
-                        continue
-
-                    # Consensus Sharp: Betfair Exchange doit confirmer la tendance (cote plus basse que le soft book)
-                    if not (betfair_odds < soft_odds_val):
-                        logger.debug(f"Betfair ({betfair_odds}) ne confirme pas la tendance du soft book ({soft_odds_val}) pour {event_name} / {effective_market_key} / {selection}")
-                        continue
-
-                    # Seuil dynamique par sport (fallback au seuil global)
-                    sport_threshold = settings.alpha_thresholds.get(sport, settings.alpha_thresholds.get("default", settings.min_ev_threshold))
+                    # Seuil: respecte l'override engine.min_ev_threshold (plancher 1%)
+                    alpha_floor = settings.alpha_thresholds.get(
+                        sport, settings.alpha_thresholds.get("default", 0.020)
+                    )
+                    sport_threshold = min(self.engine.min_ev_threshold, alpha_floor)
                     
                     signal = self.engine.evaluate_signal(
                         event_id=event_id,

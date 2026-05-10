@@ -123,34 +123,56 @@ def health():
 
 @app.route('/api/screener')
 def screener():
-    """Déclenche un scan PAIM complet."""
+    """Déclenche un scan PAIM complet via l'endpoint global upcoming."""
     try:
         from config import settings
         from signals.scanner import MarketScanner
         import asyncio
 
+        # ── Étape 1 : Vider les signaux pending (résidus null) ──────────
+        try:
+            db = get_db()
+            cleared = db.clear_signals()
+            logger.info(f"🗑️ Screener: {cleared} signaux anciens supprimés avant scan")
+        except Exception as e:
+            logger.warning(f"clear_signals non critique: {e}")
+
+        # ── Étape 2 : Scan global upcoming (1% seuil display) ──────────
         scanner = MarketScanner(bankroll=settings.starting_bankroll)
-        # Seuil abaissé à 1.5% pour le display (2.5% pour elite)
-        scanner.engine.min_ev_threshold = ALPHA_DISPLAY_MIN
+        scanner.engine.min_ev_threshold = ALPHA_DISPLAY_MIN  # 1.0%
 
         loop = asyncio.new_event_loop()
-        result = loop.run_until_complete(scanner.run_scan())
-        loop.close()
-
-        result_data = result.__dict__ if hasattr(result, '__dict__') else {}
-        print(f"DEBUG: Scan terminé: {json.dumps(result_data, default=str)}")
+        try:
+            result = loop.run_until_complete(scanner.run_scan())
+        finally:
+            loop.close()
 
         quota_status = scanner.fetcher.get_quota_status()
+
+        # ── Étape 3 : Diagnostic quota ───────────────────────────────
+        if quota_status.get("remaining_requests", -1) == 0:
+            return jsonify({
+                "status": "quota_empty",
+                "message": "Quota épuisé ou aucun match trouvé. Attendre le renouvellement mensuel.",
+                "signals_found": 0,
+                "api_quota": quota_status,
+            })
+
+        result_data = {
+            "events_analyzed": result.events_analyzed,
+            "signals_found": result.signals_found,
+            "signals_validated": result.signals_validated,
+            "duration_seconds": result.duration_seconds,
+        }
+        logger.info(f"✅ Screener: {result.signals_validated} signaux | {result.events_analyzed} events")
+
         return jsonify({
             "status": "success",
             "result": result_data,
             "threshold_used": ALPHA_DISPLAY_MIN,
-            "api_quota": quota_status
+            "api_quota": quota_status,
         })
 
-    except ImportError as e:
-        logger.error(f"ImportError screener: {e}")
-        return jsonify({"status": "error", "message": f"ImportError: {str(e)}"}), 500
     except Exception as e:
         logger.error(f"Erreur screener: {traceback.format_exc()}")
         return jsonify({"status": "error", "message": str(e)}), 500
@@ -274,55 +296,29 @@ def test_seed():
 
 @app.route('/api/data')
 def get_data():
+    """Retourne les 15 derniers signaux pending de Supabase, propres et sans fake data."""
     try:
         db = get_db()
-        # Fetch all signals for market temperature calculation
-        all_signals_response = db._client.table("signals").select("sport,alpha_spread").execute()
-        all_signals = all_signals_response.data or []
+        response = (
+            db._client.table("signals")
+            .select("*")
+            .eq("status", "pending")
+            .order("created_at", desc=True)
+            .limit(15)
+            .execute()
+        )
+        signals = response.data or []
 
-        # Calculate market temperature (average alpha per sport)
-        market_temperature = {}
-        sport_alphas = {}
-        for signal in all_signals:
-            sport = signal.get("sport")
-            alpha = signal.get("alpha_spread")
-            if sport and alpha is not None:
-                if sport not in sport_alphas:
-                    sport_alphas[sport] = []
-                sport_alphas[sport].append(alpha)
-        
-        for sport, alphas in sport_alphas.items():
-            if alphas:
-                avg_alpha = sum(alphas) / len(alphas)
-                market_temperature[sport] = round(avg_alpha * 100, 1)
+        # Filtrer les lignes nulles/incomplètes
+        valid = [
+            s for s in signals
+            if s.get("match_name") and s.get("alpha_spread") is not None
+        ]
 
-        # Fetch pending signals for the dashboard
-        pending_signals_response = db._client.table("signals").select("*").eq("status", "pending").order("created_at", desc=True).limit(50).execute()
-        pending_signals = pending_signals_response.data or []
-
-        if not pending_signals:
-            # Fallback: retourner les test-seed si la BD est vide (only if no real pending signals)
-            from datetime import datetime, timedelta
-            match_time = (datetime.now() + timedelta(hours=4)).isoformat()
-            pending_signals = [{
-                "match_name": "Lakers vs Celtics",
-                "sport": "basketball_nba",
-                "match_time": match_time,
-                "market_type": "—",
-                "alpha_spread": 0,
-                "ev_plus_pct": 0,
-                "recommended_stake": 0,
-                "fair_price": 0,
-                "cote_1xbet": 0,
-                "note_ia": "📡 MODE HUNTER ACTIF — Attendre prochains scans",
-                "sources_validated": "",
-                "is_elite": False,
-            }]
-        
-        return jsonify({"signals": pending_signals, "market_temperature": market_temperature})
+        return jsonify({"signals": valid, "count": len(valid)})
     except Exception as e:
-        print(f"DEBUG DATA FETCH ERROR: {traceback.format_exc()}")
-        return jsonify({"signals": [], "market_temperature": {}})
+        logger.error(f"Erreur /api/data: {traceback.format_exc()}")
+        return jsonify({"signals": [], "count": 0, "error": str(e)})
 
 
 @app.route('/api/stats')

@@ -169,10 +169,9 @@ class GroqClient:
 Ton rôle: analyser les signaux de valeur (EV+) et décider s'ils doivent être validés ou rejetés.
 
 Critères de rejet:
-- EV+ < 5%: Trop faible, bruit statistique
-- Sharp prob < 52%: Pas assez d'avantage
-- Confiance dans l'analyse < 60%: Incertitude trop élevée
-- Anomalies détectées dans les cotes
+- EV+ < 1.0%: En dessous du seuil de détection
+- Anomalie manifeste dans les cotes (cote < 1.01 ou > 50)
+- Incohérence flagrante entre sharp_prob et implied_prob (écart > 50%)
 
 Format de réponse JSON STRICT (pas de texte autour):
 {

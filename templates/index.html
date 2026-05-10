@@ -6,124 +6,401 @@
     <title>PREDATOR PAIM v5.5</title>
     <script src="https://cdn.tailwindcss.com"></script>
     <style>
-        body { background-color: #050505; color: #00ff00; font-family: monospace; }
-        .card { background: #111; border: 1px solid #222; border-left: 4px solid #00ff00; }
-        .card-elite { background: #111; border: 1px solid #b8860b; border-left: 4px solid #ffd700; }
-        .modal { display: none; position: fixed; inset: 0; background: rgba(0,0,0,0.9); z-index: 50; padding: 20px; }
-        .alpha-value { color: #60a5fa; font-weight: bold; }
-        .alpha-elite { color: #ffd700; font-weight: bold; }
-        .market-badge { background: #222; color: #888; font-size: 9px; padding: 1px 6px; border-radius: 2px; }
+        body { background: #050505; color: #00ff00; font-family: 'Courier New', monospace; }
+        .card {
+            background: #0e0e0e; border: 1px solid #1a1a1a; border-left: 3px solid #00cc44;
+            cursor: pointer; transition: border-color .15s, background .15s;
+        }
+        .card:hover { background: #131313; border-left-color: #00ff55; }
+        .card:active { transform: scale(0.99); }
+        .card-elite {
+            background: #0b0900; border: 1px solid #3a2900; border-left: 3px solid #ffd700;
+        }
+        .card-elite:hover { background: #100d00; border-left-color: #ffe033; }
+        .modal-overlay {
+            display: none; position: fixed; inset: 0;
+            background: rgba(0,0,0,0.93); z-index: 100;
+            align-items: flex-start; justify-content: center;
+            padding: 16px; overflow-y: auto;
+        }
+        .modal-overlay.open { display: flex; }
+        .alpha-value { color: #3b82f6; font-weight: 700; }
+        .alpha-elite { color: #ffd700; font-weight: 700; }
+        .badge { font-size: 9px; padding: 1px 5px; border-radius: 2px; }
+        .dot { width: 6px; height: 6px; border-radius: 50%; display: inline-block; margin-right: 3px; vertical-align: middle; }
+        .dot-ok  { background: #22c55e; box-shadow: 0 0 4px #22c55e88; }
+        .dot-err { background: #ef4444; }
+        .dot-warn{ background: #f59e0b; }
+        .dot-unk { background: #555; }
     </style>
 </head>
-<body class="p-2 md:p-6">
-    <!-- Header Simple -->
-    <div class="flex justify-between items-center mb-6 border-b border-green-900 pb-2">
-        <h1 class="text-lg font-bold">🦅 PREDATOR <span class="text-white">PAIM</span></h1>
-        <div id="api-status" class="text-[10px] text-green-500">● SYSTEM ONLINE</div>
+<body class="p-2 md:p-5 pb-10">
+
+    <!-- ── Header ─────────────────────────────────────────────── -->
+    <div class="flex justify-between items-center mb-3 border-b border-green-900/40 pb-2">
+        <h1 class="text-sm font-bold tracking-widest">
+            🦅 PREDATOR <span class="text-white">PAIM</span>
+            <span class="text-gray-700 text-[10px] font-normal ml-1">v5.5</span>
+        </h1>
+        <button onclick="loadSignals()" id="live-dot"
+            class="text-[10px] text-green-500 hover:text-green-300 transition-colors">
+            ● LIVE
+        </button>
     </div>
 
-    <!-- KPIs Mobile-First -->
-    <div class="grid grid-cols-2 md:grid-cols-4 gap-2 mb-6">
-        <div class="card p-2 text-center"><div class="text-[9px] text-gray-500">CAPITAL</div><div class="text-sm font-bold">10000€</div></div>
-        <div id="win-rate" class="card p-2 text-center"><div class="text-[9px] text-gray-500">WIN RATE</div><div class="text-sm font-bold">0.0%</div></div>
-        <div id="clv-avg" class="card p-2 text-center"><div class="text-[9px] text-gray-500">CLV AVG</div><div class="text-sm font-bold">+0.0%</div></div>
-        <div class="card p-2 text-center col-span-2 md:col-span-1"><div class="text-[9px] text-gray-500">STATUS</div><div class="text-sm font-bold">SÉCURISÉ</div></div>
+    <!-- ── Status Bar ──────────────────────────────────────────── -->
+    <div class="text-[9px] text-gray-700 mb-3 flex flex-wrap gap-x-4 gap-y-1 items-center">
+        <span id="s-odds"><span class="dot dot-unk"></span>Odds API</span>
+        <span id="s-1xbet"><span class="dot dot-ok"></span>1XBet</span>
+        <span id="s-gemini"><span class="dot dot-unk"></span>Gemini</span>
+        <span id="s-db"><span class="dot dot-unk"></span>Supabase</span>
+        <span id="s-latency" class="ml-auto text-gray-800">—ms</span>
     </div>
 
-    <!-- Navigation -->
-    <div class="flex gap-4 mb-4 text-xs font-bold border-b border-gray-800 pb-2 overflow-x-auto">
-        <button onclick="loadSignals()" class="text-white border-b-2 border-green-500 pb-1">LIVE SIGNALS</button>
-        <button onclick="alert('Bientôt disponible')" class="text-gray-500">LEDGER</button>
-        <button onclick="runScan()" class="bg-green-900 text-green-400 px-2 rounded">FORCE SCAN</button>
+    <!-- ── KPIs ────────────────────────────────────────────────── -->
+    <div class="grid grid-cols-2 md:grid-cols-4 gap-2 mb-4">
+        <div class="bg-[#0e0e0e] border border-gray-900 p-2 text-center">
+            <div class="text-[9px] text-gray-600 mb-0.5">CAPITAL</div>
+            <div id="kpi-capital" class="text-sm font-bold text-white">10 000€</div>
+        </div>
+        <div class="bg-[#0e0e0e] border border-gray-900 p-2 text-center">
+            <div class="text-[9px] text-gray-600 mb-0.5">WIN RATE</div>
+            <div id="kpi-winrate" class="text-sm font-bold">—</div>
+        </div>
+        <div class="bg-[#0e0e0e] border border-gray-900 p-2 text-center">
+            <div class="text-[9px] text-gray-600 mb-0.5">CLV AVG</div>
+            <div id="kpi-clv" class="text-sm font-bold">—</div>
+        </div>
+        <div class="bg-[#0e0e0e] border border-gray-900 p-2 text-center">
+            <div class="text-[9px] text-gray-600 mb-0.5">SIGNAUX</div>
+            <div id="kpi-count" class="text-sm font-bold text-green-400">—</div>
+        </div>
     </div>
 
-    <!-- Grid de Signaux -->
-    <div id="signals-grid" class="grid grid-cols-1 gap-3">
-        <div class="text-center p-10 text-gray-600">Initialisation du flux...</div>
+    <!-- ── Nav ─────────────────────────────────────────────────── -->
+    <div class="flex gap-2 mb-4 border-b border-gray-900 pb-2 overflow-x-auto whitespace-nowrap">
+        <button onclick="loadSignals()"
+            class="text-xs font-bold text-white border-b-2 border-green-500 pb-1 shrink-0 px-1">
+            LIVE SIGNALS
+        </button>
+        <div class="flex-1"></div>
+        <button id="scan-btn" onclick="triggerScan()"
+            class="text-[11px] bg-green-950 border border-green-800 text-green-400 px-3 py-1 rounded shrink-0 hover:bg-green-900 transition-colors disabled:opacity-50">
+            ⚡ FORCE SCAN
+        </button>
+        <button id="hunter-btn" onclick="triggerHunter()"
+            class="text-[11px] bg-blue-950 border border-blue-800 text-blue-400 px-3 py-1 rounded shrink-0 hover:bg-blue-900 transition-colors disabled:opacity-50">
+            🎯 HUNTER
+        </button>
     </div>
 
-    <!-- Modale de Détail -->
-    <div id="detail-modal" class="modal flex-col justify-center items-center">
-        <div class="bg-[#111] border border-green-500 p-6 w-full max-w-md rounded-sm">
-            <h2 id="m-title" class="text-xl font-bold text-white mb-4"></h2>
-            <div class="grid grid-cols-2 gap-4 mb-6">
-                <div class="bg-black p-3 border border-gray-800">
-                    <div class="text-[10px] text-gray-500">FAIR PRICE</div>
-                    <div id="m-fair" class="text-lg font-bold"></div>
+    <!-- ── Signal List ─────────────────────────────────────────── -->
+    <div id="signals-grid" class="flex flex-col gap-2">
+        <div class="text-center py-12 text-gray-700 text-sm">Chargement du flux...</div>
+    </div>
+
+    <!-- ── Detail Modal ────────────────────────────────────────── -->
+    <div id="detail-modal" class="modal-overlay" onclick="handleOverlayClick(event)">
+        <div class="bg-[#0d0d0d] border border-green-900/50 p-5 w-full max-w-md rounded mt-4">
+
+            <!-- Header modal -->
+            <div class="flex justify-between items-start mb-4">
+                <div class="min-w-0 mr-2">
+                    <div id="m-sport" class="text-[9px] text-gray-600 uppercase mb-1"></div>
+                    <h2 id="m-title" class="text-sm font-bold text-white leading-snug"></h2>
                 </div>
-                <div class="bg-black p-3 border border-gray-800">
-                    <div class="text-[10px] text-gray-500">1XBET</div>
-                    <div id="m-soft" class="text-lg font-bold text-green-400"></div>
+                <span id="m-elite-badge"
+                    class="hidden text-[9px] bg-yellow-900/40 border border-yellow-800 text-yellow-400 px-2 py-0.5 rounded shrink-0">
+                    ELITE
+                </span>
+            </div>
+
+            <!-- Prix grid -->
+            <div class="grid grid-cols-3 gap-2 mb-4">
+                <div class="bg-black border border-gray-900 p-2 text-center">
+                    <div class="text-[9px] text-gray-600 mb-1">FAIR PRICE</div>
+                    <div id="m-fair" class="text-sm font-bold text-gray-300">—</div>
+                </div>
+                <div class="bg-black border border-gray-900 p-2 text-center">
+                    <div class="text-[9px] text-gray-600 mb-1">1XBET COTE</div>
+                    <div id="m-soft" class="text-sm font-bold text-green-400">—</div>
+                </div>
+                <div class="bg-black border border-gray-900 p-2 text-center">
+                    <div class="text-[9px] text-gray-600 mb-1">ALPHA</div>
+                    <div id="m-alpha" class="text-sm font-bold alpha-value">—</div>
                 </div>
             </div>
-            <div class="mb-6">
-                <div class="text-[10px] text-gray-500 mb-1">IA RISK FLAG</div>
-                <div id="m-ia" class="text-xs italic text-gray-300 bg-black p-2 border border-gray-900"></div>
+
+            <!-- Sélection -->
+            <div class="mb-3 bg-black border border-gray-900 p-2">
+                <div class="text-[9px] text-gray-600 mb-0.5">SÉLECTION</div>
+                <div id="m-selection" class="text-sm font-bold text-white"></div>
+                <div id="m-market" class="text-[10px] text-gray-600 mt-0.5"></div>
             </div>
-            <button id="m-link" class="w-full bg-blue-600 text-white font-bold py-3 mb-3">OUVRIR SUR 1XBET</button>
-            <button onclick="closeModal()" class="w-full bg-red-900/30 text-red-500 py-2 text-xs">FERMER</button>
+
+            <!-- Match time -->
+            <div class="mb-3">
+                <div class="text-[9px] text-gray-600 mb-0.5">COUP D'ENVOI</div>
+                <div id="m-time" class="text-xs text-gray-400"></div>
+            </div>
+
+            <!-- IA Risk Flag -->
+            <div class="mb-4">
+                <div class="text-[9px] text-gray-600 mb-1 uppercase">IA Risk Flag</div>
+                <div id="m-ia"
+                    class="text-[11px] text-gray-400 bg-black border border-gray-900 p-3 leading-relaxed max-h-32 overflow-y-auto">
+                </div>
+            </div>
+
+            <!-- Bouton 1XBet -->
+            <a id="m-link" href="#" target="_blank" rel="noopener noreferrer"
+               class="block w-full bg-blue-700 hover:bg-blue-600 text-white font-bold py-3 text-center mb-2 rounded transition-colors text-sm">
+                OUVRIR SUR 1XBET ↗
+            </a>
+            <button onclick="closeModal()"
+                class="w-full border border-gray-800 text-gray-600 py-2 text-xs rounded hover:border-red-900 hover:text-red-600 transition-colors">
+                FERMER
+            </button>
         </div>
     </div>
 
     <script>
-        async function loadSignals() {
-            const grid = document.getElementById('signals-grid');
-            try {
-                const res = await fetch('/api/data');
-                const data = await res.json();
-                
-                // Extract signals array from API response (wraps in { signals: [...] })
-                const signals = (data.signals || data || []);
+    // ── Utils ─────────────────────────────────────────────────────
+    function safe(v, decimals = 2, suffix = '') {
+        const n = Number(v);
+        if (v === null || v === undefined || v === '' || isNaN(n)) return '—';
+        return n.toFixed(decimals) + suffix;
+    }
 
-                if (!signals || signals.length === 0) {
-                    grid.innerHTML = '<div class="text-center p-10 text-gray-700">AUCUN ALPHA DÉTECTÉ</div>';
-                    return;
-                }
+    function safeStr(v, fallback = '—') {
+        if (!v || String(v) === 'null' || String(v) === 'undefined') return fallback;
+        return String(v);
+    }
 
-                const eliteThreshold = 0.025;
-                grid.innerHTML = signals.filter(s => s.match_name && s.match_name !== 'null').map(s => {
-                    const alpha = s.alpha_spread * 100;
-                    const isElite = s.alpha_spread >= eliteThreshold;
-                    const cardClass = isElite ? 'card-elite' : 'card';
-                    const alphaClass = isElite ? 'alpha-elite' : 'alpha-value';
-                    const marketLabel = (s.market_type || '').replace('totals', 'Over/Under').replace('spreads', 'AH').replace('h2h', '1v1');
-                    const eliteBadge = isElite ? '<span class="text-[8px] bg-yellow-900/40 text-yellow-500 px-1 ml-1 rounded">ELITE</span>' : '';
-                    return `
-                    <div class="${cardClass} p-4 flex justify-between items-center" onclick='openModal(${JSON.stringify(s)})'>
-                        <div>
-                            <div class="text-[10px] text-gray-500">${s.sport || 'N/A'} | ${s.match_time ? s.match_time.substring(5,16) : 'N/A'} <span class="market-badge">${marketLabel}</span></div>
-                            <div class="text-sm font-bold text-white">${s.match_name}${eliteBadge}</div>
-                        </div>
-                        <div class="text-right">
-                            <div class="text-[10px] text-gray-500 uppercase">Alpha</div>
-                            <div class="${alphaClass}">+${alpha.toFixed(1)}%</div>
-                        </div>
+    function sportIcon(key) {
+        const k = (key || '').toLowerCase();
+        if (k.startsWith('basketball')) return '🏀';
+        if (k.startsWith('tennis'))     return '🎾';
+        if (k.startsWith('soccer'))     return '⚽';
+        if (k.startsWith('baseball'))   return '⚾';
+        if (k.startsWith('icehockey'))  return '🏒';
+        if (k.startsWith('mma'))        return '🥊';
+        if (k.startsWith('esports'))    return '🎮';
+        return '🎯';
+    }
+
+    function marketLabel(k) {
+        return { h2h: 'H2H', spreads: 'Asian Hcp', totals: 'O/U' }[k]
+            || (k || 'N/A').toUpperCase();
+    }
+
+    function formatTime(iso) {
+        if (!iso) return '—';
+        try {
+            return new Date(iso).toLocaleString('fr-FR', {
+                day: '2-digit', month: '2-digit',
+                hour: '2-digit', minute: '2-digit',
+            });
+        } catch { return iso.substring(5, 16); }
+    }
+
+    function xbetUrl(matchName) {
+        const parts = (matchName || '').split(' vs ');
+        const query = encodeURIComponent(parts[0] || matchName || '');
+        return `https://1xbet.com/en/line/?query=${query}`;
+    }
+
+    // ── Status Bar ────────────────────────────────────────────────
+    async function updateStatus() {
+        const t0 = Date.now();
+        try {
+            const r = await fetch('/api/health');
+            const ms = Date.now() - t0;
+            document.getElementById('s-latency').textContent = ms + 'ms';
+            if (!r.ok) return;
+            const d = await r.json();
+            const ok  = `<span class="dot dot-ok"></span>`;
+            const err = `<span class="dot dot-err"></span>`;
+            const unk = `<span class="dot dot-unk"></span>`;
+            document.getElementById('s-odds').innerHTML =
+                (d.env_vars?.ODDS_API_KEY === 'SET' ? ok : err) + 'Odds API';
+            document.getElementById('s-gemini').innerHTML =
+                (d.env_vars?.GEMINI_API_KEY === 'SET' ? ok : err) + 'Gemini';
+            document.getElementById('s-db').innerHTML =
+                (d.supabase_connected ? ok : err) + 'Supabase';
+        } catch {
+            document.getElementById('s-latency').textContent = 'err';
+        }
+    }
+
+    // ── KPI Loader ────────────────────────────────────────────────
+    async function loadKPIs() {
+        try {
+            const r = await fetch('/api/stats');
+            if (!r.ok) return;
+            const d = await r.json();
+            document.getElementById('kpi-capital').textContent =
+                (d.capital != null ? Number(d.capital).toLocaleString('fr-FR') : '10 000') + '€';
+            document.getElementById('kpi-winrate').textContent =
+                d.win_rate != null ? safe(d.win_rate, 1, '%') : '—';
+            document.getElementById('kpi-clv').textContent =
+                d.clv_avg != null ? '+' + safe(d.clv_avg, 2, '%') : '—';
+        } catch { /* non critique */ }
+    }
+
+    // ── Signal Loader ─────────────────────────────────────────────
+    async function loadSignals() {
+        const grid = document.getElementById('signals-grid');
+        grid.innerHTML = '<div class="text-center py-8 text-gray-700 text-xs">Chargement...</div>';
+        try {
+            const res = await fetch('/api/data');
+            if (!res.ok) throw new Error('HTTP ' + res.status);
+            const data = await res.json();
+            const raw = Array.isArray(data.signals) ? data.signals
+                      : Array.isArray(data)          ? data
+                      : [];
+
+            // Filtre strict : match_name valide + alpha_spread numérique > 0
+            const signals = raw.filter(s => {
+                const name  = s.match_name;
+                const alpha = Number(s.alpha_spread);
+                return name && name !== 'null' && name !== 'undefined'
+                    && !isNaN(alpha) && alpha > 0;
+            });
+
+            document.getElementById('kpi-count').textContent = signals.length;
+
+            if (signals.length === 0) {
+                grid.innerHTML = `
+                <div class="text-center py-14">
+                    <div class="text-gray-700 mb-2">AUCUN ALPHA DÉTECTÉ</div>
+                    <div class="text-gray-800 text-xs">
+                        Lancer un scan ou attendre le prochain cycle automatique
                     </div>
-                    `;
-                }).join('');
-            } catch (e) { grid.innerHTML = '<div class="text-red-500">Erreur de chargement</div>'; }
+                </div>`;
+                return;
+            }
+
+            grid.innerHTML = signals.map(s => {
+                const alpha   = Number(s.alpha_spread) * 100;
+                const isElite = alpha >= 2.5;
+                const icon    = sportIcon(s.sport);
+                const mtime   = formatTime(s.match_time);
+                const cls     = isElite ? 'card-elite' : 'card';
+                const aCls    = isElite ? 'alpha-elite' : 'alpha-value';
+                const sel     = safeStr(s.selection, '');
+
+                return `<div class="${cls} p-3 flex justify-between items-center gap-3"
+                             onclick='openModal(${JSON.stringify(s).replace(/'/g, "&#39;")})'>
+                    <div class="min-w-0">
+                        <div class="text-[9px] text-gray-600 mb-0.5">
+                            ${icon} ${safeStr(s.sport,'?')} · ${mtime}
+                            <span class="badge bg-gray-900 text-gray-600">${marketLabel(s.market_type)}</span>
+                        </div>
+                        <div class="text-sm font-bold text-white truncate">${safeStr(s.match_name)}</div>
+                        ${sel ? `<div class="text-[10px] text-gray-500 truncate">${sel}</div>` : ''}
+                    </div>
+                    <div class="text-right shrink-0">
+                        <div class="text-[9px] text-gray-600">ALPHA</div>
+                        <div class="${aCls} text-base">+${alpha.toFixed(1)}%</div>
+                        ${isElite ? '<div class="text-[8px] text-yellow-700">ELITE</div>' : ''}
+                    </div>
+                </div>`;
+            }).join('');
+
+        } catch(e) {
+            grid.innerHTML = `<div class="border border-red-900 text-red-800 text-xs p-3">
+                Erreur de chargement: ${e.message}
+            </div>`;
         }
+    }
 
-        function openModal(s) {
-            document.getElementById('m-title').innerText = s.match_name;
-            document.getElementById('m-fair').innerText = s.fair_price || '0.00';
-            document.getElementById('m-soft').innerText = s.cote_1xbet || '0.00';
-            document.getElementById('m-ia').innerText = s.note_ia || 'Analyse non disponible';
-            document.getElementById('detail-modal').style.display = 'flex';
+    // ── Modal ─────────────────────────────────────────────────────
+    function openModal(s) {
+        const alpha   = Number(s.alpha_spread) * 100;
+        const isElite = alpha >= 2.5;
+
+        document.getElementById('m-sport').textContent     = safeStr(s.sport, '');
+        document.getElementById('m-title').textContent     = safeStr(s.match_name, '—');
+        document.getElementById('m-fair').textContent      = safe(s.fair_price, 2);
+        document.getElementById('m-soft').textContent      = safe(s.cote_1xbet, 2);
+        document.getElementById('m-alpha').textContent     = '+' + alpha.toFixed(2) + '%';
+        document.getElementById('m-alpha').className       =
+            'text-sm font-bold ' + (isElite ? 'alpha-elite' : 'alpha-value');
+        document.getElementById('m-selection').textContent = safeStr(s.selection, '—');
+        document.getElementById('m-market').textContent    = marketLabel(s.market_type);
+        document.getElementById('m-time').textContent      = formatTime(s.match_time);
+        document.getElementById('m-ia').textContent        =
+            safeStr(s.note_ia || s.ai_context, 'Analyse non disponible');
+        document.getElementById('m-link').href             = xbetUrl(s.match_name);
+
+        const badge = document.getElementById('m-elite-badge');
+        badge.className = isElite
+            ? 'text-[9px] bg-yellow-900/40 border border-yellow-800 text-yellow-400 px-2 py-0.5 rounded shrink-0'
+            : 'hidden';
+
+        document.getElementById('detail-modal').classList.add('open');
+    }
+
+    function closeModal() {
+        document.getElementById('detail-modal').classList.remove('open');
+    }
+
+    function handleOverlayClick(e) {
+        if (e.target === document.getElementById('detail-modal')) closeModal();
+    }
+
+    document.addEventListener('keydown', e => { if (e.key === 'Escape') closeModal(); });
+
+    // ── Scan Actions ──────────────────────────────────────────────
+    async function triggerScan() {
+        const btn = document.getElementById('scan-btn');
+        btn.textContent = '⌛ SCANNING...';
+        btn.disabled = true;
+        try {
+            const r = await fetch('/api/screener');
+            const d = await r.json();
+            if (d.status === 'quota_empty') {
+                alert('⚠️ ' + d.message);
+            } else if (d.status === 'error') {
+                alert('❌ Erreur: ' + d.message);
+            } else {
+                await loadSignals();
+            }
+        } catch(e) {
+            alert('❌ Erreur: ' + e.message);
+        } finally {
+            btn.textContent = '⚡ FORCE SCAN';
+            btn.disabled = false;
         }
+    }
 
-        function closeModal() { document.getElementById('detail-modal').style.display = 'none'; }
-
-        async function runScan() {
-            const btn = event.target;
-            btn.innerText = "SCANNING...";
-            await fetch('/api/screener');
-            loadSignals();
-            btn.innerText = "FORCE SCAN";
+    async function triggerHunter() {
+        const btn = document.getElementById('hunter-btn');
+        btn.textContent = '⌛ HUNTING...';
+        btn.disabled = true;
+        try {
+            const r = await fetch('/api/hunter-scan', { method: 'POST' });
+            const d = await r.json();
+            if (d.status === 'error') {
+                alert('❌ Hunter erreur: ' + d.error);
+            } else {
+                await loadSignals();
+            }
+        } catch(e) {
+            alert('❌ Erreur: ' + e.message);
+        } finally {
+            btn.textContent = '🎯 HUNTER';
+            btn.disabled = false;
         }
+    }
 
-        loadSignals();
-        setInterval(loadSignals, 60000);
+    // ── Init ──────────────────────────────────────────────────────
+    loadSignals();
+    loadKPIs();
+    updateStatus();
+    setInterval(loadSignals, 60000);
+    setInterval(updateStatus, 30000);
     </script>
 </body>
 </html>
