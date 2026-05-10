@@ -124,17 +124,62 @@ def health():
 @app.route('/api/debug-events')
 def debug_events():
     """
-    Appelle l'API The-Odds-API directement et retourne les événements bruts.
-    Permet de diagnostiquer pourquoi le scanner trouve 0 signaux.
+    Diagnostic direct The-Odds-API — endpoint autonome sans dépendances.
+    Retourne événements bruts + quota pour diagnostiquer le scanner.
     """
+    import requests as _req
     try:
-        from data.odds_fetcher import OddsFetcher
-        fetcher = OddsFetcher()
-        events = fetcher.fetch_all_upcoming()
+        api_key = os.environ.get("ODDS_API_KEY", "")
+        if not api_key:
+            return jsonify({"error": "ODDS_API_KEY manquant"}), 500
+
+        from datetime import datetime, timezone, timedelta
+        cutoff = (datetime.now(timezone.utc) + timedelta(hours=48)).strftime("%Y-%m-%dT%H:%M:%SZ")
+
+        url = "https://api.the-odds-api.com/v4/sports/upcoming/odds/"
+        params = {
+            "apiKey": api_key,
+            "regions": "eu,us",
+            "markets": "h2h,spreads",
+            "oddsFormat": "decimal",
+            "commenceTimeTo": cutoff,
+        }
+
+        resp = _req.get(url, params=params, timeout=20)
+        quota = {
+            "remaining": resp.headers.get("x-requests-remaining", "?"),
+            "used": resp.headers.get("x-requests-used", "?"),
+            "http_status": resp.status_code,
+        }
+
+        if resp.status_code != 200:
+            return jsonify({
+                "error": f"API HTTP {resp.status_code}",
+                "body": resp.text[:300],
+                "quota": quota,
+            }), 200
+
+        try:
+            events = resp.json()
+        except Exception as je:
+            return jsonify({"error": f"JSON parse: {je}", "body": resp.text[:300]}), 200
+
+        if not isinstance(events, list):
+            return jsonify({"error": "Réponse non-liste", "data": str(events)[:300], "quota": quota}), 200
 
         summary = []
         for e in events[:30]:
             bms = [b.get("key", "") for b in e.get("bookmakers", [])]
+            markets_info = []
+            for bm in e.get("bookmakers", []):
+                for m in bm.get("markets", []):
+                    outcomes = m.get("outcomes", [])
+                    markets_info.append({
+                        "bm": bm.get("key",""),
+                        "market": m.get("key",""),
+                        "outcomes": [o.get("name","") for o in outcomes],
+                        "n": len(outcomes),
+                    })
             summary.append({
                 "match": f"{e.get('home_team','?')} vs {e.get('away_team','?')}",
                 "sport": e.get("sport_key", ""),
@@ -142,21 +187,18 @@ def debug_events():
                 "bookmakers": bms,
                 "has_pinnacle": "pinnacle" in bms,
                 "has_betfair": "betfair_ex_back" in bms,
-                "has_1xbet": any("1x" in b or "onex" in b for b in bms if b),
-                "markets": [
-                    {"key": m.get("key",""), "outcomes": len(m.get("outcomes", []))}
-                    for bm in e.get("bookmakers", []) for m in bm.get("markets", [])
-                ][:5],
+                "has_1xbet": any(("1x" in b or "onex" in b) for b in bms if b),
+                "markets": markets_info[:8],
             })
 
         return jsonify({
             "total_events": len(events),
-            "quota": fetcher.get_quota_status(),
+            "quota": quota,
             "events": summary,
         })
     except Exception as e:
-        logger.error(f"Erreur debug-events: {e}")
-        return jsonify({"error": str(e)}), 500
+        logger.error(f"Erreur debug-events: {e}", exc_info=True)
+        return jsonify({"error": str(e), "type": type(e).__name__}), 500
 
 
 # ── Screener avec logs de debug ───────────────────────────────
