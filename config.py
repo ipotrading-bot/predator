@@ -40,9 +40,9 @@ class Settings(BaseSettings):
     betterstack_source_id: str = Field(default="", alias="BETTERSTACK_SOURCE_ID")
 
     # ── PAIM Engine (Seuils Doctrinaires PhD MIT) ─────────────
-    min_ev_threshold: float = Field(default=0.015, ge=0.005)  # 1.5% display min
-    alpha_display_min: float = Field(default=0.015)            # 1.5% → affiché
-    alpha_elite_min: float = Field(default=0.025)              # 2.5% → ELITE
+    min_ev_threshold: float = Field(default=0.010, ge=0.005)  # 1.0% display min (Mode Hunter)
+    alpha_display_min: float = Field(default=0.010)            # 1.0% → affiché (baisse pour flux)
+    alpha_elite_min: float = Field(default=0.025)              # 2.5% → ELITE gold border
     min_snr_ratio: float = Field(default=3.0, ge=1.5)
     kelly_fraction: float = Field(default=0.25)
     max_single_stake_pct: float = Field(default=0.03)   # 3% max par pari

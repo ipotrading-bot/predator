@@ -8,8 +8,11 @@
     <style>
         body { background-color: #050505; color: #00ff00; font-family: monospace; }
         .card { background: #111; border: 1px solid #222; border-left: 4px solid #00ff00; }
+        .card-elite { background: #111; border: 1px solid #b8860b; border-left: 4px solid #ffd700; }
         .modal { display: none; position: fixed; inset: 0; background: rgba(0,0,0,0.9); z-index: 50; padding: 20px; }
         .alpha-value { color: #60a5fa; font-weight: bold; }
+        .alpha-elite { color: #ffd700; font-weight: bold; }
+        .market-badge { background: #222; color: #888; font-size: 9px; padding: 1px 6px; border-radius: 2px; }
     </style>
 </head>
 <body class="p-2 md:p-6">
@@ -77,18 +80,27 @@
                     return;
                 }
 
-                grid.innerHTML = signals.filter(s => s.match_name && s.match_name !== 'null').map(s => `
-                    <div class="card p-4 flex justify-between items-center" onclick='openModal(${JSON.stringify(s)})'>
+                const eliteThreshold = 0.025;
+                grid.innerHTML = signals.filter(s => s.match_name && s.match_name !== 'null').map(s => {
+                    const alpha = s.alpha_spread * 100;
+                    const isElite = s.alpha_spread >= eliteThreshold;
+                    const cardClass = isElite ? 'card-elite' : 'card';
+                    const alphaClass = isElite ? 'alpha-elite' : 'alpha-value';
+                    const marketLabel = (s.market_type || '').replace('totals', 'Over/Under').replace('spreads', 'AH').replace('h2h', '1v1');
+                    const eliteBadge = isElite ? '<span class="text-[8px] bg-yellow-900/40 text-yellow-500 px-1 ml-1 rounded">ELITE</span>' : '';
+                    return `
+                    <div class="${cardClass} p-4 flex justify-between items-center" onclick='openModal(${JSON.stringify(s)})'>
                         <div>
-                            <div class="text-[10px] text-gray-500">${s.sport || 'N/A'} | ${s.match_time ? s.match_time.substring(5,16) : 'N/A'}</div>
-                            <div class="text-sm font-bold text-white">${s.match_name}</div>
+                            <div class="text-[10px] text-gray-500">${s.sport || 'N/A'} | ${s.match_time ? s.match_time.substring(5,16) : 'N/A'} <span class="market-badge">${marketLabel}</span></div>
+                            <div class="text-sm font-bold text-white">${s.match_name}${eliteBadge}</div>
                         </div>
                         <div class="text-right">
                             <div class="text-[10px] text-gray-500 uppercase">Alpha</div>
-                            <div class="alpha-value">+${(s.alpha_spread * 100).toFixed(1)}%</div>
+                            <div class="${alphaClass}">+${alpha.toFixed(1)}%</div>
                         </div>
                     </div>
-                `).join('');
+                    `;
+                }).join('');
             } catch (e) { grid.innerHTML = '<div class="text-red-500">Erreur de chargement</div>'; }
         }
 

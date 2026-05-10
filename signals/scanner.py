@@ -34,7 +34,7 @@ from api.perplexity_client import perplexity_grounding
 logger = logging.getLogger(__name__)
 
 # Fenêtre de scan : T+0h à T+48h (Alpha Decay doctrine)
-SCAN_WINDOW_HOURS = 48
+SCAN_WINDOW_HOURS = 12
 
 # Mots-clés fuzzy pour identifier les soft books 1XBet
 # The-Odds-API peut retourner : onexbet, 1xbet, 1xbit, 1xstavka, 1x_bet, etc.
@@ -472,8 +472,9 @@ class MarketScanner:
         if not bookmakers:
             return []
 
-        # Probabilités sharp via Shin Method (avec garde-fou binaire)
-        sharp_odds = self._extract_sharp_odds(bookmakers, sport=sport)
+        # Probabilités sharp via Shin Method avec fallback multi-bookmaker
+        # 🔧 v5.5: Utiliser _extract_market_odds_with_fallback pour les cotes manquantes
+        sharp_odds = self._extract_market_odds_with_fallback(bookmakers, sport=sport)
         if not sharp_odds:
             logger.debug(f"⏭️ Pas de sharp odds binaires pour {event_name}")
             return []
@@ -498,7 +499,7 @@ class MarketScanner:
 
             for sharp_market in sharp_bm.get("markets", []):
                 sharp_market_key = sharp_market.get("key", "")
-                if sharp_market_key not in ("h2h", "spreads"):
+                if sharp_market_key not in ("h2h", "spreads", "totals"):
                     continue
 
                 raw_outcomes = sharp_market.get("outcomes", [])
@@ -676,6 +677,7 @@ class MarketScanner:
         - Rejette si != 2 outcomes (doctrine Zéro Nul)
         - Rejette si un outcome s'appelle "Draw"
         - Pour soccer: uniquement spreads (pas h2h)
+        - Supporte: h2h, spreads, totals (Over/Under binaires)
         """
         for bm in bookmakers:
             if bm.get("key", "").lower() not in [s.lower() for s in settings.sharp_books]:
@@ -705,9 +707,9 @@ class MarketScanner:
                         continue
                     return {outcomes[i]["name"]: shin_probs[i] for i in range(2)}
             
-            # Pour autres sports (NBA, Tennis, etc.): h2h est OK (naturellement binaire)
+            # Pour autres sports (NBA, Tennis, etc.): h2h puis totals
             for market in markets:
-                if market.get("key") != "h2h":
+                if market.get("key") not in ("h2h", "totals"):
                     continue
                 outcomes = market.get("outcomes", [])
                 
@@ -738,6 +740,52 @@ class MarketScanner:
         
         return {}
 
+    def _extract_market_odds_with_fallback(self, bookmakers: list[dict], sport: str = "") -> dict[str, float]:
+        """
+        🔧 Pinnacle Fallback v5.5
+        Si Shin Method échoue sur Pinnacle (cotes manquantes),
+        prend la MOYENNE des 3 plus gros bookmakers comme Fair Price.
+        
+        Fallback ordre: Betfair > bet365 > unibet > williamhill
+        """
+        # Essayer Pinnacle Shin d'abord
+        sharp = self._extract_sharp_odds(bookmakers, sport)
+        if sharp:
+            return sharp
+        
+        # Pinnacle absent → fallback multi-bookmaker
+        fallback_bm_keys = ["betfair_exchange", "bet365", "unibet", "williamhill"]
+        collected_odds = []
+        
+        for bm in bookmakers:
+            bm_key = bm.get("key", "").lower()
+            if bm_key not in [k.lower() for k in fallback_bm_keys]:
+                continue
+            
+            for market in bm.get("markets", []):
+                if market.get("key") not in ("h2h", "spreads", "totals"):
+                    continue
+                outcomes = market.get("outcomes", [])
+                if len(outcomes) != 2:
+                    continue
+                raw = [o["price"] for o in outcomes if o.get("price", 0) > 1.0]
+                if len(raw) == 2:
+                    collected_odds.append((outcomes, raw))
+                    break  # Un marché par bookmaker suffit
+        
+        if len(collected_odds) >= 2:
+            # Prendre la moyenne des cotes comme référence Fair Price
+            avg_odds = [sum(o[1][i] for o in collected_odds) / len(collected_odds) for i in (0, 1)]
+            outcomes = collected_odds[0][0]
+            try:
+                shin_probs = calculate_shin_probabilities(avg_odds)
+                logger.info(f"🔧 FALLBACK Fair Price: moyenne de {len(collected_odds)} bookmakers")
+                return {outcomes[0]["name"]: shin_probs[0], outcomes[1]["name"]: shin_probs[1]}
+            except Exception:
+                pass
+        
+        return {}
+
     # ─────────────────────────────────────────────────────────────
     # Persistance + notifications
     # ─────────────────────────────────────────────────────────────
@@ -758,7 +806,7 @@ class MarketScanner:
                 continue
             
             # Vérification supplémentaire: le marché doit être binaire
-            if signal.market_key not in ("h2h", "spreads"):
+            if signal.market_key not in ("h2h", "spreads", "totals"):
                 logger.warning(f"🚫 Marché non-binaire rejeté: {signal.market_key}")
                 continue
             
