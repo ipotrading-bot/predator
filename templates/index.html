@@ -3,7 +3,7 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
-    <title>PREDATOR PAIM v2.0 | Terminal</title>
+    <title>PREDATOR PAIM v5.3 | Terminal</title>
     <script src="https://cdn.tailwindcss.com"></script>
     <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
     <link href="https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@400;700&display=swap" rel="stylesheet">
@@ -32,18 +32,58 @@
         .log-time { color: #555; }
         .log-success { color: var(--paim-green); font-weight: bold; }
         .log-error { color: #ff3333; }
-        
+
+        /* Fix 3: True Mobile Layout */
         @media (min-width: 769px) {
             .kpi-grid { display: grid; grid-template-columns: repeat(5, 1fr); gap: 16px; }
             .console-body { height: 300px; }
             .signal-list { display: grid; grid-template-columns: repeat(3, 1fr); gap: 16px; }
         }
         @media (max-width: 768px) {
+            /* Force single column grid on mobile */
+            .signal-list { 
+                display: grid !important; 
+                grid-template-columns: 1fr !important; 
+                gap: 8px; 
+            }
             .kpi-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; }
             .kpi-full { grid-column: span 2; }
             .signal-card-mobile { padding: 12px; margin-bottom: 8px; position: relative; }
             .alpha-tag { position: absolute; top: 12px; right: 12px; font-size: 16px; font-weight: 800; }
             .modal-fullscreen { position: fixed; top: 0; left: 0; width: 100%; height: 100%; z-index: 100; background: var(--paim-dark); padding: 20px; display: flex; flex-direction: column; }
+            
+            /* Sticky bottom button in modal */
+            .modal-sticky-bottom { 
+                position: sticky; 
+                bottom: 0; 
+                background: var(--paim-dark); 
+                padding: 12px 0 0 0;
+                margin-top: auto;
+            }
+
+            /* Remove unnecessary green borders on mobile cards */
+            .glass { border-width: 0; border-top: 1px solid rgba(0, 255, 0, 0.08); }
+            
+            /* Console hidden by default on mobile - Fix 5 */
+            .console-mobile-hidden { display: none; }
+            .console-mobile-visible { display: block; }
+            
+            .logs-toggle-btn {
+                position: fixed;
+                bottom: 16px;
+                right: 16px;
+                z-index: 50;
+                background: #0a0a0a;
+                border: 1px solid rgba(0, 255, 0, 0.3);
+                color: var(--paim-green);
+                padding: 8px 16px;
+                border-radius: 4px;
+                font-size: 9px;
+                font-family: 'JetBrains Mono', monospace;
+                cursor: pointer;
+                text-transform: uppercase;
+                letter-spacing: 1px;
+            }
         }
         
         /* ═══════════════════════════════════════════════════════════════════
@@ -222,7 +262,7 @@
     <!-- Header -->
     <div class="flex flex-col md:flex-row justify-between items-start md:items-center mb-6 border-b border-green-900/30 pb-4 gap-4">
         <div>
-            <h1 class="text-lg md:text-2xl font-bold tracking-tighter">🦅 PREDATOR <span class="text-xs font-normal text-gray-500">v5.2 MOBILE</span></h1>
+            <h1 class="text-lg md:text-2xl font-bold tracking-tighter">🦅 PREDATOR <span class="text-xs font-normal text-gray-500">v5.3 MOBILE</span></h1>
             <div class="flex items-center gap-2 mt-1">
                 <span class="text-[9px] bg-green-900/20 text-green-700 px-1 rounded uppercase">Dakar Hub</span>
                 <span class="text-[9px] text-blue-600 font-bold" id="quota-display">API: --/500</span>
@@ -279,8 +319,8 @@
                     </div>
                 </div>
 
-                <!-- Terminal -->
-                <div class="console-container">
+                <!-- Terminal / Console - Fix 5: Hidden on mobile by default -->
+                <div class="console-container" id="console-container">
                     <div class="console-header">
                         <span>TERMINAL DE LOGS</span>
                         <button onclick="clearConsole()" class="text-gray-600">CLEAR</button>
@@ -300,18 +340,24 @@
         </div>
     </div>
 
-    <!-- Signal Detail Modal -->
+    <!-- Signal Detail Modal - Fix 3: Sticky bottom button -->
     <div id="detail-modal" class="hidden modal-fullscreen">
         <div class="flex-1 overflow-y-auto" id="modal-content">
             <!-- Content here -->
         </div>
-        <button onclick="closeModal()" class="w-full bg-red-900/20 text-red-500 font-bold py-5 rounded mt-4 uppercase tracking-tighter text-sm">
-            Fermer le Terminal
-        </button>
+        <div class="modal-sticky-bottom">
+            <button onclick="closeModal()" class="w-full bg-red-900/20 text-red-500 font-bold py-5 rounded mt-4 uppercase tracking-tighter text-sm">
+                Fermer le Terminal
+            </button>
+        </div>
     </div>
+
+    <!-- Fix 5: Console toggle button for mobile -->
+    <button id="logs-toggle-btn" class="logs-toggle-btn hidden" onclick="toggleConsole()">LOGS</button>
 
     <script>
         let currentSignals = [];
+        let consoleVisible = false;
 
         function showPage(pageId) {
             document.querySelectorAll('.page').forEach(p => p.classList.add('hidden'));
@@ -332,6 +378,37 @@
 
         function clearConsole() { document.getElementById('console-output').innerHTML = ''; }
 
+        // Fix 5: Toggle console visibility on mobile
+        function toggleConsole() {
+            const container = document.getElementById('console-container');
+            const btn = document.getElementById('logs-toggle-btn');
+            consoleVisible = !consoleVisible;
+            if (consoleVisible) {
+                container.classList.remove('console-mobile-hidden');
+                container.classList.add('console-mobile-visible');
+                btn.textContent = 'CACHER';
+            } else {
+                container.classList.remove('console-mobile-visible');
+                container.classList.add('console-mobile-hidden');
+                btn.textContent = 'LOGS';
+            }
+        }
+
+        function initConsoleMobile() {
+            const isMobile = window.innerWidth <= 768;
+            const btn = document.getElementById('logs-toggle-btn');
+            const container = document.getElementById('console-container');
+            if (isMobile) {
+                btn.classList.remove('hidden');
+                container.classList.add('console-mobile-hidden');
+                container.classList.remove('console-mobile-visible');
+                consoleVisible = false;
+            } else {
+                btn.classList.add('hidden');
+                container.classList.remove('console-mobile-hidden', 'console-mobile-visible');
+            }
+        }
+
         async function updateDashboard() {
             const grid = document.getElementById('live-container');
             const tempContainer = document.getElementById('market-temperature');
@@ -349,47 +426,74 @@
                     </div>
                 `).join('');
 
+                // Fix 1: Filter out ghost cards - skip signals with null/incomplete data
+                const validSignals = currentSignals.filter(s => {
+                    return s && s.match_name && s.match_name !== 'null' && s.match_name.trim() !== '';
+                });
+                currentSignals = validSignals;
+
                 if (currentSignals.length === 0) {
                     grid.innerHTML = '<div class="col-span-full p-10 text-center text-gray-700 uppercase">Aucun Alpha > 2.5%</div>';
                     return;
                 }
 
-                grid.innerHTML = currentSignals.map((s, idx) => `
-                    <div onclick="openModal(${idx})" class="glass p-4 rounded-sm relative signal-card-mobile active:bg-white/5 border-l-2 border-green-500 cursor-pointer">
-                        <div class="text-[9px] text-green-700 font-bold uppercase mb-1">${s.sport}</div>
+                // Fix 4: Doctrine Check - soccer + h2h warning
+                grid.innerHTML = currentSignals.map((s, idx) => {
+                    const isNonBinaire = s.sport && s.sport.toLowerCase() === 'soccer' && s.market_type && s.market_type.toLowerCase() === 'h2h';
+                    return `
+                    <div onclick="openModal(${idx})" class="glass p-4 rounded relative signal-card-mobile active:bg-white/5 border-l-2 border-green-500 cursor-pointer">
+                        <div class="text-[9px] text-green-700 font-bold uppercase mb-1">${s.sport || 'N/A'}</div>
                         <div class="text-sm font-bold text-white max-w-[80%] truncate">${s.match_name}</div>
-                        <div class="text-[10px] text-gray-500 mt-1">${s.market_type} @ ${s.cote_1xbet}</div>
+                        <div class="text-[10px] text-gray-500 mt-1">${s.market_type || 'N/A'} @ ${s.cote_1xbet || '0.00'}</div>
+                        ${isNonBinaire ? '<div class="text-[10px] text-orange-400 font-bold mt-1">⚠️ MARCHÉ NON-BINAIRE</div>' : ''}
                         <div class="alpha-tag text-blue-400">+${(s.alpha_spread * 100).toFixed(1)}%</div>
                     </div>
-                `).join('');
+                    `;
+                }).join('');
 
             } catch (e) { console.error(e); }
         }
 
+        // Fix 2: Fix undefined in Detail Panel - exact property names with fallbacks
         function openModal(idx) {
             const s = currentSignals[idx];
+            if (!s) {
+                addLog("Erreur: Signal introuvable", "error");
+                return;
+            }
             const modal = document.getElementById('detail-modal');
             const content = document.getElementById('modal-content');
+            
+            // Fix 4: Doctrine check in modal detail
+            const isNonBinaire = s.sport && s.sport.toLowerCase() === 'soccer' && s.market_type && s.market_type.toLowerCase() === 'h2h';
+            const doctrineWarning = isNonBinaire ? `
+                <div class="glass p-3 rounded mb-4 border-l-2 border-orange-500">
+                    <p class="text-[11px] text-orange-400 font-bold">⚠️ MARCHÉ NON-BINAIRE</p>
+                    <p class="text-[10px] text-gray-500">Le marché H2H (Head-to-Head) sur le soccer est non-binaire. Vérifiez les 3 voies possibles.</p>
+                </div>
+            ` : '';
+
             content.innerHTML = `
                 <div class="border-b border-green-900/30 pb-4 mb-6">
-                    <h2 class="text-xl font-bold text-white">${s.match_name}</h2>
-                    <p class="text-blue-500 text-sm font-bold uppercase">${s.sport} | ALPHA: ${(s.alpha_spread * 100).toFixed(2)}%</p>
+                    <h2 class="text-xl font-bold text-white">${s.match_name || 'Match Inconnu'}</h2>
+                    <p class="text-blue-500 text-sm font-bold uppercase">${s.sport || 'N/A'} | ALPHA: ${(s.alpha_spread * 100).toFixed(2)}%</p>
                 </div>
+                ${doctrineWarning}
                 <div class="grid grid-cols-2 gap-4 mb-8">
                     <div class="glass p-4 rounded">
-                        <p class="text-[10px] text-gray-500 mb-1 uppercase">Cote Soft</p>
-                        <p class="text-2xl font-bold text-green-400">${s.cote_1xbet}</p>
+                        <p class="text-[10px] text-gray-500 mb-1 uppercase">Cote Soft (1XBET)</p>
+                        <p class="text-2xl font-bold text-green-400">${s.cote_1xbet || '0.00'}</p>
                     </div>
                     <div class="glass p-4 rounded">
                         <p class="text-[10px] text-gray-500 mb-1 uppercase">Fair Price</p>
-                        <p class="text-2xl font-bold text-gray-400">${s.fair_price?.toFixed(2)}</p>
+                        <p class="text-2xl font-bold text-gray-400">${s.fair_price ? s.fair_price.toFixed(2) : '0.00'}</p>
                     </div>
                 </div>
                 <div class="glass p-4 rounded mb-6">
                     <h3 class="text-xs text-gray-500 uppercase mb-2">IA Context</h3>
                     <p class="text-sm text-gray-300 italic">${s.note_ia || 'Analyse non disponible'}</p>
                 </div>
-                <a href="#" class="block w-full bg-blue-600 text-white text-center py-4 rounded font-bold uppercase tracking-widest">Ouvrir sur 1XBet</a>
+                <a href="${s.match_url || '#'}" target="_blank" class="block w-full bg-blue-600 text-white text-center py-4 rounded font-bold uppercase tracking-widest">Ouvrir sur 1XBet</a>
             `;
             modal.classList.remove('hidden');
         }
@@ -449,9 +553,11 @@
             fetchExposure();
             fetchStats();
             fetchAPIHealth();
+            initConsoleMobile();
             setInterval(updateDashboard, 60000);
             setInterval(fetchExposure, 30000);
             setInterval(fetchAPIHealth, 60000);
+            window.addEventListener('resize', initConsoleMobile);
         });
     </script>
 </body>
