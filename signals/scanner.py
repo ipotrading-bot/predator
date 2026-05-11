@@ -35,28 +35,16 @@ logger = logging.getLogger(__name__)
 # Fenêtre de scan : T+0h à T+48h (Alpha Decay doctrine)
 SCAN_WINDOW_HOURS = 48
 
-# Mots-clés fuzzy pour identifier les soft books 1XBet
-# The-Odds-API peut retourner : onexbet, 1xbet, 1xbit, 1xstavka, 1x_bet, etc.
-_SOFT_FUZZY_PATTERNS = ("1x", "one", "onex", "1xbet")
-
-
 def _is_soft_book(bm_key: str) -> bool:
     """
-    Vérifie si un bookmaker est un soft book via :
-    1. Liste exacte dans settings.soft_books
-    2. Fuzzy match sur les patterns 1XBet
-    3. Autres soft books connus (bet365, unibet, williamhill)
+    Tout bookmaker qui N'EST PAS un sharp book de référence est un soft book.
+    Couvre winamax_de/fr, nordicbet, betsson, fanduel, draftkings, betmgm,
+    unibet_se/nl/fr, leovegas_se, pmu_fr, marathonbet, bovada, etc.
     """
     key = bm_key.lower().strip()
-    # Normaliser via synonymes
     key = settings.synonyms.get(key, key)
-    # Match exact
-    if key in [s.lower() for s in settings.soft_books]:
-        return True
-    # Fuzzy 1XBet
-    if any(p in key for p in _SOFT_FUZZY_PATTERNS):
-        return True
-    return False
+    sharp_keys = {s.lower() for s in settings.sharp_books}
+    return key not in sharp_keys
 
 
 def _normalize_bm_key(bm_key: str) -> str:
