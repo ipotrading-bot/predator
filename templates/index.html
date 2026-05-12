@@ -529,7 +529,8 @@
             addLog("Pulse Hunter v6.1: Démarrage scan séquentiel...", "info");
             
             // Pulse Hunter v6.1: Scan sports sequentially to avoid timeout
-            const sports = ['basketball_nba', 'tennis_atp', 'soccer_uefa_champions_league'];
+            // Using broader sport categories that match The-Odds-API format
+            const sports = ['basketball_nba', 'tennis_atp_tour', 'soccer_epl'];
             let totalEvents = 0;
             let totalSignals = 0;
             
