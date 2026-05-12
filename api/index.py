@@ -217,11 +217,28 @@ def debug_events():
 
 @app.route('/api/screener')
 def screener():
-    """Déclenche un scan PAIM complet via l'endpoint global upcoming."""
+    """
+    Déclenche un scan PAIM complet via l'endpoint global upcoming.
+    Pulse Hunter v6.1: Support ?sport= parameter for individual sport scanning.
+    """
     try:
+        # Pulse Hunter v6.1: Secret validation
+        api_key = os.environ.get("ODDS_API_KEY")
+        supabase_url = os.environ.get("SUPABASE_URL")
+        if not api_key:
+            logger.error("[CRITICAL] ODDS_API_KEY manquant - scan impossible")
+            return jsonify({"status": "error", "message": "[CRITICAL] ODDS_API_KEY manquant"}), 500
+        if not supabase_url:
+            logger.error("[CRITICAL] SUPABASE_URL manquant - scan impossible")
+            return jsonify({"status": "error", "message": "[CRITICAL] SUPABASE_URL manquant"}), 500
+
         from config import settings
         from signals.scanner import MarketScanner
         import asyncio
+
+        # Pulse Hunter v6.1: Get sport parameter for individual scanning
+        sport_param = request.args.get('sport', None)
+        logger.info(f"[SCANNER] Début scan - Sport: {sport_param or 'TOUS'}")
 
         # ── Étape 1 : Vider les signaux pending (résidus null + Draw) ──────────
         try:
@@ -243,7 +260,21 @@ def screener():
 
         loop = asyncio.new_event_loop()
         try:
-            result = loop.run_until_complete(scanner.run_scan())
+            # Pulse Hunter v6.1: Pass sport parameter if provided
+            if sport_param:
+                logger.info(f"[SCANNER] Scan individuel: {sport_param}")
+                result = loop.run_until_complete(scanner.run_single_sport_scan(sport_param))
+            else:
+                logger.info(f"[SCANNER] Scan global tous sports")
+                result = loop.run_until_complete(scanner.run_scan())
+        except Exception as scan_error:
+            logger.error(f"[SCANNER] Erreur pendant le scan: {traceback.format_exc()}")
+            loop.close()
+            return jsonify({
+                "status": "error",
+                "message": f"[SCANNER] Erreur critique: {str(scan_error)}",
+                "step": "scan_execution"
+            }), 500
         finally:
             loop.close()
 
@@ -251,6 +282,7 @@ def screener():
 
         # ── Étape 3 : Diagnostic quota ───────────────────────────────
         if quota_status.get("remaining_requests", -1) == 0:
+            logger.warning("[SCANNER] Quota API épuisé")
             return jsonify({
                 "status": "quota_empty",
                 "message": "Quota épuisé ou aucun match trouvé. Attendre le renouvellement mensuel.",
@@ -301,8 +333,12 @@ def screener():
         })
 
     except Exception as e:
-        logger.error(f"Erreur screener: {traceback.format_exc()}")
-        return jsonify({"status": "error", "message": str(e)}), 500
+        logger.error(f"[CRITICAL] Erreur screener: {traceback.format_exc()}")
+        return jsonify({
+            "status": "error",
+            "message": f"[CRITICAL] {str(e)}",
+            "step": "initialization"
+        }), 500
 
 
 # ── Rotation Scan — PhD MIT Protocol (Rate Limiting) ──────────

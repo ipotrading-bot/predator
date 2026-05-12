@@ -510,6 +510,26 @@ class MarketScanner:
                 raw_outcomes = sharp_market.get("outcomes", [])
                 
                 # ═══════════════════════════════════════════════════════════════════
+                # PULSE HUNTER v6.1: Binary Market Validation for totals and btts
+                # ═══════════════════════════════════════════════════════════════════
+                if sharp_market_key in ("totals", "btts"):
+                    logger.debug(f"[BINARY] {sharp_market_key} market detected for {event_name} | Outcomes: {len(raw_outcomes)}")
+                    if len(raw_outcomes) != 2:
+                        logger.warning(f"[BINARY] {sharp_market_key} non-binaire: {len(raw_outcomes)} issues - Rejet")
+                        continue
+                    # Verify outcome names are valid binary (Over/Under or Yes/No)
+                    outcome_names = [o.get("name", "").lower() for o in raw_outcomes]
+                    if sharp_market_key == "totals":
+                        if not all(n in ("over", "under") for n in outcome_names):
+                            logger.warning(f"[BINARY] totals outcomes invalid: {outcome_names} - Rejet")
+                            continue
+                    elif sharp_market_key == "btts":
+                        if not all(n in ("yes", "no") for n in outcome_names):
+                            logger.warning(f"[BINARY] btts outcomes invalid: {outcome_names} - Rejet")
+                            continue
+                    logger.debug(f"[BINARY] {sharp_market_key} validation passed: {outcome_names}")
+                
+                # ═══════════════════════════════════════════════════════════════════
                 # PULSE HUNTER v6.0: Automatic Fallback for Soccer H2H
                 # Si h2h a 3 issues (incluant Draw), chercher automatiquement spreads 0.0/+0.5
                 # ═══════════════════════════════════════════════════════════════════

@@ -526,16 +526,40 @@
         function closeModal() { document.getElementById('detail-modal').classList.add('hidden'); }
 
         async function triggerScan() {
-            addLog("Démarrage du scan global...", "info");
-            try {
-                const res = await fetch('/api/screener');
-                const data = await res.json();
-                if (data.status === "success") {
-                    addLog(`Scan terminé: ${data.result.events_analyzed} événements`, "success");
-                    if (data.api_quota) document.getElementById('quota-display').textContent = `API: ${data.api_quota.remaining_requests}/500`;
+            addLog("Pulse Hunter v6.1: Démarrage scan séquentiel...", "info");
+            
+            // Pulse Hunter v6.1: Scan sports sequentially to avoid timeout
+            const sports = ['basketball_nba', 'tennis_atp', 'soccer_uefa_champions_league'];
+            let totalEvents = 0;
+            let totalSignals = 0;
+            
+            for (const sport of sports) {
+                addLog(`[SCANNER] Scan en cours: ${sport}...`, "info");
+                try {
+                    const res = await fetch(`/api/screener?sport=${sport}`);
+                    const data = await res.json();
+                    
+                    if (data.status === "success") {
+                        totalEvents += data.result.events_analyzed;
+                        totalSignals += data.result.signals_validated;
+                        addLog(`✅ ${sport}: ${data.result.signals_validated} signaux | ${data.result.events_analyzed} events`, "success");
+                        if (data.api_quota) document.getElementById('quota-display').textContent = `API: ${data.api_quota.remaining_requests}/500`;
+                    } else if (data.status === "quota_empty") {
+                        addLog(`[API] Quota épuisé ou Serveur saturé`, "error");
+                        break;
+                    } else {
+                        addLog(`[SCANNER] Erreur ${sport}: ${data.message}`, "error");
+                    }
+                } catch (e) {
+                    addLog(`[SCANNER] Erreur critique ${sport}: ${e.message}`, "error");
                 }
-                updateDashboard();
-            } catch (e) { addLog("Erreur critique pendant le scan", "error"); }
+                
+                // Small delay between sports to avoid rate limiting
+                await new Promise(resolve => setTimeout(resolve, 1000));
+            }
+            
+            addLog(`🎯 Scan terminé: ${totalSignals} signaux totaux | ${totalEvents} événements`, "success");
+            updateDashboard();
         }
 
         async function fetchExposure() {
