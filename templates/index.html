@@ -8,10 +8,35 @@
     <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
     <link href="https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@400;700&display=swap" rel="stylesheet">
     <style>
-        :root { --paim-green: #00ff00; --paim-dark: #050505; }
+        :root { --paim-green: #00ff00; --paim-dark: #050505; --paim-blue: #00d4ff; }
         body { font-family: 'JetBrains Mono', monospace; background-color: var(--paim-dark); color: var(--paim-green); }
         .glass { background: rgba(255, 255, 255, 0.03); border: 1px solid rgba(0, 255, 0, 0.15); }
         .tab-active { border-bottom: 3px solid var(--paim-green); color: #fff; }
+        
+        /* Pulse Hunter v6.0: Market Badges */
+        .market-badge { display: inline-block; padding: 2px 8px; border-radius: 4px; font-size: 9px; font-weight: bold; text-transform: uppercase; }
+        .badge-ou { background: rgba(255, 165, 0, 0.2); color: #ffa500; border: 1px solid rgba(255, 165, 0, 0.4); }
+        .badge-btts { background: rgba(138, 43, 226, 0.2); color: #8a2be2; border: 1px solid rgba(138, 43, 226, 0.4); }
+        .badge-ah { background: rgba(0, 100, 255, 0.2); color: #0064ff; border: 1px solid rgba(0, 100, 255, 0.4); }
+        .badge-prop { background: rgba(255, 215, 0, 0.2); color: #ffd700; border: 1px solid rgba(255, 215, 0, 0.4); }
+        
+        /* Pulse Hunter v6.0: Countdown Timer */
+        .countdown { font-family: 'JetBrains Mono', monospace; font-size: 11px; }
+        .countdown.urgent { color: #ff3333; animation: pulse-red 1s infinite; }
+        @keyframes pulse-red { 0%, 100% { opacity: 1; } 50% { opacity: 0.5; } }
+        
+        /* Pulse Hunter v6.0: SNR Progress Bar */
+        .snr-bar-container { width: 100%; height: 6px; background: rgba(255, 255, 255, 0.1); border-radius: 3px; overflow: hidden; }
+        .snr-bar-fill { height: 100%; background: linear-gradient(90deg, var(--paim-green), var(--paim-blue)); transition: width 0.3s ease; }
+        
+        /* Pulse Hunter v6.0: Filter Buttons */
+        .filter-btn { padding: 6px 12px; border: 1px solid rgba(0, 255, 0, 0.3); background: rgba(0, 255, 0, 0.05); color: var(--paim-green); font-size: 10px; font-weight: bold; text-transform: uppercase; cursor: pointer; transition: all 0.2s; }
+        .filter-btn:hover { background: rgba(0, 255, 0, 0.15); }
+        .filter-btn.active { background: var(--paim-green); color: var(--paim-dark); }
+        
+        /* Pulse Hunter v6.0: Electric Blue for Alpha */
+        .alpha-highlight { color: var(--paim-blue); }
+        .alpha-bar { background: var(--paim-blue); }
         
         .nav-scroll { -ms-overflow-style: none; scrollbar-width: none; overflow-x: auto; display: flex; white-space: nowrap; border-bottom: 1px solid #111; }
         .nav-scroll::-webkit-scrollbar { display: none; }
@@ -41,9 +66,12 @@
         @media (max-width: 768px) {
             .kpi-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; }
             .kpi-full { grid-column: span 2; }
-            .signal-card-mobile { padding: 12px; margin-bottom: 8px; position: relative; }
-            .alpha-tag { position: absolute; top: 12px; right: 12px; font-size: 16px; font-weight: 800; }
+            .signal-card-mobile { padding: 10px; margin-bottom: 6px; position: relative; }
+            .alpha-tag { position: absolute; top: 10px; right: 10px; font-size: 14px; font-weight: 800; }
             .modal-fullscreen { position: fixed; top: 0; left: 0; width: 100%; height: 100%; z-index: 100; background: var(--paim-dark); padding: 20px; display: flex; flex-direction: column; }
+            /* Pulse Hunter v6.0: 3 cards per screen on mobile */
+            .signal-list { display: grid; grid-template-columns: repeat(2, 1fr); gap: 8px; padding: 0 8px; }
+            .signal-card { padding: 8px; min-height: 120px; }
         }
         
         /* ═══════════════════════════════════════════════════════════════════
@@ -220,9 +248,9 @@
     </div>
 
     <!-- Header -->
-    <div class="flex flex-col md:flex-row justify-between items-start md:items-center mb-6 border-b border-green-900/30 pb-4 gap-4">
+    <div class="flex flex-col md:flex-row justify-between items-start md:items-center mb-4 border-b border-green-900/30 pb-4 gap-4">
         <div>
-            <h1 class="text-lg md:text-2xl font-bold tracking-tighter">🦅 PREDATOR <span class="text-xs font-normal text-gray-500">v5.2 MOBILE</span></h1>
+            <h1 class="text-lg md:text-2xl font-bold tracking-tighter">🦅 PREDATOR <span class="text-xs font-normal text-gray-500">v6.0 PULSE HUNTER</span></h1>
             <div class="flex items-center gap-2 mt-1">
                 <span class="text-[9px] bg-green-900/20 text-green-700 px-1 rounded uppercase">Dakar Hub</span>
                 <span class="text-[9px] text-blue-600 font-bold" id="quota-display">API: --/500</span>
@@ -295,6 +323,13 @@
 
     <!-- PAGE: Live Signals -->
     <div id="page-live" class="page hidden">
+        <!-- Pulse Hunter v6.0: Quick View Filters -->
+        <div class="flex gap-2 mb-4 overflow-x-auto pb-2">
+            <button onclick="filterSignals('all')" class="filter-btn active" id="filter-all">TOUT</button>
+            <button onclick="filterSignals('soccer')" class="filter-btn" id="filter-soccer">⚽ FOOTBALL</button>
+            <button onclick="filterSignals('basketball')" class="filter-btn" id="filter-basketball">🏀 NBA</button>
+            <button onclick="filterSignals('tennis')" class="filter-btn" id="filter-tennis">🎾 TENNIS</button>
+        </div>
         <div id="live-container" class="signal-list">
             <!-- Signal cards -->
         </div>
@@ -312,6 +347,7 @@
 
     <script>
         let currentSignals = [];
+        let currentFilter = 'all';
 
         function showPage(pageId) {
             document.querySelectorAll('.page').forEach(p => p.classList.add('hidden'));
@@ -332,6 +368,63 @@
 
         function clearConsole() { document.getElementById('console-output').innerHTML = ''; }
 
+        // Pulse Hunter v6.0: Market Badge Helper
+        function getMarketBadge(marketKey) {
+            if (!marketKey) return '';
+            if (marketKey === 'totals') return '<span class="market-badge badge-ou">O/U</span>';
+            if (marketKey === 'btts') return '<span class="market-badge badge-btts">BTTS</span>';
+            if (marketKey === 'spreads') return '<span class="market-badge badge-ah">AH</span>';
+            if (marketKey.includes('player') || marketKey.includes('total_corners')) return '<span class="market-badge badge-prop">PROP</span>';
+            return '';
+        }
+
+        // Pulse Hunter v6.0: Countdown Timer
+        function getCountdown(matchTime) {
+            if (!matchTime) return 'CALCUL EN COURS...';
+            try {
+                const matchDate = new Date(matchTime);
+                const now = new Date();
+                const diff = matchDate - now;
+                if (diff <= 0) return 'MATCH COMMENCÉ';
+                
+                const hours = Math.floor(diff / (1000 * 60 * 60));
+                const minutes = Math.floor((diff % (1000 * 60 * 60)) / (1000 * 60));
+                const seconds = Math.floor((diff % (1000 * 60)) / 1000);
+                
+                const isUrgent = diff < (60 * 60 * 1000); // Less than 60 minutes
+                const urgencyClass = isUrgent ? 'countdown urgent' : 'countdown';
+                
+                return `<span class="${urgencyClass}">⏱️ ${String(hours).padStart(2, '0')}:${String(minutes).padStart(2, '0')}:${String(seconds).padStart(2, '0')}</span>`;
+            } catch (e) {
+                return 'CALCUL EN COURS...';
+            }
+        }
+
+        // Pulse Hunter v6.0: SNR Progress Bar
+        function getSNRBar(snrRatio) {
+            const percentage = Math.min(Math.max(snrRatio * 10, 0), 100);
+            return `
+                <div class="snr-bar-container">
+                    <div class="snr-bar-fill" style="width: ${percentage}%"></div>
+                </div>
+                <div class="text-[9px] text-gray-500 mt-1">SNR: ${percentage.toFixed(0)}%</div>
+            `;
+        }
+
+        // Pulse Hunter v6.0: Filter Signals
+        function filterSignals(filterType) {
+            currentFilter = filterType;
+            document.querySelectorAll('.filter-btn').forEach(btn => btn.classList.remove('active'));
+            document.getElementById('filter-' + filterType).classList.add('active');
+            renderSignals();
+        }
+
+        // Pulse Hunter v6.0: Safe Value Helper
+        function safeValue(value, fallback = 'CALCUL EN COURS...') {
+            if (value === null || value === undefined || value === 'null') return fallback;
+            return value;
+        }
+
         async function updateDashboard() {
             const grid = document.getElementById('live-container');
             const tempContainer = document.getElementById('market-temperature');
@@ -349,45 +442,81 @@
                     </div>
                 `).join('');
 
-                if (currentSignals.length === 0) {
-                    grid.innerHTML = '<div class="col-span-full p-10 text-center text-gray-700 uppercase">Aucun Alpha > 2.5%</div>';
-                    return;
-                }
-
-                grid.innerHTML = currentSignals.map((s, idx) => `
-                    <div onclick="openModal(${idx})" class="glass p-4 rounded-sm relative signal-card-mobile active:bg-white/5 border-l-2 border-green-500 cursor-pointer">
-                        <div class="text-[9px] text-green-700 font-bold uppercase mb-1">${s.sport}</div>
-                        <div class="text-sm font-bold text-white max-w-[80%] truncate">${s.match_name}</div>
-                        <div class="text-[10px] text-gray-500 mt-1">${s.market_type} @ ${s.cote_1xbet}</div>
-                        <div class="alpha-tag text-blue-400">+${(s.alpha_spread * 100).toFixed(1)}%</div>
-                    </div>
-                `).join('');
+                renderSignals();
 
             } catch (e) { console.error(e); }
+        }
+
+        function renderSignals() {
+            const grid = document.getElementById('live-container');
+            
+            // Apply filter
+            let filteredSignals = currentSignals;
+            if (currentFilter !== 'all') {
+                filteredSignals = currentSignals.filter(s => s.sport && s.sport.includes(currentFilter));
+            }
+
+            if (filteredSignals.length === 0) {
+                grid.innerHTML = '<div class="col-span-full p-10 text-center text-gray-700 uppercase">Aucun signal disponible</div>';
+                return;
+            }
+
+            grid.innerHTML = filteredSignals.map((s, idx) => {
+                const marketBadge = getMarketBadge(s.market_type);
+                const countdown = getCountdown(s.match_time);
+                const snrBar = getSNRBar(s.snr_ratio || 0);
+                const alphaValue = safeValue(s.alpha_spread, 0);
+                const coteValue = safeValue(s.cote_1xbet, '---');
+                const matchName = safeValue(s.match_name, 'Match inconnu');
+                const sportName = safeValue(s.sport, 'N/A');
+                
+                return `
+                    <div onclick="openModal(${idx})" class="glass p-3 rounded-sm relative signal-card active:bg-white/5 border-l-2 border-blue-500 cursor-pointer">
+                        <div class="flex justify-between items-start mb-2">
+                            <div class="text-[9px] text-gray-500 font-bold uppercase">${sportName}</div>
+                            <div class="flex gap-1">${marketBadge}</div>
+                        </div>
+                        <div class="text-sm font-bold text-white truncate mb-1">${matchName}</div>
+                        <div class="text-[10px] text-gray-500 mb-2">${s.selection || 'Sélection'} @ ${coteValue}</div>
+                        <div class="flex justify-between items-center mb-2">
+                            <div class="alpha-highlight text-sm font-bold">+${(alphaValue * 100).toFixed(1)}%</div>
+                            <div class="text-[10px]">${countdown}</div>
+                        </div>
+                        <div class="mt-2">${snrBar}</div>
+                    </div>
+                `;
+            }).join('');
         }
 
         function openModal(idx) {
             const s = currentSignals[idx];
             const modal = document.getElementById('detail-modal');
             const content = document.getElementById('modal-content');
+            const marketBadge = getMarketBadge(s.market_type);
+            const countdown = getCountdown(s.match_time);
+            
             content.innerHTML = `
                 <div class="border-b border-green-900/30 pb-4 mb-6">
-                    <h2 class="text-xl font-bold text-white">${s.match_name}</h2>
-                    <p class="text-blue-500 text-sm font-bold uppercase">${s.sport} | ALPHA: ${(s.alpha_spread * 100).toFixed(2)}%</p>
+                    <div class="flex justify-between items-start">
+                        <h2 class="text-xl font-bold text-white">${safeValue(s.match_name, 'Match inconnu')}</h2>
+                        <div class="flex gap-1">${marketBadge}</div>
+                    </div>
+                    <p class="text-blue-500 text-sm font-bold uppercase mt-2">${safeValue(s.sport, 'N/A')} | ALPHA: +${(safeValue(s.alpha_spread, 0) * 100).toFixed(2)}%</p>
+                    <div class="mt-2">${countdown}</div>
                 </div>
                 <div class="grid grid-cols-2 gap-4 mb-8">
                     <div class="glass p-4 rounded">
                         <p class="text-[10px] text-gray-500 mb-1 uppercase">Cote Soft</p>
-                        <p class="text-2xl font-bold text-green-400">${s.cote_1xbet}</p>
+                        <p class="text-2xl font-bold text-green-400">${safeValue(s.cote_1xbet, '---')}</p>
                     </div>
                     <div class="glass p-4 rounded">
                         <p class="text-[10px] text-gray-500 mb-1 uppercase">Fair Price</p>
-                        <p class="text-2xl font-bold text-gray-400">${s.fair_price?.toFixed(2)}</p>
+                        <p class="text-2xl font-bold text-gray-400">${safeValue(s.fair_price, '---')}</p>
                     </div>
                 </div>
                 <div class="glass p-4 rounded mb-6">
                     <h3 class="text-xs text-gray-500 uppercase mb-2">IA Context</h3>
-                    <p class="text-sm text-gray-300 italic">${s.note_ia || 'Analyse non disponible'}</p>
+                    <p class="text-sm text-gray-300 italic">${safeValue(s.note_ia, 'Analyse non disponible')}</p>
                 </div>
                 <a href="#" class="block w-full bg-blue-600 text-white text-center py-4 rounded font-bold uppercase tracking-widest">Ouvrir sur 1XBet</a>
             `;
@@ -452,6 +581,8 @@
             setInterval(updateDashboard, 60000);
             setInterval(fetchExposure, 30000);
             setInterval(fetchAPIHealth, 60000);
+            // Pulse Hunter v6.0: Update countdown every second
+            setInterval(renderSignals, 1000);
         });
     </script>
 </body>

@@ -126,6 +126,9 @@ class OddsFetcher:
         """
         Récupère les cotes pour UN sport spécifique (protocole rotation).
         
+        Pulse Hunter v6.0: Inclut les marchés Props (Player Points, Rebounds, Corners)
+        + Binary Markets (BTTS, h2h_lay, totals)
+        
         Args:
             sport: Clé The-Odds-API (ex: 'basketball_nba')
             
@@ -133,9 +136,23 @@ class OddsFetcher:
             list[dict]: Liste des événements avec cotes
         """
         all_books = settings.sharp_books + settings.soft_books
+        
+        # Pulse Hunter: Expanded markets for high-frequency props and binary markets
+        markets = "h2h,spreads,totals"
+        
+        # Add player props for NBA
+        if "basketball" in sport:
+            markets += ",player_points,player_rebounds"
+        # Add corner props and BTTS for soccer
+        elif "soccer" in sport:
+            markets += ",total_corners,btts"
+        
+        # Add h2h_lay (Double Chance) for all sports
+        markets += ",h2h_lay"
+        
         return await self.fetch_odds(
             sport=sport,
-            markets="h2h,spreads,totals",
+            markets=markets,
             bookmakers=all_books,
         )
 

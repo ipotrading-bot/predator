@@ -1,10 +1,13 @@
 """
-signals/scanner.py — MarketScanner v3.1 (Data-Link Fix)
+signals/scanner.py — MarketScanner v6.0 (Pulse Hunter Strategy)
 
-Correctifs v3.1 :
+Pulse Hunter v6.0 - High Frequency Prop Strategy:
+  - Scan window: 6h (instead of 48h) for immediate action
+  - Expanded markets: player_points, player_rebounds (NBA), total_corners (Soccer)
+  - Hybrid truth source: Pinnacle primary, Bet365+William Hill average fallback
+  - Alpha thresholds: 1.0% display, 2.0% elite (🔥 HIGH PRIORITY)
   - Fuzzy bookmaker search : '1x' ou 'one' dans la clé → soft book reconnu
   - Market fallback : si spreads absent chez le soft, tente h2h
-  - Filtre 48h : rejette les matchs à plus de 48h (Alpha Decay trop fort)
   - Data integrity : signal rejeté si cote_1xbet nulle ou invalide
   - Timezone fix : commence_time ISO 8601 transmis tel quel (UTC)
   - Gemini timeout : 10s max, fallback propre
@@ -33,8 +36,8 @@ from api.perplexity_client import perplexity_grounding
 
 logger = logging.getLogger(__name__)
 
-# Fenêtre de scan : T+0h à T+48h (Alpha Decay doctrine)
-SCAN_WINDOW_HOURS = 48
+# Fenêtre de scan : T+0h à T+6h (Pulse Hunter Strategy - High Frequency)
+SCAN_WINDOW_HOURS = 6
 
 # Mots-clés fuzzy pour identifier les soft books 1XBet
 # The-Odds-API peut retourner : onexbet, 1xbet, 1xbit, 1xstavka, 1x_bet, etc.
@@ -422,7 +425,9 @@ class MarketScanner:
             
             result.signals_rejected = result.signals_found - result.signals_validated
             
+            # Pulse Hunter v6.0: Apply correlation filter before persistence
             if dossiers:
+                dossiers = self._apply_correlation_filter(dossiers)
                 await self._persist_and_notify(dossiers)
             
         except Exception as e:
@@ -472,8 +477,8 @@ class MarketScanner:
         if not bookmakers:
             return []
 
-        # Probabilités sharp via Shin Method (avec garde-fou binaire)
-        sharp_odds = self._extract_sharp_odds(bookmakers, sport=sport)
+        # Probabilités sharp via Hybrid Method (Pinnacle primary, Bet365+WH fallback)
+        sharp_odds = self._extract_hybrid_sharp_odds(bookmakers, sport=sport)
         if not sharp_odds:
             logger.debug(f"⏭️ Pas de sharp odds binaires pour {event_name}")
             return []
@@ -498,10 +503,34 @@ class MarketScanner:
 
             for sharp_market in sharp_bm.get("markets", []):
                 sharp_market_key = sharp_market.get("key", "")
-                if sharp_market_key not in ("h2h", "spreads"):
+                # Pulse Hunter v6.0: Include prop markets + binary markets
+                if sharp_market_key not in ("h2h", "spreads", "totals", "player_points", "player_rebounds", "total_corners", "btts", "h2h_lay"):
                     continue
 
                 raw_outcomes = sharp_market.get("outcomes", [])
+                
+                # ═══════════════════════════════════════════════════════════════════
+                # PULSE HUNTER v6.0: Automatic Fallback for Soccer H2H
+                # Si h2h a 3 issues (incluant Draw), chercher automatiquement spreads 0.0/+0.5
+                # ═══════════════════════════════════════════════════════════════════
+                if "soccer" in sport and sharp_market_key == "h2h" and len(raw_outcomes) == 3:
+                    logger.debug(f"🔄 Soccer H2H 3 issues detected - Auto-fallback to spreads AH 0.0/+0.5")
+                    # Try to find spreads market with line 0.0 or +0.5
+                    for fallback_market in sharp_bm.get("markets", []):
+                        if fallback_market.get("key") != "spreads":
+                            continue
+                        # Check if any outcome has line 0.0 or +0.5
+                        for outcome in fallback_market.get("outcomes", []):
+                            line = outcome.get("point", None)
+                            if line is not None and abs(line) <= 0.5:
+                                # Use this spreads market instead
+                                sharp_market = fallback_market
+                                sharp_market_key = "spreads"
+                                raw_outcomes = fallback_market.get("outcomes", [])
+                                logger.info(f"✅ Auto-switched to spreads AH {line} for {event_name}")
+                                break
+                        if sharp_market_key == "spreads":
+                            break
                 
                 # ═══════════════════════════════════════════════════════════════════
                 # DOCTRINE BINARY SYNTHESIS STRICTE (PhD MIT Protocol v4.1)
@@ -664,13 +693,70 @@ class MarketScanner:
 
         return validated
 
+    def _apply_correlation_filter(self, dossiers: list[ArbitrageDossier]) -> list[ArbitrageDossier]:
+        """
+        Pulse Hunter v6.0: Correlation Filter
+        
+        Si plusieurs signaux sur le même match (ex: Over 2.5 + BTTS Yes),
+        ne garder que celui avec l'EV+ la plus élevée pour éviter le double risque.
+        """
+        if not dossiers:
+            return dossiers
+        
+        # Group by event_id
+        events_dict = {}
+        for dossier in dossiers:
+            event_id = dossier.signal.event_id
+            if event_id not in events_dict:
+                events_dict[event_id] = []
+            events_dict[event_id].append(dossier)
+        
+        filtered = []
+        for event_id, event_dossiers in events_dict.items():
+            if len(event_dossiers) == 1:
+                # Single signal - keep it
+                filtered.append(event_dossiers[0])
+            else:
+                # Multiple signals - keep only highest EV+
+                best_dossier = max(event_dossiers, key=lambda d: d.signal.ev_plus)
+                rejected_count = len(event_dossiers) - 1
+                logger.info(
+                    f"🔀 Correlation Filter: {event_id} | "
+                    f"Kept {best_dossier.signal.market_key} (EV+={best_dossier.signal.ev_plus:.2%}) | "
+                    f"Rejected {rejected_count} lower EV+ signals"
+                )
+                filtered.append(best_dossier)
+        
+        return filtered
+
     # ─────────────────────────────────────────────────────────────
     # Extraction sharp odds (Shin Method)
     # ─────────────────────────────────────────────────────────────
 
+    def _extract_hybrid_sharp_odds(self, bookmakers: list[dict], sport: str = "") -> dict[str, float]:
+        """
+        Pulse Hunter v6.0: Hybrid Truth Source Logic
+        
+        1. Primary: Pinnacle (sharp_books) - if available
+        2. Fallback: Weighted average of Bet365 + William Hill (if Pinnacle unavailable)
+        
+        GARDE-FOU BINAIRE STRICT:
+        - Rejette si != 2 outcomes (doctrine Zéro Nul)
+        - Rejette si un outcome s'appelle "Draw"
+        - Pour soccer: uniquement spreads (pas h2h)
+        """
+        # Try Pinnacle first (primary sharp source)
+        pinnacle_odds = self._extract_sharp_odds(bookmakers, sport)
+        if pinnacle_odds:
+            return pinnacle_odds
+        
+        # Fallback: Hybrid Bet365 + William Hill average
+        logger.info("🔄 Pinnacle unavailable - Using Hybrid Bet365 + William Hill")
+        return self._extract_hybrid_bookmaker_odds(bookmakers, sport)
+    
     def _extract_sharp_odds(self, bookmakers: list[dict], sport: str = "") -> dict[str, float]:
         """
-        Extrait les probabilités sharp via Shin Method.
+        Extrait les probabilités sharp via Shin Method (Pinnacle only).
         
         GARDE-FOU BINAIRE STRICT:
         - Rejette si != 2 outcomes (doctrine Zéro Nul)
@@ -737,6 +823,87 @@ class MarketScanner:
                 return {outcomes[0]["name"]: shin_probs[0], outcomes[1]["name"]: shin_probs[1]}
         
         return {}
+    
+    def _extract_hybrid_bookmaker_odds(self, bookmakers: list[dict], sport: str = "") -> dict[str, float]:
+        """
+        Pulse Hunter v6.0: Hybrid Truth Source (Bet365 + William Hill average)
+        
+        Utilisé quand Pinnacle n'a pas la ligne (props markets, etc.)
+        Calcule la moyenne pondérée des cotes Bet365 et William Hill.
+        """
+        hybrid_books = ["bet365", "williamhill"]
+        odds_by_book = {}
+        
+        # Collect odds from both bookmakers
+        for bm in bookmakers:
+            bm_key = bm.get("key", "").lower()
+            if bm_key not in hybrid_books:
+                continue
+            
+            markets = bm.get("markets", [])
+            
+            # Pour soccer: privilégier spreads
+            if "soccer" in sport:
+                for market in markets:
+                    if market.get("key") != "spreads":
+                        continue
+                    outcomes = market.get("outcomes", [])
+                    if len(outcomes) != 2:
+                        continue
+                    if any(o.get("name", "").lower() == "draw" for o in outcomes):
+                        continue
+                    raw_odds = {o["name"]: o["price"] for o in outcomes if o.get("price", 0) > 1.0}
+                    if len(raw_odds) == 2:
+                        odds_by_book[bm_key] = raw_odds
+                        break
+            else:
+                # Pour autres sports: h2h
+                for market in markets:
+                    if market.get("key") != "h2h":
+                        continue
+                    outcomes = market.get("outcomes", [])
+                    if len(outcomes) != 2:
+                        continue
+                    if any(o.get("name", "").lower() == "draw" for o in outcomes):
+                        continue
+                    raw_odds = {o["name"]: o["price"] for o in outcomes if o.get("price", 0) > 1.0}
+                    if len(raw_odds) == 2:
+                        odds_by_book[bm_key] = raw_odds
+                        break
+        
+        # Need both bookmakers for hybrid average
+        if len(odds_by_book) < 2:
+            logger.debug(f"Hybrid: Insufficient bookmakers ({len(odds_by_book)}/2)")
+            return {}
+        
+        # Calculate weighted average odds
+        bet365_odds = odds_by_book.get("bet365", {})
+        williamhill_odds = odds_by_book.get("williamhill", {})
+        
+        # Ensure both have same outcomes
+        if set(bet365_odds.keys()) != set(williamhill_odds.keys()):
+            logger.debug("Hybrid: Outcome mismatch between bookmakers")
+            return {}
+        
+        # Calculate average odds
+        avg_odds = {}
+        for outcome in bet365_odds.keys():
+            avg_odds[outcome] = (bet365_odds[outcome] + williamhill_odds[outcome]) / 2.0
+        
+        # Apply Shin Method to averaged odds
+        raw_odds_list = list(avg_odds.values())
+        if len(raw_odds_list) != 2:
+            return {}
+        
+        try:
+            shin_probs = calculate_shin_probabilities(raw_odds_list)
+        except Exception as e:
+            logger.warning(f"Hybrid Shin échoué: {e}")
+            return {}
+        
+        # Map outcomes to probabilities
+        outcome_names = list(avg_odds.keys())
+        return {outcome_names[0]: shin_probs[0], outcome_names[1]: shin_probs[1]}
 
     # ─────────────────────────────────────────────────────────────
     # Persistance + notifications
@@ -757,9 +924,9 @@ class MarketScanner:
                            f"Sélection='{signal.selection}' | Signal REJETÉ")
                 continue
             
-            # Vérification supplémentaire: le marché doit être binaire
-            if signal.market_key not in ("h2h", "spreads"):
-                logger.warning(f"🚫 Marché non-binaire rejeté: {signal.market_key}")
+            # Vérification supplémentaire: le marché doit être binaire ou prop
+            if signal.market_key not in ("h2h", "spreads", "totals", "player_points", "player_rebounds", "total_corners", "btts", "h2h_lay"):
+                logger.warning(f"🚫 Marché non-supporté rejeté: {signal.market_key}")
                 continue
             
             try:
