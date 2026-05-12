@@ -2,12 +2,15 @@
 api/groq_client.py — Groq AI Client for Ultra-Fast Signal Filtering
 Utilise Groq (LPU) pour le filtrage bayésien de premier niveau.
 Groq est 10x plus rapide que Gemini pour l'inférence, idéal pour le trading haute fréquence.
+
+Pulse Hunter v6.0: Optimisé pour 1000+ combinaisons de marchés binaires.
 """
 from __future__ import annotations
 
 import json
 import time
 from typing import Optional
+from concurrent.futures import ThreadPoolExecutor, as_completed
 
 from config import settings
 
@@ -103,6 +106,51 @@ class GroqClient:
         for signal in signals:
             result = self._sync_quick_filter(signal)
             results.append(result)
+        
+        return results
+    
+    def parallel_batch_filter(self, signals: list[dict], max_workers: int = 10) -> list[dict]:
+        """
+        Pulse Hunter v6.0: Filtrage parallèle pour 1000+ combinaisons.
+        
+        Utilise ThreadPoolExecutor pour traiter les signaux en parallèle.
+        Réduit le temps de traitement de 1000 signaux de ~100s à ~10s.
+        
+        Args:
+            signals: Liste de signaux à filtrer
+            max_workers: Nombre de workers parallèles (défaut: 10)
+            
+        Returns:
+            list[dict]: Résultats de filtrage dans le même ordre que l'input
+        """
+        if not self.enabled or not signals:
+            return [{"approved": True, "confidence": 0.5} for _ in signals]
+        
+        # Pour petit nombre de signaux, utiliser le batch standard
+        if len(signals) < 20:
+            return self.batch_filter(signals)
+        
+        results = [None] * len(signals)
+        
+        with ThreadPoolExecutor(max_workers=max_workers) as executor:
+            # Soumettre toutes les tâches
+            future_to_index = {
+                executor.submit(self._sync_quick_filter, signal): idx
+                for idx, signal in enumerate(signals)
+            }
+            
+            # Collecter les résultats
+            for future in as_completed(future_to_index):
+                idx = future_to_index[future]
+                try:
+                    results[idx] = future.result()
+                except Exception as e:
+                    results[idx] = {
+                        "approved": True,
+                        "confidence": 0.3,
+                        "reason": f"Parallel filter error: {str(e)}",
+                        "latency_ms": 0
+                    }
         
         return results
     

@@ -26,11 +26,11 @@ def get_db() -> SupabaseClient:
     return _db
 
 # ═══════════════════════════════════════════════════════════════════
-# MODE HUNTER 48h — Full Spectrum (PhD MIT Emergency Protocol)
-# Seuil de détection : 1.0% display (saturé), 2.5% elite (qualité)
+# MODE PULSE HUNTER v6.0 — High Frequency Prop Strategy
+# Seuil de détection : 1.0% display (flux), 2.0% elite (🔥 HIGH PRIORITY)
 # ═══════════════════════════════════════════════════════════════════
 ALPHA_DISPLAY_MIN = 0.010  # 1.0% — Affiche tout le flux
-ALPHA_ELITE_MIN   = 0.025  # 2.5% — Alerte ELITE seulement
+ALPHA_ELITE_MIN   = 0.020  # 2.0% — 🔥 HIGH PRIORITY
 
 
 def _market_label(market_key: str, sport: str) -> str:
@@ -44,7 +44,19 @@ def _market_label(market_key: str, sport: str) -> str:
     if market_key == "spreads":
         return "Asian Handicap"
     if market_key == "totals":
-        return "Over/Under"
+        return "O/U"  # Pulse Hunter v6.0: Compact Over/Under format
+    # Pulse Hunter v6.0: Prop markets
+    if market_key == "player_points":
+        return "Player Points"
+    if market_key == "player_rebounds":
+        return "Player Rebounds"
+    if market_key == "total_corners":
+        return "Total Corners"
+    # Pulse Hunter v6.0: Binary markets
+    if market_key == "btts":
+        return "BTTS"  # Both Teams To Score
+    if market_key == "h2h_lay":
+        return "Double Chance"
     return market_key.upper()
 
 
