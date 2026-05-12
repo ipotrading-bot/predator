@@ -8,8 +8,14 @@ import logging
 from typing import Optional
 from math import comb
 
-from telegram import Bot
-from telegram.constants import ParseMode
+try:
+    from telegram import Bot
+    from telegram.constants import ParseMode
+    _TELEGRAM_AVAILABLE = True
+except ImportError:
+    Bot = None
+    ParseMode = None
+    _TELEGRAM_AVAILABLE = False
 
 from config import settings
 from core.paim_engine import PAIMSignal
@@ -21,10 +27,12 @@ class TelegramNotifier:
     """Envoi des tickets PAIM via le bot Telegram privé."""
 
     def __init__(self):
-        if not settings.telegram_bot_token or not settings.telegram_chat_id:
+        if not _TELEGRAM_AVAILABLE or not settings.telegram_bot_token or not settings.telegram_chat_id:
             self.bot = None
             self.chat_id = None
             self.enabled = False
+            if not _TELEGRAM_AVAILABLE:
+                logger.warning("python-telegram-bot non installé — notifications Telegram désactivées")
             return
         self.bot = Bot(token=settings.telegram_bot_token)
         self.chat_id = settings.telegram_chat_id

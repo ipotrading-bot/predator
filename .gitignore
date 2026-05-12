@@ -8,3 +8,4 @@ ui/out/
 *.pyc
 get-pip.py
 *.code-workspace
+.vercel

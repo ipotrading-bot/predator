@@ -35,6 +35,17 @@ class SupabaseClient:
 
     # ── Signals ───────────────────────────────────────────────
 
+    def clear_signals(self) -> int:
+        """Vide tous les signaux pending avant un nouveau scan pour éliminer les résidus null."""
+        try:
+            result = self._client.table("signals").delete().eq("status", "pending").execute()
+            count = len(result.data or [])
+            logger.info(f"🗑️ clear_signals: {count} signaux pending supprimés")
+            return count
+        except Exception as e:
+            logger.error(f"Erreur clear_signals: {e}")
+            return 0
+
     def insert_signal(
         self,
         signal: PAIMSignal,

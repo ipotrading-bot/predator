@@ -131,38 +131,175 @@ def health():
     })
 
 
+# ── Debug Events — Diagnostic direct API ──────────────────────
+
+@app.route('/api/debug-events')
+def debug_events():
+    """
+    Diagnostic direct The-Odds-API — endpoint autonome sans dépendances.
+    Retourne événements bruts + quota pour diagnostiquer le scanner.
+    """
+    import requests as _req
+    try:
+        api_key = os.environ.get("ODDS_API_KEY", "")
+        if not api_key:
+            return jsonify({"error": "ODDS_API_KEY manquant"}), 500
+
+        from datetime import datetime, timezone, timedelta
+        cutoff = (datetime.now(timezone.utc) + timedelta(hours=48)).strftime("%Y-%m-%dT%H:%M:%SZ")
+
+        url = "https://api.the-odds-api.com/v4/sports/upcoming/odds/"
+        params = {
+            "apiKey": api_key,
+            "regions": "eu,us",
+            "markets": "h2h,spreads",
+            "oddsFormat": "decimal",
+            "commenceTimeTo": cutoff,
+        }
+
+        resp = _req.get(url, params=params, timeout=20)
+        quota = {
+            "remaining": resp.headers.get("x-requests-remaining", "?"),
+            "used": resp.headers.get("x-requests-used", "?"),
+            "http_status": resp.status_code,
+        }
+
+        if resp.status_code != 200:
+            return jsonify({
+                "error": f"API HTTP {resp.status_code}",
+                "body": resp.text[:300],
+                "quota": quota,
+            }), 200
+
+        try:
+            events = resp.json()
+        except Exception as je:
+            return jsonify({"error": f"JSON parse: {je}", "body": resp.text[:300]}), 200
+
+        if not isinstance(events, list):
+            return jsonify({"error": "Réponse non-liste", "data": str(events)[:300], "quota": quota}), 200
+
+        summary = []
+        for e in events[:30]:
+            bms = [b.get("key", "") for b in e.get("bookmakers", [])]
+            markets_info = []
+            for bm in e.get("bookmakers", []):
+                for m in bm.get("markets", []):
+                    outcomes = m.get("outcomes", [])
+                    markets_info.append({
+                        "bm": bm.get("key",""),
+                        "market": m.get("key",""),
+                        "outcomes": [o.get("name","") for o in outcomes],
+                        "n": len(outcomes),
+                    })
+            summary.append({
+                "match": f"{e.get('home_team','?')} vs {e.get('away_team','?')}",
+                "sport": e.get("sport_key", ""),
+                "commence": e.get("commence_time", ""),
+                "bookmakers": bms,
+                "has_pinnacle": "pinnacle" in bms,
+                "has_betfair": "betfair_ex_back" in bms,
+                "has_1xbet": any(("1x" in b or "onex" in b) for b in bms if b),
+                "markets": markets_info[:8],
+            })
+
+        return jsonify({
+            "total_events": len(events),
+            "quota": quota,
+            "events": summary,
+        })
+    except Exception as e:
+        logger.error(f"Erreur debug-events: {e}", exc_info=True)
+        return jsonify({"error": str(e), "type": type(e).__name__}), 500
+
+
 # ── Screener avec logs de debug ───────────────────────────────
 
 @app.route('/api/screener')
 def screener():
-    """Déclenche un scan PAIM complet."""
+    """Déclenche un scan PAIM complet via l'endpoint global upcoming."""
     try:
         from config import settings
         from signals.scanner import MarketScanner
         import asyncio
 
+        # ── Étape 1 : Vider les signaux pending (résidus null + Draw) ──────────
+        try:
+            db = get_db()
+            cleared = db.clear_signals()
+            logger.info(f"🗑️ Screener: {cleared} signaux anciens supprimés avant scan")
+            # Purger les résidus Draw (violation Binary Synthesis doctrine)
+            for draw_word in ("draw", "nul", "match nul"):
+                try:
+                    db._client.table("signals").delete().ilike("selection", draw_word).execute()
+                except Exception:
+                    pass
+        except Exception as e:
+            logger.warning(f"clear_signals non critique: {e}")
+
+        # ── Étape 2 : Scan global upcoming (1% seuil display) ──────────
         scanner = MarketScanner(bankroll=settings.starting_bankroll)
-        # Seuil abaissé à 1.5% pour le display (2.5% pour elite)
-        scanner.engine.min_ev_threshold = ALPHA_DISPLAY_MIN
+        scanner.engine.min_ev_threshold = ALPHA_DISPLAY_MIN  # 1.0%
 
         loop = asyncio.new_event_loop()
-        result = loop.run_until_complete(scanner.run_scan())
-        loop.close()
-
-        result_data = result.__dict__ if hasattr(result, '__dict__') else {}
-        print(f"DEBUG: Scan terminé: {json.dumps(result_data, default=str)}")
+        try:
+            result = loop.run_until_complete(scanner.run_scan())
+        finally:
+            loop.close()
 
         quota_status = scanner.fetcher.get_quota_status()
+
+        # ── Étape 3 : Diagnostic quota ───────────────────────────────
+        if quota_status.get("remaining_requests", -1) == 0:
+            return jsonify({
+                "status": "quota_empty",
+                "message": "Quota épuisé ou aucun match trouvé. Attendre le renouvellement mensuel.",
+                "signals_found": 0,
+                "api_quota": quota_status,
+            })
+
+        result_data = {
+            "events_analyzed": result.events_analyzed,
+            "signals_found": result.signals_found,
+            "signals_validated": result.signals_validated,
+            "duration_seconds": result.duration_seconds,
+        }
+        logger.info(f"✅ Screener: {result.signals_validated} signaux | {result.events_analyzed} events")
+
+        # ── Morning Brief Telegram (même si 0 signaux) ──────────────
+        import asyncio as _aio
+        try:
+            from core.notifications import TelegramNotifier
+            _notifier = TelegramNotifier()
+            if _notifier.enabled:
+                async def _brief():
+                    n = result.signals_validated
+                    icon = "🔥" if n >= 3 else ("✅" if n > 0 else "🌫️")
+                    msg = (
+                        f"{icon} *PREDATOR PAIM — Scan terminé*\n"
+                        f"📊 Événements analysés: `{result.events_analyzed}`\n"
+                        f"🎯 Signaux validés: `{n}`\n"
+                        f"⏱️ Durée: `{result.duration_seconds}s`\n"
+                        f"{'💰 Signaux disponibles sur le dashboard.' if n > 0 else '🌫️ Marché efficient — capital préservé.'}"
+                    )
+                    await _notifier.bot.send_message(
+                        chat_id=_notifier.chat_id, text=msg, parse_mode="Markdown"
+                    )
+                _loop = _aio.new_event_loop()
+                try:
+                    _loop.run_until_complete(_brief())
+                finally:
+                    _loop.close()
+        except Exception as _te:
+            logger.warning(f"Morning Brief Telegram non critique: {_te}")
+
         return jsonify({
             "status": "success",
             "result": result_data,
             "threshold_used": ALPHA_DISPLAY_MIN,
-            "api_quota": quota_status
+            "api_quota": quota_status,
         })
 
-    except ImportError as e:
-        logger.error(f"ImportError screener: {e}")
-        return jsonify({"status": "error", "message": f"ImportError: {str(e)}"}), 500
     except Exception as e:
         logger.error(f"Erreur screener: {traceback.format_exc()}")
         return jsonify({"status": "error", "message": str(e)}), 500
@@ -286,55 +423,31 @@ def test_seed():
 
 @app.route('/api/data')
 def get_data():
+    """Retourne les 15 derniers signaux pending de Supabase, propres et sans fake data."""
     try:
         db = get_db()
-        # Fetch all signals for market temperature calculation
-        all_signals_response = db._client.table("signals").select("sport,alpha_spread").execute()
-        all_signals = all_signals_response.data or []
+        response = (
+            db._client.table("signals")
+            .select("*")
+            .eq("status", "pending")
+            .order("created_at", desc=True)
+            .limit(15)
+            .execute()
+        )
+        signals = response.data or []
 
-        # Calculate market temperature (average alpha per sport)
-        market_temperature = {}
-        sport_alphas = {}
-        for signal in all_signals:
-            sport = signal.get("sport")
-            alpha = signal.get("alpha_spread")
-            if sport and alpha is not None:
-                if sport not in sport_alphas:
-                    sport_alphas[sport] = []
-                sport_alphas[sport].append(alpha)
-        
-        for sport, alphas in sport_alphas.items():
-            if alphas:
-                avg_alpha = sum(alphas) / len(alphas)
-                market_temperature[sport] = round(avg_alpha * 100, 1)
+        _DRAW_WORDS = {"draw", "nul", "match nul"}
+        valid = [
+            s for s in signals
+            if s.get("match_name")
+            and s.get("alpha_spread") is not None
+            and str(s.get("selection", "")).lower() not in _DRAW_WORDS
+        ]
 
-        # Fetch pending signals for the dashboard
-        pending_signals_response = db._client.table("signals").select("*").eq("status", "pending").order("created_at", desc=True).limit(50).execute()
-        pending_signals = pending_signals_response.data or []
-
-        if not pending_signals:
-            # Fallback: retourner les test-seed si la BD est vide (only if no real pending signals)
-            from datetime import datetime, timedelta
-            match_time = (datetime.now() + timedelta(hours=4)).isoformat()
-            pending_signals = [{
-                "match_name": "Lakers vs Celtics",
-                "sport": "basketball_nba",
-                "match_time": match_time,
-                "market_type": "—",
-                "alpha_spread": 0,
-                "ev_plus_pct": 0,
-                "recommended_stake": 0,
-                "fair_price": 0,
-                "cote_1xbet": 0,
-                "note_ia": "📡 MODE HUNTER ACTIF — Attendre prochains scans",
-                "sources_validated": "",
-                "is_elite": False,
-            }]
-        
-        return jsonify({"signals": pending_signals, "market_temperature": market_temperature})
+        return jsonify({"signals": valid, "count": len(valid)})
     except Exception as e:
-        print(f"DEBUG DATA FETCH ERROR: {traceback.format_exc()}")
-        return jsonify({"signals": [], "market_temperature": {}})
+        logger.error(f"Erreur /api/data: {traceback.format_exc()}")
+        return jsonify({"signals": [], "count": 0, "error": str(e)})
 
 
 @app.route('/api/stats')
@@ -450,6 +563,98 @@ def audit_settlement():
 @app.route('/api/healthcheck')
 def healthcheck():
     return jsonify({"status": "ok", "version": "3.0.0", "ts": int(datetime.now().timestamp())})
+
+
+@app.route('/api/oracle')
+def gemini_oracle():
+    """
+    Oracle Gemini v6.0 — Détection proactive des inefficiences de marché.
+    Analyse les événements disponibles et identifie les plus prometteurs.
+    """
+    try:
+        from data.odds_fetcher import OddsFetcher
+        import google.generativeai as genai
+        from config import settings as cfg
+
+        fetcher = OddsFetcher()
+        events = fetcher.fetch_all_upcoming()
+
+        if not events:
+            return jsonify({"oracle": [], "message": "Aucun événement disponible", "total": 0})
+
+        # Préparer le résumé des événements pour Gemini
+        event_list = []
+        for e in events[:40]:
+            bm_keys = [b.get("key", "") for b in e.get("bookmakers", [])]
+            event_list.append({
+                "match": f"{e.get('home_team','?')} vs {e.get('away_team','?')}",
+                "sport": e.get("sport_key", ""),
+                "time": e.get("commence_time", ""),
+                "books": bm_keys[:6],
+            })
+
+        prompt = f"""Tu es un analyste expert en value betting quantitatif.
+
+Voici {len(event_list)} matchs disponibles dans les 48h:
+{chr(10).join(f"- {e['match']} ({e['sport']}) — Books: {e['books']}" for e in event_list[:25])}
+
+Identifie les 5 matchs avec le plus fort potentiel d'inefficience de marché basé sur:
+1. Sport avec marchés moins efficients (esports, NBA nuit, tennis ITF)
+2. Présence de bookmakers sharp ET soft dans la même cote
+3. Matchs où l'écart public/sharp est historiquement élevé
+
+Réponds en JSON strict:
+[{{"match": "...", "sport": "...", "reason": "...", "side": "...", "confidence": 0.0-1.0}}]
+Retourne UNIQUEMENT le JSON, pas de texte autour."""
+
+        genai.configure(api_key=cfg.gemini_api_key)
+        model = genai.GenerativeModel("gemini-2.0-flash-exp")
+        resp = model.generate_content(prompt)
+        text = resp.text.strip()
+
+        # Extraire le JSON de la réponse
+        import json as _json, re as _re
+        json_match = _re.search(r'\[.*?\]', text, _re.DOTALL)
+        oracle_signals = _json.loads(json_match.group()) if json_match else []
+
+        return jsonify({
+            "oracle": oracle_signals,
+            "total_events_analyzed": len(events),
+            "quota": fetcher.get_quota_status(),
+        })
+
+    except Exception as e:
+        logger.error(f"Erreur Oracle: {e}")
+        return jsonify({"oracle": [], "error": str(e)}), 500
+
+
+@app.route('/api/test-telegram')
+def test_telegram():
+    """Teste la connectivité Telegram et envoie un message de diagnostic."""
+    import asyncio
+    try:
+        from core.notifications import TelegramNotifier
+        notifier = TelegramNotifier()
+        if not notifier.enabled:
+            return jsonify({"status": "disabled", "message": "Telegram non configuré (token ou chat_id manquant)"})
+
+        async def _send():
+            await notifier.bot.send_message(
+                chat_id=notifier.chat_id,
+                text="🦅 *PREDATOR PAIM* — Test Telegram OK ✅\n_Système opérationnel._",
+                parse_mode="Markdown",
+            )
+
+        loop = asyncio.new_event_loop()
+        try:
+            loop.run_until_complete(_send())
+        finally:
+            loop.close()
+
+        return jsonify({"status": "sent", "message": "Message Telegram envoyé avec succès"})
+    except Exception as e:
+        logger.error(f"Erreur test-telegram: {e}")
+        return jsonify({"status": "error", "message": str(e)}), 500
 
 
 # ── Market Heatmap (Alpha moyen par sport) ────────────────────────
