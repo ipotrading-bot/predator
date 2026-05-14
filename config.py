@@ -213,7 +213,7 @@ class Settings(BaseSettings):
     groq_model: str = Field(default="llama-3.1-70b-versatile")
 
     # ── Gemini Model ──────────────────────────────────────────
-    gemini_model: str = Field(default="gemini-2.0-flash-exp")
+    gemini_model: str = Field(default="gemini-2.0-flash")
 
 
 # Singleton

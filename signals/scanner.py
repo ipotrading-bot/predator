@@ -44,13 +44,15 @@ SCAN_WINDOW_HOURS = 6
 _SOFT_FUZZY_PATTERNS = ("1x", "one", "onex")
 
 
-def _is_soft_book(bm_key: str) -> bool:
+def _is_soft_book(bm_key: Optional[str]) -> bool:
     """
     Vérifie si un bookmaker est un soft book via :
     1. Liste exacte dans settings.soft_books
     2. Fuzzy match sur les patterns 1XBet
     3. Autres soft books connus (bet365, unibet, williamhill)
     """
+    if not bm_key:
+        return False
     key = bm_key.lower().strip()
     # Normaliser via synonymes
     key = settings.synonyms.get(key, key)
@@ -98,7 +100,7 @@ def _is_within_window(commence_time_iso: str, hours: int = SCAN_WINDOW_HOURS) ->
         delta = ct - now
         return timedelta(hours=0) <= delta <= timedelta(hours=hours)
     except Exception:
-        return True  # En cas de parse error, ne pas bloquer
+        return False  # En cas de parse error, ne pas traiter le match
 
 
 def _get_best_soft_odds(
@@ -340,12 +342,12 @@ class MarketScanner:
 
             for event in events:
                 event_dossiers = await self._process_event(event, news_cache)
-                result.signals_found += len(event_dossiers)
+                result.signals_validated += len(event_dossiers)
                 for d in event_dossiers:
-                    result.signals_validated += 1
                     dossiers.append(d)
 
-            result.signals_rejected = result.signals_found - result.signals_validated
+            result.signals_found = result.signals_validated
+            result.signals_rejected = 0
 
             if dossiers:
                 await self._persist_and_notify(dossiers)
@@ -576,10 +578,13 @@ class MarketScanner:
                     continue
                 
                 # Étape 3: Vérification finale - aucun outcome ne doit être "Draw"
-                for outcome in raw_outcomes:
-                    if outcome.get("name", "").lower() in ("draw", "nul", "match nul"):
-                        logger.warning(f"🚫 DRAW DETECTED: {event_name} | Marché rejeté")
-                        continue
+                has_draw = any(
+                    outcome.get("name", "").lower() in ("draw", "nul", "match nul")
+                    for outcome in raw_outcomes
+                )
+                if has_draw:
+                    logger.warning(f"🚫 DRAW DETECTED: {event_name} | Marché rejeté")
+                    continue
                 
                 outcomes_to_process = raw_outcomes
                 effective_market_key = sharp_market_key
@@ -632,6 +637,8 @@ class MarketScanner:
                         "commence_time": commence_time,
                     }
                     dossier = ArbitrageDossier(signal=signal, meta=meta, news_impact=news_impact)
+                    # Initialize optional fields to prevent AttributeError
+                    dossier.perplexity_summary = "Non vérifié"
 
                     # ── News ───────────────────────────────────
                     dossier.news_ok = (news_impact is None or not news_impact.market_moving)

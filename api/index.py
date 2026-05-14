@@ -259,6 +259,7 @@ def screener():
         scanner.engine.min_ev_threshold = ALPHA_DISPLAY_MIN  # 1.0%
 
         loop = asyncio.new_event_loop()
+        asyncio.set_event_loop(loop)
         try:
             # Pulse Hunter v6.1: Pass sport parameter if provided
             if sport_param:
@@ -269,7 +270,6 @@ def screener():
                 result = loop.run_until_complete(scanner.run_scan())
         except Exception as scan_error:
             logger.error(f"[SCANNER] Erreur pendant le scan: {traceback.format_exc()}")
-            loop.close()
             return jsonify({
                 "status": "error",
                 "message": f"[SCANNER] Erreur critique: {str(scan_error)}",
@@ -277,6 +277,7 @@ def screener():
             }), 500
         finally:
             loop.close()
+            asyncio.set_event_loop(None)
 
         quota_status = scanner.fetcher.get_quota_status()
 
@@ -992,7 +993,7 @@ def hunter_scan():
         
         # ── ÉTAPE 3: RÉSUMÉ ─────────────────────────────────────────
         total_signals = len(all_signals)
-        elite_signals = sum(1 for s in all_signals if (s.alpha_spread or 0) >= ALPHA_ELITE_MIN)
+        elite_signals = sum(1 for s in all_signals if (s.ev_plus or 0) >= ALPHA_ELITE_MIN)
         
         logger.info(f"🎯 HUNTER COMPLET: {total_signals} signaux trouvés ({elite_signals} ELITE)")
         

@@ -107,18 +107,21 @@ async def run_scheduler() -> None:
 
     async def _job(session: str):
         try:
-            await scanner.run_scan()
-            await _save_scan_log(None, session)
+            result = await scanner.run_scan()
+            await _save_scan_log(result, session)
         except Exception as e:
             logger.error(f"Erreur scan {session}: {e}", exc_info=True)
 
     scheduler = AsyncIOScheduler(timezone="UTC")
     scheduler.add_job(lambda: asyncio.create_task(_job("Asie")),
-                      CronTrigger(hour=0, minute=0))
+                      CronTrigger(hour=0, minute=0),
+                      id="scan_asie")
     scheduler.add_job(lambda: asyncio.create_task(_job("Europe")),
-                      CronTrigger(hour=8, minute=0))
+                      CronTrigger(hour=8, minute=0),
+                      id="scan_europe")
     scheduler.add_job(lambda: asyncio.create_task(_job("USA")),
-                      CronTrigger(hour=16, minute=0))
+                      CronTrigger(hour=16, minute=0),
+                      id="scan_usa")
     scheduler.start()
 
     stop = asyncio.Event()

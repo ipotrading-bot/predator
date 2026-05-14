@@ -11,8 +11,7 @@ from dataclasses import dataclass, field
 from typing import Optional, Any
 import math
 from datetime import datetime, timedelta
-from data.odds_fetcher import OddsFetcher
-from core.gemini_search import search_upcoming_events_from_gemini
+
 
 
 
@@ -100,22 +99,6 @@ class PAIMEngine:
         seven_days_ago = (datetime.now() - timedelta(days=7)).isoformat()
         res = supabase_client.table('signals').select("*").gt('created_at', seven_days_ago).execute()
         return res.data
-
-    def fetch_and_process_events(self) -> list[dict]:
-        """
-        Tente de récupérer les événements de The-Odds-API. Si échec, utilise Gemini en fallback.
-        Retourne une liste d'événements bruts pour traitement ultérieur.
-        """
-        odds_fetcher = OddsFetcher()
-        events = odds_fetcher.fetch_all_upcoming()
-
-        if not events:
-            import logging
-            logger = logging.getLogger(__name__)
-            logger.warning("⚠️ ODDS-API VIDE - BASCULE SUR GEMINI SEARCH...")
-            events = search_upcoming_events_from_gemini()
-
-        return events
 
     def compute_ev(self, sharp_prob: float, soft_odds: float) -> float:
         """
