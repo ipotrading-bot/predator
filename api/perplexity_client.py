@@ -121,7 +121,8 @@ Respond in JSON only:
 }"""
     
     def __init__(self):
-        self.api_key = settings.perplexity_api_key or None  # Perplexity API key
+        self.api_key = settings.perplexity_api_key or None  # Perplexity API key (officiel)
+        self.rapidapi_key = settings.rapidapi_key or None  # RapidAPI key (via perplexity2.p.rapidapi.com)
         self.model = "sonar-small-online"  # sonar-small-online ou sonar-pro
         self._request_count = 0
         self._total_latency_ms = 0
