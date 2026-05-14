@@ -1,168 +1,129 @@
 """
-run_engine.py — PREDATOR PAIM Heavy Engine v7.0 (GitHub Actions)
-Cerveau Déporté — contourne le timeout 10s de Vercel.
-
-Exécuté sur GitHub Actions (gratuit, 6h max) toutes les 20 minutes.
-Ne dépend PAS de Vercel. Écrit directement dans Supabase.
-
-Pipeline:
-  1. Harvester 1XBet (flux direct gratuit)
-  2. Gemini Oracle (Pinnacle Fair Price via Search Grounding)
-  3. MultiSource cascade (si besoin)
-  4. Shin Method → PAIMEngine → signaux
-  5. Supabase insert
-  6. Telegram notification
+run_engine.py — PREDATOR PAIM v7.0 — GitHub Actions Engine
+Pipeline: 1XBet Harvest → Shin Edge → Gemini Oracle → Telegram → Supabase
 """
-from __future__ import annotations
-
-import asyncio
-import logging
 import os
-import sys
 import time
 from datetime import datetime, timezone
 
-# ── Configuration robuste pour GitHub Actions ───────────────
-# Les secrets sont injectés via $GITHUB_ENV dans le workflow
-os.environ.setdefault("ODDS_API_KEY", "")
-os.environ.setdefault("GEMINI_API_KEY", "")
-os.environ.setdefault("GROQ_API_KEY", "")
-os.environ.setdefault("SUPABASE_URL", "")
-os.environ.setdefault("SUPABASE_KEY", "")
-os.environ.setdefault("SUPABASE_SERVICE_KEY", "")
-os.environ.setdefault("TELEGRAM_BOT_TOKEN", "")
-os.environ.setdefault("TELEGRAM_CHAT_ID", "")
-os.environ.setdefault("NEWS_API_KEY", "")
-os.environ.setdefault("PERPLEXITY_API_KEY", "")
-os.environ.setdefault("RAPIDAPI_KEY", "")
-os.environ.setdefault("API_FOOTBALL_KEY", "")
+import requests
+from dotenv import load_dotenv
+from supabase import create_client
 
-# ── Logging ──────────────────────────────────────────────────
-logging.basicConfig(
-    level=logging.INFO,
-    format="%(asctime)s [%(levelname)s] %(name)s — %(message)s",
-    handlers=[logging.StreamHandler(sys.stdout)],
-)
-logger = logging.getLogger("engine")
+from core.harvester import fetch_matches, shin_edge
+from core.oracle import get_pinnacle_price
+
+load_dotenv()
+
+GEMINI_KEY     = os.environ.get("GEMINI_API_KEY")
+SUPABASE_URL   = os.environ.get("SUPABASE_URL")
+SUPABASE_KEY   = os.environ.get("SUPABASE_KEY")
+TELEGRAM_TOKEN = os.environ.get("TELEGRAM_BOT_TOKEN")
+TELEGRAM_CHAT  = os.environ.get("TELEGRAM_CHAT_ID")
+
+MIN_EDGE    = 3.0   # % minimum to flag as a signal
+MAX_MATCHES = 10    # cap to preserve Gemini free quota
 
 
-async def run_pulse_hunter_scan() -> dict:
-    """
-    Pulse Hunter Scan v7.0 — Exécution complète du pipeline.
-    
-    Retourne:
-        dict: Statistiques du scan
-    """
-    from config import settings
-    from signals.scanner import MarketScanner
-    from core.harvester import get_harvester
+# ── helpers ──────────────────────────────────────────────────────────
 
-    start = time.monotonic()
-    stats = {
-        "events_from_api": 0,
-        "events_from_harvester": 0,
-        "events_from_multisource": 0,
-        "signals_validated": 0,
-        "signals_persisted": 0,
-        "duration_seconds": 0,
-    }
+def _telegram(text):
+    if not TELEGRAM_TOKEN or not TELEGRAM_CHAT:
+        return
+    try:
+        url = f"https://api.telegram.org/bot{TELEGRAM_TOKEN}/sendMessage"
+        requests.post(url, json={"chat_id": TELEGRAM_CHAT, "text": text, "parse_mode": "Markdown"}, timeout=10)
+    except Exception as e:
+        print(f"[Telegram] {e}")
 
-    logger.info(f"🦅 PREDATOR PAIM v7.0 — Pulse Hunter Engine")
-    logger.info(f"   Bankroll : {settings.starting_bankroll:,.0f}€")
-    logger.info(f"   EV+ min  : {settings.min_ev_threshold:.1%}")
-    logger.info(f"   Fenêtre  : 6h (Pulse Hunter)")
 
-    scanner = MarketScanner(bankroll=settings.starting_bankroll)
-    scanner.engine.min_ev_threshold = settings.min_ev_threshold
+def _save(sb, signal):
+    try:
+        sb.table("signals").insert(signal).execute()
+    except Exception as e:
+        print(f"[Supabase] {e}")
+
+
+def _risk(edge_pct, pinnacle_found):
+    if not pinnacle_found:
+        return "NO_DATA"
+    if edge_pct >= 8:
+        return "HIGH_VALUE"
+    if edge_pct >= MIN_EDGE:
+        return "VALUE"
+    return "LOW"
+
+
+# ── main ─────────────────────────────────────────────────────────────
+
+def run():
+    now = datetime.now(timezone.utc)
+    print(f"\n[Engine] Start — {now.isoformat()}")
 
     try:
-        # ── Étape 1: Harvester 1XBet (flux direct) ───────────────
-        logger.info("🔧 [Engine] Step 1: 1XBet Harvester...")
-        harvester = get_harvester()
-        raw_feeds = harvester.fetch_multi_sport(["soccer", "basketball", "tennis"])
-        stats["events_from_harvester"] = len(raw_feeds)
-
-        # ── Étape 2: Gemini Oracle (Pinnacle Fair Price) ─────────
-        logger.info("🔮 [Engine] Step 2: Scanning The-Odds-API + MultiSource...")
-        
-        # Utilise le scanner existant qui a déjà le fallback MultiSource
-        from data.odds_fetcher import OddsFetcher
-        from data.multi_source_fetcher import MultiSourceFetcher
-
-        async with OddsFetcher() as fetcher:
-            api_events = await fetcher.fetch_all_sports_odds()
-
-        if api_events:
-            stats["events_from_api"] = len(api_events)
-            logger.info(f"📡 [Engine] The-Odds-API: {len(api_events)} events")
-            events = api_events
-        else:
-            logger.warning("⚠️ [Engine] The-Odds-API vide → MultiSource cascade...")
-            async with MultiSourceFetcher() as msf:
-                events = await msf.fetch_all()
-                stats["events_from_multisource"] = len(events)
-                if not events:
-                    logger.error("❌ [Engine] Aucune source disponible")
-                    stats["duration_seconds"] = round(time.monotonic() - start, 2)
-                    return stats
-
-        # ── Étape 3: Process events via PAIM Engine ───────────────
-        logger.info(f"⚡ [Engine] Step 3: PAIM Processing {len(events)} events...")
-        
-        result = await scanner._scan_events(events)
-        stats["signals_validated"] = result.signals_validated
-
-        # ── Étape 4: Notifications Telegram ───────────────────────
-        if result.signals_validated > 0:
-            logger.info(f"📬 [Engine] {result.signals_validated} signaux → notification Telegram")
-            notifier = scanner._get_notifier()
-            if notifier:
-                summary = (
-                    f"🦅 *PREDATOR PAIM — Scan Engine*\n"
-                    f"📊 Événements: `{result.events_analyzed}`\n"
-                    f"🎯 Signaux: `{result.signals_validated}`\n"
-                    f"⏱️ Durée: `{result.duration_seconds}s`\n"
-                    f"🏷️ Mode: GUERRILLA FREE"
-                )
-                await notifier.bot.send_message(
-                    chat_id=settings.telegram_chat_id,
-                    text=summary,
-                    parse_mode="Markdown",
-                )
-
+        sb = create_client(SUPABASE_URL, SUPABASE_KEY)
     except Exception as e:
-        logger.critical(f"❌ [Engine] Critical error: {e}", exc_info=True)
+        print(f"[Engine] Supabase failed: {e}")
+        sb = None
 
-    stats["duration_seconds"] = round(time.monotonic() - start, 2)
-    logger.info(
-        f"✅ [Engine] Scan terminé | "
-        f"{stats['signals_validated']} signaux | "
-        f"{stats['duration_seconds']}s"
-    )
-    return stats
+    matches = fetch_matches()
+    if not matches:
+        _telegram("⚠️ PREDATOR: Scan 1XBet vide — vérifier le flux.")
+        return
 
+    signals = []
 
-def main():
-    """Point d'entrée pour GitHub Actions."""
-    logger.info("🚀 PREDATOR PAIM Engine v7.0 — Démarrage")
-    
-    stats = asyncio.run(run_pulse_hunter_scan())
-    
-    logger.info(
-        f"\n{'='*50}\n"
-        f"📊 RÉSUMÉ DU SCAN\n"
-        f"{'='*50}\n"
-        f"  API Events      : {stats['events_from_api']}\n"
-        f"  Harvester Events : {stats['events_from_harvester']}\n"
-        f"  MultiSource      : {stats['events_from_multisource']}\n"
-        f"  Signaux validés  : {stats['signals_validated']}\n"
-        f"  Durée            : {stats['duration_seconds']}s\n"
-        f"{'='*50}"
-    )
+    for m in matches[:MAX_MATCHES]:
+        try:
+            name   = m["match"]
+            odds   = m["odds_1xbet"]
+            # Take the best (highest) odd as the candidate bet
+            best   = max(odds["1"], odds.get("2", 0))
 
-    # Exit code: 0 = succès, 1 = erreur
-    sys.exit(0 if stats['signals_validated'] >= 0 else 1)
+            pinnacle = get_pinnacle_price(name, GEMINI_KEY)
+            time.sleep(1)  # rate-limit Gemini
+
+            edge = shin_edge(best, pinnacle)
+            risk = _risk(edge, pinnacle is not None)
+
+            print(f"  {name} | 1XBet: {best} | Pinnacle: {pinnacle} | Edge: {edge}% | {risk}")
+
+            signal = {
+                "match":          name,
+                "league":         m.get("league", ""),
+                "sport":          "football",
+                "xbet_odd":       best,
+                "pinnacle_price": pinnacle,
+                "edge_pct":       edge,
+                "risk_flag":      risk,
+                "scanned_at":     now.isoformat(),
+            }
+            signals.append(signal)
+
+            if edge >= MIN_EDGE and sb:
+                _save(sb, signal)
+
+        except Exception as e:
+            print(f"  [skip] {m.get('match', '?')}: {e}")
+            continue
+
+    # Telegram summary
+    value_signals = [s for s in signals if s["edge_pct"] >= MIN_EDGE]
+    if value_signals:
+        msg = f"🎯 *PREDATOR SIGNALS* — {now.strftime('%H:%M UTC')}\n"
+        msg += f"Scan: {len(matches)} matchs | Signaux: {len(value_signals)}\n\n"
+        for s in value_signals[:5]:
+            msg += (
+                f"⚡ *{s['match']}*\n"
+                f"   1XBet: `{s['xbet_odd']}` | Pinnacle: `{s['pinnacle_price']}`\n"
+                f"   Edge: `+{s['edge_pct']}%` | {s['risk_flag']}\n\n"
+            )
+        _telegram(msg)
+    else:
+        _telegram(f"✅ PREDATOR: Scan {now.strftime('%H:%M')} — {len(matches)} matchs, aucun signal ≥{MIN_EDGE}%")
+
+    print(f"[Engine] Done. {len(value_signals)} value signals.")
 
 
 if __name__ == "__main__":
-    main()
+    run()

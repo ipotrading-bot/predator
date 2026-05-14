@@ -1,170 +1,180 @@
 """
-core/harvester.py — 1XBet Direct Feed Harvester v7.0
-Moissonnage direct du flux JSON interne de 1XBet.
-
-Stratégie "Guerrilla Data" (PhD MIT):
-  Au lieu d'attendre que les données arrivent via une API payante,
-  on intercepte le flux direct que 1XBet utilise pour afficher ses cotes.
-  
-  Avantages:
-  - Gratuit et illimité (pas de quota)
-  - Cotes en temps réel (avant même l'affichage site web)
-  - Accès à TOUS les sports et marchés
-
-Sécurité (Dakar Hub):
-  - Rotation User-Agent
-  - Scan toutes les 15 minutes max (pas toutes les minutes)
-  - Jitter aléatoire entre les requêtes
+core/harvester.py — Match harvester with dual strategy:
+  1. 1XBet direct feed (fast, free, may be geo-blocked)
+  2. Gemini Google Search fallback (always works)
 """
-from __future__ import annotations
+import os
+import re
+import json
+import requests
 
-import logging
-import random
-import time
-from typing import Optional
-
-import requests as _req
-
-logger = logging.getLogger(__name__)
-
-# ── Sports IDs 1XBet ──────────────────────────────────────────────
-# Identifiants internes du LineFeed 1XBet
-SPORT_IDS = {
-    "soccer":           1,
-    "basketball":       4,
-    "tennis":           5,
-    "icehockey":        6,
-    "baseball":         9,
-    "esports_lol":     112,
-    "esports_csgo":    117,
-    "mma":             21,
-}
-
-# ── User-Agents pour obfuscation ─────────────────────────────────
-USER_AGENTS = [
-    "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/119.0.0.0 Safari/537.36",
-    "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
-    "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/119.0.0.0 Safari/537.36",
-    "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
-    "Mozilla/5.0 (Windows NT 10.0; Win64; x64; rv:120.0) Gecko/20100101 Firefox/120.0",
-    "Mozilla/5.0 (iPhone; CPU iPhone OS 17_0 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) CriOS/119.0.6045.109 Mobile/15E148 Safari/604.1",
+# ── 1XBet feed candidates (try in order) ─────────────────────────
+XBET_FEEDS = [
+    "https://1xbet.com/LineFeed/Get1x2?sport=1&count=50&lng=en&mode=4",
+    "https://1xbet.com/LineFeed/Get1x2?sport=1&count=50&lng=en&mode=1",
+    "https://1xbet.cm/LineFeed/Get1x2?sport=1&count=50&lng=en&mode=4",
 ]
+HEADERS = {
+    "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36",
+    "Accept": "application/json, text/plain, */*",
+    "Accept-Language": "en-US,en;q=0.9",
+    "Referer": "https://1xbet.com/en/line/football/",
+}
+GEMINI_URL = "https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent"
 
-# ── Intervalles de scan (secondes) ────────────────────────────────
-MIN_SCAN_INTERVAL = 900   # 15 minutes
-JITTER_RANGE = 120        # ±2 minutes de jitter
+
+def _odd(val):
+    try:
+        f = float(val)
+        return f if f > 1.01 else 0.0
+    except (TypeError, ValueError):
+        return 0.0
 
 
-class OneXBetHarvester:
-    """
-    Moissonneur de flux direct 1XBet.
-    
-    Récupère le fichier JSON interne que 1XBet utilise
-    pour alimenter son interface de cotes en ligne.
-    
-    Le JSON est complexe et nécessite Gemini pour le décoder
-    (via GeminiOracle.decode_harvester_feed()).
-    """
-
-    def __init__(self):
-        self._last_scan: float = 0.0
-        self._stats = {"total_raw_fetches": 0, "successful_decodes": 0}
-
-    def _get_headers(self) -> dict:
-        """Génère des headers HTTP avec rotation User-Agent."""
-        return {
-            "User-Agent": random.choice(USER_AGENTS),
-            "Accept": "application/json",
-            "Accept-Language": "en-US,en;q=0.9",
-            "Referer": "https://1xbet.com/en/line/",
-            "Origin": "https://1xbet.com",
-            "Connection": "keep-alive",
-            "Sec-Fetch-Dest": "empty",
-            "Sec-Fetch-Mode": "cors",
-            "Sec-Fetch-Site": "same-origin",
-        }
-
-    def fetch_raw_feed(self, sport_key: str = "soccer", count: int = 50) -> Optional[dict]:
-        """
-        Intercepte le flux JSON interne de 1XBet (LineFeed).
-        
-        Args:
-            sport_key: Identifiant sport (clé interne Predator)
-            count: Nombre de matchs à récupérer (max 50)
-            
-        Returns:
-            dict: Flux JSON brut de 1XBet ou None si échec
-            
-        Note:
-            Le JSON retourné est complexe et cryptique.
-            Utiliser GeminiOracle.decode_harvester_feed() pour le décoder.
-        """
-        sport_id = SPORT_IDS.get(sport_key, 1)
-
-        # URL du proxy de flux interne (Endpoint mondial 1XBet)
-        url = (
-            f"https://1xbet.com/LineFeed/Get1x2"
-            f"?sport={sport_id}&count={count}&lng=en&mode=4&country=1"
-        )
-
+def _parse_xbet_json(data):
+    matches = []
+    for event in data.get("Value", []):
         try:
-            response = _req.get(url, headers=self._get_headers(), timeout=15)
+            home = str(event.get("O1", "")).strip()
+            away = str(event.get("O2", "")).strip()
+            if not home or not away:
+                continue
+            o1 = _odd(event.get("C1"))
+            ox = _odd(event.get("C2"))
+            o2 = _odd(event.get("C3"))
+            if o1 == 0.0 and o2 == 0.0:
+                continue
+            matches.append({
+                "id":         str(event.get("CI", f"{home}_{away}")),
+                "match":      f"{home} vs {away}",
+                "home":       home,
+                "away":       away,
+                "league":     str(event.get("L", "Unknown")),
+                "odds_1xbet": {"1": o1, "X": ox, "2": o2},
+            })
+        except Exception:
+            continue
+    return matches
 
-            if response.status_code == 200:
-                self._stats["total_raw_fetches"] += 1
-                logger.info(f"✅ Harvester: {sport_key} → {len(response.text)} bytes")
-                return response.json()
-            
-            logger.warning(f"Harvester HTTP {response.status_code} pour {sport_key}")
-            return None
 
+def _fetch_from_1xbet():
+    """Try each 1XBet feed URL. Returns list of matches or []."""
+    for url in XBET_FEEDS:
+        try:
+            r = requests.get(url, headers=HEADERS, timeout=12)
+            if r.status_code == 200:
+                data = r.json()
+                matches = _parse_xbet_json(data)
+                if matches:
+                    print(f"[Harvester] 1XBet OK: {len(matches)} matches via {url}")
+                    return matches
         except Exception as e:
-            logger.error(f"Harvester error {sport_key}: {e}")
-            return None
-
-    def fetch_multi_sport(self, sports: list[str] | None = None) -> dict[str, dict]:
-        """
-        Récupère les flux bruts pour plusieurs sports.
-        
-        Args:
-            sports: Liste des sports à scanner (défaut: soccer + basketball + tennis)
-            
-        Returns:
-            dict: {sport_key: raw_json_dict}
-        """
-        if sports is None:
-            sports = ["soccer", "basketball", "tennis"]
-
-        results = {}
-        for sport in sports:
-            raw = self.fetch_raw_feed(sport_key=sport, count=30)
-            if raw:
-                results[sport] = raw
-            # Rate-limit: 2-4 secondes entre chaque sport
-            time.sleep(random.uniform(2.0, 4.0))
-
-        logger.info(f"Harvester multi-sport: {len(results)}/{len(sports)} récupérés")
-        return results
-
-    def can_scan(self) -> bool:
-        """Vérifie si le délai minimum entre scans est respecté."""
-        elapsed = time.time() - self._last_scan
-        return elapsed >= MIN_SCAN_INTERVAL + random.uniform(-JITTER_RANGE, JITTER_RANGE)
-
-    def mark_scanned(self):
-        """Marque le dernier scan."""
-        self._last_scan = time.time()
-
-    def get_stats(self) -> dict:
-        return dict(self._stats)
+            print(f"[Harvester] 1XBet {url}: {e}")
+    return []
 
 
-# Singleton
-_harvester_instance: Optional[OneXBetHarvester] = None
+def _fetch_from_gemini():
+    """
+    Fallback: ask Gemini (Google Search) for today's top football matches
+    with their current 1XBet odds.
+    Returns list of matches in the same format as _fetch_from_1xbet().
+    """
+    api_key = os.environ.get("GEMINI_API_KEY")
+    if not api_key:
+        print("[Harvester] No GEMINI_API_KEY for fallback")
+        return []
 
-def get_harvester() -> OneXBetHarvester:
-    """Retourne l'instance singleton du Harvester."""
-    global _harvester_instance
-    if _harvester_instance is None:
-        _harvester_instance = OneXBetHarvester()
-    return _harvester_instance
+    prompt = """Use Google Search to find the 10 most important football matches happening today or tomorrow.
+For each match, find the current 1XBet odds (1/X/2).
+Return ONLY a JSON array — no text before or after:
+[
+  {
+    "match": "Team A vs Team B",
+    "home": "Team A",
+    "away": "Team B",
+    "league": "Premier League",
+    "odds_1xbet": {"1": 1.85, "X": 3.40, "2": 4.20}
+  }
+]
+If a match has no odds yet, skip it. Return real current odds only."""
+
+    payload = {
+        "contents": [{"role": "user", "parts": [{"text": prompt}]}],
+        "tools": [{"google_search": {}}],
+        "generationConfig": {"temperature": 0.1, "maxOutputTokens": 1024},
+    }
+
+    try:
+        for attempt in range(3):
+            r = requests.post(f"{GEMINI_URL}?key={api_key}", json=payload, timeout=30)
+            if r.status_code == 429:
+                wait = 65 if attempt == 0 else 30
+                print(f"[Harvester] Gemini rate limit — waiting {wait}s (attempt {attempt+1}/3)")
+                import time; time.sleep(wait)
+                continue
+            break
+        if r.status_code != 200:
+            print(f"[Harvester] Gemini fallback error: {r.status_code}")
+            return []
+
+        # gemini-2.5 returns [thinking_part, response_part] — take last text part
+        parts = r.json().get("candidates", [{}])[0].get("content", {}).get("parts", [])
+        text = next((p["text"] for p in reversed(parts) if p.get("text", "").strip()), "")
+        text = re.sub(r'```(?:json)?|```', '', text)
+        m = re.search(r'\[[\s\S]*\]', text)
+        if not m:
+            print("[Harvester] Gemini: no JSON array found")
+            return []
+
+        raw = json.loads(m.group())
+        matches = []
+        for i, ev in enumerate(raw):
+            try:
+                home = str(ev.get("home", "")).strip()
+                away = str(ev.get("away", "")).strip()
+                odds = ev.get("odds_1xbet", {})
+                if not home or not away:
+                    continue
+                matches.append({
+                    "id":         f"gemini_{i}",
+                    "match":      ev.get("match", f"{home} vs {away}"),
+                    "home":       home,
+                    "away":       away,
+                    "league":     ev.get("league", "Unknown"),
+                    "odds_1xbet": {
+                        "1": _odd(odds.get("1")),
+                        "X": _odd(odds.get("X", 0)),
+                        "2": _odd(odds.get("2")),
+                    },
+                })
+            except Exception:
+                continue
+
+        print(f"[Harvester] Gemini fallback: {len(matches)} matches")
+        return matches
+
+    except Exception as e:
+        print(f"[Harvester] Gemini fallback exception: {e}")
+        return []
+
+
+def fetch_matches():
+    """
+    Fetch upcoming football matches.
+    Tries 1XBet direct feed first, falls back to Gemini Google Search.
+    """
+    matches = _fetch_from_1xbet()
+    if not matches:
+        print("[Harvester] 1XBet unreachable — using Gemini fallback")
+        matches = _fetch_from_gemini()
+    return matches
+
+
+def shin_edge(xbet_odd, pinnacle_price):
+    """
+    Compute value edge vs Pinnacle fair price (Shin approximation).
+    Returns % edge — positive means value bet.
+    """
+    if not xbet_odd or not pinnacle_price or xbet_odd <= 1.01 or pinnacle_price <= 1.01:
+        return 0.0
+    return round((xbet_odd / pinnacle_price - 1) * 100, 2)

@@ -1,615 +1,200 @@
 <!DOCTYPE html>
-<html lang="fr">
+<html lang="en">
 <head>
-    <meta charset="UTF-8">
-    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
-            <title>PREDATOR PAIM v7.0 GUERRILLA | Terminal</title>
-    <script src="https://cdn.tailwindcss.com"></script>
-    <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
-    <link href="https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@400;700&display=swap" rel="stylesheet">
-    <style>
-        :root { --paim-green: #00ff00; --paim-dark: #050505; --paim-blue: #00d4ff; }
-        body { font-family: 'JetBrains Mono', monospace; background-color: var(--paim-dark); color: var(--paim-green); }
-        .glass { background: rgba(255, 255, 255, 0.03); border: 1px solid rgba(0, 255, 0, 0.15); }
-        .tab-active { border-bottom: 3px solid var(--paim-green); color: #fff; }
-        
-        /* Pulse Hunter v6.0: Market Badges */
-        .market-badge { display: inline-block; padding: 2px 8px; border-radius: 4px; font-size: 9px; font-weight: bold; text-transform: uppercase; }
-        .badge-ou { background: rgba(255, 165, 0, 0.2); color: #ffa500; border: 1px solid rgba(255, 165, 0, 0.4); }
-        .badge-btts { background: rgba(138, 43, 226, 0.2); color: #8a2be2; border: 1px solid rgba(138, 43, 226, 0.4); }
-        .badge-ah { background: rgba(0, 100, 255, 0.2); color: #0064ff; border: 1px solid rgba(0, 100, 255, 0.4); }
-        .badge-prop { background: rgba(255, 215, 0, 0.2); color: #ffd700; border: 1px solid rgba(255, 215, 0, 0.4); }
-        
-        /* Pulse Hunter v6.0: Countdown Timer */
-        .countdown { font-family: 'JetBrains Mono', monospace; font-size: 11px; }
-        .countdown.urgent { color: #ff3333; animation: pulse-red 1s infinite; }
-        @keyframes pulse-red { 0%, 100% { opacity: 1; } 50% { opacity: 0.5; } }
-        
-        /* Pulse Hunter v6.0: SNR Progress Bar */
-        .snr-bar-container { width: 100%; height: 6px; background: rgba(255, 255, 255, 0.1); border-radius: 3px; overflow: hidden; }
-        .snr-bar-fill { height: 100%; background: linear-gradient(90deg, var(--paim-green), var(--paim-blue)); transition: width 0.3s ease; }
-        
-        /* Pulse Hunter v6.0: Filter Buttons */
-        .filter-btn { padding: 6px 12px; border: 1px solid rgba(0, 255, 0, 0.3); background: rgba(0, 255, 0, 0.05); color: var(--paim-green); font-size: 10px; font-weight: bold; text-transform: uppercase; cursor: pointer; transition: all 0.2s; }
-        .filter-btn:hover { background: rgba(0, 255, 0, 0.15); }
-        .filter-btn.active { background: var(--paim-green); color: var(--paim-dark); }
-        
-        /* Pulse Hunter v6.0: Electric Blue for Alpha */
-        .alpha-highlight { color: var(--paim-blue); }
-        .alpha-bar { background: var(--paim-blue); }
-        
-        .nav-scroll { -ms-overflow-style: none; scrollbar-width: none; overflow-x: auto; display: flex; white-space: nowrap; border-bottom: 1px solid #111; }
-        .nav-scroll::-webkit-scrollbar { display: none; }
-        .nav-item { min-width: 100px; text-align: center; padding: 12px 16px; min-height: 44px; display: flex; align-items: center; justify-content: center; font-weight: bold; }
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>PREDATOR PAIM v7.0</title>
+<style>
+:root {
+  --bg:     #050505;
+  --bg2:    #0d0d0d;
+  --border: #1c1c1c;
+  --green:  #00ff41;
+  --blue:   #00bfff;
+  --red:    #ff3b3b;
+  --yellow: #ffd700;
+  --grey:   #555;
+  --text:   #c0c0c0;
+  --font:   'Courier New', monospace;
+}
+* { margin: 0; padding: 0; box-sizing: border-box; }
+body { background: var(--bg); color: var(--text); font-family: var(--font); font-size: 13px; min-height: 100vh; }
 
-        .console-container { background: #0a0a0a; border: 1px solid rgba(0, 255, 0, 0.2); border-radius: 4px; overflow: hidden; }
-        .console-header { background: rgba(0, 255, 0, 0.05); padding: 8px 12px; font-size: 10px; border-bottom: 1px solid rgba(0, 255, 0, 0.1); display: flex; justify-content: space-between; }
-        .console-body { padding: 10px; height: 150px; overflow-y: auto; font-size: 11px; line-height: 1.4; scrollbar-width: thin; scrollbar-color: var(--paim-green) #0a0a0a; }
-        
-        .ticker-container { overflow: hidden; background: rgba(0, 255, 0, 0.02); border-bottom: 1px solid rgba(0, 255, 0, 0.1); padding: 4px 0; }
-        .ticker-content { display: inline-block; white-space: nowrap; animation: ticker 30s linear infinite; }
-        @keyframes ticker { 0% { transform: translateX(0); } 100% { transform: translateX(-50%); } }
-        
-        .led { display: inline-block; width: 6px; height: 6px; border-radius: 50%; margin-right: 4px; }
-        .led-online { background: var(--paim-green); box-shadow: 0 0 5px var(--paim-green); }
-        .led-offline { background: #ff3333; }
-        
-        .log-time { color: #555; }
-        .log-success { color: var(--paim-green); font-weight: bold; }
-        .log-error { color: #ff3333; }
-        
-        @media (min-width: 769px) {
-            .kpi-grid { display: grid; grid-template-columns: repeat(5, 1fr); gap: 16px; }
-            .console-body { height: 300px; }
-            .signal-list { display: grid; grid-template-columns: repeat(3, 1fr); gap: 16px; }
-        }
-        @media (max-width: 768px) {
-            .kpi-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; }
-            .kpi-full { grid-column: span 2; }
-            .signal-card-mobile { padding: 10px; margin-bottom: 6px; position: relative; }
-            .alpha-tag { position: absolute; top: 10px; right: 10px; font-size: 14px; font-weight: 800; }
-            .modal-fullscreen { position: fixed; top: 0; left: 0; width: 100%; height: 100%; z-index: 100; background: var(--paim-dark); padding: 20px; display: flex; flex-direction: column; }
-            /* Pulse Hunter v6.0: 3 cards per screen on mobile */
-            .signal-list { display: grid; grid-template-columns: repeat(2, 1fr); gap: 8px; padding: 0 8px; }
-            .signal-card { padding: 8px; min-height: 120px; }
-        }
-        
-        /* ═══════════════════════════════════════════════════════════════════
-           RESPONSIVE MOBILE OPTIMIZATION (PAIM v5.0 Mobile)
-           ═══════════════════════════════════════════════════════════════════ */
-        
-        /* Tablettes et petits écrans */
-        @media (max-width: 1024px) {
-            .signal-card {
-                padding: 12px;
-            }
-            .signal-card .alpha-big {
-                font-size: 22px;
-            }
-            .heatmap-cell {
-                padding: 8px 4px;
-            }
-        }
-        
-        /* Smartphones */
-        @media (max-width: 768px) {
-            /* Header compact */
-            header {
-                padding: 8px 12px;
-            }
-            header h1 {
-                font-size: 14px;
-            }
-            header .text-xs {
-                font-size: 9px;
-            }
-            
-            /* LED plus petits */
-            .led {
-                width: 6px;
-                height: 6px;
-                margin-right: 3px;
-            }
-            
-            /* Health bar ultra-compact */
-            #health-bar {
-                padding: 4px 12px;
-                font-size: 9px;
-            }
-            #health-bar .gap-4 {
-                gap: 8px;
-            }
-            
-            /* KPI Bar: 2 colonnes sur mobile */
-            #kpi-bar {
-                grid-template-columns: repeat(2, 1fr) !important;
-                gap: 8px !important;
-                padding: 8px 12px !important;
-            }
-            #kpi-bar .glass {
-                padding: 8px;
-            }
-            #kpi-bar .text-xl {
-                font-size: 14px;
-            }
-            #kpi-bar .text-xs {
-                font-size: 8px;
-            }
-            
-            /* Heatmap: 2 colonnes */
-            #heatmap-grid {
-                grid-template-columns: repeat(2, 1fr) !important;
-            }
-            .heatmap-cell {
-                padding: 6px;
-                min-height: 60px;
-            }
-            .heatmap-cell .text-lg {
-                font-size: 14px;
-            }
-            
-            /* Console masquée sur mobile pour gagner de la place */
-            #console-panel {
-                display: none;
-            }
-            
-            /* Heatmap prend toute la largeur */
-            #heatmap-section {
-                width: 100% !important;
-                height: 200px !important;
-            }
-            
-            /* Signal cards pleine largeur */
-            #signal-grid {
-                grid-template-columns: 1fr !important;
-                gap: 8px !important;
-                padding: 0 12px;
-            }
-            
-            .signal-card {
-                padding: 12px;
-            }
-            .signal-card h4 {
-                font-size: 13px !important;
-            }
-            .signal-card .alpha-big {
-                font-size: 24px;
-            }
-            
-            /* Modal plein écran sur mobile */
-            .modal-content {
-                width: 100%;
-                max-width: none;
-                height: 100vh;
-                max-height: 100vh;
-                border-radius: 0;
-            }
-            
-            /* Onglets plus compacts */
-            .tab {
-                padding: 8px 12px;
-                font-size: 10px;
-            }
-            
-            /* Bouton action plus grand pour touch */
-            #modal-link {
-                padding: 16px;
-                font-size: 16px;
-            }
-            
-            /* Texte général plus lisible */
-            body {
-                font-size: 12px;
-            }
-            .text-xs {
-                font-size: 10px;
-            }
-        }
-        
-        /* Très petits écrans */
-        @media (max-width: 375px) {
-            #kpi-bar {
-                grid-template-columns: 1fr !important;
-            }
-            
-            header .flex.items-center {
-                gap: 8px;
-            }
-            
-            .signal-card .alpha-big {
-                font-size: 20px;
-            }
-        }
-        
-        /* Touch targets plus grands sur mobile */
-        @media (hover: none) and (pointer: coarse) {
-            .signal-card {
-                min-height: 80px;
-            }
-            .tab {
-                min-height: 44px;
-                display: flex;
-                align-items: center;
-            }
-            button, a {
-                min-height: 44px;
-                min-width: 44px;
-            }
-        }
-    </style>
+header {
+  background: var(--bg2);
+  border-bottom: 1px solid var(--border);
+  padding: 14px 24px;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+}
+.logo { color: var(--green); font-size: 17px; font-weight: bold; letter-spacing: 4px; }
+.tagline { color: var(--grey); font-size: 10px; margin-top: 3px; }
+.clock { color: var(--blue); font-size: 11px; }
+
+.stats {
+  background: var(--bg2);
+  border-bottom: 1px solid var(--border);
+  display: flex;
+  gap: 0;
+}
+.stat {
+  flex: 1;
+  text-align: center;
+  padding: 14px 10px;
+  border-right: 1px solid var(--border);
+}
+.stat:last-child { border-right: none; }
+.stat-val { font-size: 26px; font-weight: bold; }
+.stat-lbl { color: var(--grey); font-size: 9px; text-transform: uppercase; letter-spacing: 1px; margin-top: 4px; }
+
+.container { padding: 24px; overflow-x: auto; }
+
+table { width: 100%; border-collapse: collapse; min-width: 780px; }
+
+thead th {
+  color: var(--blue);
+  font-size: 10px;
+  letter-spacing: 1px;
+  text-transform: uppercase;
+  padding: 8px 14px;
+  border-bottom: 1px solid var(--border);
+  background: var(--bg2);
+  text-align: left;
+}
+
+tbody tr { border-bottom: 1px solid var(--border); transition: background 0.1s; }
+tbody tr:hover { background: #111; }
+td { padding: 11px 14px; vertical-align: middle; }
+
+.match { color: #fff; font-weight: bold; }
+.league { color: var(--grey); font-size: 11px; }
+.odd { color: var(--blue); font-weight: bold; }
+.pin { color: var(--text); }
+
+.edge { font-weight: bold; }
+.e-high { color: var(--green); }
+.e-mid  { color: var(--yellow); }
+.e-low  { color: var(--grey); }
+
+.badge {
+  display: inline-block;
+  padding: 2px 9px;
+  font-size: 10px;
+  font-weight: bold;
+  text-transform: uppercase;
+  border-radius: 2px;
+}
+.b-HIGH_VALUE { background: #002200; color: var(--green); border: 1px solid #004400; }
+.b-VALUE      { background: #2a2000; color: var(--yellow); border: 1px solid #554000; }
+.b-LOW        { background: #111;    color: var(--grey);   border: 1px solid #2a2a2a; }
+.b-NO_DATA    { background: #111;    color: #333;          border: 1px solid #222; }
+
+.ts { color: var(--grey); font-size: 11px; }
+
+.empty {
+  text-align: center;
+  padding: 80px 20px;
+  color: var(--grey);
+  line-height: 2;
+}
+.empty-icon { font-size: 40px; color: #1a1a1a; margin-bottom: 12px; }
+
+footer {
+  border-top: 1px solid var(--border);
+  padding: 10px 24px;
+  font-size: 10px;
+  color: #333;
+  text-align: center;
+}
+</style>
 </head>
-<body class="p-2 md:p-4 text-xs md:text-sm">
-    <!-- Market Ticker -->
-    <div class="ticker-container mb-4">
-        <div class="ticker-content" id="market-ticker">
-            <span class="px-4 text-blue-400">[LIVE] Scan PAIM actif...</span>
-            <span class="px-4 text-blue-400">[DATA] Flux Supabase synchronisé...</span>
-        </div>
+<body>
+
+<header>
+  <div>
+    <div class="logo">&#9658; PREDATOR PAIM</div>
+    <div class="tagline">v7.0 &middot; Guerrilla Intelligence Engine &middot; 1XBet Harvester + Gemini Oracle</div>
+  </div>
+  <div class="clock" id="clock">&mdash;</div>
+</header>
+
+<div class="stats">
+  <div class="stat">
+    <div class="stat-val" style="color:var(--blue)">{{ signals|length }}</div>
+    <div class="stat-lbl">Total Signals</div>
+  </div>
+  <div class="stat">
+    <div class="stat-val" style="color:var(--green)">
+      {{ signals | selectattr('risk_flag', 'in', ['HIGH_VALUE', 'VALUE']) | list | length }}
     </div>
-
-    <!-- Header -->
-    <div class="flex flex-col md:flex-row justify-between items-start md:items-center mb-4 border-b border-green-900/30 pb-4 gap-4">
-        <div>
-            <h1 class="text-lg md:text-2xl font-bold tracking-tighter">🦅 PREDATOR <span class="text-xs font-normal text-gray-500">v7.0 GUERRILLA</span></h1>
-            <div class="flex items-center gap-2 mt-1">
-                <span class="text-[9px] bg-purple-900/30 text-purple-400 px-1 rounded uppercase animate-pulse">⚡ GUERRILLA FREE</span>
-                <span class="text-[9px] bg-green-900/20 text-green-700 px-1 rounded uppercase">Dakar Hub</span>
-                <span class="text-[9px] text-blue-600 font-bold" id="quota-display">API: --/500</span>
-            </div>
-        </div>
-        <div class="flex flex-wrap gap-3 items-center">
-            <div class="flex gap-2 text-[10px]" id="api-health">
-                <div class="flex items-center"><span class="led led-offline" id="led-pinnacle"></span><span class="text-gray-500">PIN</span></div>
-                <div class="flex items-center"><span class="led led-offline" id="led-1xbet"></span><span class="text-gray-500">1XB</span></div>
-                <div class="flex items-center"><span class="led led-offline" id="led-telegram"></span><span class="text-gray-500">TG</span></div>
-            </div>
-            <div class="text-right">
-                <div class="text-[10px] font-bold text-green-400 animate-pulse" id="system-status">● ONLINE</div>
-            </div>
-        </div>
+    <div class="stat-lbl">Value Bets</div>
+  </div>
+  <div class="stat">
+    <div class="stat-val" style="color:var(--yellow)">
+      {% if signals %}
+        {% set edges = signals | map(attribute='edge_pct') | list %}
+        {{ "%.1f" | format(edges | max) }}%
+      {% else %}—{% endif %}
     </div>
-
-    <!-- Stats Cards -->
-    <div class="kpi-grid mb-6">
-        <div class="glass p-3 rounded"><div class="text-[10px] text-gray-500">CAPITAL</div><div class="text-base md:text-xl font-bold" id="stat-capital">...</div></div>
-        <div class="glass p-3 rounded"><div class="text-[10px] text-gray-500">WIN RATE</div><div class="text-base md:text-xl font-bold text-white" id="stat-winrate">...</div></div>
-        <div class="glass p-3 rounded"><div class="text-[10px] text-gray-500">CLV AVG</div><div class="text-base md:text-xl font-bold text-blue-400" id="stat-clv">...</div></div>
-        <div class="glass p-3 rounded"><div class="text-[10px] text-gray-500">ROI</div><div class="text-base md:text-xl font-bold text-green-400" id="stat-roi">...</div></div>
-        <div class="glass p-3 rounded border-blue-500/20 kpi-full">
-            <div class="flex justify-between items-center">
-                <span class="text-[10px] text-gray-500 uppercase">Risque Cluster</span>
-                <span class="text-[10px] text-gray-600" id="risk-percentage">...</span>
-            </div>
-            <div class="text-sm md:text-lg font-bold" id="risk-cluster">...</div>
-        </div>
+    <div class="stat-lbl">Best Edge</div>
+  </div>
+  <div class="stat">
+    <div class="stat-val" style="color:var(--grey); font-size:14px">
+      {% if signals %}{{ signals[0].scanned_at[:16] | replace('T',' ') }}{% else %}—{% endif %}
     </div>
+    <div class="stat-lbl">Last Scan (UTC)</div>
+  </div>
+</div>
 
-    <!-- Tactical Navigation -->
-    <div class="nav-scroll mb-6">
-        <button onclick="showPage('control')" class="nav-item uppercase text-[11px] tracking-widest" id="btn-control">Contrôle</button>
-        <button onclick="showPage('live')" class="nav-item uppercase text-[11px] tracking-widest" id="btn-live">Live</button>
-        <button onclick="showPage('ledger')" class="nav-item uppercase text-[11px] tracking-widest" id="btn-ledger">Ledger</button>
-        <button onclick="showPage('audit')" class="nav-item uppercase text-[11px] tracking-widest" id="btn-audit">Audit</button>
-    </div>
+<div class="container">
+  {% if signals %}
+  <table>
+    <thead>
+      <tr>
+        <th>Match</th>
+        <th>League</th>
+        <th>1XBet</th>
+        <th>Pinnacle</th>
+        <th>Edge %</th>
+        <th>Signal</th>
+        <th>Time (UTC)</th>
+      </tr>
+    </thead>
+    <tbody>
+      {% for s in signals %}
+      <tr>
+        <td class="match">{{ s.match }}</td>
+        <td class="league">{{ s.league or '&mdash;' }}</td>
+        <td class="odd">{{ "%.2f" | format(s.xbet_odd) }}</td>
+        <td class="pin">{{ "%.2f" | format(s.pinnacle_price) if s.pinnacle_price else '&mdash;' }}</td>
+        <td class="edge {% if s.edge_pct >= 8 %}e-high{% elif s.edge_pct >= 3 %}e-mid{% else %}e-low{% endif %}">
+          {% if s.edge_pct > 0 %}+{% endif %}{{ "%.1f" | format(s.edge_pct) }}%
+        </td>
+        <td><span class="badge b-{{ s.risk_flag }}">{{ s.risk_flag }}</span></td>
+        <td class="ts">{{ s.scanned_at[:16] | replace('T',' ') if s.scanned_at else '&mdash;' }}</td>
+      </tr>
+      {% endfor %}
+    </tbody>
+  </table>
+  {% else %}
+  <div class="empty">
+    <div class="empty-icon">&#9634;</div>
+    <div>No signals yet.</div>
+    <div style="font-size:11px">The engine runs every 30 min via GitHub Actions.</div>
+    <div style="font-size:11px; margin-top:6px">Manual trigger: GitHub &rarr; Actions &rarr; <strong>Predator Engine</strong> &rarr; Run workflow</div>
+  </div>
+  {% endif %}
+</div>
 
-    <!-- PAGE: Contrôle -->
-    <div id="page-control" class="page">
-        <div class="flex flex-col gap-4">
-            <button onclick="triggerScan()" class="w-full bg-green-900/20 active:bg-green-900/40 border border-green-500/30 text-green-400 font-bold py-4 rounded-sm transition-all uppercase tracking-widest text-xs min-h-[50px]">
-                DÉCLENCHER SCAN PAIM
-            </button>
-            
-            <div class="grid grid-cols-1 md:grid-cols-2 gap-4">
-                <!-- Heatmap / Temperature -->
-                <div class="glass p-4 rounded-sm">
-                    <h3 class="text-[10px] text-gray-500 uppercase mb-3">Température Marché</h3>
-                    <div id="market-temperature" class="grid grid-cols-2 md:grid-cols-3 gap-2">
-                        <!-- Dynamic content -->
-                    </div>
-                </div>
+<footer>PREDATOR PAIM v7.0 &nbsp;&middot;&nbsp; GitHub Actions Engine &nbsp;&middot;&nbsp; Vercel Dashboard</footer>
 
-                <!-- Terminal -->
-                <div class="console-container">
-                    <div class="console-header">
-                        <span>TERMINAL DE LOGS</span>
-                        <button onclick="clearConsole()" class="text-gray-600">CLEAR</button>
-                    </div>
-                    <div class="console-body" id="console-output">
-                        <div class="log-line"><span class="log-time">[12:00]</span> <span class="log-info">PAIM initialisé...</span></div>
-                    </div>
-                </div>
-            </div>
-        </div>
-    </div>
-
-    <!-- PAGE: Live Signals -->
-    <div id="page-live" class="page hidden">
-        <!-- Pulse Hunter v6.0: Quick View Filters -->
-        <div class="flex gap-2 mb-4 overflow-x-auto pb-2">
-            <button onclick="filterSignals('all')" class="filter-btn active" id="filter-all">TOUT</button>
-            <button onclick="filterSignals('soccer')" class="filter-btn" id="filter-soccer">⚽ FOOTBALL</button>
-            <button onclick="filterSignals('basketball')" class="filter-btn" id="filter-basketball">🏀 NBA</button>
-            <button onclick="filterSignals('tennis')" class="filter-btn" id="filter-tennis">🎾 TENNIS</button>
-        </div>
-        <div id="live-container" class="signal-list">
-            <!-- Signal cards -->
-        </div>
-    </div>
-
-    <!-- Signal Detail Modal -->
-    <div id="detail-modal" class="hidden modal-fullscreen">
-        <div class="flex-1 overflow-y-auto" id="modal-content">
-            <!-- Content here -->
-        </div>
-        <button onclick="closeModal()" class="w-full bg-red-900/20 text-red-500 font-bold py-5 rounded mt-4 uppercase tracking-tighter text-sm">
-            Fermer le Terminal
-        </button>
-    </div>
-
-    <script>
-        let currentSignals = [];
-        let currentFilter = 'all';
-
-        function showPage(pageId) {
-            document.querySelectorAll('.page').forEach(p => p.classList.add('hidden'));
-            document.getElementById('page-' + pageId).classList.remove('hidden');
-            document.querySelectorAll('.nav-item').forEach(btn => btn.classList.remove('tab-active'));
-            document.getElementById('btn-' + pageId).classList.add('tab-active');
-        }
-
-        function addLog(message, type = 'info') {
-            const el = document.getElementById('console-output');
-            const cls = {success:'log-success', error:'log-error'}[type] || 'log-info';
-            const div = document.createElement('div');
-            div.className = 'log-line';
-            div.innerHTML = `<span class="log-time">[${new Date().toLocaleTimeString('fr-FR', {hour:'2-digit', minute:'2-digit'})}]</span> <span class="${cls}">${message}</span>`;
-            el.appendChild(div);
-            el.scrollTop = el.scrollHeight;
-        }
-
-        function clearConsole() { document.getElementById('console-output').innerHTML = ''; }
-
-        // Pulse Hunter v6.0: Market Badge Helper
-        function getMarketBadge(marketKey) {
-            if (!marketKey) return '';
-            if (marketKey === 'totals') return '<span class="market-badge badge-ou">O/U</span>';
-            if (marketKey === 'btts') return '<span class="market-badge badge-btts">BTTS</span>';
-            if (marketKey === 'spreads') return '<span class="market-badge badge-ah">AH</span>';
-            if (marketKey.includes('player') || marketKey.includes('total_corners')) return '<span class="market-badge badge-prop">PROP</span>';
-            return '';
-        }
-
-        // Pulse Hunter v6.0: Countdown Timer
-        function getCountdown(matchTime) {
-            if (!matchTime) return 'CALCUL EN COURS...';
-            try {
-                const matchDate = new Date(matchTime);
-                const now = new Date();
-                const diff = matchDate - now;
-                if (diff <= 0) return 'MATCH COMMENCÉ';
-                
-                const hours = Math.floor(diff / (1000 * 60 * 60));
-                const minutes = Math.floor((diff % (1000 * 60 * 60)) / (1000 * 60));
-                const seconds = Math.floor((diff % (1000 * 60)) / 1000);
-                
-                const isUrgent = diff < (60 * 60 * 1000); // Less than 60 minutes
-                const urgencyClass = isUrgent ? 'countdown urgent' : 'countdown';
-                
-                return `<span class="${urgencyClass}">⏱️ ${String(hours).padStart(2, '0')}:${String(minutes).padStart(2, '0')}:${String(seconds).padStart(2, '0')}</span>`;
-            } catch (e) {
-                return 'CALCUL EN COURS...';
-            }
-        }
-
-        // Pulse Hunter v6.0: SNR Progress Bar
-        function getSNRBar(snrRatio) {
-            const percentage = Math.min(Math.max(snrRatio * 10, 0), 100);
-            return `
-                <div class="snr-bar-container">
-                    <div class="snr-bar-fill" style="width: ${percentage}%"></div>
-                </div>
-                <div class="text-[9px] text-gray-500 mt-1">SNR: ${percentage.toFixed(0)}%</div>
-            `;
-        }
-
-        // Pulse Hunter v6.0: Filter Signals
-        function filterSignals(filterType) {
-            currentFilter = filterType;
-            document.querySelectorAll('.filter-btn').forEach(btn => btn.classList.remove('active'));
-            document.getElementById('filter-' + filterType).classList.add('active');
-            renderSignals();
-        }
-
-        // Pulse Hunter v6.0: Safe Value Helper
-        function safeValue(value, fallback = 'CALCUL EN COURS...') {
-            if (value === null || value === undefined || value === 'null') return fallback;
-            return value;
-        }
-
-        async function updateDashboard() {
-            const grid = document.getElementById('live-container');
-            const tempContainer = document.getElementById('market-temperature');
-            
-            try {
-                const res = await fetch('/api/data');
-                const data = await res.json();
-                currentSignals = data.signals || [];
-                const temp = data.market_temperature || {};
-
-                tempContainer.innerHTML = Object.entries(temp).map(([sport, alpha]) => `
-                    <div class="glass p-2 rounded text-[10px]">
-                        <div class="text-gray-500 uppercase truncate">${sport.includes('_') ? sport.split('_')[1] : sport}</div>
-                        <div class="text-blue-400 font-bold">${alpha.toFixed(1)}% ${alpha < 1 ? '❄️' : '🔥'}</div>
-                    </div>
-                `).join('');
-
-                renderSignals();
-
-            } catch (e) { console.error(e); }
-        }
-
-        function renderSignals() {
-            const grid = document.getElementById('live-container');
-            
-            // Apply filter
-            let filteredSignals = currentSignals;
-            if (currentFilter !== 'all') {
-                filteredSignals = currentSignals.filter(s => s.sport && s.sport.includes(currentFilter));
-            }
-
-            if (filteredSignals.length === 0) {
-                grid.innerHTML = '<div class="col-span-full p-10 text-center text-gray-700 uppercase">Aucun signal disponible</div>';
-                return;
-            }
-
-            grid.innerHTML = filteredSignals.map((s, idx) => {
-                const marketBadge = getMarketBadge(s.market_type);
-                const countdown = getCountdown(s.match_time);
-                const snrBar = getSNRBar(s.snr_ratio || 0);
-                const alphaValue = safeValue(s.alpha_spread, 0);
-                const coteValue = safeValue(s.cote_1xbet, '---');
-                const matchName = safeValue(s.match_name, 'Match inconnu');
-                const sportName = safeValue(s.sport, 'N/A');
-                
-                return `
-                    <div onclick="openModal(${idx})" class="glass p-3 rounded-sm relative signal-card active:bg-white/5 border-l-2 border-blue-500 cursor-pointer">
-                        <div class="flex justify-between items-start mb-2">
-                            <div class="text-[9px] text-gray-500 font-bold uppercase">${sportName}</div>
-                            <div class="flex gap-1">${marketBadge}</div>
-                        </div>
-                        <div class="text-sm font-bold text-white truncate mb-1">${matchName}</div>
-                        <div class="text-[10px] text-gray-500 mb-2">${s.selection || 'Sélection'} @ ${coteValue}</div>
-                        <div class="flex justify-between items-center mb-2">
-                            <div class="alpha-highlight text-sm font-bold">+${(alphaValue * 100).toFixed(1)}%</div>
-                            <div class="text-[10px]">${countdown}</div>
-                        </div>
-                        <div class="mt-2">${snrBar}</div>
-                    </div>
-                `;
-            }).join('');
-        }
-
-        function openModal(idx) {
-            const s = currentSignals[idx];
-            const modal = document.getElementById('detail-modal');
-            const content = document.getElementById('modal-content');
-            const marketBadge = getMarketBadge(s.market_type);
-            const countdown = getCountdown(s.match_time);
-            
-            content.innerHTML = `
-                <div class="border-b border-green-900/30 pb-4 mb-6">
-                    <div class="flex justify-between items-start">
-                        <h2 class="text-xl font-bold text-white">${safeValue(s.match_name, 'Match inconnu')}</h2>
-                        <div class="flex gap-1">${marketBadge}</div>
-                    </div>
-                    <p class="text-blue-500 text-sm font-bold uppercase mt-2">${safeValue(s.sport, 'N/A')} | ALPHA: +${(safeValue(s.alpha_spread, 0) * 100).toFixed(2)}%</p>
-                    <div class="mt-2">${countdown}</div>
-                </div>
-                <div class="grid grid-cols-2 gap-4 mb-8">
-                    <div class="glass p-4 rounded">
-                        <p class="text-[10px] text-gray-500 mb-1 uppercase">Cote Soft</p>
-                        <p class="text-2xl font-bold text-green-400">${safeValue(s.cote_1xbet, '---')}</p>
-                    </div>
-                    <div class="glass p-4 rounded">
-                        <p class="text-[10px] text-gray-500 mb-1 uppercase">Fair Price</p>
-                        <p class="text-2xl font-bold text-gray-400">${safeValue(s.fair_price, '---')}</p>
-                    </div>
-                </div>
-                <div class="glass p-4 rounded mb-6">
-                    <h3 class="text-xs text-gray-500 uppercase mb-2">IA Context</h3>
-                    <p class="text-sm text-gray-300 italic">${safeValue(s.note_ia, 'Analyse non disponible')}</p>
-                </div>
-                <a href="#" class="block w-full bg-blue-600 text-white text-center py-4 rounded font-bold uppercase tracking-widest">Ouvrir sur 1XBet</a>
-            `;
-            modal.classList.remove('hidden');
-        }
-
-        function closeModal() { document.getElementById('detail-modal').classList.add('hidden'); }
-
-        async function triggerScan() {
-            addLog("Pulse Hunter v6.1: Démarrage scan séquentiel...", "info");
-            
-            // Pulse Hunter v6.1: Scan sports sequentially to avoid timeout
-            // Using broader sport categories that match The-Odds-API format
-            const sports = ['basketball_nba', 'tennis_atp_masters_1000', 'soccer_epl'];
-            let totalEvents = 0;
-            let totalSignals = 0;
-            
-            for (const sport of sports) {
-                addLog(`[SCANNER] Scan en cours: ${sport}...`, "info");
-                try {
-                    const res = await fetch(`/api/screener?sport=${sport}`);
-                    const data = await res.json();
-                    
-                    if (data.status === "success") {
-                        totalEvents += data.result.events_analyzed;
-                        totalSignals += data.result.signals_validated;
-                        addLog(`✅ ${sport}: ${data.result.signals_validated} signaux | ${data.result.events_analyzed} events`, "success");
-                        if (data.api_quota) document.getElementById('quota-display').textContent = `API: ${data.api_quota.remaining_requests}/500`;
-                    } else if (data.status === "quota_empty") {
-                        addLog(`[API] Quota épuisé ou Serveur saturé`, "error");
-                        break;
-                    } else {
-                        addLog(`[SCANNER] Erreur ${sport}: ${data.message}`, "error");
-                    }
-                } catch (e) {
-                    addLog(`[SCANNER] Erreur critique ${sport}: ${e.message}`, "error");
-                }
-                
-                // Small delay between sports to avoid rate limiting
-                await new Promise(resolve => setTimeout(resolve, 1000));
-            }
-            
-            addLog(`🎯 Scan terminé: ${totalSignals} signaux totaux | ${totalEvents} événements`, "success");
-            updateDashboard();
-        }
-
-        async function fetchExposure() {
-            try {
-                const res = await fetch('/api/exposure');
-                const d = await res.json();
-                const rcEl = document.getElementById('risk-cluster');
-                rcEl.textContent = d.risk_cluster || 'SÉCURISÉ';
-                rcEl.className = d.risk_cluster === 'CRITIQUE' ? 'text-sm md:text-lg font-bold text-red-500' : 
-                                d.risk_cluster === 'ÉLEVÉ' ? 'text-sm md:text-lg font-bold text-yellow-500' : 
-                                'text-sm md:text-lg font-bold text-green-400';
-                document.getElementById('risk-percentage').textContent = `${d.risk_percentage || 0}%`;
-            } catch (e) {}
-        }
-
-        async function fetchStats() {
-            try {
-                const res = await fetch('/api/stats');
-                const d = await res.json();
-                document.getElementById('stat-capital').textContent = (d.capital || 0).toFixed(0) + '€';
-                document.getElementById('stat-winrate').textContent = (d.win_rate || 0).toFixed(1) + '%';
-                document.getElementById('stat-clv').textContent = (d.clv_avg || 0).toFixed(2) + '%';
-                document.getElementById('stat-roi').textContent = (d.roi_mensuel || 0).toFixed(1) + '%';
-            } catch (e) {}
-        }
-
-        async function fetchAPIHealth() {
-            try {
-                const res = await fetch('/api/health');
-                const d = await res.json();
-                if (d.status === 'ok') {
-                    document.querySelectorAll('[id^="led-"]').forEach(el => el.className = 'led led-online');
-                }
-            } catch (e) { document.querySelectorAll('[id^="led-"]').forEach(el => el.className = 'led led-offline'); }
-        }
-
-        document.addEventListener('DOMContentLoaded', () => {
-            showPage('control');
-            updateDashboard();
-            fetchExposure();
-            fetchStats();
-            fetchAPIHealth();
-            setInterval(updateDashboard, 60000);
-            setInterval(fetchExposure, 30000);
-            setInterval(fetchAPIHealth, 60000);
-            // Pulse Hunter v6.0: Update countdown every second
-            setInterval(renderSignals, 1000);
-        });
-    </script>
+<script>
+  (function tick() {
+    const d = new Date();
+    document.getElementById('clock').textContent = d.toUTCString().slice(0,25) + ' UTC';
+    setTimeout(tick, 1000);
+  })();
+</script>
 </body>
 </html>
