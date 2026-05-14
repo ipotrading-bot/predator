@@ -30,6 +30,7 @@ from core.paim_engine import PAIMEngine, PAIMSignal, ScanResult
 from core.validator import check_market_red_flags
 from core.gemini_search import GeminiOracle, GeminiOddsResult  # 🔮 Fallback Oracle
 from data.odds_fetcher import OddsFetcher
+from data.multi_source_fetcher import MultiSourceFetcher
 from data.supabase_client import SupabaseClient
 from api.groq_client import groq_client
 from api.perplexity_client import perplexity_grounding
@@ -333,9 +334,21 @@ class MarketScanner:
             logger.info(f"📡 {len(events)} événements dans la fenêtre")
 
             if not events:
-                logger.warning("Aucun événement dans la fenêtre 48h.")
-                result.duration_seconds = time.monotonic() - start
-                return result
+                logger.warning("⚠️ The-Odds-API vide — activation cascade MultiSource...")
+                try:
+                    async with MultiSourceFetcher() as msf:
+                        multi_events = await msf.fetch_all()
+                        if multi_events:
+                            events = multi_events
+                            logger.info(f"✅ MultiSource a trouvé {len(events)} événements alternatifs")
+                        else:
+                            logger.warning("Aucune source alternative n'a retourné d'événements")
+                            result.duration_seconds = time.monotonic() - start
+                            return result
+                except Exception as ms_e:
+                    logger.error(f"MultiSource fallback échoué: {ms_e}")
+                    result.duration_seconds = time.monotonic() - start
+                    return result
 
             news_cache = await self._prefetch_news(events)
             dossiers: list[ArbitrageDossier] = []
