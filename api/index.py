@@ -26,7 +26,7 @@ def dashboard():
     try:
         sb = _db()
         if sb:
-            res = sb.table("signals").select("*").order("scanned_at", desc=True).limit(50).execute()
+            res = sb.table("signals").select("*").order("created_at", desc=True).limit(50).execute()
             signals = res.data or []
     except Exception as e:
         print(f"[Dashboard] {e}")
@@ -39,7 +39,7 @@ def api_signals():
         sb = _db()
         if not sb:
             return jsonify({"error": "no db"}), 503
-        res = sb.table("signals").select("*").order("scanned_at", desc=True).limit(50).execute()
+        res = sb.table("signals").select("*").order("created_at", desc=True).limit(50).execute()
         return jsonify(res.data or [])
     except Exception as e:
         return jsonify({"error": str(e)}), 500

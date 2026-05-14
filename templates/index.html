@@ -172,7 +172,7 @@ footer {
           {% if s.edge_pct > 0 %}+{% endif %}{{ "%.1f" | format(s.edge_pct) }}%
         </td>
         <td><span class="badge b-{{ s.risk_flag }}">{{ s.risk_flag }}</span></td>
-        <td class="ts">{{ s.scanned_at[:16] | replace('T',' ') if s.scanned_at else '&mdash;' }}</td>
+        <td class="ts">{{ s.created_at[:16] | replace('T',' ') if s.created_at else '&mdash;' }}</td>
       </tr>
       {% endfor %}
     </tbody>

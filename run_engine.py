@@ -90,13 +90,14 @@ def run():
 
             signal = {
                 "match":          name,
-                "league":         m.get("league", ""),
+                "league":         m.get("league", "") or "",
                 "sport":          "football",
-                "xbet_odd":       best,
-                "pinnacle_price": pinnacle,
-                "edge_pct":       edge,
+                "xbet_odd":       float(best),
+                "pinnacle_price": float(pinnacle) if pinnacle else None,
+                "edge_pct":       float(edge),
                 "risk_flag":      risk,
                 "scanned_at":     now.isoformat(),
+                "status":         "active",
             }
             signals.append(signal)
 
