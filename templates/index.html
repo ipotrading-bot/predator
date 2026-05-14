@@ -3,7 +3,7 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>PREDATOR PAIM v7.0</title>
+<title>PREDATOR PAIM v7.2</title>
 <style>
 :root {
   --bg:     #050505;
@@ -13,6 +13,7 @@
   --blue:   #00bfff;
   --red:    #ff3b3b;
   --yellow: #ffd700;
+  --orange: #ff8c00;
   --grey:   #555;
   --text:   #c0c0c0;
   --font:   'Courier New', monospace;
@@ -30,6 +31,7 @@ header {
 }
 .logo { color: var(--green); font-size: 17px; font-weight: bold; letter-spacing: 4px; }
 .tagline { color: var(--grey); font-size: 10px; margin-top: 3px; }
+.doctrine { color: var(--orange); font-size: 10px; letter-spacing: 1px; margin-top: 2px; }
 .clock { color: var(--blue); font-size: 11px; }
 
 .stats {
@@ -50,7 +52,7 @@ header {
 
 .container { padding: 24px; overflow-x: auto; }
 
-table { width: 100%; border-collapse: collapse; min-width: 780px; }
+table { width: 100%; border-collapse: collapse; min-width: 900px; }
 
 thead th {
   color: var(--blue);
@@ -65,10 +67,23 @@ thead th {
 
 tbody tr { border-bottom: 1px solid var(--border); transition: background 0.1s; }
 tbody tr:hover { background: #111; }
+tbody tr.suspect-row { border-left: 2px solid var(--orange); }
 td { padding: 11px 14px; vertical-align: middle; }
 
 .match { color: #fff; font-weight: bold; }
 .league { color: var(--grey); font-size: 11px; }
+
+.market-badge {
+  display: inline-block;
+  padding: 1px 7px;
+  font-size: 10px;
+  font-weight: bold;
+  border-radius: 2px;
+  letter-spacing: 0.5px;
+}
+.m-ah   { background: #001a00; color: var(--green); border: 1px solid #003300; }
+.m-ml   { background: #001533; color: var(--blue);  border: 1px solid #003366; }
+
 .odd { color: var(--blue); font-weight: bold; }
 .pin { color: var(--text); }
 
@@ -76,6 +91,7 @@ td { padding: 11px 14px; vertical-align: middle; }
 .e-high { color: var(--green); }
 .e-mid  { color: var(--yellow); }
 .e-low  { color: var(--grey); }
+.e-sus  { color: var(--orange); }
 
 .badge {
   display: inline-block;
@@ -85,10 +101,12 @@ td { padding: 11px 14px; vertical-align: middle; }
   text-transform: uppercase;
   border-radius: 2px;
 }
-.b-HIGH_VALUE { background: #002200; color: var(--green); border: 1px solid #004400; }
-.b-VALUE      { background: #2a2000; color: var(--yellow); border: 1px solid #554000; }
-.b-LOW        { background: #111;    color: var(--grey);   border: 1px solid #2a2a2a; }
-.b-NO_DATA    { background: #111;    color: #333;          border: 1px solid #222; }
+.b-HIGH_VALUE   { background: #002200; color: var(--green);  border: 1px solid #004400; }
+.b-VALUE        { background: #2a2000; color: var(--yellow); border: 1px solid #554000; }
+.b-LOW_VALUE    { background: #111;    color: #888;          border: 1px solid #2a2a2a; }
+.b-LOW          { background: #111;    color: var(--grey);   border: 1px solid #2a2a2a; }
+.b-NO_DATA      { background: #111;    color: #333;          border: 1px solid #222; }
+.b-SUSPECT_DATA { background: #1a0d00; color: var(--orange); border: 1px solid #4d2800; }
 
 .ts { color: var(--grey); font-size: 11px; }
 
@@ -114,34 +132,40 @@ footer {
 <header>
   <div>
     <div class="logo">&#9658; PREDATOR PAIM</div>
-    <div class="tagline">v7.0 &middot; Guerrilla Intelligence Engine &middot; 1XBet Harvester + Gemini Oracle</div>
+    <div class="tagline">v7.2 &middot; Binary Synthesis Engine &middot; 1XBet Harvester + Gemini Oracle</div>
+    <div class="doctrine">&#9632; DOCTRINE: Soccer = AH 0.0 Only &nbsp;|&nbsp; NBA/Tennis = Moneyline &nbsp;|&nbsp; Edge Cap: 15% Suspect / 25% Discard</div>
   </div>
   <div class="clock" id="clock">&mdash;</div>
 </header>
 
 <div class="stats">
   <div class="stat">
-    <div class="stat-val" style="color:var(--blue)">{{ signals|length }}</div>
-    <div class="stat-lbl">Total Signals</div>
+    {% set clean = signals | rejectattr('risk_flag', 'equalto', 'SUSPECT_DATA') | list %}
+    <div class="stat-val" style="color:var(--blue)">{{ clean|length }}</div>
+    <div class="stat-lbl">Valid Signals</div>
   </div>
   <div class="stat">
     <div class="stat-val" style="color:var(--green)">
-      {{ signals | selectattr('risk_flag', 'in', ['HIGH_VALUE', 'VALUE']) | list | length }}
+      {{ clean | selectattr('risk_flag', 'in', ['HIGH_VALUE', 'VALUE']) | list | length }}
     </div>
-    <div class="stat-lbl">Value Bets</div>
+    <div class="stat-lbl">Elite &ge;2.5%</div>
   </div>
   <div class="stat">
     <div class="stat-val" style="color:var(--yellow)">
-      {% if signals %}
-        {% set edges = signals | map(attribute='edge_pct') | list %}
-        {{ "%.1f" | format(edges | max) }}%
-      {% else %}—{% endif %}
+      {% set edges = clean | map(attribute='edge_pct') | list %}
+      {% if edges %}{{ "%.1f" | format(edges | max) }}%{% else %}&mdash;{% endif %}
     </div>
     <div class="stat-lbl">Best Edge</div>
   </div>
   <div class="stat">
+    <div class="stat-val" style="color:var(--orange); font-size:20px">
+      {{ signals | selectattr('risk_flag', 'equalto', 'SUSPECT_DATA') | list | length }}
+    </div>
+    <div class="stat-lbl">&#9888; Suspect &gt;15%</div>
+  </div>
+  <div class="stat">
     <div class="stat-val" style="color:var(--grey); font-size:14px">
-      {% if signals %}{{ signals[0].scanned_at[:16] | replace('T',' ') }}{% else %}—{% endif %}
+      {% if signals %}{{ signals[0].scanned_at[:16] | replace('T',' ') }}{% else %}&mdash;{% endif %}
     </div>
     <div class="stat-lbl">Last Scan (UTC)</div>
   </div>
@@ -152,8 +176,10 @@ footer {
   <table>
     <thead>
       <tr>
+        <th>Sport</th>
         <th>Match</th>
         <th>League</th>
+        <th>Market</th>
         <th>1XBet</th>
         <th>Pinnacle</th>
         <th>Edge %</th>
@@ -163,15 +189,31 @@ footer {
     </thead>
     <tbody>
       {% for s in signals %}
-      <tr>
+      {% set is_suspect = s.risk_flag == 'SUSPECT_DATA' %}
+      <tr {% if is_suspect %}class="suspect-row"{% endif %}>
+        <td>
+          {% if s.sport == 'soccer' %}⚽
+          {% elif s.sport == 'tennis' %}🎾
+          {% elif s.sport == 'basketball' %}🏀
+          {% else %}🎯{% endif %}
+        </td>
         <td class="match">{{ s.match }}</td>
         <td class="league">{{ s.league or '&mdash;' }}</td>
+        <td>
+          {% set mkt = s.market or 'Moneyline' %}
+          {% if 'AH' in mkt %}
+            <span class="market-badge m-ah">AH 0.0</span>
+          {% else %}
+            <span class="market-badge m-ml">Moneyline</span>
+          {% endif %}
+        </td>
         <td class="odd">{{ "%.2f" | format(s.xbet_odd) }}</td>
         <td class="pin">{{ "%.2f" | format(s.pinnacle_price) if s.pinnacle_price else '&mdash;' }}</td>
-        <td class="edge {% if s.edge_pct >= 8 %}e-high{% elif s.edge_pct >= 3 %}e-mid{% else %}e-low{% endif %}">
+        <td class="edge {% if is_suspect %}e-sus{% elif s.edge_pct >= 5 %}e-high{% elif s.edge_pct >= 2.5 %}e-mid{% else %}e-low{% endif %}">
+          {% if is_suspect %}⚠️ {% endif %}
           {% if s.edge_pct > 0 %}+{% endif %}{{ "%.1f" | format(s.edge_pct) }}%
         </td>
-        <td><span class="badge b-{{ s.risk_flag }}">{{ s.risk_flag }}</span></td>
+        <td><span class="badge b-{{ s.risk_flag }}">{{ s.risk_flag | replace('_', ' ') }}</span></td>
         <td class="ts">{{ s.created_at[:16] | replace('T',' ') if s.created_at else '&mdash;' }}</td>
       </tr>
       {% endfor %}
@@ -187,7 +229,7 @@ footer {
   {% endif %}
 </div>
 
-<footer>PREDATOR PAIM v7.0 &nbsp;&middot;&nbsp; GitHub Actions Engine &nbsp;&middot;&nbsp; Vercel Dashboard</footer>
+<footer>PREDATOR PAIM v7.2 &nbsp;&middot;&nbsp; Binary Synthesis &nbsp;&middot;&nbsp; ⚽ AH 0.0 &nbsp;|&nbsp; 🏀 🎾 Moneyline</footer>
 
 <script>
   (function tick() {

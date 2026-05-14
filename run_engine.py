@@ -1,6 +1,7 @@
 """
 run_engine.py — PREDATOR PAIM v7.2 — GitHub Actions Engine
-Pipeline: Multi-Sport Harvest → DNB/Moneyline → Gemini Oracle → Supabase → Telegram
+Binary Synthesis Doctrine: Soccer = AH 0.0 only. NBA/Tennis = Moneyline only.
+Pipeline: Multi-Sport Harvest → Binary Conversion → Gemini Oracle → Supabase → Telegram
 """
 import os
 import time
@@ -12,7 +13,8 @@ from supabase import create_client
 
 from core.harvester import fetch_matches
 from core.oracle import get_pinnacle_price
-from core.paim_engine import calc_dnb, compute_alpha
+from core.math_engine import to_binary
+from core.paim_engine import compute_alpha
 
 load_dotenv()
 
@@ -22,9 +24,9 @@ SUPABASE_KEY   = os.environ.get("SUPABASE_KEY")
 TELEGRAM_TOKEN = os.environ.get("TELEGRAM_BOT_TOKEN")
 TELEGRAM_CHAT  = os.environ.get("TELEGRAM_CHAT_ID")
 
-MIN_EDGE    = 1.5   # % — save to dashboard
-ELITE_EDGE  = 2.5   # % — send Telegram alert
-MAX_MATCHES = 15    # cap per run to preserve Gemini quota
+MIN_EDGE   = 1.5   # % — save to dashboard
+ELITE_EDGE = 2.5   # % — send Telegram alert
+MAX_MATCHES = 15
 
 SPORT_EMOJI = {"soccer": "⚽", "tennis": "🎾", "basketball": "🏀"}
 
@@ -57,8 +59,10 @@ def _cleanup_erroneous_signals(sb):
         print(f"[Supabase] Cleanup error: {e}")
 
 
-def _risk(edge_pct, pinnacle_found):
-    if not pinnacle_found:
+def _risk(edge_pct: float, pinnacle_found: bool, status: str) -> str:
+    if status == "SUSPECT":
+        return "SUSPECT_DATA"
+    if status == "DISCARD" or not pinnacle_found:
         return "NO_DATA"
     if edge_pct >= ELITE_EDGE * 2:
         return "HIGH_VALUE"
@@ -69,35 +73,11 @@ def _risk(edge_pct, pinnacle_found):
     return "LOW"
 
 
-def _best_odd(m):
-    """
-    Returns (xbet_odd, market_label) for the most favourable outcome.
-    Soccer with a draw odd → uses AH 0.0 (DNB) to eliminate draw risk.
-    Tennis / Basketball → raw moneyline.
-    """
-    odds  = m["odds_1xbet"]
-    o1    = odds.get("1", 0)
-    ox    = odds.get("X", 0)
-    o2    = odds.get("2", 0)
-    sport = m.get("sport", "soccer")
-
-    if sport == "soccer" and ox > 1.01:
-        dnb_home = calc_dnb(o1, ox)
-        dnb_away = calc_dnb(o2, ox)
-        candidates = [v for v in [dnb_home, dnb_away] if v > 1.01]
-        best = min(candidates) if candidates else 0.0
-        return best, "AH 0.0 (DNB)"
-
-    candidates = [v for v in [o1, o2] if v > 1.01]
-    best = min(candidates) if candidates else 0.0
-    return best, "Moneyline"
-
-
 # ── main ─────────────────────────────────────────────────────────────
 
 def run():
     now = datetime.now(timezone.utc)
-    print(f"\n[Engine] PAIM v7.2 Start — {now.isoformat()}")
+    print(f"\n[Engine] PAIM v7.2 — Binary Synthesis — {now.isoformat()}")
 
     try:
         sb = create_client(SUPABASE_URL, SUPABASE_KEY)
@@ -118,19 +98,30 @@ def run():
             name   = m["match"]
             sport  = m.get("sport", "soccer")
             league = m.get("league", "")
+            emoji  = SPORT_EMOJI.get(sport, "🎯")
 
-            best, market = _best_odd(m)
-            if best <= 1.01:
+            # ── Binary Synthesis: enforce market type ──────────────
+            best, market = to_binary(m["odds_1xbet"], sport)
+            if best <= 1.01 or market is None:
+                print(f"  [REJECTED] {emoji} {name} — no draw odd, AH 0.0 impossible")
                 continue
 
             pinnacle = get_pinnacle_price(name, sport=sport, api_key=GEMINI_KEY)
             time.sleep(1)
 
-            edge = compute_alpha(best, pinnacle)
-            risk = _risk(edge, pinnacle is not None)
+            edge, status = compute_alpha(best, pinnacle)
 
-            emoji = SPORT_EMOJI.get(sport, "🎯")
-            print(f"  {emoji} {name} | {market}: {best} | Pinnacle: {pinnacle} | Edge: {edge}% | {risk}")
+            if status == "DISCARD":
+                print(f"  [DISCARD]  {emoji} {name} — edge {edge}% exceeds MAX (25%)")
+                continue
+
+            risk = _risk(edge, pinnacle is not None, status)
+            suspect_tag = " ⚠️ SUSPECT" if status == "SUSPECT" else ""
+
+            print(
+                f"  {emoji} {name} | {market}: {best} "
+                f"| Pinnacle: {pinnacle} | Edge: {edge}%{suspect_tag} | {risk}"
+            )
 
             signal = {
                 "match":          name,
@@ -153,28 +144,31 @@ def run():
             print(f"  [skip] {m.get('match', '?')}: {e}")
             continue
 
-    # Telegram summary — only elite signals
-    elite = [s for s in signals if s["edge_pct"] >= ELITE_EDGE]
+    # Telegram — elite signals only (exclude SUSPECT)
+    elite = [s for s in signals if s["edge_pct"] >= ELITE_EDGE and s["risk_flag"] != "SUSPECT_DATA"]
+    suspect = [s for s in signals if s["risk_flag"] == "SUSPECT_DATA"]
+
     if elite:
         msg = f"🎯 *PREDATOR v7.2 — SIGNAUX ELITE* — {now.strftime('%H:%M UTC')}\n"
-        msg += f"Scan: {len(matches)} matchs | Elite ≥{ELITE_EDGE}%: {len(elite)}\n\n"
+        msg += f"Scan: {len(matches)} | Elite ≥{ELITE_EDGE}%: {len(elite)}\n\n"
         for s in elite[:5]:
-            emoji = SPORT_EMOJI.get(s["sport"], "🎯")
+            e = SPORT_EMOJI.get(s["sport"], "🎯")
             msg += (
-                f"{emoji} *{s['match']}*\n"
-                f"   Marché: `{s['market']}` | 1XBet: `{s['xbet_odd']}` | Pinnacle: `{s['pinnacle_price']}`\n"
+                f"{e} *{s['match']}*\n"
+                f"   `{s['market']}` | 1XBet: `{s['xbet_odd']}` | Pinnacle: `{s['pinnacle_price']}`\n"
                 f"   Edge: `+{s['edge_pct']}%` | {s['risk_flag']}\n\n"
             )
         _telegram(msg)
     else:
-        low = [s for s in signals if s["edge_pct"] >= MIN_EDGE]
+        low = [s for s in signals if s["edge_pct"] >= MIN_EDGE and s["risk_flag"] != "SUSPECT_DATA"]
+        note = f" | ⚠️ Suspects: {len(suspect)}" if suspect else ""
         _telegram(
-            f"✅ PREDATOR v7.2: Scan {now.strftime('%H:%M')} — {len(matches)} matchs | "
-            f"Dashboard ≥{MIN_EDGE}%: {len(low)} | Elite ≥{ELITE_EDGE}%: 0"
+            f"✅ PREDATOR v7.2: {now.strftime('%H:%M')} — {len(matches)} matchs "
+            f"| Dashboard ≥{MIN_EDGE}%: {len(low)} | Elite ≥{ELITE_EDGE}%: 0{note}"
         )
 
-    value_count = len([s for s in signals if s["edge_pct"] >= MIN_EDGE])
-    print(f"[Engine] Done. {value_count} signals ≥{MIN_EDGE}% | {len(elite)} elite ≥{ELITE_EDGE}%.")
+    valid = [s for s in signals if s["edge_pct"] >= MIN_EDGE and s["risk_flag"] != "SUSPECT_DATA"]
+    print(f"[Engine] Done. {len(valid)} valid ≥{MIN_EDGE}% | {len(elite)} elite | {len(suspect)} suspect.")
 
 
 if __name__ == "__main__":
