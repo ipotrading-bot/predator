@@ -311,6 +311,58 @@ class MarketScanner:
                         return outcome.get("price")
         return None
 
+    # ── Scan events helper (utilisé par run_engine.py) ────────
+
+    async def _scan_events(self, events: list[dict]) -> ScanResult:
+        """
+        Traite une liste d'événements déjà récupérés.
+        Utilisé par run_engine.py (GitHub Actions Heavy Engine).
+        
+        Args:
+            events: Liste d'événements au format The-Odds-API
+            
+        Returns:
+            ScanResult avec les signaux validés
+        """
+        start = time.monotonic()
+        result = ScanResult()
+        result.events_analyzed = len(events)
+
+        if not events:
+            result.duration_seconds = time.monotonic() - start
+            return result
+
+        try:
+            news_cache = await self._prefetch_news(events)
+            dossiers: list[ArbitrageDossier] = []
+
+            for event in events:
+                event_dossiers = await self._process_event(event, news_cache)
+                result.signals_validated += len(event_dossiers)
+                for d in event_dossiers:
+                    dossiers.append(d)
+                    if d.signal:
+                        result.signals.append(d.signal)
+
+            result.signals_found = result.signals_validated
+
+            if dossiers:
+                await self._persist_and_notify(dossiers)
+
+            consensus = [d for d in dossiers if d.is_consensus]
+            if len(consensus) >= settings.system_min_wins:
+                sigs  = [d.signal for d in consensus[:settings.system_size]]
+                metas = [d.meta   for d in consensus[:settings.system_size]]
+                notifier = self._get_notifier()
+                if notifier:
+                    await notifier.send_system_ticket(sigs, metas)
+
+        except Exception as e:
+            logger.critical(f"❌ Erreur critique scan events: {e}", exc_info=True)
+
+        result.duration_seconds = round(time.monotonic() - start, 2)
+        return result
+
     # ── Scan principal ────────────────────────────────────────
 
     async def run_scan(self) -> ScanResult:
