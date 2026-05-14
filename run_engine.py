@@ -3,6 +3,7 @@ run_engine.py — PREDATOR PAIM v7.5 — GitHub Actions Engine
 Binary Synthesis + Team Mapping Validation + Hard 15% Edge Cap
 Pipeline: Multi-Sport Harvest → AH 0.0 / Moneyline → Pinnacle Oracle → Mapping Check → Supabase → Telegram
 """
+import json
 import os
 import time
 from datetime import datetime, timezone
@@ -48,6 +49,21 @@ def _save(sb, signal):
         sb.table("signals").insert(signal).execute()
     except Exception as e:
         print(f"[Supabase] {e}")
+
+
+def _heartbeat(sb, scan_time: datetime, matches: int, signals: int):
+    try:
+        sb.table("meta").upsert({
+            "key":        "last_scan",
+            "value":      json.dumps({
+                "at":      scan_time.isoformat(),
+                "matches": matches,
+                "signals": signals,
+            }),
+            "updated_at": scan_time.isoformat(),
+        }).execute()
+    except Exception as e:
+        print(f"[Supabase] Heartbeat error: {e}")
 
 
 def _purge_bad_signals(sb):
@@ -189,6 +205,9 @@ def run():
 
     valid_count = len([s for s in signals if s["edge_pct"] >= MIN_EDGE])
     print(f"[Engine] Done. {valid_count} signals ≥{MIN_EDGE}% | {len(elite)} elite.")
+
+    if sb:
+        _heartbeat(sb, now, len(matches), valid_count)
 
 
 if __name__ == "__main__":

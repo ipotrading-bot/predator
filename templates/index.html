@@ -3,7 +3,7 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>PREDATOR PAIM v7.2</title>
+<title>PREDATOR PAIM v7.5</title>
 <style>
 :root {
   --bg:     #050505;
@@ -132,7 +132,7 @@ footer {
 <header>
   <div>
     <div class="logo">&#9658; PREDATOR PAIM</div>
-    <div class="tagline">v7.2 &middot; Binary Synthesis Engine &middot; 1XBet Harvester + Gemini Oracle</div>
+    <div class="tagline">v7.5 &middot; Binary Synthesis Engine &middot; 1XBet Harvester + Gemini Oracle</div>
     <div class="doctrine">&#9632; DOCTRINE: Soccer = AH 0.0 Only &nbsp;|&nbsp; NBA/Tennis = Moneyline &nbsp;|&nbsp; Hard Cap: 15% (données aberrantes supprimées)</div>
   </div>
   <div class="clock" id="clock">&mdash;</div>
@@ -159,9 +159,12 @@ footer {
   </div>
   <div class="stat">
     <div class="stat-val" style="color:var(--grey); font-size:14px">
-      {% if signals %}{{ signals[0].scanned_at[:16] | replace('T',' ') }}{% else %}&mdash;{% endif %}
+      {% if last_scan %}{{ last_scan.at[:16] | replace('T',' ') }}{% elif signals %}{{ signals[0].scanned_at[:16] | replace('T',' ') }}{% else %}&mdash;{% endif %}
     </div>
-    <div class="stat-lbl">Last Scan (UTC)</div>
+    <div class="stat-lbl">
+      Last Scan (UTC)
+      {% if last_scan %}<br><span style="color:#333;font-size:9px">{{ last_scan.matches }} matchs · {{ last_scan.signals }} signaux</span>{% endif %}
+    </div>
   </div>
 </div>
 
@@ -223,7 +226,7 @@ footer {
   {% endif %}
 </div>
 
-<footer>PREDATOR PAIM v7.2 &nbsp;&middot;&nbsp; Binary Synthesis &nbsp;&middot;&nbsp; ⚽ AH 0.0 &nbsp;|&nbsp; 🏀 🎾 Moneyline</footer>
+<footer>PREDATOR PAIM v7.5 &nbsp;&middot;&nbsp; Binary Synthesis &nbsp;&middot;&nbsp; ⚽ AH 0.0 &nbsp;|&nbsp; 🏀 🎾 Moneyline</footer>
 
 <script>
   (function tick() {
