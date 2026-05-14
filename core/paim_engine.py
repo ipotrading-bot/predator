@@ -1,15 +1,23 @@
 """
-core/paim_engine.py — PAIM v7.2 — Signal validation & edge classification
+core/paim_engine.py — PAIM v7.5 — Signal validation & edge computation
 """
 import difflib
 
+from core.math_engine import calc_dnb
+
 SPORT_LABELS = {1: "soccer", 3: "tennis", 4: "basketball"}
-SUSPECT_EDGE = 15.0   # Flag ⚠️ SUSPECT DATA — not shown as ELITE
-MAX_EDGE     = 25.0   # Discard entirely — data mapping error
+MAX_EDGE     = 15.0   # Hard cap — anything above is a data error, discard immediately
+
+
+def convert_to_ah0(v1: float, vx: float, v2: float) -> tuple[float, float]:
+    """Return (DNB_home, DNB_away) from raw 1X2 odds."""
+    return calc_dnb(v1, vx), calc_dnb(v2, vx)
 
 
 def strict_team_match(name_a: str, name_b: str, threshold: float = 0.72) -> bool:
     """True if both names likely refer to the same team."""
+    if not name_a or not name_b:
+        return True  # Cannot validate → assume OK
     a = name_a.lower().strip()
     b = name_b.lower().strip()
     if a in b or b in a:
@@ -20,16 +28,11 @@ def strict_team_match(name_a: str, name_b: str, threshold: float = 0.72) -> bool
 def compute_alpha(xbet_odd: float, pinnacle_price: float) -> tuple[float, str]:
     """
     Returns (edge_pct, status).
-    status values:
-      "OK"      — valid signal, edge within normal range
-      "SUSPECT" — edge > 15%: show on dashboard with warning, never ELITE
-      "DISCARD" — edge > 25% or invalid inputs: drop entirely
+    status: "OK" — valid | "DISCARD" — invalid or edge > 15% (hard cap).
     """
     if not xbet_odd or not pinnacle_price or xbet_odd <= 1.01 or pinnacle_price <= 1.01:
         return 0.0, "DISCARD"
     edge = round((xbet_odd / pinnacle_price - 1) * 100, 2)
     if abs(edge) > MAX_EDGE:
         return edge, "DISCARD"
-    if abs(edge) > SUSPECT_EDGE:
-        return edge, "SUSPECT"
     return edge, "OK"

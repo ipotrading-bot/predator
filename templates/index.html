@@ -133,7 +133,7 @@ footer {
   <div>
     <div class="logo">&#9658; PREDATOR PAIM</div>
     <div class="tagline">v7.2 &middot; Binary Synthesis Engine &middot; 1XBet Harvester + Gemini Oracle</div>
-    <div class="doctrine">&#9632; DOCTRINE: Soccer = AH 0.0 Only &nbsp;|&nbsp; NBA/Tennis = Moneyline &nbsp;|&nbsp; Edge Cap: 15% Suspect / 25% Discard</div>
+    <div class="doctrine">&#9632; DOCTRINE: Soccer = AH 0.0 Only &nbsp;|&nbsp; NBA/Tennis = Moneyline &nbsp;|&nbsp; Hard Cap: 15% (données aberrantes supprimées)</div>
   </div>
   <div class="clock" id="clock">&mdash;</div>
 </header>
@@ -156,12 +156,6 @@ footer {
       {% if edges %}{{ "%.1f" | format(edges | max) }}%{% else %}&mdash;{% endif %}
     </div>
     <div class="stat-lbl">Best Edge</div>
-  </div>
-  <div class="stat">
-    <div class="stat-val" style="color:var(--orange); font-size:20px">
-      {{ signals | selectattr('risk_flag', 'equalto', 'SUSPECT_DATA') | list | length }}
-    </div>
-    <div class="stat-lbl">&#9888; Suspect &gt;15%</div>
   </div>
   <div class="stat">
     <div class="stat-val" style="color:var(--grey); font-size:14px">

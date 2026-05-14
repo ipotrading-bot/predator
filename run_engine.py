@@ -1,7 +1,7 @@
 """
-run_engine.py — PREDATOR PAIM v7.2 — GitHub Actions Engine
-Binary Synthesis Doctrine: Soccer = AH 0.0 only. NBA/Tennis = Moneyline only.
-Pipeline: Multi-Sport Harvest → Binary Conversion → Gemini Oracle → Supabase → Telegram
+run_engine.py — PREDATOR PAIM v7.5 — GitHub Actions Engine
+Binary Synthesis + Team Mapping Validation + Hard 15% Edge Cap
+Pipeline: Multi-Sport Harvest → AH 0.0 / Moneyline → Pinnacle Oracle → Mapping Check → Supabase → Telegram
 """
 import os
 import time
@@ -14,7 +14,7 @@ from supabase import create_client
 from core.harvester import fetch_matches
 from core.oracle import get_pinnacle_price
 from core.math_engine import to_binary
-from core.paim_engine import compute_alpha
+from core.paim_engine import compute_alpha, strict_team_match
 
 load_dotenv()
 
@@ -24,8 +24,8 @@ SUPABASE_KEY   = os.environ.get("SUPABASE_KEY")
 TELEGRAM_TOKEN = os.environ.get("TELEGRAM_BOT_TOKEN")
 TELEGRAM_CHAT  = os.environ.get("TELEGRAM_CHAT_ID")
 
-MIN_EDGE   = 1.5   # % — save to dashboard
-ELITE_EDGE = 2.5   # % — send Telegram alert
+MIN_EDGE    = 1.5   # % — save to dashboard
+ELITE_EDGE  = 2.5   # % — send Telegram alert
 MAX_MATCHES = 15
 
 SPORT_EMOJI = {"soccer": "⚽", "tennis": "🎾", "basketball": "🏀"}
@@ -50,19 +50,22 @@ def _save(sb, signal):
         print(f"[Supabase] {e}")
 
 
-def _cleanup_erroneous_signals(sb):
-    """Delete signals with unrealistically high edges — artifacts from old mapping bugs."""
+def _purge_bad_signals(sb):
+    """Remove all erroneous signals: edge > 15%, null market, or legacy h2h format."""
     try:
-        sb.table("signals").delete().gt("edge_pct", 25.0).execute()
-        print("[Engine] Cleaned up erroneous signals (edge_pct > 25%)")
+        sb.table("signals").delete().gt("edge_pct", 15.0).execute()
+        print("[Engine] Purged signals with edge > 15%")
     except Exception as e:
-        print(f"[Supabase] Cleanup error: {e}")
+        print(f"[Supabase] Purge (edge>15) error: {e}")
+    try:
+        sb.table("signals").delete().is_("market", "null").execute()
+        print("[Engine] Purged legacy signals with null market")
+    except Exception as e:
+        print(f"[Supabase] Purge (null market) error: {e}")
 
 
-def _risk(edge_pct: float, pinnacle_found: bool, status: str) -> str:
-    if status == "SUSPECT":
-        return "SUSPECT_DATA"
-    if status == "DISCARD" or not pinnacle_found:
+def _risk(edge_pct: float, pinnacle_found: bool) -> str:
+    if not pinnacle_found:
         return "NO_DATA"
     if edge_pct >= ELITE_EDGE * 2:
         return "HIGH_VALUE"
@@ -77,18 +80,18 @@ def _risk(edge_pct: float, pinnacle_found: bool, status: str) -> str:
 
 def run():
     now = datetime.now(timezone.utc)
-    print(f"\n[Engine] PAIM v7.2 — Binary Synthesis — {now.isoformat()}")
+    print(f"\n[Engine] PAIM v7.5 — Binary Synthesis — {now.isoformat()}")
 
     try:
         sb = create_client(SUPABASE_URL, SUPABASE_KEY)
-        _cleanup_erroneous_signals(sb)
+        _purge_bad_signals(sb)
     except Exception as e:
         print(f"[Engine] Supabase failed: {e}")
         sb = None
 
     matches = fetch_matches()
     if not matches:
-        _telegram("⚠️ PREDATOR: Scan multi-sport vide — vérifier les flux.")
+        _telegram("⚠️ PREDATOR: Scan multi-sport vide — tous les flux sont inaccessibles.")
         return
 
     signals = []
@@ -99,28 +102,34 @@ def run():
             sport  = m.get("sport", "soccer")
             league = m.get("league", "")
             emoji  = SPORT_EMOJI.get(sport, "🎯")
+            home   = m.get("home", "")
+            away   = m.get("away", "")
 
-            # ── Binary Synthesis: enforce market type ──────────────
-            best, market = to_binary(m["odds_1xbet"], sport)
+            # ── Step 1: Binary Synthesis ──────────────────────────
+            best, market, xbet_fav = to_binary(m["odds_1xbet"], sport, home, away)
             if best <= 1.01 or market is None:
-                print(f"  [REJECTED] {emoji} {name} — no draw odd, AH 0.0 impossible")
+                print(f"  [REJECTED] {emoji} {name} — AH 0.0 impossible (no draw odd)")
                 continue
 
-            pinnacle = get_pinnacle_price(name, sport=sport, api_key=GEMINI_KEY)
+            # ── Step 2: Pinnacle Oracle ───────────────────────────
+            pinnacle, pin_fav = get_pinnacle_price(name, sport=sport, api_key=GEMINI_KEY)
             time.sleep(1)
 
-            edge, status = compute_alpha(best, pinnacle)
-
-            if status == "DISCARD":
-                print(f"  [DISCARD]  {emoji} {name} — edge {edge}% exceeds MAX (25%)")
+            # ── Step 3: Mapping Validation ────────────────────────
+            if xbet_fav and pin_fav and not strict_team_match(xbet_fav, pin_fav):
+                print(f"  [MAPPING]  {emoji} {name} — favorite mismatch: 1XBet={xbet_fav} | Pinnacle={pin_fav}")
                 continue
 
-            risk = _risk(edge, pinnacle is not None, status)
-            suspect_tag = " ⚠️ SUSPECT" if status == "SUSPECT" else ""
+            # ── Step 4: Alpha Computation (hard cap at 15%) ───────
+            edge, status = compute_alpha(best, pinnacle)
+            if status == "DISCARD":
+                print(f"  [DISCARD]  {emoji} {name} — edge {edge}% exceeds 15% cap (data error)")
+                continue
 
+            risk = _risk(edge, pinnacle is not None)
             print(
                 f"  {emoji} {name} | {market}: {best} "
-                f"| Pinnacle: {pinnacle} | Edge: {edge}%{suspect_tag} | {risk}"
+                f"| Pinnacle ({pin_fav or '?'}): {pinnacle} | Edge: {edge}% | {risk}"
             )
 
             signal = {
@@ -144,13 +153,11 @@ def run():
             print(f"  [skip] {m.get('match', '?')}: {e}")
             continue
 
-    # Telegram — elite signals only (exclude SUSPECT)
-    elite = [s for s in signals if s["edge_pct"] >= ELITE_EDGE and s["risk_flag"] != "SUSPECT_DATA"]
-    suspect = [s for s in signals if s["risk_flag"] == "SUSPECT_DATA"]
-
+    # Telegram — elite signals only
+    elite = [s for s in signals if s["edge_pct"] >= ELITE_EDGE]
     if elite:
-        msg = f"🎯 *PREDATOR v7.2 — SIGNAUX ELITE* — {now.strftime('%H:%M UTC')}\n"
-        msg += f"Scan: {len(matches)} | Elite ≥{ELITE_EDGE}%: {len(elite)}\n\n"
+        msg = f"🎯 *PREDATOR v7.5 — SIGNAUX ELITE* — {now.strftime('%H:%M UTC')}\n"
+        msg += f"Scan: {len(matches)} | AH 0.0 + Moneyline | Elite ≥{ELITE_EDGE}%: {len(elite)}\n\n"
         for s in elite[:5]:
             e = SPORT_EMOJI.get(s["sport"], "🎯")
             msg += (
@@ -160,15 +167,14 @@ def run():
             )
         _telegram(msg)
     else:
-        low = [s for s in signals if s["edge_pct"] >= MIN_EDGE and s["risk_flag"] != "SUSPECT_DATA"]
-        note = f" | ⚠️ Suspects: {len(suspect)}" if suspect else ""
+        valid = [s for s in signals if s["edge_pct"] >= MIN_EDGE]
         _telegram(
-            f"✅ PREDATOR v7.2: {now.strftime('%H:%M')} — {len(matches)} matchs "
-            f"| Dashboard ≥{MIN_EDGE}%: {len(low)} | Elite ≥{ELITE_EDGE}%: 0{note}"
+            f"✅ PREDATOR v7.5: {now.strftime('%H:%M')} — {len(matches)} matchs "
+            f"| Dashboard ≥{MIN_EDGE}%: {len(valid)} | Elite ≥{ELITE_EDGE}%: 0"
         )
 
-    valid = [s for s in signals if s["edge_pct"] >= MIN_EDGE and s["risk_flag"] != "SUSPECT_DATA"]
-    print(f"[Engine] Done. {len(valid)} valid ≥{MIN_EDGE}% | {len(elite)} elite | {len(suspect)} suspect.")
+    valid_count = len([s for s in signals if s["edge_pct"] >= MIN_EDGE])
+    print(f"[Engine] Done. {valid_count} signals ≥{MIN_EDGE}% | {len(elite)} elite.")
 
 
 if __name__ == "__main__":
