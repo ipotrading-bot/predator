@@ -77,8 +77,9 @@ def run():
         try:
             name   = m["match"]
             odds   = m["odds_1xbet"]
-            # Take the best (highest) odd as the candidate bet
-            best   = max(odds["1"], odds.get("2", 0))
+            # Use the favorite's odd (lowest) — same outcome as Pinnacle price
+            candidates = [o for o in [odds.get("1", 0), odds.get("2", 0)] if o > 1.01]
+            best   = min(candidates) if candidates else 0
 
             pinnacle = get_pinnacle_price(name, GEMINI_KEY)
             time.sleep(1)  # rate-limit Gemini

@@ -1,25 +1,46 @@
--- PREDATOR PAIM v7.0 — Signals table setup
--- Run this in Supabase Dashboard > SQL Editor
+-- PREDATOR PAIM v7.0 — Full schema reset
+-- CASCADE drops dependent views (performance_summary, monthly_performance)
 
--- Drop old table and recreate with full schema
-DROP TABLE IF EXISTS signals;
+DROP TABLE IF EXISTS public.signals CASCADE;
 
-CREATE TABLE signals (
-  id            bigserial PRIMARY KEY,
-  created_at    timestamptz DEFAULT now(),
-  scanned_at    timestamptz,
-  match         text        NOT NULL,
-  league        text,
-  sport         text        DEFAULT 'football',
-  xbet_odd      numeric(6,2),
+CREATE TABLE public.signals (
+  id             bigserial PRIMARY KEY,
+  created_at     timestamptz DEFAULT now(),
+  scanned_at     timestamptz,
+  match          text        NOT NULL,
+  league         text,
+  sport          text        DEFAULT 'football',
+  xbet_odd       numeric(6,2),
   pinnacle_price numeric(6,2),
-  edge_pct      numeric(6,2),
-  risk_flag     text,
-  status        text        DEFAULT 'active'
+  edge_pct       numeric(6,2),
+  risk_flag      text,
+  status         text        DEFAULT 'active'
 );
 
--- Allow anon key to read and insert (no auth needed for the engine)
-ALTER TABLE signals ENABLE ROW LEVEL SECURITY;
+-- Recreate performance views on new schema
+CREATE OR REPLACE VIEW public.performance_summary AS
+SELECT
+  risk_flag,
+  count(*)                        AS total,
+  round(avg(edge_pct)::numeric, 2) AS avg_edge,
+  round(max(edge_pct)::numeric, 2) AS best_edge,
+  count(*) FILTER (WHERE edge_pct >= 8) AS high_value,
+  count(*) FILTER (WHERE edge_pct >= 3) AS value_bets
+FROM public.signals
+GROUP BY risk_flag;
 
-CREATE POLICY "allow_all_read"   ON signals FOR SELECT USING (true);
-CREATE POLICY "allow_all_insert" ON signals FOR INSERT WITH CHECK (true);
+CREATE OR REPLACE VIEW public.monthly_performance AS
+SELECT
+  date_trunc('month', created_at)  AS month,
+  count(*)                          AS total_signals,
+  round(avg(edge_pct)::numeric, 2)  AS avg_edge,
+  count(*) FILTER (WHERE edge_pct >= 3) AS value_bets
+FROM public.signals
+GROUP BY 1
+ORDER BY 1 DESC;
+
+-- RLS: allow anon key to read and insert
+ALTER TABLE public.signals ENABLE ROW LEVEL SECURITY;
+
+CREATE POLICY "allow_all_read"   ON public.signals FOR SELECT USING (true);
+CREATE POLICY "allow_all_insert" ON public.signals FOR INSERT WITH CHECK (true);

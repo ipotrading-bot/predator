@@ -20,7 +20,7 @@ HEADERS = {
     "Accept-Language": "en-US,en;q=0.9",
     "Referer": "https://1xbet.com/en/line/football/",
 }
-GEMINI_URL = "https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent"
+GEMINI_URL = "https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash-lite:generateContent"
 
 
 def _odd(val):
@@ -75,33 +75,29 @@ def _fetch_from_1xbet():
 
 def _fetch_from_gemini():
     """
-    Fallback: ask Gemini (Google Search) for today's top football matches
-    with their current 1XBet odds.
-    Returns list of matches in the same format as _fetch_from_1xbet().
+    Fallback: ask Gemini for today's top football matches with estimated odds.
+    No google_search tool — uses model knowledge to preserve quota.
     """
     api_key = os.environ.get("GEMINI_API_KEY")
     if not api_key:
         print("[Harvester] No GEMINI_API_KEY for fallback")
         return []
 
-    prompt = """Use Google Search to find the 10 most important football matches happening today or tomorrow.
-For each match, find the current 1XBet odds (1/X/2).
-Return ONLY a JSON array — no text before or after:
-[
-  {
-    "match": "Team A vs Team B",
-    "home": "Team A",
-    "away": "Team B",
-    "league": "Premier League",
-    "odds_1xbet": {"1": 1.85, "X": 3.40, "2": 4.20}
-  }
-]
-If a match has no odds yet, skip it. Return real current odds only."""
+    from datetime import date
+    today = date.today().isoformat()
+
+    prompt = (
+        f"Today is {today}. List 8 important football matches scheduled today or tomorrow "
+        f"(top European leagues, Champions League, Copa Libertadores, or major international). "
+        f"For each match estimate realistic decimal odds for 1XBet (1/X/2) based on team strength. "
+        f"Return ONLY a valid JSON array, no text before or after:\n"
+        '[{"match":"Real Madrid vs Barcelona","home":"Real Madrid","away":"Barcelona",'
+        '"league":"La Liga","odds_1xbet":{"1":2.10,"X":3.50,"2":3.20}}]'
+    )
 
     payload = {
         "contents": [{"role": "user", "parts": [{"text": prompt}]}],
-        "tools": [{"google_search": {}}],
-        "generationConfig": {"temperature": 0.1, "maxOutputTokens": 1024},
+        "generationConfig": {"temperature": 0.3, "maxOutputTokens": 1024},
     }
 
     try:
