@@ -1,6 +1,6 @@
 """
-core/oracle.py — Gemini 2.0 Flash + Google Search to find Pinnacle fair price.
-Uses raw HTTP (no SDK dependency).
+core/oracle.py — Gemini 2.5 Flash Lite + Google Search → Pinnacle fair price
+Supports multi-sport: soccer, tennis, basketball
 """
 import os
 import re
@@ -9,9 +9,9 @@ import requests
 GEMINI_URL = "https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash-lite:generateContent"
 
 
-def get_pinnacle_price(match_name: str, api_key: str = None) -> float | None:
+def get_pinnacle_price(match_name: str, sport: str = "soccer", api_key: str = None) -> float | None:
     """
-    Ask Gemini (with Google Search grounding) for Pinnacle's current price.
+    Ask Gemini (with Google Search grounding) for Pinnacle's current fair price.
     Returns the decimal odd of the favorite, or None if not found.
     """
     if not api_key:
@@ -20,9 +20,15 @@ def get_pinnacle_price(match_name: str, api_key: str = None) -> float | None:
         print("[Oracle] No GEMINI_API_KEY")
         return None
 
+    sport_ctx = {
+        "soccer":     "football/soccer",
+        "tennis":     "tennis",
+        "basketball": "basketball/NBA",
+    }.get(sport, sport)
+
     prompt = (
-        f"Use Google Search to find the current Pinnacle Sports betting odds for this match: {match_name}\n"
-        f"Return ONLY valid JSON: {{\"price\": 1.85, \"team\": \"FavoriteTeam\"}}\n"
+        f"Use Google Search to find the current Pinnacle Sports betting odds for this {sport_ctx} match: {match_name}\n"
+        f"Return ONLY valid JSON with the favorite's decimal odd: {{\"price\": 1.85, \"team\": \"FavoriteTeam\"}}\n"
         f"If not found: {{\"price\": null}}"
     )
 
@@ -49,12 +55,10 @@ def get_pinnacle_price(match_name: str, api_key: str = None) -> float | None:
         text = next((p["text"] for p in reversed(parts) if p.get("text", "").strip()), "")
         text = re.sub(r'```(?:json)?|```', '', text)
 
-        # Try JSON price field first
         m = re.search(r'"price"\s*:\s*(\d+\.\d+)', text)
         if m:
             return float(m.group(1))
 
-        # Fallback: first plausible decimal number
         nums = re.findall(r'\b(\d+\.\d{2})\b', text)
         valid = [float(n) for n in nums if 1.05 < float(n) < 20.0]
         return valid[0] if valid else None
