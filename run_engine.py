@@ -51,17 +51,27 @@ def _save(sb, signal):
 
 
 def _purge_bad_signals(sb):
-    """Remove all erroneous signals: edge > 15%, null market, or legacy h2h format."""
+    """Remove all erroneous signals: edge > 15%, null market, or legacy h2h/Moneyline soccer."""
     try:
         sb.table("signals").delete().gt("edge_pct", 15.0).execute()
         print("[Engine] Purged signals with edge > 15%")
     except Exception as e:
         print(f"[Supabase] Purge (edge>15) error: {e}")
     try:
+        sb.table("signals").delete().lt("edge_pct", MIN_EDGE).execute()
+        print(f"[Engine] Purged signals with edge < {MIN_EDGE}%")
+    except Exception as e:
+        print(f"[Supabase] Purge (edge<{MIN_EDGE}) error: {e}")
+    try:
         sb.table("signals").delete().is_("market", "null").execute()
         print("[Engine] Purged legacy signals with null market")
     except Exception as e:
         print(f"[Supabase] Purge (null market) error: {e}")
+    try:
+        sb.table("signals").delete().eq("sport", "soccer").eq("market", "Moneyline").execute()
+        print("[Engine] Purged legacy soccer signals with Moneyline market")
+    except Exception as e:
+        print(f"[Supabase] Purge (soccer Moneyline) error: {e}")
 
 
 def _risk(edge_pct: float, pinnacle_found: bool) -> str:
@@ -116,7 +126,11 @@ def run():
             time.sleep(1)
 
             # ── Step 3: Mapping Validation ────────────────────────
-            if xbet_fav and pin_fav and not strict_team_match(xbet_fav, pin_fav):
+            # Require Pinnacle team name — empty name = cannot validate = reject
+            if not pin_fav:
+                print(f"  [REJECT]   {emoji} {name} — Pinnacle team name unknown, mapping unverifiable")
+                continue
+            if xbet_fav and not strict_team_match(xbet_fav, pin_fav):
                 print(f"  [MAPPING]  {emoji} {name} — favorite mismatch: 1XBet={xbet_fav} | Pinnacle={pin_fav}")
                 continue
 

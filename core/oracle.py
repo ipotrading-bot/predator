@@ -98,9 +98,9 @@ def _parse_soccer(text: str) -> tuple[float | None, str | None]:
         away_name = m_at.group(1) if m_at else ""
 
         if dnb_h > 1.01 and (dnb_a <= 1.01 or dnb_h <= dnb_a):
-            return dnb_h, home_name
+            return (dnb_h, home_name) if home_name else (None, None)
         elif dnb_a > 1.01:
-            return dnb_a, away_name
+            return (dnb_a, away_name) if away_name else (None, None)
 
     return None, None
 

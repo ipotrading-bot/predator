@@ -25,14 +25,18 @@ def strict_team_match(name_a: str, name_b: str, threshold: float = 0.72) -> bool
     return difflib.SequenceMatcher(None, a, b).ratio() >= threshold
 
 
+MIN_EDGE = 1.5   # % — floor: anything below has no betting value
+
+
 def compute_alpha(xbet_odd: float, pinnacle_price: float) -> tuple[float, str]:
     """
     Returns (edge_pct, status).
-    status: "OK" — valid | "DISCARD" — invalid or edge > 15% (hard cap).
+    status: "OK" — valid signal in [1.5%, 15%]
+            "DISCARD" — invalid data, negative edge, or outside [MIN_EDGE, MAX_EDGE].
     """
     if not xbet_odd or not pinnacle_price or xbet_odd <= 1.01 or pinnacle_price <= 1.01:
         return 0.0, "DISCARD"
     edge = round((xbet_odd / pinnacle_price - 1) * 100, 2)
-    if abs(edge) > MAX_EDGE:
+    if edge < MIN_EDGE or edge > MAX_EDGE:
         return edge, "DISCARD"
     return edge, "OK"
