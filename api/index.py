@@ -1,6 +1,7 @@
 """
-api/index.py — PREDATOR PAIM v7.5 — Vercel Dashboard
+api/index.py — PREDATOR PAIM v7.5 — Vercel Dashboard (Guerrilla Mode)
 Read-only: fetches signals + engine heartbeat from Supabase.
+Sources: 1XBet Harvester (Soft) + Gemini/Pinnacle (Sharp). No Odds API.
 """
 import json
 import os
@@ -60,4 +61,4 @@ def api_signals():
 
 @app.route("/api/health")
 def health():
-    return jsonify({"status": "ok", "version": "7.5"})
+    return jsonify({"status": "ok", "version": "7.5-guerrilla", "source": "harvester+gemini"})

@@ -11,16 +11,15 @@ def validate_all_systems():
     print("🦅 PREDATOR PAIM v7.0 - SYSTEM CHECK")
     print("━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━")
 
-    # 1. Test THE-ODDS-API (Quota Check)
+    # 1. Test HARVESTER — 1XBet direct feed
     try:
-        url = f"https://api.the-odds-api.com/v4/sports/?apiKey={os.environ.get('ODDS_API_KEY')}"
-        res = requests.get(url)
-        remaining = res.headers.get('x-requests-remaining', '0')
-        if res.status_code == 200:
-            print(f"✅ ODDS-API : CONNECTÉ (Jetons restants : {remaining})")
+        url = "https://1xbet.com/LineFeed/Get1x2?sport=1&count=5&lng=en&mode=4"
+        res = requests.get(url, timeout=10, headers={"User-Agent": "Mozilla/5.0"})
+        if res.status_code == 200 and res.json().get("Value"):
+            print(f"✅ HARVESTER : 1XBet CONNECTÉ ({len(res.json()['Value'])} matchs bruts)")
         else:
-            print(f"❌ ODDS-API : ERREUR {res.status_code} (Probablement épuisé)")
-    except: print("❌ ODDS-API : ÉCHEC CRITIQUE")
+            print(f"⚠️ HARVESTER : 1XBet HTTP {res.status_code} (Gemini fallback actif)")
+    except: print("⚠️ HARVESTER : 1XBet inaccessible (Gemini fallback actif)")
 
     # 2. Test GEMINI (Grounding Check)
     try:

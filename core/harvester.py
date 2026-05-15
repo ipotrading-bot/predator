@@ -1,8 +1,11 @@
 """
-core/harvester.py — PAIM v7.5 — Multi-sport match harvester
+core/harvester.py — PAIM v7.5 — Guerrilla Mode
+Soft source : 1XBet direct feed (JSON) → Gemini fallback
+Sharp source: Gemini 2.0 Flash + Google Search → Pinnacle prices
 Sports: 1=Soccer, 3=Tennis, 4=Basketball
-Strategy: 1XBet direct feed (multiple URL variants) → Gemini fallback
+All timestamps : UTC/GMT.
 """
+import logging
 import os
 import re
 import json
@@ -12,9 +15,11 @@ import requests
 
 from core.paim_engine import SPORT_LABELS
 
+# ── UTC sub-logger (inherits handler from PREDATOR root) ─────────────
+log = logging.getLogger("PREDATOR.harvester")
+
 SPORT_IDS = {1: "soccer", 3: "tennis", 4: "basketball"}
 
-# Try URL variants in order: partner param, country param, mirror domain
 XBET_FEED_TPLS = [
     "https://1xbet.com/LineFeed/Get1x2?sport={sport_id}&count=50&lng=en&mode=4&partner=157",
     "https://1xbet.com/LineFeed/Get1x2?sport={sport_id}&count=50&lng=en&mode=4",
@@ -29,7 +34,8 @@ HEADERS = {
     "Accept-Language": "en-US,en;q=0.9",
     "Referer": "https://1xbet.com/en/line/",
 }
-GEMINI_URL = "https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash-lite:generateContent"
+GEMINI_URL       = "https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash-lite:generateContent"
+GEMINI_FLASH_URL = "https://generativelanguage.googleapis.com/v1beta/models/gemini-2.0-flash:generateContent"
 
 _SPORT_PROMPTS = {
     "soccer":     "top European football/soccer",
@@ -87,10 +93,10 @@ def _fetch_from_1xbet(sport_id):
                 data = r.json()
                 matches = _parse_xbet_json(data, sport_id)
                 if matches:
-                    print(f"[Harvester] 1XBet {sport_name} OK: {len(matches)} via {url.split('?')[0]}")
+                    log.info("1XBet %s OK: %d matches via %s", sport_name, len(matches), url.split("?")[0])
                     return matches
         except Exception as e:
-            print(f"[Harvester] 1XBet {sport_name} fail ({url.split('?')[0]}): {e}")
+            log.warning("1XBet %s fail (%s): %s", sport_name, url.split("?")[0], e)
     return []
 
 
@@ -128,7 +134,7 @@ def _fetch_from_gemini(sport_id):
             r = requests.post(f"{GEMINI_URL}?key={api_key}", json=payload, timeout=30)
             if r.status_code == 429:
                 wait = 65 if attempt == 0 else 30
-                print(f"[Harvester] Gemini rate limit ({sport_name}) — waiting {wait}s")
+                log.warning("Gemini rate limit (%s) — waiting %ds", sport_name, wait)
                 time.sleep(wait)
                 continue
             break
@@ -172,11 +178,11 @@ def _fetch_from_gemini(sport_id):
             except Exception:
                 continue
 
-        print(f"[Harvester] Gemini {sport_name}: {len(matches)} valid matches")
+        log.info("Gemini %s: %d valid matches", sport_name, len(matches))
         return matches
 
     except Exception as e:
-        print(f"[Harvester] Gemini {sport_name} exception: {e}")
+        log.error("Gemini %s exception: %s", sport_name, e)
         return []
 
 
@@ -189,6 +195,67 @@ def fetch_matches():
             matches = _fetch_from_gemini(sport_id)
         all_matches.extend(matches)
     return all_matches
+
+
+def fetch_pinnacle_prices(matches: list) -> dict:
+    """
+    Sharp source — Gemini 2.0 Flash + Google Search → Pinnacle decimal odds.
+    Returns {match_name: {"1": float, "X": float, "2": float}}.
+    Soccer entries include draw (X); tennis/basketball have X=0.
+    """
+    api_key = os.environ.get("GEMINI_API_KEY")
+    if not api_key or not matches:
+        return {}
+
+    names = [m["match"] for m in matches[:25]]
+    match_list = "\n".join(f"- {n}" for n in names)
+
+    prompt = (
+        f"Use Google Search to find current Pinnacle sportsbook decimal odds for these matches:\n"
+        f"{match_list}\n\n"
+        f"For each match return the latest Pinnacle no-vig odds: "
+        f"1=home win, X=draw (soccer only, else 0), 2=away win.\n"
+        f"Return ONLY a valid JSON array, no extra text:\n"
+        f'[{{"match":"Team A vs Team B","1":2.05,"X":3.35,"2":3.60}}]'
+    )
+
+    payload = {
+        "contents": [{"role": "user", "parts": [{"text": prompt}]}],
+        "tools": [{"google_search": {}}],
+        "generationConfig": {"temperature": 0.1, "maxOutputTokens": 2048},
+    }
+
+    try:
+        r = requests.post(f"{GEMINI_FLASH_URL}?key={api_key}", json=payload, timeout=60)
+        if r.status_code != 200:
+            log.error("Pinnacle/Gemini HTTP %d: %s", r.status_code, r.text[:200])
+            return {}
+
+        parts = r.json().get("candidates", [{}])[0].get("content", {}).get("parts", [])
+        text = next((p["text"] for p in reversed(parts) if p.get("text", "").strip()), "")
+        text = re.sub(r'```(?:json)?|```', '', text).strip()
+        m = re.search(r'\[[\s\S]*\]', text)
+        if not m:
+            log.warning("Pinnacle/Gemini: no JSON array in response")
+            return {}
+
+        raw = json.loads(m.group())
+        result = {}
+        for item in raw:
+            name = item.get("match", "").strip()
+            if not name:
+                continue
+            result[name] = {
+                "1": _odd(item.get("1")),
+                "X": _odd(item.get("X", 0)),
+                "2": _odd(item.get("2")),
+            }
+        log.info("Pinnacle/Gemini: %d/%d prices received", len(result), len(names))
+        return result
+
+    except Exception as e:
+        log.error("Pinnacle/Gemini exception: %s", e)
+        return {}
 
 
 def shin_edge(xbet_odd, pinnacle_price):

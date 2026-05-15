@@ -1,8 +1,20 @@
 name: Predator Engine
 
+# All cron times are UTC/GMT — GitHub Actions runs on UTC.
+#
+# EU MARKET WINDOW  06:00–21:30 UTC — every 30 min
+#   └ 06:00 UTC = European bookmaker lines refresh (max inefficiency)
+#   └ 06:00–11:59 UTC = EU-OPEN  : fresh pre-match lines
+#   └ 12:00–17:59 UTC = EU-MID   : afternoon fixtures
+#   └ 18:00–21:30 UTC = EU-CLOSE : prime-time kickoffs
+#
+# NBA OVERNIGHT     00:00–05:00 UTC — hourly
+#   └ Covers US evening slate (EST-5h = UTC): tip-offs 17:00–02:00 ET
+
 on:
   schedule:
-    - cron: '*/30 * * * *'
+    - cron: '*/30 6-21 * * *'   # EU market window — every 30 min, 06:00–21:30 UTC
+    - cron: '0 0-5 * * *'       # NBA overnight window — hourly, 00:00–05:00 UTC
   workflow_dispatch:
 
 env:

@@ -1,4 +1,5 @@
 .env
+.vscode/
 .streamlit/secrets.toml
 __pycache__/
 # Next.js build output (ui/ folder not used - using Flask templates)
