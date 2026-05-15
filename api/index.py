@@ -6,6 +6,7 @@ Sources: 1XBet Harvester (Soft) + Gemini/Pinnacle (Sharp). No Odds API.
 import json
 import os
 
+import requests
 from dotenv import load_dotenv
 from flask import Flask, jsonify, render_template
 from supabase import create_client
@@ -62,3 +63,26 @@ def api_signals():
 @app.route("/api/health")
 def health():
     return jsonify({"status": "ok", "version": "7.5-guerrilla", "source": "harvester+gemini"})
+
+
+@app.route("/api/scan", methods=["POST"])
+def trigger_scan():
+    pat = os.environ.get("GITHUB_PAT")
+    if not pat:
+        return jsonify({"error": "GITHUB_PAT not configured"}), 503
+    try:
+        resp = requests.post(
+            "https://api.github.com/repos/ipotrading-bot/predator/actions/workflows/engine.yml/dispatches",
+            headers={
+                "Authorization": f"Bearer {pat}",
+                "Accept": "application/vnd.github+json",
+                "X-GitHub-Api-Version": "2022-11-28",
+            },
+            json={"ref": "main"},
+            timeout=10,
+        )
+        if resp.status_code == 204:
+            return jsonify({"status": "triggered"}), 200
+        return jsonify({"error": resp.text}), resp.status_code
+    except Exception as e:
+        return jsonify({"error": str(e)}), 500

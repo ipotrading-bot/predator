@@ -135,7 +135,14 @@ footer {
     <div class="tagline">v7.5 &middot; Binary Synthesis Engine &middot; 1XBet Harvester + Gemini Oracle</div>
     <div class="doctrine">&#9632; DOCTRINE: Soccer = AH 0.0 Only &nbsp;|&nbsp; NBA/Tennis = Moneyline &nbsp;|&nbsp; Hard Cap: 15% (données aberrantes supprimées)</div>
   </div>
-  <div class="clock" id="clock">&mdash;</div>
+  <div style="display:flex;align-items:center;gap:14px">
+    <div class="clock" id="clock">&mdash;</div>
+    <button id="scanBtn" onclick="triggerScan()" style="
+      background:#001a00;border:1px solid var(--green);color:var(--green);
+      font-family:var(--font);font-size:11px;font-weight:bold;letter-spacing:2px;
+      padding:6px 14px;cursor:pointer;text-transform:uppercase;transition:all 0.2s;
+    ">&#9654; RUN SCAN</button>
+  </div>
 </header>
 
 <div class="stats">
@@ -234,6 +241,32 @@ footer {
     document.getElementById('clock').textContent = d.toUTCString().slice(0,25) + ' UTC';
     setTimeout(tick, 1000);
   })();
+
+  async function triggerScan() {
+    const btn = document.getElementById('scanBtn');
+    btn.textContent = '⏳ TRIGGERING…';
+    btn.disabled = true;
+    btn.style.opacity = '0.5';
+    try {
+      const res = await fetch('/api/scan', { method: 'POST' });
+      const data = await res.json();
+      if (res.ok) {
+        btn.textContent = '✓ SCAN LAUNCHED';
+        btn.style.color = '#00ff41';
+        btn.style.borderColor = '#00ff41';
+        setTimeout(() => { btn.textContent = '▶ RUN SCAN'; btn.disabled = false; btn.style.opacity = '1'; }, 5000);
+      } else {
+        btn.textContent = '✗ ERROR';
+        btn.style.color = 'var(--red)';
+        btn.style.borderColor = 'var(--red)';
+        console.error(data);
+        setTimeout(() => { btn.textContent = '▶ RUN SCAN'; btn.disabled = false; btn.style.opacity = '1'; btn.style.color = 'var(--green)'; btn.style.borderColor = 'var(--green)'; }, 4000);
+      }
+    } catch(e) {
+      btn.textContent = '✗ NETWORK ERROR';
+      setTimeout(() => { btn.textContent = '▶ RUN SCAN'; btn.disabled = false; btn.style.opacity = '1'; }, 4000);
+    }
+  }
 </script>
 </body>
 </html>
