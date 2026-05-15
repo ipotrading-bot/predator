@@ -126,6 +126,7 @@ def _purge_old_signals(sb):
         ("edge_pct",  "gt",  15.0,    "edge > 15%"),
         ("edge_pct",  "lt",  MIN_EDGE, f"edge < {MIN_EDGE}%"),
         ("market",    "is",  "null",   "null market"),
+        ("sharp_prob", "lte", 0.0,    "sharp_prob=0 (stale)"),
     ]
     for col, op, val, label in purge_rules:
         try:
@@ -139,6 +140,11 @@ def _purge_old_signals(sb):
         log.info("Purged: legacy soccer Moneyline")
     except Exception as e:
         log.error("Supabase purge (soccer Moneyline): %s", e)
+    try:
+        sb.table("signals").delete().is_("sharp_prob", "null").execute()
+        log.info("Purged: signals with sharp_prob=null")
+    except Exception as e:
+        log.error("Supabase purge (sharp_prob=null): %s", e)
 
 
 def _risk(edge_pct: float) -> str:
@@ -156,6 +162,9 @@ def _emit(signals, sb, now, log, name, sport, league, mkt_key, mkt_label,
     edge, status = compute_alpha(xbet_odd, pin_odd, min_edge=effective_min)
     if status == "DISCARD":
         log.info("DISCARD | %s %s | %s — edge %.2f%%", emoji, name, mkt_label, edge)
+        return
+    if sharp_prob <= 0:
+        log.info("DISCARD | %s %s | %s — sharp_prob=0 (stale/missing data)", emoji, name, mkt_label)
         return
     risk = _risk(edge)
 
@@ -195,7 +204,7 @@ def _emit(signals, sb, now, log, name, sport, league, mkt_key, mkt_label,
 
 def _process_h2h(m, name, sport, league, home, away, emoji, signals, sb, now, log, min_edge=None):
     """H2H market: DNB for soccer, Moneyline for NBA/Tennis + Prob.Sharp filter."""
-    prob_min = SHARP_PROB_BY_MARKET["h2h"]
+    prob_min = SHARP_PROB_BY_MARKET.get("h2h_soccer" if sport == "soccer" else "h2h", 0.52)
 
     if "_oracle_price" in m:
         pin_price = m["_oracle_price"]
