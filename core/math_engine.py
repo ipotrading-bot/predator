@@ -1,6 +1,7 @@
 """
-core/math_engine.py — PAIM v7.5 — Binary market conversion
+core/math_engine.py — PAIM v8.0 — Binary market conversion + Shin devigging
 Enforces Zero-Draw doctrine: Soccer = AH 0.0 only.
+New: devig_prob() for spreads/totals quality filter.
 """
 
 
@@ -9,6 +10,20 @@ def calc_dnb(odd_team: float, odd_draw: float) -> float:
     if odd_team <= 1.01 or odd_draw <= 1.01:
         return 0.0
     return round(odd_team * (1.0 - 1.0 / odd_draw), 4)
+
+
+def devig_prob(own_odd: float, other_odd: float) -> float:
+    """
+    Shin-normalized binary probability — removes bookmaker margin.
+    For binary markets (spreads, totals, tennis/NBA h2h):
+    p_true = (1/own) / (1/own + 1/other)
+    Returns 0.0 if either odd is invalid.
+    """
+    if own_odd <= 1.01 or other_odd <= 1.01:
+        return 0.0
+    q1 = 1.0 / own_odd
+    q2 = 1.0 / other_odd
+    return round(q1 / (q1 + q2), 4)
 
 
 def to_binary(odds: dict, sport: str, home: str = "", away: str = "") -> tuple[float, str | None, str]:

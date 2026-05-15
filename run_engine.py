@@ -1,8 +1,8 @@
 """
-run_engine.py — PREDATOR PAIM v7.5 — Guerrilla Mode
-Soft  source : Harvester (1XBet direct JSON feed)
-Sharp source : Gemini 2.0 Flash + Google Search → Pinnacle prices
-Pipeline     : Harvest → Pinnacle enrich → AH 0.0 binary → Edge [1.5%–15%] → Supabase → Telegram
+run_engine.py — PREDATOR PAIM v8.0 — Hunter Multi-Sport Mode
+Markets: h2h (NBA/Tennis) | spreads (NBA/Soccer) | totals (all)
+Sharp filter: Prob. Sharp (Shin devigged) >= threshold per market type
+Pipeline: OddsAPI → Gemini Search → Gemini Estimator → AH0.0/ML/PS/OU → Edge → Supabase
 All timestamps : UTC/GMT — no local-time contamination.
 """
 import json
@@ -16,10 +16,13 @@ from dotenv import load_dotenv
 from supabase import create_client
 
 from core.harvester import fetch_matches, fetch_pinnacle_prices, fetch_estimated_prices
-from core.math_engine import to_binary
+from core.math_engine import to_binary, devig_prob
 from core.odds_api import fetch_odds
 from core.oracle import get_pinnacle_price
-from core.paim_engine import compute_alpha, MIN_EDGE, strict_team_match
+from core.paim_engine import (
+    compute_alpha, MIN_EDGE, strict_team_match,
+    market_label, SHARP_PROB_BY_MARKET,
+)
 
 load_dotenv()
 
@@ -122,13 +125,129 @@ def _risk(edge_pct: float) -> str:
     return "LOW_VALUE"
 
 
+def _emit(signals, sb, now, log, name, sport, league, mkt_key, mkt_label,
+          xbet_odd, pin_odd, sharp_prob, emoji):
+    """Compute edge, apply quality gates, persist signal."""
+    edge, status = compute_alpha(xbet_odd, pin_odd)
+    if status == "DISCARD":
+        log.info("DISCARD | %s %s | %s — edge %.2f%%", emoji, name, mkt_label, edge)
+        return
+    risk = _risk(edge)
+    log.info("SIGNAL  | %s %s | %s: 1XBet=%.3f Pin=%.3f Edge=+%.2f%% Prob=%.0f%% %s",
+             emoji, name, mkt_label, xbet_odd, pin_odd, edge, sharp_prob * 100, risk)
+    signal = {
+        "match":          name,
+        "league":         league or "",
+        "sport":          sport,
+        "market":         mkt_label,
+        "market_key":     mkt_key,
+        "xbet_odd":       float(xbet_odd),
+        "pinnacle_price": float(pin_odd),
+        "sharp_prob":     float(sharp_prob),
+        "edge_pct":       float(edge),
+        "risk_flag":      risk,
+        "scanned_at":     now.isoformat(),
+        "status":         "active",
+    }
+    signals.append(signal)
+    if sb:
+        _save(sb, signal)
+
+
+def _process_h2h(m, name, sport, league, home, away, emoji, signals, sb, now, log):
+    """H2H market: DNB for soccer, Moneyline for NBA/Tennis + Prob.Sharp filter."""
+    prob_min = SHARP_PROB_BY_MARKET["h2h"]
+
+    if "_oracle_price" in m:
+        pin_price = m["_oracle_price"]
+        xbet_price, _, xbet_fav = to_binary(m["odds_1xbet"], sport, home, away)
+        pin_fav = m.get("_oracle_team", "")
+        sharp_prob = 1.0  # Oracle already filtered
+    else:
+        xbet_price, _, xbet_fav = to_binary(m["odds_1xbet"], sport, home, away)
+        pin_price,  _, pin_fav  = to_binary(m.get("odds_pinnacle", {}), sport, home, away)
+        # Pinnacle devigged probability from raw h2h odds
+        po = m.get("odds_pinnacle", {})
+        if sport == "soccer":
+            from core.math_engine import calc_dnb
+            dnb_o = calc_dnb(
+                po.get("1", 0) if xbet_fav == home else po.get("2", 0),
+                po.get("X", 0)
+            )
+            dnb_other = calc_dnb(
+                po.get("2", 0) if xbet_fav == home else po.get("1", 0),
+                po.get("X", 0)
+            )
+            sharp_prob = devig_prob(dnb_o, dnb_other)
+        else:
+            p1, p2 = po.get("1", 0), po.get("2", 0)
+            sharp_prob = devig_prob(p1, p2) if xbet_fav == home else devig_prob(p2, p1)
+
+    if xbet_price <= 1.01 or pin_price <= 1.01:
+        return
+    if not strict_team_match(xbet_fav, pin_fav):
+        log.info("SPLIT   | %s %s — 1XBet=%s Sharp=%s", emoji, name, xbet_fav, pin_fav)
+        return
+    if sharp_prob < prob_min:
+        log.info("LOWPROB | %s %s h2h — Prob.Sharp=%.0f%% < %.0f%%",
+                 emoji, name, sharp_prob * 100, prob_min * 100)
+        return
+
+    lbl = market_label("h2h", "", 0.0, sport)
+    _emit(signals, sb, now, log, name, sport, league,
+          "h2h", lbl, xbet_price, pin_price, sharp_prob, emoji)
+
+
+def _process_totals(m, name, sport, league, emoji, signals, sb, now, log):
+    """Over/Under market for all sports."""
+    prob_min = SHARP_PROB_BY_MARKET["totals"]
+    xt = m["totals_1xbet"]
+    pt = m["totals_pinnacle"]
+    point = pt.get("point", xt.get("point", 0.0))
+
+    for side, other in [("over", "under"), ("under", "over")]:
+        x_odd = float(xt.get(side, 0))
+        p_odd = float(pt.get(side, 0))
+        p_lay = float(pt.get(other, 0))
+        if x_odd <= 1.01 or p_odd <= 1.01:
+            continue
+        sharp_prob = devig_prob(p_odd, p_lay)
+        if sharp_prob < prob_min:
+            continue
+        lbl = market_label("totals", side, point, sport)
+        _emit(signals, sb, now, log, name, sport, league,
+              "totals", lbl, x_odd, p_odd, sharp_prob, emoji)
+
+
+def _process_spreads(m, name, sport, league, home, away, emoji, signals, sb, now, log):
+    """Spread/Handicap market for NBA + Soccer."""
+    prob_min = SHARP_PROB_BY_MARKET["spreads"]
+    xs = m["spreads_1xbet"]
+    ps = m["spreads_pinnacle"]
+    home_point = float(ps.get("point", xs.get("point", 0.0)))
+    away_point = -home_point
+
+    for side, team, pt in [("home", home, home_point), ("away", away, away_point)]:
+        x_odd = float(xs.get(side, 0))
+        p_odd = float(ps.get(side, 0))
+        p_lay = float(ps.get("away" if side == "home" else "home", 0))
+        if x_odd <= 1.01 or p_odd <= 1.01:
+            continue
+        sharp_prob = devig_prob(p_odd, p_lay)
+        if sharp_prob < prob_min:
+            continue
+        lbl = market_label("spreads", side, pt, sport)
+        _emit(signals, sb, now, log, name, sport, league,
+              "spreads", lbl, x_odd, p_odd, sharp_prob, emoji)
+
+
 # ── main ─────────────────────────────────────────────────────────────
 
 def run():
     now     = datetime.now(timezone.utc)
     session = _market_session(now.hour)
     log.info("━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━")
-    log.info("PAIM v7.6 — Guerrilla Mode | Session: %s", session)
+    log.info("PAIM v8.0 — Hunter Multi-Sport | Session: %s", session)
     log.info("Scan start: %s", now.strftime("%Y-%m-%d %H:%M:%S UTC"))
 
     try:
@@ -222,7 +341,7 @@ def run():
             log.info("✅ Tier 3 OK — %d matchs estimés (non-arbitrage, value)", len(matches))
 
     if not matches:
-        msg = "📡 PREDATOR v7.6: 0 signaux — toutes sources épuisées."
+        msg = "📡 PREDATOR v8.0: 0 signaux — toutes sources épuisées."
         log.warning(msg)
         _telegram(msg)
         if sb:
@@ -240,52 +359,19 @@ def run():
             away   = m.get("away", "")
             emoji  = SPORT_EMOJI.get(sport, "🎯")
 
-            # ── Step 3: Binary Synthesis — 1XBet side ────────────
-            xbet_price, market, xbet_fav = to_binary(m["odds_1xbet"], sport, home, away)
-            if xbet_price <= 1.01 or market is None:
-                log.info("SKIP    | %s %s — AH 0.0 impossible (no draw odd)", emoji, name)
-                continue
+            # ── H2H market ───────────────────────────────────────
+            _process_h2h(m, name, sport, league, home, away, emoji,
+                         signals, sb, now, log)
 
-            # ── Step 4: Sharp reference price — same side ────────
-            if "_oracle_price" in m:
-                pin_price = m["_oracle_price"]
-                pin_fav   = m.get("_oracle_team", "")
-            else:
-                pin_price, _, pin_fav = to_binary(m["odds_pinnacle"], sport, home, away)
-            if pin_price <= 1.01:
-                log.info("SKIP    | %s %s — Sharp price invalid", emoji, name)
-                continue
+            # ── Totals market (Over/Under) ────────────────────────
+            if "totals_1xbet" in m and "totals_pinnacle" in m:
+                _process_totals(m, name, sport, league, emoji,
+                                signals, sb, now, log)
 
-            # ── Step 5: Same favorite on both books? ──────────────
-            if not strict_team_match(xbet_fav, pin_fav):
-                log.info("SPLIT   | %s %s — 1XBet=%s | Sharp=%s", emoji, name, xbet_fav, pin_fav)
-                continue
-
-            # ── Step 6: Edge computation [1.5% – 15%] ────────────
-            edge, status = compute_alpha(xbet_price, pin_price)
-            if status == "DISCARD":
-                log.info("DISCARD | %s %s — edge %.2f%% outside window", emoji, name, edge)
-                continue
-
-            risk = _risk(edge)
-            log.info("SIGNAL  | %s %s | %s %s: 1XBet=%.3f Pinnacle=%.3f Edge=+%.2f%% %s",
-                     emoji, name, market, xbet_fav, xbet_price, pin_price, edge, risk)
-
-            signal = {
-                "match":          name,
-                "league":         league or "",
-                "sport":          sport,
-                "market":         market,
-                "xbet_odd":       float(xbet_price),
-                "pinnacle_price": float(pin_price),
-                "edge_pct":       float(edge),
-                "risk_flag":      risk,
-                "scanned_at":     now.isoformat(),
-                "status":         "active",
-            }
-            signals.append(signal)
-            if sb:
-                _save(sb, signal)
+            # ── Spreads market (Handicap) ─────────────────────────
+            if "spreads_1xbet" in m and "spreads_pinnacle" in m:
+                _process_spreads(m, name, sport, league, home, away, emoji,
+                                 signals, sb, now, log)
 
         except Exception as e:
             log.error("Match error [%s]: %s", m.get("match", "?"), e)
@@ -293,23 +379,24 @@ def run():
 
     # ── Telegram report ───────────────────────────────────────────────
     elite = [s for s in signals if s["edge_pct"] >= ELITE_EDGE]
-    no_pin_suffix = f" | ⚠️ {no_pin_count} sans prix" if no_pin_count > 0 else ""
-    estimated_flag = " _(estimé)_" if sharp_source == "Gemini/Estimateur" else ""
+    no_pin_suffix  = f" | {no_pin_count} sans prix" if no_pin_count > 0 else ""
+    estimated_flag = " (estimé)" if sharp_source == "Gemini/Estimateur" else ""
     if elite:
-        msg = f"🎯 *PREDATOR v7.6 — SIGNAUX ELITE* — {now.strftime('%H:%M UTC')} ({session.strip()})\n"
-        msg += f"Source: `{sharp_source}`{estimated_flag} | {len(matches)} matchs | Elite ≥{ELITE_EDGE}%: {len(elite)}{no_pin_suffix}\n\n"
+        msg = f"PREDATOR v8.0 SIGNAUX ELITE — {now.strftime('%H:%M UTC')} ({session.strip()})\n"
+        msg += f"Source: {sharp_source}{estimated_flag} | {len(matches)} events | Elite: {len(elite)}{no_pin_suffix}\n\n"
         for s in elite[:5]:
             e = SPORT_EMOJI.get(s["sport"], "🎯")
+            prob_str = f" | Prob.Sharp {s.get('sharp_prob', 0)*100:.0f}%" if s.get('sharp_prob') else ""
             msg += (
                 f"{e} *{s['match']}*\n"
-                f"   `{s['market']}` | 1XBet: `{s['xbet_odd']}` | Pinnacle: `{s['pinnacle_price']}`\n"
-                f"   Edge: `+{s['edge_pct']}%` | {s['risk_flag']}\n\n"
+                f"   `{s['market']}` | 1XBet: `{s['xbet_odd']}` | Pin: `{s['pinnacle_price']}`\n"
+                f"   Edge: `+{s['edge_pct']}%` | {s['risk_flag']}{prob_str}\n\n"
             )
         _telegram(msg)
     else:
         _telegram(
-            f"✅ PREDATOR v7.6: {now.strftime('%H:%M')} UTC ({session.strip()}) — "
-            f"[{sharp_source}] {len(matches)} matchs | Signaux: {len(signals)} | Elite: 0{no_pin_suffix}"
+            f"PREDATOR v8.0: {now.strftime('%H:%M')} UTC ({session.strip()}) — "
+            f"[{sharp_source}] {len(matches)} events | Signaux: {len(signals)} | Elite: 0{no_pin_suffix}"
         )
 
     log.info("Done. %d signals | %d elite.", len(signals), len(elite))

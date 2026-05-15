@@ -1,10 +1,8 @@
 """
-core/odds_api.py — PAIM v7.6 — The Odds API (real Pinnacle + 1XBet data)
-One call per sport → returns both 1XBet AND Pinnacle odds for the same event.
-No hallucinated data. No team matching ambiguity. No rate limit beyond monthly quota.
-
-QUOTA: Free tier = 500 requests/month. Set ODDS_API_KEY in .env + GitHub Secrets.
-When quota is exhausted, returns [] and the engine falls back to Gemini sources.
+core/odds_api.py — PAIM v8.0 — The Odds API (Hunter Multi-Sport Mode)
+Markets: h2h (NBA + Tennis) | spreads (NBA + Soccer) | totals (all sports)
+Priority: basketball_nba → tennis_atp_masters_1000 → Soccer leagues
+Returns one event dict per event with all available markets embedded.
 """
 import os
 import requests
@@ -14,42 +12,59 @@ BASE_URL     = "https://api.the-odds-api.com/v4"
 PINNACLE_KEY = "pinnacle"
 XBET_KEY     = "onexbet"
 
-# Comprehensive sport keys — 404 = not in season (skipped automatically)
+# Priority sports first — scanned before secondary leagues
 SPORT_KEYS = {
-    # Soccer — top European leagues
-    "soccer_epl":                        "soccer",
-    "soccer_france_ligue_one":           "soccer",
-    "soccer_spain_la_liga":              "soccer",
-    "soccer_germany_bundesliga":         "soccer",
-    "soccer_italy_serie_a":              "soccer",
-    "soccer_netherlands_eredivisie":     "soccer",
-    "soccer_portugal_primeira_liga":     "soccer",
-    "soccer_turkey_super_league":        "soccer",
-    # UEFA competitions
+    # ── PRIORITY ─────────────────────────────────────────────────────
+    "basketball_nba":                    "basketball",  # NBA Playoffs
+    "tennis_atp_masters_1000":           "tennis",      # ATP Masters 1000
+    # ── Tennis (clay season) ─────────────────────────────────────────
+    "tennis_atp_french_open":            "tennis",
+    "tennis_wta_french_open":            "tennis",
+    "tennis_atp_roland_garros":          "tennis",
+    "tennis_wta_roland_garros":          "tennis",
+    "tennis_atp_italian_open":           "tennis",
+    "tennis_wta_italian_open":           "tennis",
+    # ── Soccer ───────────────────────────────────────────────────────
     "soccer_uefa_champs_league":         "soccer",
     "soccer_uefa_europa_league":         "soccer",
     "soccer_uefa_conference_league":     "soccer",
-    # Basketball
-    "basketball_nba":                    "basketball",
-    # Tennis — clay season (Roland Garros / Italian Open)
-    "tennis_atp_french_open":            "tennis",
-    "tennis_wta_french_open":            "tennis",
-    "tennis_atp_italian_open":           "tennis",
-    "tennis_wta_italian_open":           "tennis",
-    "tennis_atp_roland_garros":          "tennis",
-    "tennis_wta_roland_garros":          "tennis",
+    "soccer_epl":                        "soccer",
+    "soccer_spain_la_liga":              "soccer",
+    "soccer_italy_serie_a":              "soccer",
+    "soccer_france_ligue_one":           "soccer",
+    "soccer_germany_bundesliga":         "soccer",
+    "soccer_netherlands_eredivisie":     "soccer",
+    "soccer_portugal_primeira_liga":     "soccer",
+    "soccer_turkey_super_league":        "soccer",
+}
+
+# Markets fetched per sport (API supports h2h,spreads,totals in one call)
+_MARKETS_BY_SPORT = {
+    "basketball": "h2h,spreads,totals",
+    "tennis":     "h2h,totals",          # No spreads market in tennis
+    "soccer":     "h2h,spreads,totals",
 }
 
 
+# ── Extraction helpers ────────────────────────────────────────────────
+
+def _odd(val) -> float:
+    try:
+        f = float(val)
+        return f if f > 1.01 else 0.0
+    except (TypeError, ValueError):
+        return 0.0
+
+
 def _extract_h2h(bookmakers: list, bookie_key: str, home: str, away: str) -> dict | None:
-    """Return {"1", "X", "2"} odds dict for a bookmaker, or None if not found."""
+    """{"1": float, "X": float, "2": float} — X=0 for binary sports."""
     for bk in bookmakers:
         if bk.get("key") != bookie_key:
             continue
         for mkt in bk.get("markets", []):
             if mkt.get("key") != "h2h":
                 continue
-            prices = {o["name"]: float(o.get("price", 0)) for o in mkt.get("outcomes", [])}
+            prices = {o["name"]: _odd(o.get("price")) for o in mkt.get("outcomes", [])}
             return {
                 "1": prices.get(home, 0.0),
                 "X": prices.get("Draw", 0.0),
@@ -58,6 +73,53 @@ def _extract_h2h(bookmakers: list, bookie_key: str, home: str, away: str) -> dic
     return None
 
 
+def _extract_spreads(bookmakers: list, bookie_key: str, home: str, away: str) -> dict | None:
+    """{"home": float, "away": float, "point": float} — point is home team's line."""
+    for bk in bookmakers:
+        if bk.get("key") != bookie_key:
+            continue
+        for mkt in bk.get("markets", []):
+            if mkt.get("key") != "spreads":
+                continue
+            result: dict = {}
+            for o in mkt.get("outcomes", []):
+                price = _odd(o.get("price"))
+                point = float(o.get("point", 0))
+                if o["name"] == home:
+                    result["home"]  = price
+                    result["point"] = point
+                elif o["name"] == away:
+                    result["away"]       = price
+                    result["away_point"] = point
+            if "home" in result and "away" in result and result["home"] > 1.01:
+                return result
+    return None
+
+
+def _extract_totals(bookmakers: list, bookie_key: str) -> dict | None:
+    """{"over": float, "under": float, "point": float}."""
+    for bk in bookmakers:
+        if bk.get("key") != bookie_key:
+            continue
+        for mkt in bk.get("markets", []):
+            if mkt.get("key") != "totals":
+                continue
+            result: dict = {}
+            for o in mkt.get("outcomes", []):
+                price = _odd(o.get("price"))
+                side  = o.get("name", "").lower()
+                if side == "over":
+                    result["over"]  = price
+                    result["point"] = float(o.get("point", 0))
+                elif side == "under":
+                    result["under"] = price
+            if "over" in result and "under" in result:
+                return result
+    return None
+
+
+# ── Event parser ──────────────────────────────────────────────────────
+
 def _parse_event(ev: dict, sport_type: str) -> dict | None:
     home = str(ev.get("home_team", "")).strip()
     away = str(ev.get("away_team", "")).strip()
@@ -65,13 +127,13 @@ def _parse_event(ev: dict, sport_type: str) -> dict | None:
         return None
 
     bookmakers = ev.get("bookmakers", [])
-    xbet     = _extract_h2h(bookmakers, XBET_KEY,     home, away)
-    pinnacle = _extract_h2h(bookmakers, PINNACLE_KEY, home, away)
 
-    if not xbet or not pinnacle:
-        return None
+    xbet_h2h = _extract_h2h(bookmakers, XBET_KEY,     home, away)
+    pin_h2h  = _extract_h2h(bookmakers, PINNACLE_KEY, home, away)
+    if not xbet_h2h or not pin_h2h:
+        return None  # Both books must have h2h for the event to be useful
 
-    return {
+    event = {
         "id":            ev.get("id", f"{home}_{away}"),
         "match":         f"{home} vs {away}",
         "home":          home,
@@ -80,14 +142,34 @@ def _parse_event(ev: dict, sport_type: str) -> dict | None:
         "sport":         sport_type,
         "sport_id":      {"soccer": 1, "tennis": 3, "basketball": 4}.get(sport_type, 1),
         "commence_time": ev.get("commence_time", ""),
-        "odds_1xbet":    xbet,
-        "odds_pinnacle": pinnacle,
+        "odds_1xbet":    xbet_h2h,
+        "odds_pinnacle": pin_h2h,
     }
 
+    # ── Spreads (NBA + Soccer) ────────────────────────────────────────
+    if sport_type != "tennis":
+        xs = _extract_spreads(bookmakers, XBET_KEY,     home, away)
+        ps = _extract_spreads(bookmakers, PINNACLE_KEY, home, away)
+        if xs and ps:
+            event["spreads_1xbet"]    = xs
+            event["spreads_pinnacle"] = ps
+
+    # ── Totals (all sports) ───────────────────────────────────────────
+    xt = _extract_totals(bookmakers, XBET_KEY)
+    pt = _extract_totals(bookmakers, PINNACLE_KEY)
+    if xt and pt:
+        event["totals_1xbet"]    = xt
+        event["totals_pinnacle"] = pt
+
+    return event
+
+
+# ── Public API ────────────────────────────────────────────────────────
 
 def fetch_odds(api_key: str = None, hours_ahead: int = 24) -> list[dict]:
     """
-    Fetch events in the next `hours_ahead` hours with both 1XBet and Pinnacle h2h odds.
+    Fetch events in the next `hours_ahead` hours with h2h + spreads + totals.
+    Priority: NBA → Tennis Masters → Soccer.
     Returns [] if API key missing or quota exhausted (engine falls back to Gemini).
     """
     if not api_key:
@@ -103,11 +185,12 @@ def fetch_odds(api_key: str = None, hours_ahead: int = 24) -> list[dict]:
 
     all_events = []
     for sport_key, sport_type in SPORT_KEYS.items():
+        markets = _MARKETS_BY_SPORT.get(sport_type, "h2h")
         url = f"{BASE_URL}/sports/{sport_key}/odds/"
         params = {
             "apiKey":           api_key,
             "regions":          "eu",
-            "markets":          "h2h",
+            "markets":          markets,
             "bookmakers":       f"{PINNACLE_KEY},{XBET_KEY}",
             "oddsFormat":       "decimal",
             "commenceTimeFrom": time_from,
@@ -124,7 +207,7 @@ def fetch_odds(api_key: str = None, hours_ahead: int = 24) -> list[dict]:
                 print("[OddsAPI] Auth error — check ODDS_API_KEY")
                 return []
             if r.status_code == 422:
-                print(f"[OddsAPI] Quota exhausted — falling back to Gemini")
+                print("[OddsAPI] Quota exhausted — falling back to Gemini")
                 return []
             if r.status_code != 200:
                 print(f"[OddsAPI] {sport_key}: HTTP {r.status_code}")
@@ -134,7 +217,13 @@ def fetch_odds(api_key: str = None, hours_ahead: int = 24) -> list[dict]:
             events = [e for e in events if e]
             all_events.extend(events)
             if events:
-                print(f"[OddsAPI] {sport_key}: {len(events)} events | used={used} remaining={remaining}")
+                has_totals  = sum(1 for e in events if "totals_1xbet"  in e)
+                has_spreads = sum(1 for e in events if "spreads_1xbet" in e)
+                print(
+                    f"[OddsAPI] {sport_key}: {len(events)} events "
+                    f"| totals={has_totals} spreads={has_spreads} "
+                    f"| used={used} remaining={remaining}"
+                )
 
         except Exception as e:
             print(f"[OddsAPI] {sport_key}: {e}")

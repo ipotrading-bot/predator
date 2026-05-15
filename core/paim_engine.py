@@ -26,8 +26,31 @@ def _normalize_team(name: str) -> str:
         s = re.sub(pattern, repl, s, flags=re.I)
     return ' '.join(s.split())
 
-SPORT_LABELS = {1: "soccer", 3: "tennis", 4: "basketball"}
-MAX_EDGE     = 15.0   # Hard cap — anything above is a data error, discard immediately
+SPORT_LABELS    = {1: "soccer", 3: "tennis", 4: "basketball"}
+MAX_EDGE        = 15.0   # Hard cap — data error above this
+SHARP_PROB_MIN  = 0.65   # Minimum Pinnacle devigged probability (Shin quality gate)
+
+# Per-market probability thresholds — spreads/totals are symmetric by design
+SHARP_PROB_BY_MARKET = {
+    "h2h":     0.65,   # Strong-favourite filter
+    "spreads": 0.52,   # Slight skew is enough (spreads price ~50/50 by construction)
+    "totals":  0.52,   # Same for totals
+}
+
+_SPORT_PFX = {"basketball": "NBA", "tennis": "TEN", "soccer": "SOC"}
+
+
+def market_label(key: str, side: str, point: float, sport: str) -> str:
+    """Human-readable market label for Dashboard and Telegram."""
+    pfx = _SPORT_PFX.get(sport, sport[:3].upper())
+    if key == "totals":
+        sign = f" {point}" if point else ""
+        return f"{pfx} {side.capitalize()}{sign}"
+    if key == "spreads":
+        sign = f"+{point}" if point > 0 else str(point)
+        return f"{pfx} PS {sign}"
+    # h2h
+    return "AH 0.0" if sport == "soccer" else f"{pfx} ML"
 
 
 def convert_to_ah0(v1: float, vx: float, v2: float) -> tuple[float, float]:

@@ -3,7 +3,7 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>PREDATOR PAIM v7.5</title>
+<title>PREDATOR PAIM v8.0</title>
 <style>
 :root {
   --bg:     #050505;
@@ -81,8 +81,22 @@ td { padding: 11px 14px; vertical-align: middle; }
   border-radius: 2px;
   letter-spacing: 0.5px;
 }
-.m-ah   { background: #001a00; color: var(--green); border: 1px solid #003300; }
-.m-ml   { background: #001533; color: var(--blue);  border: 1px solid #003366; }
+.m-ah      { background: #001a00; color: var(--green);  border: 1px solid #003300; }
+.m-ml      { background: #001533; color: var(--blue);   border: 1px solid #003366; }
+.m-spread  { background: #1a1000; color: var(--orange); border: 1px solid #4d3000; }
+.m-total   { background: #0d001a; color: #cc88ff;       border: 1px solid #330066; }
+.m-nba     { background: #1a0000; color: #ff6622;       border: 1px solid #660000; }
+.m-ten     { background: #001a11; color: #00ffaa;       border: 1px solid #004422; }
+.prob-chip {
+  display: inline-block;
+  padding: 1px 5px;
+  font-size: 9px;
+  border-radius: 2px;
+  background: #111;
+  color: #888;
+  border: 1px solid #2a2a2a;
+  margin-left: 4px;
+}
 
 .odd { color: var(--blue); font-weight: bold; }
 .pin { color: var(--text); }
@@ -132,8 +146,8 @@ footer {
 <header>
   <div>
     <div class="logo">&#9658; PREDATOR PAIM</div>
-    <div class="tagline">v7.5 &middot; Binary Synthesis Engine &middot; 1XBet Harvester + Gemini Oracle</div>
-    <div class="doctrine">&#9632; DOCTRINE: Soccer = AH 0.0 Only &nbsp;|&nbsp; NBA/Tennis = Moneyline &nbsp;|&nbsp; Hard Cap: 15% (données aberrantes supprimées)</div>
+    <div class="tagline">v8.0 &middot; Hunter Multi-Sport &middot; The Odds API &rarr; Gemini Oracle</div>
+    <div class="doctrine">&#9632; Markets: AH 0.0 &nbsp;|&nbsp; NBA/TEN ML &nbsp;|&nbsp; Spreads PS &nbsp;|&nbsp; Over/Under &nbsp;&mdash;&nbsp; Prob.Sharp &ge;52% &nbsp;|&nbsp; Edge [1.5%–15%]</div>
   </div>
   <div style="display:flex;align-items:center;gap:14px">
     <div class="clock" id="clock">&mdash;</div>
@@ -205,10 +219,22 @@ footer {
         <td class="league">{{ s.league or '&mdash;' }}</td>
         <td>
           {% set mkt = s.market or 'Moneyline' %}
+          {% set mk  = s.market_key or '' %}
           {% if 'AH' in mkt %}
-            <span class="market-badge m-ah">AH 0.0</span>
+            <span class="market-badge m-ah">{{ mkt }}</span>
+          {% elif mk == 'totals' or 'Over' in mkt or 'Under' in mkt %}
+            <span class="market-badge m-total">{{ mkt }}</span>
+          {% elif mk == 'spreads' or 'PS' in mkt or 'Spread' in mkt %}
+            <span class="market-badge m-spread">{{ mkt }}</span>
+          {% elif 'NBA' in mkt %}
+            <span class="market-badge m-nba">{{ mkt }}</span>
+          {% elif 'TEN' in mkt %}
+            <span class="market-badge m-ten">{{ mkt }}</span>
           {% else %}
-            <span class="market-badge m-ml">Moneyline</span>
+            <span class="market-badge m-ml">{{ mkt }}</span>
+          {% endif %}
+          {% if s.sharp_prob %}
+            <span class="prob-chip">{{ "%.0f" | format(s.sharp_prob * 100) }}%</span>
           {% endif %}
         </td>
         <td class="odd">{{ "%.2f" | format(s.xbet_odd) }}</td>
@@ -233,7 +259,7 @@ footer {
   {% endif %}
 </div>
 
-<footer>PREDATOR PAIM v7.5 &nbsp;&middot;&nbsp; Binary Synthesis &nbsp;&middot;&nbsp; ⚽ AH 0.0 &nbsp;|&nbsp; 🏀 🎾 Moneyline</footer>
+<footer>PREDATOR PAIM v8.0 &nbsp;&middot;&nbsp; Hunter Multi-Sport &nbsp;&middot;&nbsp; ⚽ AH0.0/Totals &nbsp;|&nbsp; 🏀 ML/PS/OU &nbsp;|&nbsp; 🎾 ML/OU</footer>
 
 <script>
   (function tick() {
