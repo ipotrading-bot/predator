@@ -171,7 +171,7 @@ footer {
   display: none;
   position: fixed;
   inset: 0;
-  background: rgba(0,0,0,0.82);
+  background: rgba(0,0,0,0.85);
   z-index: 100;
 }
 #modal {
@@ -181,21 +181,21 @@ footer {
   left: 50%;
   transform: translate(-50%, -50%);
   z-index: 101;
-  width: min(580px, 95vw);
+  width: min(620px, 97vw);
   background: #080808;
   border: 1px solid #1e1e1e;
   border-top: 2px solid var(--green);
   font-family: var(--font);
-  box-shadow: 0 0 60px rgba(0,255,65,0.08);
+  box-shadow: 0 0 60px rgba(0,255,65,0.10);
 }
 .modal-hdr {
   display: flex;
   justify-content: space-between;
   align-items: center;
-  padding: 14px 18px 10px;
+  padding: 12px 18px 10px;
   border-bottom: 1px solid #111;
 }
-.modal-title { color: var(--green); font-size: 12px; font-weight: bold; letter-spacing: 3px; }
+.modal-title { color: var(--green); font-size: 11px; font-weight: bold; letter-spacing: 3px; }
 .modal-close {
   background: none; border: 1px solid #2a2a2a; color: #555;
   font-family: var(--font); font-size: 13px; cursor: pointer;
@@ -204,69 +204,79 @@ footer {
 .modal-close:hover { border-color: var(--red); color: var(--red); }
 
 .modal-match-bar {
-  padding: 12px 18px;
+  padding: 10px 18px;
   background: #0a0a0a;
   border-bottom: 1px solid #111;
 }
 .modal-match-name { color: #fff; font-size: 14px; font-weight: bold; }
-.modal-match-sub  { color: var(--grey); font-size: 10px; margin-top: 3px; }
+.modal-match-sub  { color: var(--grey); font-size: 10px; margin-top: 2px; }
 
-.modal-section { padding: 14px 18px; border-bottom: 1px solid #0f0f0f; }
+.modal-section { padding: 12px 18px; border-bottom: 1px solid #0f0f0f; }
 .modal-section-lbl {
   font-size: 9px;
   letter-spacing: 2px;
   text-transform: uppercase;
   color: var(--grey);
-  margin-bottom: 8px;
+  margin-bottom: 7px;
 }
 
-#m-who {
-  font-size: 20px;
+/* ── SELECTION TEAM ── */
+.modal-team-block { display: flex; align-items: baseline; gap: 12px; flex-wrap: wrap; }
+#m-team-name {
+  font-size: 22px;
   font-weight: bold;
   color: var(--green);
   letter-spacing: 1px;
   text-transform: uppercase;
-  padding: 6px 0;
+}
+#m-team-context { color: var(--grey); font-size: 11px; }
+#m-market-explain {
+  margin-top: 5px;
+  font-size: 11px;
+  color: #888;
+  border-left: 2px solid #1c1c1c;
+  padding-left: 8px;
 }
 
-.modal-market-row {
-  display: flex;
-  gap: 12px;
-  align-items: center;
-  flex-wrap: wrap;
-  margin-bottom: 8px;
-}
-.modal-odds-box {
-  background: #0d0d0d;
-  border: 1px solid #1c1c1c;
-  padding: 4px 12px;
-  font-size: 13px;
-}
-.modal-odds-lbl { font-size: 9px; color: var(--grey); margin-bottom: 2px; }
-.modal-odds-val { font-weight: bold; }
-
-.kelly-row {
+/* ── BET STEPS ── */
+.bet-steps { display: flex; flex-direction: column; gap: 8px; margin-top: 4px; }
+.bet-step {
   display: flex;
   align-items: center;
   gap: 10px;
-  margin-top: 10px;
-  flex-wrap: wrap;
+  font-size: 12px;
+  color: var(--text);
+  padding: 6px 10px;
+  background: #0a0a0a;
+  border: 1px solid #141414;
 }
-.kelly-badge {
-  background: #001a00;
-  border: 1px solid #003300;
+.step-num {
   color: var(--green);
-  font-size: 11px;
-  padding: 4px 12px;
   font-weight: bold;
+  font-size: 13px;
+  min-width: 18px;
 }
-.kelly-calc {
+.step-val { color: #fff; font-weight: bold; }
+.step-cote { color: var(--blue); font-weight: bold; font-size: 15px; }
+.step-market { color: var(--blue); font-weight: bold; }
+
+/* ── STAKE ROW ── */
+.stake-row {
   display: flex;
   align-items: center;
-  gap: 6px;
-  font-size: 11px;
-  color: var(--grey);
+  gap: 8px;
+  padding: 8px 10px;
+  background: #001500;
+  border: 1px solid #003300;
+  margin-top: 0;
 }
+#stake-big {
+  font-size: 26px;
+  font-weight: bold;
+  color: var(--yellow);
+  min-width: 70px;
+}
+.stake-meta { font-size: 10px; color: var(--grey); display: flex; align-items: center; gap: 6px; }
 #bankroll-input {
   background: #0d0d0d;
   border: 1px solid #2a2a2a;
@@ -278,18 +288,19 @@ footer {
   text-align: right;
 }
 #bankroll-input:focus { outline: none; border-color: var(--green); }
-#stake-display {
-  color: var(--yellow);
-  font-weight: bold;
-  font-size: 13px;
-  min-width: 50px;
+#m-kelly-badge { color: var(--green); font-weight: bold; }
+
+/* ── STALE WARN ── */
+#m-stale-warn {
+  display: none;
+  padding: 9px 18px;
+  background: #120800;
+  border-bottom: 1px solid #3d1c00;
+  font-size: 11px;
+  color: var(--orange);
 }
 
-#m-why {
-  color: var(--text);
-  font-size: 11px;
-  line-height: 1.7;
-}
+#m-why { color: var(--text); font-size: 11px; line-height: 1.7; }
 
 .modal-stats-row {
   display: flex;
@@ -467,45 +478,61 @@ footer {
     <div class="modal-match-sub" id="m-sub">&mdash;</div>
   </div>
 
-  <!-- QUI ? -->
-  <div class="modal-section">
-    <div class="modal-section-lbl">&#9632; QUI MISER ?</div>
-    <div id="m-who">&mdash;</div>
+  <!-- Signal obsolète (sharp_prob=0) -->
+  <div id="m-stale-warn">
+    &#9888;&nbsp; Signal obsolète — probabilité non calculée. Lancez un <strong>RUN SCAN</strong> pour des mises correctes.
   </div>
 
-  <!-- COMMENT ? -->
+  <!-- 1 — MISER SUR -->
   <div class="modal-section">
-    <div class="modal-section-lbl">&#9632; COMMENT ?</div>
-    <div class="modal-market-row">
-      <div class="modal-odds-box">
-        <div class="modal-odds-lbl">MARCHÉ</div>
-        <div class="modal-odds-val" id="m-market" style="color:var(--blue)">&mdash;</div>
-      </div>
-      <div class="modal-odds-box">
-        <div class="modal-odds-lbl">COTE 1XBET</div>
-        <div class="modal-odds-val" id="m-xbet" style="color:var(--blue)">&mdash;</div>
-      </div>
-      <div class="modal-odds-box">
-        <div class="modal-odds-lbl">PINNACLE (FAIR)</div>
-        <div class="modal-odds-val" id="m-pin" style="color:var(--text)">&mdash;</div>
-      </div>
+    <div class="modal-section-lbl">&#9632; MISER SUR</div>
+    <div class="modal-team-block">
+      <div id="m-team-name">&mdash;</div>
+      <div id="m-team-context">&mdash;</div>
     </div>
-    <div class="kelly-row">
-      <span class="kelly-badge" id="m-kelly-badge">&mdash;</span>
-      <span style="color:var(--grey);font-size:10px">de la bankroll (Kelly &times;0.25)</span>
-      <div class="kelly-calc">
-        <span style="color:#444">|</span>
-        <span style="color:var(--grey)">Bankroll:</span>
-        <input id="bankroll-input" type="number" value="1000" min="1" oninput="updateStake()" />
-        <span style="color:var(--grey)">&euro; &rarr;</span>
-        <span id="stake-display">—</span>
+    <div id="m-market-explain">&mdash;</div>
+  </div>
+
+  <!-- 2 — ÉTAPES 1XBET -->
+  <div class="modal-section">
+    <div class="modal-section-lbl">&#9632; COMMENT MISER SUR 1XBET</div>
+    <div class="bet-steps">
+      <div class="bet-step">
+        <span class="step-num">①</span>
+        <span style="color:var(--grey)">Recherche :</span>
+        <span class="step-val" id="m-step-match">&mdash;</span>
+      </div>
+      <div class="bet-step">
+        <span class="step-num">②</span>
+        <span style="color:var(--grey)">Marché :</span>
+        <span class="step-market" id="m-step-market">&mdash;</span>
+      </div>
+      <div class="bet-step">
+        <span class="step-num">③</span>
+        <span style="color:var(--grey)">Sélection :</span>
+        <span class="step-val" id="m-step-team">&mdash;</span>
+        <span style="color:#444">&nbsp;@&nbsp;</span>
+        <span class="step-cote" id="m-step-cote">&mdash;</span>
+        <span style="color:#555;font-size:10px;margin-left:8px">(fair Pinnacle : <span id="m-step-pin">&mdash;</span>)</span>
+      </div>
+      <div class="bet-step stake-row">
+        <span class="step-num">④</span>
+        <span style="color:var(--grey)">Mise :</span>
+        <span id="stake-big">— €</span>
+        <div class="stake-meta">
+          <span id="m-kelly-badge">&mdash;</span>
+          <span style="color:#333">|</span>
+          <span>Bankroll :</span>
+          <input id="bankroll-input" type="number" value="1000" min="1" oninput="updateStake()" />
+          <span>&euro;</span>
+        </div>
       </div>
     </div>
   </div>
 
-  <!-- POURQUOI ? -->
+  <!-- 3 — LOGIQUE -->
   <div class="modal-section">
-    <div class="modal-section-lbl">&#9632; POURQUOI ?</div>
+    <div class="modal-section-lbl">&#9632; LOGIQUE DU SIGNAL</div>
     <div id="m-why">&mdash;</div>
   </div>
 
@@ -564,20 +591,46 @@ footer {
   // ── Signal data (injected by Flask) ───────────────────────────────
   const SIGNALS = {{ signals | tojson }};
 
-  // ── Kelly stake calculator ─────────────────────────────────────────
+  // ── Kelly calculator ───────────────────────────────────────────────
   let _currentKellyPct = 0;
 
   function _computeKelly(xbet_odd, sharp_prob) {
     const b = xbet_odd - 1;
     if (b <= 0 || sharp_prob <= 0) return 0;
-    const kf = (sharp_prob * b - (1 - sharp_prob)) / b;
-    return Math.max(0, kf * 0.25 * 100);
+    return Math.max(0, ((sharp_prob * b - (1 - sharp_prob)) / b) * 0.25 * 100);
   }
 
   function updateStake() {
     const bankroll = parseFloat(document.getElementById('bankroll-input').value) || 0;
     const stake = Math.round(bankroll * _currentKellyPct / 100);
-    document.getElementById('stake-display').textContent = stake + ' €';
+    document.getElementById('stake-big').textContent = stake + ' €';
+  }
+
+  // ── Market label for 1XBet instructions ───────────────────────────
+  function _1xbetMarket(mkt_key, sport, mkt_label) {
+    if (mkt_key === 'h2h' && sport === 'soccer')
+      return 'Asian Handicap → ligne "0" (= AH 0.0 / Draw No Bet)';
+    if (mkt_key === 'h2h')
+      return 'Résultat du match → Moneyline (1×2)';
+    if (mkt_key === 'totals')
+      return 'Total → ' + (mkt_label || 'Over/Under');
+    if (mkt_key === 'spreads')
+      return 'Handicap → ' + (mkt_label || 'Point Spread');
+    return mkt_label || 'Voir section Handicap / Total';
+  }
+
+  function _marketExplain(mkt_key, sport) {
+    if (mkt_key === 'h2h' && sport === 'soccer')
+      return 'AH 0.0 : équipe gagne → gagné · nul → remboursé · défaite → perdu';
+    if (mkt_key === 'h2h' && sport === 'basketball')
+      return 'Moneyline : victoire directe de l\'équipe sélectionnée';
+    if (mkt_key === 'h2h' && sport === 'tennis')
+      return 'Moneyline : victoire directe du joueur sélectionné';
+    if (mkt_key === 'totals')
+      return 'Total buts/points — Over si le score dépasse la ligne, Under sinon';
+    if (mkt_key === 'spreads')
+      return 'Handicap — l\'équipe doit gagner avec la marge indiquée';
+    return '';
   }
 
   // ── Modal open / close ─────────────────────────────────────────────
@@ -586,42 +639,66 @@ footer {
     if (!s) return;
 
     const sportEmoji = {soccer:'⚽', basketball:'🏀', tennis:'🎾'}[s.sport] || '🎯';
+    const isStale    = !(s.sharp_prob > 0);
 
-    // Kelly (use stored value if available, else compute)
-    _currentKellyPct = (s.kelly_pct != null)
+    // Kelly
+    _currentKellyPct = (s.kelly_pct != null && s.kelly_pct > 0)
       ? s.kelly_pct
       : _computeKelly(s.xbet_odd || 0, s.sharp_prob || 0);
-    const kellyStr = _currentKellyPct.toFixed(2) + '%';
 
-    // Selection (stored or fallback to match)
-    const selection = s.selection_name || s.match;
+    // Selection name — if it's the full match (old signal), use best-effort extraction
+    let teamName = (s.selection_name && !s.selection_name.includes(' vs '))
+      ? s.selection_name
+      : null;
+    // For old soccer signals: home team is usually the one with lower AH 0.0 odd
+    if (!teamName && s.match && s.match.includes(' vs ')) {
+      const parts = s.match.split(' vs ');
+      teamName = parts[0].trim();  // default to home — matches 80% of soccer AH 0.0
+    }
+
+    // Market context string
+    const mktKey     = s.market_key || 'h2h';
+    const mktExplain = _marketExplain(mktKey, s.sport);
+    const xbetMkt    = _1xbetMarket(mktKey, s.sport, s.market);
 
     // Risk colour
-    const riskCol = {HIGH_VALUE: '#00ff41', VALUE: '#ffd700', LOW_VALUE: '#555'}[s.risk_flag] || '#555';
+    const riskCol = {HIGH_VALUE:'#00ff41', VALUE:'#ffd700', LOW_VALUE:'#555'}[s.risk_flag] || '#555';
 
-    // Advice (stored or auto-generated)
+    // Advice
     const advice = s.advice || (
-      `Edge +${(s.edge_pct||0).toFixed(1)}% détecté — 1XBet ${(s.xbet_odd||0).toFixed(2)} ` +
-      `vs Pinnacle ${(s.pinnacle_price||0).toFixed(2)}. ` +
-      `Prob.Sharp ${Math.round((s.sharp_prob||0)*100)}%. ` +
+      `Edge +${(s.edge_pct||0).toFixed(1)}% — 1XBet ${(s.xbet_odd||0).toFixed(2)} ` +
+      `vs Pinnacle (fair) ${(s.pinnacle_price||0).toFixed(2)}. ` +
       `1XBet n'a pas encore ajusté sa cote sur ce mouvement Sharp.`
     );
 
-    document.getElementById('m-match').textContent   = sportEmoji + '  ' + s.match;
-    document.getElementById('m-sub').textContent     = (s.league || '—') + '  ·  ' + (s.sport || '');
-    document.getElementById('m-who').textContent     = selection;
-    document.getElementById('m-market').textContent  = s.market || '—';
-    document.getElementById('m-xbet').textContent    = (s.xbet_odd || 0).toFixed(2);
-    document.getElementById('m-pin').textContent     = s.pinnacle_price ? s.pinnacle_price.toFixed(2) : '—';
-    document.getElementById('m-kelly-badge').textContent = kellyStr;
-    document.getElementById('m-why').textContent     = advice;
-    document.getElementById('m-edge').textContent    = (s.edge_pct > 0 ? '+' : '') + (s.edge_pct||0).toFixed(1) + '%';
-    document.getElementById('m-prob').textContent    = Math.round((s.sharp_prob||0)*100) + '%';
-    document.getElementById('m-risk').textContent    = (s.risk_flag||'').replace(/_/g,' ');
-    document.getElementById('m-risk').style.color    = riskCol;
+    // ── Remplir le modal ───────────────────────────────────────────
+    document.getElementById('m-match').textContent      = sportEmoji + '  ' + s.match;
+    document.getElementById('m-sub').textContent        = (s.league || '—') + '  ·  ' + (s.sport || '');
+    document.getElementById('m-stale-warn').style.display = isStale ? 'block' : 'none';
+
+    // Section 1 — MISER SUR
+    document.getElementById('m-team-name').textContent   = teamName || s.match;
+    document.getElementById('m-team-context').textContent = s.market || '—';
+    document.getElementById('m-market-explain').textContent = mktExplain;
+
+    // Section 2 — ÉTAPES 1XBET
+    document.getElementById('m-step-match').textContent  = s.match;
+    document.getElementById('m-step-market').textContent = xbetMkt;
+    document.getElementById('m-step-team').textContent   = teamName || '—';
+    document.getElementById('m-step-cote').textContent   = (s.xbet_odd || 0).toFixed(2);
+    document.getElementById('m-step-pin').textContent    = s.pinnacle_price ? s.pinnacle_price.toFixed(2) : '—';
+    document.getElementById('m-kelly-badge').textContent = _currentKellyPct.toFixed(2) + '% bankroll';
+
+    // Section 3 — LOGIQUE
+    document.getElementById('m-why').textContent = advice;
+
+    // Stats
+    document.getElementById('m-edge').textContent  = (s.edge_pct > 0 ? '+' : '') + (s.edge_pct||0).toFixed(1) + '%';
+    document.getElementById('m-prob').textContent  = s.sharp_prob > 0 ? Math.round(s.sharp_prob * 100) + '%' : 'N/A';
+    document.getElementById('m-risk').textContent  = (s.risk_flag||'').replace(/_/g,' ');
+    document.getElementById('m-risk').style.color  = riskCol;
 
     updateStake();
-
     document.getElementById('modal-overlay').style.display = 'block';
     document.getElementById('modal').style.display         = 'block';
     document.getElementById('modal').focus();
@@ -632,9 +709,7 @@ footer {
     document.getElementById('modal').style.display         = 'none';
   }
 
-  document.addEventListener('keydown', function(e) {
-    if (e.key === 'Escape') closeModal();
-  });
+  document.addEventListener('keydown', e => { if (e.key === 'Escape') closeModal(); });
 </script>
 </body>
 </html>
