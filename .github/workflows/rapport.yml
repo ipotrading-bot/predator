@@ -1,0 +1,37 @@
+name: Predator Rapport
+
+# Rapport Telegram à 06:05 UTC et 18:05 UTC (après le scan de 06:00 / 18:00)
+# Envoie : équipe, marché, cote, mise Kelly, alerte erreur si moteur KO
+
+on:
+  schedule:
+    - cron: '5 6 * * *'    # 06:05 UTC — rapport matin (après scan 06:00)
+    - cron: '5 18 * * *'   # 18:05 UTC — rapport soir  (après scan 18:00)
+  workflow_dispatch:         # Déclenchement manuel depuis GitHub Actions
+
+env:
+  FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: true
+
+jobs:
+  rapport:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+          cache: 'pip'
+
+      - name: Install dependencies
+        run: pip install -r requirements.txt
+
+      - name: Send rapport
+        env:
+          SUPABASE_URL:       ${{ secrets.SUPABASE_URL }}
+          SUPABASE_KEY:       ${{ secrets.SUPABASE_KEY }}
+          TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
+          TELEGRAM_CHAT_ID:   ${{ secrets.TELEGRAM_CHAT_ID }}
+        run: python run_rapport.py

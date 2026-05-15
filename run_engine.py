@@ -349,11 +349,16 @@ def _telegram_grouped(signals: list, now, session: str, matches: int,
         label = sport.upper()
         msg += f"\n{emoji} {label}\n"
         for s in group:
-            prob_str = f" | Prob {int(s.get('sharp_prob', 0) * 100)}%" if s.get('sharp_prob') else ""
+            prob      = s.get("sharp_prob", 0) or 0
+            prob_str  = f" | Prob {int(prob * 100)}%" if prob > 0 else ""
+            team      = s.get("selection_name") or s["match"]
+            if " vs " in team:
+                team = team.split(" vs ")[0].strip()
+            b = (s["xbet_odd"] - 1)
+            stake = round(max(0, ((prob * b - (1 - prob)) / b) * 0.25 * 1000)) if b > 0 and prob > 0 else 0
             msg += (
-                f"  *{s['match']}*\n"
-                f"  `{s['market']}` | 1XBet: `{s['xbet_odd']}` | Pin: `{s['pinnacle_price']}`\n"
-                f"  Edge: `+{s['edge_pct']}%` | {s['risk_flag']}{prob_str}\n"
+                f"  🎯 *{team.upper()}*  `{s['market']} @ {s['xbet_odd']:.2f}`\n"
+                f"  Edge `+{s['edge_pct']:.1f}%`{prob_str} | Mise `{stake}€`/1000€\n"
             )
     _telegram(msg)
 
