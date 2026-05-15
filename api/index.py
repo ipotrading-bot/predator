@@ -1,14 +1,18 @@
 """
-api/index.py — PREDATOR PAIM v8.5 — Vercel Dashboard + Ledger
-Routes: / (Dashboard)  /ledger (CLV Bilan)  /api/signals  /api/health  /api/scan
+api/index.py — PREDATOR PAIM v8.5 — Vercel Dashboard + Ledger + Audit
+Routes: / (Dashboard)  /ledger (CLV Bilan)  /audit (CLV par sport)
+        /api/signals  /api/health  /api/scan
 """
 import json
+import logging
 import os
 
 import requests
 from dotenv import load_dotenv
 from flask import Flask, jsonify, render_template
 from supabase import create_client
+
+log = logging.getLogger("PREDATOR.api")
 
 load_dotenv()
 
@@ -34,6 +38,9 @@ def _get_meta(sb, key: str) -> dict | None:
 
 # ── Dashboard ────────────────────────────────────────────────────────
 
+_DASH_SPORT_ORDER = {"basketball": 0, "tennis": 1, "soccer": 2}
+
+
 @app.route("/")
 def dashboard():
     signals   = []
@@ -42,10 +49,18 @@ def dashboard():
         sb = _db()
         if sb:
             res = sb.table("signals").select("*").order("created_at", desc=True).limit(50).execute()
-            signals   = res.data or []
+            raw = res.data or []
+            # Sort: basketball → tennis → soccer, then by edge desc within each sport
+            signals = sorted(
+                raw,
+                key=lambda s: (
+                    _DASH_SPORT_ORDER.get(s.get("sport", ""), 3),
+                    -(s.get("edge_pct") or 0),
+                ),
+            )
             last_scan = _get_meta(sb, "last_scan")
     except Exception as e:
-        print(f"[Dashboard] {e}")
+        log.error("Dashboard: %s", e)
     return render_template("index.html", signals=signals, last_scan=last_scan)
 
 
@@ -98,9 +113,55 @@ def ledger():
                 stats["sports"] = sports_stats
 
     except Exception as e:
-        print(f"[Ledger] {e}")
+        log.error("Ledger: %s", e)
 
     return render_template("ledger.html", signals=signals, stats=stats)
+
+
+# ── JSON API ─────────────────────────────────────────────────────────
+
+@app.route("/audit")
+def audit():
+    audit_data: dict     = {}
+    thresholds: dict     = {}
+    recent_signals: list = []   # always defined — avoids NameError if sb is None
+    try:
+        sb = _db()
+        if sb:
+            res = (sb.table("signals")
+                   .select("sport,clv_pct,edge_pct,scanned_at,closed_at,status,match,market")
+                   .in_("status", ["closed", "expired"])
+                   .order("closed_at", desc=True)
+                   .limit(300)
+                   .execute())
+            rows = [r for r in (res.data or []) if r.get("clv_pct") is not None]
+
+            for sport in ["basketball", "tennis", "soccer"]:
+                sv = [r["clv_pct"] for r in rows if r.get("sport") == sport]
+                if sv:
+                    hits = sum(1 for c in sv if c >= 0)
+                    audit_data[sport] = {
+                        "count":    len(sv),
+                        "hit_rate": round(hits / len(sv) * 100, 1),
+                        "avg_clv":  round(sum(sv) / len(sv), 2),
+                        "best":     round(max(sv), 2),
+                        "worst":    round(min(sv), 2),
+                        "recent":   sv[:10],
+                    }
+
+            t_res = sb.table("meta").select("key,value").like("key", "threshold_%").execute()
+            for row in (t_res.data or []):
+                sport = row["key"].replace("threshold_", "")
+                thresholds[sport] = float(row["value"])
+
+            recent_signals = rows[:20]
+    except Exception as e:
+        log.error("Audit: %s", e)
+
+    return render_template("audit.html",
+                           audit_data=audit_data,
+                           thresholds=thresholds,
+                           recent_signals=recent_signals)
 
 
 # ── JSON API ─────────────────────────────────────────────────────────

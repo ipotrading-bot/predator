@@ -406,10 +406,3 @@ def fetch_estimated_prices(matches: list) -> dict:
 
     log.info("Estimator/Gemini: %d/%d estimated prices", len(result), len(names))
     return result
-
-
-def shin_edge(xbet_odd, pinnacle_price):
-    """Legacy — kept for backward compat. Use core.paim_engine.compute_alpha."""
-    if not xbet_odd or not pinnacle_price or xbet_odd <= 1.01 or pinnacle_price <= 1.01:
-        return 0.0
-    return round((xbet_odd / pinnacle_price - 1) * 100, 2)

@@ -134,6 +134,30 @@ td { padding: 11px 14px; vertical-align: middle; }
 }
 .empty-icon { font-size: 40px; color: #1a1a1a; margin-bottom: 12px; }
 
+/* ── SPORT SECTIONS ─────────────────────────────────────────────── */
+.sport-section { margin-bottom: 28px; }
+.sport-header {
+  font-size: 11px;
+  font-weight: bold;
+  letter-spacing: 3px;
+  text-transform: uppercase;
+  color: var(--blue);
+  padding: 8px 0 6px;
+  border-bottom: 1px solid #1a2a1a;
+  margin-bottom: 4px;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+.sport-header .sport-count {
+  background: #0d1a0d;
+  border: 1px solid #1c3a1c;
+  color: var(--green);
+  font-size: 9px;
+  padding: 1px 7px;
+  border-radius: 2px;
+}
+
 footer {
   border-top: 1px solid var(--border);
   padding: 10px 24px;
@@ -288,6 +312,7 @@ footer {
 <nav style="background:#030303;border-bottom:1px solid var(--border);padding:0 24px;display:flex;">
   <a href="/" style="color:var(--green);text-decoration:none;font-size:10px;font-weight:bold;letter-spacing:2px;text-transform:uppercase;padding:10px 18px;border-right:1px solid var(--border);border-bottom:2px solid var(--green);">&#9658; DASHBOARD</a>
   <a href="/ledger" style="color:var(--grey);text-decoration:none;font-size:10px;font-weight:bold;letter-spacing:2px;text-transform:uppercase;padding:10px 18px;border-right:1px solid var(--border);transition:color 0.15s;">&#9660; LEDGER</a>
+  <a href="/audit" style="color:var(--grey);text-decoration:none;font-size:10px;font-weight:bold;letter-spacing:2px;text-transform:uppercase;padding:10px 18px;border-right:1px solid var(--border);transition:color 0.15s;">&#9632; AUDIT CLV</a>
 </nav>
 
 <header>
@@ -342,64 +367,81 @@ footer {
 
 <div class="container">
   {% if signals %}
-  <table>
-    <thead>
-      <tr>
-        <th>Sport</th>
-        <th>Match</th>
-        <th>League</th>
-        <th>Market</th>
-        <th>1XBet</th>
-        <th>Pinnacle</th>
-        <th>Edge %</th>
-        <th>Signal</th>
-        <th>Time (UTC)</th>
-      </tr>
-    </thead>
-    <tbody>
-      {% for s in signals %}
-      {% set is_suspect = s.risk_flag == 'SUSPECT_DATA' %}
-      <tr {% if is_suspect %}class="suspect-row"{% endif %} onclick="openModal({{ loop.index0 }})">
-        <td>
-          {% if s.sport == 'soccer' %}⚽
-          {% elif s.sport == 'tennis' %}🎾
-          {% elif s.sport == 'basketball' %}🏀
-          {% else %}🎯{% endif %}
-        </td>
-        <td class="match">{{ s.match }}</td>
-        <td class="league">{{ s.league or '&mdash;' }}</td>
-        <td>
-          {% set mkt = s.market or 'Moneyline' %}
-          {% set mk  = s.market_key or '' %}
-          {% if 'AH' in mkt %}
-            <span class="market-badge m-ah">{{ mkt }}</span>
-          {% elif mk == 'totals' or 'Over' in mkt or 'Under' in mkt %}
-            <span class="market-badge m-total">{{ mkt }}</span>
-          {% elif mk == 'spreads' or 'PS' in mkt or 'Spread' in mkt %}
-            <span class="market-badge m-spread">{{ mkt }}</span>
-          {% elif 'NBA' in mkt %}
-            <span class="market-badge m-nba">{{ mkt }}</span>
-          {% elif 'TEN' in mkt %}
-            <span class="market-badge m-ten">{{ mkt }}</span>
-          {% else %}
-            <span class="market-badge m-ml">{{ mkt }}</span>
-          {% endif %}
-          {% if s.sharp_prob %}
-            <span class="prob-chip">{{ "%.0f" | format(s.sharp_prob * 100) }}%</span>
-          {% endif %}
-        </td>
-        <td class="odd">{{ "%.2f" | format(s.xbet_odd) }}</td>
-        <td class="pin">{{ "%.2f" | format(s.pinnacle_price) if s.pinnacle_price else '&mdash;' }}</td>
-        <td class="edge {% if is_suspect %}e-sus{% elif s.edge_pct >= 5 %}e-high{% elif s.edge_pct >= 2.5 %}e-mid{% else %}e-low{% endif %}">
-          {% if is_suspect %}⚠️ {% endif %}
-          {% if s.edge_pct > 0 %}+{% endif %}{{ "%.1f" | format(s.edge_pct) }}%
-        </td>
-        <td><span class="badge b-{{ s.risk_flag }}">{{ s.risk_flag | replace('_', ' ') }}</span></td>
-        <td class="ts">{{ s.created_at[:16] | replace('T',' ') if s.created_at else '&mdash;' }}</td>
-      </tr>
-      {% endfor %}
-    </tbody>
-  </table>
+
+  {# ── Sport groups: basketball first (highest alpha), then tennis, soccer ── #}
+  {% set sport_config = [
+    ('basketball', '🏀', 'BASKETBALL'),
+    ('tennis',     '🎾', 'TENNIS'),
+    ('soccer',     '⚽', 'SOCCER'),
+  ] %}
+
+  {# Build per-sport index — signals passed from server are already sport-sorted #}
+  {% set ns = namespace(modal_idx=0) %}
+
+  {% for sport_key, emoji, label in sport_config %}
+    {% set group = signals | selectattr('sport', 'equalto', sport_key) | list %}
+    {% if group %}
+    <div class="sport-section">
+      <div class="sport-header">
+        {{ emoji }} {{ label }}
+        <span class="sport-count">{{ group|length }} signal{{ 's' if group|length > 1 else '' }}</span>
+      </div>
+      <table>
+        <thead>
+          <tr>
+            <th>Match</th>
+            <th>League</th>
+            <th>Market</th>
+            <th>1XBet</th>
+            <th>Pinnacle</th>
+            <th>Edge %</th>
+            <th>Signal</th>
+            <th>Time (UTC)</th>
+          </tr>
+        </thead>
+        <tbody>
+          {% for s in group %}
+          {% set is_suspect = s.risk_flag == 'SUSPECT_DATA' %}
+          <tr {% if is_suspect %}class="suspect-row"{% endif %} onclick="openModal({{ ns.modal_idx }})">
+            {% set ns.modal_idx = ns.modal_idx + 1 %}
+            <td class="match">{{ s.match }}</td>
+            <td class="league">{{ s.league or '&mdash;' }}</td>
+            <td>
+              {% set mkt = s.market or 'Moneyline' %}
+              {% set mk  = s.market_key or '' %}
+              {% if 'AH' in mkt %}
+                <span class="market-badge m-ah">{{ mkt }}</span>
+              {% elif mk == 'totals' or 'Over' in mkt or 'Under' in mkt %}
+                <span class="market-badge m-total">{{ mkt }}</span>
+              {% elif mk == 'spreads' or 'PS' in mkt or 'Spread' in mkt %}
+                <span class="market-badge m-spread">{{ mkt }}</span>
+              {% elif 'NBA' in mkt %}
+                <span class="market-badge m-nba">{{ mkt }}</span>
+              {% elif 'TEN' in mkt %}
+                <span class="market-badge m-ten">{{ mkt }}</span>
+              {% else %}
+                <span class="market-badge m-ml">{{ mkt }}</span>
+              {% endif %}
+              {% if s.sharp_prob %}
+                <span class="prob-chip">{{ "%.0f" | format(s.sharp_prob * 100) }}%</span>
+              {% endif %}
+            </td>
+            <td class="odd">{{ "%.2f" | format(s.xbet_odd) }}</td>
+            <td class="pin">{{ "%.2f" | format(s.pinnacle_price) if s.pinnacle_price else '&mdash;' }}</td>
+            <td class="edge {% if is_suspect %}e-sus{% elif s.edge_pct >= 5 %}e-high{% elif s.edge_pct >= 2.5 %}e-mid{% else %}e-low{% endif %}">
+              {% if is_suspect %}⚠️ {% endif %}
+              {% if s.edge_pct > 0 %}+{% endif %}{{ "%.1f" | format(s.edge_pct) }}%
+            </td>
+            <td><span class="badge b-{{ s.risk_flag }}">{{ s.risk_flag | replace('_', ' ') }}</span></td>
+            <td class="ts">{{ s.created_at[:16] | replace('T',' ') if s.created_at else '&mdash;' }}</td>
+          </tr>
+          {% endfor %}
+        </tbody>
+      </table>
+    </div>
+    {% endif %}
+  {% endfor %}
+
   {% else %}
   <div class="empty">
     <div class="empty-icon">&#9634;</div>

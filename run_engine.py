@@ -1,8 +1,8 @@
 """
-run_engine.py — PREDATOR PAIM v8.5 — Hunter Multi-Sport Mode + Decision Modal
+run_engine.py — PREDATOR PAIM v8.5 — Hunter Multi-Sport + Portfolio Balancer
 Markets: h2h (NBA/Tennis) | spreads (NBA/Soccer) | totals (all)
 Sharp filter: Prob. Sharp (Shin devigged) >= threshold per market type
-Pipeline: OddsAPI → Gemini Search → Gemini Estimator → AH0.0/ML/PS/OU → Edge → Supabase
+Pipeline: OddsAPI → Gemini Search → Gemini Estimator → AH0.0/ML/PS/OU → Edge → Balancer → Supabase
 All timestamps : UTC/GMT — no local-time contamination.
 """
 import json
@@ -48,7 +48,11 @@ TELEGRAM_CHAT  = os.environ.get("TELEGRAM_CHAT_ID")
 ELITE_EDGE  = 2.5   # % — send Telegram alert
 MAX_MATCHES = 50
 
-SPORT_EMOJI = {"soccer": "⚽", "tennis": "🎾", "basketball": "🏀"}
+SPORT_EMOJI  = {"soccer": "⚽", "tennis": "🎾", "basketball": "🏀"}
+# Portfolio Balancer: max signals per sport per scan — prevents soccer flooding
+SPORT_QUOTA  = {"soccer": 3, "basketball": 3, "tennis": 3}
+# Telegram report order: highest alpha first (NBA favoured when edges are equal)
+_SPORT_ORDER = ["basketball", "tennis", "soccer"]
 
 # EU market sessions (UTC) — aligns with European bookmaker line movement
 _SESSIONS = {
@@ -185,9 +189,8 @@ def _emit(signals, sb, now, log, name, sport, league, mkt_key, mkt_label,
         "kelly_pct":      kelly_pct,
         "advice":         advice,
     }
+    # Collect only — bulk-save happens after Portfolio Balancer is applied
     signals.append(signal)
-    if sb:
-        _save(sb, signal)
 
 
 def _process_h2h(m, name, sport, league, home, away, emoji, signals, sb, now, log, min_edge=None):
@@ -282,13 +285,77 @@ def _process_spreads(m, name, sport, league, home, away, emoji, signals, sb, now
               selection_name=f"{team} {pt_str}", min_edge=min_edge)
 
 
+# ── Portfolio Balancer ────────────────────────────────────────────────
+
+def _portfolio_balance(candidates: list) -> list:
+    """
+    Enforce per-sport quota and sort by edge descending.
+    A +5% NBA edge beats a +3% soccer edge even if soccer starts sooner.
+    Returns at most SPORT_QUOTA[sport] signals per sport.
+    """
+    by_sport: dict[str, list] = {}
+    for s in sorted(candidates, key=lambda x: x["edge_pct"], reverse=True):
+        sport = s.get("sport", "soccer")
+        by_sport.setdefault(sport, []).append(s)
+
+    result = []
+    for sport in _SPORT_ORDER:
+        quota = SPORT_QUOTA.get(sport, 3)
+        result.extend(by_sport.get(sport, [])[:quota])
+    # Any sport not in _SPORT_ORDER (future-proofing)
+    for sport, sigs in by_sport.items():
+        if sport not in _SPORT_ORDER:
+            result.extend(sigs[:SPORT_QUOTA.get(sport, 3)])
+    return result
+
+
+def _telegram_grouped(signals: list, now, session: str, matches: int,
+                      sharp_source: str, no_pin_count: int):
+    """Send Telegram report grouped by sport, sorted by alpha."""
+    elite = [s for s in signals if s["edge_pct"] >= ELITE_EDGE]
+    no_pin_suffix  = f" | {no_pin_count} sans prix" if no_pin_count > 0 else ""
+    estimated_flag = " (estimé)" if sharp_source == "Gemini/Estimateur" else ""
+
+    if not elite:
+        _telegram(
+            f"PREDATOR v8.5: {now.strftime('%H:%M')} UTC ({session.strip()}) — "
+            f"[{sharp_source}] {matches} events | Signaux: {len(signals)} | Elite: 0{no_pin_suffix}"
+        )
+        return
+
+    msg = (f"PREDATOR v8.5 PORTFOLIO — {now.strftime('%H:%M UTC')} ({session.strip()})\n"
+           f"Source: {sharp_source}{estimated_flag} | {matches} events | "
+           f"Elite: {len(elite)}{no_pin_suffix}\n")
+
+    # Group elite by sport, highest alpha first
+    by_sport: dict[str, list] = {}
+    for s in elite:
+        by_sport.setdefault(s["sport"], []).append(s)
+
+    for sport in _SPORT_ORDER:
+        group = by_sport.get(sport, [])
+        if not group:
+            continue
+        emoji = SPORT_EMOJI.get(sport, "🎯")
+        label = sport.upper()
+        msg += f"\n{emoji} {label}\n"
+        for s in group:
+            prob_str = f" | Prob {int(s.get('sharp_prob', 0) * 100)}%" if s.get('sharp_prob') else ""
+            msg += (
+                f"  *{s['match']}*\n"
+                f"  `{s['market']}` | 1XBet: `{s['xbet_odd']}` | Pin: `{s['pinnacle_price']}`\n"
+                f"  Edge: `+{s['edge_pct']}%` | {s['risk_flag']}{prob_str}\n"
+            )
+    _telegram(msg)
+
+
 # ── main ─────────────────────────────────────────────────────────────
 
 def run():
     now     = datetime.now(timezone.utc)
     session = _market_session(now.hour)
     log.info("━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━")
-    log.info("PAIM v8.0 — Hunter Multi-Sport | Session: %s", session)
+    log.info("PAIM v8.5 — Hunter Multi-Sport + Portfolio Balancer | Session: %s", session)
     log.info("Scan start: %s", now.strftime("%Y-%m-%d %H:%M:%S UTC"))
 
     try:
@@ -315,6 +382,7 @@ def run():
     # Tier 3: Gemini Estim. → probabilités internes, toujours disponible
 
     matches        = []
+    xbet_matches   = []   # declared here so Tier 3 can reuse Tier 2's result safely
     no_pin_count   = 0
     sharp_source   = "?"
 
@@ -331,7 +399,7 @@ def run():
         log.info("📡 Tier 2 — Harvest 1XBet + Gemini Search Pinnacle...")
         xbet_matches = fetch_matches()
         if not xbet_matches:
-            msg = "📡 PREDATOR v7.6: 0 matchs trouvés — 1XBet inaccessible."
+            msg = "📡 PREDATOR v8.5: 0 matchs trouvés — 1XBet inaccessible."
             log.warning(msg)
             _telegram(msg)
             if sb:
@@ -373,9 +441,10 @@ def run():
     # ── Tier 3: Gemini Estimateur (toujours disponible) ───────────────
     if not matches:
         log.info("🧠 Tier 3 — Gemini Estimateur (connaissance interne, marge 2%%)...")
-        xbet_matches = fetch_matches() if not locals().get("xbet_matches") else xbet_matches
         if not xbet_matches:
-            msg = "📡 PREDATOR v7.6: 0 matchs — toutes sources épuisées."
+            xbet_matches = fetch_matches()
+        if not xbet_matches:
+            msg = "📡 PREDATOR v8.5: 0 matchs — toutes sources épuisées."
             log.warning(msg)
             _telegram(msg)
             if sb:
@@ -393,14 +462,14 @@ def run():
             log.info("✅ Tier 3 OK — %d matchs estimés (non-arbitrage, value)", len(matches))
 
     if not matches:
-        msg = "📡 PREDATOR v8.0: 0 signaux — toutes sources épuisées."
+        msg = "📡 PREDATOR v8.5: 0 signaux — toutes sources épuisées."
         log.warning(msg)
         _telegram(msg)
         if sb:
             _heartbeat(sb, now, 0, 0)
         return
 
-    signals = []
+    candidates = []
 
     for m in matches:
         try:
@@ -414,45 +483,46 @@ def run():
 
             # ── H2H market ───────────────────────────────────────
             _process_h2h(m, name, sport, league, home, away, emoji,
-                         signals, sb, now, log, min_edge=min_edge)
+                         candidates, sb, now, log, min_edge=min_edge)
 
             # ── Totals market (Over/Under) ────────────────────────
             if "totals_1xbet" in m and "totals_pinnacle" in m:
                 _process_totals(m, name, sport, league, emoji,
-                                signals, sb, now, log, min_edge=min_edge)
+                                candidates, sb, now, log, min_edge=min_edge)
 
             # ── Spreads market (Handicap) ─────────────────────────
             if "spreads_1xbet" in m and "spreads_pinnacle" in m:
                 _process_spreads(m, name, sport, league, home, away, emoji,
-                                 signals, sb, now, log, min_edge=min_edge)
+                                 candidates, sb, now, log, min_edge=min_edge)
 
         except Exception as e:
             log.error("Match error [%s]: %s", m.get("match", "?"), e)
             continue
 
-    # ── Telegram report ───────────────────────────────────────────────
-    elite = [s for s in signals if s["edge_pct"] >= ELITE_EDGE]
-    no_pin_suffix  = f" | {no_pin_count} sans prix" if no_pin_count > 0 else ""
-    estimated_flag = " (estimé)" if sharp_source == "Gemini/Estimateur" else ""
-    if elite:
-        msg = f"PREDATOR v8.0 SIGNAUX ELITE — {now.strftime('%H:%M UTC')} ({session.strip()})\n"
-        msg += f"Source: {sharp_source}{estimated_flag} | {len(matches)} events | Elite: {len(elite)}{no_pin_suffix}\n\n"
-        for s in elite[:5]:
-            e = SPORT_EMOJI.get(s["sport"], "🎯")
-            prob_str = f" | Prob.Sharp {s.get('sharp_prob', 0)*100:.0f}%" if s.get('sharp_prob') else ""
-            msg += (
-                f"{e} *{s['match']}*\n"
-                f"   `{s['market']}` | 1XBet: `{s['xbet_odd']}` | Pin: `{s['pinnacle_price']}`\n"
-                f"   Edge: `+{s['edge_pct']}%` | {s['risk_flag']}{prob_str}\n\n"
-            )
-        _telegram(msg)
-    else:
-        _telegram(
-            f"PREDATOR v8.0: {now.strftime('%H:%M')} UTC ({session.strip()}) — "
-            f"[{sharp_source}] {len(matches)} events | Signaux: {len(signals)} | Elite: 0{no_pin_suffix}"
-        )
+    # ── Portfolio Balancer — apply quota + alpha priority ─────────────
+    signals = _portfolio_balance(candidates)
+    discarded = len(candidates) - len(signals)
+    if discarded:
+        log.info("Portfolio Balancer: %d candidates → %d kept (%d quota-trimmed)",
+                 len(candidates), len(signals), discarded)
+    sport_counts = {}
+    for s in signals:
+        sport_counts[s.get("sport", "?")] = sport_counts.get(s.get("sport", "?"), 0) + 1
+    if sport_counts:
+        log.info("Allocation: %s", " | ".join(
+            f"{SPORT_EMOJI.get(sp,'🎯')} {sp}={n}" for sp, n in sport_counts.items()))
 
-    log.info("Done. %d signals | %d elite.", len(signals), len(elite))
+    # ── Bulk-save balanced signals to Supabase ─────────────────────────
+    if sb:
+        for s in signals:
+            _save(sb, s)
+
+    # ── Telegram report (grouped by sport, alpha-sorted) ──────────────
+    _telegram_grouped(signals, now, session, len(matches), sharp_source, no_pin_count)
+
+    elite = [s for s in signals if s["edge_pct"] >= ELITE_EDGE]
+    log.info("Done. %d candidates | %d balanced | %d elite.",
+             len(candidates), len(signals), len(elite))
     log.info("━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━")
     if sb:
         _heartbeat(sb, now, len(matches), len(signals))

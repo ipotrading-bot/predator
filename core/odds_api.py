@@ -4,9 +4,12 @@ Markets: h2h (NBA + Tennis) | spreads (NBA + Soccer) | totals (all sports)
 Priority: basketball_nba → tennis_atp_masters_1000 → Soccer leagues
 Returns one event dict per event with all available markets embedded.
 """
+import logging
 import os
 import requests
 from datetime import datetime, timedelta, timezone
+
+log = logging.getLogger("PREDATOR.odds_api")
 
 BASE_URL     = "https://api.the-odds-api.com/v4"
 PINNACLE_KEY = "pinnacle"
@@ -175,7 +178,7 @@ def fetch_odds(api_key: str = None, hours_ahead: int = 24) -> list[dict]:
     if not api_key:
         api_key = os.environ.get("ODDS_API_KEY")
     if not api_key:
-        print("[OddsAPI] No ODDS_API_KEY — add to .env and GitHub Secrets")
+        log.error("No ODDS_API_KEY — add to .env and GitHub Secrets")
         return []
 
     now       = datetime.now(timezone.utc)
@@ -204,13 +207,13 @@ def fetch_odds(api_key: str = None, hours_ahead: int = 24) -> list[dict]:
             if r.status_code == 404:
                 continue  # Not in season
             if r.status_code in (401, 403):
-                print("[OddsAPI] Auth error — check ODDS_API_KEY")
+                log.error("Auth error — check ODDS_API_KEY")
                 return []
             if r.status_code == 422:
-                print("[OddsAPI] Quota exhausted — falling back to Gemini")
+                log.warning("Quota exhausted — falling back to Gemini")
                 return []
             if r.status_code != 200:
-                print(f"[OddsAPI] {sport_key}: HTTP {r.status_code}")
+                log.warning("%s: HTTP %d", sport_key, r.status_code)
                 continue
 
             events = [_parse_event(e, sport_type) for e in r.json()]
@@ -219,13 +222,10 @@ def fetch_odds(api_key: str = None, hours_ahead: int = 24) -> list[dict]:
             if events:
                 has_totals  = sum(1 for e in events if "totals_1xbet"  in e)
                 has_spreads = sum(1 for e in events if "spreads_1xbet" in e)
-                print(
-                    f"[OddsAPI] {sport_key}: {len(events)} events "
-                    f"| totals={has_totals} spreads={has_spreads} "
-                    f"| used={used} remaining={remaining}"
-                )
+                log.info("%s: %d events | totals=%d spreads=%d | used=%s remaining=%s",
+                         sport_key, len(events), has_totals, has_spreads, used, remaining)
 
         except Exception as e:
-            print(f"[OddsAPI] {sport_key}: {e}")
+            log.error("%s: %s", sport_key, e)
 
     return all_events

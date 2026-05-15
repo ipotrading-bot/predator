@@ -1,77 +1,92 @@
+"""
+validator.py — PREDATOR PAIM v8.5 — Manual system health-check
+Run locally: python validator.py
+NOT imported by the engine — standalone diagnostic tool only.
+"""
 import os
 import requests
 import google.generativeai as genai
-from groq import Groq
 from supabase import create_client
 from dotenv import load_dotenv
 
 load_dotenv()
 
+
 def validate_all_systems():
-    print("🦅 PREDATOR PAIM v7.0 - SYSTEM CHECK")
+    print("PREDATOR PAIM v8.5 - SYSTEM CHECK")
     print("━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━")
 
-    # 1. Test HARVESTER — 1XBet direct feed
+    # 1. HARVESTER — 1XBet direct feed
     try:
         url = "https://1xbet.com/LineFeed/Get1x2?sport=1&count=5&lng=en&mode=4"
         res = requests.get(url, timeout=10, headers={"User-Agent": "Mozilla/5.0"})
         if res.status_code == 200 and res.json().get("Value"):
-            print(f"✅ HARVESTER : 1XBet CONNECTÉ ({len(res.json()['Value'])} matchs bruts)")
+            print(f"OK  HARVESTER : 1XBet CONNECTE ({len(res.json()['Value'])} matchs bruts)")
         else:
-            print(f"⚠️ HARVESTER : 1XBet HTTP {res.status_code} (Gemini fallback actif)")
-    except: print("⚠️ HARVESTER : 1XBet inaccessible (Gemini fallback actif)")
+            print(f"WARN HARVESTER : 1XBet HTTP {res.status_code} (Gemini fallback actif)")
+    except Exception:
+        print("WARN HARVESTER : 1XBet inaccessible (Gemini fallback actif)")
 
-    # 2. Test GEMINI (Grounding Check)
+    # 2. GEMINI
     try:
         genai.configure(api_key=os.environ.get("GEMINI_API_KEY"))
-        model = genai.GenerativeModel('gemini-2.0-flash')
+        model = genai.GenerativeModel("gemini-2.0-flash")
         response = model.generate_content("Test ping")
         if response:
-            print("✅ GEMINI AI : OPÉRATIONNEL (Prêt pour le Grounding)")
-    except: print("❌ GEMINI AI : CLÉ INVALIDE OU LIMITE ATTEINTE")
+            print("OK  GEMINI AI : OPERATIONNEL")
+    except Exception as e:
+        print(f"ERR GEMINI AI : {e}")
 
-    # 3. Test GROQ (Speed Check)
+    # 3. SUPABASE
     try:
-        client = Groq(api_key=os.environ.get("GROQ_API_KEY"))
-        chat_completion = client.chat.completions.create(
-            messages=[{"role": "user", "content": "ping"}],
-            model="llama3-8b-8192",
+        supabase = create_client(
+            os.environ.get("SUPABASE_URL", ""),
+            os.environ.get("SUPABASE_KEY", ""),
         )
-        print("✅ GROQ API : OPÉRATIONNEL (Latence ultra-faible)")
-    except: print("❌ GROQ API : ÉCHEC DE CONNEXION")
+        supabase.table("signals").select("id").limit(1).execute()
+        print("OK  SUPABASE : CONNECTE")
+    except Exception as e:
+        print(f"ERR SUPABASE : {e}")
 
-    # 4. Test SUPABASE (Database Check)
+    # 4. ODDS API
     try:
-        supabase = create_client(os.environ.get("SUPABASE_URL"), os.environ.get("SUPABASE_KEY"))
-        res = supabase.table("signals").select("id").limit(1).execute()
-        print("✅ SUPABASE : CONNECTÉ (Accès Service Role validé)")
-    except: print("❌ SUPABASE : ERREUR DE LIAISON (Vérifiez URL/KEY)")
-
-    # 5. Test RAPIDAPI (Football/NBA Data)
-    try:
-        url = "https://api-football-v1.p.rapidapi.com/v3/timezone"
-        headers = {"X-RapidAPI-Key": os.environ.get("RAPIDAPI_KEY"), "X-RapidAPI-Host": "api-football-v1.p.rapidapi.com"}
-        res = requests.get(url, headers=headers)
-        if res.status_code == 200:
-            print("✅ RAPIDAPI : CONNECTÉ (Flux Stats prêt)")
+        key = os.environ.get("ODDS_API_KEY")
+        if key:
+            r = requests.get(
+                "https://api.the-odds-api.com/v4/sports/",
+                params={"apiKey": key},
+                timeout=10,
+            )
+            remaining = r.headers.get("x-requests-remaining", "?")
+            print(f"OK  ODDS API : HTTP {r.status_code} | quota restant={remaining}")
         else:
-            print(f"❌ RAPIDAPI : ERREUR {res.status_code}")
-    except: print("❌ RAPIDAPI : ÉCHEC CRITIQUE")
+            print("WARN ODDS API : ODDS_API_KEY manquant")
+    except Exception as e:
+        print(f"ERR ODDS API : {e}")
 
-    # 6. Test TELEGRAM (Ghost Layer)
+    # 5. TELEGRAM
     try:
-        token = os.environ.get("TELEGRAM_TOKEN")
+        token   = os.environ.get("TELEGRAM_BOT_TOKEN")
         chat_id = os.environ.get("TELEGRAM_CHAT_ID")
-        url = f"https://api.telegram.org/bot{token}/sendMessage"
-        res = requests.post(url, json={"chat_id": chat_id, "text": "🔔 PREDATOR : Test de liaison réussi."})
-        if res.status_code == 200:
-            print("✅ TELEGRAM : LIAISON ÉTABLIE (Vérifiez votre téléphone)")
+        if token and chat_id:
+            url = f"https://api.telegram.org/bot{token}/sendMessage"
+            res = requests.post(
+                url,
+                json={"chat_id": chat_id, "text": "PREDATOR : Test de liaison."},
+                timeout=10,
+            )
+            if res.status_code == 200:
+                print("OK  TELEGRAM : LIAISON ETABLIE")
+            else:
+                print(f"ERR TELEGRAM : HTTP {res.status_code}")
         else:
-            print(f"❌ TELEGRAM : ERREUR {res.status_code}")
-    except: print("❌ TELEGRAM : ÉCHEC D'ENVOI")
+            print("WARN TELEGRAM : TELEGRAM_BOT_TOKEN ou TELEGRAM_CHAT_ID manquant")
+    except Exception as e:
+        print(f"ERR TELEGRAM : {e}")
 
     print("━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━")
-    print("🏁 AUDIT TERMINÉ.")
+    print("AUDIT TERMINE.")
+
 
 if __name__ == "__main__":
     validate_all_systems()

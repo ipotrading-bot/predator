@@ -1,0 +1,388 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>PREDATOR AUDIT CLV v8.5</title>
+<style>
+:root {
+  --bg:     #050505;
+  --bg2:    #0d0d0d;
+  --border: #1c1c1c;
+  --green:  #00ff41;
+  --blue:   #00bfff;
+  --red:    #ff3b3b;
+  --yellow: #ffd700;
+  --orange: #ff8c00;
+  --grey:   #555;
+  --purple: #cc88ff;
+  --text:   #c0c0c0;
+  --font:   'Courier New', monospace;
+}
+* { margin: 0; padding: 0; box-sizing: border-box; }
+body { background: var(--bg); color: var(--text); font-family: var(--font); font-size: 13px; min-height: 100vh; }
+
+nav {
+  background: #030303;
+  border-bottom: 1px solid var(--border);
+  padding: 0 24px;
+  display: flex;
+}
+.nav-link {
+  color: var(--grey);
+  text-decoration: none;
+  font-size: 10px;
+  font-weight: bold;
+  letter-spacing: 2px;
+  text-transform: uppercase;
+  padding: 10px 18px;
+  border-right: 1px solid var(--border);
+  transition: color 0.15s;
+}
+.nav-link:hover  { color: var(--text); }
+.nav-link.active { color: var(--green); border-bottom: 2px solid var(--green); }
+
+header {
+  background: var(--bg2);
+  border-bottom: 1px solid var(--border);
+  padding: 14px 24px;
+}
+.logo    { color: var(--green); font-size: 17px; font-weight: bold; letter-spacing: 4px; }
+.tagline { color: var(--grey); font-size: 10px; margin-top: 3px; }
+
+.container { padding: 24px; }
+
+/* ── SPORT CARDS ─────────────────────────────────────────────────── */
+.cards { display: flex; gap: 20px; flex-wrap: wrap; margin-bottom: 32px; }
+
+.card {
+  flex: 1;
+  min-width: 240px;
+  background: var(--bg2);
+  border: 1px solid var(--border);
+  padding: 18px 20px 14px;
+}
+.card-title {
+  font-size: 11px;
+  font-weight: bold;
+  letter-spacing: 3px;
+  text-transform: uppercase;
+  color: var(--blue);
+  margin-bottom: 14px;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+.card-stats { display: flex; gap: 0; border-top: 1px solid var(--border); }
+.cs {
+  flex: 1;
+  text-align: center;
+  padding: 10px 6px;
+  border-right: 1px solid var(--border);
+}
+.cs:last-child { border-right: none; }
+.cs-val { font-size: 20px; font-weight: bold; }
+.cs-lbl { color: var(--grey); font-size: 9px; text-transform: uppercase; letter-spacing: 1px; margin-top: 3px; }
+
+/* ── BAR CHART (pure CSS) ─────────────────────────────────────────── */
+.chart-section {
+  background: var(--bg2);
+  border: 1px solid var(--border);
+  padding: 18px 20px;
+  margin-bottom: 32px;
+}
+.chart-title {
+  font-size: 10px;
+  font-weight: bold;
+  letter-spacing: 2px;
+  text-transform: uppercase;
+  color: var(--blue);
+  margin-bottom: 18px;
+}
+.chart-bars { display: flex; gap: 32px; align-items: flex-end; height: 120px; }
+.bar-group  { display: flex; flex-direction: column; align-items: center; gap: 4px; min-width: 70px; }
+.bar-wrap   { height: 100px; display: flex; align-items: flex-end; }
+.bar {
+  width: 54px;
+  min-height: 3px;
+  border-radius: 1px 1px 0 0;
+  transition: opacity 0.2s;
+  position: relative;
+}
+.bar:hover { opacity: 0.8; }
+.bar-val {
+  position: absolute;
+  top: -18px;
+  left: 0; right: 0;
+  text-align: center;
+  font-size: 10px;
+  font-weight: bold;
+}
+.bar-lbl { font-size: 10px; color: var(--grey); }
+.bar-sport { font-size: 12px; }
+
+/* Threshold marker line */
+.chart-axis {
+  border-top: 1px dashed #2a2a2a;
+  margin-top: 4px;
+  padding-top: 4px;
+  font-size: 9px;
+  color: #333;
+  letter-spacing: 1px;
+}
+
+/* ── DETAIL TABLE ─────────────────────────────────────────────────── */
+.section-title {
+  font-size: 10px;
+  font-weight: bold;
+  letter-spacing: 2px;
+  text-transform: uppercase;
+  color: var(--grey);
+  margin-bottom: 12px;
+}
+table { width: 100%; border-collapse: collapse; min-width: 700px; }
+thead th {
+  color: var(--blue);
+  font-size: 10px;
+  letter-spacing: 1px;
+  text-transform: uppercase;
+  padding: 7px 12px;
+  border-bottom: 1px solid var(--border);
+  background: var(--bg2);
+  text-align: left;
+}
+tbody tr { border-bottom: 1px solid var(--border); }
+tbody tr:hover { background: #0d0d0d; }
+td { padding: 9px 12px; vertical-align: middle; }
+
+.clv-pos { color: var(--green); font-weight: bold; }
+.clv-neg { color: var(--red); font-weight: bold; }
+.clv-zero { color: var(--grey); }
+
+.ts { color: var(--grey); font-size: 11px; }
+
+.empty {
+  text-align: center;
+  padding: 60px 20px;
+  color: var(--grey);
+  line-height: 2;
+}
+
+footer {
+  border-top: 1px solid var(--border);
+  padding: 10px 24px;
+  font-size: 10px;
+  color: #333;
+  text-align: center;
+  margin-top: 24px;
+}
+</style>
+</head>
+<body>
+
+<nav>
+  <a href="/" class="nav-link">&#9658; DASHBOARD</a>
+  <a href="/ledger" class="nav-link">&#9660; LEDGER</a>
+  <a href="/audit" class="nav-link active">&#9632; AUDIT CLV</a>
+</nav>
+
+<header>
+  <div class="logo">&#9632; AUDIT CLV — CERVEAU STATISTIQUE</div>
+  <div class="tagline">v8.5 &middot; Closing Line Value par sport &middot; Indicateur de sant&eacute; n&deg;1 &middot; CLV &gt; 0 = alpha r&eacute;el captur&eacute;</div>
+</header>
+
+<div class="container">
+
+{% if audit_data %}
+
+  <!-- ── SPORT CARDS ──────────────────────────────────────────────── -->
+  <div class="cards">
+    {% set sport_config = [
+      ('basketball', '🏀', 'BASKETBALL', '#ff6622'),
+      ('tennis',     '🎾', 'TENNIS',     '#00ffaa'),
+      ('soccer',     '⚽', 'SOCCER',     '#00ff41'),
+    ] %}
+    {% for sport_key, emoji, label, color in sport_config %}
+      {% if audit_data.get(sport_key) %}
+      {% set d = audit_data[sport_key] %}
+      {% set thr = thresholds.get(sport_key, 1.5) %}
+      <div class="card">
+        <div class="card-title">
+          {{ emoji }} {{ label }}
+          {% if d.avg_clv >= 1.5 %}
+            <span style="color:var(--green);font-size:9px;border:1px solid #003300;background:#001a00;padding:1px 6px;">PERFORMANT</span>
+          {% elif d.avg_clv >= 0 %}
+            <span style="color:var(--yellow);font-size:9px;border:1px solid #554000;background:#2a2000;padding:1px 6px;">STABLE</span>
+          {% else %}
+            <span style="color:var(--orange);font-size:9px;border:1px solid #4d2800;background:#1a0d00;padding:1px 6px;">⚠ EROSION</span>
+          {% endif %}
+        </div>
+
+        <!-- Mini bar chart for recent CLV (last 10) -->
+        <div style="display:flex;gap:3px;align-items:flex-end;height:36px;margin-bottom:10px;">
+          {% set max_abs = [0.01] %}
+          {% for v in d.recent %}{% if v|abs > max_abs[0] %}{% set _ = max_abs.append(v|abs) %}{% endif %}{% endfor %}
+          {% set scale = max_abs[-1] %}
+          {% for v in d.recent %}
+          {% set pct = [(v / scale * 100)|abs, 100]|min %}
+          <div style="
+            flex:1;
+            height:{{ pct|int }}%;
+            background:{{ color if v >= 0 else '#ff3b3b' }};
+            opacity:0.7;
+            min-height:2px;
+          " title="CLV {{ '+' if v >= 0 else '' }}{{ '%.2f'|format(v) }}%"></div>
+          {% endfor %}
+        </div>
+
+        <div class="card-stats">
+          <div class="cs">
+            <div class="cs-val" style="color:{{ color }}">{{ "%.1f" | format(d.avg_clv) }}%</div>
+            <div class="cs-lbl">Avg CLV</div>
+          </div>
+          <div class="cs">
+            <div class="cs-val" style="color:{{ '#00ff41' if d.hit_rate >= 60 else ('#ffd700' if d.hit_rate >= 40 else '#ff3b3b') }}">{{ d.hit_rate }}%</div>
+            <div class="cs-lbl">Hit Rate</div>
+          </div>
+          <div class="cs">
+            <div class="cs-val" style="color:var(--grey);font-size:14px">{{ thr }}%</div>
+            <div class="cs-lbl">Seuil Min</div>
+          </div>
+          <div class="cs">
+            <div class="cs-val" style="color:var(--grey);font-size:13px">{{ d.count }}</div>
+            <div class="cs-lbl">Signaux</div>
+          </div>
+        </div>
+      </div>
+      {% endif %}
+    {% endfor %}
+  </div>
+
+  <!-- ── CLV BAR CHART ───────────────────────────────────────────── -->
+  <div class="chart-section">
+    <div class="chart-title">&#9632; CLV MOYENNE PAR SPORT — Santé du Portefeuille</div>
+    <div class="chart-bars">
+      {% set bar_config = [
+        ('basketball', '🏀', '#ff6622'),
+        ('tennis',     '🎾', '#00ffaa'),
+        ('soccer',     '⚽', '#00ff41'),
+      ] %}
+      {% for sport_key, emoji, color in bar_config %}
+        {% if audit_data.get(sport_key) %}
+        {% set d = audit_data[sport_key] %}
+        {% set bar_h = [(d.avg_clv * 12)|abs|int, 100]|min %}
+        {% set bar_h = [bar_h, 3]|max %}
+        <div class="bar-group">
+          <div style="font-size:10px;font-weight:bold;
+            color:{{ '#00ff41' if d.avg_clv >= 0 else '#ff3b3b' }}">
+            {{ '+' if d.avg_clv >= 0 else '' }}{{ "%.2f" | format(d.avg_clv) }}%
+          </div>
+          <div class="bar-wrap">
+            <div class="bar" style="
+              height:{{ bar_h }}px;
+              background:{{ color if d.avg_clv >= 0 else '#ff3b3b' }};
+              opacity:{{ '0.9' if d.avg_clv >= 1.5 else '0.55' }};
+            "></div>
+          </div>
+          <div class="bar-sport">{{ emoji }}</div>
+          <div class="bar-lbl">{{ sport_key.upper() }}</div>
+          <div style="font-size:9px;color:var(--grey)">n={{ d.count }}</div>
+        </div>
+        {% endif %}
+      {% endfor %}
+
+      <!-- Legend -->
+      <div style="margin-left:auto;display:flex;flex-direction:column;gap:8px;justify-content:flex-end;padding-bottom:24px;">
+        <div style="font-size:9px;color:var(--grey);letter-spacing:1px;">LÉGENDE</div>
+        <div style="font-size:9px;color:var(--green);">&#9632; CLV &ge; 1.5% → Seuil maintenu</div>
+        <div style="font-size:9px;color:var(--yellow);">&#9632; CLV 0–1.5% → Seuil peut monter</div>
+        <div style="font-size:9px;color:var(--red);">&#9632; CLV &lt; 0% → Érosion d'alpha</div>
+        <div style="font-size:9px;color:var(--grey);margin-top:6px;">Seuil ajusté automatiquement<br>par Learning Layer toutes les 6h</div>
+      </div>
+    </div>
+    <div class="chart-axis">&#9650; CLV &gt; 0 : vous battez le marché &nbsp;&nbsp;|&nbsp;&nbsp; CLV &lt; 0 : l'edge avait déjà été arbitré avant le scan</div>
+  </div>
+
+  <!-- ── DYNAMIC THRESHOLDS STATUS ──────────────────────────────── -->
+  {% if thresholds %}
+  <div style="background:var(--bg2);border:1px solid var(--border);padding:14px 20px;margin-bottom:28px;">
+    <div class="section-title">&#9632; SEUILS DYNAMIQUES (LEARNING LAYER)</div>
+    <div style="display:flex;gap:24px;flex-wrap:wrap;margin-top:8px;">
+      {% for sport_key, emoji, label, color in [('basketball','🏀','BASKETBALL','#ff6622'),('tennis','🎾','TENNIS','#00ffaa'),('soccer','⚽','SOCCER','#00ff41')] %}
+      {% if thresholds.get(sport_key) %}
+      <div style="display:flex;align-items:center;gap:8px;font-size:11px;">
+        <span>{{ emoji }} {{ label }}</span>
+        <span style="color:var(--grey)">→</span>
+        <span style="color:{{ color }};font-weight:bold;">{{ thresholds[sport_key] }}%</span>
+        <span style="color:#333">MIN_EDGE</span>
+      </div>
+      {% endif %}
+      {% endfor %}
+    </div>
+  </div>
+  {% endif %}
+
+  <!-- ── DETAIL TABLE — Last 20 Closed Signals ──────────────────── -->
+  {% if recent_signals %}
+  <div class="section-title">&#9632; 20 DERNIERS SIGNAUX AUDITÉS</div>
+  <div style="overflow-x:auto;">
+  <table>
+    <thead>
+      <tr>
+        <th>Sport</th>
+        <th>Match</th>
+        <th>Market</th>
+        <th>Edge pris</th>
+        <th>CLV</th>
+        <th>Status</th>
+        <th>Clôture (UTC)</th>
+      </tr>
+    </thead>
+    <tbody>
+      {% for s in recent_signals %}
+      {% set clv = s.clv_pct %}
+      <tr>
+        <td>
+          {% if s.sport == 'basketball' %}🏀
+          {% elif s.sport == 'tennis' %}🎾
+          {% elif s.sport == 'soccer' %}⚽
+          {% else %}🎯{% endif %}
+        </td>
+        <td style="color:#fff;font-weight:bold">{{ s.match }}</td>
+        <td style="color:var(--grey);font-size:11px">{{ s.market or '—' }}</td>
+        <td style="color:var(--blue)">
+          {% if s.edge_pct %}+{{ "%.2f"|format(s.edge_pct) }}%{% else %}—{% endif %}
+        </td>
+        <td class="{% if clv > 0 %}clv-pos{% elif clv < 0 %}clv-neg{% else %}clv-zero{% endif %}">
+          {{ '+' if clv > 0 else '' }}{{ "%.2f"|format(clv) }}%
+          {% if clv >= 0 %} ✓{% else %} ✗{% endif %}
+        </td>
+        <td>
+          <span style="
+            font-size:10px;padding:1px 7px;font-weight:bold;
+            {% if s.status == 'closed' %}color:var(--green);border:1px solid #003300;background:#001a00;
+            {% else %}color:var(--grey);border:1px solid #2a2a2a;background:#111;{% endif %}
+          ">{{ s.status | upper }}</span>
+        </td>
+        <td class="ts">{{ s.closed_at[:16] | replace('T',' ') if s.closed_at else '—' }}</td>
+      </tr>
+      {% endfor %}
+    </tbody>
+  </table>
+  </div>
+  {% endif %}
+
+{% else %}
+<div class="empty">
+  <div style="font-size:40px;color:#1a1a1a;margin-bottom:12px;">&#9632;</div>
+  <div>Aucun signal audité pour l'instant.</div>
+  <div style="font-size:11px;margin-top:6px">Le moteur d'audit tourne toutes les 6h via GitHub Actions.</div>
+  <div style="font-size:11px;margin-top:4px">Les signaux actifs seront audités 3h après le scan.</div>
+</div>
+{% endif %}
+
+</div>
+
+<footer>PREDATOR PAIM v8.5 &nbsp;&middot;&nbsp; Audit CLV &nbsp;&middot;&nbsp; Closing Line Value &mdash; la seule m&eacute;trique qui prouve si le bot bat le march&eacute;</footer>
+</body>
+</html>

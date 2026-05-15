@@ -4,6 +4,7 @@ Multi-source: Pinnacle → Betfair Exchange → Circa Sports
 Non-Pinnacle sources receive a 0.5% reference price penalty (conservative edge).
 Returns (price: float | None, team_name: str | None)
 """
+import logging
 import os
 import re
 import time
@@ -11,6 +12,8 @@ import requests
 from datetime import date as _date
 
 from core.math_engine import calc_dnb
+
+log = logging.getLogger("PREDATOR.oracle")
 
 GEMINI_URL = "https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash-lite:generateContent"
 
@@ -39,7 +42,7 @@ def get_pinnacle_price(
     if not api_key:
         api_key = os.environ.get("GEMINI_API_KEY")
     if not api_key:
-        print("[Oracle] No GEMINI_API_KEY")
+        log.error("No GEMINI_API_KEY")
         return None, None
 
     if not match_date:
@@ -55,7 +58,7 @@ def get_pinnacle_price(
         if price and price > 1.01:
             if penalty > 0:
                 price = round(price * (1 + penalty / 100), 4)
-                print(f"[Oracle] {book_name} fallback for {match_name} (+{penalty}% penalty)")
+                log.info("%s fallback for %s (+%.1f%% penalty)", book_name, match_name, penalty)
             return price, team
 
     return None, None
@@ -97,11 +100,11 @@ def _query_book(
         try:
             r = requests.post(f"{GEMINI_URL}?key={api_key}", json=payload, timeout=25)
         except Exception as e:
-            print(f"[Oracle] Request error ({book_name}): {e}")
+            log.error("Request error (%s): %s", book_name, e)
             return None, None
         if r.status_code == 429:
             wait = 65 if attempt == 0 else 30
-            print(f"[Oracle] Rate limit ({book_name}) — waiting {wait}s")
+            log.warning("Rate limit (%s) — waiting %ds", book_name, wait)
             time.sleep(wait)
             r = None
             continue
@@ -109,7 +112,7 @@ def _query_book(
 
     if r is None or r.status_code != 200:
         if r is not None:
-            print(f"[Oracle] HTTP {r.status_code} from Gemini ({book_name})")
+            log.error("HTTP %d from Gemini (%s)", r.status_code, book_name)
         return None, None
 
     try:
@@ -117,7 +120,7 @@ def _query_book(
         text = next((p["text"] for p in reversed(parts) if p.get("text", "").strip()), "")
         text = re.sub(r'```(?:json)?|```', '', text)
     except Exception as e:
-        print(f"[Oracle] Parse error ({book_name}): {e}")
+        log.error("Parse error (%s): %s", book_name, e)
         return None, None
 
     if sport == "soccer":
