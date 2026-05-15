@@ -1,0 +1,36 @@
+name: Predator Audit
+
+# Runs every 6h to compute CLV for signals scanned > 3h ago,
+# then updates sport-specific MIN_EDGE thresholds via learning_layer.
+# Manual trigger available for testing.
+
+on:
+  schedule:
+    - cron: '0 */6 * * *'   # Every 6h: 00:00 06:00 12:00 18:00 UTC
+  workflow_dispatch:
+
+env:
+  FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: true
+
+jobs:
+  audit:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+          cache: 'pip'
+
+      - name: Install dependencies
+        run: pip install -r requirements.txt
+
+      - name: Run audit engine
+        env:
+          GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY }}
+          SUPABASE_URL:   ${{ secrets.SUPABASE_URL }}
+          SUPABASE_KEY:   ${{ secrets.SUPABASE_KEY }}
+        run: python run_audit.py

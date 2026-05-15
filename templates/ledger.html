@@ -1,0 +1,384 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>PREDATOR LEDGER v8.5</title>
+<style>
+:root {
+  --bg:     #050505;
+  --bg2:    #0d0d0d;
+  --border: #1c1c1c;
+  --green:  #00ff41;
+  --blue:   #00bfff;
+  --red:    #ff3b3b;
+  --yellow: #ffd700;
+  --orange: #ff8c00;
+  --grey:   #555;
+  --purple: #cc88ff;
+  --text:   #c0c0c0;
+  --font:   'Courier New', monospace;
+}
+* { margin: 0; padding: 0; box-sizing: border-box; }
+body { background: var(--bg); color: var(--text); font-family: var(--font); font-size: 13px; min-height: 100vh; }
+
+/* ── NAV ──────────────────────────────────────────────────────────── */
+nav {
+  background: #030303;
+  border-bottom: 1px solid var(--border);
+  padding: 0 24px;
+  display: flex;
+  gap: 0;
+}
+.nav-link {
+  color: var(--grey);
+  text-decoration: none;
+  font-size: 10px;
+  font-weight: bold;
+  letter-spacing: 2px;
+  text-transform: uppercase;
+  padding: 10px 18px;
+  border-right: 1px solid var(--border);
+  transition: color 0.15s;
+}
+.nav-link:hover  { color: var(--text); }
+.nav-link.active { color: var(--green); border-bottom: 2px solid var(--green); }
+
+/* ── HEADER ───────────────────────────────────────────────────────── */
+header {
+  background: var(--bg2);
+  border-bottom: 1px solid var(--border);
+  padding: 14px 24px;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+}
+.logo    { color: var(--yellow); font-size: 17px; font-weight: bold; letter-spacing: 4px; }
+.tagline { color: var(--grey); font-size: 10px; margin-top: 3px; }
+.doctrine { color: var(--blue); font-size: 10px; letter-spacing: 1px; margin-top: 2px; }
+.clock { color: var(--blue); font-size: 11px; }
+
+/* ── STATS BAR ────────────────────────────────────────────────────── */
+.stats {
+  background: var(--bg2);
+  border-bottom: 1px solid var(--border);
+  display: flex;
+}
+.stat {
+  flex: 1;
+  text-align: center;
+  padding: 14px 10px;
+  border-right: 1px solid var(--border);
+}
+.stat:last-child { border-right: none; }
+.stat-val { font-size: 26px; font-weight: bold; }
+.stat-lbl { color: var(--grey); font-size: 9px; text-transform: uppercase; letter-spacing: 1px; margin-top: 4px; }
+
+/* ── SPORT BREAKDOWN TABLE ────────────────────────────────────────── */
+.section { padding: 20px 24px 0; }
+.section-title {
+  color: var(--blue);
+  font-size: 10px;
+  font-weight: bold;
+  letter-spacing: 3px;
+  text-transform: uppercase;
+  border-bottom: 1px solid var(--border);
+  padding-bottom: 8px;
+  margin-bottom: 14px;
+}
+.sport-grid {
+  display: grid;
+  grid-template-columns: repeat(3, 1fr);
+  gap: 12px;
+  margin-bottom: 24px;
+}
+.sport-card {
+  background: var(--bg2);
+  border: 1px solid var(--border);
+  padding: 14px 16px;
+}
+.sport-card-hdr {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  margin-bottom: 10px;
+}
+.sport-name { font-size: 12px; font-weight: bold; color: #fff; }
+.threshold-badge {
+  font-size: 9px;
+  padding: 1px 7px;
+  border-radius: 2px;
+  font-weight: bold;
+}
+.th-raised   { background: #1a0800; color: var(--orange); border: 1px solid #4d2200; }
+.th-lowered  { background: #001a00; color: var(--green);  border: 1px solid #003300; }
+.th-default  { background: #0d0d0d; color: var(--grey);   border: 1px solid #2a2a2a; }
+
+.sport-stat-row {
+  display: flex;
+  gap: 10px;
+  flex-wrap: wrap;
+}
+.sport-mini {
+  flex: 1;
+  min-width: 80px;
+}
+.sport-mini-val { font-size: 18px; font-weight: bold; }
+.sport-mini-lbl { font-size: 9px; color: var(--grey); text-transform: uppercase; letter-spacing: 1px; margin-top: 2px; }
+
+/* ── LEDGER TABLE ─────────────────────────────────────────────────── */
+.container { padding: 0 24px 24px; overflow-x: auto; }
+table { width: 100%; border-collapse: collapse; min-width: 860px; }
+thead th {
+  color: var(--blue);
+  font-size: 10px;
+  letter-spacing: 1px;
+  text-transform: uppercase;
+  padding: 8px 12px;
+  border-bottom: 1px solid var(--border);
+  background: var(--bg2);
+  text-align: left;
+}
+tbody tr { border-bottom: 1px solid var(--border); transition: background 0.1s; }
+tbody tr:hover { background: #111; }
+td { padding: 9px 12px; vertical-align: middle; }
+
+.match { color: #fff; font-weight: bold; font-size: 12px; }
+.lg    { color: var(--grey); font-size: 10px; }
+
+.clv-pos { color: var(--green); font-weight: bold; }
+.clv-neg { color: var(--red);   font-weight: bold; }
+.clv-nil { color: var(--grey);  font-weight: bold; }
+
+.beat-yes { background: #001a00; color: var(--green);  border: 1px solid #003300; display:inline-block; padding:1px 7px; font-size:10px; border-radius:2px; font-weight:bold; }
+.beat-no  { background: #1a0000; color: var(--red);    border: 1px solid #660000; display:inline-block; padding:1px 7px; font-size:10px; border-radius:2px; font-weight:bold; }
+
+.market-badge {
+  display: inline-block;
+  padding: 1px 6px;
+  font-size: 9px;
+  font-weight: bold;
+  border-radius: 2px;
+}
+.m-ah    { background: #001a00; color: var(--green);  border: 1px solid #003300; }
+.m-ml    { background: #001533; color: var(--blue);   border: 1px solid #003366; }
+.m-spread{ background: #1a1000; color: var(--orange); border: 1px solid #4d3000; }
+.m-total { background: #0d001a; color: var(--purple); border: 1px solid #330066; }
+
+.status-closed  { color: var(--grey);   font-size: 10px; }
+.status-expired { color: #333;          font-size: 10px; font-style: italic; }
+
+.ts { color: var(--grey); font-size: 10px; }
+
+.empty {
+  text-align: center;
+  padding: 80px 20px;
+  color: var(--grey);
+  line-height: 2;
+}
+.empty-icon { font-size: 40px; color: #1a1a1a; margin-bottom: 12px; }
+
+footer {
+  border-top: 1px solid var(--border);
+  padding: 10px 24px;
+  font-size: 10px;
+  color: #333;
+  text-align: center;
+}
+</style>
+</head>
+<body>
+
+<nav>
+  <a class="nav-link" href="/">&#9658; DASHBOARD</a>
+  <a class="nav-link active" href="/ledger">&#9660; LEDGER</a>
+</nav>
+
+<header>
+  <div>
+    <div class="logo">&#9660; PREDATOR LEDGER</div>
+    <div class="tagline">v8.5 &middot; Closing Line Value &middot; M&eacute;moire des signaux audit&eacute;s</div>
+    <div class="doctrine">CLV &gt; 0 = signal valide ind&eacute;pendamment du r&eacute;sultat sportif &nbsp;&mdash;&nbsp; Seuils auto-ajust&eacute;s par sport</div>
+  </div>
+  <div class="clock" id="clock">&mdash;</div>
+</header>
+
+{% if stats %}
+<div class="stats">
+  <div class="stat">
+    <div class="stat-val" style="color:var(--text)">{{ stats.total }}</div>
+    <div class="stat-lbl">Signaux audit&eacute;s</div>
+  </div>
+  <div class="stat">
+    <div class="stat-val" style="color:{% if stats.hit_rate >= 65 %}var(--green){% elif stats.hit_rate >= 50 %}var(--yellow){% else %}var(--red){% endif %}">
+      {{ "%.1f" | format(stats.hit_rate) }}%
+    </div>
+    <div class="stat-lbl">CLV Hit Rate <span style="color:#333">(cible &ge;65%)</span></div>
+  </div>
+  <div class="stat">
+    <div class="stat-val" style="color:{% if stats.avg_clv >= 0 %}var(--green){% else %}var(--red){% endif %}">
+      {% if stats.avg_clv > 0 %}+{% endif %}{{ "%.2f" | format(stats.avg_clv) }}%
+    </div>
+    <div class="stat-lbl">CLV Moyenne</div>
+  </div>
+  <div class="stat">
+    <div class="stat-val" style="color:var(--yellow)">+{{ "%.2f" | format(stats.best_clv) }}%</div>
+    <div class="stat-lbl">Meilleur CLV</div>
+  </div>
+  <div class="stat">
+    <div class="stat-val" style="color:var(--red)">{{ "%.2f" | format(stats.worst_clv) }}%</div>
+    <div class="stat-lbl">Pire CLV</div>
+  </div>
+</div>
+{% else %}
+<div class="stats">
+  <div class="stat" style="flex:1;padding:20px;text-align:center;color:var(--grey)">
+    Aucune donn&eacute;e d'audit. Le moteur d'audit tournera 3h apr&egrave;s chaque scan.
+  </div>
+</div>
+{% endif %}
+
+<!-- ── PER-SPORT BREAKDOWN ──────────────────────────────────────── -->
+{% if stats and stats.sports %}
+<div class="section">
+  <div class="section-title">&#9632; Performance par Sport</div>
+  <div class="sport-grid">
+    {% for sport, s in stats.sports.items() %}
+    {% set emoji = {'soccer':'⚽','basketball':'🏀','tennis':'🎾'}[sport] %}
+    {% set default_t = 1.5 %}
+    {% set t = s.threshold %}
+    {% set badge_cls = 'th-raised' if t > default_t else ('th-lowered' if t < default_t else 'th-default') %}
+    {% set badge_arrow = '↑ ' if t > default_t else ('↓ ' if t < default_t else '') %}
+    <div class="sport-card">
+      <div class="sport-card-hdr">
+        <span class="sport-name">{{ emoji }} {{ sport | capitalize }}</span>
+        <span class="threshold-badge {{ badge_cls }}">{{ badge_arrow }}Seuil {{ "%.1f" | format(t) }}%</span>
+      </div>
+      <div class="sport-stat-row">
+        <div class="sport-mini">
+          <div class="sport-mini-val" style="color:var(--text)">{{ s.count }}</div>
+          <div class="sport-mini-lbl">Signaux</div>
+        </div>
+        <div class="sport-mini">
+          <div class="sport-mini-val" style="color:{% if s.hit_rate >= 65 %}var(--green){% elif s.hit_rate >= 50 %}var(--yellow){% else %}var(--red){% endif %}">
+            {{ "%.0f" | format(s.hit_rate) }}%
+          </div>
+          <div class="sport-mini-lbl">CLV Rate</div>
+        </div>
+        <div class="sport-mini">
+          <div class="sport-mini-val" style="color:{% if s.avg_clv >= 0 %}var(--green){% else %}var(--red){% endif %}">
+            {% if s.avg_clv > 0 %}+{% endif %}{{ "%.1f" | format(s.avg_clv) }}%
+          </div>
+          <div class="sport-mini-lbl">CLV Moy</div>
+        </div>
+      </div>
+    </div>
+    {% endfor %}
+  </div>
+</div>
+{% endif %}
+
+<!-- ── LEDGER TABLE ─────────────────────────────────────────────── -->
+<div class="section">
+  <div class="section-title">&#9632; Historique CLV &mdash; {{ signals|length }} entr&eacute;es</div>
+</div>
+<div class="container">
+  {% if signals %}
+  <table>
+    <thead>
+      <tr>
+        <th>Sport</th>
+        <th>Match</th>
+        <th>March&eacute;</th>
+        <th>Edge @Scan</th>
+        <th>Pin @Scan</th>
+        <th>Pin Cl&ocirc;ture</th>
+        <th>CLV</th>
+        <th>Ligne bat&eacute;e ?</th>
+        <th>Statut</th>
+        <th>Audit&eacute;</th>
+      </tr>
+    </thead>
+    <tbody>
+      {% for s in signals %}
+      {% set clv = s.clv_pct %}
+      <tr>
+        <td>
+          {% if s.sport == 'soccer' %}⚽
+          {% elif s.sport == 'tennis' %}🎾
+          {% elif s.sport == 'basketball' %}🏀
+          {% else %}🎯{% endif %}
+        </td>
+        <td>
+          <div class="match">{{ s.match }}</div>
+          <div class="lg">{{ s.league or '&mdash;' }}</div>
+        </td>
+        <td>
+          {% set mkt = s.market or '' %}
+          {% set mk  = s.market_key or '' %}
+          {% if 'AH' in mkt %}
+            <span class="market-badge m-ah">{{ mkt }}</span>
+          {% elif mk == 'totals' or 'Over' in mkt or 'Under' in mkt %}
+            <span class="market-badge m-total">{{ mkt }}</span>
+          {% elif mk == 'spreads' or 'PS' in mkt %}
+            <span class="market-badge m-spread">{{ mkt }}</span>
+          {% else %}
+            <span class="market-badge m-ml">{{ mkt }}</span>
+          {% endif %}
+        </td>
+        <td style="color:var(--blue)">+{{ "%.1f" | format(s.edge_pct) }}%</td>
+        <td style="color:var(--text)">{{ "%.2f" | format(s.pinnacle_price) if s.pinnacle_price else '&mdash;' }}</td>
+        <td style="color:var(--grey)">{{ "%.2f" | format(s.closing_line) if s.closing_line else '&mdash;' }}</td>
+        <td class="{% if clv is not none and clv >= 0 %}clv-pos{% elif clv is not none %}clv-neg{% else %}clv-nil{% endif %}">
+          {% if clv is not none %}
+            {% if clv > 0 %}+{% endif %}{{ "%.2f" | format(clv) }}%
+          {% else %}&mdash;{% endif %}
+        </td>
+        <td>
+          {% if clv is not none %}
+            {% if clv >= 0 %}
+              <span class="beat-yes">✓ OUI</span>
+            {% else %}
+              <span class="beat-no">✗ NON</span>
+            {% endif %}
+          {% else %}&mdash;{% endif %}
+        </td>
+        <td>
+          {% if s.status == 'closed' %}
+            <span class="status-closed">closed</span>
+          {% elif s.status == 'expired' %}
+            <span class="status-expired">expired</span>
+          {% else %}
+            <span style="color:#333">{{ s.status }}</span>
+          {% endif %}
+        </td>
+        <td class="ts">
+          {% if s.closed_at %}{{ s.closed_at[:16] | replace('T',' ') }}
+          {% elif s.scanned_at %}{{ s.scanned_at[:16] | replace('T',' ') }}
+          {% else %}&mdash;{% endif %}
+        </td>
+      </tr>
+      {% endfor %}
+    </tbody>
+  </table>
+  {% else %}
+  <div class="empty">
+    <div class="empty-icon">&#9634;</div>
+    <div>Aucun signal audit&eacute; pour l'instant.</div>
+    <div style="font-size:11px">L'audit tourne 3h apr&egrave;s chaque scan via GitHub Actions.</div>
+    <div style="font-size:11px;margin-top:6px">Workflow : <strong>Predator Audit</strong> (toutes les 6h)</div>
+  </div>
+  {% endif %}
+</div>
+
+<footer>PREDATOR LEDGER v8.5 &nbsp;&middot;&nbsp; CLV Audit + Adaptive Thresholds &nbsp;&middot;&nbsp; Beat the closing line or don't bet</footer>
+
+<script>
+  (function tick() {
+    const d = new Date();
+    document.getElementById('clock').textContent = d.toUTCString().slice(0,25) + ' UTC';
+    setTimeout(tick, 1000);
+  })();
+</script>
+</body>
+</html>

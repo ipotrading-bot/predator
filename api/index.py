@@ -1,7 +1,6 @@
 """
-api/index.py — PREDATOR PAIM v7.5 — Vercel Dashboard (Guerrilla Mode)
-Read-only: fetches signals + engine heartbeat from Supabase.
-Sources: 1XBet Harvester (Soft) + Gemini/Pinnacle (Sharp). No Odds API.
+api/index.py — PREDATOR PAIM v8.5 — Vercel Dashboard + Ledger
+Routes: / (Dashboard)  /ledger (CLV Bilan)  /api/signals  /api/health  /api/scan
 """
 import json
 import os
@@ -33,20 +32,78 @@ def _get_meta(sb, key: str) -> dict | None:
     return None
 
 
+# ── Dashboard ────────────────────────────────────────────────────────
+
 @app.route("/")
 def dashboard():
-    signals = []
+    signals   = []
     last_scan = None
     try:
         sb = _db()
         if sb:
             res = sb.table("signals").select("*").order("created_at", desc=True).limit(50).execute()
-            signals = res.data or []
+            signals   = res.data or []
             last_scan = _get_meta(sb, "last_scan")
     except Exception as e:
         print(f"[Dashboard] {e}")
     return render_template("index.html", signals=signals, last_scan=last_scan)
 
+
+# ── Ledger ───────────────────────────────────────────────────────────
+
+@app.route("/ledger")
+def ledger():
+    signals    = []
+    stats: dict = {}
+    try:
+        sb = _db()
+        if sb:
+            # Closed/expired signals sorted by CLV (best first)
+            res = (sb.table("signals")
+                   .select("*")
+                   .in_("status", ["closed", "expired"])
+                   .order("clv_pct", desc=True)
+                   .limit(200)
+                   .execute())
+            signals = [s for s in (res.data or []) if s.get("clv_pct") is not None]
+
+            if signals:
+                clv_vals  = [s["clv_pct"] for s in signals]
+                hit_count = sum(1 for c in clv_vals if c >= 0)
+                stats = {
+                    "total":     len(signals),
+                    "hit_rate":  round(hit_count / len(clv_vals) * 100, 1),
+                    "avg_clv":   round(sum(clv_vals) / len(clv_vals), 2),
+                    "best_clv":  round(max(clv_vals), 2),
+                    "worst_clv": round(min(clv_vals), 2),
+                }
+
+                # Per-sport breakdown + dynamic thresholds
+                t_res = sb.table("meta").select("key,value").like("key", "threshold_%").execute()
+                thresholds = {}
+                for row in (t_res.data or []):
+                    sport = row["key"].replace("threshold_", "")
+                    thresholds[sport] = float(row["value"])
+
+                sports_stats = {}
+                for sport in ["soccer", "basketball", "tennis"]:
+                    sv = [s["clv_pct"] for s in signals if s.get("sport") == sport]
+                    if sv:
+                        sports_stats[sport] = {
+                            "count":     len(sv),
+                            "hit_rate":  round(sum(1 for c in sv if c >= 0) / len(sv) * 100, 1),
+                            "avg_clv":   round(sum(sv) / len(sv), 2),
+                            "threshold": thresholds.get(sport, 1.5),
+                        }
+                stats["sports"] = sports_stats
+
+    except Exception as e:
+        print(f"[Ledger] {e}")
+
+    return render_template("ledger.html", signals=signals, stats=stats)
+
+
+# ── JSON API ─────────────────────────────────────────────────────────
 
 @app.route("/api/signals")
 def api_signals():

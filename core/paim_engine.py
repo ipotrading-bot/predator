@@ -76,15 +76,21 @@ def strict_team_match(name_a: str, name_b: str, threshold: float = 0.72) -> bool
 MIN_EDGE = 1.5   # % — floor: anything below has no betting value
 
 
-def compute_alpha(xbet_odd: float, pinnacle_price: float) -> tuple[float, str]:
+def compute_alpha(
+    xbet_odd: float,
+    pinnacle_price: float,
+    min_edge: float = MIN_EDGE,
+) -> tuple[float, str]:
     """
     Returns (edge_pct, status).
-    status: "OK" — valid signal in [1.5%, 15%]
-            "DISCARD" — invalid data, negative edge, or outside [MIN_EDGE, MAX_EDGE].
+    status: "OK"      — valid signal in [min_edge, MAX_EDGE]
+            "DISCARD" — invalid data, negative edge, or outside thresholds.
+    min_edge defaults to the global MIN_EDGE (1.5 %) but can be overridden
+    by the learning_layer for sport-specific adaptive thresholds.
     """
     if not xbet_odd or not pinnacle_price or xbet_odd <= 1.01 or pinnacle_price <= 1.01:
         return 0.0, "DISCARD"
     edge = round((xbet_odd / pinnacle_price - 1) * 100, 2)
-    if edge < MIN_EDGE or edge > MAX_EDGE:
+    if edge < min_edge or edge > MAX_EDGE:
         return edge, "DISCARD"
     return edge, "OK"

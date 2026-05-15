@@ -19,6 +19,7 @@ from core.harvester import fetch_matches, fetch_pinnacle_prices, fetch_estimated
 from core.math_engine import to_binary, devig_prob
 from core.odds_api import fetch_odds
 from core.oracle import get_pinnacle_price
+from core.learning_layer import load_thresholds as _load_thresholds
 from core.paim_engine import (
     compute_alpha, MIN_EDGE, strict_team_match,
     market_label, SHARP_PROB_BY_MARKET,
@@ -145,9 +146,10 @@ def _risk(edge_pct: float) -> str:
 
 
 def _emit(signals, sb, now, log, name, sport, league, mkt_key, mkt_label,
-          xbet_odd, pin_odd, sharp_prob, emoji, selection_name=""):
+          xbet_odd, pin_odd, sharp_prob, emoji, selection_name="", min_edge=None):
     """Compute edge, apply quality gates, persist signal."""
-    edge, status = compute_alpha(xbet_odd, pin_odd)
+    effective_min = min_edge if min_edge is not None else MIN_EDGE
+    edge, status = compute_alpha(xbet_odd, pin_odd, min_edge=effective_min)
     if status == "DISCARD":
         log.info("DISCARD | %s %s | %s — edge %.2f%%", emoji, name, mkt_label, edge)
         return
@@ -188,7 +190,7 @@ def _emit(signals, sb, now, log, name, sport, league, mkt_key, mkt_label,
         _save(sb, signal)
 
 
-def _process_h2h(m, name, sport, league, home, away, emoji, signals, sb, now, log):
+def _process_h2h(m, name, sport, league, home, away, emoji, signals, sb, now, log, min_edge=None):
     """H2H market: DNB for soccer, Moneyline for NBA/Tennis + Prob.Sharp filter."""
     prob_min = SHARP_PROB_BY_MARKET["h2h"]
 
@@ -230,10 +232,10 @@ def _process_h2h(m, name, sport, league, home, away, emoji, signals, sb, now, lo
     lbl = market_label("h2h", "", 0.0, sport)
     _emit(signals, sb, now, log, name, sport, league,
           "h2h", lbl, xbet_price, pin_price, sharp_prob, emoji,
-          selection_name=xbet_fav)
+          selection_name=xbet_fav, min_edge=min_edge)
 
 
-def _process_totals(m, name, sport, league, emoji, signals, sb, now, log):
+def _process_totals(m, name, sport, league, emoji, signals, sb, now, log, min_edge=None):
     """Over/Under market for all sports."""
     prob_min = SHARP_PROB_BY_MARKET["totals"]
     xt = m["totals_1xbet"]
@@ -253,10 +255,10 @@ def _process_totals(m, name, sport, league, emoji, signals, sb, now, log):
         sel = f"{'Over' if side == 'over' else 'Under'}{(' ' + str(point)) if point else ''}"
         _emit(signals, sb, now, log, name, sport, league,
               "totals", lbl, x_odd, p_odd, sharp_prob, emoji,
-              selection_name=sel)
+              selection_name=sel, min_edge=min_edge)
 
 
-def _process_spreads(m, name, sport, league, home, away, emoji, signals, sb, now, log):
+def _process_spreads(m, name, sport, league, home, away, emoji, signals, sb, now, log, min_edge=None):
     """Spread/Handicap market for NBA + Soccer."""
     prob_min = SHARP_PROB_BY_MARKET["spreads"]
     xs = m["spreads_1xbet"]
@@ -277,7 +279,7 @@ def _process_spreads(m, name, sport, league, home, away, emoji, signals, sb, now
         pt_str = f"+{pt}" if pt > 0 else str(pt)
         _emit(signals, sb, now, log, name, sport, league,
               "spreads", lbl, x_odd, p_odd, sharp_prob, emoji,
-              selection_name=f"{team} {pt_str}")
+              selection_name=f"{team} {pt_str}", min_edge=min_edge)
 
 
 # ── main ─────────────────────────────────────────────────────────────
@@ -295,6 +297,17 @@ def run():
     except Exception as e:
         log.error("Supabase init failed: %s", e)
         sb = None
+
+    # Load sport-specific MIN_EDGE thresholds from learning layer
+    dyn_thresholds: dict[str, float] = {}
+    if sb:
+        try:
+            dyn_thresholds = _load_thresholds(sb)
+            if any(v != MIN_EDGE for v in dyn_thresholds.values()):
+                log.info("Dynamic thresholds: %s",
+                         " | ".join(f"{k}={v:.2f}%" for k, v in dyn_thresholds.items()))
+        except Exception as e:
+            log.warning("load_thresholds: %s — using default %.1f%%", e, MIN_EDGE)
 
     # ══ SOURCE PIPELINE — 3 NIVEAUX ══════════════════════════════════
     # Tier 1: The Odds API  → real 1XBet + Pinnacle, même event (idéal)
@@ -391,26 +404,27 @@ def run():
 
     for m in matches:
         try:
-            name   = m["match"]
-            sport  = m.get("sport", "soccer")
-            league = m.get("league", "")
-            home   = m.get("home", "")
-            away   = m.get("away", "")
-            emoji  = SPORT_EMOJI.get(sport, "🎯")
+            name     = m["match"]
+            sport    = m.get("sport", "soccer")
+            league   = m.get("league", "")
+            home     = m.get("home", "")
+            away     = m.get("away", "")
+            emoji    = SPORT_EMOJI.get(sport, "🎯")
+            min_edge = dyn_thresholds.get(sport, MIN_EDGE)
 
             # ── H2H market ───────────────────────────────────────
             _process_h2h(m, name, sport, league, home, away, emoji,
-                         signals, sb, now, log)
+                         signals, sb, now, log, min_edge=min_edge)
 
             # ── Totals market (Over/Under) ────────────────────────
             if "totals_1xbet" in m and "totals_pinnacle" in m:
                 _process_totals(m, name, sport, league, emoji,
-                                signals, sb, now, log)
+                                signals, sb, now, log, min_edge=min_edge)
 
             # ── Spreads market (Handicap) ─────────────────────────
             if "spreads_1xbet" in m and "spreads_pinnacle" in m:
                 _process_spreads(m, name, sport, league, home, away, emoji,
-                                 signals, sb, now, log)
+                                 signals, sb, now, log, min_edge=min_edge)
 
         except Exception as e:
             log.error("Match error [%s]: %s", m.get("match", "?"), e)
