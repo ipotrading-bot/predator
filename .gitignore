@@ -10,3 +10,4 @@ ui/out/
 get-pip.py
 *.code-workspace
 .vercel
+*.docx
