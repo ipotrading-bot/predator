@@ -62,7 +62,7 @@ def api_signals():
 
 @app.route("/api/health")
 def health():
-    return jsonify({"status": "ok", "version": "7.5-guerrilla", "source": "harvester+gemini"})
+    return jsonify({"status": "ok", "version": "8.5", "source": "harvester+gemini"})
 
 
 @app.route("/api/scan", methods=["POST"])

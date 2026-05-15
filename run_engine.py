@@ -1,5 +1,5 @@
 """
-run_engine.py — PREDATOR PAIM v8.0 — Hunter Multi-Sport Mode
+run_engine.py — PREDATOR PAIM v8.5 — Hunter Multi-Sport Mode + Decision Modal
 Markets: h2h (NBA/Tennis) | spreads (NBA/Soccer) | totals (all)
 Sharp filter: Prob. Sharp (Shin devigged) >= threshold per market type
 Pipeline: OddsAPI → Gemini Search → Gemini Estimator → AH0.0/ML/PS/OU → Edge → Supabase
@@ -9,7 +9,7 @@ import json
 import logging
 import os
 import time
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 
 import requests
 from dotenv import load_dotenv
@@ -75,11 +75,22 @@ def _telegram(text):
         log.error("Telegram: %s", e)
 
 
+_OPTIONAL_COLS = {"selection_name", "kelly_pct", "advice"}
+
+
 def _save(sb, signal):
     try:
         sb.table("signals").insert(signal).execute()
     except Exception as e:
-        log.error("Supabase insert: %s", e)
+        # Retry without new optional columns if DB schema not yet migrated
+        if any(c in str(e) for c in _OPTIONAL_COLS):
+            core = {k: v for k, v in signal.items() if k not in _OPTIONAL_COLS}
+            try:
+                sb.table("signals").insert(core).execute()
+            except Exception as e2:
+                log.error("Supabase insert: %s", e2)
+        else:
+            log.error("Supabase insert: %s", e)
 
 
 def _heartbeat(sb, scan_time: datetime, matches: int, signals: int):
@@ -98,6 +109,14 @@ def _heartbeat(sb, scan_time: datetime, matches: int, signals: int):
 
 
 def _purge_old_signals(sb):
+    # Age-based purge — keep last 48h only
+    try:
+        cutoff = (datetime.now(timezone.utc) - timedelta(hours=48)).isoformat()
+        sb.table("signals").delete().lt("created_at", cutoff).execute()
+        log.info("Purged: signals older than 48h")
+    except Exception as e:
+        log.error("Supabase purge (age): %s", e)
+
     purge_rules = [
         ("edge_pct",  "gt",  15.0,    "edge > 15%"),
         ("edge_pct",  "lt",  MIN_EDGE, f"edge < {MIN_EDGE}%"),
@@ -126,13 +145,25 @@ def _risk(edge_pct: float) -> str:
 
 
 def _emit(signals, sb, now, log, name, sport, league, mkt_key, mkt_label,
-          xbet_odd, pin_odd, sharp_prob, emoji):
+          xbet_odd, pin_odd, sharp_prob, emoji, selection_name=""):
     """Compute edge, apply quality gates, persist signal."""
     edge, status = compute_alpha(xbet_odd, pin_odd)
     if status == "DISCARD":
         log.info("DISCARD | %s %s | %s — edge %.2f%%", emoji, name, mkt_label, edge)
         return
     risk = _risk(edge)
+
+    # Fractional Kelly 0.25
+    b = xbet_odd - 1
+    kelly_full = (sharp_prob * b - (1 - sharp_prob)) / b if b > 0 else 0.0
+    kelly_pct  = round(max(0.0, kelly_full * 0.25) * 100, 2)
+
+    advice = (
+        f"Edge +{edge:.1f}% détecté — 1XBet {xbet_odd:.2f} vs Pinnacle {pin_odd:.2f}. "
+        f"Prob.Sharp {int(sharp_prob * 100)}%. "
+        f"1XBet n'a pas encore ajusté sa cote sur ce mouvement Sharp."
+    )
+
     log.info("SIGNAL  | %s %s | %s: 1XBet=%.3f Pin=%.3f Edge=+%.2f%% Prob=%.0f%% %s",
              emoji, name, mkt_label, xbet_odd, pin_odd, edge, sharp_prob * 100, risk)
     signal = {
@@ -148,6 +179,9 @@ def _emit(signals, sb, now, log, name, sport, league, mkt_key, mkt_label,
         "risk_flag":      risk,
         "scanned_at":     now.isoformat(),
         "status":         "active",
+        "selection_name": selection_name or name,
+        "kelly_pct":      kelly_pct,
+        "advice":         advice,
     }
     signals.append(signal)
     if sb:
@@ -195,7 +229,8 @@ def _process_h2h(m, name, sport, league, home, away, emoji, signals, sb, now, lo
 
     lbl = market_label("h2h", "", 0.0, sport)
     _emit(signals, sb, now, log, name, sport, league,
-          "h2h", lbl, xbet_price, pin_price, sharp_prob, emoji)
+          "h2h", lbl, xbet_price, pin_price, sharp_prob, emoji,
+          selection_name=xbet_fav)
 
 
 def _process_totals(m, name, sport, league, emoji, signals, sb, now, log):
@@ -215,8 +250,10 @@ def _process_totals(m, name, sport, league, emoji, signals, sb, now, log):
         if sharp_prob < prob_min:
             continue
         lbl = market_label("totals", side, point, sport)
+        sel = f"{'Over' if side == 'over' else 'Under'}{(' ' + str(point)) if point else ''}"
         _emit(signals, sb, now, log, name, sport, league,
-              "totals", lbl, x_odd, p_odd, sharp_prob, emoji)
+              "totals", lbl, x_odd, p_odd, sharp_prob, emoji,
+              selection_name=sel)
 
 
 def _process_spreads(m, name, sport, league, home, away, emoji, signals, sb, now, log):
@@ -237,8 +274,10 @@ def _process_spreads(m, name, sport, league, home, away, emoji, signals, sb, now
         if sharp_prob < prob_min:
             continue
         lbl = market_label("spreads", side, pt, sport)
+        pt_str = f"+{pt}" if pt > 0 else str(pt)
         _emit(signals, sb, now, log, name, sport, league,
-              "spreads", lbl, x_odd, p_odd, sharp_prob, emoji)
+              "spreads", lbl, x_odd, p_odd, sharp_prob, emoji,
+              selection_name=f"{team} {pt_str}")
 
 
 # ── main ─────────────────────────────────────────────────────────────

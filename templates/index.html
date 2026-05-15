@@ -3,7 +3,7 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>PREDATOR PAIM v8.0</title>
+<title>PREDATOR PAIM v8.5</title>
 <style>
 :root {
   --bg:     #050505;
@@ -65,8 +65,8 @@ thead th {
   text-align: left;
 }
 
-tbody tr { border-bottom: 1px solid var(--border); transition: background 0.1s; }
-tbody tr:hover { background: #111; }
+tbody tr { border-bottom: 1px solid var(--border); transition: background 0.12s; cursor: pointer; }
+tbody tr:hover { background: #131313; border-left: 2px solid var(--green); }
 tbody tr.suspect-row { border-left: 2px solid var(--orange); }
 td { padding: 11px 14px; vertical-align: middle; }
 
@@ -124,6 +124,8 @@ td { padding: 11px 14px; vertical-align: middle; }
 
 .ts { color: var(--grey); font-size: 11px; }
 
+.hint { color: #333; font-size: 10px; padding: 8px 24px; border-bottom: 1px solid #111; text-align: right; }
+
 .empty {
   text-align: center;
   padding: 80px 20px;
@@ -139,6 +141,146 @@ footer {
   color: #333;
   text-align: center;
 }
+
+/* ── MODAL ─────────────────────────────────────────────────────────── */
+#modal-overlay {
+  display: none;
+  position: fixed;
+  inset: 0;
+  background: rgba(0,0,0,0.82);
+  z-index: 100;
+}
+#modal {
+  display: none;
+  position: fixed;
+  top: 50%;
+  left: 50%;
+  transform: translate(-50%, -50%);
+  z-index: 101;
+  width: min(580px, 95vw);
+  background: #080808;
+  border: 1px solid #1e1e1e;
+  border-top: 2px solid var(--green);
+  font-family: var(--font);
+  box-shadow: 0 0 60px rgba(0,255,65,0.08);
+}
+.modal-hdr {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  padding: 14px 18px 10px;
+  border-bottom: 1px solid #111;
+}
+.modal-title { color: var(--green); font-size: 12px; font-weight: bold; letter-spacing: 3px; }
+.modal-close {
+  background: none; border: 1px solid #2a2a2a; color: #555;
+  font-family: var(--font); font-size: 13px; cursor: pointer;
+  padding: 2px 10px; transition: all 0.15s;
+}
+.modal-close:hover { border-color: var(--red); color: var(--red); }
+
+.modal-match-bar {
+  padding: 12px 18px;
+  background: #0a0a0a;
+  border-bottom: 1px solid #111;
+}
+.modal-match-name { color: #fff; font-size: 14px; font-weight: bold; }
+.modal-match-sub  { color: var(--grey); font-size: 10px; margin-top: 3px; }
+
+.modal-section { padding: 14px 18px; border-bottom: 1px solid #0f0f0f; }
+.modal-section-lbl {
+  font-size: 9px;
+  letter-spacing: 2px;
+  text-transform: uppercase;
+  color: var(--grey);
+  margin-bottom: 8px;
+}
+
+#m-who {
+  font-size: 20px;
+  font-weight: bold;
+  color: var(--green);
+  letter-spacing: 1px;
+  text-transform: uppercase;
+  padding: 6px 0;
+}
+
+.modal-market-row {
+  display: flex;
+  gap: 12px;
+  align-items: center;
+  flex-wrap: wrap;
+  margin-bottom: 8px;
+}
+.modal-odds-box {
+  background: #0d0d0d;
+  border: 1px solid #1c1c1c;
+  padding: 4px 12px;
+  font-size: 13px;
+}
+.modal-odds-lbl { font-size: 9px; color: var(--grey); margin-bottom: 2px; }
+.modal-odds-val { font-weight: bold; }
+
+.kelly-row {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  margin-top: 10px;
+  flex-wrap: wrap;
+}
+.kelly-badge {
+  background: #001a00;
+  border: 1px solid #003300;
+  color: var(--green);
+  font-size: 11px;
+  padding: 4px 12px;
+  font-weight: bold;
+}
+.kelly-calc {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 11px;
+  color: var(--grey);
+}
+#bankroll-input {
+  background: #0d0d0d;
+  border: 1px solid #2a2a2a;
+  color: #fff;
+  font-family: var(--font);
+  font-size: 11px;
+  padding: 3px 8px;
+  width: 80px;
+  text-align: right;
+}
+#bankroll-input:focus { outline: none; border-color: var(--green); }
+#stake-display {
+  color: var(--yellow);
+  font-weight: bold;
+  font-size: 13px;
+  min-width: 50px;
+}
+
+#m-why {
+  color: var(--text);
+  font-size: 11px;
+  line-height: 1.7;
+}
+
+.modal-stats-row {
+  display: flex;
+  gap: 0;
+  border-top: 1px solid #111;
+}
+.modal-stat {
+  flex: 1;
+  padding: 10px 14px;
+  border-right: 1px solid #111;
+  text-align: center;
+}
+.modal-stat:last-child { border-right: none; }
+.modal-stat-val { font-size: 15px; font-weight: bold; }
+.modal-stat-lbl { font-size: 9px; color: var(--grey); margin-top: 2px; text-transform: uppercase; letter-spacing: 1px; }
 </style>
 </head>
 <body>
@@ -146,7 +288,7 @@ footer {
 <header>
   <div>
     <div class="logo">&#9658; PREDATOR PAIM</div>
-    <div class="tagline">v8.0 &middot; Hunter Multi-Sport &middot; The Odds API &rarr; Gemini Oracle</div>
+    <div class="tagline">v8.5 &middot; Hunter Multi-Sport &middot; The Odds API &rarr; Gemini Oracle &middot; Click signal for details</div>
     <div class="doctrine">&#9632; Markets: AH 0.0 &nbsp;|&nbsp; NBA/TEN ML &nbsp;|&nbsp; Spreads PS &nbsp;|&nbsp; Over/Under &nbsp;&mdash;&nbsp; Prob.Sharp &ge;52% &nbsp;|&nbsp; Edge [1.5%–15%]</div>
   </div>
   <div style="display:flex;align-items:center;gap:14px">
@@ -189,6 +331,10 @@ footer {
   </div>
 </div>
 
+{% if signals %}
+<div class="hint">&#9432; Cliquez sur une ligne pour afficher l'ordre d'exécution (QUI / COMMENT / POURQUOI)</div>
+{% endif %}
+
 <div class="container">
   {% if signals %}
   <table>
@@ -208,7 +354,7 @@ footer {
     <tbody>
       {% for s in signals %}
       {% set is_suspect = s.risk_flag == 'SUSPECT_DATA' %}
-      <tr {% if is_suspect %}class="suspect-row"{% endif %}>
+      <tr {% if is_suspect %}class="suspect-row"{% endif %} onclick="openModal({{ loop.index0 }})">
         <td>
           {% if s.sport == 'soccer' %}⚽
           {% elif s.sport == 'tennis' %}🎾
@@ -259,15 +405,89 @@ footer {
   {% endif %}
 </div>
 
-<footer>PREDATOR PAIM v8.0 &nbsp;&middot;&nbsp; Hunter Multi-Sport &nbsp;&middot;&nbsp; ⚽ AH0.0/Totals &nbsp;|&nbsp; 🏀 ML/PS/OU &nbsp;|&nbsp; 🎾 ML/OU</footer>
+<footer>PREDATOR PAIM v8.5 &nbsp;&middot;&nbsp; Hunter Multi-Sport &nbsp;&middot;&nbsp; ⚽ AH0.0/Totals &nbsp;|&nbsp; 🏀 ML/PS/OU &nbsp;|&nbsp; 🎾 ML/OU</footer>
+
+<!-- ── DECISION MODAL ──────────────────────────────────────────────── -->
+<div id="modal-overlay" onclick="closeModal()"></div>
+<div id="modal" role="dialog" aria-modal="true">
+  <div class="modal-hdr">
+    <span class="modal-title">&#9658; ORDRE D'EXÉCUTION PREDATOR</span>
+    <button class="modal-close" onclick="closeModal()">&#10005; FERMER</button>
+  </div>
+
+  <div class="modal-match-bar">
+    <div class="modal-match-name" id="m-match">&mdash;</div>
+    <div class="modal-match-sub" id="m-sub">&mdash;</div>
+  </div>
+
+  <!-- QUI ? -->
+  <div class="modal-section">
+    <div class="modal-section-lbl">&#9632; QUI MISER ?</div>
+    <div id="m-who">&mdash;</div>
+  </div>
+
+  <!-- COMMENT ? -->
+  <div class="modal-section">
+    <div class="modal-section-lbl">&#9632; COMMENT ?</div>
+    <div class="modal-market-row">
+      <div class="modal-odds-box">
+        <div class="modal-odds-lbl">MARCHÉ</div>
+        <div class="modal-odds-val" id="m-market" style="color:var(--blue)">&mdash;</div>
+      </div>
+      <div class="modal-odds-box">
+        <div class="modal-odds-lbl">COTE 1XBET</div>
+        <div class="modal-odds-val" id="m-xbet" style="color:var(--blue)">&mdash;</div>
+      </div>
+      <div class="modal-odds-box">
+        <div class="modal-odds-lbl">PINNACLE (FAIR)</div>
+        <div class="modal-odds-val" id="m-pin" style="color:var(--text)">&mdash;</div>
+      </div>
+    </div>
+    <div class="kelly-row">
+      <span class="kelly-badge" id="m-kelly-badge">&mdash;</span>
+      <span style="color:var(--grey);font-size:10px">de la bankroll (Kelly &times;0.25)</span>
+      <div class="kelly-calc">
+        <span style="color:#444">|</span>
+        <span style="color:var(--grey)">Bankroll:</span>
+        <input id="bankroll-input" type="number" value="1000" min="1" oninput="updateStake()" />
+        <span style="color:var(--grey)">&euro; &rarr;</span>
+        <span id="stake-display">—</span>
+      </div>
+    </div>
+  </div>
+
+  <!-- POURQUOI ? -->
+  <div class="modal-section">
+    <div class="modal-section-lbl">&#9632; POURQUOI ?</div>
+    <div id="m-why">&mdash;</div>
+  </div>
+
+  <!-- Stats bar -->
+  <div class="modal-stats-row">
+    <div class="modal-stat">
+      <div class="modal-stat-val" id="m-edge" style="color:var(--green)">&mdash;</div>
+      <div class="modal-stat-lbl">Edge</div>
+    </div>
+    <div class="modal-stat">
+      <div class="modal-stat-val" id="m-prob" style="color:var(--blue)">&mdash;</div>
+      <div class="modal-stat-lbl">Prob.Sharp</div>
+    </div>
+    <div class="modal-stat">
+      <div class="modal-stat-val" id="m-risk">&mdash;</div>
+      <div class="modal-stat-lbl">Signal</div>
+    </div>
+  </div>
+</div>
 
 <script>
+  // ── Clock ──────────────────────────────────────────────────────────
   (function tick() {
     const d = new Date();
     document.getElementById('clock').textContent = d.toUTCString().slice(0,25) + ' UTC';
     setTimeout(tick, 1000);
   })();
 
+  // ── RUN SCAN ───────────────────────────────────────────────────────
   async function triggerScan() {
     const btn = document.getElementById('scanBtn');
     btn.textContent = '⏳ TRIGGERING…';
@@ -293,6 +513,81 @@ footer {
       setTimeout(() => { btn.textContent = '▶ RUN SCAN'; btn.disabled = false; btn.style.opacity = '1'; }, 4000);
     }
   }
+
+  // ── Signal data (injected by Flask) ───────────────────────────────
+  const SIGNALS = {{ signals | tojson }};
+
+  // ── Kelly stake calculator ─────────────────────────────────────────
+  let _currentKellyPct = 0;
+
+  function _computeKelly(xbet_odd, sharp_prob) {
+    const b = xbet_odd - 1;
+    if (b <= 0 || sharp_prob <= 0) return 0;
+    const kf = (sharp_prob * b - (1 - sharp_prob)) / b;
+    return Math.max(0, kf * 0.25 * 100);
+  }
+
+  function updateStake() {
+    const bankroll = parseFloat(document.getElementById('bankroll-input').value) || 0;
+    const stake = Math.round(bankroll * _currentKellyPct / 100);
+    document.getElementById('stake-display').textContent = stake + ' €';
+  }
+
+  // ── Modal open / close ─────────────────────────────────────────────
+  function openModal(idx) {
+    const s = SIGNALS[idx];
+    if (!s) return;
+
+    const sportEmoji = {soccer:'⚽', basketball:'🏀', tennis:'🎾'}[s.sport] || '🎯';
+
+    // Kelly (use stored value if available, else compute)
+    _currentKellyPct = (s.kelly_pct != null)
+      ? s.kelly_pct
+      : _computeKelly(s.xbet_odd || 0, s.sharp_prob || 0);
+    const kellyStr = _currentKellyPct.toFixed(2) + '%';
+
+    // Selection (stored or fallback to match)
+    const selection = s.selection_name || s.match;
+
+    // Risk colour
+    const riskCol = {HIGH_VALUE: '#00ff41', VALUE: '#ffd700', LOW_VALUE: '#555'}[s.risk_flag] || '#555';
+
+    // Advice (stored or auto-generated)
+    const advice = s.advice || (
+      `Edge +${(s.edge_pct||0).toFixed(1)}% détecté — 1XBet ${(s.xbet_odd||0).toFixed(2)} ` +
+      `vs Pinnacle ${(s.pinnacle_price||0).toFixed(2)}. ` +
+      `Prob.Sharp ${Math.round((s.sharp_prob||0)*100)}%. ` +
+      `1XBet n'a pas encore ajusté sa cote sur ce mouvement Sharp.`
+    );
+
+    document.getElementById('m-match').textContent   = sportEmoji + '  ' + s.match;
+    document.getElementById('m-sub').textContent     = (s.league || '—') + '  ·  ' + (s.sport || '');
+    document.getElementById('m-who').textContent     = selection;
+    document.getElementById('m-market').textContent  = s.market || '—';
+    document.getElementById('m-xbet').textContent    = (s.xbet_odd || 0).toFixed(2);
+    document.getElementById('m-pin').textContent     = s.pinnacle_price ? s.pinnacle_price.toFixed(2) : '—';
+    document.getElementById('m-kelly-badge').textContent = kellyStr;
+    document.getElementById('m-why').textContent     = advice;
+    document.getElementById('m-edge').textContent    = (s.edge_pct > 0 ? '+' : '') + (s.edge_pct||0).toFixed(1) + '%';
+    document.getElementById('m-prob').textContent    = Math.round((s.sharp_prob||0)*100) + '%';
+    document.getElementById('m-risk').textContent    = (s.risk_flag||'').replace(/_/g,' ');
+    document.getElementById('m-risk').style.color    = riskCol;
+
+    updateStake();
+
+    document.getElementById('modal-overlay').style.display = 'block';
+    document.getElementById('modal').style.display         = 'block';
+    document.getElementById('modal').focus();
+  }
+
+  function closeModal() {
+    document.getElementById('modal-overlay').style.display = 'none';
+    document.getElementById('modal').style.display         = 'none';
+  }
+
+  document.addEventListener('keydown', function(e) {
+    if (e.key === 'Escape') closeModal();
+  });
 </script>
 </body>
 </html>
