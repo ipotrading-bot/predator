@@ -13,7 +13,7 @@ import time
 import random
 import requests
 
-from core.paim_engine import SPORT_LABELS
+from core.paim_engine import SPORT_LABELS, strict_team_match
 
 # ── UTC sub-logger (inherits handler from PREDATOR root) ─────────────
 log = logging.getLogger("PREDATOR.harvester")
@@ -197,26 +197,48 @@ def fetch_matches():
     return all_matches
 
 
+def _fuzzy_match_name(ret_name: str, orig_names: list) -> str | None:
+    """Map a Gemini-returned match name back to the original 1XBet name using team fuzzy matching."""
+    if " vs " not in ret_name:
+        return None
+    ret_home, ret_away = [x.strip() for x in ret_name.split(" vs ", 1)]
+    for orig in orig_names:
+        if " vs " not in orig:
+            continue
+        orig_home, orig_away = [x.strip() for x in orig.split(" vs ", 1)]
+        if strict_team_match(ret_home, orig_home) and strict_team_match(ret_away, orig_away):
+            return orig
+    return None
+
+
 def fetch_pinnacle_prices(matches: list) -> dict:
     """
     Sharp source — Gemini 2.0 Flash + Google Search → Pinnacle decimal odds.
+    Falls back to Betfair Exchange per match when Pinnacle line is unavailable.
+    Uses fuzzy team matching to handle 1XBet abbreviation vs Pinnacle full name divergence.
     Returns {match_name: {"1": float, "X": float, "2": float}}.
-    Soccer entries include draw (X); tennis/basketball have X=0.
     """
     api_key = os.environ.get("GEMINI_API_KEY")
     if not api_key or not matches:
         return {}
 
+    from datetime import date
+    today = date.today().isoformat()
+
     names = [m["match"] for m in matches[:25]]
-    match_list = "\n".join(f"- {n}" for n in names)
+    match_list = "\n".join(
+        f"- {m['match']} [{m.get('league', '?')}, {m.get('sport', 'soccer')}]"
+        for m in matches[:25]
+    )
 
     prompt = (
-        f"Use Google Search to find current Pinnacle sportsbook decimal odds for these matches:\n"
-        f"{match_list}\n\n"
-        f"For each match return the latest Pinnacle no-vig odds: "
-        f"1=home win, X=draw (soccer only, else 0), 2=away win.\n"
-        f"Return ONLY a valid JSON array, no extra text:\n"
-        f'[{{"match":"Team A vs Team B","1":2.05,"X":3.35,"2":3.60}}]'
+        f"Today is {today}. Use Google Search to find current decimal odds for each match below.\n"
+        f"Search PINNACLE SPORTS first. If Pinnacle has no line for a match, search BETFAIR EXCHANGE.\n"
+        f"Add a 'source' field: 'Pinnacle' or 'Betfair'.\n\n"
+        f"Matches (name [league, sport]):\n{match_list}\n\n"
+        f"Return ONLY a valid JSON array. Use the exact match name from the list:\n"
+        f'[{{"match":"Team A vs Team B","1":2.05,"X":3.35,"2":3.60,"source":"Pinnacle"}}]\n'
+        f"X=0 for non-soccer. Omit matches with no odds found on either book."
     )
 
     payload = {
@@ -225,37 +247,68 @@ def fetch_pinnacle_prices(matches: list) -> dict:
         "generationConfig": {"temperature": 0.1, "maxOutputTokens": 2048},
     }
 
-    try:
-        r = requests.post(f"{GEMINI_FLASH_URL}?key={api_key}", json=payload, timeout=60)
-        if r.status_code != 200:
-            log.error("Pinnacle/Gemini HTTP %d: %s", r.status_code, r.text[:200])
+    r = None
+    for attempt in range(3):
+        try:
+            r = requests.post(f"{GEMINI_FLASH_URL}?key={api_key}", json=payload, timeout=60)
+        except Exception as e:
+            log.error("Pinnacle/Gemini request error: %s", e)
             return {}
+        if r.status_code == 429:
+            wait = 65 if attempt == 0 else 30
+            log.warning("Pinnacle/Gemini rate limit — waiting %ds (attempt %d)", wait, attempt + 1)
+            time.sleep(wait)
+            r = None
+            continue
+        break
 
+    if r is None or r.status_code != 200:
+        if r is not None:
+            log.error("Pinnacle/Gemini HTTP %d: %s", r.status_code, r.text[:200])
+        return {}
+
+    try:
         parts = r.json().get("candidates", [{}])[0].get("content", {}).get("parts", [])
         text = next((p["text"] for p in reversed(parts) if p.get("text", "").strip()), "")
         text = re.sub(r'```(?:json)?|```', '', text).strip()
-        m = re.search(r'\[[\s\S]*\]', text)
-        if not m:
+        m_arr = re.search(r'\[[\s\S]*\]', text)
+        if not m_arr:
             log.warning("Pinnacle/Gemini: no JSON array in response")
             return {}
 
-        raw = json.loads(m.group())
-        result = {}
-        for item in raw:
-            name = item.get("match", "").strip()
-            if not name:
-                continue
-            result[name] = {
-                "1": _odd(item.get("1")),
-                "X": _odd(item.get("X", 0)),
-                "2": _odd(item.get("2")),
-            }
-        log.info("Pinnacle/Gemini: %d/%d prices received", len(result), len(names))
-        return result
-
+        raw = json.loads(m_arr.group())
     except Exception as e:
-        log.error("Pinnacle/Gemini exception: %s", e)
+        log.error("Pinnacle/Gemini parse exception: %s", e)
         return {}
+
+    names_set = set(names)
+    result = {}
+    for item in raw:
+        ret_name = item.get("match", "").strip()
+        source   = item.get("source", "Pinnacle")
+        if not ret_name:
+            continue
+
+        # Exact match first, then fuzzy fallback
+        matched = ret_name if ret_name in names_set else _fuzzy_match_name(ret_name, names)
+        if not matched:
+            log.debug("Pinnacle/Gemini: no local match for '%s'", ret_name)
+            continue
+
+        odds = {
+            "1": _odd(item.get("1")),
+            "X": _odd(item.get("X", 0)),
+            "2": _odd(item.get("2")),
+        }
+        # 0.5% conservative penalty for non-Pinnacle sources
+        if source.lower() not in ("pinnacle", "pinnacle sports"):
+            odds = {k: round(v * 1.005, 4) if v > 1.01 else v for k, v in odds.items()}
+            log.info("Betfair fallback for %s (+0.5%% penalty)", matched)
+
+        result[matched] = odds
+
+    log.info("Pinnacle/Gemini: %d/%d prices received", len(result), len(names))
+    return result
 
 
 def shin_edge(xbet_odd, pinnacle_price):

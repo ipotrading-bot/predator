@@ -1,29 +1,40 @@
 """
-core/oracle.py — PAIM v7.5 — Gemini + Google Search → Pinnacle fair price + team name
-Soccer:              asks for 1X2 with team names, computes AH 0.0 internally
-Tennis / Basketball: asks for Moneyline with team name
+core/oracle.py — PAIM v7.6 — Gemini + Google Search → Sharp fair price
+Multi-source: Pinnacle → Betfair Exchange → Circa Sports
+Non-Pinnacle sources receive a 0.5% reference price penalty (conservative edge).
 Returns (price: float | None, team_name: str | None)
 """
 import os
 import re
+import time
 import requests
+from datetime import date as _date
 
 from core.math_engine import calc_dnb
 
 GEMINI_URL = "https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash-lite:generateContent"
+
+# Fallback chain: (book_name, edge_penalty_pct)
+# Penalty inflates the reference price → reduces effective edge → more conservative
+_SHARP_BOOKS = [
+    ("Pinnacle Sports",  0.0),   # Primary sharp — no penalty
+    ("Betfair Exchange", 0.5),   # Sharp exchange — 0.5% conservative penalty
+    ("Circa Sports",     0.5),   # Sharp US book — 0.5% penalty
+]
 
 
 def get_pinnacle_price(
     match_name: str,
     sport: str = "soccer",
     api_key: str = None,
+    league: str = "",
+    match_date: str = "",
 ) -> tuple[float | None, str | None]:
     """
-    Returns (pinnacle_fair_price, favorite_team_name).
-    Both may be None on failure.
-
-    Soccer  → AH 0.0 (DNB) price of the Pinnacle favorite.
-    Others  → Moneyline price of the Pinnacle favorite.
+    Returns (sharp_reference_price, favorite_team_name).
+    Tries Pinnacle → Betfair Exchange → Circa Sports in order.
+    Non-Pinnacle prices are inflated by penalty% (reduces effective edge shown to engine).
+    Both may be None on complete failure.
     """
     if not api_key:
         api_key = os.environ.get("GEMINI_API_KEY")
@@ -31,56 +42,91 @@ def get_pinnacle_price(
         print("[Oracle] No GEMINI_API_KEY")
         return None, None
 
+    if not match_date:
+        match_date = _date.today().isoformat()
+
+    context = match_name
+    if league:
+        context += f" ({league})"
+    context += f" — {match_date}"
+
+    for book_name, penalty in _SHARP_BOOKS:
+        price, team = _query_book(context, sport, api_key, book_name)
+        if price and price > 1.01:
+            if penalty > 0:
+                price = round(price * (1 + penalty / 100), 4)
+                print(f"[Oracle] {book_name} fallback for {match_name} (+{penalty}% penalty)")
+            return price, team
+
+    return None, None
+
+
+def _query_book(
+    context: str,
+    sport: str,
+    api_key: str,
+    book_name: str,
+) -> tuple[float | None, str | None]:
+    """Single Gemini call for one sportsbook. Returns (dnb_price, team) or (None, None)."""
     if sport == "soccer":
         prompt = (
-            f"Use Google Search to find Pinnacle Sports current 1X2 odds for: {match_name}\n"
-            f"Return ONLY valid JSON — include both team names:\n"
+            f"Use Google Search to find {book_name} current 1X2 odds for this soccer match:\n"
+            f"{context}\n"
+            f"Include both team names. Return ONLY valid JSON:\n"
             f'{{"home_team":"PSG","home":1.60,"draw":3.80,"away_team":"Lyon","away":9.00}}\n'
-            f'If not found: {{"home":null}}'
+            f'If not found on {book_name}: {{"home":null}}'
         )
     else:
         sport_ctx = {"tennis": "tennis", "basketball": "NBA basketball"}.get(sport, sport)
         prompt = (
-            f"Use Google Search to find Pinnacle Sports current Moneyline odds for this {sport_ctx} match: {match_name}\n"
-            f"Return ONLY valid JSON with the favorite's decimal odd and team name:\n"
+            f"Use Google Search to find {book_name} current Moneyline odds for this {sport_ctx}:\n"
+            f"{context}\n"
+            f"Return ONLY valid JSON with favorite decimal odd and team name:\n"
             f'{{"price":1.85,"team":"FavoriteTeam"}}\n'
-            f'If not found: {{"price":null}}'
+            f'If not found on {book_name}: {{"price":null}}'
         )
 
     payload = {
         "contents": [{"role": "user", "parts": [{"text": prompt}]}],
         "tools": [{"google_search": {}}],
-        "generationConfig": {"temperature": 0.1, "maxOutputTokens": 150},
+        "generationConfig": {"temperature": 0.1, "maxOutputTokens": 200},
     }
 
-    try:
-        import time
-        for attempt in range(2):
-            r = requests.post(f"{GEMINI_URL}?key={api_key}", json=payload, timeout=20)
-            if r.status_code == 429:
-                print(f"[Oracle] Rate limit for {match_name} — waiting 65s")
-                time.sleep(65)
-                continue
-            break
-        if r.status_code != 200:
-            print(f"[Oracle] Gemini error {r.status_code} for {match_name}")
+    r = None
+    for attempt in range(3):
+        try:
+            r = requests.post(f"{GEMINI_URL}?key={api_key}", json=payload, timeout=25)
+        except Exception as e:
+            print(f"[Oracle] Request error ({book_name}): {e}")
             return None, None
+        if r.status_code == 429:
+            wait = 65 if attempt == 0 else 30
+            print(f"[Oracle] Rate limit ({book_name}) — waiting {wait}s")
+            time.sleep(wait)
+            r = None
+            continue
+        break
 
+    if r is None or r.status_code != 200:
+        if r is not None:
+            print(f"[Oracle] HTTP {r.status_code} from Gemini ({book_name})")
+        return None, None
+
+    try:
         parts = r.json().get("candidates", [{}])[0].get("content", {}).get("parts", [])
         text = next((p["text"] for p in reversed(parts) if p.get("text", "").strip()), "")
         text = re.sub(r'```(?:json)?|```', '', text)
-
-        if sport == "soccer":
-            return _parse_soccer(text)
-        return _parse_moneyline(text)
-
     except Exception as e:
-        print(f"[Oracle] Error for {match_name}: {e}")
+        print(f"[Oracle] Parse error ({book_name}): {e}")
         return None, None
+
+    if sport == "soccer":
+        return _parse_soccer(text)
+    return _parse_moneyline(text)
 
 
 def _parse_soccer(text: str) -> tuple[float | None, str | None]:
-    """Extract Pinnacle 1X2 with team names → compute AH 0.0 for the favorite."""
+    """Extract 1X2 odds + team names → compute AH 0.0 for the favorite."""
     m_ht = re.search(r'"home_team"\s*:\s*"([^"]+)"', text)
     m_at = re.search(r'"away_team"\s*:\s*"([^"]+)"', text)
     m_h  = re.search(r'"home"\s*:\s*(\d+\.\d+)', text)
@@ -97,7 +143,7 @@ def _parse_soccer(text: str) -> tuple[float | None, str | None]:
         home_name = m_ht.group(1) if m_ht else ""
         away_name = m_at.group(1) if m_at else ""
 
-        if dnb_h > 1.01 and (dnb_a <= 1.01 or dnb_h <= dnb_a):
+        if dnb_h >= dnb_a and dnb_h > 1.01:
             return (dnb_h, home_name) if home_name else (None, None)
         elif dnb_a > 1.01:
             return (dnb_a, away_name) if away_name else (None, None)

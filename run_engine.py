@@ -17,7 +17,8 @@ from supabase import create_client
 
 from core.harvester import fetch_matches, fetch_pinnacle_prices
 from core.math_engine import to_binary
-from core.paim_engine import compute_alpha, MIN_EDGE
+from core.oracle import get_pinnacle_price
+from core.paim_engine import compute_alpha, MIN_EDGE, strict_team_match
 
 load_dotenv()
 
@@ -126,7 +127,7 @@ def run():
     now     = datetime.now(timezone.utc)
     session = _market_session(now.hour)
     log.info("━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━")
-    log.info("PAIM v7.5 — Guerrilla Mode | Session: %s", session)
+    log.info("PAIM v7.6 — Guerrilla Mode | Session: %s", session)
     log.info("Scan start: %s", now.strftime("%Y-%m-%d %H:%M:%S UTC"))
 
     try:
@@ -151,18 +152,40 @@ def run():
     log.info("%d matchs 1XBet | Requête Pinnacle → Gemini...", len(xbet_matches))
     pinnacle_map = fetch_pinnacle_prices(xbet_matches)
 
-    # Merge: keep only matches where Pinnacle price was found
+    # Merge: batch Pinnacle prices + oracle per-match fallback (max 3 calls)
+    MAX_ORACLE = 3
+    oracle_used = 0
+    no_pin_count = 0
     matches = []
     for m in xbet_matches[:MAX_MATCHES]:
         pin_odds = pinnacle_map.get(m["match"])
-        if not pin_odds:
-            log.info("NO-PIN  | %s", m["match"])
-            continue
-        m["odds_pinnacle"] = pin_odds
-        matches.append(m)
+        if pin_odds:
+            m["odds_pinnacle"] = pin_odds
+            matches.append(m)
+        elif oracle_used < MAX_ORACLE:
+            # Per-match fallback: Pinnacle → Betfair → Circa
+            sport = m.get("sport", "soccer")
+            pin_price, pin_team = get_pinnacle_price(
+                m["match"], sport=sport, league=m.get("league", "")
+            )
+            if pin_price and pin_price > 1.01:
+                m["_oracle_price"] = pin_price
+                m["_oracle_team"]  = pin_team or ""
+                matches.append(m)
+                oracle_used += 1
+                log.info("ORACLE  | %s — %.3f via fallback", m["match"], pin_price)
+            else:
+                no_pin_count += 1
+                log.warning("⚠️ %s ignoré : Échec de découverte du prix Sharp", m["match"])
+        else:
+            no_pin_count += 1
+            log.warning("⚠️ %s ignoré : Échec de découverte du prix Sharp", m["match"])
 
     if not matches:
-        msg = "📡 RECHERCHE D'ALPHA VIA HARVESTER... Pinnacle introuvable sur ces matchs."
+        msg = (
+            f"📡 PREDATOR v7.6: Pinnacle introuvable — "
+            f"{len(xbet_matches)} matchs moissonnés, 0 prix Sharp trouvés."
+        )
         log.warning(msg)
         _telegram(msg)
         if sb:
@@ -186,15 +209,19 @@ def run():
                 log.info("SKIP    | %s %s — AH 0.0 impossible (no draw odd)", emoji, name)
                 continue
 
-            # ── Step 4: Pinnacle fair price — same side ───────────
-            pin_price, _, pin_fav = to_binary(m["odds_pinnacle"], sport, home, away)
+            # ── Step 4: Sharp reference price — same side ────────
+            if "_oracle_price" in m:
+                pin_price = m["_oracle_price"]
+                pin_fav   = m.get("_oracle_team", "")
+            else:
+                pin_price, _, pin_fav = to_binary(m["odds_pinnacle"], sport, home, away)
             if pin_price <= 1.01:
-                log.info("SKIP    | %s %s — Pinnacle price invalid", emoji, name)
+                log.info("SKIP    | %s %s — Sharp price invalid", emoji, name)
                 continue
 
             # ── Step 5: Same favorite on both books? ──────────────
-            if xbet_fav != pin_fav:
-                log.info("SPLIT   | %s %s — 1XBet=%s | Pinnacle=%s", emoji, name, xbet_fav, pin_fav)
+            if not strict_team_match(xbet_fav, pin_fav):
+                log.info("SPLIT   | %s %s — 1XBet=%s | Sharp=%s", emoji, name, xbet_fav, pin_fav)
                 continue
 
             # ── Step 6: Edge computation [1.5% – 15%] ────────────
@@ -229,9 +256,10 @@ def run():
 
     # ── Telegram report ───────────────────────────────────────────────
     elite = [s for s in signals if s["edge_pct"] >= ELITE_EDGE]
+    no_pin_suffix = f" | ⚠️ {no_pin_count} sans prix Sharp" if no_pin_count > 0 else ""
     if elite:
-        msg = f"🎯 *PREDATOR v7.5 — SIGNAUX ELITE* — {now.strftime('%H:%M UTC')} ({session.strip()})\n"
-        msg += f"Scan: {len(matches)} matchs | Elite ≥{ELITE_EDGE}%: {len(elite)}\n\n"
+        msg = f"🎯 *PREDATOR v7.6 — SIGNAUX ELITE* — {now.strftime('%H:%M UTC')} ({session.strip()})\n"
+        msg += f"Scan: {len(matches)} matchs | Elite ≥{ELITE_EDGE}%: {len(elite)}{no_pin_suffix}\n\n"
         for s in elite[:5]:
             e = SPORT_EMOJI.get(s["sport"], "🎯")
             msg += (
@@ -242,8 +270,8 @@ def run():
         _telegram(msg)
     else:
         _telegram(
-            f"✅ PREDATOR v7.5: {now.strftime('%H:%M')} UTC ({session.strip()}) — "
-            f"{len(matches)} matchs | Signaux: {len(signals)} | Elite ≥{ELITE_EDGE}%: 0"
+            f"✅ PREDATOR v7.6: {now.strftime('%H:%M')} UTC ({session.strip()}) — "
+            f"{len(matches)} matchs | Signaux: {len(signals)} | Elite ≥{ELITE_EDGE}%: 0{no_pin_suffix}"
         )
 
     log.info("Done. %d signals | %d elite.", len(signals), len(elite))
