@@ -311,6 +311,103 @@ def fetch_pinnacle_prices(matches: list) -> dict:
     return result
 
 
+def fetch_estimated_prices(matches: list) -> dict:
+    """
+    Tier 3 fallback — Gemini internal knowledge (NO web search).
+    Asks Gemini to estimate fair decimal odds from training data.
+    Applies a 2% conservative margin on all estimated prices.
+    Always returns prices (no 'introuvable') — useful when Odds API quota is exhausted
+    and Gemini Search fails to find real Pinnacle lines.
+    Returns {match_name: {"1": float, "X": float, "2": float}}.
+    """
+    api_key = os.environ.get("GEMINI_API_KEY")
+    if not api_key or not matches:
+        return {}
+
+    from datetime import date
+    today = date.today().isoformat()
+
+    names = [m["match"] for m in matches[:20]]
+    match_list = "\n".join(
+        f"- {m['match']} ({m.get('league', '?')}, {m.get('sport', 'soccer')})"
+        for m in matches[:20]
+    )
+
+    prompt = (
+        f"Today is {today}. You are a professional sports analyst with expertise in "
+        f"football, tennis, and basketball betting markets.\n\n"
+        f"For each match below, estimate the fair decimal odds reflecting the TRUE probability "
+        f"of each outcome. Base this on team quality, head-to-head history, recent form, "
+        f"and typical market pricing for this competition. Be precise — use realistic odds "
+        f"typical of Pinnacle or Betfair closing lines.\n\n"
+        f"Matches:\n{match_list}\n\n"
+        f"IMPORTANT: Do NOT search the web. Use only your training knowledge.\n"
+        f"Return ONLY a valid JSON array:\n"
+        f'[{{"match":"Team A vs Team B","1":2.10,"X":3.40,"2":3.20}}]\n'
+        f"X=0 for tennis/basketball. Include ALL matches from the list."
+    )
+
+    payload = {
+        "contents": [{"role": "user", "parts": [{"text": prompt}]}],
+        "generationConfig": {"temperature": 0.2, "maxOutputTokens": 2048},
+    }
+
+    r = None
+    for attempt in range(3):
+        try:
+            r = requests.post(f"{GEMINI_URL}?key={api_key}", json=payload, timeout=45)
+        except Exception as e:
+            log.error("Estimator/Gemini request error: %s", e)
+            return {}
+        if r.status_code == 429:
+            wait = 65 if attempt == 0 else 30
+            log.warning("Estimator/Gemini rate limit — waiting %ds", wait)
+            time.sleep(wait)
+            r = None
+            continue
+        break
+
+    if r is None or r.status_code != 200:
+        if r is not None:
+            log.error("Estimator/Gemini HTTP %d", r.status_code)
+        return {}
+
+    try:
+        parts = r.json().get("candidates", [{}])[0].get("content", {}).get("parts", [])
+        text = next((p["text"] for p in reversed(parts) if p.get("text", "").strip()), "")
+        text = re.sub(r'```(?:json)?|```', '', text).strip()
+        m_arr = re.search(r'\[[\s\S]*\]', text)
+        if not m_arr:
+            log.warning("Estimator/Gemini: no JSON array in response")
+            return {}
+        raw = json.loads(m_arr.group())
+    except Exception as e:
+        log.error("Estimator/Gemini parse error: %s", e)
+        return {}
+
+    names_set = set(names)
+    result = {}
+    # Conservative margin: inflate estimated prices by 2% (reduces apparent edge)
+    MARGIN = 1.02
+
+    for item in raw:
+        ret_name = item.get("match", "").strip()
+        if not ret_name:
+            continue
+        matched = ret_name if ret_name in names_set else _fuzzy_match_name(ret_name, names)
+        if not matched:
+            continue
+        odds = {
+            "1": round(_odd(item.get("1")) * MARGIN, 4) if _odd(item.get("1")) > 1.01 else 0.0,
+            "X": round(_odd(item.get("X", 0)) * MARGIN, 4) if _odd(item.get("X", 0)) > 1.01 else 0.0,
+            "2": round(_odd(item.get("2")) * MARGIN, 4) if _odd(item.get("2")) > 1.01 else 0.0,
+        }
+        result[matched] = odds
+
+    log.info("Estimator/Gemini: %d/%d estimated prices", len(result), len(names))
+    return result
+
+
 def shin_edge(xbet_odd, pinnacle_price):
     """Legacy — kept for backward compat. Use core.paim_engine.compute_alpha."""
     if not xbet_odd or not pinnacle_price or xbet_odd <= 1.01 or pinnacle_price <= 1.01:

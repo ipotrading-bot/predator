@@ -15,8 +15,9 @@ import requests
 from dotenv import load_dotenv
 from supabase import create_client
 
-from core.harvester import fetch_matches, fetch_pinnacle_prices
+from core.harvester import fetch_matches, fetch_pinnacle_prices, fetch_estimated_prices
 from core.math_engine import to_binary
+from core.odds_api import fetch_odds
 from core.oracle import get_pinnacle_price
 from core.paim_engine import compute_alpha, MIN_EDGE, strict_team_match
 
@@ -137,59 +138,95 @@ def run():
         log.error("Supabase init failed: %s", e)
         sb = None
 
-    # ── Step 1: Soft source — 1XBet via Harvester ────────────────────
-    log.info("📡 RECHERCHE D'ALPHA VIA HARVESTER...")
-    xbet_matches = fetch_matches()
-    if not xbet_matches:
-        msg = "📡 RECHERCHE D'ALPHA VIA HARVESTER... 0 matchs trouvés."
+    # ══ SOURCE PIPELINE — 3 NIVEAUX ══════════════════════════════════
+    # Tier 1: The Odds API  → real 1XBet + Pinnacle, même event (idéal)
+    # Tier 2: Gemini Search → batch Pinnacle via Google Search
+    # Tier 3: Gemini Estim. → probabilités internes, toujours disponible
+
+    matches        = []
+    no_pin_count   = 0
+    sharp_source   = "?"
+
+    # ── Tier 1: The Odds API ──────────────────────────────────────────
+    log.info("⚡ Tier 1 — The Odds API (24h window)...")
+    oddsapi_events = fetch_odds(hours_ahead=24)
+    if oddsapi_events:
+        matches      = oddsapi_events[:MAX_MATCHES]
+        sharp_source = "OddsAPI/Pinnacle"
+        log.info("✅ Tier 1 OK — %d events avec Pinnacle réel", len(matches))
+
+    # ── Tier 2: Gemini + Google Search (fallback si Odds API vide) ────
+    if not matches:
+        log.info("📡 Tier 2 — Harvest 1XBet + Gemini Search Pinnacle...")
+        xbet_matches = fetch_matches()
+        if not xbet_matches:
+            msg = "📡 PREDATOR v7.6: 0 matchs trouvés — 1XBet inaccessible."
+            log.warning(msg)
+            _telegram(msg)
+            if sb:
+                _heartbeat(sb, now, 0, 0)
+            return
+
+        log.info("%d matchs 1XBet | Requête Pinnacle → Gemini Search...", len(xbet_matches))
+        pinnacle_map = fetch_pinnacle_prices(xbet_matches)
+
+        MAX_ORACLE = 3
+        oracle_used = 0
+        for m in xbet_matches[:MAX_MATCHES]:
+            pin_odds = pinnacle_map.get(m["match"])
+            if pin_odds:
+                m["odds_pinnacle"] = pin_odds
+                matches.append(m)
+            elif oracle_used < MAX_ORACLE:
+                sport = m.get("sport", "soccer")
+                pin_price, pin_team = get_pinnacle_price(
+                    m["match"], sport=sport, league=m.get("league", "")
+                )
+                if pin_price and pin_price > 1.01:
+                    m["_oracle_price"] = pin_price
+                    m["_oracle_team"]  = pin_team or ""
+                    matches.append(m)
+                    oracle_used += 1
+                    log.info("ORACLE  | %s — %.3f", m["match"], pin_price)
+                else:
+                    no_pin_count += 1
+                    log.warning("⚠️ %s ignoré : Échec prix Sharp", m["match"])
+            else:
+                no_pin_count += 1
+                log.warning("⚠️ %s ignoré : Échec prix Sharp", m["match"])
+
+        if matches:
+            sharp_source = "Gemini/Pinnacle"
+            log.info("✅ Tier 2 OK — %d matchs avec prix Sharp", len(matches))
+
+    # ── Tier 3: Gemini Estimateur (toujours disponible) ───────────────
+    if not matches:
+        log.info("🧠 Tier 3 — Gemini Estimateur (connaissance interne, marge 2%%)...")
+        xbet_matches = fetch_matches() if not locals().get("xbet_matches") else xbet_matches
+        if not xbet_matches:
+            msg = "📡 PREDATOR v7.6: 0 matchs — toutes sources épuisées."
+            log.warning(msg)
+            _telegram(msg)
+            if sb:
+                _heartbeat(sb, now, 0, 0)
+            return
+        estimated_map = fetch_estimated_prices(xbet_matches)
+        for m in xbet_matches[:MAX_MATCHES]:
+            est_odds = estimated_map.get(m["match"])
+            if est_odds:
+                m["odds_pinnacle"] = est_odds
+                m["_estimated"]    = True
+                matches.append(m)
+        if matches:
+            sharp_source = "Gemini/Estimateur"
+            log.info("✅ Tier 3 OK — %d matchs estimés (non-arbitrage, value)", len(matches))
+
+    if not matches:
+        msg = "📡 PREDATOR v7.6: 0 signaux — toutes sources épuisées."
         log.warning(msg)
         _telegram(msg)
         if sb:
             _heartbeat(sb, now, 0, 0)
-        return
-
-    # ── Step 2: Sharp source — Pinnacle via Gemini 2.0 Flash ─────────
-    log.info("%d matchs 1XBet | Requête Pinnacle → Gemini...", len(xbet_matches))
-    pinnacle_map = fetch_pinnacle_prices(xbet_matches)
-
-    # Merge: batch Pinnacle prices + oracle per-match fallback (max 3 calls)
-    MAX_ORACLE = 3
-    oracle_used = 0
-    no_pin_count = 0
-    matches = []
-    for m in xbet_matches[:MAX_MATCHES]:
-        pin_odds = pinnacle_map.get(m["match"])
-        if pin_odds:
-            m["odds_pinnacle"] = pin_odds
-            matches.append(m)
-        elif oracle_used < MAX_ORACLE:
-            # Per-match fallback: Pinnacle → Betfair → Circa
-            sport = m.get("sport", "soccer")
-            pin_price, pin_team = get_pinnacle_price(
-                m["match"], sport=sport, league=m.get("league", "")
-            )
-            if pin_price and pin_price > 1.01:
-                m["_oracle_price"] = pin_price
-                m["_oracle_team"]  = pin_team or ""
-                matches.append(m)
-                oracle_used += 1
-                log.info("ORACLE  | %s — %.3f via fallback", m["match"], pin_price)
-            else:
-                no_pin_count += 1
-                log.warning("⚠️ %s ignoré : Échec de découverte du prix Sharp", m["match"])
-        else:
-            no_pin_count += 1
-            log.warning("⚠️ %s ignoré : Échec de découverte du prix Sharp", m["match"])
-
-    if not matches:
-        msg = (
-            f"📡 PREDATOR v7.6: Pinnacle introuvable — "
-            f"{len(xbet_matches)} matchs moissonnés, 0 prix Sharp trouvés."
-        )
-        log.warning(msg)
-        _telegram(msg)
-        if sb:
-            _heartbeat(sb, now, len(xbet_matches), 0)
         return
 
     signals = []
@@ -256,10 +293,11 @@ def run():
 
     # ── Telegram report ───────────────────────────────────────────────
     elite = [s for s in signals if s["edge_pct"] >= ELITE_EDGE]
-    no_pin_suffix = f" | ⚠️ {no_pin_count} sans prix Sharp" if no_pin_count > 0 else ""
+    no_pin_suffix = f" | ⚠️ {no_pin_count} sans prix" if no_pin_count > 0 else ""
+    estimated_flag = " _(estimé)_" if sharp_source == "Gemini/Estimateur" else ""
     if elite:
         msg = f"🎯 *PREDATOR v7.6 — SIGNAUX ELITE* — {now.strftime('%H:%M UTC')} ({session.strip()})\n"
-        msg += f"Scan: {len(matches)} matchs | Elite ≥{ELITE_EDGE}%: {len(elite)}{no_pin_suffix}\n\n"
+        msg += f"Source: `{sharp_source}`{estimated_flag} | {len(matches)} matchs | Elite ≥{ELITE_EDGE}%: {len(elite)}{no_pin_suffix}\n\n"
         for s in elite[:5]:
             e = SPORT_EMOJI.get(s["sport"], "🎯")
             msg += (
@@ -271,7 +309,7 @@ def run():
     else:
         _telegram(
             f"✅ PREDATOR v7.6: {now.strftime('%H:%M')} UTC ({session.strip()}) — "
-            f"{len(matches)} matchs | Signaux: {len(signals)} | Elite ≥{ELITE_EDGE}%: 0{no_pin_suffix}"
+            f"[{sharp_source}] {len(matches)} matchs | Signaux: {len(signals)} | Elite: 0{no_pin_suffix}"
         )
 
     log.info("Done. %d signals | %d elite.", len(signals), len(elite))
