@@ -81,26 +81,30 @@ def _telegram(text):
         log.error("Telegram: %s", e)
 
 
-_OPTIONAL_COLS = {"selection_name", "kelly_pct", "advice", "market_key", "sharp_prob", "match_time", "match_id"}
+# Columns confirmed missing in current Supabase schema — strip before every insert
+_SCHEMA_MISSING = {"market_key", "sharp_prob", "match_time", "match_id"}
+# Columns present in DB but truly optional (strip only as last-resort fallback)
+_OPTIONAL_COLS  = {"selection_name", "kelly_pct", "advice"}
 
 
 def _save(sb, signal) -> bool:
     """Delete-then-insert to avoid duplicates. Returns True on success."""
+    # Always strip columns not yet in DB schema
+    payload = {k: v for k, v in signal.items() if k not in _SCHEMA_MISSING}
     try:
         (sb.table("signals").delete()
-           .eq("match",          signal["match"])
-           .eq("market_key",     signal["market_key"])
-           .eq("selection_name", signal["selection_name"])
-           .eq("status",         "active")
+           .eq("match",  payload["match"])
+           .eq("market", payload.get("market", ""))
+           .eq("status", "active")
            .execute())
     except Exception:
         pass  # Non-fatal — insert will still proceed
     try:
-        sb.table("signals").insert(signal).execute()
+        sb.table("signals").insert(payload).execute()
         return True
     except Exception as e:
         if any(c in str(e) for c in _OPTIONAL_COLS):
-            core = {k: v for k, v in signal.items() if k not in _OPTIONAL_COLS}
+            core = {k: v for k, v in payload.items() if k not in _OPTIONAL_COLS}
             try:
                 sb.table("signals").insert(core).execute()
                 return True

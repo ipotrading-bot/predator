@@ -1,5 +1,5 @@
 <!DOCTYPE html>
-<html lang="en">
+<html lang="fr">
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
@@ -8,12 +8,14 @@
 :root {
   --bg:     #050505;
   --bg2:    #0d0d0d;
+  --bg3:    #0a0a0a;
   --border: #1c1c1c;
   --green:  #00ff41;
   --blue:   #00bfff;
   --red:    #ff3b3b;
   --yellow: #ffd700;
   --orange: #ff8c00;
+  --purple: #cc88ff;
   --grey:   #555;
   --text:   #c0c0c0;
   --font:   'Courier New', monospace;
@@ -21,157 +23,262 @@
 * { margin: 0; padding: 0; box-sizing: border-box; }
 body { background: var(--bg); color: var(--text); font-family: var(--font); font-size: 13px; min-height: 100vh; }
 
-header {
-  background: var(--bg2);
+/* ── NAV ── */
+nav {
+  background: #030303;
   border-bottom: 1px solid var(--border);
-  padding: 14px 24px;
+  padding: 0 24px;
   display: flex;
   align-items: center;
   justify-content: space-between;
 }
-.logo { color: var(--green); font-size: 17px; font-weight: bold; letter-spacing: 4px; }
-.tagline { color: var(--grey); font-size: 10px; margin-top: 3px; }
-.doctrine { color: var(--orange); font-size: 10px; letter-spacing: 1px; margin-top: 2px; }
-.clock { color: var(--blue); font-size: 11px; }
+.nav-links { display: flex; }
+.nav-links a {
+  color: var(--grey);
+  text-decoration: none;
+  font-size: 10px;
+  font-weight: bold;
+  letter-spacing: 2px;
+  text-transform: uppercase;
+  padding: 10px 18px;
+  border-right: 1px solid var(--border);
+  transition: color 0.15s;
+}
+.nav-links a:hover { color: var(--text); }
+.nav-links a.active { color: var(--green); border-bottom: 2px solid var(--green); }
+.nav-right { display: flex; align-items: center; gap: 14px; padding: 8px 0; }
 
-.stats {
+/* ── HEADER MINI ── */
+.topbar {
+  background: var(--bg2);
+  border-bottom: 1px solid var(--border);
+  padding: 10px 24px;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+}
+.logo { color: var(--green); font-size: 15px; font-weight: bold; letter-spacing: 4px; }
+.doctrine { color: #333; font-size: 9px; letter-spacing: 1px; margin-top: 2px; }
+.clock { color: var(--blue); font-size: 11px; font-weight: bold; }
+
+/* ── STATS BAR ── */
+.statsbar {
   background: var(--bg2);
   border-bottom: 1px solid var(--border);
   display: flex;
-  gap: 0;
 }
-.stat {
-  flex: 1;
-  text-align: center;
-  padding: 14px 10px;
-  border-right: 1px solid var(--border);
-}
+.stat { flex: 1; text-align: center; padding: 12px 10px; border-right: 1px solid var(--border); }
 .stat:last-child { border-right: none; }
-.stat-val { font-size: 26px; font-weight: bold; }
-.stat-lbl { color: var(--grey); font-size: 9px; text-transform: uppercase; letter-spacing: 1px; margin-top: 4px; }
+.stat-val { font-size: 24px; font-weight: bold; }
+.stat-lbl { color: var(--grey); font-size: 9px; text-transform: uppercase; letter-spacing: 1px; margin-top: 3px; }
 
-.container { padding: 24px; overflow-x: auto; }
-
-table { width: 100%; border-collapse: collapse; min-width: 900px; }
-
-thead th {
-  color: var(--blue);
-  font-size: 10px;
-  letter-spacing: 1px;
-  text-transform: uppercase;
-  padding: 8px 14px;
-  border-bottom: 1px solid var(--border);
-  background: var(--bg2);
-  text-align: left;
-}
-
-tbody tr { border-bottom: 1px solid var(--border); transition: background 0.12s; cursor: pointer; }
-tbody tr:hover { background: #131313; border-left: 2px solid var(--green); }
-tbody tr.suspect-row { border-left: 2px solid var(--orange); }
-td { padding: 11px 14px; vertical-align: middle; }
-
-.match { color: #fff; font-weight: bold; }
-.league { color: var(--grey); font-size: 11px; }
-
-.market-badge {
-  display: inline-block;
-  padding: 1px 7px;
+/* ── SCAN BUTTON ── */
+#scanBtn {
+  background: #001a00;
+  border: 1px solid var(--green);
+  color: var(--green);
+  font-family: var(--font);
   font-size: 10px;
   font-weight: bold;
+  letter-spacing: 2px;
+  padding: 6px 14px;
+  cursor: pointer;
+  text-transform: uppercase;
+  transition: all 0.2s;
+  white-space: nowrap;
+}
+#scanBtn:hover { background: #003300; }
+
+/* ── CONTAINER ── */
+.container { padding: 20px 24px; max-width: 960px; margin: 0 auto; }
+
+/* ── SIGNAL CARD ── */
+.signal-card {
+  background: var(--bg3);
+  border: 1px solid var(--border);
+  border-left: 3px solid var(--border);
+  margin-bottom: 12px;
+  cursor: pointer;
+  transition: border-color 0.15s, background 0.12s;
+}
+.signal-card:hover { background: #0f0f0f; border-left-color: var(--green); }
+.signal-card.high  { border-left-color: var(--green); }
+.signal-card.value { border-left-color: var(--yellow); }
+.signal-card.suspect { border-left-color: var(--orange); }
+
+/* Card header */
+.card-head {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 10px 14px 8px;
+  border-bottom: 1px solid #111;
+  flex-wrap: wrap;
+}
+.card-sport { font-size: 16px; }
+.card-match { color: #fff; font-weight: bold; font-size: 13px; flex: 1; }
+.card-league { color: var(--grey); font-size: 10px; margin-left: 4px; }
+.card-badge {
+  display: inline-block;
+  padding: 2px 8px;
+  font-size: 9px;
+  font-weight: bold;
+  text-transform: uppercase;
   border-radius: 2px;
   letter-spacing: 0.5px;
 }
-.m-ah      { background: #001a00; color: var(--green);  border: 1px solid #003300; }
-.m-ml      { background: #001533; color: var(--blue);   border: 1px solid #003366; }
-.m-spread  { background: #1a1000; color: var(--orange); border: 1px solid #4d3000; }
-.m-total   { background: #0d001a; color: #cc88ff;       border: 1px solid #330066; }
-.m-nba     { background: #1a0000; color: #ff6622;       border: 1px solid #660000; }
-.m-ten     { background: #001a11; color: #00ffaa;       border: 1px solid #004422; }
-.prob-chip {
-  display: inline-block;
-  padding: 1px 5px;
-  font-size: 9px;
-  border-radius: 2px;
-  background: #111;
-  color: #888;
-  border: 1px solid #2a2a2a;
-  margin-left: 4px;
-}
-
-.odd { color: var(--blue); font-weight: bold; }
-.pin { color: var(--text); }
-
-.edge { font-weight: bold; }
-.e-high { color: var(--green); }
-.e-mid  { color: var(--yellow); }
-.e-low  { color: var(--grey); }
-.e-sus  { color: var(--orange); }
-
-.badge {
-  display: inline-block;
-  padding: 2px 9px;
-  font-size: 10px;
-  font-weight: bold;
-  text-transform: uppercase;
-  border-radius: 2px;
-}
 .b-HIGH_VALUE   { background: #002200; color: var(--green);  border: 1px solid #004400; }
 .b-VALUE        { background: #2a2000; color: var(--yellow); border: 1px solid #554000; }
-.b-LOW_VALUE    { background: #111;    color: #888;          border: 1px solid #2a2a2a; }
-.b-LOW          { background: #111;    color: var(--grey);   border: 1px solid #2a2a2a; }
-.b-NO_DATA      { background: #111;    color: #333;          border: 1px solid #222; }
+.b-LOW_VALUE    { background: #111;    color: #666;          border: 1px solid #2a2a2a; }
 .b-SUSPECT_DATA { background: #1a0d00; color: var(--orange); border: 1px solid #4d2800; }
 
-.ts { color: var(--grey); font-size: 11px; }
-
-.hint { color: #333; font-size: 10px; padding: 8px 24px; border-bottom: 1px solid #111; text-align: right; }
-
-.empty {
-  text-align: center;
-  padding: 80px 20px;
+.card-time {
+  font-size: 10px;
   color: var(--grey);
-  line-height: 2;
+  white-space: nowrap;
+  display: flex;
+  align-items: center;
+  gap: 6px;
 }
-.empty-icon { font-size: 40px; color: #1a1a1a; margin-bottom: 12px; }
+.time-match { color: var(--blue); font-weight: bold; }
+.time-urgent { color: var(--orange); font-weight: bold; }
+.countdown { font-size: 9px; }
 
-/* ── SPORT SECTIONS ─────────────────────────────────────────────── */
-.sport-section { margin-bottom: 28px; }
-.sport-header {
-  font-size: 11px;
-  font-weight: bold;
-  letter-spacing: 3px;
+/* Card body */
+.card-body {
+  display: flex;
+  gap: 0;
+  padding: 0;
+}
+
+/* BET section */
+.card-bet {
+  flex: 2;
+  padding: 12px 14px;
+  border-right: 1px solid #111;
+}
+.section-lbl {
+  font-size: 8px;
+  letter-spacing: 2px;
   text-transform: uppercase;
-  color: var(--blue);
-  padding: 8px 0 6px;
-  border-bottom: 1px solid #1a2a1a;
-  margin-bottom: 4px;
+  color: var(--grey);
+  margin-bottom: 5px;
+}
+.bet-team {
+  font-size: 17px;
+  font-weight: bold;
+  color: var(--green);
+  letter-spacing: 1px;
+  text-transform: uppercase;
+}
+.bet-market {
+  font-size: 11px;
+  color: var(--text);
+  margin-top: 3px;
   display: flex;
   align-items: center;
   gap: 8px;
 }
-.sport-header .sport-count {
-  background: #0d1a0d;
-  border: 1px solid #1c3a1c;
-  color: var(--green);
-  font-size: 9px;
-  padding: 1px 7px;
-  border-radius: 2px;
+.bet-odd {
+  color: var(--blue);
+  font-weight: bold;
+  font-size: 14px;
 }
-
-footer {
-  border-top: 1px solid var(--border);
-  padding: 10px 24px;
+.bet-pin {
+  color: var(--grey);
   font-size: 10px;
-  color: #333;
-  text-align: center;
 }
 
-/* ── MODAL ─────────────────────────────────────────────────────────── */
+/* EDGE section */
+.card-edge {
+  flex: 1;
+  padding: 12px 14px;
+  text-align: center;
+  border-right: 1px solid #111;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+}
+.edge-big {
+  font-size: 22px;
+  font-weight: bold;
+}
+.edge-big.high   { color: var(--green); }
+.edge-big.mid    { color: var(--yellow); }
+.edge-big.low    { color: var(--grey); }
+.edge-big.sus    { color: var(--orange); }
+
+/* MISE section */
+.card-mise {
+  flex: 1;
+  padding: 12px 14px;
+  text-align: center;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+}
+.mise-amount {
+  font-size: 20px;
+  font-weight: bold;
+  color: var(--yellow);
+}
+.mise-sub { color: var(--grey); font-size: 9px; margin-top: 3px; }
+
+/* Raison */
+.card-why {
+  padding: 8px 14px;
+  border-top: 1px solid #0f0f0f;
+  font-size: 10px;
+  color: #666;
+  line-height: 1.5;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+}
+.card-why-text { flex: 1; }
+.card-cta {
+  color: var(--green);
+  font-size: 10px;
+  font-weight: bold;
+  letter-spacing: 1px;
+  white-space: nowrap;
+  opacity: 0.7;
+}
+.signal-card:hover .card-cta { opacity: 1; }
+
+/* ── SPORT SEPARATOR ── */
+.sport-sep {
+  font-size: 9px;
+  font-weight: bold;
+  letter-spacing: 3px;
+  text-transform: uppercase;
+  color: #2a2a2a;
+  padding: 6px 0 4px;
+  margin-top: 8px;
+  border-bottom: 1px solid #111;
+  margin-bottom: 8px;
+}
+.sport-sep span { color: var(--blue); }
+
+/* ── EMPTY STATE ── */
+.empty {
+  text-align: center;
+  padding: 80px 20px;
+  color: var(--grey);
+  line-height: 2.2;
+}
+.empty-icon { font-size: 40px; color: #1a1a1a; margin-bottom: 12px; }
+
+/* ── MODAL ── */
 #modal-overlay {
   display: none;
   position: fixed;
   inset: 0;
-  background: rgba(0,0,0,0.85);
+  background: rgba(0,0,0,0.87);
   z-index: 100;
 }
 #modal {
@@ -181,535 +288,530 @@ footer {
   left: 50%;
   transform: translate(-50%, -50%);
   z-index: 101;
-  width: min(620px, 97vw);
-  background: #080808;
+  width: min(600px, 97vw);
+  background: #060606;
   border: 1px solid #1e1e1e;
   border-top: 2px solid var(--green);
   font-family: var(--font);
-  box-shadow: 0 0 60px rgba(0,255,65,0.10);
+  box-shadow: 0 0 60px rgba(0,255,65,0.08);
 }
 .modal-hdr {
   display: flex;
   justify-content: space-between;
   align-items: center;
-  padding: 12px 18px 10px;
+  padding: 11px 18px;
   border-bottom: 1px solid #111;
 }
-.modal-title { color: var(--green); font-size: 11px; font-weight: bold; letter-spacing: 3px; }
+.modal-title { color: var(--green); font-size: 10px; font-weight: bold; letter-spacing: 3px; }
 .modal-close {
   background: none; border: 1px solid #2a2a2a; color: #555;
-  font-family: var(--font); font-size: 13px; cursor: pointer;
+  font-family: var(--font); font-size: 12px; cursor: pointer;
   padding: 2px 10px; transition: all 0.15s;
 }
 .modal-close:hover { border-color: var(--red); color: var(--red); }
 
-.modal-match-bar {
+/* Modal match bar */
+.m-matchbar {
   padding: 10px 18px;
   background: #0a0a0a;
   border-bottom: 1px solid #111;
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 10px;
 }
-.modal-match-name { color: #fff; font-size: 14px; font-weight: bold; }
-.modal-match-sub  { color: var(--grey); font-size: 10px; margin-top: 2px; }
+.m-match-name { color: #fff; font-size: 14px; font-weight: bold; }
+.m-match-sub  { color: var(--grey); font-size: 10px; margin-top: 2px; }
+.m-match-time { text-align: right; font-size: 10px; }
+.m-time-val   { color: var(--blue); font-weight: bold; }
 
-.modal-section { padding: 12px 18px; border-bottom: 1px solid #0f0f0f; }
-.modal-section-lbl {
-  font-size: 9px;
-  letter-spacing: 2px;
-  text-transform: uppercase;
-  color: var(--grey);
-  margin-bottom: 7px;
-}
-
-/* ── SELECTION TEAM ── */
-.modal-team-block { display: flex; align-items: baseline; gap: 12px; flex-wrap: wrap; }
-#m-team-name {
-  font-size: 22px;
-  font-weight: bold;
-  color: var(--green);
-  letter-spacing: 1px;
-  text-transform: uppercase;
-}
-#m-team-context { color: var(--grey); font-size: 11px; }
-#m-market-explain {
-  margin-top: 5px;
-  font-size: 11px;
-  color: #888;
-  border-left: 2px solid #1c1c1c;
-  padding-left: 8px;
+/* Modal stale warning */
+#m-stale-warn {
+  display: none;
+  padding: 8px 18px;
+  background: #120800;
+  border-bottom: 1px solid #3d1c00;
+  font-size: 10px;
+  color: var(--orange);
 }
 
-/* ── BET STEPS ── */
-.bet-steps { display: flex; flex-direction: column; gap: 8px; margin-top: 4px; }
-.bet-step {
+/* Bet target */
+.m-section { padding: 11px 18px; border-bottom: 1px solid #0f0f0f; }
+.m-lbl { font-size: 8px; letter-spacing: 2px; text-transform: uppercase; color: var(--grey); margin-bottom: 6px; }
+.m-team-big { font-size: 20px; font-weight: bold; color: var(--green); letter-spacing: 1px; text-transform: uppercase; }
+.m-market-line { font-size: 11px; color: var(--text); margin-top: 4px; }
+.m-explain { font-size: 10px; color: #666; margin-top: 5px; border-left: 2px solid #1c1c1c; padding-left: 8px; }
+
+/* Steps */
+.steps { display: flex; flex-direction: column; gap: 6px; }
+.step {
   display: flex;
   align-items: center;
   gap: 10px;
-  font-size: 12px;
-  color: var(--text);
   padding: 6px 10px;
   background: #0a0a0a;
   border: 1px solid #141414;
+  font-size: 11px;
 }
-.step-num {
-  color: var(--green);
-  font-weight: bold;
-  font-size: 13px;
-  min-width: 18px;
-}
-.step-val { color: #fff; font-weight: bold; }
-.step-cote { color: var(--blue); font-weight: bold; font-size: 15px; }
-.step-market { color: var(--blue); font-weight: bold; }
-
-/* ── STAKE ROW ── */
-.stake-row {
-  display: flex;
-  align-items: center;
-  gap: 8px;
-  padding: 8px 10px;
+.step-n { color: var(--green); font-weight: bold; min-width: 18px; }
+.step-k { color: var(--grey); }
+.step-v { color: #fff; font-weight: bold; }
+.step-cote { color: var(--blue); font-weight: bold; font-size: 14px; }
+.step.stake-step {
   background: #001500;
-  border: 1px solid #003300;
-  margin-top: 0;
+  border-color: #003300;
 }
-#stake-big {
-  font-size: 26px;
-  font-weight: bold;
-  color: var(--yellow);
-  min-width: 70px;
-}
-.stake-meta { font-size: 10px; color: var(--grey); display: flex; align-items: center; gap: 6px; }
+
+/* Stake row */
+.stake-row { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
+#stake-big { font-size: 24px; font-weight: bold; color: var(--yellow); min-width: 60px; }
+.stake-meta { font-size: 10px; color: var(--grey); display: flex; align-items: center; gap: 5px; }
 #bankroll-input {
   background: #0d0d0d;
   border: 1px solid #2a2a2a;
   color: #fff;
   font-family: var(--font);
   font-size: 11px;
-  padding: 3px 8px;
+  padding: 3px 7px;
   width: 80px;
   text-align: right;
 }
 #bankroll-input:focus { outline: none; border-color: var(--green); }
-#m-kelly-badge { color: var(--green); font-weight: bold; }
 
-/* ── STALE WARN ── */
-#m-stale-warn {
-  display: none;
-  padding: 9px 18px;
-  background: #120800;
-  border-bottom: 1px solid #3d1c00;
-  font-size: 11px;
-  color: var(--orange);
-}
+/* Modal why */
+#m-why { font-size: 10px; color: var(--text); line-height: 1.7; }
 
-#m-why { color: var(--text); font-size: 11px; line-height: 1.7; }
+/* Modal stats */
+.m-statsrow { display: flex; border-top: 1px solid #111; }
+.m-stat { flex: 1; padding: 10px 14px; border-right: 1px solid #111; text-align: center; }
+.m-stat:last-child { border-right: none; }
+.m-stat-val { font-size: 15px; font-weight: bold; }
+.m-stat-lbl { font-size: 9px; color: var(--grey); margin-top: 2px; text-transform: uppercase; letter-spacing: 1px; }
 
-.modal-stats-row {
-  display: flex;
-  gap: 0;
-  border-top: 1px solid #111;
-}
-.modal-stat {
-  flex: 1;
-  padding: 10px 14px;
-  border-right: 1px solid #111;
+footer {
+  border-top: 1px solid var(--border);
+  padding: 10px 24px;
+  font-size: 10px;
+  color: #2a2a2a;
   text-align: center;
 }
-.modal-stat:last-child { border-right: none; }
-.modal-stat-val { font-size: 15px; font-weight: bold; }
-.modal-stat-lbl { font-size: 9px; color: var(--grey); margin-top: 2px; text-transform: uppercase; letter-spacing: 1px; }
 </style>
 </head>
 <body>
 
-<nav style="background:#030303;border-bottom:1px solid var(--border);padding:0 24px;display:flex;">
-  <a href="/" style="color:var(--green);text-decoration:none;font-size:10px;font-weight:bold;letter-spacing:2px;text-transform:uppercase;padding:10px 18px;border-right:1px solid var(--border);border-bottom:2px solid var(--green);">&#9658; DASHBOARD</a>
-  <a href="/ledger" style="color:var(--grey);text-decoration:none;font-size:10px;font-weight:bold;letter-spacing:2px;text-transform:uppercase;padding:10px 18px;border-right:1px solid var(--border);transition:color 0.15s;">&#9660; LEDGER</a>
-  <a href="/audit" style="color:var(--grey);text-decoration:none;font-size:10px;font-weight:bold;letter-spacing:2px;text-transform:uppercase;padding:10px 18px;border-right:1px solid var(--border);transition:color 0.15s;">&#9632; AUDIT CLV</a>
+<nav>
+  <div class="nav-links">
+    <a href="/" class="active">&#9658; DASHBOARD</a>
+    <a href="/ledger">&#9660; LEDGER</a>
+    <a href="/audit">&#9632; AUDIT CLV</a>
+  </div>
+  <div class="nav-right">
+    <div class="clock" id="clock">—</div>
+    <button id="scanBtn" onclick="triggerScan()">&#9654; RUN SCAN</button>
+  </div>
 </nav>
 
-<header>
+<div class="topbar">
   <div>
     <div class="logo">&#9658; PREDATOR PAIM</div>
-    <div class="tagline">v8.5 &middot; Hunter Multi-Sport &middot; The Odds API &rarr; Gemini Oracle &middot; Click signal for details</div>
-    <div class="doctrine">&#9632; Markets: AH 0.0 &nbsp;|&nbsp; NBA/TEN ML &nbsp;|&nbsp; Spreads PS &nbsp;|&nbsp; Over/Under &nbsp;&mdash;&nbsp; Prob.Sharp &ge;52% &nbsp;|&nbsp; Edge [1.5%–15%]</div>
+    <div class="doctrine">&#9632; AH 0.0 &nbsp;|&nbsp; NBA ML &nbsp;|&nbsp; Spreads &nbsp;|&nbsp; Over/Under &nbsp;&mdash;&nbsp; Pinnacle Sharp &rarr; 1XBet</div>
   </div>
-  <div style="display:flex;align-items:center;gap:14px">
-    <div class="clock" id="clock">&mdash;</div>
-    <button id="scanBtn" onclick="triggerScan()" style="
-      background:#001a00;border:1px solid var(--green);color:var(--green);
-      font-family:var(--font);font-size:11px;font-weight:bold;letter-spacing:2px;
-      padding:6px 14px;cursor:pointer;text-transform:uppercase;transition:all 0.2s;
-    ">&#9654; RUN SCAN</button>
-  </div>
-</header>
-
-<div class="stats">
-  <div class="stat">
-    {% set clean = signals | rejectattr('risk_flag', 'equalto', 'SUSPECT_DATA') | list %}
-    <div class="stat-val" style="color:var(--blue)">{{ clean|length }}</div>
-    <div class="stat-lbl">Valid Signals</div>
-  </div>
-  <div class="stat">
-    <div class="stat-val" style="color:var(--green)">
-      {{ clean | selectattr('risk_flag', 'in', ['HIGH_VALUE', 'VALUE']) | list | length }}
-    </div>
-    <div class="stat-lbl">Elite &ge;2.5%</div>
-  </div>
-  <div class="stat">
-    <div class="stat-val" style="color:var(--yellow)">
-      {% set edges = clean | map(attribute='edge_pct') | list %}
-      {% if edges %}{{ "%.1f" | format(edges | max) }}%{% else %}&mdash;{% endif %}
-    </div>
-    <div class="stat-lbl">Best Edge</div>
-  </div>
-  <div class="stat">
-    <div class="stat-val" style="color:var(--grey); font-size:14px">
-      {% if last_scan %}{{ last_scan.at[:16] | replace('T',' ') }}{% elif signals %}{{ signals[0].scanned_at[:16] | replace('T',' ') }}{% else %}&mdash;{% endif %}
-    </div>
-    <div class="stat-lbl">
-      Last Scan (UTC)
-      {% if last_scan %}<br><span style="color:#333;font-size:9px">{{ last_scan.matches }} matchs · {{ last_scan.signals }} signaux</span>{% endif %}
-    </div>
+  <div style="text-align:right;font-size:10px;color:var(--grey)">
+    {% if last_scan %}
+      Dernier scan : <span style="color:var(--text)">{{ last_scan.at[11:16] }} UTC</span><br>
+      {{ last_scan.matches }} matchs &middot; {{ last_scan.signals }} signaux
+    {% endif %}
   </div>
 </div>
 
-{% if signals %}
-<div class="hint">&#9432; Cliquez sur une ligne pour afficher l'ordre d'exécution (QUI / COMMENT / POURQUOI)</div>
-{% endif %}
+<div class="statsbar">
+  {% set clean = signals | rejectattr('risk_flag', 'equalto', 'SUSPECT_DATA') | list %}
+  {% set elites = clean | selectattr('risk_flag', 'in', ['HIGH_VALUE', 'VALUE']) | list %}
+  <div class="stat">
+    <div class="stat-val" style="color:var(--blue)">{{ clean|length }}</div>
+    <div class="stat-lbl">Signaux actifs</div>
+  </div>
+  <div class="stat">
+    <div class="stat-val" style="color:var(--green)">{{ elites|length }}</div>
+    <div class="stat-lbl">&#9650; Edge &ge;2.5%</div>
+  </div>
+  <div class="stat">
+    {% set edges = clean | map(attribute='edge_pct') | list %}
+    <div class="stat-val" style="color:var(--yellow)">
+      {% if edges %}+{{ "%.1f" | format(edges | max) }}%{% else %}&mdash;{% endif %}
+    </div>
+    <div class="stat-lbl">Meilleur edge</div>
+  </div>
+  <div class="stat">
+    {% set all_advice = clean | selectattr('advice') | list %}
+    <div class="stat-val" style="color:var(--grey);font-size:16px">
+      {% if last_scan %}{{ last_scan.at[11:16] }}{% else %}&mdash;{% endif %}
+    </div>
+    <div class="stat-lbl">Scan UTC</div>
+  </div>
+</div>
 
 <div class="container">
   {% if signals %}
 
-  {# ── Sport groups: basketball first (highest alpha), then tennis, soccer ── #}
   {% set sport_config = [
-    ('basketball', '🏀', 'BASKETBALL'),
+    ('basketball', '🏀', 'BASKETBALL / NBA'),
     ('tennis',     '🎾', 'TENNIS'),
     ('soccer',     '⚽', 'SOCCER'),
   ] %}
 
-  {# Build per-sport index — signals passed from server are already sport-sorted #}
-  {% set ns = namespace(modal_idx=0) %}
+  {% set ns = namespace(idx=0) %}
 
   {% for sport_key, emoji, label in sport_config %}
     {% set group = signals | selectattr('sport', 'equalto', sport_key) | list %}
     {% if group %}
-    <div class="sport-section">
-      <div class="sport-header">
-        {{ emoji }} {{ label }}
-        <span class="sport-count">{{ group|length }} signal{{ 's' if group|length > 1 else '' }}</span>
+    <div class="sport-sep">{{ emoji }} <span>{{ label }}</span> &nbsp;·&nbsp; {{ group|length }} signal{{ 's' if group|length > 1 else '' }}</div>
+
+    {% for s in group %}
+    {% set is_suspect = s.risk_flag == 'SUSPECT_DATA' %}
+    {% set is_high    = s.risk_flag == 'HIGH_VALUE' %}
+    {% set is_value   = s.risk_flag == 'VALUE' %}
+    {% set is_low     = s.risk_flag == 'LOW_VALUE' %}
+
+    {# Selection name — fallback to home team #}
+    {% set team = s.selection_name if s.selection_name and ' vs ' not in s.selection_name else (s.match.split(' vs ')[0].strip() if ' vs ' in s.match else s.match) %}
+
+    {# Match time display #}
+    {% set mtime = s.match_time[:16] | replace('T',' ') if s.match_time else '—' %}
+
+    {# Kelly from DB or computed #}
+    {% set kelly = s.kelly_pct if s.kelly_pct else 0 %}
+
+    <div class="signal-card {% if is_high %}high{% elif is_value %}value{% elif is_suspect %}suspect{% endif %}"
+         onclick="openModal({{ ns.idx }})"
+         data-matchtime="{{ s.match_time or '' }}">
+      {% set ns.idx = ns.idx + 1 %}
+
+      <!-- HEAD: match + badge + time -->
+      <div class="card-head">
+        <span class="card-sport">{{ emoji }}</span>
+        <span class="card-match">{{ s.match }}<span class="card-league">&nbsp;·&nbsp;{{ s.league or '—' }}</span></span>
+        <span class="card-badge b-{{ s.risk_flag }}">{{ s.risk_flag | replace('_',' ') }}</span>
+        <span class="card-time">
+          {% if s.match_time %}
+            <span class="time-match">Match {{ mtime }} UTC</span>
+            <span class="countdown" data-ts="{{ s.match_time }}"></span>
+          {% else %}
+            <span style="color:#2a2a2a">Heure &mdash;</span>
+          {% endif %}
+        </span>
       </div>
-      <table>
-        <thead>
-          <tr>
-            <th>Match</th>
-            <th>League</th>
-            <th>Market</th>
-            <th>1XBet</th>
-            <th>Pinnacle</th>
-            <th>Edge %</th>
-            <th>Signal</th>
-            <th>Time (UTC)</th>
-          </tr>
-        </thead>
-        <tbody>
-          {% for s in group %}
-          {% set is_suspect = s.risk_flag == 'SUSPECT_DATA' %}
-          <tr {% if is_suspect %}class="suspect-row"{% endif %} onclick="openModal({{ ns.modal_idx }})">
-            {% set ns.modal_idx = ns.modal_idx + 1 %}
-            <td class="match">{{ s.match }}</td>
-            <td class="league">{{ s.league or '&mdash;' }}</td>
-            <td>
-              {% set mkt = s.market or 'Moneyline' %}
-              {% set mk  = s.market_key or '' %}
-              {% if 'AH' in mkt %}
-                <span class="market-badge m-ah">{{ mkt }}</span>
-              {% elif mk == 'totals' or 'Over' in mkt or 'Under' in mkt %}
-                <span class="market-badge m-total">{{ mkt }}</span>
-              {% elif mk == 'spreads' or 'PS' in mkt or 'Spread' in mkt %}
-                <span class="market-badge m-spread">{{ mkt }}</span>
-              {% elif 'NBA' in mkt %}
-                <span class="market-badge m-nba">{{ mkt }}</span>
-              {% elif 'TEN' in mkt %}
-                <span class="market-badge m-ten">{{ mkt }}</span>
-              {% else %}
-                <span class="market-badge m-ml">{{ mkt }}</span>
-              {% endif %}
-              {% if s.sharp_prob %}
-                <span class="prob-chip">{{ "%.0f" | format(s.sharp_prob * 100) }}%</span>
-              {% endif %}
-            </td>
-            <td class="odd">{{ "%.2f" | format(s.xbet_odd) }}</td>
-            <td class="pin">{{ "%.2f" | format(s.pinnacle_price) if s.pinnacle_price else '&mdash;' }}</td>
-            <td class="edge {% if is_suspect %}e-sus{% elif s.edge_pct >= 5 %}e-high{% elif s.edge_pct >= 2.5 %}e-mid{% else %}e-low{% endif %}">
-              {% if is_suspect %}⚠️ {% endif %}
-              {% if s.edge_pct > 0 %}+{% endif %}{{ "%.1f" | format(s.edge_pct) }}%
-            </td>
-            <td><span class="badge b-{{ s.risk_flag }}">{{ s.risk_flag | replace('_', ' ') }}</span></td>
-            <td class="ts">{{ s.created_at[:16] | replace('T',' ') if s.created_at else '&mdash;' }}</td>
-          </tr>
-          {% endfor %}
-        </tbody>
-      </table>
+
+      <!-- BODY: BET / EDGE / MISE -->
+      <div class="card-body">
+
+        <!-- MISER SUR -->
+        <div class="card-bet">
+          <div class="section-lbl">&#9632; Miser sur</div>
+          <div class="bet-team">{{ team }}</div>
+          <div class="bet-market">
+            <span>{{ s.market or '—' }}</span>
+            <span class="bet-odd">@ {{ "%.2f" | format(s.xbet_odd) }}</span>
+            <span class="bet-pin">fair Pinnacle {{ "%.2f" | format(s.pinnacle_price) if s.pinnacle_price else '—' }}</span>
+          </div>
+        </div>
+
+        <!-- EDGE -->
+        <div class="card-edge">
+          <div class="section-lbl">Edge</div>
+          <div class="edge-big {% if is_suspect %}sus{% elif s.edge_pct >= 5 %}high{% elif s.edge_pct >= 2.5 %}mid{% else %}low{% endif %}">
+            {% if is_suspect %}&#9888; {% endif %}+{{ "%.1f" | format(s.edge_pct) }}%
+          </div>
+          <div style="font-size:9px;color:var(--grey);margin-top:2px">Sharp &gt; Soft</div>
+        </div>
+
+        <!-- MISE -->
+        <div class="card-mise">
+          <div class="section-lbl">Mise / 1 000€</div>
+          {% if kelly > 0 %}
+            <div class="mise-amount">{{ (kelly / 100 * 1000) | round | int }}€</div>
+            <div class="mise-sub">Kelly {{ "%.1f" | format(kelly) }}%</div>
+          {% else %}
+            <div class="mise-amount" style="color:var(--grey)">—</div>
+            <div class="mise-sub">Prob. manquante</div>
+          {% endif %}
+        </div>
+
+      </div>
+
+      <!-- RAISON + CTA -->
+      <div class="card-why">
+        <div class="card-why-text">
+          {% if s.advice %}
+            {{ s.advice[:120] }}{% if s.advice|length > 120 %}…{% endif %}
+          {% else %}
+            1XBet {{ "%.2f" | format(s.xbet_odd) }} &gt; Pinnacle {{ "%.2f" | format(s.pinnacle_price) if s.pinnacle_price else '—' }} — avantage non répercuté.
+          {% endif %}
+        </div>
+        <div class="card-cta">&#9654; Comment parier</div>
+      </div>
+
     </div>
+    {% endfor %}
     {% endif %}
   {% endfor %}
 
   {% else %}
   <div class="empty">
     <div class="empty-icon">&#9634;</div>
-    <div>No signals yet.</div>
-    <div style="font-size:11px">The engine runs every 30 min via GitHub Actions.</div>
-    <div style="font-size:11px; margin-top:6px">Manual trigger: GitHub &rarr; Actions &rarr; <strong>Predator Engine</strong> &rarr; Run workflow</div>
+    <div>Aucun signal actif.</div>
+    <div style="font-size:11px">Le moteur tourne toutes les 30 min via GitHub Actions.</div>
+    <div style="font-size:11px;margin-top:6px">Lancement manuel : bouton <strong>RUN SCAN</strong> en haut à droite.</div>
   </div>
   {% endif %}
 </div>
 
-<footer>PREDATOR PAIM v8.5 &nbsp;&middot;&nbsp; Hunter Multi-Sport &nbsp;&middot;&nbsp; ⚽ AH0.0/Totals &nbsp;|&nbsp; 🏀 ML/PS/OU &nbsp;|&nbsp; 🎾 ML/OU</footer>
+<footer>PREDATOR PAIM v8.5 &nbsp;&middot;&nbsp; ⚽ AH 0.0 &nbsp;|&nbsp; 🏀 ML/PS/OU &nbsp;|&nbsp; 🎾 ML &nbsp;&middot;&nbsp; Sharp Lead-Lag via OddsAPI/Pinnacle</footer>
 
-<!-- ── DECISION MODAL ──────────────────────────────────────────────── -->
+<!-- ── MODAL EXÉCUTION 1XBET ── -->
 <div id="modal-overlay" onclick="closeModal()"></div>
 <div id="modal" role="dialog" aria-modal="true">
   <div class="modal-hdr">
-    <span class="modal-title">&#9658; ORDRE D'EXÉCUTION PREDATOR</span>
+    <span class="modal-title">&#9658; COMMENT PLACER LE PARI</span>
     <button class="modal-close" onclick="closeModal()">&#10005; FERMER</button>
   </div>
 
-  <div class="modal-match-bar">
-    <div class="modal-match-name" id="m-match">&mdash;</div>
-    <div class="modal-match-sub" id="m-sub">&mdash;</div>
+  <!-- Match info -->
+  <div class="m-matchbar">
+    <div>
+      <div class="m-match-name" id="m-match">—</div>
+      <div class="m-match-sub" id="m-sub">—</div>
+    </div>
+    <div class="m-match-time">
+      <div style="color:var(--grey);font-size:9px;letter-spacing:1px">MATCH</div>
+      <div class="m-time-val" id="m-time">—</div>
+      <div id="m-countdown" style="font-size:9px;color:var(--grey)"></div>
+    </div>
   </div>
 
-  <!-- Signal obsolète (sharp_prob=0) -->
-  <div id="m-stale-warn">
-    &#9888;&nbsp; Signal obsolète — probabilité non calculée. Lancez un <strong>RUN SCAN</strong> pour des mises correctes.
-  </div>
+  <div id="m-stale-warn">&#9888;&nbsp; Kelly non calculé — relancez un scan pour une mise correcte.</div>
 
   <!-- 1 — MISER SUR -->
-  <div class="modal-section">
-    <div class="modal-section-lbl">&#9632; MISER SUR</div>
-    <div class="modal-team-block">
-      <div id="m-team-name">&mdash;</div>
-      <div id="m-team-context">&mdash;</div>
-    </div>
-    <div id="m-market-explain">&mdash;</div>
+  <div class="m-section">
+    <div class="m-lbl">&#9658; Miser sur</div>
+    <div class="m-team-big" id="m-team">—</div>
+    <div class="m-market-line" id="m-market-line">—</div>
+    <div class="m-explain" id="m-explain">—</div>
   </div>
 
   <!-- 2 — ÉTAPES 1XBET -->
-  <div class="modal-section">
-    <div class="modal-section-lbl">&#9632; COMMENT MISER SUR 1XBET</div>
-    <div class="bet-steps">
-      <div class="bet-step">
-        <span class="step-num">①</span>
-        <span style="color:var(--grey)">Recherche :</span>
-        <span class="step-val" id="m-step-match">&mdash;</span>
+  <div class="m-section">
+    <div class="m-lbl">&#9658; Étapes sur 1XBet</div>
+    <div class="steps">
+      <div class="step">
+        <span class="step-n">①</span>
+        <span class="step-k">Chercher :</span>
+        <span class="step-v" id="s-match">—</span>
       </div>
-      <div class="bet-step">
-        <span class="step-num">②</span>
-        <span style="color:var(--grey)">Marché :</span>
-        <span class="step-market" id="m-step-market">&mdash;</span>
+      <div class="step">
+        <span class="step-n">②</span>
+        <span class="step-k">Marché :</span>
+        <span class="step-v" id="s-market">—</span>
       </div>
-      <div class="bet-step">
-        <span class="step-num">③</span>
-        <span style="color:var(--grey)">Sélection :</span>
-        <span class="step-val" id="m-step-team">&mdash;</span>
+      <div class="step">
+        <span class="step-n">③</span>
+        <span class="step-k">Sélectionner :</span>
+        <span class="step-v" id="s-team">—</span>
         <span style="color:#444">&nbsp;@&nbsp;</span>
-        <span class="step-cote" id="m-step-cote">&mdash;</span>
-        <span style="color:#555;font-size:10px;margin-left:8px">(fair Pinnacle : <span id="m-step-pin">&mdash;</span>)</span>
+        <span class="step-cote" id="s-cote">—</span>
+        <span style="color:#444;font-size:10px">&nbsp;(Pinnacle : <span id="s-pin">—</span>)</span>
       </div>
-      <div class="bet-step stake-row">
-        <span class="step-num">④</span>
-        <span style="color:var(--grey)">Mise :</span>
-        <span id="stake-big">— €</span>
-        <div class="stake-meta">
-          <span id="m-kelly-badge">&mdash;</span>
-          <span style="color:#333">|</span>
-          <span>Bankroll :</span>
-          <input id="bankroll-input" type="number" value="1000" min="1" oninput="updateStake()" />
-          <span>&euro;</span>
+      <div class="step stake-step">
+        <span class="step-n">④</span>
+        <span class="step-k">Mise :</span>
+        <div class="stake-row">
+          <span id="stake-big">— €</span>
+          <div class="stake-meta">
+            Bankroll :
+            <input id="bankroll-input" type="number" value="1000" min="1" oninput="updateStake()" />€
+            &nbsp;<span id="m-kelly-pct" style="color:var(--green)">—</span>
+          </div>
         </div>
       </div>
     </div>
   </div>
 
-  <!-- 3 — LOGIQUE -->
-  <div class="modal-section">
-    <div class="modal-section-lbl">&#9632; LOGIQUE DU SIGNAL</div>
-    <div id="m-why">&mdash;</div>
+  <!-- 3 — POURQUOI -->
+  <div class="m-section">
+    <div class="m-lbl">&#9658; Pourquoi ce signal ?</div>
+    <div id="m-why">—</div>
   </div>
 
-  <!-- Stats bar -->
-  <div class="modal-stats-row">
-    <div class="modal-stat">
-      <div class="modal-stat-val" id="m-edge" style="color:var(--green)">&mdash;</div>
-      <div class="modal-stat-lbl">Edge</div>
+  <!-- Stats -->
+  <div class="m-statsrow">
+    <div class="m-stat">
+      <div class="m-stat-val" id="m-edge" style="color:var(--green)">—</div>
+      <div class="m-stat-lbl">Edge</div>
     </div>
-    <div class="modal-stat">
-      <div class="modal-stat-val" id="m-prob" style="color:var(--blue)">&mdash;</div>
-      <div class="modal-stat-lbl">Prob.Sharp</div>
+    <div class="m-stat">
+      <div class="m-stat-val" id="m-pin-price" style="color:var(--blue)">—</div>
+      <div class="m-stat-lbl">Pinnacle (fair)</div>
     </div>
-    <div class="modal-stat">
-      <div class="modal-stat-val" id="m-risk">&mdash;</div>
-      <div class="modal-stat-lbl">Signal</div>
+    <div class="m-stat">
+      <div class="m-stat-val" id="m-risk">—</div>
+      <div class="m-stat-lbl">Signal</div>
     </div>
   </div>
 </div>
 
 <script>
-  // ── Clock ──────────────────────────────────────────────────────────
-  (function tick() {
-    const d = new Date();
-    document.getElementById('clock').textContent = d.toUTCString().slice(0,25) + ' UTC';
-    setTimeout(tick, 1000);
-  })();
+// ── Clock UTC ──────────────────────────────────────────────────────
+(function tick() {
+  const d = new Date();
+  document.getElementById('clock').textContent = d.toISOString().slice(0,16).replace('T',' ') + ' UTC';
+  setTimeout(tick, 1000);
+})();
 
-  // ── RUN SCAN ───────────────────────────────────────────────────────
-  async function triggerScan() {
-    const btn = document.getElementById('scanBtn');
-    btn.textContent = '⏳ TRIGGERING…';
-    btn.disabled = true;
-    btn.style.opacity = '0.5';
-    try {
-      const res = await fetch('/api/scan', { method: 'POST' });
-      const data = await res.json();
-      if (res.ok) {
-        btn.textContent = '✓ SCAN LAUNCHED';
-        btn.style.color = '#00ff41';
-        btn.style.borderColor = '#00ff41';
-        setTimeout(() => { btn.textContent = '▶ RUN SCAN'; btn.disabled = false; btn.style.opacity = '1'; }, 5000);
-      } else {
-        btn.textContent = '✗ ERROR';
-        btn.style.color = 'var(--red)';
-        btn.style.borderColor = 'var(--red)';
-        console.error(data);
-        setTimeout(() => { btn.textContent = '▶ RUN SCAN'; btn.disabled = false; btn.style.opacity = '1'; btn.style.color = 'var(--green)'; btn.style.borderColor = 'var(--green)'; }, 4000);
+// ── Countdown util ────────────────────────────────────────────────
+function _countdown(isoStr) {
+  if (!isoStr) return null;
+  const diff = new Date(isoStr) - Date.now();
+  if (diff <= 0) return 'passé';
+  const h = Math.floor(diff / 3600000);
+  const m = Math.floor((diff % 3600000) / 60000);
+  if (h === 0) return `dans ${m}min`;
+  if (h < 24)  return `dans ${h}h${m > 0 ? m + 'min' : ''}`;
+  const d = Math.floor(h / 24);
+  return `dans ${d}j ${h % 24}h`;
+}
+
+// ── Live countdowns on cards ──────────────────────────────────────
+(function updateCountdowns() {
+  document.querySelectorAll('.countdown[data-ts]').forEach(el => {
+    const r = _countdown(el.dataset.ts);
+    if (r) {
+      el.textContent = '· ' + r;
+      if (r.startsWith('dans') && r.includes('min') && !r.includes('h')) {
+        el.style.color = 'var(--orange)';
+        el.style.fontWeight = 'bold';
       }
-    } catch(e) {
-      btn.textContent = '✗ NETWORK ERROR';
-      setTimeout(() => { btn.textContent = '▶ RUN SCAN'; btn.disabled = false; btn.style.opacity = '1'; }, 4000);
     }
-  }
+  });
+  setTimeout(updateCountdowns, 30000);
+})();
 
-  // ── Signal data (injected by Flask) ───────────────────────────────
-  const SIGNALS = {{ signals | tojson }};
+// ── Signals data ──────────────────────────────────────────────────
+const SIGNALS = {{ signals | tojson }};
+let _kellyPct = 0;
 
-  // ── Kelly calculator ───────────────────────────────────────────────
-  let _currentKellyPct = 0;
+function _computeKelly(odd, kellyPctDb) {
+  if (kellyPctDb > 0) return kellyPctDb;
+  return 0;
+}
 
-  function _computeKelly(xbet_odd, sharp_prob) {
-    const b = xbet_odd - 1;
-    if (b <= 0 || sharp_prob <= 0) return 0;
-    return Math.max(0, ((sharp_prob * b - (1 - sharp_prob)) / b) * 0.25 * 100);
-  }
+function updateStake() {
+  const br = parseFloat(document.getElementById('bankroll-input').value) || 0;
+  const stake = Math.round(br * _kellyPct / 100);
+  document.getElementById('stake-big').textContent = stake > 0 ? stake + ' €' : '— €';
+}
 
-  function updateStake() {
-    const bankroll = parseFloat(document.getElementById('bankroll-input').value) || 0;
-    const stake = Math.round(bankroll * _currentKellyPct / 100);
-    document.getElementById('stake-big').textContent = stake + ' €';
-  }
+function _marketFor1xbet(market, sport) {
+  if (!market) return 'Voir section Handicap / Total';
+  if (market.includes('AH')) return 'Asian Handicap → ligne "0" (Draw No Bet)';
+  if (market.includes('NBA ML') || market.includes('TEN ML')) return 'Résultat du match → Moneyline';
+  if (market.includes('Over') || market.includes('Under')) return 'Totaux → Over/Under';
+  if (market.includes('PS')) return 'Handicap asiatique → Point Spread';
+  return market;
+}
 
-  // ── Market label for 1XBet instructions ───────────────────────────
-  function _1xbetMarket(mkt_key, sport, mkt_label) {
-    if (mkt_key === 'h2h' && sport === 'soccer')
-      return 'Asian Handicap → ligne "0" (= AH 0.0 / Draw No Bet)';
-    if (mkt_key === 'h2h')
-      return 'Résultat du match → Moneyline (1×2)';
-    if (mkt_key === 'totals')
-      return 'Total → ' + (mkt_label || 'Over/Under');
-    if (mkt_key === 'spreads')
-      return 'Handicap → ' + (mkt_label || 'Point Spread');
-    return mkt_label || 'Voir section Handicap / Total';
-  }
+function _explainMarket(market, sport) {
+  if (!market) return '';
+  if (market.includes('AH')) return 'AH 0.0 : victoire → gagné · nul → remboursé · défaite → perdu';
+  if (sport === 'basketball') return 'Moneyline : victoire directe de l\'équipe sélectionnée';
+  if (sport === 'tennis')     return 'Moneyline : victoire directe du joueur sélectionné';
+  if (market.includes('Over'))  return 'Over : le total de buts/points dépasse la ligne';
+  if (market.includes('Under')) return 'Under : le total de buts/points est inférieur à la ligne';
+  if (market.includes('PS'))    return 'Spread : l\'équipe gagne avec la marge du handicap';
+  return '';
+}
 
-  function _marketExplain(mkt_key, sport) {
-    if (mkt_key === 'h2h' && sport === 'soccer')
-      return 'AH 0.0 : équipe gagne → gagné · nul → remboursé · défaite → perdu';
-    if (mkt_key === 'h2h' && sport === 'basketball')
-      return 'Moneyline : victoire directe de l\'équipe sélectionnée';
-    if (mkt_key === 'h2h' && sport === 'tennis')
-      return 'Moneyline : victoire directe du joueur sélectionné';
-    if (mkt_key === 'totals')
-      return 'Total buts/points — Over si le score dépasse la ligne, Under sinon';
-    if (mkt_key === 'spreads')
-      return 'Handicap — l\'équipe doit gagner avec la marge indiquée';
-    return '';
-  }
+// ── Open modal ───────────────────────────────────────────────────
+function openModal(idx) {
+  const s = SIGNALS[idx];
+  if (!s) return;
 
-  // ── Modal open / close ─────────────────────────────────────────────
-  function openModal(idx) {
-    const s = SIGNALS[idx];
-    if (!s) return;
+  const emoji = {soccer:'⚽', basketball:'🏀', tennis:'🎾'}[s.sport] || '🎯';
+  const team  = (s.selection_name && !s.selection_name.includes(' vs '))
+    ? s.selection_name
+    : (s.match && s.match.includes(' vs ') ? s.match.split(' vs ')[0].trim() : s.match);
 
-    const sportEmoji = {soccer:'⚽', basketball:'🏀', tennis:'🎾'}[s.sport] || '🎯';
-    const isStale    = !(s.sharp_prob > 0);
+  _kellyPct = s.kelly_pct || 0;
+  const isStale = (_kellyPct === 0);
 
-    // Kelly
-    _currentKellyPct = (s.kelly_pct != null && s.kelly_pct > 0)
-      ? s.kelly_pct
-      : _computeKelly(s.xbet_odd || 0, s.sharp_prob || 0);
+  const mtime = s.match_time ? s.match_time.slice(0,16).replace('T',' ') + ' UTC' : '—';
+  const cd    = s.match_time ? _countdown(s.match_time) : null;
 
-    // Selection name — if it's the full match (old signal), use best-effort extraction
-    let teamName = (s.selection_name && !s.selection_name.includes(' vs '))
-      ? s.selection_name
-      : null;
-    // For old soccer signals: home team is usually the one with lower AH 0.0 odd
-    if (!teamName && s.match && s.match.includes(' vs ')) {
-      const parts = s.match.split(' vs ');
-      teamName = parts[0].trim();  // default to home — matches 80% of soccer AH 0.0
+  const riskCol = {HIGH_VALUE:'#00ff41', VALUE:'#ffd700', LOW_VALUE:'#555', SUSPECT_DATA:'#ff8c00'}[s.risk_flag] || '#555';
+
+  const advice = s.advice || (
+    `Edge +${(s.edge_pct||0).toFixed(1)}% — 1XBet ${(s.xbet_odd||0).toFixed(2)} ` +
+    `vs Pinnacle ${(s.pinnacle_price||0).toFixed(2)}. ` +
+    `1XBet n'a pas encore ajusté sa cote sur ce mouvement Sharp.`
+  );
+
+  // Fill modal
+  document.getElementById('m-match').textContent     = emoji + '  ' + s.match;
+  document.getElementById('m-sub').textContent       = (s.league || '—') + '  ·  ' + (s.sport || '');
+  document.getElementById('m-time').textContent      = mtime;
+  document.getElementById('m-countdown').textContent = cd || '';
+  document.getElementById('m-stale-warn').style.display = isStale ? 'block' : 'none';
+
+  document.getElementById('m-team').textContent        = team;
+  document.getElementById('m-market-line').textContent  = (s.market || '—') + '  ·  Cote ' + (s.xbet_odd||0).toFixed(2);
+  document.getElementById('m-explain').textContent      = _explainMarket(s.market, s.sport);
+
+  document.getElementById('s-match').textContent  = s.match;
+  document.getElementById('s-market').textContent = _marketFor1xbet(s.market, s.sport);
+  document.getElementById('s-team').textContent   = team;
+  document.getElementById('s-cote').textContent   = (s.xbet_odd||0).toFixed(2);
+  document.getElementById('s-pin').textContent    = s.pinnacle_price ? s.pinnacle_price.toFixed(2) : '—';
+  document.getElementById('m-kelly-pct').textContent = _kellyPct > 0 ? _kellyPct.toFixed(1) + '% bankroll' : '(Kelly non dispo)';
+
+  document.getElementById('m-why').textContent = advice;
+
+  document.getElementById('m-edge').textContent = (s.edge_pct > 0 ? '+' : '') + (s.edge_pct||0).toFixed(1) + '%';
+  document.getElementById('m-pin-price').textContent = s.pinnacle_price ? s.pinnacle_price.toFixed(2) : '—';
+  document.getElementById('m-risk').textContent  = (s.risk_flag||'').replace(/_/g,' ');
+  document.getElementById('m-risk').style.color  = riskCol;
+
+  updateStake();
+  document.getElementById('modal-overlay').style.display = 'block';
+  document.getElementById('modal').style.display         = 'block';
+}
+
+function closeModal() {
+  document.getElementById('modal-overlay').style.display = 'none';
+  document.getElementById('modal').style.display         = 'none';
+}
+document.addEventListener('keydown', e => { if (e.key === 'Escape') closeModal(); });
+
+// ── RUN SCAN ─────────────────────────────────────────────────────
+async function triggerScan() {
+  const btn = document.getElementById('scanBtn');
+  btn.textContent = '⏳ LANCEMENT…';
+  btn.disabled = true;
+  btn.style.opacity = '0.5';
+  try {
+    const res = await fetch('/api/scan', { method: 'POST' });
+    const data = await res.json();
+    if (res.ok) {
+      btn.textContent = '✓ SCAN LANCÉ';
+      setTimeout(() => { btn.textContent = '▶ RUN SCAN'; btn.disabled = false; btn.style.opacity = '1'; }, 5000);
+    } else {
+      btn.textContent = '✗ ERREUR';
+      btn.style.color = 'var(--red)';
+      setTimeout(() => { btn.textContent = '▶ RUN SCAN'; btn.disabled = false; btn.style.opacity = '1'; btn.style.color = 'var(--green)'; }, 4000);
     }
-
-    // Market context string
-    const mktKey     = s.market_key || 'h2h';
-    const mktExplain = _marketExplain(mktKey, s.sport);
-    const xbetMkt    = _1xbetMarket(mktKey, s.sport, s.market);
-
-    // Risk colour
-    const riskCol = {HIGH_VALUE:'#00ff41', VALUE:'#ffd700', LOW_VALUE:'#555'}[s.risk_flag] || '#555';
-
-    // Advice
-    const advice = s.advice || (
-      `Edge +${(s.edge_pct||0).toFixed(1)}% — 1XBet ${(s.xbet_odd||0).toFixed(2)} ` +
-      `vs Pinnacle (fair) ${(s.pinnacle_price||0).toFixed(2)}. ` +
-      `1XBet n'a pas encore ajusté sa cote sur ce mouvement Sharp.`
-    );
-
-    // ── Remplir le modal ───────────────────────────────────────────
-    document.getElementById('m-match').textContent      = sportEmoji + '  ' + s.match;
-    document.getElementById('m-sub').textContent        = (s.league || '—') + '  ·  ' + (s.sport || '');
-    document.getElementById('m-stale-warn').style.display = isStale ? 'block' : 'none';
-
-    // Section 1 — MISER SUR
-    document.getElementById('m-team-name').textContent   = teamName || s.match;
-    document.getElementById('m-team-context').textContent = s.market || '—';
-    document.getElementById('m-market-explain').textContent = mktExplain;
-
-    // Section 2 — ÉTAPES 1XBET
-    document.getElementById('m-step-match').textContent  = s.match;
-    document.getElementById('m-step-market').textContent = xbetMkt;
-    document.getElementById('m-step-team').textContent   = teamName || '—';
-    document.getElementById('m-step-cote').textContent   = (s.xbet_odd || 0).toFixed(2);
-    document.getElementById('m-step-pin').textContent    = s.pinnacle_price ? s.pinnacle_price.toFixed(2) : '—';
-    document.getElementById('m-kelly-badge').textContent = _currentKellyPct.toFixed(2) + '% bankroll';
-
-    // Section 3 — LOGIQUE
-    document.getElementById('m-why').textContent = advice;
-
-    // Stats
-    document.getElementById('m-edge').textContent  = (s.edge_pct > 0 ? '+' : '') + (s.edge_pct||0).toFixed(1) + '%';
-    document.getElementById('m-prob').textContent  = s.sharp_prob > 0 ? Math.round(s.sharp_prob * 100) + '%' : 'N/A';
-    document.getElementById('m-risk').textContent  = (s.risk_flag||'').replace(/_/g,' ');
-    document.getElementById('m-risk').style.color  = riskCol;
-
-    updateStake();
-    document.getElementById('modal-overlay').style.display = 'block';
-    document.getElementById('modal').style.display         = 'block';
-    document.getElementById('modal').focus();
+  } catch(e) {
+    btn.textContent = '✗ RÉSEAU';
+    setTimeout(() => { btn.textContent = '▶ RUN SCAN'; btn.disabled = false; btn.style.opacity = '1'; }, 4000);
   }
-
-  function closeModal() {
-    document.getElementById('modal-overlay').style.display = 'none';
-    document.getElementById('modal').style.display         = 'none';
-  }
-
-  document.addEventListener('keydown', e => { if (e.key === 'Escape') closeModal(); });
+}
 </script>
 </body>
 </html>
