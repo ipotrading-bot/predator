@@ -20,6 +20,14 @@ _template_dir = os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", "
 app = Flask(__name__, template_folder=_template_dir)
 
 
+@app.after_request
+def no_cache(response):
+    response.headers["Cache-Control"] = "no-cache, no-store, must-revalidate"
+    response.headers["Pragma"]        = "no-cache"
+    response.headers["Expires"]       = "0"
+    return response
+
+
 def _db():
     url = os.environ.get("SUPABASE_URL")
     key = os.environ.get("SUPABASE_KEY")
@@ -50,11 +58,12 @@ def dashboard():
         if sb:
             res = sb.table("signals").select("*").order("created_at", desc=True).limit(50).execute()
             raw = res.data or []
-            # Sort: basketball → tennis → soccer, then by edge desc within each sport
+            # Sort: sport priority → match_time asc (soonest first) → edge desc
             signals = sorted(
                 raw,
                 key=lambda s: (
                     _DASH_SPORT_ORDER.get(s.get("sport", ""), 3),
+                    s.get("match_time") or "9999",
                     -(s.get("edge_pct") or 0),
                 ),
             )

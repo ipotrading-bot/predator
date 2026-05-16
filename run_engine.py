@@ -84,19 +84,31 @@ def _telegram(text):
 _OPTIONAL_COLS = {"selection_name", "kelly_pct", "advice"}
 
 
-def _save(sb, signal):
+def _save(sb, signal) -> bool:
+    """Delete-then-insert to avoid duplicates. Returns True on success."""
+    try:
+        (sb.table("signals").delete()
+           .eq("match",          signal["match"])
+           .eq("market_key",     signal["market_key"])
+           .eq("selection_name", signal["selection_name"])
+           .eq("status",         "active")
+           .execute())
+    except Exception:
+        pass  # Non-fatal — insert will still proceed
     try:
         sb.table("signals").insert(signal).execute()
+        return True
     except Exception as e:
-        # Retry without new optional columns if DB schema not yet migrated
         if any(c in str(e) for c in _OPTIONAL_COLS):
             core = {k: v for k, v in signal.items() if k not in _OPTIONAL_COLS}
             try:
                 sb.table("signals").insert(core).execute()
+                return True
             except Exception as e2:
                 log.error("Supabase insert: %s", e2)
         else:
             log.error("Supabase insert: %s", e)
+        return False
 
 
 def _heartbeat(sb, scan_time: datetime, matches: int, signals: int):
@@ -115,7 +127,21 @@ def _heartbeat(sb, scan_time: datetime, matches: int, signals: int):
 
 
 def _purge_old_signals(sb):
-    # Age-based purge — keep last 48h only
+    now_iso = datetime.now(timezone.utc).isoformat()
+
+    # ── Clean Before Scan — matches already started or status=pending ──
+    try:
+        sb.table("signals").delete().eq("status", "pending").execute()
+        log.info("Purged: status=pending")
+    except Exception as e:
+        log.error("Supabase purge (pending): %s", e)
+    try:
+        sb.table("signals").delete().eq("status", "active").lt("match_time", now_iso).execute()
+        log.info("Purged: active signals with match_time in the past")
+    except Exception as e:
+        log.error("Supabase purge (past match_time): %s", e)
+
+    # ── Age-based purge — keep last 48h only ──────────────────────────
     try:
         cutoff = (datetime.now(timezone.utc) - timedelta(hours=48)).isoformat()
         sb.table("signals").delete().lt("created_at", cutoff).execute()
@@ -124,10 +150,10 @@ def _purge_old_signals(sb):
         log.error("Supabase purge (age): %s", e)
 
     purge_rules = [
-        ("edge_pct",  "gt",  15.0,    "edge > 15%"),
-        ("edge_pct",  "lt",  MIN_EDGE, f"edge < {MIN_EDGE}%"),
-        ("market",    "is",  "null",   "null market"),
-        ("sharp_prob", "lte", 0.0,    "sharp_prob=0 (stale)"),
+        ("edge_pct",   "gt",  15.0,     "edge > 15%"),
+        ("edge_pct",   "lt",  MIN_EDGE,  f"edge < {MIN_EDGE}%"),
+        ("market",     "is",  "null",    "null market"),
+        ("sharp_prob", "lte", 0.0,       "sharp_prob=0 (stale)"),
     ]
     for col, op, val, label in purge_rules:
         try:
@@ -153,8 +179,9 @@ def _risk(edge_pct: float) -> str:
 
 
 def _emit(signals, sb, now, log, name, sport, league, mkt_key, mkt_label,
-          xbet_odd, pin_odd, sharp_prob, emoji, selection_name="", min_edge=None):
-    """Compute edge, apply quality gates, persist signal."""
+          xbet_odd, pin_odd, sharp_prob, emoji, selection_name="", min_edge=None,
+          match_time="", match_id=""):
+    """Compute edge, apply quality gates, collect signal for bulk-save."""
     effective_min = min_edge if min_edge is not None else MIN_EDGE
     edge, status = compute_alpha(xbet_odd, pin_odd, min_edge=effective_min)
     if status == "DISCARD":
@@ -165,7 +192,6 @@ def _emit(signals, sb, now, log, name, sport, league, mkt_key, mkt_label,
         return
     risk = _risk(edge)
 
-    # Fractional Kelly 0.25
     b = xbet_odd - 1
     kelly_full = (sharp_prob * b - (1 - sharp_prob)) / b if b > 0 else 0.0
     kelly_pct  = round(max(0.0, kelly_full * 0.25) * 100, 2)
@@ -175,6 +201,9 @@ def _emit(signals, sb, now, log, name, sport, league, mkt_key, mkt_label,
         f"Prob.Sharp {int(sharp_prob * 100)}%. "
         f"1XBet n'a pas encore ajusté sa cote sur ce mouvement Sharp."
     )
+
+    # Normalize match_time to ISO UTC (+00:00)
+    mt = match_time.replace("Z", "+00:00") if match_time else ""
 
     log.info("SIGNAL  | %s %s | %s: 1XBet=%.3f Pin=%.3f Edge=+%.2f%% Prob=%.0f%% %s",
              emoji, name, mkt_label, xbet_odd, pin_odd, edge, sharp_prob * 100, risk)
@@ -190,12 +219,13 @@ def _emit(signals, sb, now, log, name, sport, league, mkt_key, mkt_label,
         "edge_pct":       float(edge),
         "risk_flag":      risk,
         "scanned_at":     now.isoformat(),
+        "match_time":     mt,
+        "match_id":       match_id,
         "status":         "active",
         "selection_name": selection_name or name,
         "kelly_pct":      kelly_pct,
         "advice":         advice,
     }
-    # Collect only — bulk-save happens after Portfolio Balancer is applied
     signals.append(signal)
 
 
@@ -241,7 +271,8 @@ def _process_h2h(m, name, sport, league, home, away, emoji, signals, sb, now, lo
     lbl = market_label("h2h", "", 0.0, sport)
     _emit(signals, sb, now, log, name, sport, league,
           "h2h", lbl, xbet_price, pin_price, sharp_prob, emoji,
-          selection_name=xbet_fav, min_edge=min_edge)
+          selection_name=xbet_fav, min_edge=min_edge,
+          match_time=m.get("commence_time", ""), match_id=m.get("id", ""))
 
 
 def _process_totals(m, name, sport, league, emoji, signals, sb, now, log, min_edge=None):
@@ -264,7 +295,8 @@ def _process_totals(m, name, sport, league, emoji, signals, sb, now, log, min_ed
         sel = f"{'Over' if side == 'over' else 'Under'}{(' ' + str(point)) if point else ''}"
         _emit(signals, sb, now, log, name, sport, league,
               "totals", lbl, x_odd, p_odd, sharp_prob, emoji,
-              selection_name=sel, min_edge=min_edge)
+              selection_name=sel, min_edge=min_edge,
+              match_time=m.get("commence_time", ""), match_id=m.get("id", ""))
 
 
 def _process_spreads(m, name, sport, league, home, away, emoji, signals, sb, now, log, min_edge=None):
@@ -288,7 +320,8 @@ def _process_spreads(m, name, sport, league, home, away, emoji, signals, sb, now
         pt_str = f"+{pt}" if pt > 0 else str(pt)
         _emit(signals, sb, now, log, name, sport, league,
               "spreads", lbl, x_odd, p_odd, sharp_prob, emoji,
-              selection_name=f"{team} {pt_str}", min_edge=min_edge)
+              selection_name=f"{team} {pt_str}", min_edge=min_edge,
+              match_time=m.get("commence_time", ""), match_id=m.get("id", ""))
 
 
 # ── Portfolio Balancer ────────────────────────────────────────────────
@@ -524,13 +557,19 @@ def run():
         log.info("Allocation: %s", " | ".join(
             f"{SPORT_EMOJI.get(sp,'🎯')} {sp}={n}" for sp, n in sport_counts.items()))
 
-    # ── Bulk-save balanced signals to Supabase ─────────────────────────
-    if sb:
+    # ── B. Bulk-save balanced signals to Supabase ─────────────────────
+    saved_count = 0
+    if sb and signals:
         for s in signals:
-            _save(sb, s)
+            if _save(sb, s):
+                saved_count += 1
+        log.info("Supabase: %d/%d signals persisted", saved_count, len(signals))
+        if saved_count == 0:
+            log.error("Telegram skipped — all %d signals failed to persist", len(signals))
 
-    # ── Telegram report (grouped by sport, alpha-sorted) ──────────────
-    _telegram_grouped(signals, now, session, len(matches), sharp_source, no_pin_count)
+    # ── C. Telegram UNIQUEMENT si persistance Supabase réussie ─────────
+    if not signals or saved_count > 0:
+        _telegram_grouped(signals, now, session, len(matches), sharp_source, no_pin_count)
 
     elite = [s for s in signals if s["edge_pct"] >= ELITE_EDGE]
     log.info("Done. %d candidates | %d balanced | %d elite.",
