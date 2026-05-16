@@ -432,8 +432,8 @@ def run():
     sharp_source   = "?"
 
     # ── Tier 1: The Odds API ──────────────────────────────────────────
-    log.info("⚡ Tier 1 — The Odds API (24h window)...")
-    oddsapi_events = fetch_odds(hours_ahead=24)
+    log.info("⚡ Tier 1 — The Odds API (72h window)...")
+    oddsapi_events = fetch_odds(hours_ahead=72)
     if oddsapi_events:
         matches      = oddsapi_events[:MAX_MATCHES]
         sharp_source = "OddsAPI/Pinnacle"
