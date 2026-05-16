@@ -185,7 +185,7 @@ nav {
   display: none;
   position: fixed;
   inset: 0;
-  background: rgba(0,0,0,0.9);
+  background: rgba(0,0,0,0.88);
   z-index: 100;
 }
 #modal {
@@ -195,90 +195,163 @@ nav {
   left: 50%;
   transform: translate(-50%, -50%);
   z-index: 101;
-  width: min(540px, 97vw);
+  width: min(500px, 97vw);
   background: #060606;
   border: 1px solid #1a1a1a;
   border-top: 2px solid var(--green);
   font-family: var(--font);
-  box-shadow: 0 0 40px rgba(0,255,65,0.05);
+  box-shadow: 0 0 60px rgba(0,255,65,0.06);
 }
+
+/* Header */
 .m-hdr {
   display: flex;
   justify-content: space-between;
   align-items: center;
-  padding: 9px 15px;
-  border-bottom: 1px solid #111;
+  padding: 8px 14px;
+  border-bottom: 1px solid #0f0f0f;
 }
 .m-title { color: var(--green); font-size: 9px; font-weight: bold; letter-spacing: 3px; }
 .m-close {
-  background: none; border: 1px solid #222; color: #444;
+  background: none; border: 1px solid #1c1c1c; color: #333;
   font-family: var(--font); font-size: 11px; cursor: pointer;
-  padding: 2px 9px; transition: all 0.15s;
+  padding: 1px 8px; transition: all 0.15s; line-height: 1.6;
 }
 .m-close:hover { border-color: var(--red); color: var(--red); }
 
-.m-head {
-  padding: 9px 15px;
+/* Match identity block */
+.m-match-block {
+  padding: 10px 14px;
   background: #070707;
   border-bottom: 1px solid #0d0d0d;
+  display: flex;
+  align-items: baseline;
+  gap: 8px;
+  flex-wrap: wrap;
 }
-.m-name { color: #ddd; font-size: 13px; font-weight: bold; }
-.m-sub  { color: #333; font-size: 9px; margin-top: 3px; }
-.m-sub b { color: var(--blue); font-weight: bold; }
+.m-name { color: #ccc; font-size: 13px; font-weight: bold; flex: 1; min-width: 0; }
+.m-meta { font-size: 9px; color: #2a2a2a; white-space: nowrap; }
+.m-meta b { color: var(--blue); }
+.m-meta .m-cd-inline { color: #444; }
 
+/* Stale warning */
 #m-stale {
   display: none;
-  padding: 6px 15px;
+  padding: 5px 14px;
   background: #0f0600;
-  border-bottom: 1px solid #3d1c00;
+  border-bottom: 1px solid #2d1200;
   font-size: 9px;
   color: var(--orange);
 }
 
-.ms { padding: 9px 15px; border-bottom: 1px solid #0d0d0d; }
-.ms-lbl { font-size: 8px; letter-spacing: 2px; color: #2a2a2a; margin-bottom: 5px; text-transform: uppercase; }
+/* Selection + Stats row */
+.m-sel-stats {
+  display: flex;
+  border-bottom: 1px solid #0d0d0d;
+}
+.m-sel {
+  flex: 1;
+  padding: 11px 14px;
+  border-right: 1px solid #0d0d0d;
+  min-width: 0;
+}
+.m-team {
+  font-size: 18px;
+  font-weight: bold;
+  color: var(--green);
+  letter-spacing: 0.5px;
+  text-transform: uppercase;
+  line-height: 1.1;
+}
+.m-mkt-line {
+  font-size: 9px;
+  color: #555;
+  margin-top: 4px;
+  letter-spacing: 0.3px;
+}
+.m-exp {
+  font-size: 9px;
+  color: #333;
+  margin-top: 5px;
+  border-left: 2px solid #161616;
+  padding-left: 7px;
+  line-height: 1.5;
+}
+.m-stats-col {
+  display: flex;
+  flex-direction: column;
+  width: 120px;
+  flex-shrink: 0;
+}
+.m-stat {
+  flex: 1;
+  padding: 5px 10px;
+  border-bottom: 1px solid #0a0a0a;
+  text-align: center;
+  display: flex;
+  flex-direction: column;
+  justify-content: center;
+}
+.m-stat:last-child { border-bottom: none; }
+.m-sv { font-size: 12px; font-weight: bold; line-height: 1.2; }
+.m-sl { font-size: 7px; color: #2a2a2a; margin-top: 2px; text-transform: uppercase; letter-spacing: 1px; }
 
-.m-team { font-size: 17px; font-weight: bold; color: var(--green); letter-spacing: 0.5px; text-transform: uppercase; }
-.m-mkt  { font-size: 10px; color: var(--text); margin-top: 3px; }
-.m-exp  { font-size: 9px; color: #444; margin-top: 4px; border-left: 2px solid #1a1a1a; padding-left: 7px; }
-
-.steps { display: flex; flex-direction: column; gap: 4px; }
+/* Steps */
+.m-steps {
+  padding: 9px 14px;
+  border-bottom: 1px solid #0d0d0d;
+}
+.steps-lbl { font-size: 8px; letter-spacing: 2px; color: #222; margin-bottom: 6px; text-transform: uppercase; }
+.steps { display: flex; flex-direction: column; gap: 3px; }
 .step {
   display: flex;
   align-items: center;
-  gap: 7px;
+  gap: 8px;
   padding: 5px 9px;
   background: #080808;
-  border: 1px solid #111;
+  border: 1px solid #0f0f0f;
   font-size: 10px;
 }
-.step-n    { color: var(--green); font-weight: bold; min-width: 14px; }
-.step-k    { color: #333; }
-.step-v    { color: #ccc; font-weight: bold; }
-.step-cote { color: var(--blue); font-weight: bold; font-size: 12px; }
-.step.s-stake { background: #001100; border-color: #002200; }
-.s-row { display: flex; align-items: center; gap: 7px; flex-wrap: wrap; }
-#stake-big { font-size: 20px; font-weight: bold; color: var(--yellow); min-width: 46px; }
-.s-meta { font-size: 9px; color: #333; display: flex; align-items: center; gap: 4px; }
+.step-n    { color: var(--green); font-weight: bold; min-width: 14px; flex-shrink: 0; }
+.step-k    { color: #2a2a2a; flex-shrink: 0; }
+.step-v    { color: #bbb; font-weight: bold; flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.step-cote { color: var(--blue); font-weight: bold; font-size: 12px; flex-shrink: 0; }
+.step-pin  { color: #2a2a2a; font-size: 9px; flex-shrink: 0; }
+
+/* Stake row */
+.m-stake {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 10px 14px;
+  background: #030f03;
+  border-bottom: 1px solid #0d1a0d;
+  flex-wrap: wrap;
+}
+.stake-amt { font-size: 22px; font-weight: bold; color: var(--yellow); min-width: 60px; line-height: 1; }
+.stake-sep { color: #1a1a1a; font-size: 16px; }
+.stake-meta { font-size: 9px; color: #2a2a2a; display: flex; align-items: center; gap: 5px; flex-wrap: wrap; }
 #bankroll-input {
-  background: #0d0d0d;
-  border: 1px solid #222;
-  color: #ccc;
+  background: #0a0a0a;
+  border: 1px solid #1c1c1c;
+  color: #999;
   font-family: var(--font);
   font-size: 10px;
   padding: 2px 5px;
-  width: 66px;
+  width: 64px;
   text-align: right;
 }
-#bankroll-input:focus { outline: none; border-color: var(--green); }
+#bankroll-input:focus { outline: none; border-color: var(--green); color: #ccc; }
+.stake-kpct { color: var(--green); font-weight: bold; }
 
-#m-why { font-size: 9px; color: #555; line-height: 1.7; }
-
-.m-stats { display: flex; border-top: 1px solid #0d0d0d; }
-.m-stat  { flex: 1; padding: 8px 12px; border-right: 1px solid #0d0d0d; text-align: center; }
-.m-stat:last-child { border-right: none; }
-.m-sv { font-size: 13px; font-weight: bold; }
-.m-sl { font-size: 8px; color: #333; margin-top: 2px; text-transform: uppercase; letter-spacing: 1px; }
+/* Why */
+.m-why {
+  padding: 8px 14px;
+  font-size: 9px;
+  color: #3a3a3a;
+  line-height: 1.6;
+  border-bottom: 1px solid #080808;
+}
 
 footer { border-top: 1px solid #0d0d0d; padding: 7px 20px; font-size: 9px; color: #1a1a1a; text-align: center; }
 </style>
@@ -398,27 +471,48 @@ footer { border-top: 1px solid #0d0d0d; padding: 7px 20px; font-size: 9px; color
 <!-- MODAL -->
 <div id="modal-overlay" onclick="closeModal()"></div>
 <div id="modal" role="dialog" aria-modal="true">
+
+  <!-- Header -->
   <div class="m-hdr">
     <span class="m-title">&#9658; PLACER LE PARI — 1XBET</span>
     <button class="m-close" onclick="closeModal()">&#10005;</button>
   </div>
 
-  <div class="m-head">
+  <!-- Match identity -->
+  <div class="m-match-block">
     <div class="m-name" id="m-match">—</div>
-    <div class="m-sub"><b id="m-time">—</b> &nbsp;·&nbsp; <span id="m-sub">—</span> &nbsp;<span id="m-cd" style="color:#444"></span></div>
+    <div class="m-meta"><b id="m-time">—</b> &nbsp;·&nbsp; <span id="m-sub">—</span> &nbsp;<span class="m-cd-inline" id="m-cd"></span></div>
   </div>
 
+  <!-- Stale alert -->
   <div id="m-stale">&#9888; Kelly non calculé — relancez un scan pour une mise précise.</div>
 
-  <div class="ms">
-    <div class="ms-lbl">Miser sur</div>
-    <div class="m-team" id="m-team">—</div>
-    <div class="m-mkt"  id="m-mkt">—</div>
-    <div class="m-exp"  id="m-exp"></div>
+  <!-- Selection + Stats (side by side) -->
+  <div class="m-sel-stats">
+    <div class="m-sel">
+      <div class="m-team" id="m-team">—</div>
+      <div class="m-mkt-line" id="m-mkt">—</div>
+      <div class="m-exp" id="m-exp"></div>
+    </div>
+    <div class="m-stats-col">
+      <div class="m-stat">
+        <div class="m-sv" id="m-edge" style="color:var(--green)">—</div>
+        <div class="m-sl">Edge</div>
+      </div>
+      <div class="m-stat">
+        <div class="m-sv" id="m-pin" style="color:var(--blue)">—</div>
+        <div class="m-sl">Pinnacle</div>
+      </div>
+      <div class="m-stat">
+        <div class="m-sv" id="m-risk">—</div>
+        <div class="m-sl">Signal</div>
+      </div>
+    </div>
   </div>
 
-  <div class="ms">
-    <div class="ms-lbl">Étapes 1XBet</div>
+  <!-- Steps 1XBet -->
+  <div class="m-steps">
+    <div class="steps-lbl">Étapes 1XBet</div>
     <div class="steps">
       <div class="step">
         <span class="step-n">①</span>
@@ -434,44 +528,26 @@ footer { border-top: 1px solid #0d0d0d; padding: 7px 20px; font-size: 9px; color
         <span class="step-n">③</span>
         <span class="step-k">Sélection :</span>
         <span class="step-v" id="s-team">—</span>
-        <span style="color:#222">&nbsp;@&nbsp;</span>
         <span class="step-cote" id="s-cote">—</span>
-        <span style="color:#2a2a2a;font-size:9px">&nbsp;(Pin: <span id="s-pin">—</span>)</span>
-      </div>
-      <div class="step s-stake">
-        <span class="step-n">④</span>
-        <span class="step-k">Mise :</span>
-        <div class="s-row">
-          <span id="stake-big">— €</span>
-          <div class="s-meta">
-            bankroll
-            <input id="bankroll-input" type="number" value="1000" min="1" oninput="updateStake()" />€
-            &nbsp;<span id="m-kelly-pct" style="color:var(--green)"></span>
-          </div>
-        </div>
+        <span class="step-pin">(Pin: <span id="s-pin">—</span>)</span>
       </div>
     </div>
   </div>
 
-  <div class="ms">
-    <div class="ms-lbl">Pourquoi ?</div>
-    <div id="m-why">—</div>
+  <!-- Stake calculator -->
+  <div class="m-stake">
+    <span class="stake-amt" id="stake-big">— €</span>
+    <span class="stake-sep">|</span>
+    <div class="stake-meta">
+      bankroll
+      <input id="bankroll-input" type="number" value="1000" min="1" oninput="updateStake()" />€
+      <span class="stake-kpct" id="m-kelly-pct"></span>
+    </div>
   </div>
 
-  <div class="m-stats">
-    <div class="m-stat">
-      <div class="m-sv" id="m-edge" style="color:var(--green)">—</div>
-      <div class="m-sl">Edge</div>
-    </div>
-    <div class="m-stat">
-      <div class="m-sv" id="m-pin" style="color:var(--blue)">—</div>
-      <div class="m-sl">Pinnacle fair</div>
-    </div>
-    <div class="m-stat">
-      <div class="m-sv" id="m-risk">—</div>
-      <div class="m-sl">Signal</div>
-    </div>
-  </div>
+  <!-- Why -->
+  <div class="m-why" id="m-why">—</div>
+
 </div>
 
 <script>
