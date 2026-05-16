@@ -28,6 +28,11 @@ from core.constants import ELITE_EDGE as _ELITE_EDGE, kelly_stake as _kelly_stak
 
 load_dotenv()
 
+# ── Deep-scan mode (DEEP_SCAN=1) ─────────────────────────────────────
+# Triggered by .github/workflows/deep_scan.yml or manually.
+# Lifts per-sport quotas + scans 48h ahead with up to 100 events.
+DEEP_SCAN = os.environ.get("DEEP_SCAN", "0") == "1"
+
 # ── UTC logger ────────────────────────────────────────────────────────
 _fmt = logging.Formatter(
     fmt="%(asctime)s UTC | %(levelname)-7s | %(message)s",
@@ -47,11 +52,17 @@ TELEGRAM_TOKEN = os.environ.get("TELEGRAM_BOT_TOKEN")
 TELEGRAM_CHAT  = os.environ.get("TELEGRAM_CHAT_ID")
 
 ELITE_EDGE  = _ELITE_EDGE   # % — send Telegram alert (from core.constants)
-MAX_MATCHES = 20   # 20 closest 1XBet matches — speed mode
+
+# Fast mode (default): 20 events, tight quota — speed over coverage
+# Deep mode (DEEP_SCAN=1): 100 events, wide quota — 48h full slate
+MAX_MATCHES = 100 if DEEP_SCAN else 20
 
 SPORT_EMOJI  = {"soccer": "⚽", "tennis": "🎾", "basketball": "🏀", "boxing": "🥊", "mma": "🥋", "darts": "🎯", "cricket": "🏏"}
+
 # Portfolio Balancer: max signals per sport per scan — prevents soccer flooding
-SPORT_QUOTA  = {"soccer": 5, "basketball": 3, "tennis": 3, "boxing": 3, "mma": 3, "darts": 2, "cricket": 2}
+_QUOTA_FAST = {"soccer": 5, "basketball": 3, "tennis": 3, "boxing": 3, "mma": 3, "darts": 2, "cricket": 2}
+_QUOTA_DEEP = {"soccer": 12, "basketball": 8, "tennis": 10, "boxing": 5, "mma": 5, "darts": 4, "cricket": 4}
+SPORT_QUOTA = _QUOTA_DEEP if DEEP_SCAN else _QUOTA_FAST
 # Telegram report order: highest alpha first
 _SPORT_ORDER = ["basketball", "mma", "darts", "boxing", "cricket", "tennis", "soccer"]
 
@@ -420,8 +431,11 @@ def run():
     now     = datetime.now(timezone.utc)
     session = _market_session(now.hour)
     log.info("━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━")
-    log.info("PAIM v8.5 — Hunter Multi-Sport + Portfolio Balancer | Session: %s", session)
-    log.info("Scan start: %s", now.strftime("%Y-%m-%d %H:%M:%S UTC"))
+    mode = "DEEP 48h" if DEEP_SCAN else "FAST 72h"
+    log.info("PAIM v8.5 — %s | Multi-Sport + Portfolio Balancer | Session: %s", mode, session)
+    log.info("Scan start: %s | max_events=%d | quotas=%s",
+             now.strftime("%Y-%m-%d %H:%M:%S UTC"), MAX_MATCHES,
+             " ".join(f"{k}={v}" for k, v in SPORT_QUOTA.items()))
 
     try:
         sb = create_client(SUPABASE_URL, SUPABASE_KEY)
@@ -452,12 +466,15 @@ def run():
     sharp_source   = "?"
 
     # ── Tier 1: The Odds API ──────────────────────────────────────────
-    log.info("⚡ Tier 1 — The Odds API (72h window)...")
-    oddsapi_events = fetch_odds(hours_ahead=72)
+    hours_ahead = 48 if DEEP_SCAN else 72
+    log.info("⚡ Tier 1 — The Odds API (%dh window)...", hours_ahead)
+    oddsapi_events = fetch_odds(hours_ahead=hours_ahead)
     if oddsapi_events:
         matches      = oddsapi_events[:MAX_MATCHES]
         sharp_source = "OddsAPI/Pinnacle"
-        log.info("✅ Tier 1 OK — %d events avec Pinnacle réel", len(matches))
+        sports_found = set(e.get("sport","?") for e in matches)
+        log.info("✅ Tier 1 OK — %d/%d events | sports: %s",
+                 len(matches), len(oddsapi_events), " ".join(sorted(sports_found)))
 
     # ── MMA/UFC — Gemini Search (Melbet vs Pinnacle) — always runs ────
     log.info("🥋 MMA — Gemini Search (Melbet vs Pinnacle)...")

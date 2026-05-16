@@ -1,0 +1,45 @@
+name: Predator Deep Scan 48h
+
+# Deep scan — 48h horizon, full multi-sport multi-market coverage
+# Runs every morning before EU-OPEN + manual trigger from GitHub Actions UI.
+#
+# vs normal engine.yml:
+#   - MAX_MATCHES : 20  →  100  (all sports, full slate)
+#   - SPORT_QUOTA : tight → wide (soccer=12, tennis=10, basketball=8, …)
+#   - Time window : 72h  →  48h (focused on next 2 days)
+
+on:
+  schedule:
+    - cron: '55 5 * * *'    # 05:55 UTC daily — before EU-OPEN (06:00 UTC)
+    - cron: '0 18 * * *'    # 18:00 UTC daily — prime-time evening sweep
+  workflow_dispatch:         # Manual trigger: Actions → deep_scan → Run workflow
+
+env:
+  FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: true
+
+jobs:
+  deep-scan:
+    runs-on: ubuntu-latest
+    timeout-minutes: 25      # Longer timeout — more events, more API calls
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+          cache: 'pip'
+
+      - name: Install dependencies
+        run: pip install -r requirements.txt
+
+      - name: Run deep scan (48h / all sports / all markets)
+        env:
+          ODDS_API_KEY:       ${{ secrets.ODDS_API_KEY }}
+          GEMINI_API_KEY:     ${{ secrets.GEMINI_API_KEY }}
+          SUPABASE_URL:       ${{ secrets.SUPABASE_URL }}
+          SUPABASE_KEY:       ${{ secrets.SUPABASE_KEY }}
+          TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
+          TELEGRAM_CHAT_ID:   ${{ secrets.TELEGRAM_CHAT_ID }}
+          DEEP_SCAN:          "1"
+        run: python run_engine.py
