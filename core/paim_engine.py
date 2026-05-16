@@ -26,7 +26,7 @@ def _normalize_team(name: str) -> str:
         s = re.sub(pattern, repl, s, flags=re.I)
     return ' '.join(s.split())
 
-SPORT_LABELS    = {1: "soccer", 3: "tennis", 4: "basketball"}
+SPORT_LABELS    = {1: "soccer", 3: "tennis", 4: "basketball", 5: "mma"}
 MAX_EDGE        = 15.0   # Hard cap — data error above this
 SHARP_PROB_MIN  = 0.65   # Minimum Pinnacle devigged probability (Shin quality gate)
 
@@ -38,7 +38,7 @@ SHARP_PROB_BY_MARKET = {
     "totals":        0.52,   # Same for totals
 }
 
-_SPORT_PFX = {"basketball": "NBA", "tennis": "TEN", "soccer": "SOC", "boxing": "BOX"}
+_SPORT_PFX = {"basketball": "NBA", "tennis": "TEN", "soccer": "SOC", "boxing": "BOX", "mma": "MMA"}
 
 
 def market_label(key: str, side: str, point: float, sport: str) -> str:
@@ -52,6 +52,10 @@ def market_label(key: str, side: str, point: float, sport: str) -> str:
         return f"{pfx} PS {sign}"
     # h2h
     return "AH 0.0" if sport == "soccer" else f"{pfx} ML"
+
+
+# MMA uses the same binary ML logic as boxing/tennis — no draw possible
+MMA_SPORTS = {"mma", "boxing"}
 
 
 def convert_to_ah0(v1: float, vx: float, v2: float) -> tuple[float, float]:

@@ -18,7 +18,7 @@ from core.paim_engine import SPORT_LABELS, strict_team_match
 # ── UTC sub-logger (inherits handler from PREDATOR root) ─────────────
 log = logging.getLogger("PREDATOR.harvester")
 
-SPORT_IDS = {1: "soccer", 3: "tennis", 4: "basketball"}
+SPORT_IDS = {1: "soccer", 3: "tennis", 4: "basketball", 5: "mma"}
 
 XBET_FEED_TPLS = [
     "https://1xbet.com/LineFeed/Get1x2?sport={sport_id}&count=50&lng=en&mode=4&partner=157",
@@ -41,6 +41,7 @@ _SPORT_PROMPTS = {
     "soccer":     "top European football/soccer",
     "tennis":     "ATP or WTA tennis (Roland Garros, Italian Open, or similar)",
     "basketball": "NBA playoff or top basketball",
+    "mma":        "UFC or major MMA fights",
 }
 
 
@@ -406,3 +407,104 @@ def fetch_estimated_prices(matches: list) -> dict:
 
     log.info("Estimator/Gemini: %d/%d estimated prices", len(result), len(names))
     return result
+
+
+def fetch_mma_events() -> list[dict]:
+    """
+    Gemini 2.0 Flash + Google Search → upcoming UFC/MMA fights with BOTH
+    Melbet (soft) and Pinnacle (sharp) decimal ML odds.
+    Returns events in the standard engine format with _soft_source="Melbet".
+    No OddsAPI calls — fully Gemini-based to avoid quota usage.
+    """
+    api_key = os.environ.get("GEMINI_API_KEY")
+    if not api_key:
+        return []
+
+    from datetime import date
+    today = date.today().isoformat()
+
+    prompt = (
+        f"Today is {today}. Use Google Search to find all upcoming UFC or major MMA fights "
+        f"scheduled in the next 7 days.\n\n"
+        f"For each fight, search for:\n"
+        f"1. Current Melbet decimal moneyline odds (no draw — only winner odds)\n"
+        f"2. Current Pinnacle decimal moneyline odds\n\n"
+        f"Return ONLY a valid JSON array. Omit any fight where you cannot confirm both books have lines:\n"
+        f'[{{"match":"Fighter A vs Fighter B","home":"Fighter A","away":"Fighter B",'
+        f'"event":"UFC 317","commence_time":"2026-05-17T02:00:00Z",'
+        f'"odds_melbet":{{"1":1.85,"X":0,"2":2.00}},'
+        f'"odds_pinnacle":{{"1":1.75,"X":0,"2":2.10}}}}]\n\n'
+        f"X must always be 0 (no draw in MMA). Include the event name. "
+        f"Only include fights with confirmed lines on BOTH Melbet AND Pinnacle."
+    )
+
+    payload = {
+        "contents": [{"role": "user", "parts": [{"text": prompt}]}],
+        "tools": [{"google_search": {}}],
+        "generationConfig": {"temperature": 0.1, "maxOutputTokens": 2048},
+    }
+
+    r = None
+    for attempt in range(3):
+        try:
+            r = requests.post(f"{GEMINI_FLASH_URL}?key={api_key}", json=payload, timeout=60)
+        except Exception as e:
+            log.error("MMA/Gemini request error: %s", e)
+            return []
+        if r.status_code == 429:
+            wait = 65 if attempt == 0 else 30
+            log.warning("MMA/Gemini rate limit — waiting %ds", wait)
+            time.sleep(wait)
+            r = None
+            continue
+        break
+
+    if r is None or r.status_code != 200:
+        if r is not None:
+            log.error("MMA/Gemini HTTP %d: %s", r.status_code, r.text[:200])
+        return []
+
+    try:
+        parts = r.json().get("candidates", [{}])[0].get("content", {}).get("parts", [])
+        text = next((p["text"] for p in reversed(parts) if p.get("text", "").strip()), "")
+        text = re.sub(r'```(?:json)?|```', '', text).strip()
+        m_arr = re.search(r'\[[\s\S]*\]', text)
+        if not m_arr:
+            log.warning("MMA/Gemini: no JSON array in response")
+            return []
+        raw = json.loads(m_arr.group())
+    except Exception as e:
+        log.error("MMA/Gemini parse error: %s", e)
+        return []
+
+    events = []
+    for i, ev in enumerate(raw):
+        try:
+            home = str(ev.get("home", "")).strip()
+            away = str(ev.get("away", "")).strip()
+            if not home or not away:
+                continue
+            om = ev.get("odds_melbet", {})
+            op = ev.get("odds_pinnacle", {})
+            xbet_h = _odd(om.get("1")); xbet_a = _odd(om.get("2"))
+            pin_h  = _odd(op.get("1")); pin_a  = _odd(op.get("2"))
+            if xbet_h <= 1.01 or xbet_a <= 1.01 or pin_h <= 1.01 or pin_a <= 1.01:
+                continue
+            events.append({
+                "id":            f"mma_gemini_{i}",
+                "match":         ev.get("match", f"{home} vs {away}"),
+                "home":          home,
+                "away":          away,
+                "league":        ev.get("event", "UFC"),
+                "sport":         "mma",
+                "sport_id":      5,
+                "commence_time": ev.get("commence_time", ""),
+                "odds_1xbet":    {"1": xbet_h, "X": 0.0, "2": xbet_a},
+                "odds_pinnacle": {"1": pin_h,  "X": 0.0, "2": pin_a},
+                "_soft_source":  "Melbet",
+            })
+        except Exception:
+            continue
+
+    log.info("MMA/Gemini: %d events found (Melbet vs Pinnacle)", len(events))
+    return events

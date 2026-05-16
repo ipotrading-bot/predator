@@ -15,7 +15,7 @@ import requests
 from dotenv import load_dotenv
 from supabase import create_client
 
-from core.harvester import fetch_matches, fetch_pinnacle_prices, fetch_estimated_prices
+from core.harvester import fetch_matches, fetch_pinnacle_prices, fetch_estimated_prices, fetch_mma_events
 from core.math_engine import to_binary, devig_prob
 from core.odds_api import fetch_odds
 from core.oracle import get_pinnacle_price
@@ -49,11 +49,11 @@ TELEGRAM_CHAT  = os.environ.get("TELEGRAM_CHAT_ID")
 ELITE_EDGE  = _ELITE_EDGE   # % — send Telegram alert (from core.constants)
 MAX_MATCHES = 20   # 20 closest 1XBet matches — speed mode
 
-SPORT_EMOJI  = {"soccer": "⚽", "tennis": "🎾", "basketball": "🏀", "boxing": "🥊"}
+SPORT_EMOJI  = {"soccer": "⚽", "tennis": "🎾", "basketball": "🏀", "boxing": "🥊", "mma": "🥋"}
 # Portfolio Balancer: max signals per sport per scan — prevents soccer flooding
-SPORT_QUOTA  = {"soccer": 5, "basketball": 3, "tennis": 3, "boxing": 3}
-# Telegram report order: highest alpha first (NBA favoured when edges are equal)
-_SPORT_ORDER = ["basketball", "boxing", "tennis", "soccer"]
+SPORT_QUOTA  = {"soccer": 5, "basketball": 3, "tennis": 3, "boxing": 3, "mma": 3}
+# Telegram report order: highest alpha first
+_SPORT_ORDER = ["basketball", "mma", "boxing", "tennis", "soccer"]
 
 # EU market sessions (UTC) — aligns with European bookmaker line movement
 _SESSIONS = {
@@ -181,6 +181,11 @@ def _purge_old_signals(sb):
         log.info("Purged: past boxing matches")
     except Exception as e:
         log.error("Supabase purge (past boxing): %s", e)
+    try:
+        sb.table("signals").delete().eq("sport", "mma").lt("match_time", datetime.now(timezone.utc).isoformat()).execute()
+        log.info("Purged: past MMA fights")
+    except Exception as e:
+        log.error("Supabase purge (past MMA): %s", e)
 
 
 def _risk(edge_pct: float) -> str:
@@ -447,6 +452,13 @@ def run():
         matches      = oddsapi_events[:MAX_MATCHES]
         sharp_source = "OddsAPI/Pinnacle"
         log.info("✅ Tier 1 OK — %d events avec Pinnacle réel", len(matches))
+
+    # ── MMA/UFC — Gemini Search (Melbet vs Pinnacle) — always runs ────
+    log.info("🥋 MMA — Gemini Search (Melbet vs Pinnacle)...")
+    mma_events = fetch_mma_events()
+    if mma_events:
+        matches = (matches or []) + mma_events
+        log.info("🥋 MMA OK — %d combats UFC (Melbet soft)", len(mma_events))
 
     # ── Tier 2: Gemini + Google Search — DISABLED (trop lent) ───────
     # Saute directement en Tier 3 (Estimateur) si Tier 1 vide
