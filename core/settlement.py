@@ -138,22 +138,26 @@ def settle_signal(sb, sig: dict, now_iso: str) -> bool:
     orig_pin = sig.get("pinnacle_price") or 0.0
     clv = round((sig["xbet_odd"] / orig_pin - 1) * 100, 2) if orig_pin > 1.01 else 0.0
 
-    payload = {
+    # DELETE + INSERT — RLS anon key blocks UPDATE
+    merged = {**sig, **{
         "status":    "settled",
         "clv_pct":   float(clv),
         "closed_at": now_iso,
         "outcome":   outcome,
-    }
+    }}
+    sig_id = merged.pop("id", None)
     try:
-        sb.table("signals").update(payload).eq("id", sig["id"]).execute()
+        sb.table("signals").delete().eq("id", sig_id).execute()
+        sb.table("signals").insert(merged).execute()
         log.info("SETTLED  | %s %s→%s | outcome=%s | CLV %+.2f%%",
                  match, hs, as_, outcome, clv)
         return True
     except Exception as e:
         if any(c in str(e) for c in _SETTLEMENT_OPTIONAL):
-            core = {k: v for k, v in payload.items() if k not in _SETTLEMENT_OPTIONAL}
+            core = {k: v for k, v in merged.items() if k not in _SETTLEMENT_OPTIONAL}
             try:
-                sb.table("signals").update(core).eq("id", sig["id"]).execute()
+                sb.table("signals").delete().eq("id", sig_id).execute()
+                sb.table("signals").insert(core).execute()
                 return True
             except Exception as e2:
                 log.error("settle_signal fallback [%s]: %s", match, e2)

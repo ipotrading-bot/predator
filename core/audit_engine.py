@@ -61,19 +61,31 @@ def fetch_pending(sb) -> list[dict]:
         return []
 
 
-def _update_signal(sb, sig_id: str, payload: dict):
-    """Persist audit result; retries without new columns if schema is stale."""
+def _update_signal(sb, sig: dict, payload: dict):
+    """
+    Persist audit result via DELETE + INSERT (RLS anon key blocks UPDATE).
+    sig is the full signal row from fetch_pending(); payload contains the new fields.
+    """
+    sig_id = sig["id"]
+    merged = {**sig, **payload}
+    merged.pop("id", None)  # Supabase will reject explicit id on insert
     try:
-        sb.table("signals").update(payload).eq("id", sig_id).execute()
+        sb.table("signals").delete().eq("id", sig_id).execute()
     except Exception as e:
+        log.error("Delete signal %s: %s", sig_id, e)
+        return
+    try:
+        sb.table("signals").insert(merged).execute()
+    except Exception as e:
+        # Retry without optional audit columns if schema is stale
         if any(c in str(e) for c in _AUDIT_COLS):
-            core = {k: v for k, v in payload.items() if k not in _AUDIT_COLS}
+            core = {k: v for k, v in merged.items() if k not in _AUDIT_COLS}
             try:
-                sb.table("signals").update(core).eq("id", sig_id).execute()
+                sb.table("signals").insert(core).execute()
             except Exception as e2:
-                log.error("Update signal %s (fallback): %s", sig_id, e2)
+                log.error("Insert signal %s (fallback): %s", sig_id, e2)
         else:
-            log.error("Update signal %s: %s", sig_id, e)
+            log.error("Insert signal %s: %s", sig_id, e)
 
 
 def audit_one(sb, sig: dict, oracle_calls: list, settle_calls: list, now: datetime) -> str:
@@ -118,7 +130,7 @@ def audit_one(sb, sig: dict, oracle_calls: list, settle_calls: list, now: dateti
         status   = "expired"
         log.info("EXPIRED  | %s (proxy CLV %+.2f%%)", match, clv)
 
-    _update_signal(sb, sig["id"], {
+    _update_signal(sb, sig, {
         "status":       status,
         "clv_pct":      float(clv),
         "closing_line": float(closing_price) if closing_price else None,
