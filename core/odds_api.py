@@ -20,13 +20,24 @@ SPORT_KEYS = {
     # ── PRIORITY ─────────────────────────────────────────────────────
     "basketball_nba":                    "basketball",  # NBA Playoffs
     "tennis_atp_masters_1000":           "tennis",      # ATP Masters 1000
-    # ── Tennis (clay season) ─────────────────────────────────────────
+    # ── Tennis (clay season + lower tiers) ───────────────────────────
     "tennis_atp_french_open":            "tennis",
     "tennis_wta_french_open":            "tennis",
     "tennis_atp_roland_garros":          "tennis",
     "tennis_wta_roland_garros":          "tennis",
     "tennis_atp_italian_open":           "tennis",
     "tennis_wta_italian_open":           "tennis",
+    "tennis_atp_500":                    "tennis",      # ATP 500 (Hamburg, Vienna…)
+    "tennis_atp_250":                    "tennis",      # ATP 250 — more lag on soft books
+    "tennis_wta_500":                    "tennis",      # WTA 500
+    "tennis_wta_250":                    "tennis",      # WTA 250
+    "tennis_challenger_tour":            "tennis",      # Challenger — highest lag
+    # ── Darts (PDC) ──────────────────────────────────────────────────
+    "darts_betway_premier_league":       "darts",       # PDC Premier League Darts
+    "darts_master":                      "darts",       # Masters / other PDC
+    # ── Cricket (T20 only — no draw) ─────────────────────────────────
+    "cricket_ipl":                       "cricket",     # IPL T20
+    "cricket_international_t20":         "cricket",     # International T20s
     # ── Boxing ───────────────────────────────────────────────────────
     "boxing_boxing":                     "boxing",
     # ── Soccer ───────────────────────────────────────────────────────
@@ -47,6 +58,8 @@ SPORT_KEYS = {
 _MARKETS_BY_SPORT = {
     "basketball": "h2h,spreads,totals",
     "tennis":     "h2h,totals",          # No spreads market in tennis
+    "darts":      "h2h",                 # ML only — no draw in darts
+    "cricket":    "h2h",                 # T20 ML only — no draw in T20
     "boxing":     "h2h",                 # ML only — no spreads/totals on boxing
     "soccer":     "h2h,spreads,totals",
 }
@@ -146,14 +159,14 @@ def _parse_event(ev: dict, sport_type: str) -> dict | None:
         "away":          away,
         "league":        ev.get("sport_title", ""),
         "sport":         sport_type,
-        "sport_id":      {"soccer": 1, "tennis": 3, "basketball": 4, "boxing": 5}.get(sport_type, 1),
+        "sport_id":      {"soccer": 1, "tennis": 3, "basketball": 4, "boxing": 5, "darts": 6, "cricket": 7}.get(sport_type, 1),
         "commence_time": ev.get("commence_time", ""),
         "odds_1xbet":    xbet_h2h,
         "odds_pinnacle": pin_h2h,
     }
 
     # ── Spreads (NBA + Soccer only) ──────────────────────────────────
-    if sport_type not in ("tennis", "boxing"):
+    if sport_type not in ("tennis", "boxing", "darts", "cricket"):
         xs = _extract_spreads(bookmakers, XBET_KEY,     home, away)
         ps = _extract_spreads(bookmakers, PINNACLE_KEY, home, away)
         if xs and ps:

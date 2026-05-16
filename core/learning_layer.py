@@ -16,6 +16,8 @@ SPORT_DEFAULTS: dict[str, float] = {
     "tennis":     1.5,
     "mma":        2.0,   # Higher baseline — Gemini price estimation adds uncertainty
     "boxing":     1.5,
+    "darts":      1.5,
+    "cricket":    1.5,
 }
 _THRESHOLD_MIN = 1.5   # Never weaker than the global baseline
 _THRESHOLD_MAX = 5.0   # Hard cap — above this no signals would ever pass

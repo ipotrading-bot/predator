@@ -49,11 +49,11 @@ TELEGRAM_CHAT  = os.environ.get("TELEGRAM_CHAT_ID")
 ELITE_EDGE  = _ELITE_EDGE   # % — send Telegram alert (from core.constants)
 MAX_MATCHES = 20   # 20 closest 1XBet matches — speed mode
 
-SPORT_EMOJI  = {"soccer": "⚽", "tennis": "🎾", "basketball": "🏀", "boxing": "🥊", "mma": "🥋"}
+SPORT_EMOJI  = {"soccer": "⚽", "tennis": "🎾", "basketball": "🏀", "boxing": "🥊", "mma": "🥋", "darts": "🎯", "cricket": "🏏"}
 # Portfolio Balancer: max signals per sport per scan — prevents soccer flooding
-SPORT_QUOTA  = {"soccer": 5, "basketball": 3, "tennis": 3, "boxing": 3, "mma": 3}
+SPORT_QUOTA  = {"soccer": 5, "basketball": 3, "tennis": 3, "boxing": 3, "mma": 3, "darts": 2, "cricket": 2}
 # Telegram report order: highest alpha first
-_SPORT_ORDER = ["basketball", "mma", "boxing", "tennis", "soccer"]
+_SPORT_ORDER = ["basketball", "mma", "darts", "boxing", "cricket", "tennis", "soccer"]
 
 # EU market sessions (UTC) — aligns with European bookmaker line movement
 _SESSIONS = {
@@ -186,6 +186,12 @@ def _purge_old_signals(sb):
         log.info("Purged: past MMA fights")
     except Exception as e:
         log.error("Supabase purge (past MMA): %s", e)
+    for _dead_sport in ("darts", "cricket"):
+        try:
+            sb.table("signals").delete().eq("sport", _dead_sport).lt("match_time", datetime.now(timezone.utc).isoformat()).execute()
+            log.info("Purged: past %s events", _dead_sport)
+        except Exception as e:
+            log.error("Supabase purge (past %s): %s", _dead_sport, e)
 
 
 def _risk(edge_pct: float) -> str:
