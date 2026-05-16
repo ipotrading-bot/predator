@@ -47,11 +47,11 @@ TELEGRAM_TOKEN = os.environ.get("TELEGRAM_BOT_TOKEN")
 TELEGRAM_CHAT  = os.environ.get("TELEGRAM_CHAT_ID")
 
 ELITE_EDGE  = _ELITE_EDGE   # % — send Telegram alert (from core.constants)
-MAX_MATCHES = 50
+MAX_MATCHES = 20   # 20 closest 1XBet matches — speed mode
 
 SPORT_EMOJI  = {"soccer": "⚽", "tennis": "🎾", "basketball": "🏀"}
 # Portfolio Balancer: max signals per sport per scan — prevents soccer flooding
-SPORT_QUOTA  = {"soccer": 3, "basketball": 3, "tennis": 3}
+SPORT_QUOTA  = {"soccer": 5, "basketball": 3, "tennis": 3}
 # Telegram report order: highest alpha first (NBA favoured when edges are equal)
 _SPORT_ORDER = ["basketball", "tennis", "soccer"]
 
@@ -81,7 +81,7 @@ def _telegram(text):
         log.error("Telegram: %s", e)
 
 
-_OPTIONAL_COLS = {"selection_name", "kelly_pct", "advice"}
+_OPTIONAL_COLS = {"selection_name", "kelly_pct", "advice", "market_key", "sharp_prob", "match_time", "match_id"}
 
 
 def _save(sb, signal) -> bool:
@@ -439,8 +439,9 @@ def run():
         sharp_source = "OddsAPI/Pinnacle"
         log.info("✅ Tier 1 OK — %d events avec Pinnacle réel", len(matches))
 
-    # ── Tier 2: Gemini + Google Search (fallback si Odds API vide) ────
-    if not matches:
+    # ── Tier 2: Gemini + Google Search — DISABLED (trop lent) ───────
+    # Saute directement en Tier 3 (Estimateur) si Tier 1 vide
+    if False and not matches:
         log.info("📡 Tier 2 — Harvest 1XBet + Gemini Search Pinnacle...")
         xbet_matches = fetch_matches()
         if not xbet_matches:
@@ -483,7 +484,7 @@ def run():
             sharp_source = "Gemini/Pinnacle"
             log.info("✅ Tier 2 OK — %d matchs avec prix Sharp", len(matches))
 
-    # ── Tier 3: Gemini Estimateur (toujours disponible) ───────────────
+    # ── Tier 3: Gemini Estimateur — fallback direct si Tier 1 vide ───
     if not matches:
         log.info("🧠 Tier 3 — Gemini Estimateur (connaissance interne, marge 2%%)...")
         if not xbet_matches:

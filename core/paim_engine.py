@@ -59,7 +59,7 @@ def convert_to_ah0(v1: float, vx: float, v2: float) -> tuple[float, float]:
     return calc_dnb(v1, vx), calc_dnb(v2, vx)
 
 
-def strict_team_match(name_a: str, name_b: str, threshold: float = 0.72) -> bool:
+def strict_team_match(name_a: str, name_b: str, threshold: float = 0.60) -> bool:
     """True if both names likely refer to the same team (handles abbreviations)."""
     if not name_a or not name_b:
         return True
@@ -74,7 +74,7 @@ def strict_team_match(name_a: str, name_b: str, threshold: float = 0.72) -> bool
     return difflib.SequenceMatcher(None, na, nb).ratio() >= threshold
 
 
-MIN_EDGE = 1.5   # % — floor: anything below has no betting value
+MIN_EDGE = 1.2   # % — floor (lowered for visibility — see all movements)
 
 
 def compute_alpha(
