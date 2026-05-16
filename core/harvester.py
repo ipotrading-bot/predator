@@ -187,13 +187,19 @@ def _fetch_from_gemini(sport_id):
         return []
 
 
+_GEMINI_INTER_SPORT_SLEEP = 20  # seconds — avoids 429 burst when all sports fallback to Gemini
+
 def fetch_matches():
     """Fetch matches for all configured sports. Returns combined list."""
     all_matches = []
+    gemini_calls = 0
     for sport_id in SPORT_IDS:
         matches = _fetch_from_1xbet(sport_id)
         if not matches:
+            if gemini_calls > 0:
+                time.sleep(_GEMINI_INTER_SPORT_SLEEP)
             matches = _fetch_from_gemini(sport_id)
+            gemini_calls += 1
         all_matches.extend(matches)
     return all_matches
 

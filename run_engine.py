@@ -530,6 +530,8 @@ def run():
 
     # ── Tier 3: Gemini Estimateur — fallback direct si Tier 1 vide ───
     if not matches:
+        # MMA always calls Gemini above — wait before flooding again
+        time.sleep(20)
         log.info("🧠 Tier 3 — Gemini Estimateur (connaissance interne, marge 2%%)...")
         if not xbet_matches:
             xbet_matches = fetch_matches()
