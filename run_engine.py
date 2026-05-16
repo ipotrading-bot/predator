@@ -379,50 +379,83 @@ def _portfolio_balance(candidates: list) -> list:
     return result
 
 
+_RISK_DOT = {"HIGH_VALUE": "🟢", "VALUE": "🟡", "LOW_VALUE": "⚪", "SUSPECT_DATA": "🔴"}
+_SESSION_ICON = {"EU-OPEN": "📈", "EU-MID": "⚡", "EU-CLOSE": "🎯", "OVERNIGHT": "🌙"}
+
+
+def _session_icon(session: str) -> str:
+    for k, v in _SESSION_ICON.items():
+        if k in session:
+            return v
+    return ""
+
+
 def _telegram_grouped(signals: list, now, session: str, matches: int,
                       sharp_source: str, no_pin_count: int):
-    """Send Telegram report grouped by sport, sorted by alpha."""
-    elite = [s for s in signals if s["edge_pct"] >= ELITE_EDGE]
-    no_pin_suffix  = f" | {no_pin_count} sans prix" if no_pin_count > 0 else ""
-    estimated_flag = " (estimé)" if sharp_source == "Gemini/Estimateur" else ""
+    """Send all signals grouped by sport, sorted by edge desc."""
+    sess      = session.strip()
+    icon      = _session_icon(sess)
+    estimated = " ⚠️" if sharp_source == "Gemini/Estimateur" else ""
+    n_high    = sum(1 for s in signals if s.get("risk_flag") == "HIGH_VALUE")
+    n_val     = sum(1 for s in signals if s.get("risk_flag") == "VALUE")
+    no_pin    = f" · ❓{no_pin_count}" if no_pin_count > 0 else ""
 
-    if not elite:
+    if not signals:
         _telegram(
-            f"PREDATOR v8.5: {now.strftime('%H:%M')} UTC ({session.strip()}) — "
-            f"[{sharp_source}] {matches} events | Signaux: {len(signals)} | Elite: 0{no_pin_suffix}"
+            f"⚫ PREDATOR · {now.strftime('%H:%M')} UTC · {sess} {icon}\n"
+            f"0 signaux · {matches} events · {sharp_source}"
         )
         return
 
-    msg = (f"PREDATOR v8.5 PORTFOLIO — {now.strftime('%H:%M UTC')} ({session.strip()})\n"
-           f"Source: {sharp_source}{estimated_flag} | {matches} events | "
-           f"Elite: {len(elite)}{no_pin_suffix}\n")
+    header = (
+        f"📡 *PREDATOR* · {now.strftime('%H:%M')} UTC · {sess} {icon}\n"
+        f"🟢×{n_high}  🟡×{n_val}  —  {len(signals)} signaux · {matches} events\n"
+        f"`{sharp_source}`{estimated}{no_pin}\n"
+    )
 
-    # Group elite by sport, highest alpha first
+    # Group ALL signals by sport, sorted by edge desc within each sport
     by_sport: dict[str, list] = {}
-    for s in elite:
+    for s in sorted(signals, key=lambda x: x["edge_pct"], reverse=True):
         by_sport.setdefault(s["sport"], []).append(s)
 
+    body = ""
     for sport in _SPORT_ORDER:
         group = by_sport.get(sport, [])
         if not group:
             continue
         emoji = SPORT_EMOJI.get(sport, "🎯")
-        label = sport.upper()
-        msg += f"\n{emoji} {label}\n"
+        body += f"\n{emoji} *{sport.upper()}*\n"
         for s in group:
-            prob      = s.get("sharp_prob", 0) or 0
-            stake     = _kelly_stake(s["xbet_odd"], prob)
-            if stake == 0:
-                continue
-            prob_str  = f" | Prob {int(prob * 100)}%" if prob > 0 else ""
-            team      = s.get("selection_name") or s["match"]
+            prob  = s.get("sharp_prob", 0) or 0
+            stake = _kelly_stake(s["xbet_odd"], prob)
+            team  = s.get("selection_name") or s["match"]
             if " vs " in team:
                 team = team.split(" vs ")[0].strip()
-            msg += (
-                f"  🎯 *{team.upper()}*  `{s['market']} @ {s['xbet_odd']:.2f}`\n"
-                f"  Edge `+{s['edge_pct']:.1f}%`{prob_str} | Mise `{stake}€`/1000€\n"
+            dot   = _RISK_DOT.get(s.get("risk_flag", ""), "⚪")
+            mt    = s.get("match_time") or ""
+            dt    = f" · {mt[8:10]}/{mt[5:7]} {mt[11:16]}" if mt else ""
+            prob_s  = f" · {int(prob * 100)}%" if prob > 0 else ""
+            stake_s = f" · *{stake}€/k*" if stake > 0 else ""
+            body += (
+                f"{dot} *{team.upper()}*  `{s['market']} @ {s['xbet_odd']:.2f}`{dt}\n"
+                f"    `+{s['edge_pct']:.1f}%`{prob_s}{stake_s}\n"
             )
-    _telegram(msg)
+
+    # Telegram 4096-char limit: send in chunks if needed
+    full = header + body
+    if len(full) <= 4000:
+        _telegram(full)
+    else:
+        _telegram(header)
+        chunk = ""
+        for line in body.splitlines(keepends=True):
+            if len(chunk) + len(line) > 3800:
+                _telegram(chunk)
+                chunk = line
+            else:
+                chunk += line
+        if chunk.strip():
+            _telegram(chunk)
 
 
 # ── main ─────────────────────────────────────────────────────────────
