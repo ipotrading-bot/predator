@@ -75,6 +75,24 @@ nav {
   cursor: pointer; transition: all .15s; white-space: nowrap;
 }
 #scanBtn:hover, #scanBtn:active { background: rgba(0,224,58,.13); border-color: var(--green); }
+@media (max-width: 639px) { #scanBtn { display: none; } }
+
+/* ─── FAB SCAN (mobile only) ─────────────────── */
+.fab-scan {
+  display: none;
+  position: fixed; right: 16px;
+  bottom: calc(62px + var(--sbot));
+  width: 46px; height: 46px; border-radius: 50%;
+  background: rgba(0,224,58,.1);
+  border: 1.5px solid rgba(0,224,58,.35);
+  color: var(--green); font-family: var(--font);
+  font-size: 15px; font-weight: 700;
+  cursor: pointer; z-index: 55; transition: all .15s;
+  align-items: center; justify-content: center;
+  box-shadow: 0 2px 14px rgba(0,224,58,.18);
+}
+.fab-scan:active { background: rgba(0,224,58,.2); transform: scale(.93); }
+@media (max-width: 639px) { .fab-scan { display: flex; } }
 
 /* ─── BOTTOM NAV (mobile) ─────────────────────── */
 .bnav {
@@ -425,6 +443,9 @@ footer { display: none; }
 
 <footer>PREDATOR PAIM v8.5 &nbsp;·&nbsp; Pinnacle Sharp &rarr; 1XBet &nbsp;·&nbsp; Lead-Lag Arbitrage</footer>
 
+<!-- ── FAB SCAN (mobile) ──────────────────── -->
+<button class="fab-scan" id="fabScan" onclick="triggerScan()">&#9654;</button>
+
 <!-- ── BOTTOM NAV (mobile) ────────────────── -->
 <nav class="bnav">
   <a href="/" class="on">
@@ -612,13 +633,19 @@ document.addEventListener('keydown',e=>{ if(e.key==='Escape') closeModal(); });
 
 async function triggerScan(){
   const btn=document.getElementById('scanBtn');
-  btn.textContent='⏳'; btn.disabled=true; btn.style.opacity='.5';
+  const fab=document.getElementById('fabScan');
+  const set=(el,txt,col)=>{ if(!el) return; el.textContent=txt; el.disabled=true; el.style.opacity='.5'; if(col) el.style.color=col; };
+  set(btn,'⏳'); set(fab,'⏳');
   try {
     const r=await fetch('/api/scan',{method:'POST'});
-    btn.textContent=r.ok?'✓ OK':'✗ ERR';
-    if(!r.ok) btn.style.color='var(--red)';
-  } catch(e){ btn.textContent='✗ NET'; }
-  setTimeout(()=>{ btn.textContent='▶ SCAN'; btn.disabled=false; btn.style.opacity='1'; btn.style.color='var(--green)'; },4000);
+    if(r.ok){ set(btn,'✓ OK'); set(fab,'✓'); }
+    else     { set(btn,'✗ ERR','var(--red)'); set(fab,'✗','var(--red)'); }
+  } catch(e){ set(btn,'✗ NET','var(--red)'); set(fab,'✗','var(--red)'); }
+  setTimeout(()=>{
+    [btn,fab].forEach(el=>{ if(!el) return; el.disabled=false; el.style.opacity='1'; el.style.color='var(--green)'; });
+    if(btn) btn.textContent='▶ SCAN';
+    if(fab) fab.textContent='▶';
+  },4000);
 }
 </script>
 </body>

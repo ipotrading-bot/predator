@@ -1,320 +1,345 @@
 <!DOCTYPE html>
-<html lang="en">
+<html lang="fr">
 <head>
 <meta charset="UTF-8">
-<meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>PREDATOR AUDIT CLV v8.5</title>
+<meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+<meta name="theme-color" content="#050505">
+<title>PREDATOR · AUDIT CLV</title>
 <style>
 :root {
   --bg:     #050505;
-  --bg2:    #0d0d0d;
-  --border: #1c1c1c;
-  --green:  #00ff41;
-  --blue:   #00bfff;
+  --bg1:    #090909;
+  --bg2:    #0e0e0e;
+  --bd:     #151515;
+  --bd2:    #202020;
+  --green:  #00e03a;
+  --blue:   #00b4e6;
   --red:    #ff3b3b;
-  --yellow: #ffd700;
+  --yellow: #f5c518;
   --orange: #ff8c00;
-  --grey:   #555;
-  --purple: #cc88ff;
-  --text:   #c0c0c0;
-  --font:   'Courier New', monospace;
+  --t1:     #c0c0c0;
+  --t2:     #555;
+  --t3:     #2a2a2a;
+  --font:   'SF Mono','Fira Code','Cascadia Code','Courier New',monospace;
+  --r:      7px;
+  --sbot:   env(safe-area-inset-bottom, 0px);
 }
-* { margin: 0; padding: 0; box-sizing: border-box; }
-body { background: var(--bg); color: var(--text); font-family: var(--font); font-size: 13px; min-height: 100vh; }
+*, *::before, *::after { margin:0; padding:0; box-sizing:border-box; -webkit-tap-highlight-color:transparent; }
+body { background:var(--bg); color:var(--t1); font-family:var(--font); font-size:13px; min-height:100dvh; overscroll-behavior:none; }
 
-nav {
-  background: #030303;
-  border-bottom: 1px solid var(--border);
-  padding: 0 24px;
+/* ─── TOP NAV ─────────────────────────────────── */
+nav.topnav {
+  position: sticky; top: 0; z-index: 60;
+  height: 48px;
+  background: rgba(5,5,5,.96);
+  backdrop-filter: blur(14px); -webkit-backdrop-filter: blur(14px);
+  border-bottom: 1px solid var(--bd);
+  display: flex; align-items: center; padding: 0 14px; gap: 0;
+}
+.nav-logo {
+  color: var(--blue); font-size: 11px; font-weight: 700;
+  letter-spacing: 3px; white-space: nowrap; flex-shrink: 0;
+}
+.nav-pages {
+  display: none; align-items: center; margin-left: 14px; gap: 0;
+}
+.nav-pages a {
+  height: 48px; padding: 0 13px;
+  display: flex; align-items: center;
+  font-size: 9px; font-weight: 700; letter-spacing: 2px;
+  text-transform: uppercase; text-decoration: none; color: var(--t2);
+  border-right: 1px solid var(--bd); transition: color .12s;
+}
+.nav-pages a:first-child { border-left: 1px solid var(--bd); margin-left: 10px; }
+.nav-pages a.on { color: var(--blue); }
+.nav-pages a:hover { color: var(--t1); }
+.nav-right { display: flex; align-items: center; gap: 10px; margin-left: auto; flex-shrink: 0; }
+#clock { font-size: 10px; color: var(--t3); }
+
+/* ─── BOTTOM NAV (mobile) ─────────────────────── */
+.bnav {
+  position: fixed; bottom: 0; left: 0; right: 0; z-index: 60;
+  background: rgba(5,5,5,.97);
+  backdrop-filter: blur(16px); -webkit-backdrop-filter: blur(16px);
+  border-top: 1px solid var(--bd);
   display: flex;
+  height: calc(54px + var(--sbot));
+  padding-bottom: var(--sbot);
 }
-.nav-link {
-  color: var(--grey);
-  text-decoration: none;
-  font-size: 10px;
-  font-weight: bold;
-  letter-spacing: 2px;
-  text-transform: uppercase;
-  padding: 10px 18px;
-  border-right: 1px solid var(--border);
-  transition: color 0.15s;
+.bnav a {
+  flex: 1; display: flex; flex-direction: column;
+  align-items: center; justify-content: center; gap: 4px;
+  text-decoration: none; color: var(--t2);
+  font-size: 8px; font-weight: 700; letter-spacing: 1px;
+  text-transform: uppercase; transition: color .12s;
 }
-.nav-link:hover  { color: var(--text); }
-.nav-link.active { color: var(--green); border-bottom: 2px solid var(--green); }
+.bnav a.on { color: var(--blue); }
+.bnav svg { width: 19px; height: 19px; stroke: currentColor; fill: none; stroke-width: 1.6; stroke-linecap: round; stroke-linejoin: round; }
 
-header {
-  background: var(--bg2);
-  border-bottom: 1px solid var(--border);
-  padding: 14px 24px;
+/* ─── LAYOUT ──────────────────────────────────── */
+.wrap {
+  padding: 12px 11px calc(68px + var(--sbot));
+  max-width: 900px; margin: 0 auto;
 }
-.logo    { color: var(--green); font-size: 17px; font-weight: bold; letter-spacing: 4px; }
-.tagline { color: var(--grey); font-size: 10px; margin-top: 3px; }
-
-.container { padding: 24px; }
-
-/* ── SPORT CARDS ─────────────────────────────────────────────────── */
-.cards { display: flex; gap: 20px; flex-wrap: wrap; margin-bottom: 32px; }
-
-.card {
-  flex: 1;
-  min-width: 240px;
-  background: var(--bg2);
-  border: 1px solid var(--border);
-  padding: 18px 20px 14px;
-}
-.card-title {
-  font-size: 11px;
-  font-weight: bold;
-  letter-spacing: 3px;
-  text-transform: uppercase;
-  color: var(--blue);
-  margin-bottom: 14px;
-  display: flex;
-  align-items: center;
-  gap: 8px;
-}
-.card-stats { display: flex; gap: 0; border-top: 1px solid var(--border); }
-.cs {
-  flex: 1;
-  text-align: center;
-  padding: 10px 6px;
-  border-right: 1px solid var(--border);
-}
-.cs:last-child { border-right: none; }
-.cs-val { font-size: 20px; font-weight: bold; }
-.cs-lbl { color: var(--grey); font-size: 9px; text-transform: uppercase; letter-spacing: 1px; margin-top: 3px; }
-
-/* ── BAR CHART (pure CSS) ─────────────────────────────────────────── */
-.chart-section {
-  background: var(--bg2);
-  border: 1px solid var(--border);
-  padding: 18px 20px;
-  margin-bottom: 32px;
-}
-.chart-title {
-  font-size: 10px;
-  font-weight: bold;
-  letter-spacing: 2px;
-  text-transform: uppercase;
-  color: var(--blue);
-  margin-bottom: 18px;
-}
-.chart-bars { display: flex; gap: 32px; align-items: flex-end; height: 120px; }
-.bar-group  { display: flex; flex-direction: column; align-items: center; gap: 4px; min-width: 70px; }
-.bar-wrap   { height: 100px; display: flex; align-items: flex-end; }
-.bar {
-  width: 54px;
-  min-height: 3px;
-  border-radius: 1px 1px 0 0;
-  transition: opacity 0.2s;
-  position: relative;
-}
-.bar:hover { opacity: 0.8; }
-.bar-val {
-  position: absolute;
-  top: -18px;
-  left: 0; right: 0;
-  text-align: center;
-  font-size: 10px;
-  font-weight: bold;
-}
-.bar-lbl { font-size: 10px; color: var(--grey); }
-.bar-sport { font-size: 12px; }
-
-/* Threshold marker line */
-.chart-axis {
-  border-top: 1px dashed #2a2a2a;
-  margin-top: 4px;
-  padding-top: 4px;
-  font-size: 9px;
-  color: #333;
-  letter-spacing: 1px;
+@media (min-width: 640px) {
+  .wrap { padding: 14px 20px 40px; }
+  .bnav { display: none; }
+  .nav-pages { display: flex; }
 }
 
-/* ── DETAIL TABLE ─────────────────────────────────────────────────── */
-.section-title {
-  font-size: 10px;
-  font-weight: bold;
-  letter-spacing: 2px;
-  text-transform: uppercase;
-  color: var(--grey);
-  margin-bottom: 12px;
+/* ─── PAGE HEADER ─────────────────────────────── */
+.page-hdr { margin-bottom: 14px; }
+.page-title {
+  font-size: 15px; font-weight: 700; letter-spacing: 4px;
+  text-transform: uppercase; color: var(--blue);
 }
-table { width: 100%; border-collapse: collapse; min-width: 700px; }
+.page-sub { font-size: 9px; color: var(--t2); margin-top: 4px; }
+
+/* ─── SPORT GRID ──────────────────────────────── */
+.sport-grid {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 8px; margin-bottom: 10px;
+}
+@media (min-width: 640px)  { .sport-grid { grid-template-columns: repeat(3, 1fr); } }
+@media (min-width: 900px)  { .sport-grid { grid-template-columns: repeat(4, 1fr); } }
+
+.sport-card {
+  background: var(--bg1); border: 1px solid var(--bd);
+  border-radius: var(--r); padding: 11px 12px;
+}
+.sc-hdr {
+  display: flex; align-items: center; justify-content: space-between; margin-bottom: 8px;
+}
+.sc-name { font-size: 9px; font-weight: 700; letter-spacing: 2px; text-transform: uppercase; color: var(--t2); }
+.sc-badge {
+  font-size: 7px; font-weight: 700; padding: 2px 5px; border-radius: 3px; letter-spacing: .3px;
+}
+.sc-badge.perf   { color: var(--green);  background: rgba(0,224,58,.07);  border: 1px solid rgba(0,224,58,.18);  }
+.sc-badge.stable { color: var(--yellow); background: rgba(245,197,24,.07); border: 1px solid rgba(245,197,24,.18); }
+.sc-badge.erosion{ color: var(--orange); background: rgba(255,140,0,.07);  border: 1px solid rgba(255,140,0,.18);  }
+
+.sc-spark { display: flex; gap: 2px; align-items: flex-end; height: 28px; margin-bottom: 9px; }
+.sc-spark-bar { flex: 1; min-height: 2px; border-radius: 1px 1px 0 0; opacity: .75; }
+
+.sc-stats { display: flex; border-top: 1px solid var(--bd); }
+.sc-stat {
+  flex: 1; text-align: center; padding: 7px 4px; border-right: 1px solid var(--bd);
+}
+.sc-stat:last-child { border-right: none; }
+.sc-val { font-size: 13px; font-weight: 700; }
+.sc-lbl { font-size: 7px; color: var(--t2); margin-top: 2px; text-transform: uppercase; letter-spacing: .8px; }
+
+/* ─── CLV CHART ───────────────────────────────── */
+.clv-chart {
+  background: var(--bg1); border: 1px solid var(--bd);
+  border-radius: var(--r); padding: 13px 14px; margin-bottom: 10px;
+}
+.clv-chart-title {
+  font-size: 9px; font-weight: 700; letter-spacing: 2px;
+  text-transform: uppercase; color: var(--t2); margin-bottom: 12px;
+}
+.chart-bars {
+  display: flex; gap: 20px; align-items: flex-end; height: 104px;
+  overflow-x: auto; padding-bottom: 4px; scrollbar-width: none;
+}
+.chart-bars::-webkit-scrollbar { display: none; }
+.bar-group { display: flex; flex-direction: column; align-items: center; gap: 3px; min-width: 48px; flex-shrink: 0; }
+.bar-val-lbl { font-size: 9px; font-weight: 700; }
+.bar-wrap { height: 72px; display: flex; align-items: flex-end; }
+.bar { width: 38px; min-height: 3px; border-radius: 2px 2px 0 0; }
+.bar-sport { font-size: 14px; }
+.bar-name  { font-size: 7px; color: var(--t2); letter-spacing: 1px; }
+.bar-n     { font-size: 7px; color: var(--t3); }
+.chart-legend {
+  margin-top: 10px; padding-top: 8px; border-top: 1px solid var(--bd);
+  display: flex; flex-wrap: wrap; gap: 10px;
+  font-size: 8px; color: var(--t2);
+}
+
+/* ─── THRESHOLDS ──────────────────────────────── */
+.thresholds {
+  background: var(--bg1); border: 1px solid var(--bd);
+  border-radius: var(--r); padding: 11px 14px; margin-bottom: 10px;
+}
+.thr-title { font-size: 9px; font-weight: 700; letter-spacing: 2px; color: var(--t2); text-transform: uppercase; margin-bottom: 8px; }
+.thr-list  { display: flex; flex-wrap: wrap; gap: 10px 18px; }
+.thr-item  { display: flex; align-items: center; gap: 6px; font-size: 10px; }
+.thr-val   { font-weight: 700; }
+.thr-lbl   { color: var(--t2); font-size: 9px; }
+
+/* ─── TABLE ───────────────────────────────────── */
+.sec-title {
+  font-size: 9px; font-weight: 700; letter-spacing: 2px;
+  color: var(--t2); text-transform: uppercase; margin-bottom: 8px;
+}
+.tbl-wrap { overflow-x: auto; border: 1px solid var(--bd); border-radius: var(--r); }
+table { width: 100%; border-collapse: collapse; min-width: 660px; }
 thead th {
-  color: var(--blue);
-  font-size: 10px;
-  letter-spacing: 1px;
-  text-transform: uppercase;
-  padding: 7px 12px;
-  border-bottom: 1px solid var(--border);
-  background: var(--bg2);
-  text-align: left;
+  color: var(--blue); font-size: 9px; letter-spacing: 1px;
+  text-transform: uppercase; padding: 8px 12px;
+  border-bottom: 1px solid var(--bd);
+  background: var(--bg2); text-align: left; white-space: nowrap;
 }
-tbody tr { border-bottom: 1px solid var(--border); }
-tbody tr:hover { background: #0d0d0d; }
-td { padding: 9px 12px; vertical-align: middle; }
+tbody tr { border-bottom: 1px solid var(--bd); }
+tbody tr:last-child { border-bottom: none; }
+tbody tr:hover { background: var(--bg2); }
+td { padding: 8px 12px; vertical-align: middle; font-size: 11px; }
 
-.clv-pos { color: var(--green); font-weight: bold; }
-.clv-neg { color: var(--red); font-weight: bold; }
-.clv-zero { color: var(--grey); }
+.clv-pos  { color: var(--green); font-weight: 700; }
+.clv-neg  { color: var(--red);   font-weight: 700; }
+.clv-zero { color: var(--t2); }
 
-.ts { color: var(--grey); font-size: 11px; }
-
-.empty {
-  text-align: center;
-  padding: 60px 20px;
-  color: var(--grey);
-  line-height: 2;
+.status-badge {
+  font-size: 8px; font-weight: 700; padding: 2px 7px; border-radius: 3px;
+  letter-spacing: .5px; text-transform: uppercase;
 }
+.st-closed { color: var(--green); background: rgba(0,224,58,.06); border: 1px solid rgba(0,224,58,.15); }
+.st-other  { color: var(--t2);    background: var(--bg2);          border: 1px solid var(--bd); }
 
-footer {
-  border-top: 1px solid var(--border);
-  padding: 10px 24px;
-  font-size: 10px;
-  color: #333;
-  text-align: center;
-  margin-top: 24px;
+/* ─── EMPTY ───────────────────────────────────── */
+.empty { text-align: center; padding: 80px 20px; color: var(--t2); font-size: 11px; line-height: 2.6; }
+.empty-icon { font-size: 36px; color: var(--t3); margin-bottom: 12px; }
+
+footer { display: none; }
+@media (min-width: 640px) {
+  footer { display: block; border-top: 1px solid var(--bd); padding: 7px 20px; font-size: 9px; color: var(--t3); text-align: center; }
 }
 </style>
 </head>
 <body>
 
-<nav>
-  <a href="/" class="nav-link">&#9658; DASHBOARD</a>
-  <a href="/ledger" class="nav-link">&#9660; LEDGER</a>
-  <a href="/audit" class="nav-link active">&#9632; AUDIT CLV</a>
+<!-- ── TOP NAV ────────────────────────────── -->
+<nav class="topnav">
+  <div class="nav-logo">&#9632; AUDIT CLV</div>
+  <div class="nav-pages">
+    <a href="/">DASHBOARD</a>
+    <a href="/ledger">LEDGER</a>
+    <a href="/audit" class="on">AUDIT CLV</a>
+  </div>
+  <div class="nav-right">
+    <span id="clock">—</span>
+  </div>
 </nav>
 
-<header>
-  <div class="logo">&#9632; AUDIT CLV — CERVEAU STATISTIQUE</div>
-  <div class="tagline">v8.5 &middot; Closing Line Value par sport &middot; Indicateur de sant&eacute; n&deg;1 &middot; CLV &gt; 0 = alpha r&eacute;el captur&eacute;</div>
-</header>
+<!-- ── CONTENT ────────────────────────────── -->
+<main class="wrap">
 
-<div class="container">
+  <div class="page-hdr">
+    <div class="page-title">&#9632; AUDIT CLV &mdash; CERVEAU STATISTIQUE</div>
+    <div class="page-sub">v8.5 &middot; Closing Line Value par sport &middot; Indicateur de sant&eacute; n&deg;1 &middot; CLV &gt; 0 = alpha r&eacute;el captur&eacute;</div>
+  </div>
 
 {% if audit_data %}
 
-  <!-- ── SPORT CARDS ──────────────────────────────────────────────── -->
-  <div class="cards">
-    {% set sport_config = [
-      ('basketball', '🏀', 'BASKETBALL', '#ff6622'),
-      ('tennis',     '🎾', 'TENNIS',     '#00ffaa'),
-      ('soccer',     '⚽', 'SOCCER',     '#00ff41'),
-    ] %}
-    {% for sport_key, emoji, label, color in sport_config %}
-      {% if audit_data.get(sport_key) %}
-      {% set d = audit_data[sport_key] %}
-      {% set thr = thresholds.get(sport_key, 1.5) %}
-      <div class="card">
-        <div class="card-title">
-          {{ emoji }} {{ label }}
-          {% if d.avg_clv >= 1.5 %}
-            <span style="color:var(--green);font-size:9px;border:1px solid #003300;background:#001a00;padding:1px 6px;">PERFORMANT</span>
-          {% elif d.avg_clv >= 0 %}
-            <span style="color:var(--yellow);font-size:9px;border:1px solid #554000;background:#2a2000;padding:1px 6px;">STABLE</span>
-          {% else %}
-            <span style="color:var(--orange);font-size:9px;border:1px solid #4d2800;background:#1a0d00;padding:1px 6px;">⚠ EROSION</span>
-          {% endif %}
-        </div>
+  {% set sport_cfg_audit = [
+    ('basketball','🏀','BASKET', '#ff6622'),
+    ('tennis',    '🎾','TENNIS', '#00ccaa'),
+    ('soccer',    '⚽','SOCCER', '#00e03a'),
+    ('mma',       '🥋','MMA',    '#cc88ff'),
+    ('boxing',    '🥊','BOXING', '#ff4488'),
+    ('darts',     '🎯','DARTS',  '#00b4e6'),
+    ('cricket',   '🏏','CRICKET','#f5c518'),
+  ] %}
 
-        <!-- Mini bar chart for recent CLV (last 10) -->
-        <div style="display:flex;gap:3px;align-items:flex-end;height:36px;margin-bottom:10px;">
-          {% set max_abs = [0.01] %}
-          {% for v in d.recent %}{% if v|abs > max_abs[0] %}{% set _ = max_abs.append(v|abs) %}{% endif %}{% endfor %}
-          {% set scale = max_abs[-1] %}
-          {% for v in d.recent %}
-          {% set pct = [(v / scale * 100)|abs, 100]|min %}
-          <div style="
-            flex:1;
-            height:{{ pct|int }}%;
-            background:{{ color if v >= 0 else '#ff3b3b' }};
-            opacity:0.7;
-            min-height:2px;
-          " title="CLV {{ '+' if v >= 0 else '' }}{{ '%.2f'|format(v) }}%"></div>
-          {% endfor %}
-        </div>
+  <!-- ── SPORT CARDS ─────────────────────────── -->
+  <div class="sport-grid">
+    {% for sport_key, emoji, label, color in sport_cfg_audit %}
+    {% if audit_data.get(sport_key) %}
+    {% set d = audit_data[sport_key] %}
+    {% set thr = thresholds.get(sport_key, 1.5) %}
 
-        <div class="card-stats">
-          <div class="cs">
-            <div class="cs-val" style="color:{{ color }}">{{ "%.1f" | format(d.avg_clv) }}%</div>
-            <div class="cs-lbl">Avg CLV</div>
-          </div>
-          <div class="cs">
-            <div class="cs-val" style="color:{{ '#00ff41' if d.hit_rate >= 60 else ('#ffd700' if d.hit_rate >= 40 else '#ff3b3b') }}">{{ d.hit_rate }}%</div>
-            <div class="cs-lbl">Hit Rate</div>
-          </div>
-          <div class="cs">
-            <div class="cs-val" style="color:var(--grey);font-size:14px">{{ thr }}%</div>
-            <div class="cs-lbl">Seuil Min</div>
-          </div>
-          <div class="cs">
-            <div class="cs-val" style="color:var(--grey);font-size:13px">{{ d.count }}</div>
-            <div class="cs-lbl">Signaux</div>
-          </div>
-        </div>
+    <div class="sport-card">
+      <div class="sc-hdr">
+        <span class="sc-name">{{ emoji }} {{ label }}</span>
+        {% if d.avg_clv >= 1.5 %}
+          <span class="sc-badge perf">OK</span>
+        {% elif d.avg_clv >= 0 %}
+          <span class="sc-badge stable">~</span>
+        {% else %}
+          <span class="sc-badge erosion">⚠</span>
+        {% endif %}
+      </div>
+
+      {% if d.recent %}
+      {% set mav = namespace(v=0.01) %}
+      {% for v in d.recent %}{% if v|abs > mav.v %}{% set mav.v = v|abs %}{% endif %}{% endfor %}
+      <div class="sc-spark">
+        {% for v in d.recent %}
+        {% set pct = [(v / mav.v * 100)|abs, 100]|min %}
+        <div class="sc-spark-bar" style="
+          height:{{ [pct|int,4]|max }}%;
+          background:{{ color if v >= 0 else 'var(--red)' }};
+        " title="{{ '+' if v >= 0 else '' }}{{ '%.2f'|format(v) }}%"></div>
+        {% endfor %}
       </div>
       {% endif %}
+
+      <div class="sc-stats">
+        <div class="sc-stat">
+          <div class="sc-val" style="color:{{ color }}">{{ '%.1f'|format(d.avg_clv) }}%</div>
+          <div class="sc-lbl">CLV</div>
+        </div>
+        <div class="sc-stat">
+          <div class="sc-val" style="color:{{ 'var(--green)' if d.hit_rate >= 60 else ('var(--yellow)' if d.hit_rate >= 40 else 'var(--red)') }}">{{ d.hit_rate }}%</div>
+          <div class="sc-lbl">Hit</div>
+        </div>
+        <div class="sc-stat">
+          <div class="sc-val" style="color:var(--t2);font-size:12px">{{ d.count }}</div>
+          <div class="sc-lbl">n</div>
+        </div>
+      </div>
+    </div>
+    {% endif %}
     {% endfor %}
   </div>
 
-  <!-- ── CLV BAR CHART ───────────────────────────────────────────── -->
-  <div class="chart-section">
-    <div class="chart-title">&#9632; CLV MOYENNE PAR SPORT — Santé du Portefeuille</div>
+  <!-- ── CLV BAR CHART ───────────────────────── -->
+  <div class="clv-chart">
+    <div class="clv-chart-title">&#9632; CLV MOYENNE PAR SPORT</div>
     <div class="chart-bars">
-      {% set bar_config = [
-        ('basketball', '🏀', '#ff6622'),
-        ('tennis',     '🎾', '#00ffaa'),
-        ('soccer',     '⚽', '#00ff41'),
-      ] %}
-      {% for sport_key, emoji, color in bar_config %}
-        {% if audit_data.get(sport_key) %}
-        {% set d = audit_data[sport_key] %}
-        {% set bar_h = [(d.avg_clv * 12)|abs|int, 100]|min %}
-        {% set bar_h = [bar_h, 3]|max %}
-        <div class="bar-group">
-          <div style="font-size:10px;font-weight:bold;
-            color:{{ '#00ff41' if d.avg_clv >= 0 else '#ff3b3b' }}">
-            {{ '+' if d.avg_clv >= 0 else '' }}{{ "%.2f" | format(d.avg_clv) }}%
-          </div>
-          <div class="bar-wrap">
-            <div class="bar" style="
-              height:{{ bar_h }}px;
-              background:{{ color if d.avg_clv >= 0 else '#ff3b3b' }};
-              opacity:{{ '0.9' if d.avg_clv >= 1.5 else '0.55' }};
-            "></div>
-          </div>
-          <div class="bar-sport">{{ emoji }}</div>
-          <div class="bar-lbl">{{ sport_key.upper() }}</div>
-          <div style="font-size:9px;color:var(--grey)">n={{ d.count }}</div>
+      {% for sport_key, emoji, label, color in sport_cfg_audit %}
+      {% if audit_data.get(sport_key) %}
+      {% set d = audit_data[sport_key] %}
+      {% set bh = [(d.avg_clv * 12)|abs|int, 72]|min %}
+      {% set bh = [bh, 3]|max %}
+      <div class="bar-group">
+        <div class="bar-val-lbl" style="color:{{ 'var(--green)' if d.avg_clv >= 0 else 'var(--red)' }}">
+          {{ '+' if d.avg_clv >= 0 else '' }}{{ '%.1f'|format(d.avg_clv) }}%
         </div>
-        {% endif %}
-      {% endfor %}
-
-      <!-- Legend -->
-      <div style="margin-left:auto;display:flex;flex-direction:column;gap:8px;justify-content:flex-end;padding-bottom:24px;">
-        <div style="font-size:9px;color:var(--grey);letter-spacing:1px;">LÉGENDE</div>
-        <div style="font-size:9px;color:var(--green);">&#9632; CLV &ge; 1.5% → Seuil maintenu</div>
-        <div style="font-size:9px;color:var(--yellow);">&#9632; CLV 0–1.5% → Seuil peut monter</div>
-        <div style="font-size:9px;color:var(--red);">&#9632; CLV &lt; 0% → Érosion d'alpha</div>
-        <div style="font-size:9px;color:var(--grey);margin-top:6px;">Seuil ajusté automatiquement<br>par Learning Layer toutes les 6h</div>
+        <div class="bar-wrap">
+          <div class="bar" style="
+            height:{{ bh }}px;
+            background:{{ color if d.avg_clv >= 0 else 'var(--red)' }};
+            opacity:{{ '0.9' if d.avg_clv >= 1.5 else '0.5' }};
+          "></div>
+        </div>
+        <div class="bar-sport">{{ emoji }}</div>
+        <div class="bar-name">{{ label }}</div>
+        <div class="bar-n">n={{ d.count }}</div>
       </div>
+      {% endif %}
+      {% endfor %}
     </div>
-    <div class="chart-axis">&#9650; CLV &gt; 0 : vous battez le marché &nbsp;&nbsp;|&nbsp;&nbsp; CLV &lt; 0 : l'edge avait déjà été arbitré avant le scan</div>
+    <div class="chart-legend">
+      <span style="color:var(--green)">&#9632; &ge;1.5% Performant</span>
+      <span style="color:var(--yellow)">&#9632; 0–1.5% Stable</span>
+      <span style="color:var(--red)">&#9632; &lt;0% Érosion</span>
+      <span style="color:var(--t3)">CLV &gt; 0 = vous battez le marché avant clôture</span>
+    </div>
   </div>
 
-  <!-- ── DYNAMIC THRESHOLDS STATUS ──────────────────────────────── -->
+  <!-- ── DYNAMIC THRESHOLDS ─────────────────── -->
   {% if thresholds %}
-  <div style="background:var(--bg2);border:1px solid var(--border);padding:14px 20px;margin-bottom:28px;">
-    <div class="section-title">&#9632; SEUILS DYNAMIQUES (LEARNING LAYER)</div>
-    <div style="display:flex;gap:24px;flex-wrap:wrap;margin-top:8px;">
-      {% for sport_key, emoji, label, color in [('basketball','🏀','BASKETBALL','#ff6622'),('tennis','🎾','TENNIS','#00ffaa'),('soccer','⚽','SOCCER','#00ff41')] %}
+  <div class="thresholds">
+    <div class="thr-title">&#9632; SEUILS DYNAMIQUES — LEARNING LAYER</div>
+    <div class="thr-list">
+      {% for sport_key, emoji, label, color in sport_cfg_audit %}
       {% if thresholds.get(sport_key) %}
-      <div style="display:flex;align-items:center;gap:8px;font-size:11px;">
-        <span>{{ emoji }} {{ label }}</span>
-        <span style="color:var(--grey)">→</span>
-        <span style="color:{{ color }};font-weight:bold;">{{ thresholds[sport_key] }}%</span>
-        <span style="color:#333">MIN_EDGE</span>
+      <div class="thr-item">
+        <span>{{ emoji }}</span>
+        <span class="thr-val" style="color:{{ color }}">{{ thresholds[sport_key] }}%</span>
+        <span class="thr-lbl">{{ label }} MIN</span>
       </div>
       {% endif %}
       {% endfor %}
@@ -322,20 +347,20 @@ footer {
   </div>
   {% endif %}
 
-  <!-- ── DETAIL TABLE — Last 20 Closed Signals ──────────────────── -->
+  <!-- ── LAST 20 AUDITED ────────────────────── -->
   {% if recent_signals %}
-  <div class="section-title">&#9632; 20 DERNIERS SIGNAUX AUDITÉS</div>
-  <div style="overflow-x:auto;">
+  <div class="sec-title" style="margin-top:14px">&#9632; 20 DERNIERS SIGNAUX AUDITÉS</div>
+  <div class="tbl-wrap">
   <table>
     <thead>
       <tr>
         <th>Sport</th>
         <th>Match</th>
-        <th>Market</th>
-        <th>Edge pris</th>
+        <th>Marché</th>
+        <th>Edge</th>
         <th>CLV</th>
         <th>Status</th>
-        <th>Clôture (UTC)</th>
+        <th>Clôture UTC</th>
       </tr>
     </thead>
     <tbody>
@@ -346,25 +371,22 @@ footer {
           {% if s.sport == 'basketball' %}🏀
           {% elif s.sport == 'tennis' %}🎾
           {% elif s.sport == 'soccer' %}⚽
+          {% elif s.sport == 'mma' %}🥋
+          {% elif s.sport == 'boxing' %}🥊
+          {% elif s.sport == 'darts' %}🎯
+          {% elif s.sport == 'cricket' %}🏏
           {% else %}🎯{% endif %}
         </td>
-        <td style="color:#fff;font-weight:bold">{{ s.match }}</td>
-        <td style="color:var(--grey);font-size:11px">{{ s.market or '—' }}</td>
-        <td style="color:var(--blue)">
-          {% if s.edge_pct %}+{{ "%.2f"|format(s.edge_pct) }}%{% else %}—{% endif %}
-        </td>
+        <td style="color:#ddd;font-weight:700;white-space:nowrap">{{ s.match }}</td>
+        <td style="color:var(--t2)">{{ s.market or '—' }}</td>
+        <td style="color:var(--blue)">{% if s.edge_pct %}+{{ '%.2f'|format(s.edge_pct) }}%{% else %}—{% endif %}</td>
         <td class="{% if clv > 0 %}clv-pos{% elif clv < 0 %}clv-neg{% else %}clv-zero{% endif %}">
-          {{ '+' if clv > 0 else '' }}{{ "%.2f"|format(clv) }}%
-          {% if clv >= 0 %} ✓{% else %} ✗{% endif %}
+          {{ '+' if clv > 0 else '' }}{{ '%.2f'|format(clv) }}% {{ '✓' if clv >= 0 else '✗' }}
         </td>
         <td>
-          <span style="
-            font-size:10px;padding:1px 7px;font-weight:bold;
-            {% if s.status == 'closed' %}color:var(--green);border:1px solid #003300;background:#001a00;
-            {% else %}color:var(--grey);border:1px solid #2a2a2a;background:#111;{% endif %}
-          ">{{ s.status | upper }}</span>
+          <span class="status-badge {% if s.status == 'closed' %}st-closed{% else %}st-other{% endif %}">{{ s.status }}</span>
         </td>
-        <td class="ts">{{ s.closed_at[:16] | replace('T',' ') if s.closed_at else '—' }}</td>
+        <td style="color:var(--t2)">{{ s.closed_at[:16]|replace('T',' ') if s.closed_at else '—' }}</td>
       </tr>
       {% endfor %}
     </tbody>
@@ -373,16 +395,41 @@ footer {
   {% endif %}
 
 {% else %}
+
 <div class="empty">
-  <div style="font-size:40px;color:#1a1a1a;margin-bottom:12px;">&#9632;</div>
+  <div class="empty-icon">&#9632;</div>
   <div>Aucun signal audité pour l'instant.</div>
-  <div style="font-size:11px;margin-top:6px">Le moteur d'audit tourne toutes les 6h via GitHub Actions.</div>
-  <div style="font-size:11px;margin-top:4px">Les signaux actifs seront audités 3h après le scan.</div>
+  <div style="font-size:10px;margin-top:6px">Le moteur d'audit tourne toutes les 6h via GitHub Actions.</div>
+  <div style="font-size:10px;margin-top:4px">Les signaux actifs seront audités 3h après le scan.</div>
 </div>
+
 {% endif %}
 
-</div>
+</main>
 
 <footer>PREDATOR PAIM v8.5 &nbsp;&middot;&nbsp; Audit CLV &nbsp;&middot;&nbsp; Closing Line Value &mdash; la seule m&eacute;trique qui prouve si le bot bat le march&eacute;</footer>
+
+<!-- ── BOTTOM NAV (mobile) ────────────────── -->
+<nav class="bnav">
+  <a href="/">
+    <svg viewBox="0 0 24 24"><rect x="3" y="3" width="7" height="7" rx="1.5"/><rect x="14" y="3" width="7" height="7" rx="1.5"/><rect x="3" y="14" width="7" height="7" rx="1.5"/><rect x="14" y="14" width="7" height="7" rx="1.5"/></svg>
+    Dashboard
+  </a>
+  <a href="/ledger">
+    <svg viewBox="0 0 24 24"><path d="M9 5H7a2 2 0 00-2 2v12a2 2 0 002 2h10a2 2 0 002-2V7a2 2 0 00-2-2h-2M9 5a2 2 0 002 2h2a2 2 0 002-2M9 5a2 2 0 012-2h2a2 2 0 012 2M12 12h4m-4 4h4m-8-4h.01m-.01 4h.01"/></svg>
+    Ledger
+  </a>
+  <a href="/audit" class="on">
+    <svg viewBox="0 0 24 24"><polyline points="22 12 18 12 15 21 9 3 6 12 2 12"/></svg>
+    Audit
+  </a>
+</nav>
+
+<script>
+(function tick(){
+  document.getElementById('clock').textContent = new Date().toISOString().slice(11,16)+' UTC';
+  setTimeout(tick,1000);
+})();
+</script>
 </body>
 </html>
