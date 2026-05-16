@@ -81,16 +81,13 @@ def _telegram(text):
         log.error("Telegram: %s", e)
 
 
-# Columns confirmed missing in current Supabase schema — strip before every insert
-_SCHEMA_MISSING = {"market_key", "sharp_prob", "match_time", "match_id"}
-# Columns present in DB but truly optional (strip only as last-resort fallback)
-_OPTIONAL_COLS  = {"selection_name", "kelly_pct", "advice"}
+# Columns optional at DB level — strip only as last-resort fallback
+_OPTIONAL_COLS = {"selection_name", "kelly_pct", "advice"}
 
 
 def _save(sb, signal) -> bool:
     """Delete-then-insert to avoid duplicates. Returns True on success."""
-    # Always strip columns not yet in DB schema
-    payload = {k: v for k, v in signal.items() if k not in _SCHEMA_MISSING}
+    payload = dict(signal)
     try:
         (sb.table("signals").delete()
            .eq("match",  payload["match"])
@@ -154,28 +151,31 @@ def _purge_old_signals(sb):
         log.error("Supabase purge (age): %s", e)
 
     purge_rules = [
-        ("edge_pct",   "gt",  15.0,     "edge > 15%"),
-        ("edge_pct",   "lt",  MIN_EDGE,  f"edge < {MIN_EDGE}%"),
-        ("market",     "is",  "null",    "null market"),
-        ("sharp_prob", "lte", 0.0,       "sharp_prob=0 (stale)"),
+        ("gt",  "edge_pct",   15.0,    "edge > 15%"),
+        ("lt",  "edge_pct",   MIN_EDGE, f"edge < {MIN_EDGE}%"),
+        ("lte", "sharp_prob", 0.0,      "sharp_prob=0 (stale)"),
     ]
-    for col, op, val, label in purge_rules:
+    for op, col, val, label in purge_rules:
         try:
-            q = sb.table("signals").delete()
-            getattr(q, op)(col, val).execute()
+            getattr(sb.table("signals").delete(), op)(col, val).execute()
             log.info("Purged: %s", label)
         except Exception as e:
             log.error("Supabase purge (%s): %s", label, e)
+    try:
+        sb.table("signals").delete().is_("market", "null").execute()
+        log.info("Purged: null market")
+    except Exception as e:
+        log.error("Supabase purge (null market): %s", e)
+    try:
+        sb.table("signals").delete().is_("sharp_prob", "null").execute()
+        log.info("Purged: sharp_prob=null")
+    except Exception as e:
+        log.error("Supabase purge (sharp_prob=null): %s", e)
     try:
         sb.table("signals").delete().eq("sport", "soccer").eq("market", "Moneyline").execute()
         log.info("Purged: legacy soccer Moneyline")
     except Exception as e:
         log.error("Supabase purge (soccer Moneyline): %s", e)
-    try:
-        sb.table("signals").delete().is_("sharp_prob", "null").execute()
-        log.info("Purged: signals with sharp_prob=null")
-    except Exception as e:
-        log.error("Supabase purge (sharp_prob=null): %s", e)
 
 
 def _risk(edge_pct: float) -> str:
