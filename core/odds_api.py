@@ -27,6 +27,8 @@ SPORT_KEYS = {
     "tennis_wta_roland_garros":          "tennis",
     "tennis_atp_italian_open":           "tennis",
     "tennis_wta_italian_open":           "tennis",
+    # ── Boxing ───────────────────────────────────────────────────────
+    "boxing_boxing":                     "boxing",
     # ── Soccer ───────────────────────────────────────────────────────
     "soccer_uefa_champs_league":         "soccer",
     "soccer_uefa_europa_league":         "soccer",
@@ -45,6 +47,7 @@ SPORT_KEYS = {
 _MARKETS_BY_SPORT = {
     "basketball": "h2h,spreads,totals",
     "tennis":     "h2h,totals",          # No spreads market in tennis
+    "boxing":     "h2h",                 # ML only — no spreads/totals on boxing
     "soccer":     "h2h,spreads,totals",
 }
 
@@ -143,14 +146,14 @@ def _parse_event(ev: dict, sport_type: str) -> dict | None:
         "away":          away,
         "league":        ev.get("sport_title", ""),
         "sport":         sport_type,
-        "sport_id":      {"soccer": 1, "tennis": 3, "basketball": 4}.get(sport_type, 1),
+        "sport_id":      {"soccer": 1, "tennis": 3, "basketball": 4, "boxing": 5}.get(sport_type, 1),
         "commence_time": ev.get("commence_time", ""),
         "odds_1xbet":    xbet_h2h,
         "odds_pinnacle": pin_h2h,
     }
 
-    # ── Spreads (NBA + Soccer) ────────────────────────────────────────
-    if sport_type != "tennis":
+    # ── Spreads (NBA + Soccer only) ──────────────────────────────────
+    if sport_type not in ("tennis", "boxing"):
         xs = _extract_spreads(bookmakers, XBET_KEY,     home, away)
         ps = _extract_spreads(bookmakers, PINNACLE_KEY, home, away)
         if xs and ps:

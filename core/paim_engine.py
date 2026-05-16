@@ -38,7 +38,7 @@ SHARP_PROB_BY_MARKET = {
     "totals":        0.52,   # Same for totals
 }
 
-_SPORT_PFX = {"basketball": "NBA", "tennis": "TEN", "soccer": "SOC"}
+_SPORT_PFX = {"basketball": "NBA", "tennis": "TEN", "soccer": "SOC", "boxing": "BOX"}
 
 
 def market_label(key: str, side: str, point: float, sport: str) -> str:
