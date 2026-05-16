@@ -1,18 +1,14 @@
 """
-core/audit_engine.py — PAIM v8.5 — Closing Line Value Audit
+core/audit_engine.py — PAIM v8.5 — Settlement + CLV Audit
 Runs every 6h via GitHub Actions (run_audit.py entry point).
 
-For each signal scanned > AUDIT_LAG_H hours ago with status='active':
-  1. Call Oracle (Gemini Search) to fetch current Pinnacle price.
-  2. If a price is found → closing_line = that price, status = 'closed'.
-  3. Otherwise market has shut → closing_line = pinnacle_price at scan time,
-     status = 'expired' (conservative: we assume Sharp closed efficiently).
-  4. CLV = (xbet_odd / closing_line − 1) × 100
-     CLV > 0  → we captured a real inefficiency (beat the closing line).
-     CLV < 0  → the edge had already been arbed away before our scan.
-
-After all signals are processed, trigger learning_layer.compute_and_save()
-to update sport-specific MIN_EDGE thresholds.
+Pipeline for each signal scanned > AUDIT_LAG_H hours ago with status='active':
+  1. Settlement pass — Gemini Search fetches real match score → status='settled'
+     outcome = WIN | LOSS | PUSH | UNKNOWN
+  2. CLV pass (if settlement failed) — fetch current Pinnacle closing line
+     → status='closed' (real closing line) or 'expired' (proxy original price)
+  3. CLV = (xbet_odd / closing_line − 1) × 100
+  4. Learning Layer updates sport-specific MIN_EDGE thresholds.
 """
 import logging
 import os
@@ -24,13 +20,12 @@ from supabase import create_client
 
 from core.learning_layer import compute_and_save as _learn
 from core.oracle import get_pinnacle_price
+from core.settlement import settle_signal
 
 load_dotenv()
 
-_fmt = logging.Formatter(
-    fmt="%(asctime)s UTC | %(levelname)-7s | %(message)s",
-    datefmt="%Y-%m-%d %H:%M:%S",
-)
+_fmt = logging.Formatter(fmt="%(asctime)s UTC | %(levelname)-7s | %(message)s",
+                          datefmt="%Y-%m-%d %H:%M:%S")
 _fmt.converter = time.gmtime
 _handler = logging.StreamHandler()
 _handler.setFormatter(_fmt)
@@ -39,10 +34,14 @@ log.setLevel(logging.INFO)
 log.addHandler(_handler)
 log.propagate = False
 
-AUDIT_LAG_H   = 3     # Wait this many hours after scan before auditing
-ORACLE_BUDGET = 10    # Max Gemini calls per audit run (API rate-limit guard)
+AUDIT_LAG_H   = 3      # Wait this many hours after scan before auditing
+ORACLE_BUDGET = 10     # Max Gemini oracle calls per audit run
+SETTLE_BUDGET = 8      # Max Gemini settlement calls per audit run
 
 _AUDIT_COLS = {"closing_line", "clv_pct", "closed_at"}
+
+# Terminal statuses — Ledger reads all of these
+TERMINAL_STATUSES = ["settled", "closed", "expired"]
 
 
 def fetch_pending(sb) -> list[dict]:
@@ -77,16 +76,26 @@ def _update_signal(sb, sig_id: str, payload: dict):
             log.error("Update signal %s: %s", sig_id, e)
 
 
-def audit_one(sb, sig: dict, oracle_calls: list) -> str:
+def audit_one(sb, sig: dict, oracle_calls: list, settle_calls: list, now: datetime) -> str:
     """
-    Audit a single signal. oracle_calls is a mutable [remaining] counter.
-    Returns the new status string ('closed' or 'expired').
+    Audit a single signal.
+    Pass 1: settlement (real score) → 'settled'
+    Pass 2: CLV only             → 'closed' or 'expired'
+    Returns the new status string.
     """
     match  = sig["match"]
     sport  = sig.get("sport", "soccer")
     league = sig.get("league", "")
-    now    = datetime.now(timezone.utc)
+    now_iso = now.isoformat()
 
+    # ── Pass 1 : Settlement via real score ───────────────────────────
+    if settle_calls[0] > 0:
+        settle_calls[0] -= 1
+        if settle_signal(sb, sig, now_iso):
+            return "settled"
+        log.info("No score yet for %s — falling back to CLV audit", match)
+
+    # ── Pass 2 : CLV — fetch current Pinnacle closing line ────────────
     closing_price: float | None = None
 
     if oracle_calls[0] > 0:
@@ -101,24 +110,19 @@ def audit_one(sb, sig: dict, oracle_calls: list) -> str:
     if closing_price:
         clv    = round((sig["xbet_odd"] / closing_price - 1) * 100, 2)
         status = "closed"
-        icon   = "✓" if clv >= 0 else "✗"
-        log.info("CLV %+.2f%% %s | %s", clv, icon, match)
+        log.info("CLV %+.2f%% %s | %s", clv, "✓" if clv >= 0 else "✗", match)
     else:
-        # Market closed — use original Pinnacle price as closing proxy
         orig_pin = sig.get("pinnacle_price") or 0.0
-        if orig_pin > 1.01:
-            clv = round((sig["xbet_odd"] / orig_pin - 1) * 100, 2)
-        else:
-            clv = 0.0
+        clv      = round((sig["xbet_odd"] / orig_pin - 1) * 100, 2) if orig_pin > 1.01 else 0.0
         closing_price = orig_pin
-        status = "expired"
+        status   = "expired"
         log.info("EXPIRED  | %s (proxy CLV %+.2f%%)", match, clv)
 
     _update_signal(sb, sig["id"], {
         "status":       status,
         "clv_pct":      float(clv),
         "closing_line": float(closing_price) if closing_price else None,
-        "closed_at":    now.isoformat(),
+        "closed_at":    now_iso,
     })
     return status
 
@@ -138,21 +142,21 @@ def run():
         log.info("━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━")
         return
 
-    budget  = [ORACLE_BUDGET]
-    closed  = 0
-    expired = 0
+    now = datetime.now(timezone.utc)
+    oracle_budget = [ORACLE_BUDGET]
+    settle_budget = [SETTLE_BUDGET]
+    counts = {"settled": 0, "closed": 0, "expired": 0}
 
     for sig in pending:
-        status = audit_one(sb, sig, budget)
-        if status == "closed":
-            closed += 1
-        else:
-            expired += 1
+        status = audit_one(sb, sig, oracle_budget, settle_budget, now)
+        counts[status] = counts.get(status, 0) + 1
 
-    log.info("Audit done: %d closed | %d expired | Oracle: %d/%d calls used",
-             closed, expired, ORACLE_BUDGET - budget[0], ORACLE_BUDGET)
+    log.info("Audit done: %d settled | %d closed | %d expired",
+             counts["settled"], counts["closed"], counts["expired"])
+    log.info("Oracle: %d/%d | Settlement: %d/%d calls used",
+             ORACLE_BUDGET - oracle_budget[0], ORACLE_BUDGET,
+             SETTLE_BUDGET - settle_budget[0], SETTLE_BUDGET)
 
-    # Update adaptive thresholds with new CLV data
     log.info("--- Learning Layer ---")
     try:
         _learn(sb)

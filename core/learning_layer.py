@@ -55,7 +55,7 @@ def compute_and_save(sb) -> dict[str, float]:
             res = (sb.table("signals")
                    .select("clv_pct")
                    .eq("sport", sport)
-                   .in_("status", ["closed", "expired"])
+                   .in_("status", ["settled", "closed", "expired"])
                    .order("closed_at", desc=True)
                    .limit(50)
                    .execute())

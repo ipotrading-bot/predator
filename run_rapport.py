@@ -15,6 +15,12 @@ import requests
 from dotenv import load_dotenv
 from supabase import create_client
 
+from core.constants import (
+    ELITE_EDGE as _ELITE_EDGE,
+    kelly_stake as _kelly_stake,
+    risk_flag as _risk_flag,
+)
+
 load_dotenv()
 
 _fmt = logging.Formatter(fmt="%(asctime)s UTC | %(levelname)-7s | %(message)s",
@@ -35,7 +41,7 @@ SUPABASE_KEY   = os.environ.get("SUPABASE_KEY")
 BANKROLL       = 1000   # Bankroll de référence pour les mises Kelly
 SPORT_EMOJI    = {"soccer": "⚽", "basketball": "🏀", "tennis": "🎾"}
 SPORT_ORDER    = ["basketball", "tennis", "soccer"]
-ELITE_EDGE     = 2.5
+ELITE_EDGE     = _ELITE_EDGE
 SCAN_STALE_H   = 2      # Alerte si aucun scan depuis X heures
 
 
@@ -55,14 +61,6 @@ def _send(text: str):
         log.error("Telegram erreur: %s", e)
 
 
-def _kelly_stake(xbet_odd: float, sharp_prob: float, bankroll: int = BANKROLL) -> int:
-    b = xbet_odd - 1
-    if b <= 0 or sharp_prob <= 0:
-        return 0
-    kf = (sharp_prob * b - (1 - sharp_prob)) / b
-    return round(max(0.0, kf * 0.25) * bankroll)
-
-
 def _market_1xbet(mkt_key: str, sport: str, mkt_label: str) -> str:
     if mkt_key == "h2h" and sport == "soccer":
         return "Asian Handicap → ligne «0»"
@@ -75,7 +73,7 @@ def _market_1xbet(mkt_key: str, sport: str, mkt_label: str) -> str:
     return mkt_label or "Voir Handicap/Total"
 
 
-def _signal_line(s: dict) -> str:
+def _signal_line(s: dict) -> str | None:
     """Format one signal as a Telegram-friendly string."""
     emoji     = SPORT_EMOJI.get(s.get("sport", ""), "🎯")
     team      = s.get("selection_name") or s.get("match", "?")
@@ -89,6 +87,8 @@ def _signal_line(s: dict) -> str:
     mkt_lbl   = s.get("market", "AH 0.0")
     sport     = s.get("sport", "soccer")
     stake     = _kelly_stake(xbet_odd, prob)
+    if stake == 0:
+        return None   # Below MIN_STAKE — skip this signal
     risk      = s.get("risk_flag", "")
     risk_icon = "🔥" if risk == "HIGH_VALUE" else ("✅" if risk == "VALUE" else "📌")
     xbet_mkt  = _market_1xbet(mkt_key, sport, mkt_lbl)
@@ -214,7 +214,9 @@ def run():
         emoji = SPORT_EMOJI.get(sport, "🎯")
         body += f"{emoji} *{sport.upper()}* — {len(group)} signal(s)\n"
         for s in group:
-            body += _signal_line(s) + "\n"
+            line = _signal_line(s)
+            if line:
+                body += line + "\n"
 
     footer = (
         f"━━━━━━━━━━━━━━━━━━━━━━━━━━\n"

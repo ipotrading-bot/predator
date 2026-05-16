@@ -24,6 +24,7 @@ from core.paim_engine import (
     compute_alpha, MIN_EDGE, strict_team_match,
     market_label, SHARP_PROB_BY_MARKET,
 )
+from core.constants import ELITE_EDGE as _ELITE_EDGE, kelly_stake as _kelly_stake, risk_flag as _risk_flag
 
 load_dotenv()
 
@@ -45,7 +46,7 @@ SUPABASE_KEY   = os.environ.get("SUPABASE_KEY")
 TELEGRAM_TOKEN = os.environ.get("TELEGRAM_BOT_TOKEN")
 TELEGRAM_CHAT  = os.environ.get("TELEGRAM_CHAT_ID")
 
-ELITE_EDGE  = 2.5   # % — send Telegram alert
+ELITE_EDGE  = _ELITE_EDGE   # % — send Telegram alert (from core.constants)
 MAX_MATCHES = 50
 
 SPORT_EMOJI  = {"soccer": "⚽", "tennis": "🎾", "basketball": "🏀"}
@@ -148,11 +149,7 @@ def _purge_old_signals(sb):
 
 
 def _risk(edge_pct: float) -> str:
-    if edge_pct >= ELITE_EDGE * 2:
-        return "HIGH_VALUE"
-    if edge_pct >= ELITE_EDGE:
-        return "VALUE"
-    return "LOW_VALUE"
+    return _risk_flag(edge_pct)
 
 
 def _emit(signals, sb, now, log, name, sport, league, mkt_key, mkt_label,
@@ -350,12 +347,13 @@ def _telegram_grouped(signals: list, now, session: str, matches: int,
         msg += f"\n{emoji} {label}\n"
         for s in group:
             prob      = s.get("sharp_prob", 0) or 0
+            stake     = _kelly_stake(s["xbet_odd"], prob)
+            if stake == 0:
+                continue
             prob_str  = f" | Prob {int(prob * 100)}%" if prob > 0 else ""
             team      = s.get("selection_name") or s["match"]
             if " vs " in team:
                 team = team.split(" vs ")[0].strip()
-            b = (s["xbet_odd"] - 1)
-            stake = round(max(0, ((prob * b - (1 - prob)) / b) * 0.25 * 1000)) if b > 0 and prob > 0 else 0
             msg += (
                 f"  🎯 *{team.upper()}*  `{s['market']} @ {s['xbet_odd']:.2f}`\n"
                 f"  Edge `+{s['edge_pct']:.1f}%`{prob_str} | Mise `{stake}€`/1000€\n"

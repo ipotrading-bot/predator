@@ -73,10 +73,10 @@ def ledger():
     try:
         sb = _db()
         if sb:
-            # Closed/expired signals sorted by CLV (best first)
+            # Closed/expired/settled signals sorted by CLV (best first)
             res = (sb.table("signals")
                    .select("*")
-                   .in_("status", ["closed", "expired"])
+                   .in_("status", ["settled", "closed", "expired"])
                    .order("clv_pct", desc=True)
                    .limit(200)
                    .execute())
@@ -130,7 +130,7 @@ def audit():
         if sb:
             res = (sb.table("signals")
                    .select("sport,clv_pct,edge_pct,scanned_at,closed_at,status,match,market")
-                   .in_("status", ["closed", "expired"])
+                   .in_("status", ["settled", "closed", "expired"])
                    .order("closed_at", desc=True)
                    .limit(300)
                    .execute())

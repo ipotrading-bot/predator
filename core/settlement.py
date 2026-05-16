@@ -1,0 +1,162 @@
+"""
+core/settlement.py — PAIM v8.5 — Match Settlement Engine
+Fetches actual match scores via Gemini Search → determines WIN/LOSS/PUSH
+→ updates signal status to 'settled' in Supabase.
+"""
+import json
+import logging
+import os
+import re
+import time
+
+import requests
+
+log = logging.getLogger("PREDATOR.settlement")
+
+GEMINI_URL = "https://generativelanguage.googleapis.com/v1beta/models/gemini-2.0-flash:generateContent"
+_SETTLEMENT_OPTIONAL = {"outcome", "settled_at"}
+
+
+def fetch_match_result(match_name: str, sport: str, match_date: str = "") -> dict | None:
+    """
+    Gemini Search → final score of a completed match.
+    Returns {"home_score": int, "away_score": int, "completed": True} or None.
+    """
+    api_key = os.environ.get("GEMINI_API_KEY")
+    if not api_key:
+        return None
+
+    sport_ctx = {"soccer": "football/soccer",
+                 "basketball": "NBA basketball",
+                 "tennis": "tennis"}.get(sport, sport)
+    context = match_name + (f" (date: {match_date})" if match_date else "")
+
+    prompt = (
+        f"Use Google Search to find the FINAL SCORE of this {sport_ctx} match:\n"
+        f"{context}\n\n"
+        f"Return ONLY valid JSON. If match finished:\n"
+        f'{{"completed":true,"home_score":2,"away_score":1}}\n'
+        f"If not finished or not found:\n"
+        f'{{"completed":false}}'
+    )
+    payload = {
+        "contents": [{"role": "user", "parts": [{"text": prompt}]}],
+        "tools": [{"google_search": {}}],
+        "generationConfig": {"temperature": 0.0, "maxOutputTokens": 80},
+    }
+
+    r = None
+    for attempt in range(2):
+        try:
+            r = requests.post(f"{GEMINI_URL}?key={api_key}", json=payload, timeout=25)
+        except Exception as e:
+            log.error("settlement request [%s]: %s", match_name, e)
+            return None
+        if r.status_code == 429:
+            time.sleep(30 if attempt else 65)
+            r = None
+            continue
+        break
+
+    if r is None or r.status_code != 200:
+        return None
+
+    try:
+        parts = r.json().get("candidates", [{}])[0].get("content", {}).get("parts", [])
+        text  = next((p["text"] for p in reversed(parts) if p.get("text", "").strip()), "")
+        text  = re.sub(r'```(?:json)?|```', '', text)
+        m     = re.search(r'\{[^{}]+\}', text)
+        if not m:
+            return None
+        data  = json.loads(m.group())
+        if data.get("completed"):
+            return {
+                "home_score": int(data.get("home_score", 0)),
+                "away_score": int(data.get("away_score", 0)),
+                "completed": True,
+            }
+    except Exception as e:
+        log.error("settlement parse [%s]: %s", match_name, e)
+    return None
+
+
+def determine_outcome(sport: str, market_key: str, selection_name: str,
+                      home: str, away: str,
+                      home_score: int, away_score: int) -> str:
+    """Returns 'WIN', 'LOSS', or 'PUSH'."""
+    sel    = (selection_name or "").lower().strip()
+    home_l = (home or "").lower().strip()
+    is_home = bool(sel and (sel in home_l or home_l in sel or sel == home_l))
+
+    if market_key == "h2h" and sport == "soccer":
+        if home_score == away_score:
+            return "PUSH"
+        won = (is_home and home_score > away_score) or (not is_home and away_score > home_score)
+        return "WIN" if won else "LOSS"
+
+    if market_key == "h2h":
+        won = (is_home and home_score > away_score) or (not is_home and away_score > home_score)
+        return "WIN" if won else "LOSS"
+
+    if market_key == "totals":
+        total = home_score + away_score
+        try:
+            line = float(re.search(r'[\d.]+', sel).group())
+        except Exception:
+            return "UNKNOWN"
+        if total == line:
+            return "PUSH"
+        return "WIN" if ("over" in sel and total > line) or ("under" in sel and total < line) else "LOSS"
+
+    return "UNKNOWN"
+
+
+def settle_signal(sb, sig: dict, now_iso: str) -> bool:
+    """
+    Try to settle one signal using real match score.
+    Returns True if settled, False if score not found.
+    """
+    match   = sig["match"]
+    sport   = sig.get("sport", "soccer")
+    scanned = (sig.get("scanned_at") or "")[:10]
+
+    result = fetch_match_result(match, sport, scanned)
+    if not result or not result.get("completed"):
+        return False
+
+    hs = result["home_score"]
+    as_ = result["away_score"]
+    home = sig.get("match", "").split(" vs ")[0].strip() if " vs " in sig.get("match", "") else ""
+    away = sig.get("match", "").split(" vs ")[1].strip() if " vs " in sig.get("match", "") else ""
+    outcome = determine_outcome(
+        sport, sig.get("market_key", "h2h"),
+        sig.get("selection_name", ""),
+        home, away, hs, as_,
+    )
+
+    # CLV from original Pinnacle price (best proxy if no closing line yet)
+    orig_pin = sig.get("pinnacle_price") or 0.0
+    clv = round((sig["xbet_odd"] / orig_pin - 1) * 100, 2) if orig_pin > 1.01 else 0.0
+
+    payload = {
+        "status":    "settled",
+        "clv_pct":   float(clv),
+        "closed_at": now_iso,
+        "outcome":   outcome,
+    }
+    try:
+        sb.table("signals").update(payload).eq("id", sig["id"]).execute()
+        log.info("SETTLED  | %s %s→%s | outcome=%s | CLV %+.2f%%",
+                 match, hs, as_, outcome, clv)
+        return True
+    except Exception as e:
+        if any(c in str(e) for c in _SETTLEMENT_OPTIONAL):
+            core = {k: v for k, v in payload.items() if k not in _SETTLEMENT_OPTIONAL}
+            try:
+                sb.table("signals").update(core).eq("id", sig["id"]).execute()
+                return True
+            except Exception as e2:
+                log.error("settle_signal fallback [%s]: %s", match, e2)
+        else:
+            log.error("settle_signal [%s]: %s", match, e)
+        return False
