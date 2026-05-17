@@ -41,6 +41,7 @@ SPORT_KEYS = {
     # ── Boxing ───────────────────────────────────────────────────────
     "boxing_boxing":                     "boxing",
     # ── Soccer ───────────────────────────────────────────────────────
+    "soccer_fifa_world_cup":             "soccer",      # FIFA WC 2026 — priority over club leagues
     "soccer_uefa_champs_league":         "soccer",
     "soccer_uefa_europa_league":         "soccer",
     "soccer_uefa_conference_league":     "soccer",

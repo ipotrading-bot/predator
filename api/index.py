@@ -175,6 +175,58 @@ def audit():
 
 # ── JSON API ─────────────────────────────────────────────────────────
 
+_WC_KEYWORDS = ["world cup", "fifa", "wc 2026", "mondial", "coupe du monde"]
+
+
+def _is_wc_signal(s: dict) -> bool:
+    league = (s.get("league") or "").lower()
+    sport  = (s.get("sport")  or "").lower()
+    return (
+        any(kw in league for kw in _WC_KEYWORDS)
+        or "soccer_fifa_world_cup" in sport
+    )
+
+
+# ── World Cup Terminal ────────────────────────────────────────────────
+
+@app.route("/worldcup")
+def worldcup():
+    signals   = []
+    last_scan = None
+    try:
+        sb = _db()
+        if sb:
+            res = sb.table("signals").select("*").order("created_at", desc=True).limit(200).execute()
+            raw = res.data or []
+            signals = sorted(
+                [s for s in raw if _is_wc_signal(s)],
+                key=lambda s: (
+                    s.get("match_time") or "9999",
+                    -(s.get("edge_pct") or 0),
+                ),
+            )
+            last_scan = _get_meta(sb, "last_scan")
+    except Exception as e:
+        log.error("WorldCup: %s", e)
+    return render_template("worldcup.html", signals=signals, last_scan=last_scan)
+
+
+@app.route("/api/worldcup")
+def api_worldcup():
+    try:
+        sb = _db()
+        if not sb:
+            return jsonify({"error": "no db"}), 503
+        res = sb.table("signals").select("*").order("created_at", desc=True).limit(200).execute()
+        raw = res.data or []
+        wc  = [s for s in raw if _is_wc_signal(s)]
+        return jsonify(wc)
+    except Exception as e:
+        return jsonify({"error": str(e)}), 500
+
+
+# ── JSON API ─────────────────────────────────────────────────────────
+
 @app.route("/api/signals")
 def api_signals():
     try:

@@ -1,0 +1,687 @@
+<!DOCTYPE html>
+<html lang="fr">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+<meta name="theme-color" content="#050505">
+<title>PREDATOR · WC 2026</title>
+<style>
+:root {
+  --bg:     #050505;
+  --bg1:    #090909;
+  --bg2:    #0e0e0e;
+  --bd:     #151515;
+  --bd2:    #202020;
+  --green:  #00e03a;
+  --blue:   #00b4e6;
+  --red:    #ff3b3b;
+  --yellow: #f5c518;
+  --orange: #ff8c00;
+  --gold:   #f5c518;
+  --gold2:  #c8a010;
+  --gold-bg: rgba(245,197,24,.06);
+  --gold-bd: rgba(245,197,24,.22);
+  --t1:     #c0c0c0;
+  --t2:     #555;
+  --t3:     #2a2a2a;
+  --font:   'SF Mono','Fira Code','Cascadia Code','Courier New',monospace;
+  --r:      7px;
+  --sbot:   env(safe-area-inset-bottom, 0px);
+}
+*, *::before, *::after { margin:0; padding:0; box-sizing:border-box; -webkit-tap-highlight-color:transparent; }
+body { background:var(--bg); color:var(--t1); font-family:var(--font); font-size:13px; min-height:100dvh; overscroll-behavior:none; }
+
+/* ─── NAV ─────────────────────────────────────── */
+nav {
+  position: sticky; top: 0; z-index: 60;
+  height: 48px;
+  background: rgba(5,5,5,.96);
+  backdrop-filter: blur(14px);
+  -webkit-backdrop-filter: blur(14px);
+  border-bottom: 1px solid var(--bd);
+  display: flex; align-items: center; padding: 0 14px; gap: 0;
+}
+.nav-logo { color: var(--gold); font-size: 11px; font-weight: 700; letter-spacing: 3px; white-space: nowrap; flex-shrink: 0; }
+.nav-pages { display: none; align-items: center; margin-left: 14px; gap: 0; }
+.nav-pages a {
+  height: 48px; padding: 0 13px;
+  display: flex; align-items: center;
+  font-size: 9px; font-weight: 700; letter-spacing: 2px;
+  text-transform: uppercase; text-decoration: none; color: var(--t2);
+  border-right: 1px solid var(--bd); transition: color .12s;
+}
+.nav-pages a:first-child { border-left: 1px solid var(--bd); margin-left: 10px; }
+.nav-pages a.on { color: var(--gold); }
+.nav-pages a:hover { color: var(--t1); }
+.nav-mid { flex: 1; display: flex; align-items: center; gap: 10px; padding-left: 14px; overflow: hidden; }
+.nav-mid span { font-size: 10px; color: var(--t3); white-space: nowrap; }
+.nav-mid b    { font-weight: 700; }
+.nav-mid .g   { color: var(--gold); }
+.nav-right { display: flex; align-items: center; gap: 10px; margin-left: auto; flex-shrink: 0; }
+#clock { font-size: 10px; color: var(--t3); }
+
+/* ─── BOTTOM NAV (mobile) ─────────────────────── */
+.bnav {
+  position: fixed; bottom: 0; left: 0; right: 0; z-index: 60;
+  background: rgba(5,5,5,.97);
+  backdrop-filter: blur(16px); -webkit-backdrop-filter: blur(16px);
+  border-top: 1px solid var(--bd);
+  display: flex;
+  height: calc(54px + var(--sbot));
+  padding-bottom: var(--sbot);
+}
+.bnav a {
+  flex: 1; display: flex; flex-direction: column;
+  align-items: center; justify-content: center; gap: 3px;
+  text-decoration: none; color: var(--t2);
+  font-size: 7px; font-weight: 700; letter-spacing: 1px;
+  text-transform: uppercase; transition: color .12s;
+}
+.bnav a.on { color: var(--gold); }
+.bnav svg { width: 18px; height: 18px; stroke: currentColor; fill: none; stroke-width: 1.6; stroke-linecap: round; stroke-linejoin: round; }
+
+/* ─── LAYOUT ──────────────────────────────────── */
+.wrap {
+  padding: 12px 11px calc(68px + var(--sbot));
+  max-width: 760px; margin: 0 auto;
+}
+@media (min-width: 640px) {
+  .wrap { padding: 14px 20px 40px; }
+  .bnav { display: none; }
+  .nav-pages { display: flex; }
+}
+
+/* ─── WC COMMAND BANNER ───────────────────────── */
+.wc-banner {
+  border: 1px solid var(--gold-bd);
+  border-radius: var(--r);
+  background: linear-gradient(90deg, rgba(245,197,24,.04) 0%, rgba(245,197,24,.09) 50%, rgba(245,197,24,.04) 100%);
+  padding: 10px 14px;
+  margin-bottom: 10px;
+  display: flex; align-items: center; flex-wrap: wrap;
+  gap: 8px;
+  font-size: 9px; font-weight: 700; letter-spacing: 1.8px;
+}
+.wc-trophy { font-size: 16px; line-height: 1; flex-shrink: 0; }
+.wc-title  { color: var(--gold); }
+.wc-sep    { color: var(--t3); }
+.wc-loc    { color: var(--t2); }
+.wc-alpha  { color: var(--gold); background: rgba(245,197,24,.10); border: 1px solid var(--gold-bd); border-radius: 4px; padding: 2px 8px; }
+.wc-standby { color: var(--t2); }
+.wc-cd-wrap {
+  margin-left: auto; display: flex; align-items: center; gap: 6px;
+  font-size: 9px; color: var(--t2); flex-shrink: 0;
+}
+.wc-cd-num { color: var(--gold); font-size: 10px; font-weight: 700; }
+
+/* ─── SCAN META ───────────────────────────────── */
+.scan-meta { font-size: 9px; color: var(--t3); margin-bottom: 10px; display: flex; justify-content: space-between; }
+
+/* ─── GROUP FILTER ────────────────────────────── */
+.group-filter {
+  display: flex; gap: 5px; margin-bottom: 12px;
+  overflow-x: auto; padding-bottom: 2px;
+  scrollbar-width: none;
+}
+.group-filter::-webkit-scrollbar { display: none; }
+.gf {
+  flex-shrink: 0; padding: 4px 13px;
+  border: 1px solid var(--bd2); border-radius: 20px;
+  background: none; color: var(--t2);
+  font-family: var(--font); font-size: 9px; font-weight: 700;
+  letter-spacing: 1.5px; cursor: pointer; transition: all .15s;
+}
+.gf.active { border-color: var(--gold); color: var(--gold); background: rgba(245,197,24,.07); }
+.gf:hover  { border-color: var(--t2); color: var(--t1); }
+
+/* ─── SECTION SEP ─────────────────────────────── */
+.group-sep {
+  font-size: 9px; font-weight: 700; letter-spacing: 3px;
+  text-transform: uppercase; color: var(--gold2);
+  margin: 14px 0 7px;
+  display: flex; align-items: center; gap: 8px;
+}
+.group-sep::after { content: ''; flex: 1; height: 1px; background: rgba(245,197,24,.12); }
+
+/* ─── SIGNAL CARD ─────────────────────────────── */
+.sig {
+  background: var(--bg1); border: 1px solid var(--bd);
+  border-radius: var(--r); border-left: 3px solid var(--bd2);
+  margin-bottom: 7px; cursor: pointer;
+  transition: border-left-color .15s, background .1s;
+  user-select: none; -webkit-user-select: none; overflow: hidden;
+}
+.sig:active  { background: var(--bg2); }
+.sig.high    { border-left-color: #00c032; }
+.sig.value   { border-left-color: var(--gold2); }
+.sig.trap    { border-left-color: var(--gold); box-shadow: 0 0 0 1px rgba(245,197,24,.10) inset; }
+.sig.suspect { border-left-color: var(--orange); }
+.sig-body    { padding: 11px 13px 11px 12px; }
+
+.sig-r1 { display: flex; align-items: center; gap: 7px; margin-bottom: 7px; }
+.sig-icon { font-size: 15px; line-height: 1; flex-shrink: 0; }
+.sig-match { font-size: 11px; color: #777; flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.sig-league { color: var(--t3); }
+.sig-badge {
+  font-size: 8px; font-weight: 700; padding: 2px 6px;
+  border-radius: 4px; flex-shrink: 0; letter-spacing: .3px;
+}
+.b-HIGH_VALUE   { background: rgba(0,224,58,.07);  color: var(--green);  border: 1px solid rgba(0,224,58,.18); }
+.b-VALUE        { background: rgba(245,197,24,.07); color: var(--yellow); border: 1px solid rgba(245,197,24,.18); }
+.b-LOW_VALUE    { background: transparent; color: var(--t2); border: 1px solid var(--bd2); }
+.b-SUSPECT_DATA { background: rgba(255,140,0,.07);  color: var(--orange); border: 1px solid rgba(255,140,0,.18); }
+.b-TRAP_COUNTER { background: rgba(245,197,24,.14); color: var(--gold); border: 1px solid rgba(245,197,24,.40); }
+.sig-date { font-size: 10px; color: var(--blue); font-weight: 700; flex-shrink: 0; white-space: nowrap; }
+.sig-cd   { font-size: 9px;  color: var(--t2); flex-shrink: 0; }
+.sig-cd.urgent { color: var(--orange); font-weight: 700; }
+
+.sig-r2 { display: flex; align-items: center; gap: 10px; }
+.sig-team { font-size: 14px; font-weight: 700; color: #e0e0e0; flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.sig-odd  { font-size: 12px; font-weight: 700; color: var(--blue); flex-shrink: 0; }
+.sig-edge { font-size: 12px; font-weight: 700; flex-shrink: 0; min-width: 44px; text-align: right; }
+.e-high { color: var(--green); }
+.e-mid  { color: var(--gold); }
+.e-low  { color: var(--t2); }
+.e-sus  { color: var(--orange); }
+.sig-mise { font-size: 11px; font-weight: 700; color: var(--gold); flex-shrink: 0; }
+.sig-cta  { font-size: 10px; color: var(--t3); flex-shrink: 0; }
+
+/* ─── EMPTY / COUNTDOWN ───────────────────────── */
+.wc-empty {
+  text-align: center; padding: 60px 20px 40px;
+  color: var(--t2); font-size: 11px; line-height: 2.4;
+}
+.wc-empty-trophy { font-size: 48px; margin-bottom: 16px; display: block; filter: drop-shadow(0 0 20px rgba(245,197,24,.3)); }
+.wc-empty-title  { font-size: 12px; font-weight: 700; letter-spacing: 2px; color: var(--gold); margin-bottom: 6px; }
+.wc-cd-big { font-size: 32px; font-weight: 700; color: var(--gold); letter-spacing: 2px; margin: 12px 0 4px; }
+.wc-cd-sub { font-size: 9px; color: var(--t3); letter-spacing: 1px; }
+.wc-cd-note { font-size: 9px; color: var(--t3); margin-top: 20px; max-width: 300px; margin-left: auto; margin-right: auto; line-height: 1.8; }
+
+/* ─── MODAL ───────────────────────────────────── */
+#modal-overlay {
+  display: none; position: fixed; inset: 0;
+  background: rgba(0,0,0,.72);
+  backdrop-filter: blur(5px); -webkit-backdrop-filter: blur(5px);
+  z-index: 100;
+}
+#modal {
+  display: none; position: fixed; z-index: 101;
+  font-family: var(--font); background: var(--bg1);
+  bottom: 0; left: 0; right: 0;
+  border-radius: 14px 14px 0 0;
+  border: 1px solid var(--bd2); border-bottom: none;
+  max-height: 92dvh; max-height: 92vh;
+  overflow-y: auto; -webkit-overflow-scrolling: touch;
+}
+@media (min-width: 640px) {
+  #modal {
+    bottom: auto; left: 50%; top: 50%; right: auto;
+    transform: translate(-50%,-50%);
+    width: min(500px, 96vw);
+    border-radius: 10px; border: 1px solid var(--bd2);
+    border-top: 2px solid var(--gold);
+    max-height: 90vh;
+  }
+  .m-drag { display: none; }
+}
+.m-drag { display: flex; justify-content: center; padding: 10px 0 2px; }
+.m-drag i { width: 34px; height: 4px; background: var(--bd2); border-radius: 2px; }
+.m-hdr { display: flex; justify-content: space-between; align-items: center; padding: 6px 14px 10px; }
+.m-title { color: var(--gold); font-size: 9px; font-weight: 700; letter-spacing: 3px; }
+.m-close {
+  width: 28px; height: 28px; display: flex; align-items: center; justify-content: center;
+  background: var(--bg2); border: 1px solid var(--bd2); border-radius: 5px;
+  color: var(--t2); font-size: 12px; cursor: pointer; line-height: 1; transition: all .15s;
+}
+.m-close:hover { border-color: var(--red); color: var(--red); }
+.m-matchblock { padding: 0 14px 11px; border-bottom: 1px solid var(--bd); }
+.m-name { font-size: 13px; font-weight: 700; color: #ddd; margin-bottom: 3px; line-height: 1.35; }
+.m-meta { font-size: 10px; color: var(--t2); }
+.m-meta b { color: var(--blue); }
+#m-stale {
+  display: none; padding: 7px 14px;
+  background: rgba(255,140,0,.05); border-bottom: 1px solid rgba(255,140,0,.12);
+  font-size: 9px; color: var(--orange);
+}
+.m-ss { display: flex; border-bottom: 1px solid var(--bd); }
+.m-sel { flex: 1; padding: 13px 14px; min-width: 0; border-right: 1px solid var(--bd); }
+.m-team { font-size: 19px; font-weight: 700; color: var(--gold); letter-spacing: .4px; text-transform: uppercase; line-height: 1.1; }
+.m-mkt  { font-size: 10px; color: var(--t2); margin-top: 4px; }
+.m-exp  { font-size: 9px; color: var(--t3); margin-top: 5px; border-left: 2px solid var(--bd2); padding-left: 7px; line-height: 1.5; }
+.m-stats { display: flex; flex-direction: column; width: 108px; flex-shrink: 0; }
+.m-stat { flex: 1; padding: 5px 9px; border-bottom: 1px solid var(--bd); text-align: center; display: flex; flex-direction: column; justify-content: center; }
+.m-stat:last-child { border-bottom: none; }
+.m-sv { font-size: 12px; font-weight: 700; }
+.m-sl { font-size: 7px; color: var(--t2); margin-top: 2px; text-transform: uppercase; letter-spacing: 1px; }
+.m-steps { padding: 11px 14px; border-bottom: 1px solid var(--bd); }
+.m-lbl { font-size: 8px; letter-spacing: 2px; color: var(--t2); margin-bottom: 7px; text-transform: uppercase; }
+.steps { display: flex; flex-direction: column; gap: 4px; }
+.step { display: flex; align-items: center; gap: 8px; padding: 7px 10px; background: var(--bg2); border: 1px solid var(--bd); border-radius: 5px; font-size: 10px; }
+.sn { color: var(--gold); font-weight: 700; min-width: 14px; flex-shrink: 0; }
+.sk { color: var(--t2); flex-shrink: 0; }
+.sv { color: #bbb; font-weight: 700; flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.sc { color: var(--blue); font-weight: 700; font-size: 12px; flex-shrink: 0; }
+.sp { color: var(--t2); font-size: 9px; flex-shrink: 0; }
+.m-stake {
+  display: flex; align-items: center; gap: 11px;
+  padding: 13px 14px;
+  background: rgba(245,197,24,.02); border-bottom: 1px solid rgba(245,197,24,.06);
+}
+.stake-n { font-size: 24px; font-weight: 700; color: var(--gold); min-width: 64px; line-height: 1; }
+.stake-d { color: var(--bd2); font-size: 18px; }
+.stake-m { font-size: 10px; color: var(--t2); display: flex; align-items: center; gap: 5px; flex-wrap: wrap; }
+#bankroll-input {
+  background: var(--bg2); border: 1px solid var(--bd2); border-radius: 4px;
+  color: #ccc; font-family: var(--font); font-size: 11px;
+  padding: 3px 7px; width: 68px; text-align: right;
+  -webkit-appearance: none;
+}
+#bankroll-input:focus { outline: none; border-color: var(--gold); }
+#m-kelly-pct { color: var(--gold); font-weight: 700; }
+
+/* WC doctrine note inside modal */
+.m-wc-note {
+  padding: 6px 14px; font-size: 8px; color: var(--gold2);
+  background: rgba(245,197,24,.03); border-bottom: 1px solid rgba(245,197,24,.07);
+  letter-spacing: .5px;
+}
+
+.m-why { padding: 9px 14px 14px; font-size: 9px; color: var(--t3); line-height: 1.65; }
+body.locked { overflow: hidden; }
+footer { display: none; }
+@media (min-width: 640px) {
+  footer { display: block; border-top: 1px solid var(--bd); padding: 7px 20px; font-size: 9px; color: var(--t3); text-align: center; }
+}
+</style>
+</head>
+<body>
+
+<!-- ── NAV ───────────────────────────────────── -->
+<nav>
+  <div class="nav-logo">&#9658; PREDATOR</div>
+  <div class="nav-pages">
+    <a href="/">DASHBOARD</a>
+    <a href="/ledger">LEDGER</a>
+    <a href="/audit">AUDIT CLV</a>
+    <a href="/worldcup" class="on">WC 2026</a>
+  </div>
+  {% set wc_clean  = signals | rejectattr('risk_flag', 'equalto', 'SUSPECT_DATA') | list %}
+  {% set wc_edges  = wc_clean | map(attribute='edge_pct') | list %}
+  <div class="nav-mid">
+    <span style="color:var(--t3)">·</span>
+    <span><b class="g">{{ wc_clean|length }}</b> signaux WC</span>
+    {% if wc_edges %}
+    <span style="color:var(--t3)">·</span>
+    <span><b class="g">+{{ "%.1f"|format(wc_edges|max) }}%</b> best</span>
+    {% endif %}
+  </div>
+  <div class="nav-right">
+    <span id="clock">—</span>
+  </div>
+</nav>
+
+<!-- ── CONTENT ────────────────────────────────── -->
+<main class="wrap">
+
+  <!-- WC COMMAND BANNER -->
+  <div class="wc-banner">
+    <span class="wc-trophy">&#127942;</span>
+    <span class="wc-title">FIFA WORLD CUP 2026</span>
+    <span class="wc-sep">|</span>
+    <span class="wc-loc">DAKAR COMMAND CENTER</span>
+    <span class="wc-sep">|</span>
+    {% if wc_edges %}
+      <span class="wc-alpha">ALPHA DETECTED: +{{ "%.1f"|format(wc_edges|max) }}%</span>
+    {% else %}
+      <span class="wc-standby">STANDBY — SEUIL WC: 2.0%</span>
+    {% endif %}
+    <div class="wc-cd-wrap">
+      <span>J-</span><span class="wc-cd-num" id="cdNav">—</span>
+    </div>
+  </div>
+
+  {% if last_scan %}
+  <div class="scan-meta">
+    <span>Scan {{ last_scan.at[11:16] }} UTC &middot; {{ last_scan.matches }} matchs &middot; {{ last_scan.signals }} signaux</span>
+    <span>&#9670; WC FILTER ACTIF</span>
+  </div>
+  {% endif %}
+
+  <!-- GROUP FILTER (rendered by JS) -->
+  <div class="group-filter" id="groupFilter">
+    <button class="gf active" data-group="">ALL</button>
+  </div>
+
+  {% if signals %}
+
+  <!-- signals container, iterated by JS after group filtering -->
+  <div id="signals-container">
+
+  {% set ns = namespace(idx=0) %}
+  {% for s in signals %}
+  {% set is_high    = s.risk_flag == 'HIGH_VALUE' %}
+  {% set is_value   = s.risk_flag == 'VALUE' %}
+  {% set is_suspect = s.risk_flag == 'SUSPECT_DATA' %}
+  {% set is_trap    = (not is_suspect) and (s.edge_pct or 0) >= 2.0 and (s.xbet_odd or 0) >= 2.20 %}
+  {% set team = s.selection_name if s.selection_name and ' vs ' not in s.selection_name else (s.match.split(' vs ')[0].strip() if ' vs ' in s.match else s.match) %}
+  {% set kelly = s.kelly_pct if s.kelly_pct else 0 %}
+  {% if s.match_time %}
+    {% set mdate = s.match_time[8:10] + '/' + s.match_time[5:7] %}
+    {% set mhour = s.match_time[11:16] %}
+  {% endif %}
+
+  <div class="sig {% if is_trap %}trap{% elif is_high %}high{% elif is_value %}value{% elif is_suspect %}suspect{% endif %}"
+       onclick="openModal({{ ns.idx }})"
+       data-matchtime="{{ s.match_time or '' }}"
+       data-league="{{ s.league or '' }}">
+    {% set ns.idx = ns.idx + 1 %}
+    <div class="sig-body">
+
+      <!-- R1 -->
+      <div class="sig-r1">
+        <span class="sig-icon">&#9917;</span>
+        <span class="sig-match">{{ s.match }}<span class="sig-league"> &middot; {{ s.league or '—' }}</span></span>
+        {% if is_trap %}
+          <span class="sig-badge b-TRAP_COUNTER">&#128293; TRAP COUNTER</span>
+        {% elif is_high %}
+          <span class="sig-badge b-HIGH_VALUE">HIGH VALUE</span>
+        {% elif is_value %}
+          <span class="sig-badge b-VALUE">VALUE</span>
+        {% elif is_suspect %}
+          <span class="sig-badge b-SUSPECT_DATA">SUSPECT</span>
+        {% else %}
+          <span class="sig-badge b-LOW_VALUE">LOW VALUE</span>
+        {% endif %}
+        {% if s.match_time %}
+          <span class="sig-date">{{ mdate }} {{ mhour }}</span>
+          <span class="sig-cd" data-ts="{{ s.match_time }}"></span>
+        {% else %}
+          <span class="sig-date" style="color:var(--t3)">heure?</span>
+        {% endif %}
+      </div>
+
+      <!-- R2 -->
+      <div class="sig-r2">
+        <span class="sig-team">{{ team }}</span>
+        <span class="sig-odd">@ {{ "%.2f"|format(s.xbet_odd) }}</span>
+        <span class="sig-edge {% if is_suspect %}e-sus{% elif s.edge_pct >= 5 %}e-high{% elif s.edge_pct >= 2.0 %}e-mid{% else %}e-low{% endif %}">
+          +{{ "%.1f"|format(s.edge_pct) }}%
+        </span>
+        {% if kelly > 0 %}
+          <span class="sig-mise">{{ (kelly/100*1000)|round|int }}&euro;</span>
+        {% else %}
+          <span class="sig-mise" style="color:var(--t3)">&mdash;&euro;</span>
+        {% endif %}
+        <span class="sig-cta">&#9654;</span>
+      </div>
+
+    </div>
+  </div>
+  {% endfor %}
+
+  </div><!-- #signals-container -->
+
+  {% else %}
+
+  <!-- EMPTY STATE WITH COUNTDOWN -->
+  <div class="wc-empty">
+    <span class="wc-empty-trophy">&#127942;</span>
+    <div class="wc-empty-title">WORLD CUP TERMINAL — STANDBY</div>
+    <div style="color:var(--t3);font-size:9px;letter-spacing:1px;margin-bottom:8px">COUP D'ENVOI · PHASE DE GROUPES</div>
+    <div class="wc-cd-big" id="cdBig">—</div>
+    <div class="wc-cd-sub">JOURS · HEURES · MINUTES</div>
+    <div class="wc-cd-note">
+      Predator activera le scan FIFA World Cup automatiquement dès l'ouverture des marchés.<br>
+      Seuil Alpha WC: <span style="color:var(--gold)">2.0%</span> (vs 2.5% général) &nbsp;·&nbsp;
+      Doctrine: <span style="color:var(--gold)">AH +0.5 outsiders</span>
+    </div>
+  </div>
+
+  {% endif %}
+
+</main>
+
+<footer>PREDATOR PAIM v8.5 &nbsp;·&nbsp; FIFA WC 2026 TERMINAL &nbsp;·&nbsp; Seuil Alpha 2.0% &nbsp;·&nbsp; Doctrine Asian Handicap +0.5</footer>
+
+<!-- ── BOTTOM NAV (mobile) ────────────────────── -->
+<nav class="bnav">
+  <a href="/">
+    <svg viewBox="0 0 24 24"><rect x="3" y="3" width="7" height="7" rx="1.5"/><rect x="14" y="3" width="7" height="7" rx="1.5"/><rect x="3" y="14" width="7" height="7" rx="1.5"/><rect x="14" y="14" width="7" height="7" rx="1.5"/></svg>
+    Dash
+  </a>
+  <a href="/ledger">
+    <svg viewBox="0 0 24 24"><path d="M9 5H7a2 2 0 00-2 2v12a2 2 0 002 2h10a2 2 0 002-2V7a2 2 0 00-2-2h-2M9 5a2 2 0 002 2h2a2 2 0 002-2M9 5a2 2 0 012-2h2a2 2 0 012 2M12 12h4m-4 4h4m-8-4h.01m-.01 4h.01"/></svg>
+    Ledger
+  </a>
+  <a href="/audit">
+    <svg viewBox="0 0 24 24"><polyline points="22 12 18 12 15 21 9 3 6 12 2 12"/></svg>
+    Audit
+  </a>
+  <a href="/worldcup" class="on">
+    <svg viewBox="0 0 24 24"><path d="M8 21h8m-4-4v4M5 3h14l-1 7a7 7 0 01-12 0L5 3z"/><path d="M5 3a2 2 0 00-2 2v1h18V5a2 2 0 00-2-2"/></svg>
+    WC 2026
+  </a>
+</nav>
+
+<!-- ── MODAL ──────────────────────────────────── -->
+<div id="modal-overlay" onclick="closeModal()"></div>
+<div id="modal" role="dialog" aria-modal="true">
+
+  <div class="m-drag"><i></i></div>
+
+  <div class="m-hdr">
+    <span class="m-title">&#127942; WC 2026 — PLACER LE PARI</span>
+    <button class="m-close" onclick="closeModal()">&#10005;</button>
+  </div>
+
+  <div class="m-matchblock">
+    <div class="m-name" id="m-match">—</div>
+    <div class="m-meta"><b id="m-time">—</b> &nbsp;&middot;&nbsp; <span id="m-sub">—</span> &nbsp;<span id="m-cd" style="color:var(--t2)"></span></div>
+  </div>
+
+  <div id="m-stale">&#9888; Kelly non calculé — relancez un scan pour une mise précise.</div>
+
+  <!-- WC doctrine note -->
+  <div class="m-wc-note">&#9670; WC DOCTRINE · Seuil 2.0% · Over/Under 2.0 · AH +0.5 outsiders</div>
+
+  <div class="m-ss">
+    <div class="m-sel">
+      <div class="m-team" id="m-team">—</div>
+      <div class="m-mkt"  id="m-mkt">—</div>
+      <div class="m-exp"  id="m-exp"></div>
+    </div>
+    <div class="m-stats">
+      <div class="m-stat"><div class="m-sv" id="m-edge" style="color:var(--gold)">—</div><div class="m-sl">Edge</div></div>
+      <div class="m-stat"><div class="m-sv" id="m-pin"  style="color:var(--blue)">—</div><div class="m-sl">Pinnacle</div></div>
+      <div class="m-stat"><div class="m-sv" id="m-risk">—</div><div class="m-sl">Signal</div></div>
+    </div>
+  </div>
+
+  <div class="m-steps">
+    <div class="m-lbl">Étapes 1XBet</div>
+    <div class="steps">
+      <div class="step"><span class="sn">&#9312;</span><span class="sk">Match :</span><span class="sv" id="s-match">—</span></div>
+      <div class="step"><span class="sn">&#9313;</span><span class="sk">Marché :</span><span class="sv" id="s-market">—</span></div>
+      <div class="step"><span class="sn">&#9314;</span><span class="sk">Sélection :</span><span class="sv" id="s-team">—</span><span class="sc" id="s-cote">—</span><span class="sp">(Pin: <span id="s-pin">—</span>)</span></div>
+    </div>
+  </div>
+
+  <div class="m-stake">
+    <span class="stake-n" id="stake-big">— €</span>
+    <span class="stake-d">|</span>
+    <div class="stake-m">
+      bankroll
+      <input id="bankroll-input" type="number" inputmode="numeric" value="1000" min="1" oninput="updateStake()">€
+      <span id="m-kelly-pct"></span>
+    </div>
+  </div>
+
+  <div class="m-why" id="m-why">—</div>
+
+</div>
+
+<script>
+(function tick(){
+  document.getElementById('clock').textContent = new Date().toISOString().slice(11,16)+' UTC';
+  setTimeout(tick,1000);
+})();
+
+// ── Countdown to WC kickoff (June 11, 2026 18:00 UTC) ──
+const WC_START = new Date('2026-06-11T18:00:00Z');
+function updateCountdown(){
+  const diff = WC_START - Date.now();
+  let txt;
+  if(diff <= 0){
+    txt = 'EN COURS';
+  } else {
+    const d = Math.floor(diff/86400000);
+    const h = Math.floor((diff%86400000)/3600000);
+    const m = Math.floor((diff%3600000)/60000);
+    txt = d+'j '+h+'h '+String(m).padStart(2,'0')+'m';
+  }
+  const big = document.getElementById('cdBig');
+  const nav = document.getElementById('cdNav');
+  if(big) big.textContent = txt;
+  if(nav) nav.textContent = txt;
+  setTimeout(updateCountdown, 30000);
+}
+updateCountdown();
+
+// ── Countdown display per card ──
+function _cd(iso){
+  if(!iso) return null;
+  const d = new Date(iso)-Date.now();
+  if(d<=0) return null;
+  const h=Math.floor(d/3600000), m=Math.floor((d%3600000)/60000);
+  if(h===0) return m+'min';
+  if(h<24)  return h+'h'+(m?m+'min':'');
+  return Math.floor(h/24)+'j';
+}
+
+function refresh(){
+  document.querySelectorAll('.sig[data-matchtime]').forEach(el=>{
+    const ts=el.dataset.matchtime;
+    if(!ts) return;
+    el.style.display = new Date(ts)<Date.now() ? 'none' : '';
+    el.querySelectorAll('.sig-cd[data-ts]').forEach(cd=>{
+      const r=_cd(ts);
+      cd.textContent = r ? '· '+r : '';
+      cd.className = 'sig-cd'+(r&&r.includes('min')&&!r.includes('h')?' urgent':'');
+    });
+  });
+  setTimeout(refresh,60000);
+}
+refresh();
+
+// ── Group filter ──
+const SIGNALS = {{ signals|tojson }};
+
+function _group(league){
+  const m = (league||'').match(/group\s+([A-L])/i);
+  return m ? m[1].toUpperCase() : null;
+}
+
+(function buildGroupFilter(){
+  const groups = [...new Set(SIGNALS.map(s=>_group(s.league)).filter(Boolean))].sort();
+  if(!groups.length) return;
+  const bar = document.getElementById('groupFilter');
+  groups.forEach(g=>{
+    const btn = document.createElement('button');
+    btn.className = 'gf';
+    btn.dataset.group = g;
+    btn.textContent = 'GRP '+g;
+    bar.appendChild(btn);
+  });
+  bar.addEventListener('click', e=>{
+    const btn = e.target.closest('.gf');
+    if(!btn) return;
+    bar.querySelectorAll('.gf').forEach(b=>b.classList.remove('active'));
+    btn.classList.add('active');
+    filterGroup(btn.dataset.group);
+  });
+})();
+
+function filterGroup(group){
+  document.querySelectorAll('#signals-container .sig').forEach(el=>{
+    if(!group){ el.style.display=''; return; }
+    const g = _group(el.dataset.league);
+    el.style.display = (g===group) ? '' : 'none';
+  });
+}
+
+// ── Modal ──
+let _kpct = 0;
+
+function updateStake(){
+  const br = parseFloat(document.getElementById('bankroll-input').value)||0;
+  const s  = Math.round(br*_kpct/100);
+  document.getElementById('stake-big').textContent = s>0 ? s+' €' : '— €';
+}
+
+function _mkt(m,sp){
+  if(!m) return 'Handicap / Total';
+  if(m.includes('AH'))    return 'Asian Handicap → 0 (Draw No Bet)';
+  if(m.includes('ML'))    return 'Résultat → Moneyline';
+  if(m.includes('Over'))  return 'Totaux → Over';
+  if(m.includes('Under')) return 'Totaux → Under';
+  if(m.includes('PS'))    return 'Handicap → Point Spread';
+  return m;
+}
+
+function _exp(m,sp){
+  if(!m) return '';
+  if(m.includes('AH'))    return 'AH 0.0 : victoire → gagné · nul → remboursé';
+  if(m.includes('Over'))  return 'Over : total dépasse la ligne';
+  if(m.includes('Under')) return 'Under : total inférieur à la ligne';
+  return '';
+}
+
+function openModal(idx){
+  const s = SIGNALS[idx]; if(!s) return;
+  const team = (s.selection_name&&!s.selection_name.includes(' vs '))
+    ? s.selection_name
+    : (s.match&&s.match.includes(' vs ') ? s.match.split(' vs ')[0].trim() : s.match);
+
+  _kpct = s.kelly_pct||0;
+
+  let mt='—';
+  if(s.match_time){ const d=s.match_time; mt=d.slice(8,10)+'/'+d.slice(5,7)+' '+d.slice(11,16)+' UTC'; }
+  const cd = s.match_time ? _cd(s.match_time) : null;
+  const rCol = {HIGH_VALUE:'var(--green)',VALUE:'var(--gold)',LOW_VALUE:'#444',SUSPECT_DATA:'var(--orange)'}[s.risk_flag]||'#444';
+  const why = s.advice || `Edge +${(s.edge_pct||0).toFixed(1)}% — 1XBet ${(s.xbet_odd||0).toFixed(2)} vs Pinnacle ${(s.pinnacle_price||0).toFixed(2)}.`;
+
+  document.getElementById('m-match').textContent = '⚽  '+s.match;
+  document.getElementById('m-sub').textContent   = s.league||'—';
+  document.getElementById('m-time').textContent  = mt;
+  document.getElementById('m-cd').textContent    = cd ? '· dans '+cd : '';
+  document.getElementById('m-stale').style.display = _kpct===0 ? 'block' : 'none';
+  document.getElementById('m-team').textContent  = team;
+  document.getElementById('m-mkt').textContent   = (s.market||'—')+'  ·  @ '+(s.xbet_odd||0).toFixed(2);
+  document.getElementById('m-exp').textContent   = _exp(s.market,s.sport);
+  document.getElementById('s-match').textContent  = s.match;
+  document.getElementById('s-market').textContent = _mkt(s.market,s.sport);
+  document.getElementById('s-team').textContent   = team;
+  document.getElementById('s-cote').textContent   = (s.xbet_odd||0).toFixed(2);
+  document.getElementById('s-pin').textContent    = s.pinnacle_price ? s.pinnacle_price.toFixed(2) : '—';
+  document.getElementById('m-kelly-pct').textContent = _kpct>0 ? _kpct.toFixed(1)+'%' : '';
+  document.getElementById('m-why').textContent   = why;
+  document.getElementById('m-edge').textContent  = (s.edge_pct>0?'+':'')+(s.edge_pct||0).toFixed(1)+'%';
+  document.getElementById('m-pin').textContent   = s.pinnacle_price ? s.pinnacle_price.toFixed(2) : '—';
+  document.getElementById('m-risk').textContent  = (s.risk_flag||'').replace(/_/g,' ');
+  document.getElementById('m-risk').style.color  = rCol;
+
+  updateStake();
+  document.getElementById('modal-overlay').style.display = 'block';
+  document.getElementById('modal').style.display = 'block';
+  document.body.classList.add('locked');
+}
+
+function closeModal(){
+  document.getElementById('modal-overlay').style.display = 'none';
+  document.getElementById('modal').style.display = 'none';
+  document.body.classList.remove('locked');
+}
+document.addEventListener('keydown', e=>{ if(e.key==='Escape') closeModal(); });
+</script>
+</body>
+</html>

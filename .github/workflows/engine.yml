@@ -13,7 +13,7 @@ name: Predator Engine
 
 on:
   schedule:
-    - cron: '*/30 6-21 * * *'   # EU market window — every 30 min, 06:00–21:30 UTC
+    - cron: '*/30 6-22 * * *'   # EU market window — every 30 min, 06:00–22:30 UTC (WC 18h ET = 22h UTC)
     - cron: '0 0-5 * * *'       # NBA overnight window — hourly, 00:00–05:00 UTC
   workflow_dispatch:
 
