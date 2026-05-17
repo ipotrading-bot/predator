@@ -352,7 +352,6 @@ footer { display: none; }
     <a href="/" class="on">ACCUEIL</a>
     <a href="/ledger">BILAN</a>
     <a href="/audit">AUDIT</a>
-    <a href="/worldcup">eSPORT</a>
   </div>
   {% set elites = signals | selectattr('risk_flag', 'in', ['HIGH_VALUE','VALUE']) | list %}
   {% set edges  = signals | map(attribute='edge_pct') | list %}
@@ -484,10 +483,6 @@ footer { display: none; }
   <a href="/audit">
     <svg viewBox="0 0 24 24"><polyline points="22 12 18 12 15 21 9 3 6 12 2 12"/></svg>
     Audit
-  </a>
-  <a href="/worldcup">
-    <svg viewBox="0 0 24 24"><path d="M5 3h14l-1 7a7 7 0 01-12 0L5 3z"/><circle cx="12" cy="20" r="1"/><line x1="12" y1="17" x2="12" y2="21"/></svg>
-    eSport
   </a>
 </nav>
 
