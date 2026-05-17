@@ -239,20 +239,13 @@ def _emit(signals, sb, now, log, name, sport, league, mkt_key, mkt_label,
         log.info("DISCARD | %s %s | %s — sharp_prob=0 (stale/missing data)", emoji, name, mkt_label)
         return
 
-    # Safety Trigger: edge > 10% on a major sport is statistically impossible
-    # without a data mapping error — flag SUSPECT_DATA and alert for manual check.
+    # Safety Trigger: edge > 10% on a major sport = data mapping error.
+    # Never save to DB — alert only, then discard.
     if edge > _SUSPECT_EDGE and sport in _MAJOR_SPORTS:
-        risk = "SUSPECT_DATA"
-        log.warning("SUSPECT | %s %s | %s — Edge=+%.2f%% > 10%% — VALIDATION MANUELLE REQUISE",
+        log.warning("SUSPECT | %s %s | %s — Edge=+%.2f%% > 10%% — DISCARD (erreur données probable)",
                     emoji, name, mkt_label, edge)
-        _telegram(
-            f"⚠️ *SIGNAL SUSPECT* — validation manuelle requise\n"
-            f"{emoji} *{name}* | `{mkt_label} @ {xbet_odd:.2f}`\n"
-            f"Edge *+{edge:.1f}%* > 10% sur {sport} → probable inversion ou erreur de données.\n"
-            f"Vérifier manuellement avant de parier."
-        )
-    else:
-        risk = _risk(edge)
+        return
+    risk = _risk(edge)
 
     b = xbet_odd - 1
     kelly_full = (sharp_prob * b - (1 - sharp_prob)) / b if b > 0 else 0.0
