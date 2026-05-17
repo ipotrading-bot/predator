@@ -117,7 +117,7 @@ nav {
 /* ─── SCAN META ───────────────────────────────── */
 .scan-meta { font-size: 9px; color: var(--t3); margin-bottom: 10px; display: flex; justify-content: space-between; }
 
-/* ─── GROUP FILTER ────────────────────────────── */
+/* ─── GROUP FILTER (pill bar) ─────────────────── */
 .group-filter {
   display: flex; gap: 5px; margin-bottom: 12px;
   overflow-x: auto; padding-bottom: 2px;
@@ -133,6 +133,40 @@ nav {
 }
 .gf.active { border-color: var(--gold); color: var(--gold); background: rgba(245,197,24,.07); }
 .gf:hover  { border-color: var(--t2); color: var(--t1); }
+
+/* ─── ACCORDÉON GROUPE ────────────────────────── */
+.grp-accordion { margin-bottom: 6px; }
+.grp-header {
+  display: flex; align-items: center; gap: 8px;
+  padding: 8px 11px; cursor: pointer;
+  border: 1px solid rgba(245,197,24,.14);
+  border-radius: var(--r);
+  background: rgba(245,197,24,.03);
+  user-select: none; -webkit-user-select: none;
+  transition: background .12s;
+}
+.grp-header:active { background: rgba(245,197,24,.07); }
+.grp-label {
+  font-size: 9px; font-weight: 700; letter-spacing: 2.5px;
+  color: var(--gold2); text-transform: uppercase; flex: 1;
+}
+.grp-count {
+  font-size: 9px; color: var(--t2);
+  background: var(--bg2); border: 1px solid var(--bd2);
+  border-radius: 10px; padding: 1px 7px;
+}
+.grp-best {
+  font-size: 9px; font-weight: 700; color: var(--gold);
+}
+.grp-arrow {
+  font-size: 9px; color: var(--t3);
+  transition: transform .18s;
+}
+.grp-accordion.open .grp-arrow { transform: rotate(90deg); }
+.grp-body {
+  display: none; padding-top: 5px;
+}
+.grp-accordion.open .grp-body { display: block; }
 
 /* ─── SECTION SEP ─────────────────────────────── */
 .group-sep {
@@ -354,72 +388,8 @@ footer { display: none; }
 
   {% if signals %}
 
-  <!-- signals container, iterated by JS after group filtering -->
-  <div id="signals-container">
-
-  {% set ns = namespace(idx=0) %}
-  {% for s in signals %}
-  {% set is_high    = s.risk_flag == 'HIGH_VALUE' %}
-  {% set is_value   = s.risk_flag == 'VALUE' %}
-  {% set is_suspect = s.risk_flag == 'SUSPECT_DATA' %}
-  {% set is_trap    = (not is_suspect) and (s.edge_pct or 0) >= 2.0 and (s.xbet_odd or 0) >= 2.20 %}
-  {% set team = s.selection_name if s.selection_name and ' vs ' not in s.selection_name else (s.match.split(' vs ')[0].strip() if ' vs ' in s.match else s.match) %}
-  {% set kelly = s.kelly_pct if s.kelly_pct else 0 %}
-  {% if s.match_time %}
-    {% set mdate = s.match_time[8:10] + '/' + s.match_time[5:7] %}
-    {% set mhour = s.match_time[11:16] %}
-  {% endif %}
-
-  <div class="sig {% if is_trap %}trap{% elif is_high %}high{% elif is_value %}value{% elif is_suspect %}suspect{% endif %}"
-       onclick="openModal({{ ns.idx }})"
-       data-matchtime="{{ s.match_time or '' }}"
-       data-league="{{ s.league or '' }}">
-    {% set ns.idx = ns.idx + 1 %}
-    <div class="sig-body">
-
-      <!-- R1 -->
-      <div class="sig-r1">
-        <span class="sig-icon">&#9917;</span>
-        <span class="sig-match">{{ s.match }}<span class="sig-league"> &middot; {{ s.league or '—' }}</span></span>
-        {% if is_trap %}
-          <span class="sig-badge b-TRAP_COUNTER">&#128293; TRAP COUNTER</span>
-        {% elif is_high %}
-          <span class="sig-badge b-HIGH_VALUE">HIGH VALUE</span>
-        {% elif is_value %}
-          <span class="sig-badge b-VALUE">VALUE</span>
-        {% elif is_suspect %}
-          <span class="sig-badge b-SUSPECT_DATA">SUSPECT</span>
-        {% else %}
-          <span class="sig-badge b-LOW_VALUE">LOW VALUE</span>
-        {% endif %}
-        {% if s.match_time %}
-          <span class="sig-date">{{ mdate }} {{ mhour }}</span>
-          <span class="sig-cd" data-ts="{{ s.match_time }}"></span>
-        {% else %}
-          <span class="sig-date" style="color:var(--t3)">heure?</span>
-        {% endif %}
-      </div>
-
-      <!-- R2 -->
-      <div class="sig-r2">
-        <span class="sig-team">{{ team }}</span>
-        <span class="sig-odd">@ {{ "%.2f"|format(s.xbet_odd) }}</span>
-        <span class="sig-edge {% if is_suspect %}e-sus{% elif s.edge_pct >= 5 %}e-high{% elif s.edge_pct >= 2.0 %}e-mid{% else %}e-low{% endif %}">
-          +{{ "%.1f"|format(s.edge_pct) }}%
-        </span>
-        {% if kelly > 0 %}
-          <span class="sig-mise">{{ (kelly/100*1000)|round|int }}&euro;</span>
-        {% else %}
-          <span class="sig-mise" style="color:var(--t3)">&mdash;&euro;</span>
-        {% endif %}
-        <span class="sig-cta">&#9654;</span>
-      </div>
-
-    </div>
-  </div>
-  {% endfor %}
-
-  </div><!-- #signals-container -->
+  <!-- Accordéon container — built by JS from SIGNALS data -->
+  <div id="signals-container"></div>
 
   {% else %}
 
@@ -573,7 +543,7 @@ function refresh(){
 }
 refresh();
 
-// ── Group filter ──
+// ── Data + helpers ──
 const SIGNALS = {{ signals|tojson }};
 
 function _group(league){
@@ -581,9 +551,114 @@ function _group(league){
   return m ? m[1].toUpperCase() : null;
 }
 
+function _sigCard(s, idx){
+  const trap  = (s.edge_pct||0) >= 2.0 && (s.xbet_odd||0) >= 2.20 && s.risk_flag !== 'SUSPECT_DATA';
+  const cls   = trap ? 'trap' : ({HIGH_VALUE:'high',VALUE:'value',SUSPECT_DATA:'suspect'}[s.risk_flag]||'');
+  const team  = (s.selection_name && !s.selection_name.includes(' vs '))
+    ? s.selection_name
+    : (s.match && s.match.includes(' vs ') ? s.match.split(' vs ')[0].trim() : s.match);
+  const odd   = (s.xbet_odd||0).toFixed(2);
+  const edge  = (s.edge_pct||0);
+  const eCls  = s.risk_flag==='SUSPECT_DATA' ? 'e-sus' : edge>=5 ? 'e-high' : edge>=2 ? 'e-mid' : 'e-low';
+  const mise  = s.kelly_pct > 0 ? Math.round(s.kelly_pct/100*1000)+'€' : '—€';
+  const miseCol = s.kelly_pct > 0 ? '' : 'style="color:var(--t3)"';
+  const mt    = s.match_time||'';
+  const dateStr = mt ? mt.slice(8,10)+'/'+mt.slice(5,7)+' '+mt.slice(11,16) : '';
+  const badge = trap
+    ? '<span class="sig-badge b-TRAP_COUNTER">&#128293; TRAP</span>'
+    : `<span class="sig-badge b-${s.risk_flag||'LOW_VALUE'}">${(s.risk_flag||'LOW VALUE').replace(/_/g,' ')}</span>`;
+  const cdAttr = mt ? `data-ts="${mt}"` : '';
+  const dateEl = mt
+    ? `<span class="sig-date">${dateStr}</span><span class="sig-cd" ${cdAttr}></span>`
+    : `<span class="sig-date" style="color:var(--t3)">heure?</span>`;
+
+  return `<div class="sig ${cls}" onclick="openModal(${idx})" data-matchtime="${mt}" data-league="${s.league||''}">
+  <div class="sig-body">
+    <div class="sig-r1">
+      <span class="sig-icon">&#9917;</span>
+      <span class="sig-match">${s.match}<span class="sig-league"> &middot; ${s.league||'—'}</span></span>
+      ${badge}${dateEl}
+    </div>
+    <div class="sig-r2">
+      <span class="sig-team">${team}</span>
+      <span class="sig-odd">@ ${odd}</span>
+      <span class="sig-edge ${eCls}">+${edge.toFixed(1)}%</span>
+      <span class="sig-mise" ${miseCol}>${mise}</span>
+      <span class="sig-cta">&#9654;</span>
+    </div>
+  </div>
+</div>`;
+}
+
+function _buildAccordeons(filter){
+  const container = document.getElementById('signals-container');
+  if(!SIGNALS.length){ container.innerHTML=''; return; }
+
+  // Group signals
+  const byGroup = {};
+  const noGroup = [];
+  SIGNALS.forEach((s,i) => {
+    const g = _group(s.league);
+    if(!g){ noGroup.push({s,i}); return; }
+    if(!byGroup[g]) byGroup[g] = [];
+    byGroup[g].push({s,i});
+  });
+
+  const groups = Object.keys(byGroup).sort();
+
+  // Apply pill filter
+  const show = filter
+    ? (byGroup[filter] ? {[filter]: byGroup[filter]} : {})
+    : byGroup;
+  const showNoGroup = filter ? [] : noGroup;
+
+  let html = '';
+
+  Object.keys(show).sort().forEach(g => {
+    const items = show[g];
+    const bestEdge = Math.max(...items.map(x=>x.s.edge_pct||0));
+    const trapCount = items.filter(x=>(x.s.edge_pct||0)>=2.0 && (x.s.xbet_odd||0)>=2.20 && x.s.risk_flag!=='SUSPECT_DATA').length;
+    const trapBadge = trapCount ? ` &nbsp;<span style="color:var(--gold);font-size:8px">&#128293;×${trapCount}</span>` : '';
+    html += `<div class="grp-accordion open" data-group="${g}">
+  <div class="grp-header" onclick="this.parentElement.classList.toggle('open')">
+    <span class="grp-label">&#9670; GROUPE ${g}</span>
+    ${trapBadge}
+    <span class="grp-best">+${bestEdge.toFixed(1)}%</span>
+    <span class="grp-count">${items.length}</span>
+    <span class="grp-arrow">&#9654;</span>
+  </div>
+  <div class="grp-body">
+    ${items.map(x=>_sigCard(x.s,x.i)).join('')}
+  </div>
+</div>`;
+  });
+
+  // Signals without group assignment
+  if(showNoGroup.length){
+    html += `<div class="grp-accordion open" data-group="OTHER">
+  <div class="grp-header" onclick="this.parentElement.classList.toggle('open')">
+    <span class="grp-label">&#9670; FIFA WC — AUTRES</span>
+    <span class="grp-count">${showNoGroup.length}</span>
+    <span class="grp-arrow">&#9654;</span>
+  </div>
+  <div class="grp-body">
+    ${showNoGroup.map(x=>_sigCard(x.s,x.i)).join('')}
+  </div>
+</div>`;
+  }
+
+  container.innerHTML = html;
+  // Re-apply countdown to newly rendered elements
+  document.querySelectorAll('.sig-cd[data-ts]').forEach(el=>{
+    const r=_cd(el.dataset.ts);
+    el.textContent = r ? '· '+r : '';
+    el.className = 'sig-cd'+(r&&r.includes('min')&&!r.includes('h')?' urgent':'');
+  });
+}
+
+// ── Group pill filter ──
 (function buildGroupFilter(){
   const groups = [...new Set(SIGNALS.map(s=>_group(s.league)).filter(Boolean))].sort();
-  if(!groups.length) return;
   const bar = document.getElementById('groupFilter');
   groups.forEach(g=>{
     const btn = document.createElement('button');
@@ -597,17 +672,10 @@ function _group(league){
     if(!btn) return;
     bar.querySelectorAll('.gf').forEach(b=>b.classList.remove('active'));
     btn.classList.add('active');
-    filterGroup(btn.dataset.group);
+    _buildAccordeons(btn.dataset.group||'');
   });
+  _buildAccordeons('');
 })();
-
-function filterGroup(group){
-  document.querySelectorAll('#signals-container .sig').forEach(el=>{
-    if(!group){ el.style.display=''; return; }
-    const g = _group(el.dataset.league);
-    el.style.display = (g===group) ? '' : 'none';
-  });
-}
 
 // ── Modal ──
 let _kpct = 0;

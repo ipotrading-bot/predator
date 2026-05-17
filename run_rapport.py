@@ -43,6 +43,13 @@ SPORT_EMOJI    = {"soccer": "⚽", "basketball": "🏀", "tennis": "🎾"}
 SPORT_ORDER    = ["basketball", "tennis", "soccer"]
 ELITE_EDGE     = _ELITE_EDGE
 SCAN_STALE_H   = 2      # Alerte si aucun scan depuis X heures
+WC_ALPHA_MIN   = 2.0    # Seuil Edge spécifique WC (vs 2.5% général)
+_WC_KEYWORDS   = ["world cup", "fifa", "wc 2026", "mondial", "coupe du monde"]
+
+
+def _is_wc(s: dict) -> bool:
+    league = (s.get("league") or "").lower()
+    return any(kw in league for kw in _WC_KEYWORDS)
 
 
 def _send(text: str):
@@ -193,6 +200,29 @@ def run():
         log.info("Rapport envoyé — 0 signaux")
         return
 
+    # ── WC block (top 3 WC signals) — inséré avant les stats générales ─
+    wc_signals = [s for s in signals if _is_wc(s)]
+    wc_block   = ""
+    if wc_signals:
+        wc_top = sorted(wc_signals, key=lambda x: x.get("edge_pct", 0), reverse=True)[:3]
+        wc_block = "🏆 *FIFA WORLD CUP 2026 — ALPHA DU JOUR*\n"
+        for s in wc_top:
+            team     = s.get("selection_name") or s.get("match", "?")
+            if " vs " in team:
+                team = team.split(" vs ")[0].strip()
+            edge     = s.get("edge_pct", 0)
+            odd      = s.get("xbet_odd", 0)
+            prob     = s.get("sharp_prob", 0)
+            stake    = _kelly_stake(odd, prob)
+            is_trap  = edge >= WC_ALPHA_MIN and odd >= 2.20
+            icon     = "🔥 TRAP" if is_trap else ("🟢" if edge >= 3.0 else "🟡")
+            league   = s.get("league", "")
+            wc_block += f"{icon} *{team.upper()}*  `AH 0.0 @ {odd:.2f}`\n"
+            wc_block += f"   Edge `+{edge:.1f}%` | Mise `{stake}€` /1000€\n"
+            if league:
+                wc_block += f"   _({league})_\n"
+        wc_block += "\n"
+
     # Stats globales
     best_edge = max((s.get("edge_pct") or 0) for s in signals)
     summary = (
@@ -224,7 +254,7 @@ def run():
         f"🔥 Elite | ✅ Value | 📌 Low Value"
     )
 
-    msg = header + summary + body + footer
+    msg = header + wc_block + summary + body + footer
 
     # Telegram a une limite de 4096 chars
     if len(msg) > 4000:
