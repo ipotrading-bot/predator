@@ -163,7 +163,8 @@ def _purge_old_signals(sb):
         log.error("Supabase purge (age): %s", e)
 
     purge_rules = [
-        ("gt",  "edge_pct",   15.0,    "edge > 15%"),
+        ("gt",  "edge_pct",   15.0,    "edge > 15% (hard cap)"),
+        ("gt",  "edge_pct",   10.0,    "edge > 10% (SUSPECT — probable inversion)"),
         ("lt",  "edge_pct",   MIN_EDGE, f"edge < {MIN_EDGE}%"),
         ("lte", "sharp_prob", 0.0,      "sharp_prob=0 (stale)"),
     ]
@@ -183,6 +184,21 @@ def _purge_old_signals(sb):
         log.info("Purged: sharp_prob=null")
     except Exception as e:
         log.error("Supabase purge (sharp_prob=null): %s", e)
+    try:
+        sb.table("signals").delete().eq("risk_flag", "SUSPECT_DATA").execute()
+        log.info("Purged: SUSPECT_DATA signals (edge > 10%% inversion probable)")
+    except Exception as e:
+        log.error("Supabase purge (SUSPECT_DATA): %s", e)
+    try:
+        sb.table("signals").delete().lte("xbet_odd", 1.01).execute()
+        log.info("Purged: xbet_odd <= 1.01 (signal tronqué)")
+    except Exception as e:
+        log.error("Supabase purge (xbet_odd): %s", e)
+    try:
+        sb.table("signals").delete().lte("pinnacle_price", 1.01).execute()
+        log.info("Purged: pinnacle_price <= 1.01 (signal tronqué)")
+    except Exception as e:
+        log.error("Supabase purge (pinnacle_price): %s", e)
     try:
         sb.table("signals").delete().eq("sport", "soccer").eq("market", "Moneyline").execute()
         log.info("Purged: legacy soccer Moneyline")
@@ -518,7 +534,7 @@ def run():
     sharp_source   = "?"
 
     # ── Tier 1: The Odds API ──────────────────────────────────────────
-    hours_ahead = 48 if DEEP_SCAN else 72
+    hours_ahead = int(os.environ.get("HOURS_AHEAD", 48 if DEEP_SCAN else 72))
     log.info("⚡ Tier 1 — The Odds API (%dh window)...", hours_ahead)
     oddsapi_events = fetch_odds(hours_ahead=hours_ahead)
     if oddsapi_events:
