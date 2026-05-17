@@ -3,8 +3,16 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
-<meta name="theme-color" content="#050505">
+<meta name="theme-color" content="#00e03a">
+<meta name="mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+<meta name="apple-mobile-web-app-title" content="PREDATOR">
 <title>PREDATOR · AUDIT CLV</title>
+<link rel="manifest" href="/manifest.json">
+<link rel="icon" type="image/png" sizes="32x32" href="/static/icons/favicon-32.png">
+<link rel="shortcut icon" href="/favicon.ico">
+<link rel="apple-touch-icon" sizes="192x192" href="/static/icons/icon-192.png">
 <style>
 :root {
   --bg:     #050505;
@@ -37,9 +45,12 @@ nav.topnav {
   display: flex; align-items: center; padding: 0 14px; gap: 0;
 }
 .nav-logo {
+  display: flex; align-items: center; gap: 8px;
   color: var(--blue); font-size: 11px; font-weight: 700;
   letter-spacing: 3px; white-space: nowrap; flex-shrink: 0;
+  text-decoration: none;
 }
+.nav-logo img { width:28px; height:28px; border-radius:5px; object-fit:cover; filter:drop-shadow(0 0 4px rgba(0,180,230,.5)); }
 .nav-pages {
   display: none; align-items: center; margin-left: 14px; gap: 0;
 }
@@ -243,12 +254,12 @@ footer { display: none; }
 
 <!-- ── TOP NAV ────────────────────────────── -->
 <nav class="topnav">
-  <div class="nav-logo">&#9632; AUDIT CLV</div>
+  <a href="/" class="nav-logo"><img src="/static/icons/icon-96.png" alt="PREDATOR"> PREDATOR</a>
   <div class="nav-pages">
-    <a href="/">DASHBOARD</a>
-    <a href="/ledger">LEDGER</a>
-    <a href="/audit" class="on">AUDIT CLV</a>
-    <a href="/worldcup">WC 2026</a>
+    <a href="/">ACCUEIL</a>
+    <a href="/ledger">BILAN</a>
+    <a href="/audit" class="on">AUDIT</a>
+    <a href="/worldcup">eSPORT</a>
   </div>
   <div class="nav-right">
     <span id="clock">—</span>
@@ -496,19 +507,19 @@ footer { display: none; }
 <nav class="bnav">
   <a href="/">
     <svg viewBox="0 0 24 24"><rect x="3" y="3" width="7" height="7" rx="1.5"/><rect x="14" y="3" width="7" height="7" rx="1.5"/><rect x="3" y="14" width="7" height="7" rx="1.5"/><rect x="14" y="14" width="7" height="7" rx="1.5"/></svg>
-    Dashboard
+    Accueil
   </a>
   <a href="/ledger">
     <svg viewBox="0 0 24 24"><path d="M9 5H7a2 2 0 00-2 2v12a2 2 0 002 2h10a2 2 0 002-2V7a2 2 0 00-2-2h-2M9 5a2 2 0 002 2h2a2 2 0 002-2M9 5a2 2 0 012-2h2a2 2 0 012 2M12 12h4m-4 4h4m-8-4h.01m-.01 4h.01"/></svg>
-    Ledger
+    Bilan
   </a>
   <a href="/audit" class="on">
     <svg viewBox="0 0 24 24"><polyline points="22 12 18 12 15 21 9 3 6 12 2 12"/></svg>
     Audit
   </a>
   <a href="/worldcup">
-    <svg viewBox="0 0 24 24"><path d="M8 21h8m-4-4v4M5 3h14l-1 7a7 7 0 01-12 0L5 3z"/><path d="M5 3a2 2 0 00-2 2v1h18V5a2 2 0 00-2-2"/></svg>
-    WC 2026
+    <svg viewBox="0 0 24 24"><path d="M5 3h14l-1 7a7 7 0 01-12 0L5 3z"/><circle cx="12" cy="20" r="1"/><line x1="12" y1="17" x2="12" y2="21"/></svg>
+    eSport
   </a>
 </nav>
 

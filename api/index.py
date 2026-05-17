@@ -9,7 +9,7 @@ import os
 
 import requests
 from dotenv import load_dotenv
-from flask import Flask, jsonify, render_template
+from flask import Flask, jsonify, render_template, send_from_directory
 from supabase import create_client
 
 log = logging.getLogger("PREDATOR.api")
@@ -17,7 +17,8 @@ log = logging.getLogger("PREDATOR.api")
 load_dotenv()
 
 _template_dir = os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", "templates")
-app = Flask(__name__, template_folder=_template_dir)
+_static_dir   = os.path.join(os.path.dirname(os.path.abspath(__file__)), "static")
+app = Flask(__name__, template_folder=_template_dir, static_folder=_static_dir, static_url_path="/static")
 
 
 @app.after_request
@@ -294,6 +295,16 @@ def trigger_audit():
         return jsonify({"error": resp.text}), resp.status_code
     except Exception as e:
         return jsonify({"error": str(e)}), 500
+
+
+@app.route("/manifest.json")
+def manifest():
+    return send_from_directory(_static_dir, "manifest.json", mimetype="application/manifest+json")
+
+
+@app.route("/favicon.ico")
+def favicon():
+    return send_from_directory(_static_dir, "favicon.ico", mimetype="image/x-icon")
 
 
 @app.route("/api/health")

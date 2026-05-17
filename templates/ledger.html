@@ -3,8 +3,16 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
-<meta name="theme-color" content="#050505">
-<title>PREDATOR LEDGER</title>
+<meta name="theme-color" content="#00e03a">
+<meta name="mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+<meta name="apple-mobile-web-app-title" content="PREDATOR">
+<title>PREDATOR · BILAN</title>
+<link rel="manifest" href="/manifest.json">
+<link rel="icon" type="image/png" sizes="32x32" href="/static/icons/favicon-32.png">
+<link rel="shortcut icon" href="/favicon.ico">
+<link rel="apple-touch-icon" sizes="192x192" href="/static/icons/icon-192.png">
 <style>
 :root {
   --bg:     #050505;
@@ -37,7 +45,8 @@ nav.topnav {
   border-bottom: 1px solid var(--bd);
   display: flex; align-items: center; padding: 0 14px; gap: 0;
 }
-.nav-logo { color: var(--green); font-size: 11px; font-weight: 700; letter-spacing: 3px; flex-shrink: 0; }
+.nav-logo { display:flex; align-items:center; gap:8px; color: var(--green); font-size: 11px; font-weight: 700; letter-spacing: 3px; flex-shrink: 0; text-decoration:none; }
+.nav-logo img { width:28px; height:28px; border-radius:5px; object-fit:cover; filter:drop-shadow(0 0 4px rgba(0,224,58,.5)); }
 .nav-pages { display: none; align-items: center; margin-left: 14px; }
 .nav-pages a {
   height: 48px; padding: 0 13px;
@@ -223,7 +232,7 @@ footer { display: none; }
 
 <!-- TOP NAV -->
 <nav class="topnav">
-  <div class="nav-logo">&#9658; PREDATOR</div>
+  <a href="/" class="nav-logo"><img src="/static/icons/icon-96.png" alt="PREDATOR"> PREDATOR</a>
   <div class="nav-pages">
     <a href="/">DASHBOARD</a>
     <a href="/ledger" class="on">LEDGER</a>
