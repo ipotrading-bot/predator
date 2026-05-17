@@ -3,7 +3,7 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
-<meta name="theme-color" content="#00e03a">
+<meta name="theme-color" content="#38BDF8">
 <meta name="mobile-web-app-capable" content="yes">
 <meta name="apple-mobile-web-app-capable" content="yes">
 <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
@@ -13,241 +13,19 @@
 <link rel="icon" type="image/png" sizes="32x32" href="/static/icons/favicon-32.png">
 <link rel="shortcut icon" href="/favicon.ico">
 <link rel="apple-touch-icon" sizes="192x192" href="/static/icons/icon-192.png">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&family=JetBrains+Mono:wght@400;500;700&display=swap" rel="stylesheet">
+<link rel="stylesheet" href="/static/css/predator.css">
 <style>
-:root {
-  --bg:     #050505;
-  --bg1:    #090909;
-  --bg2:    #0e0e0e;
-  --bd:     #151515;
-  --bd2:    #202020;
-  --green:  #00e03a;
-  --blue:   #00b4e6;
-  --red:    #ff3b3b;
-  --yellow: #f5c518;
-  --orange: #ff8c00;
-  --t1:     #c0c0c0;
-  --t2:     #555;
-  --t3:     #2a2a2a;
-  --font:   'SF Mono','Fira Code','Cascadia Code','Courier New',monospace;
-  --r:      7px;
-  --sbot:   env(safe-area-inset-bottom, 0px);
-}
-*, *::before, *::after { margin:0; padding:0; box-sizing:border-box; -webkit-tap-highlight-color:transparent; }
-body { background:var(--bg); color:var(--t1); font-family:var(--font); font-size:13px; min-height:100dvh; overscroll-behavior:none; }
-
-/* ─── TOP NAV ─────────────────────────────────── */
-nav.topnav {
-  position: sticky; top: 0; z-index: 60;
-  height: 48px;
-  background: rgba(5,5,5,.96);
-  backdrop-filter: blur(14px); -webkit-backdrop-filter: blur(14px);
-  border-bottom: 1px solid var(--bd);
-  display: flex; align-items: center; padding: 0 14px; gap: 0;
-}
-.nav-logo {
-  display: flex; align-items: center; gap: 8px;
-  color: var(--blue); font-size: 11px; font-weight: 700;
-  letter-spacing: 3px; white-space: nowrap; flex-shrink: 0;
-  text-decoration: none;
-}
-.nav-logo img { width:28px; height:28px; border-radius:5px; object-fit:cover; filter:drop-shadow(0 0 4px rgba(0,180,230,.5)); }
-.nav-pages {
-  display: none; align-items: center; margin-left: 14px; gap: 0;
-}
-.nav-pages a {
-  height: 48px; padding: 0 13px;
-  display: flex; align-items: center;
-  font-size: 9px; font-weight: 700; letter-spacing: 2px;
-  text-transform: uppercase; text-decoration: none; color: var(--t2);
-  border-right: 1px solid var(--bd); transition: color .12s;
-}
-.nav-pages a:first-child { border-left: 1px solid var(--bd); margin-left: 10px; }
-.nav-pages a.on { color: var(--blue); }
-.nav-pages a:hover { color: var(--t1); }
-.nav-right { display: flex; align-items: center; gap: 10px; margin-left: auto; flex-shrink: 0; }
-#clock { font-size: 10px; color: var(--t3); }
-
-/* ─── BOTTOM NAV (mobile) ─────────────────────── */
-.bnav {
-  position: fixed; bottom: 0; left: 0; right: 0; z-index: 60;
-  background: rgba(5,5,5,.97);
-  backdrop-filter: blur(16px); -webkit-backdrop-filter: blur(16px);
-  border-top: 1px solid var(--bd);
-  display: flex;
-  height: calc(54px + var(--sbot));
-  padding-bottom: var(--sbot);
-}
-.bnav a {
-  flex: 1; display: flex; flex-direction: column;
-  align-items: center; justify-content: center; gap: 4px;
-  text-decoration: none; color: var(--t2);
-  font-size: 8px; font-weight: 700; letter-spacing: 1px;
-  text-transform: uppercase; transition: color .12s;
-}
-.bnav a.on { color: var(--blue); }
-.bnav svg { width: 19px; height: 19px; stroke: currentColor; fill: none; stroke-width: 1.6; stroke-linecap: round; stroke-linejoin: round; }
-
-/* ─── LAYOUT ──────────────────────────────────── */
-.wrap {
-  padding: 12px 11px calc(68px + var(--sbot));
-  max-width: 900px; margin: 0 auto;
-}
-@media (min-width: 640px) {
-  .wrap { padding: 14px 20px 40px; }
-  .bnav { display: none; }
-  .nav-pages { display: flex; }
-}
-
-/* ─── PAGE HEADER ─────────────────────────────── */
-.page-hdr { margin-bottom: 14px; }
-.page-title {
-  font-size: 15px; font-weight: 700; letter-spacing: 4px;
-  text-transform: uppercase; color: var(--blue);
-}
-.page-sub { font-size: 9px; color: var(--t2); margin-top: 4px; }
-
-/* ─── SPORT GRID ──────────────────────────────── */
-.sport-grid {
-  display: grid;
-  grid-template-columns: 1fr 1fr;
-  gap: 8px; margin-bottom: 10px;
-}
-@media (min-width: 640px)  { .sport-grid { grid-template-columns: repeat(3, 1fr); } }
-@media (min-width: 900px)  { .sport-grid { grid-template-columns: repeat(4, 1fr); } }
-
-.sport-card {
-  background: var(--bg1); border: 1px solid var(--bd);
-  border-radius: var(--r); padding: 11px 12px;
-}
-.sc-hdr {
-  display: flex; align-items: center; justify-content: space-between; margin-bottom: 8px;
-}
-.sc-name { font-size: 9px; font-weight: 700; letter-spacing: 2px; text-transform: uppercase; color: var(--t2); }
-.sc-badge {
-  font-size: 7px; font-weight: 700; padding: 2px 5px; border-radius: 3px; letter-spacing: .3px;
-}
-.sc-badge.perf   { color: var(--green);  background: rgba(0,224,58,.07);  border: 1px solid rgba(0,224,58,.18);  }
-.sc-badge.stable { color: var(--yellow); background: rgba(245,197,24,.07); border: 1px solid rgba(245,197,24,.18); }
-.sc-badge.erosion{ color: var(--orange); background: rgba(255,140,0,.07);  border: 1px solid rgba(255,140,0,.18);  }
-
-.sc-spark { display: flex; gap: 2px; align-items: flex-end; height: 28px; margin-bottom: 9px; }
-.sc-spark-bar { flex: 1; min-height: 2px; border-radius: 1px 1px 0 0; opacity: .75; }
-
-.sc-stats { display: flex; border-top: 1px solid var(--bd); }
-.sc-stat {
-  flex: 1; text-align: center; padding: 7px 4px; border-right: 1px solid var(--bd);
-}
-.sc-stat:last-child { border-right: none; }
-.sc-val { font-size: 13px; font-weight: 700; }
-.sc-lbl { font-size: 7px; color: var(--t2); margin-top: 2px; text-transform: uppercase; letter-spacing: .8px; }
-
-/* ─── CLV CHART ───────────────────────────────── */
-.clv-chart {
-  background: var(--bg1); border: 1px solid var(--bd);
-  border-radius: var(--r); padding: 13px 14px; margin-bottom: 10px;
-}
-.clv-chart-title {
-  font-size: 9px; font-weight: 700; letter-spacing: 2px;
-  text-transform: uppercase; color: var(--t2); margin-bottom: 12px;
-}
-.chart-bars {
-  display: flex; gap: 20px; align-items: flex-end; height: 104px;
-  overflow-x: auto; padding-bottom: 4px; scrollbar-width: none;
-}
-.chart-bars::-webkit-scrollbar { display: none; }
-.bar-group { display: flex; flex-direction: column; align-items: center; gap: 3px; min-width: 48px; flex-shrink: 0; }
-.bar-val-lbl { font-size: 9px; font-weight: 700; }
-.bar-wrap { height: 72px; display: flex; align-items: flex-end; }
-.bar { width: 38px; min-height: 3px; border-radius: 2px 2px 0 0; }
-.bar-sport { font-size: 14px; }
-.bar-name  { font-size: 7px; color: var(--t2); letter-spacing: 1px; }
-.bar-n     { font-size: 7px; color: var(--t3); }
-.chart-legend {
-  margin-top: 10px; padding-top: 8px; border-top: 1px solid var(--bd);
-  display: flex; flex-wrap: wrap; gap: 10px;
-  font-size: 8px; color: var(--t2);
-}
-
-/* ─── THRESHOLDS ──────────────────────────────── */
-.thresholds {
-  background: var(--bg1); border: 1px solid var(--bd);
-  border-radius: var(--r); padding: 11px 14px; margin-bottom: 10px;
-}
-.thr-title { font-size: 9px; font-weight: 700; letter-spacing: 2px; color: var(--t2); text-transform: uppercase; margin-bottom: 8px; }
-.thr-list  { display: flex; flex-wrap: wrap; gap: 10px 18px; }
-.thr-item  { display: flex; align-items: center; gap: 6px; font-size: 10px; }
-.thr-val   { font-weight: 700; }
-.thr-lbl   { color: var(--t2); font-size: 9px; }
-
-/* ─── TABLE ───────────────────────────────────── */
-.sec-title {
-  font-size: 9px; font-weight: 700; letter-spacing: 2px;
-  color: var(--t2); text-transform: uppercase; margin-bottom: 8px;
-}
-.tbl-wrap { overflow-x: auto; border: 1px solid var(--bd); border-radius: var(--r); }
-table { width: 100%; border-collapse: collapse; min-width: 660px; }
-thead th {
-  color: var(--blue); font-size: 9px; letter-spacing: 1px;
-  text-transform: uppercase; padding: 8px 12px;
-  border-bottom: 1px solid var(--bd);
-  background: var(--bg2); text-align: left; white-space: nowrap;
-}
-tbody tr { border-bottom: 1px solid var(--bd); }
-tbody tr:last-child { border-bottom: none; }
-tbody tr:hover { background: var(--bg2); }
-td { padding: 8px 12px; vertical-align: middle; font-size: 11px; }
-
-.clv-pos  { color: var(--green); font-weight: 700; }
-.clv-neg  { color: var(--red);   font-weight: 700; }
-.clv-zero { color: var(--t2); }
-
-.status-badge {
-  font-size: 8px; font-weight: 700; padding: 2px 7px; border-radius: 3px;
-  letter-spacing: .5px; text-transform: uppercase;
-}
-.st-closed { color: var(--green); background: rgba(0,224,58,.06); border: 1px solid rgba(0,224,58,.15); }
-.st-other  { color: var(--t2);    background: var(--bg2);          border: 1px solid var(--bd); }
-
-/* ─── GLOBAL KPI BAR ──────────────────────────── */
-.kpi-bar {
-  display: flex; gap: 6px; margin-bottom: 12px; flex-wrap: wrap;
-}
-.kpi-card {
-  flex: 1; min-width: 100px;
-  background: var(--bg1); border: 1px solid var(--bd);
-  border-radius: var(--r); padding: 10px 12px;
-  display: flex; flex-direction: column; gap: 3px;
-}
-.kpi-card.primary { border-color: var(--blue); background: rgba(0,180,230,.04); }
-.kpi-val  { font-size: 20px; font-weight: 700; line-height: 1; }
-.kpi-lbl  { font-size: 8px; color: var(--t2); letter-spacing: 1px; text-transform: uppercase; }
-.kpi-sub  { font-size: 9px; color: var(--t3); margin-top: 2px; }
-.kv-green  { color: var(--green); }
-.kv-yellow { color: var(--yellow); }
-.kv-red    { color: var(--red); }
-.kv-blue   { color: var(--blue); }
-.kv-gray   { color: var(--t2); }
-
-/* RUN AUDIT button */
-#auditBtn {
-  height: 30px; padding: 0 13px;
-  background: rgba(0,180,230,.06);
-  border: 1px solid rgba(0,180,230,.22); border-radius: 5px;
-  color: var(--blue); font-family: var(--font);
-  font-size: 9px; font-weight: 700; letter-spacing: 1.5px;
-  cursor: pointer; transition: all .15s; white-space: nowrap;
-}
-#auditBtn:hover { background: rgba(0,180,230,.13); border-color: var(--blue); }
-@media (max-width: 639px) { #auditBtn { display: none; } }
-
-/* ─── EMPTY ───────────────────────────────────── */
-.empty { text-align: center; padding: 80px 20px; color: var(--t2); font-size: 11px; line-height: 2.6; }
-.empty-icon { font-size: 36px; color: var(--t3); margin-bottom: 12px; }
-
-footer { display: none; }
-@media (min-width: 640px) {
-  footer { display: block; border-top: 1px solid var(--bd); padding: 7px 20px; font-size: 9px; color: var(--t3); text-align: center; }
-}
+/* Audit page overrides */
+.wrap { max-width: 960px; }
+.nav-logo { color: var(--blue); }
+.nav-logo img { filter: drop-shadow(0 0 8px rgba(56,189,248,.35)); }
+.nav-pages a.on, .bnav a.on { color: var(--blue); }
+.page-hdr { margin-bottom: 14px; border-bottom: none; background: transparent; padding-left: 0; padding-right: 0; }
+.page-title { color: var(--blue); font-size: 15px; letter-spacing: 1.5px; }
+.page-sub { font-size: 10px; color: var(--t2); margin-top: 5px; }
 </style>
 </head>
 <body>
@@ -444,8 +222,8 @@ footer { display: none; }
   <!-- ── LAST 20 AUDITED ────────────────────── -->
   {% if recent_signals %}
   <div class="sec-title" style="margin-top:14px">&#9632; 20 DERNIERS SIGNAUX AUDITÉS</div>
-  <div class="tbl-wrap">
-  <table>
+  <div class="tbl-box">
+  <table class="audit-table">
     <thead>
       <tr>
         <th>Sport</th>
