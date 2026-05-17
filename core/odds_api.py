@@ -67,12 +67,30 @@ SPORT_KEYS = {
     "soccer_netherlands_eredivisie":     "soccer",
     "soccer_portugal_primeira_liga":     "soccer",
     "soccer_turkey_super_league":        "soccer",
+    # ── Soccer — Amériques (fort lag Pinnacle → 1XBet) ───────────────
+    "soccer_brazil_campeonato":          "soccer",   # Brasileirão Serie A
+    "soccer_argentina_primera_division": "soccer",   # Argentine Primera
+    "soccer_conmebol_copa_libertadores": "soccer",   # Copa Libertadores
+    "soccer_mexico_ligamx":              "soccer",   # Liga MX
+    "soccer_usa_mls":                    "soccer",   # MLS
+    # ── Soccer — Asie / Océanie ───────────────────────────────────────
+    "soccer_korea_kleague1":             "soccer",   # K League 1
+    "soccer_japan_j_league":             "soccer",   # J-League
+    "soccer_australia_aleague":          "soccer",   # A-League
+    # ── Soccer — Autres compétitions européennes ──────────────────────
+    "soccer_belgium_first_div":          "soccer",   # Jupiler Pro League
+    "soccer_scotland_premiership":       "soccer",   # SPFL Premiership
+    "soccer_greece_super_league":        "soccer",   # Super League Greece
+    "soccer_czech_republic_liga":        "soccer",   # Czech First League
+    "soccer_poland_ekstraklasa":         "soccer",   # Ekstraklasa
+    # ── Basketball — Europe ───────────────────────────────────────────
+    "basketball_euroleague":             "basketball",  # EuroLeague
 }
 
 # Markets fetched per sport (API supports h2h,spreads,totals in one call)
 _MARKETS_BY_SPORT = {
     "basketball":       "h2h,spreads,totals",
-    "hockey":           "h2h,spreads",        # NHL ML + puck line
+    "hockey":           "h2h,spreads,totals",  # NHL ML + puck line + O/U
     "americanfootball": "h2h,spreads,totals", # NFL ML + point spread + O/U
     "baseball":         "h2h,totals",         # MLB ML + O/U (no spreads)
     "rugby":            "h2h,spreads,totals",

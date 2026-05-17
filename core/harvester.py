@@ -395,8 +395,8 @@ def fetch_estimated_prices(matches: list) -> dict:
 
     names_set = set(names)
     result = {}
-    # Conservative margin: inflate estimated prices by 2% (reduces apparent edge)
-    MARGIN = 1.02
+    # Conservative margin: inflate estimated prices by 0.5% (was 2%, artificially killed edges)
+    MARGIN = 1.005
 
     for item in raw:
         ret_name = item.get("match", "").strip()

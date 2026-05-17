@@ -56,7 +56,7 @@ _MAJOR_SPORTS = {"soccer", "basketball", "tennis", "hockey", "esports", "america
 
 # Fast mode (default): 20 events, tight quota — speed over coverage
 # Deep mode (DEEP_SCAN=1): 100 events, wide quota — 48h full slate
-MAX_MATCHES = 100 if DEEP_SCAN else 20
+MAX_MATCHES = 100 if DEEP_SCAN else 50
 
 SPORT_EMOJI  = {
     "soccer": "⚽", "tennis": "🎾", "basketball": "🏀", "boxing": "🥊",
@@ -67,10 +67,10 @@ SPORT_EMOJI  = {
 
 # Portfolio Balancer: max signals per sport per scan
 _QUOTA_FAST = {
-    "basketball": 3, "hockey": 3, "americanfootball": 3, "baseball": 3,
-    "esports": 2, "rugby": 2, "tennis": 3, "mma": 3,
-    "volleyball": 2, "tabletennis": 2, "handball": 2,
-    "boxing": 2, "darts": 2, "cricket": 2, "soccer": 3,
+    "basketball": 5, "hockey": 4, "americanfootball": 4, "baseball": 4,
+    "esports": 3, "rugby": 3, "tennis": 5, "mma": 4,
+    "volleyball": 3, "tabletennis": 3, "handball": 3,
+    "boxing": 3, "darts": 3, "cricket": 3, "soccer": 6,
 }
 _QUOTA_DEEP = {
     "basketball": 8, "hockey": 6, "americanfootball": 6, "baseball": 6,
