@@ -37,7 +37,10 @@ def _db():
 
 def _get_meta(sb, key: str) -> dict | None:
     try:
-        res = sb.table("meta").select("value").eq("key", key).limit(1).execute()
+        res = (sb.table("meta").select("value,updated_at")
+               .eq("key", key)
+               .order("updated_at", desc=True)
+               .limit(1).execute())
         if res.data:
             return json.loads(res.data[0]["value"])
     except Exception:

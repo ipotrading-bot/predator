@@ -157,7 +157,8 @@ def _heartbeat(sb, scan_time: datetime, matches: int, signals: int):
                 "signals": signals,
             }),
             "updated_at": scan_time.isoformat(),
-        }).execute()
+        }, on_conflict="key").execute()
+        log.info("Heartbeat: last_scan updated (%d matchs, %d signaux)", matches, signals)
     except Exception as e:
         log.error("Supabase heartbeat: %s", e)
 
