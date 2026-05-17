@@ -615,3 +615,111 @@ def fetch_esports_events() -> list[dict]:
 
     log.info("eSports/Gemini: %d matchs trouvés", len(events))
     return events
+
+
+def fetch_alternative_sports_batch() -> list[dict]:
+    """
+    UN SEUL appel Gemini Flash + Google Search pour Table Tennis + Volleyball + Handball.
+    Groupé en une seule requête pour éviter les cascades de rate-limit 429.
+    Retourne les événements au format standard moteur.
+    """
+    api_key = os.environ.get("GEMINI_API_KEY")
+    if not api_key:
+        return []
+
+    from datetime import date
+    today = date.today().isoformat()
+
+    prompt = (
+        f"Today is {today}. Use Google Search to find upcoming matches in the next 3 days "
+        f"for these 3 sports: Table Tennis, Volleyball (men/women), Handball.\n\n"
+        f"For each match find current 1XBet AND Pinnacle decimal moneyline odds.\n"
+        f"Target tournaments:\n"
+        f"- Table Tennis: ITTF World Tour, Bundesliga TT, Champions League TT, top Asian leagues\n"
+        f"- Volleyball: CEV Champions League, Bundesliga, top European leagues (men/women)\n"
+        f"- Handball: EHF Champions League, Bundesliga, Liga ASOBAL\n\n"
+        f"Return ONLY a valid JSON array. Omit any match without confirmed odds on BOTH books:\n"
+        f'[{{"match":"Team A vs Team B","home":"Team A","away":"Team B","sport":"tabletennis",'
+        f'"event":"ITTF World Tour","commence_time":"2026-05-18T14:00:00Z",'
+        f'"odds_1xbet":{{"1":1.70,"X":0,"2":2.10}},'
+        f'"odds_pinnacle":{{"1":1.60,"X":0,"2":2.25}}}}]\n\n'
+        f'sport field must be exactly: "tabletennis", "volleyball", or "handball". '
+        f"X=0 always (no draw in these sports). Only include matches with confirmed lines on BOTH books."
+    )
+
+    payload = {
+        "contents": [{"role": "user", "parts": [{"text": prompt}]}],
+        "tools": [{"google_search": {}}],
+        "generationConfig": {"temperature": 0.1, "maxOutputTokens": 3000},
+    }
+
+    r = None
+    for attempt in range(3):
+        try:
+            r = requests.post(f"{GEMINI_FLASH_URL}?key={api_key}", json=payload, timeout=60)
+        except Exception as e:
+            log.error("AltSports/Gemini request error: %s", e)
+            return []
+        if r.status_code == 429:
+            wait = 65 if attempt == 0 else 30
+            log.warning("AltSports/Gemini rate limit — waiting %ds", wait)
+            time.sleep(wait)
+            r = None
+            continue
+        break
+
+    if r is None or r.status_code != 200:
+        if r is not None:
+            log.error("AltSports/Gemini HTTP %d: %s", r.status_code, r.text[:200])
+        return []
+
+    try:
+        parts = r.json().get("candidates", [{}])[0].get("content", {}).get("parts", [])
+        text = next((p["text"] for p in reversed(parts) if p.get("text", "").strip()), "")
+        text = re.sub(r'```(?:json)?|```', '', text).strip()
+        m_arr = re.search(r'\[[\s\S]*\]', text)
+        if not m_arr:
+            log.warning("AltSports/Gemini: aucun tableau JSON")
+            return []
+        raw = json.loads(m_arr.group())
+    except Exception as e:
+        log.error("AltSports/Gemini parse error: %s", e)
+        return []
+
+    _SPORT_IDS = {"tabletennis": 14, "volleyball": 13, "handball": 15}
+    events = []
+    counts: dict[str, int] = {}
+    for i, ev in enumerate(raw):
+        try:
+            home = str(ev.get("home", "")).strip()
+            away = str(ev.get("away", "")).strip()
+            if not home or not away:
+                continue
+            sport = str(ev.get("sport", "")).strip().lower()
+            if sport not in _SPORT_IDS:
+                continue
+            om = ev.get("odds_1xbet", {})
+            op = ev.get("odds_pinnacle", {})
+            xbet_h = _odd(om.get("1")); xbet_a = _odd(om.get("2"))
+            pin_h  = _odd(op.get("1")); pin_a  = _odd(op.get("2"))
+            if xbet_h <= 1.01 or xbet_a <= 1.01 or pin_h <= 1.01 or pin_a <= 1.01:
+                continue
+            events.append({
+                "id":            f"{sport}_gemini_{i}",
+                "match":         ev.get("match", f"{home} vs {away}"),
+                "home":          home,
+                "away":          away,
+                "league":        ev.get("event", sport.title()),
+                "sport":         sport,
+                "sport_id":      _SPORT_IDS[sport],
+                "commence_time": ev.get("commence_time", ""),
+                "odds_1xbet":    {"1": xbet_h, "X": 0.0, "2": xbet_a},
+                "odds_pinnacle": {"1": pin_h,  "X": 0.0, "2": pin_a},
+            })
+            counts[sport] = counts.get(sport, 0) + 1
+        except Exception:
+            continue
+
+    log.info("AltSports/Gemini: %d matchs — %s",
+             len(events), " | ".join(f"{s}={n}" for s, n in counts.items()))
+    return events

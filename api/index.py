@@ -48,8 +48,10 @@ def _get_meta(sb, key: str) -> dict | None:
 # ── Dashboard ────────────────────────────────────────────────────────
 
 _DASH_SPORT_ORDER = {
-    "basketball": 0, "hockey": 1, "esports": 2,
-    "tennis": 3, "mma": 4, "boxing": 5, "darts": 6, "cricket": 7, "soccer": 8,
+    "basketball": 0, "hockey": 1, "americanfootball": 2, "baseball": 3,
+    "esports": 4, "rugby": 5, "tennis": 6, "mma": 7,
+    "volleyball": 8, "tabletennis": 9, "handball": 10,
+    "boxing": 11, "darts": 12, "cricket": 13, "soccer": 14,
 }
 
 _HIGH_QUALITY = {"HIGH_VALUE", "VALUE"}

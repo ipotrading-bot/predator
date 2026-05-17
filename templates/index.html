@@ -384,15 +384,21 @@ footer { display: none; }
   {% if signals %}
 
   {% set sport_cfg = [
-    ('basketball','🏀','BASKET'),
-    ('hockey',    '🏒','HOCKEY'),
-    ('esports',   '🎮','eSPORT'),
-    ('tennis',    '🎾','TENNIS'),
-    ('mma',       '🥋','MMA'),
-    ('boxing',    '🥊','BOXE'),
-    ('darts',     '🎯','FLÉCHETTES'),
-    ('cricket',   '🏏','CRICKET'),
-    ('soccer',    '⚽','FOOT'),
+    ('basketball',       '🏀','BASKET'),
+    ('hockey',           '🏒','HOCKEY'),
+    ('americanfootball', '🏈','NFL'),
+    ('baseball',         '⚾','MLB'),
+    ('esports',          '🎮','eSPORT'),
+    ('rugby',            '🏉','RUGBY'),
+    ('tennis',           '🎾','TENNIS'),
+    ('mma',              '🥋','MMA'),
+    ('volleyball',       '🏐','VOLLEY'),
+    ('tabletennis',      '🏓','PING-PONG'),
+    ('handball',         '🤾','HANDBALL'),
+    ('boxing',           '🥊','BOXE'),
+    ('darts',            '🎯','FLÉCHETTES'),
+    ('cricket',          '🏏','CRICKET'),
+    ('soccer',           '⚽','FOOT'),
   ] %}
   {% set ns = namespace(idx=0) %}
 
@@ -608,7 +614,7 @@ function _exp(m,sp){
 
 function openModal(idx){
   const s=SIGNALS[idx]; if(!s) return;
-  const E={soccer:'⚽',basketball:'🏀',tennis:'🎾',mma:'🥋',boxing:'🥊',darts:'🎯',cricket:'🏏',hockey:'🏒',esports:'🎮'};
+  const E={soccer:'⚽',basketball:'🏀',tennis:'🎾',mma:'🥋',boxing:'🥊',darts:'🎯',cricket:'🏏',hockey:'🏒',esports:'🎮',americanfootball:'🏈',baseball:'⚾',rugby:'🏉',volleyball:'🏐',tabletennis:'🏓',handball:'🤾'};
   const emoji=E[s.sport]||'🎯';
   const team=(s.selection_name&&!s.selection_name.includes(' vs '))
     ?s.selection_name

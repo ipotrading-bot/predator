@@ -39,6 +39,17 @@ SPORT_KEYS = {
     # ── Cricket (T20 only — no draw) ─────────────────────────────────
     "cricket_ipl":                       "cricket",     # IPL T20
     "cricket_international_t20":         "cricket",     # International T20s
+    # ── American Football (NFL) ──────────────────────────────────────
+    "americanfootball_nfl":              "americanfootball",
+    "americanfootball_ncaaf":            "americanfootball",
+    # ── Baseball (MLB) ───────────────────────────────────────────────
+    "baseball_mlb":                      "baseball",
+    # ── Rugby ────────────────────────────────────────────────────────
+    "rugbyunion_premiership":            "rugby",
+    "rugbyunion_super_rugby":            "rugby",
+    "rugbyleague_nrl":                   "rugby",
+    # ── Volleyball ───────────────────────────────────────────────────
+    "volleyball_womens_world_championship": "volleyball",
     # ── Boxing ───────────────────────────────────────────────────────
     "boxing_boxing":                     "boxing",
     # ── Soccer ───────────────────────────────────────────────────────
@@ -58,13 +69,17 @@ SPORT_KEYS = {
 
 # Markets fetched per sport (API supports h2h,spreads,totals in one call)
 _MARKETS_BY_SPORT = {
-    "basketball": "h2h,spreads,totals",
-    "hockey":     "h2h,spreads",         # NHL ML + puck line (spreads), no totals needed
-    "tennis":     "h2h,totals",          # No spreads market in tennis
-    "darts":      "h2h",                 # ML only — no draw in darts
-    "cricket":    "h2h",                 # T20 ML only — no draw in T20
-    "boxing":     "h2h",                 # ML only — no spreads/totals on boxing
-    "soccer":     "h2h,spreads,totals",
+    "basketball":       "h2h,spreads,totals",
+    "hockey":           "h2h,spreads",        # NHL ML + puck line
+    "americanfootball": "h2h,spreads,totals", # NFL ML + point spread + O/U
+    "baseball":         "h2h,totals",         # MLB ML + O/U (no spreads)
+    "rugby":            "h2h,spreads,totals",
+    "volleyball":       "h2h,totals",
+    "tennis":           "h2h,totals",
+    "darts":            "h2h",
+    "cricket":          "h2h",
+    "boxing":           "h2h",
+    "soccer":           "h2h,spreads,totals",
 }
 
 
@@ -162,14 +177,14 @@ def _parse_event(ev: dict, sport_type: str) -> dict | None:
         "away":          away,
         "league":        ev.get("sport_title", ""),
         "sport":         sport_type,
-        "sport_id":      {"soccer": 1, "tennis": 3, "basketball": 4, "boxing": 5, "darts": 6, "cricket": 7, "hockey": 8}.get(sport_type, 1),
+        "sport_id":      {"soccer": 1, "tennis": 3, "basketball": 4, "boxing": 5, "darts": 6, "cricket": 7, "hockey": 8, "americanfootball": 10, "baseball": 11, "rugby": 12, "volleyball": 13}.get(sport_type, 1),
         "commence_time": ev.get("commence_time", ""),
         "odds_1xbet":    xbet_h2h,
         "odds_pinnacle": pin_h2h,
     }
 
-    # ── Spreads (NBA + Soccer only) ──────────────────────────────────
-    if sport_type not in ("tennis", "boxing", "darts", "cricket"):
+    # ── Spreads (binary sports only — tennis/boxing/darts/cricket/baseball have no spreads) ──
+    if sport_type not in ("tennis", "boxing", "darts", "cricket", "baseball", "volleyball"):
         xs = _extract_spreads(bookmakers, XBET_KEY,     home, away)
         ps = _extract_spreads(bookmakers, PINNACLE_KEY, home, away)
         if xs and ps:

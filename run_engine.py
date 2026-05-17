@@ -15,7 +15,7 @@ import requests
 from dotenv import load_dotenv
 from supabase import create_client
 
-from core.harvester import fetch_matches, fetch_pinnacle_prices, fetch_estimated_prices, fetch_mma_events, fetch_esports_events
+from core.harvester import fetch_matches, fetch_pinnacle_prices, fetch_estimated_prices, fetch_mma_events, fetch_esports_events, fetch_alternative_sports_batch
 from core.math_engine import to_binary, devig_prob
 from core.odds_api import fetch_odds
 from core.oracle import get_pinnacle_price
@@ -24,7 +24,7 @@ from core.paim_engine import (
     compute_alpha, MIN_EDGE, strict_team_match,
     market_label, SHARP_PROB_BY_MARKET,
 )
-from core.constants import ELITE_EDGE as _ELITE_EDGE, kelly_stake as _kelly_stake, risk_flag as _risk_flag, SUSPECT_EDGE as _SUSPECT_EDGE
+from core.constants import ELITE_EDGE as _ELITE_EDGE, kelly_stake as _kelly_stake, risk_flag as _risk_flag, SUSPECT_EDGE as _SUSPECT_EDGE, KELLY_FRACTION as _KELLY_FRACTION
 
 load_dotenv()
 
@@ -52,20 +52,40 @@ TELEGRAM_TOKEN = os.environ.get("TELEGRAM_BOT_TOKEN")
 TELEGRAM_CHAT  = os.environ.get("TELEGRAM_CHAT_ID")
 
 ELITE_EDGE  = _ELITE_EDGE   # % — send Telegram alert (from core.constants)
-_MAJOR_SPORTS = {"soccer", "basketball", "tennis", "hockey", "esports"}  # Sports where edge > SUSPECT_EDGE is flagged
+_MAJOR_SPORTS = {"soccer", "basketball", "tennis", "hockey", "esports", "americanfootball", "baseball", "rugby", "volleyball"}
 
 # Fast mode (default): 20 events, tight quota — speed over coverage
 # Deep mode (DEEP_SCAN=1): 100 events, wide quota — 48h full slate
 MAX_MATCHES = 100 if DEEP_SCAN else 20
 
-SPORT_EMOJI  = {"soccer": "⚽", "tennis": "🎾", "basketball": "🏀", "boxing": "🥊", "mma": "🥋", "darts": "🎯", "cricket": "🏏", "hockey": "🏒", "esports": "🎮"}
+SPORT_EMOJI  = {
+    "soccer": "⚽", "tennis": "🎾", "basketball": "🏀", "boxing": "🥊",
+    "mma": "🥋", "darts": "🎯", "cricket": "🏏", "hockey": "🏒",
+    "esports": "🎮", "americanfootball": "🏈", "baseball": "⚾",
+    "rugby": "🏉", "volleyball": "🏐", "tabletennis": "🏓", "handball": "🤾",
+}
 
-# Portfolio Balancer: max signals per sport per scan — prevents soccer flooding
-_QUOTA_FAST = {"soccer": 3, "basketball": 3, "hockey": 3, "tennis": 3, "boxing": 3, "mma": 3, "darts": 2, "cricket": 2, "esports": 2}
-_QUOTA_DEEP = {"soccer": 6, "basketball": 8, "hockey": 6, "tennis": 10, "boxing": 5, "mma": 5, "darts": 4, "cricket": 4, "esports": 4}
+# Portfolio Balancer: max signals per sport per scan
+_QUOTA_FAST = {
+    "basketball": 3, "hockey": 3, "americanfootball": 3, "baseball": 3,
+    "esports": 2, "rugby": 2, "tennis": 3, "mma": 3,
+    "volleyball": 2, "tabletennis": 2, "handball": 2,
+    "boxing": 2, "darts": 2, "cricket": 2, "soccer": 3,
+}
+_QUOTA_DEEP = {
+    "basketball": 8, "hockey": 6, "americanfootball": 6, "baseball": 6,
+    "esports": 4, "rugby": 4, "tennis": 10, "mma": 5,
+    "volleyball": 4, "tabletennis": 4, "handball": 4,
+    "boxing": 4, "darts": 4, "cricket": 4, "soccer": 6,
+}
 SPORT_QUOTA = _QUOTA_DEEP if DEEP_SCAN else _QUOTA_FAST
 # Telegram report order: highest alpha first
-_SPORT_ORDER = ["basketball", "hockey", "esports", "mma", "darts", "boxing", "cricket", "tennis", "soccer"]
+_SPORT_ORDER = [
+    "basketball", "hockey", "americanfootball", "baseball",
+    "esports", "rugby", "tennis", "mma",
+    "volleyball", "tabletennis", "handball",
+    "boxing", "darts", "cricket", "soccer",
+]
 
 # EU market sessions (UTC) — aligns with European bookmaker line movement
 _SESSIONS = {
@@ -252,7 +272,8 @@ def _emit(signals, sb, now, log, name, sport, league, mkt_key, mkt_label,
 
     b = xbet_odd - 1
     kelly_full = (sharp_prob * b - (1 - sharp_prob)) / b if b > 0 else 0.0
-    kelly_pct  = round(max(0.0, kelly_full * 0.25) * 100, 2)
+    kelly_fraction = _KELLY_FRACTION.get(sport, 0.20)
+    kelly_pct  = round(max(0.0, kelly_full * kelly_fraction) * 100, 2)
 
     advice = (
         f"Edge +{edge:.1f}% détecté — 1XBet {xbet_odd:.2f} vs Pinnacle {pin_odd:.2f}. "
@@ -458,7 +479,7 @@ def _telegram_grouped(signals: list, now, session: str, matches: int,
         body += f"\n{emoji} *{sport.upper()}*\n"
         for s in group:
             prob  = s.get("sharp_prob", 0) or 0
-            stake = _kelly_stake(s["xbet_odd"], prob)
+            stake = _kelly_stake(s["xbet_odd"], prob, sport=s.get("sport", "soccer"))
             team  = s.get("selection_name") or s["match"]
             if " vs " in team:
                 team = team.split(" vs ")[0].strip()
@@ -553,6 +574,13 @@ def run():
     if esports_events:
         matches = (matches or []) + esports_events
         log.info("🎮 eSports OK — %d matchs", len(esports_events))
+
+    # ── Sports alternatifs batch — TT + Volleyball + Handball (1 seul appel Gemini) ──
+    log.info("🏓🏐🤾 Sports alternatifs — Gemini Search (Table Tennis / Volleyball / Handball)...")
+    alt_events = fetch_alternative_sports_batch()
+    if alt_events:
+        matches = (matches or []) + alt_events
+        log.info("🏓🏐🤾 Sports alternatifs OK — %d matchs", len(alt_events))
 
     # ── Tier 2: Gemini + Google Search — DISABLED (trop lent) ───────
     # Saute directement en Tier 3 (Estimateur) si Tier 1 vide
