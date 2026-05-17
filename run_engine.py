@@ -22,7 +22,7 @@ from core.oracle import get_pinnacle_price
 from core.learning_layer import load_thresholds as _load_thresholds
 from core.paim_engine import (
     compute_alpha, MIN_EDGE, strict_team_match,
-    market_label, SHARP_PROB_BY_MARKET,
+    market_label, SHARP_PROB_BY_MARKET, calculate_consensus_price,
 )
 from core.constants import ELITE_EDGE as _ELITE_EDGE, kelly_stake as _kelly_stake, risk_flag as _risk_flag, SUSPECT_EDGE as _SUSPECT_EDGE, KELLY_FRACTION as _KELLY_FRACTION
 
@@ -114,7 +114,7 @@ def _telegram(text):
 
 
 # Columns optional at DB level — strip only as last-resort fallback
-_OPTIONAL_COLS = {"selection_name", "kelly_pct", "advice"}
+_OPTIONAL_COLS = {"selection_name", "kelly_pct", "advice", "sharp_sources"}
 
 
 def _save(sb, signal) -> bool:
@@ -251,7 +251,7 @@ def _risk(edge_pct: float) -> str:
 
 def _emit(signals, sb, now, log, name, sport, league, mkt_key, mkt_label,
           xbet_odd, pin_odd, sharp_prob, emoji, selection_name="", min_edge=None,
-          match_time="", match_id=""):
+          match_time="", match_id="", sharp_sources=None):
     """Compute edge, apply quality gates, collect signal for bulk-save."""
     effective_min = min_edge if min_edge is not None else MIN_EDGE
     edge, status = compute_alpha(xbet_odd, pin_odd, min_edge=effective_min)
@@ -304,13 +304,15 @@ def _emit(signals, sb, now, log, name, sport, league, mkt_key, mkt_label,
         "selection_name": selection_name or name,
         "kelly_pct":      kelly_pct,
         "advice":         advice,
+        "sharp_sources":  json.dumps(sharp_sources) if sharp_sources else None,
     }
     signals.append(signal)
 
 
 def _process_h2h(m, name, sport, league, home, away, emoji, signals, sb, now, log, min_edge=None):
     """H2H market: DNB for soccer, Moneyline for NBA/Tennis + Prob.Sharp filter."""
-    prob_min = SHARP_PROB_BY_MARKET.get("h2h_soccer" if sport == "soccer" else "h2h", 0.52)
+    prob_min    = SHARP_PROB_BY_MARKET.get("h2h_soccer" if sport == "soccer" else "h2h", 0.52)
+    sources_found: dict = {}
 
     if "_oracle_price" in m:
         pin_price = m["_oracle_price"]
@@ -336,9 +338,33 @@ def _process_h2h(m, name, sport, league, home, away, emoji, signals, sb, now, lo
             pin_price = calc_dnb(float(po.get(fav_key, 0) or 0), float(po.get("X", 0) or 0))
             dnb_other = calc_dnb(float(po.get(opp_key, 0) or 0), float(po.get("X", 0) or 0))
             sharp_prob = devig_prob(pin_price, dnb_other)
+
+            # Sharp Quartet: DNB prices from Circa + CRIS
+            source_prices = {"pinnacle": pin_price}
+            for src_key, src_name in (("odds_circa", "circa"), ("odds_cris", "cris")):
+                so = m.get(src_key) or {}
+                sp = calc_dnb(float(so.get(fav_key, 0) or 0), float(so.get("X", 0) or 0))
+                if sp > 1.01:
+                    source_prices[src_name] = sp
         else:
             pin_price  = float(po.get(fav_key, 0) or 0)
             sharp_prob = devig_prob(pin_price, float(po.get(opp_key, 0) or 0))
+
+            # Sharp Quartet: ML prices from Circa + CRIS
+            source_prices = {"pinnacle": pin_price}
+            for src_key, src_name in (("odds_circa", "circa"), ("odds_cris", "cris")):
+                so = m.get(src_key) or {}
+                sp = float(so.get(fav_key, 0) or 0)
+                if sp > 1.01:
+                    source_prices[src_name] = sp
+
+        # Consensus: weighted average + divergence filter
+        consensus_price, sources_found, is_volatile = calculate_consensus_price(source_prices, sport)
+        if is_volatile:
+            log.info("VOLATILE | %s %s — Sharp books diverge >4%% — DISCARD", emoji, name)
+            return
+        if consensus_price > 1.01:
+            pin_price = consensus_price
         pin_fav = xbet_fav  # Same outcome guaranteed — no cross-book mismatch possible
 
     if xbet_price <= 1.01 or pin_price <= 1.01:
@@ -355,7 +381,8 @@ def _process_h2h(m, name, sport, league, home, away, emoji, signals, sb, now, lo
     _emit(signals, sb, now, log, name, sport, league,
           "h2h", lbl, xbet_price, pin_price, sharp_prob, emoji,
           selection_name=xbet_fav, min_edge=min_edge,
-          match_time=m.get("commence_time", ""), match_id=m.get("id", ""))
+          match_time=m.get("commence_time", ""), match_id=m.get("id", ""),
+          sharp_sources=sources_found if sources_found else None)
 
 
 def _process_totals(m, name, sport, league, emoji, signals, sb, now, log, min_edge=None):

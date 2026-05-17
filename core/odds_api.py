@@ -14,6 +14,8 @@ log = logging.getLogger("PREDATOR.odds_api")
 BASE_URL     = "https://api.the-odds-api.com/v4"
 PINNACLE_KEY = "pinnacle"
 XBET_KEY     = "onexbet"
+CIRCA_KEY    = "circa"        # Circa Sports — sharp US book
+CRIS_KEY     = "bookmaker"    # Bookmaker.eu — CRIS network
 
 # Priority sports first — scanned before secondary leagues
 SPORT_KEYS = {
@@ -165,10 +167,13 @@ def _parse_event(ev: dict, sport_type: str) -> dict | None:
 
     bookmakers = ev.get("bookmakers", [])
 
-    xbet_h2h = _extract_h2h(bookmakers, XBET_KEY,     home, away)
-    pin_h2h  = _extract_h2h(bookmakers, PINNACLE_KEY, home, away)
+    xbet_h2h  = _extract_h2h(bookmakers, XBET_KEY,     home, away)
+    pin_h2h   = _extract_h2h(bookmakers, PINNACLE_KEY, home, away)
     if not xbet_h2h or not pin_h2h:
         return None  # Both books must have h2h for the event to be useful
+
+    circa_h2h = _extract_h2h(bookmakers, CIRCA_KEY, home, away)
+    cris_h2h  = _extract_h2h(bookmakers, CRIS_KEY,  home, away)
 
     event = {
         "id":            ev.get("id", f"{home}_{away}"),
@@ -182,6 +187,10 @@ def _parse_event(ev: dict, sport_type: str) -> dict | None:
         "odds_1xbet":    xbet_h2h,
         "odds_pinnacle": pin_h2h,
     }
+    if circa_h2h:
+        event["odds_circa"] = circa_h2h
+    if cris_h2h:
+        event["odds_cris"] = cris_h2h
 
     # ── Spreads (binary sports only — tennis/boxing/darts/cricket/baseball have no spreads) ──
     if sport_type not in ("tennis", "boxing", "darts", "cricket", "baseball", "volleyball"):
@@ -228,7 +237,7 @@ def fetch_odds(api_key: str = None, hours_ahead: int = 24) -> list[dict]:
             "apiKey":           api_key,
             "regions":          "eu",
             "markets":          markets,
-            "bookmakers":       f"{PINNACLE_KEY},{XBET_KEY}",
+            "bookmakers":       f"{PINNACLE_KEY},{XBET_KEY},{CIRCA_KEY},{CRIS_KEY}",
             "oddsFormat":       "decimal",
             "commenceTimeFrom": time_from,
             "commenceTimeTo":   time_to,

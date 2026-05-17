@@ -88,6 +88,16 @@ def dashboard():
                     -(s.get("edge_pct") or 0),
                 ),
             )
+            # Parse sharp_sources JSON string → dict for template access
+            for s in signals:
+                ss = s.get("sharp_sources")
+                if isinstance(ss, str):
+                    try:
+                        s["sharp_sources"] = json.loads(ss)
+                    except Exception:
+                        s["sharp_sources"] = {}
+                elif ss is None:
+                    s["sharp_sources"] = {}
             last_scan = _get_meta(sb, "last_scan")
     except Exception as e:
         log.error("Dashboard: %s", e)

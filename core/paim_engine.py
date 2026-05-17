@@ -80,6 +80,55 @@ def strict_team_match(name_a: str, name_b: str, threshold: float = 0.60) -> bool
 
 MIN_EDGE = 1.2   # % — floor (lowered for visibility — see all movements)
 
+# ── Sharp Quartet Consensus Engine v7.8 ──────────────────────────────
+
+_CONSENSUS_WEIGHTS: dict[str, dict[str, float]] = {
+    "basketball": {"pinnacle": 0.30, "circa": 0.50, "cris": 0.10, "isn": 0.10},
+    "baseball":   {"pinnacle": 0.30, "circa": 0.50, "cris": 0.10, "isn": 0.10},
+    "soccer":     {"pinnacle": 0.40, "circa": 0.10, "cris": 0.20, "isn": 0.30},
+    "tennis":     {"pinnacle": 0.60, "circa": 0.05, "cris": 0.25, "isn": 0.10},
+}
+_DEFAULT_WEIGHTS   = {"pinnacle": 0.50, "circa": 0.20, "cris": 0.20, "isn": 0.10}
+_DIVERGENCE_LIMIT  = 4.0   # % relative spread between highest and lowest sharp price
+
+
+def calculate_consensus_price(
+    prices_by_source: dict,
+    sport: str,
+) -> tuple[float, dict, bool]:
+    """
+    Weighted consensus fair price from up to 4 sharp sources.
+    prices_by_source: {"pinnacle": 2.05, "circa": 2.10, "cris": 0.0, "isn": 2.07}
+    Returns (consensus_price, sources_found, is_volatile).
+    Missing/invalid prices (0 or <=1.01) are excluded with weight redistribution.
+    is_volatile=True means max-min spread >4% — caller should reject the signal.
+    """
+    weights = (_CONSENSUS_WEIGHTS.get(sport) or _DEFAULT_WEIGHTS).copy()
+    sources_found: dict[str, bool] = {}
+    active: dict[str, float] = {}
+
+    for src in ("pinnacle", "circa", "cris", "isn"):
+        price = prices_by_source.get(src, 0.0)
+        ok = isinstance(price, (int, float)) and float(price) > 1.01
+        sources_found[src] = ok
+        if ok and src in weights:
+            active[src] = float(price)
+
+    if not active:
+        return 0.0, sources_found, False
+
+    # Divergence filter — reject market if sharp books disagree > limit
+    vals = list(active.values())
+    if len(vals) >= 2:
+        spread = (max(vals) - min(vals)) / min(vals) * 100
+        if spread > _DIVERGENCE_LIMIT:
+            return 0.0, sources_found, True
+
+    # Proportional weight redistribution for absent sources
+    total_w = sum(weights[s] for s in active)
+    consensus = sum(active[s] * weights[s] / total_w for s in active)
+    return round(consensus, 4), sources_found, False
+
 
 def compute_alpha(
     xbet_odd: float,

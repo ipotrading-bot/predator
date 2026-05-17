@@ -136,6 +136,15 @@
         {% else %}
           <span class="sig-mise" style="color:var(--t3)">—</span>
         {% endif %}
+        {% set ss = s.sharp_sources %}
+        {% if ss %}
+        <span class="sig-srcs" title="Sharp sources">
+          <span class="src-dot{% if ss.get('pinnacle') %} src-on{% endif %}" title="Pinnacle">P</span>
+          <span class="src-dot{% if ss.get('circa') %} src-on{% endif %}" title="Circa">C</span>
+          <span class="src-dot{% if ss.get('cris') %} src-on{% endif %}" title="CRIS">R</span>
+          <span class="src-dot{% if ss.get('isn') %} src-on{% endif %}" title="ISN">I</span>
+        </span>
+        {% endif %}
         <span class="sig-cta">&#9654;</span>
       </div>
     </div>
