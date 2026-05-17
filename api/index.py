@@ -88,7 +88,7 @@ def dashboard():
                     -(s.get("edge_pct") or 0),
                 ),
             )
-            # Parse sharp_sources JSON string → dict for template access
+            # Parse sharp_sources JSON string → dict, consensus_score → int
             for s in signals:
                 ss = s.get("sharp_sources")
                 if isinstance(ss, str):
@@ -98,6 +98,8 @@ def dashboard():
                         s["sharp_sources"] = {}
                 elif ss is None:
                     s["sharp_sources"] = {}
+                cs = s.get("consensus_score")
+                s["consensus_score"] = int(cs) if cs is not None else None
             last_scan = _get_meta(sb, "last_scan")
     except Exception as e:
         log.error("Dashboard: %s", e)

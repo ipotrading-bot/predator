@@ -114,7 +114,7 @@ def _telegram(text):
 
 
 # Columns optional at DB level — strip only as last-resort fallback
-_OPTIONAL_COLS = {"selection_name", "kelly_pct", "advice", "sharp_sources"}
+_OPTIONAL_COLS = {"selection_name", "kelly_pct", "advice", "sharp_sources", "consensus_score"}
 
 
 def _save(sb, signal) -> bool:
@@ -251,7 +251,7 @@ def _risk(edge_pct: float) -> str:
 
 def _emit(signals, sb, now, log, name, sport, league, mkt_key, mkt_label,
           xbet_odd, pin_odd, sharp_prob, emoji, selection_name="", min_edge=None,
-          match_time="", match_id="", sharp_sources=None):
+          match_time="", match_id="", sharp_sources=None, consensus_score=None):
     """Compute edge, apply quality gates, collect signal for bulk-save."""
     effective_min = min_edge if min_edge is not None else MIN_EDGE
     edge, status = compute_alpha(xbet_odd, pin_odd, min_edge=effective_min)
@@ -305,6 +305,7 @@ def _emit(signals, sb, now, log, name, sport, league, mkt_key, mkt_label,
         "kelly_pct":      kelly_pct,
         "advice":         advice,
         "sharp_sources":  json.dumps(sharp_sources) if sharp_sources else None,
+        "consensus_score": consensus_score,
     }
     signals.append(signal)
 
@@ -337,34 +338,55 @@ def _process_h2h(m, name, sport, league, home, away, emoji, signals, sb, now, lo
             from core.math_engine import calc_dnb
             pin_price = calc_dnb(float(po.get(fav_key, 0) or 0), float(po.get("X", 0) or 0))
             dnb_other = calc_dnb(float(po.get(opp_key, 0) or 0), float(po.get("X", 0) or 0))
+
+            # Weighted Shin: build source prices for BOTH sides
+            source_prices_fav = {"pinnacle": pin_price}
+            source_prices_opp = {"pinnacle": dnb_other}
+            for src_key, src_name in (("odds_circa", "circa"), ("odds_cris", "cris")):
+                so = m.get(src_key) or {}
+                sp_f = calc_dnb(float(so.get(fav_key, 0) or 0), float(so.get("X", 0) or 0))
+                sp_o = calc_dnb(float(so.get(opp_key, 0) or 0), float(so.get("X", 0) or 0))
+                if sp_f > 1.01:
+                    source_prices_fav[src_name] = sp_f
+                if sp_o > 1.01:
+                    source_prices_opp[src_name] = sp_o
+
+            con_fav, sources_found, is_volatile, consensus_score = calculate_consensus_price(source_prices_fav, sport)
+            if is_volatile:
+                log.info("VOLATILE | %s %s — STD>0.02 — DISCARD", emoji, name)
+                return
+            con_opp, _, _, _ = calculate_consensus_price(source_prices_opp, sport)
+            if con_fav > 1.01:
+                pin_price = con_fav
+            if con_opp > 1.01:
+                dnb_other = con_opp
             sharp_prob = devig_prob(pin_price, dnb_other)
-
-            # Sharp Quartet: DNB prices from Circa + CRIS
-            source_prices = {"pinnacle": pin_price}
-            for src_key, src_name in (("odds_circa", "circa"), ("odds_cris", "cris")):
-                so = m.get(src_key) or {}
-                sp = calc_dnb(float(so.get(fav_key, 0) or 0), float(so.get("X", 0) or 0))
-                if sp > 1.01:
-                    source_prices[src_name] = sp
         else:
-            pin_price  = float(po.get(fav_key, 0) or 0)
-            sharp_prob = devig_prob(pin_price, float(po.get(opp_key, 0) or 0))
+            pin_price = float(po.get(fav_key, 0) or 0)
+            opp_price = float(po.get(opp_key, 0) or 0)
 
-            # Sharp Quartet: ML prices from Circa + CRIS
-            source_prices = {"pinnacle": pin_price}
+            # Weighted Shin: build source prices for BOTH sides
+            source_prices_fav = {"pinnacle": pin_price}
+            source_prices_opp = {"pinnacle": opp_price}
             for src_key, src_name in (("odds_circa", "circa"), ("odds_cris", "cris")):
                 so = m.get(src_key) or {}
-                sp = float(so.get(fav_key, 0) or 0)
-                if sp > 1.01:
-                    source_prices[src_name] = sp
+                sp_f = float(so.get(fav_key, 0) or 0)
+                sp_o = float(so.get(opp_key, 0) or 0)
+                if sp_f > 1.01:
+                    source_prices_fav[src_name] = sp_f
+                if sp_o > 1.01:
+                    source_prices_opp[src_name] = sp_o
 
-        # Consensus: weighted average + divergence filter
-        consensus_price, sources_found, is_volatile = calculate_consensus_price(source_prices, sport)
-        if is_volatile:
-            log.info("VOLATILE | %s %s — Sharp books diverge >4%% — DISCARD", emoji, name)
-            return
-        if consensus_price > 1.01:
-            pin_price = consensus_price
+            con_fav, sources_found, is_volatile, consensus_score = calculate_consensus_price(source_prices_fav, sport)
+            if is_volatile:
+                log.info("VOLATILE | %s %s — STD>0.02 — DISCARD", emoji, name)
+                return
+            con_opp, _, _, _ = calculate_consensus_price(source_prices_opp, sport)
+            if con_fav > 1.01:
+                pin_price = con_fav
+            opp_for_shin = con_opp if con_opp > 1.01 else opp_price
+            sharp_prob = devig_prob(pin_price, opp_for_shin)
+
         pin_fav = xbet_fav  # Same outcome guaranteed — no cross-book mismatch possible
 
     if xbet_price <= 1.01 or pin_price <= 1.01:
@@ -382,7 +404,8 @@ def _process_h2h(m, name, sport, league, home, away, emoji, signals, sb, now, lo
           "h2h", lbl, xbet_price, pin_price, sharp_prob, emoji,
           selection_name=xbet_fav, min_edge=min_edge,
           match_time=m.get("commence_time", ""), match_id=m.get("id", ""),
-          sharp_sources=sources_found if sources_found else None)
+          sharp_sources=sources_found if sources_found else None,
+          consensus_score=consensus_score if sources_found else None)
 
 
 def _process_totals(m, name, sport, league, emoji, signals, sb, now, log, min_edge=None):

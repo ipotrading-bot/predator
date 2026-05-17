@@ -145,6 +145,10 @@
           <span class="src-dot{% if ss.get('isn') %} src-on{% endif %}" title="ISN">I</span>
         </span>
         {% endif %}
+        {% if s.consensus_score is not none and s.consensus_score != '' %}
+          {% set cs = s.consensus_score|int %}
+          <span class="cscore {% if cs >= 80 %}cs-elite{% elif cs >= 55 %}cs-good{% else %}cs-ok{% endif %}" title="Consensus Score (0-100)">{{ cs }}</span>
+        {% endif %}
         <span class="sig-cta">&#9654;</span>
       </div>
     </div>

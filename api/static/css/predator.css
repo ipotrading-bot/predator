@@ -333,9 +333,13 @@ nav:not(.bnav) {
 .e-sus  { color: var(--orange); }
 .sig-mise { font-size: 12px; font-weight: 700; color: var(--yellow); flex-shrink: 0; font-family: var(--font-data); }
 .sig-cta  { font-size: 11px; color: var(--t3); flex-shrink: 0; }
-.sig-srcs { display: flex; gap: 2px; align-items: center; flex-shrink: 0; margin-left: auto; }
-.src-dot  { font-size: 9px; font-weight: 700; font-family: var(--font-data); width: 14px; height: 14px; border-radius: 3px; display: flex; align-items: center; justify-content: center; background: var(--bg3); color: var(--t3); border: 1px solid var(--bd); letter-spacing: 0; }
-.src-on   { background: rgba(0,232,127,.12); color: var(--green); border-color: rgba(0,232,127,.3); }
+.sig-srcs  { display: flex; gap: 2px; align-items: center; flex-shrink: 0; margin-left: auto; }
+.src-dot   { font-size: 9px; font-weight: 700; font-family: var(--font-data); width: 14px; height: 14px; border-radius: 3px; display: flex; align-items: center; justify-content: center; background: var(--bg3); color: var(--t3); border: 1px solid var(--bd); letter-spacing: 0; }
+.src-on    { background: rgba(0,232,127,.12); color: var(--green); border-color: rgba(0,232,127,.3); }
+.cscore    { font-size: 10px; font-weight: 700; font-family: var(--font-data); padding: 1px 5px; border-radius: 4px; flex-shrink: 0; margin-left: 3px; }
+.cs-elite  { background: rgba(0,232,127,.15); color: var(--green); border: 1px solid rgba(0,232,127,.35); }
+.cs-good   { background: rgba(245,197,24,.10); color: var(--yellow); border: 1px solid rgba(245,197,24,.25); }
+.cs-ok     { background: rgba(255,107,53,.10); color: var(--orange); border: 1px solid rgba(255,107,53,.25); }
 
 /* ── Empty state ───────────────────────────────── */
 .empty { text-align: center; padding: 80px 20px; color: var(--t2); font-size: 12px; line-height: 2.6; }
