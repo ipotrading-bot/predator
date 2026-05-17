@@ -6,6 +6,7 @@ Routes: / (Dashboard)  /ledger (CLV Bilan)  /audit (CLV par sport)
 import json
 import logging
 import os
+from datetime import datetime, timezone as _tz
 
 import requests
 from dotenv import load_dotenv
@@ -60,6 +61,22 @@ _DASH_SPORT_ORDER = {
 _HIGH_QUALITY = {"HIGH_VALUE", "VALUE"}
 
 
+def _parse_match_time(s: str):
+    """Parse match_time to UTC-aware datetime regardless of format (T vs space, Z vs +00:00)."""
+    if not s:
+        return None
+    try:
+        return datetime.fromisoformat(s.replace("Z", "+00:00"))
+    except Exception:
+        pass
+    for fmt in ("%Y-%m-%dT%H:%M:%S", "%Y-%m-%d %H:%M:%S", "%Y-%m-%dT%H:%M", "%Y-%m-%d %H:%M"):
+        try:
+            return datetime.strptime(s[:len(fmt)], fmt).replace(tzinfo=_tz.utc)
+        except Exception:
+            pass
+    return None
+
+
 @app.route("/")
 def dashboard():
     signals   = []
@@ -70,25 +87,22 @@ def dashboard():
             res = sb.table("signals").select("*").order("created_at", desc=True).limit(200).execute()
             raw = res.data or []
 
-            # Deduplicate: (match_id or match_name) + market_key → keep highest edge
-            # Prevents same event appearing twice across consecutive scans
+            # Deduplicate: keep NEWEST signal per (match_id, market_key).
+            # Signals are already ordered created_at DESC so first-seen = freshest.
             seen: dict = {}
             for s in raw:
                 mid  = s.get("match_id") or s.get("match", "")
                 mkey = s.get("market_key") or s.get("market", "")
                 key  = (mid, mkey)
-                prev = seen.get(key)
-                if prev is None or (s.get("edge_pct") or 0) > (prev.get("edge_pct") or 0):
+                if key not in seen:
                     seen[key] = s
 
-            # Drop signals whose match has already started
-            from datetime import datetime, timezone as _tz
-            _now = datetime.now(_tz.utc).isoformat()
-            # Filter to HIGH_VALUE + VALUE only, future matches only
+            # Drop signals whose match has already started (proper datetime parse)
+            _now = datetime.now(_tz.utc)
             filtered = [
                 s for s in seen.values()
                 if s.get("risk_flag") in _HIGH_QUALITY
-                and (not s.get("match_time") or s["match_time"] > _now)
+                and (not s.get("match_time") or (_parse_match_time(s["match_time"]) or _now) > _now)
             ]
             signals = sorted(
                 filtered,

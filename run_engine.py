@@ -187,6 +187,16 @@ def _purge_old_signals(sb):
     except Exception as e:
         log.error("Supabase purge (age): %s", e)
 
+    # ── Legacy market_key purge — old undifferentiated keys ───────────
+    # market_key="totals" and "spreads" are now "totals_over"/"totals_under"
+    # and "spreads_home"/"spreads_away" — remove stale rows to avoid ghost signals
+    for legacy in ("totals", "spreads"):
+        try:
+            sb.table("signals").delete().eq("market_key", legacy).execute()
+            log.info("Purged: legacy market_key='%s'", legacy)
+        except Exception as e:
+            log.error("Supabase purge (legacy key %s): %s", legacy, e)
+
     purge_rules = [
         ("gt",  "edge_pct",   15.0,    "edge > 15% (hard cap)"),
         ("gt",  "edge_pct",   10.0,    "edge > 10% (SUSPECT — probable inversion)"),
@@ -429,7 +439,7 @@ def _process_totals(m, name, sport, league, emoji, signals, sb, now, log, min_ed
         lbl = market_label("totals", side, point, sport)
         sel = f"{'Over' if side == 'over' else 'Under'}{(' ' + str(point)) if point else ''}"
         _emit(signals, sb, now, log, name, sport, league,
-              "totals", lbl, x_odd, p_odd, sharp_prob, emoji,
+              f"totals_{side}", lbl, x_odd, p_odd, sharp_prob, emoji,
               selection_name=sel, min_edge=min_edge,
               match_time=m.get("commence_time", ""), match_id=m.get("id", ""))
 
@@ -454,7 +464,7 @@ def _process_spreads(m, name, sport, league, home, away, emoji, signals, sb, now
         lbl = market_label("spreads", side, pt, sport)
         pt_str = f"+{pt}" if pt > 0 else str(pt)
         _emit(signals, sb, now, log, name, sport, league,
-              "spreads", lbl, x_odd, p_odd, sharp_prob, emoji,
+              f"spreads_{side}", lbl, x_odd, p_odd, sharp_prob, emoji,
               selection_name=f"{team} {pt_str}", min_edge=min_edge,
               match_time=m.get("commence_time", ""), match_id=m.get("id", ""))
 
