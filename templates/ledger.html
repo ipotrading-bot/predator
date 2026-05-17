@@ -153,12 +153,22 @@ nav.topnav {
 @media (min-width: 640px) {
   .sport-grid { grid-template-columns: repeat(3, 1fr); gap: 10px; }
 }
+@media (min-width: 960px) {
+  .sport-grid { grid-template-columns: repeat(4, 1fr); }
+}
 .sport-card {
   background: var(--bg1);
   border: 1px solid var(--bd);
   border-radius: var(--r);
   padding: 12px 13px;
+  position: relative;
+  overflow: hidden;
 }
+.sport-card.v-boost    { border-color: rgba(0,224,58,.35);  }
+.sport-card.v-stable   { border-color: rgba(100,200,100,.2); }
+.sport-card.v-attention{ border-color: rgba(255,140,0,.3);  }
+.sport-card.v-suspendu { border-color: rgba(255,59,59,.35); }
+.sport-card.v-insuffisant { border-color: var(--bd2); opacity: .6; }
 .sport-card-hdr {
   display: flex; justify-content: space-between; align-items: center;
   margin-bottom: 10px;
@@ -174,6 +184,22 @@ nav.topnav {
 .sport-mini { flex: 1; }
 .sport-mini-v { font-size: 16px; font-weight: 700; line-height: 1; }
 .sport-mini-l { font-size: 8px; color: var(--t2); text-transform: uppercase; letter-spacing: .5px; margin-top: 3px; }
+/* verdict footer strip */
+.verdict-strip {
+  margin-top: 9px; padding-top: 7px; border-top: 1px solid var(--bd);
+  display: flex; justify-content: space-between; align-items: center;
+}
+.verdict-badge {
+  font-size: 8px; font-weight: 700; letter-spacing: 1px; padding: 2px 7px;
+  border-radius: 3px;
+}
+.vb-boost      { background: rgba(0,224,58,.1);   color: var(--green);  border: 1px solid rgba(0,224,58,.25); }
+.vb-stable     { background: rgba(100,200,100,.07); color: #60c060;      border: 1px solid rgba(100,200,100,.2); }
+.vb-attention  { background: rgba(255,140,0,.08);  color: var(--orange); border: 1px solid rgba(255,140,0,.2); }
+.vb-suspendu   { background: rgba(255,59,59,.09);  color: var(--red);    border: 1px solid rgba(255,59,59,.25); }
+.vb-insuffisant{ background: transparent;           color: var(--t2);    border: 1px solid var(--bd2); }
+.verdict-t { font-size: 8px; color: var(--t2); }
+.verdict-t-raised { color: var(--orange); font-weight: 700; }
 
 /* ── LEDGER TABLE ── */
 .tbl-wrap { padding: 0 14px 16px; overflow-x: auto; -webkit-overflow-scrolling: touch; }
@@ -292,18 +318,20 @@ footer { display: none; }
   <!-- SPORT BREAKDOWN -->
   {% if stats and stats.sports %}
   <div class="section">
-    <div class="section-title">&#9632; Performance par sport</div>
+    <div class="section-title">&#9632; Performance par sport <em>{{ stats.sports|length }} sports</em></div>
     <div class="sport-grid">
-      {% for sport, s in stats.sports.items() %}
-      {% set emoji = {'soccer':'⚽','basketball':'🏀','tennis':'🎾','mma':'🥋','boxing':'🥊','darts':'🎯','cricket':'🏏'}.get(sport,'🎯') %}
+      {% for sport, s in stats.sports.items()|sort(attribute='1.avg_clv', reverse=True) %}
+      {% set v = s.verdict|lower %}
+      {% set vb_cls = 'vb-' + v %}
+      {% set card_cls = 'v-' + v %}
       {% set t = s.threshold %}
-      {% set default_t = 1.5 %}
-      {% set badge_cls = 'th-raised' if t > default_t else ('th-lowered' if t < default_t else 'th-default') %}
-      {% set badge_arrow = '↑ ' if t > default_t else ('↓ ' if t < default_t else '') %}
-      <div class="sport-card">
+      {% set def_t = s.default_t %}
+      {% set badge_cls = 'th-raised' if t > def_t else ('th-lowered' if t < def_t else 'th-default') %}
+      {% set badge_arrow = '↑' if t > def_t else ('↓' if t < def_t else '=') %}
+      <div class="sport-card {{ card_cls }}">
         <div class="sport-card-hdr">
-          <span class="sport-name">{{ emoji }} {{ sport|capitalize }}</span>
-          <span class="th-badge {{ badge_cls }}">{{ badge_arrow }}{{ "%.1f"|format(t) }}%</span>
+          <span class="sport-name">{{ s.emoji }} {{ s.label }}</span>
+          <span class="th-badge {{ badge_cls }}">{{ badge_arrow }} {{ "%.1f"|format(t) }}%</span>
         </div>
         <div class="sport-stats">
           <div class="sport-mini">
@@ -317,11 +345,19 @@ footer { display: none; }
             <div class="sport-mini-l">CLV Rate</div>
           </div>
           <div class="sport-mini">
-            <div class="sport-mini-v" style="color:{% if s.avg_clv >= 0 %}var(--green){% else %}var(--red){% endif %}">
+            <div class="sport-mini-v" style="color:{% if s.avg_clv >= 5 %}var(--green){% elif s.avg_clv >= 0 %}#60c060{% elif s.avg_clv >= -15 %}var(--orange){% else %}var(--red){% endif %}">
               {% if s.avg_clv > 0 %}+{% endif %}{{ "%.1f"|format(s.avg_clv) }}%
             </div>
             <div class="sport-mini-l">CLV Moy</div>
           </div>
+        </div>
+        <div class="verdict-strip">
+          <span class="verdict-badge {{ vb_cls }}">{{ s.verdict }}</span>
+          {% if t > def_t %}
+          <span class="verdict-t verdict-t-raised">seuil ↑ {{ "%.1f"|format(t) }}%</span>
+          {% else %}
+          <span class="verdict-t">seuil {{ "%.1f"|format(t) }}%</span>
+          {% endif %}
         </div>
       </div>
       {% endfor %}

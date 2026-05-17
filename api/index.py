@@ -96,6 +96,33 @@ def dashboard():
 
 # ── Ledger ───────────────────────────────────────────────────────────
 
+_SPORT_EMOJI = {
+    "soccer": "⚽", "basketball": "🏀", "tennis": "🎾", "hockey": "🏒",
+    "mma": "🥋", "boxing": "🥊", "darts": "🎯", "cricket": "🏏",
+    "esports": "🎮", "americanfootball": "🏈", "baseball": "⚾",
+    "rugby": "🏉", "volleyball": "🏐", "tabletennis": "🏓", "handball": "🤾",
+}
+_SPORT_LABEL = {
+    "soccer": "Football", "basketball": "Basket", "tennis": "Tennis",
+    "hockey": "Hockey", "mma": "MMA", "boxing": "Boxe", "darts": "Fléchettes",
+    "cricket": "Cricket", "esports": "eSports", "americanfootball": "NFL",
+    "baseball": "MLB", "rugby": "Rugby", "volleyball": "Volley",
+    "tabletennis": "Ping-Pong", "handball": "Handball",
+}
+
+def _clv_verdict(avg_clv: float, count: int) -> str:
+    """Return BOOST / STABLE / ATTENTION / SUSPENDU based on CLV performance."""
+    if count < 3:
+        return "INSUFFISANT"
+    if avg_clv >= 5.0:
+        return "BOOST"
+    if avg_clv >= 0.0:
+        return "STABLE"
+    if avg_clv >= -15.0:
+        return "ATTENTION"
+    return "SUSPENDU"
+
+
 @app.route("/ledger")
 def ledger():
     signals    = []
@@ -103,12 +130,11 @@ def ledger():
     try:
         sb = _db()
         if sb:
-            # Closed/expired/settled signals sorted by CLV (best first)
             res = (sb.table("signals")
                    .select("*")
                    .in_("status", ["settled", "closed", "expired"])
                    .order("clv_pct", desc=True)
-                   .limit(200)
+                   .limit(300)
                    .execute())
             signals = [s for s in (res.data or []) if s.get("clv_pct") is not None]
 
@@ -123,23 +149,67 @@ def ledger():
                     "worst_clv": round(min(clv_vals), 2),
                 }
 
-                # Per-sport breakdown + dynamic thresholds
+                # Load current dynamic thresholds
                 t_res = sb.table("meta").select("key,value").like("key", "threshold_%").execute()
                 thresholds = {}
                 for row in (t_res.data or []):
                     sport = row["key"].replace("threshold_", "")
                     thresholds[sport] = float(row["value"])
 
+                _DEFAULT_T = {
+                    "soccer": 2.5, "basketball": 2.0, "tennis": 1.8, "hockey": 2.0,
+                    "mma": 2.5, "boxing": 2.5, "darts": 2.0, "cricket": 2.0,
+                    "esports": 2.2, "americanfootball": 2.0, "baseball": 2.0,
+                    "rugby": 2.0, "volleyball": 2.0, "tabletennis": 2.0, "handball": 2.0,
+                }
+
                 sports_stats = {}
-                for sport in ["soccer", "basketball", "tennis"]:
+                threshold_updates = []
+
+                # All sports present in signals
+                all_sports = sorted(set(s.get("sport", "") for s in signals if s.get("sport")))
+                for sport in all_sports:
                     sv = [s["clv_pct"] for s in signals if s.get("sport") == sport]
-                    if sv:
-                        sports_stats[sport] = {
-                            "count":     len(sv),
-                            "hit_rate":  round(sum(1 for c in sv if c >= 0) / len(sv) * 100, 1),
-                            "avg_clv":   round(sum(sv) / len(sv), 2),
-                            "threshold": thresholds.get(sport, 1.5),
-                        }
+                    if not sv:
+                        continue
+                    avg = round(sum(sv) / len(sv), 2)
+                    hit = round(sum(1 for c in sv if c >= 0) / len(sv) * 100, 1)
+                    verdict = _clv_verdict(avg, len(sv))
+                    cur_t   = thresholds.get(sport, _DEFAULT_T.get(sport, 2.0))
+                    def_t   = _DEFAULT_T.get(sport, 2.0)
+
+                    # Auto-adjust threshold based on CLV verdict
+                    new_t = cur_t
+                    if verdict == "SUSPENDU" and cur_t < 5.0:
+                        new_t = min(5.0, round(cur_t + 0.5, 1))
+                    elif verdict == "BOOST" and len(sv) >= 5 and cur_t > 1.5:
+                        new_t = max(1.5, round(cur_t - 0.2, 1))
+
+                    if new_t != cur_t:
+                        threshold_updates.append((sport, new_t))
+
+                    sports_stats[sport] = {
+                        "count":     len(sv),
+                        "hit_rate":  hit,
+                        "avg_clv":   avg,
+                        "threshold": cur_t,
+                        "default_t": def_t,
+                        "verdict":   verdict,
+                        "emoji":     _SPORT_EMOJI.get(sport, "🎯"),
+                        "label":     _SPORT_LABEL.get(sport, sport.capitalize()),
+                    }
+
+                # Push threshold updates to Supabase meta
+                for sport, new_t in threshold_updates:
+                    try:
+                        sb.table("meta").upsert({
+                            "key":   f"threshold_{sport}",
+                            "value": str(new_t),
+                        }).execute()
+                        log.info("Ledger: threshold %s → %.1f%%", sport, new_t)
+                    except Exception as e:
+                        log.warning("Ledger threshold update %s: %s", sport, e)
+
                 stats["sports"] = sports_stats
 
     except Exception as e:
