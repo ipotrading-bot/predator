@@ -400,13 +400,13 @@ function applyFilters(){
   document.getElementById('filter-count').textContent=n?`${n} signal${n>1?'s':''}`:'';
 }
 
+const SIGNALS={{ signals|tojson }};
+let _kpct=0;
+
 // Init
 _buildSportChips();
 applyFilters();
 setInterval(applyFilters,30000);
-
-const SIGNALS={{ signals|tojson }};
-let _kpct=0;
 
 function updateStake(){
   const br=parseFloat(document.getElementById('bankroll-input').value)||0;
