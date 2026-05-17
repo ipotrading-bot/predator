@@ -100,12 +100,15 @@ _OPTIONAL_COLS = {"selection_name", "kelly_pct", "advice"}
 def _save(sb, signal) -> bool:
     """Delete-then-insert to avoid duplicates. Returns True on success."""
     payload = dict(signal)
+    # Delete by match_id+market_key first (most precise), then fallback to match+market
+    # No status filter — replaces stale signals from all previous scans
+    mid  = payload.get("match_id", "")
+    mkey = payload.get("market_key", "")
     try:
-        (sb.table("signals").delete()
-           .eq("match",  payload["match"])
-           .eq("market", payload.get("market", ""))
-           .eq("status", "active")
-           .execute())
+        if mid and mkey:
+            sb.table("signals").delete().eq("match_id", mid).eq("market_key", mkey).execute()
+        else:
+            sb.table("signals").delete().eq("match", payload["match"]).eq("market", payload.get("market", "")).execute()
     except Exception:
         pass  # Non-fatal — insert will still proceed
     try:

@@ -62,11 +62,22 @@ def dashboard():
     try:
         sb = _db()
         if sb:
-            res = sb.table("signals").select("*").order("created_at", desc=True).limit(100).execute()
+            res = sb.table("signals").select("*").order("created_at", desc=True).limit(200).execute()
             raw = res.data or []
-            # Filter to HIGH_VALUE and VALUE only — discard LOW_VALUE noise
-            filtered = [s for s in raw if s.get("risk_flag") in _HIGH_QUALITY]
-            # Sort: sport priority → match_time asc (soonest first) → edge desc
+
+            # Deduplicate: (match_id or match_name) + market_key → keep highest edge
+            # Prevents same event appearing twice across consecutive scans
+            seen: dict = {}
+            for s in raw:
+                mid  = s.get("match_id") or s.get("match", "")
+                mkey = s.get("market_key") or s.get("market", "")
+                key  = (mid, mkey)
+                prev = seen.get(key)
+                if prev is None or (s.get("edge_pct") or 0) > (prev.get("edge_pct") or 0):
+                    seen[key] = s
+
+            # Filter to HIGH_VALUE + VALUE only, sort by sport priority → soonest → edge desc
+            filtered = [s for s in seen.values() if s.get("risk_flag") in _HIGH_QUALITY]
             signals = sorted(
                 filtered,
                 key=lambda s: (
