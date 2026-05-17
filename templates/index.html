@@ -150,15 +150,57 @@ nav {
   display: flex; justify-content: space-between;
 }
 
-/* ─── SPORT SEPARATOR ─────────────────────────── */
-.sport-sep {
+/* ─── FILTER BAR ──────────────────────────────── */
+.filterbar {
+  position: sticky; top: 48px; z-index: 50;
+  background: rgba(5,5,5,.97);
+  backdrop-filter: blur(14px); -webkit-backdrop-filter: blur(14px);
+  border-bottom: 1px solid var(--bd);
+  margin: 0 -11px 14px; padding: 0 11px;
+}
+@media (min-width:640px){ .filterbar { margin: 0 -20px 14px; padding: 0 20px; } }
+.fb-row {
+  display: flex; align-items: center; gap: 8px;
+  padding: 7px 0;
+  overflow-x: auto; -webkit-overflow-scrolling: touch;
+  scrollbar-width: none;
+}
+.fb-row::-webkit-scrollbar { display: none; }
+.fb-row + .fb-row { border-top: 1px solid var(--bd); padding-top: 6px; }
+.fchip {
+  flex-shrink: 0;
+  height: 26px; padding: 0 10px;
+  border: 1px solid var(--bd2); border-radius: 13px;
+  background: none; color: var(--t2);
+  font-family: var(--font); font-size: 9px; font-weight: 700; letter-spacing: 1px;
+  cursor: pointer; transition: all .12s; white-space: nowrap;
+}
+.fchip:active { opacity: .7; }
+.fchip.on { background: rgba(0,224,58,.08); border-color: rgba(0,224,58,.35); color: var(--green); }
+.fchip.day-on { background: rgba(0,180,230,.08); border-color: rgba(0,180,230,.35); color: var(--blue); }
+.fb-div { width: 1px; height: 16px; background: var(--bd); flex-shrink: 0; }
+.fsort-group { display: flex; border: 1px solid var(--bd2); border-radius: 5px; overflow: hidden; flex-shrink: 0; margin-left: auto; }
+.fsort-btn {
+  padding: 0 9px; height: 26px;
+  background: none; border: none; border-right: 1px solid var(--bd2);
+  color: var(--t2); font-family: var(--font); font-size: 9px; font-weight: 700; letter-spacing: .5px;
+  cursor: pointer; transition: all .12s; white-space: nowrap;
+}
+.fsort-btn:last-child { border-right: none; }
+.fsort-btn.on { background: rgba(0,224,58,.08); color: var(--green); }
+#filter-count { font-size: 8px; color: var(--t3); white-space: nowrap; flex-shrink: 0; margin-left: 6px; }
+
+/* ─── SPORT / DAY SEPARATOR ───────────────────── */
+.sport-sep, .day-sep {
   font-size: 9px; font-weight: 700; letter-spacing: 3px;
   text-transform: uppercase; color: var(--t2);
-  margin: 16px 0 7px;
+  margin: 14px 0 6px;
   display: flex; align-items: center; gap: 8px;
 }
-.sport-sep::after { content: ''; flex: 1; height: 1px; background: var(--bd); }
+.sport-sep::after, .day-sep::after { content: ''; flex: 1; height: 1px; background: var(--bd); }
 .sport-sep em { color: var(--blue); font-style: normal; }
+.day-sep { color: var(--t3); letter-spacing: 2px; }
+.filter-empty { text-align:center; padding:40px 0; font-size:10px; color:var(--t2); display:none; }
 
 /* ─── SIGNAL CARD ─────────────────────────────── */
 .sig {
@@ -384,83 +426,84 @@ footer { display: none; }
 
   {% if signals %}
 
-  {% set sport_cfg = [
-    ('basketball',       '🏀','BASKET'),
-    ('hockey',           '🏒','HOCKEY'),
-    ('americanfootball', '🏈','NFL'),
-    ('baseball',         '⚾','MLB'),
-    ('esports',          '🎮','eSPORT'),
-    ('rugby',            '🏉','RUGBY'),
-    ('tennis',           '🎾','TENNIS'),
-    ('mma',              '🥋','MMA'),
-    ('volleyball',       '🏐','VOLLEY'),
-    ('tabletennis',      '🏓','PING-PONG'),
-    ('handball',         '🤾','HANDBALL'),
-    ('boxing',           '🥊','BOXE'),
-    ('darts',            '🎯','FLÉCHETTES'),
-    ('cricket',          '🏏','CRICKET'),
-    ('soccer',           '⚽','FOOT'),
-  ] %}
-  {% set ns = namespace(idx=0) %}
-
-  {% for sport_key, emoji, label in sport_cfg %}
-    {% set group = signals | selectattr('sport','equalto',sport_key) | list %}
-    {% if group %}
-
-    <div class="sport-sep" data-sport="{{ sport_key }}">{{ emoji }} <em>{{ label }}</em>&nbsp;{{ group|length }}</div>
-
-    {% for s in group %}
-    {% set is_high    = s.risk_flag == 'HIGH_VALUE' %}
-    {% set is_value   = s.risk_flag == 'VALUE' %}
-    {% set is_suspect = s.risk_flag == 'SUSPECT_DATA' %}
-    {% set team = s.selection_name if s.selection_name and ' vs ' not in s.selection_name else (s.match.split(' vs ')[0].strip() if ' vs ' in s.match else s.match) %}
-    {% set kelly = s.kelly_pct if s.kelly_pct else 0 %}
-    {% if s.match_time %}
-      {% set mdate = s.match_time[8:10] + '/' + s.match_time[5:7] %}
-      {% set mhour = s.match_time[11:16] %}
-    {% endif %}
-
-    <div class="sig {% if is_high %}high{% elif is_value %}value{% elif is_suspect %}suspect{% endif %}"
-         onclick="openModal({{ ns.idx }})"
-         data-matchtime="{{ s.match_time or '' }}"
-         data-sport="{{ sport_key }}">
-      {% set ns.idx = ns.idx + 1 %}
-      <div class="sig-body">
-
-        <!-- R1: match info -->
-        <div class="sig-r1">
-          <span class="sig-icon">{{ emoji }}</span>
-          <span class="sig-match">{{ s.match }}<span class="sig-league"> · {{ s.league or '—' }}</span></span>
-          {% set flag_fr = {'HIGH_VALUE':'TOP VALEUR','VALUE':'VALEUR','LOW_VALUE':'FAIBLE','SUSPECT_DATA':'SUSPECT'}[s.risk_flag] if s.risk_flag in ['HIGH_VALUE','VALUE','LOW_VALUE','SUSPECT_DATA'] else s.risk_flag %}
-          <span class="sig-badge b-{{ s.risk_flag }}">{{ flag_fr }}</span>
-          {% if s.match_time %}
-            <span class="sig-date">{{ mdate }} {{ mhour }}</span>
-            <span class="sig-cd" data-ts="{{ s.match_time }}"></span>
-          {% else %}
-            <span class="sig-date" style="color:var(--t3)">heure?</span>
-          {% endif %}
-        </div>
-
-        <!-- R2: bet info -->
-        <div class="sig-r2">
-          <span class="sig-team">{{ team }}</span>
-          <span class="sig-odd">@ {{ "%.2f"|format(s.xbet_odd) }}</span>
-          <span class="sig-edge {% if is_suspect %}e-sus{% elif s.edge_pct >= 5 %}e-high{% elif s.edge_pct >= 2.5 %}e-mid{% else %}e-low{% endif %}">
-            +{{ "%.1f"|format(s.edge_pct) }}%
-          </span>
-          {% if kelly > 0 %}
-            <span class="sig-mise">{{ (kelly/100*1000)|round|int }}€</span>
-          {% else %}
-            <span class="sig-mise" style="color:var(--t3)">—€</span>
-          {% endif %}
-          <span class="sig-cta">&#9654;</span>
-        </div>
-
+  {# ── Filter bar ── #}
+  <div class="filterbar" id="filterbar">
+    <div class="fb-row">
+      <button class="fchip on" data-sport="all" onclick="setSport('all')">TOUS</button>
+      <div class="fb-div"></div>
+      <div id="sport-chips" style="display:contents"></div>
+      <div class="fsort-group">
+        <button class="fsort-btn on" data-sort="sport" onclick="setSort('sport')" title="Grouper par sport">SPORT</button>
+        <button class="fsort-btn" data-sort="edge"    onclick="setSort('edge')"    title="Meilleur edge en premier">EDGE</button>
+        <button class="fsort-btn" data-sort="time"    onclick="setSort('time')"    title="Plus tôt en premier">HEURE</button>
+        <button class="fsort-btn" data-sort="quality" onclick="setSort('quality')" title="TOP VALEUR en premier">TOP</button>
       </div>
     </div>
-    {% endfor %}
-    {% endif %}
+    <div class="fb-row">
+      <button class="fchip day-on" data-day="all"      onclick="setDay('all')">TOUS JOURS</button>
+      <button class="fchip"        data-day="today"    onclick="setDay('today')">Aujourd'hui</button>
+      <button class="fchip"        data-day="tomorrow" onclick="setDay('tomorrow')">Demain</button>
+      <button class="fchip"        data-day="later"    onclick="setDay('later')">+Tard</button>
+      <span id="filter-count"></span>
+    </div>
+  </div>
+
+  {# ── Signal list (flat — sorted by JS) ── #}
+  <div id="signals-list">
+
+  {% set E = {'basketball':'🏀','hockey':'🏒','americanfootball':'🏈','baseball':'⚾','esports':'🎮','rugby':'🏉','tennis':'🎾','mma':'🥋','volleyball':'🏐','tabletennis':'🏓','handball':'🤾','boxing':'🥊','darts':'🎯','cricket':'🏏','soccer':'⚽'} %}
+
+  {% for s in signals %}
+  {% set sp  = s.sport or 'soccer' %}
+  {% set emoji = E.get(sp, '🎯') %}
+  {% set is_high    = s.risk_flag == 'HIGH_VALUE' %}
+  {% set is_value   = s.risk_flag == 'VALUE' %}
+  {% set is_suspect = s.risk_flag == 'SUSPECT_DATA' %}
+  {% set team = s.selection_name if s.selection_name and ' vs ' not in s.selection_name else (s.match.split(' vs ')[0].strip() if ' vs ' in s.match else s.match) %}
+  {% set kelly = s.kelly_pct if s.kelly_pct else 0 %}
+  {% if s.match_time %}
+    {% set mdate = s.match_time[8:10] + '/' + s.match_time[5:7] %}
+    {% set mhour = s.match_time[11:16] %}
+  {% endif %}
+  <div class="sig {% if is_high %}high{% elif is_value %}value{% elif is_suspect %}suspect{% endif %}"
+       onclick="openModal({{ loop.index0 }})"
+       data-idx="{{ loop.index0 }}"
+       data-sport="{{ sp }}"
+       data-edge="{{ s.edge_pct or 0 }}"
+       data-quality="{{ 0 if is_high else (1 if is_value else 2) }}"
+       data-matchtime="{{ s.match_time or '' }}">
+    <div class="sig-body">
+      <div class="sig-r1">
+        <span class="sig-icon">{{ emoji }}</span>
+        <span class="sig-match">{{ s.match }}<span class="sig-league"> · {{ s.league or '—' }}</span></span>
+        {% set flag_fr = {'HIGH_VALUE':'TOP VALEUR','VALUE':'VALEUR','LOW_VALUE':'FAIBLE','SUSPECT_DATA':'SUSPECT'}[s.risk_flag] if s.risk_flag in ['HIGH_VALUE','VALUE','LOW_VALUE','SUSPECT_DATA'] else s.risk_flag %}
+        <span class="sig-badge b-{{ s.risk_flag }}">{{ flag_fr }}</span>
+        {% if s.match_time %}
+          <span class="sig-date">{{ mdate }} {{ mhour }}</span>
+          <span class="sig-cd" data-ts="{{ s.match_time }}"></span>
+        {% else %}
+          <span class="sig-date" style="color:var(--t3)">heure?</span>
+        {% endif %}
+      </div>
+      <div class="sig-r2">
+        <span class="sig-team">{{ team }}</span>
+        <span class="sig-odd">@ {{ "%.2f"|format(s.xbet_odd) }}</span>
+        <span class="sig-edge {% if is_suspect %}e-sus{% elif s.edge_pct >= 5 %}e-high{% elif s.edge_pct >= 2.5 %}e-mid{% else %}e-low{% endif %}">
+          +{{ "%.1f"|format(s.edge_pct) }}%
+        </span>
+        {% if kelly > 0 %}
+          <span class="sig-mise">{{ (kelly/100*1000)|round|int }}€/k</span>
+        {% else %}
+          <span class="sig-mise" style="color:var(--t3)">—</span>
+        {% endif %}
+        <span class="sig-cta">&#9654;</span>
+      </div>
+    </div>
+  </div>
   {% endfor %}
+
+  </div>{# /signals-list #}
+  <div class="filter-empty" id="filter-empty">Aucun signal pour ce filtre.</div>
 
   {% else %}
   <div class="empty">
@@ -567,25 +610,135 @@ function _cd(iso){
   return Math.floor(h/24)+'j';
 }
 
-function refresh(){
-  document.querySelectorAll('.sig[data-matchtime]').forEach(el=>{
+// ── Filter / Sort state ───────────────────────────
+const _SPORT_ORDER = {basketball:0,hockey:1,americanfootball:2,baseball:3,esports:4,rugby:5,tennis:6,mma:7,volleyball:8,tabletennis:9,handball:10,boxing:11,darts:12,cricket:13,soccer:14};
+const _SPORT_EMOJI = {soccer:'⚽',basketball:'🏀',tennis:'🎾',hockey:'🏒',mma:'🥋',boxing:'🥊',darts:'🎯',cricket:'🏏',esports:'🎮',americanfootball:'🏈',baseball:'⚾',rugby:'🏉',volleyball:'🏐',tabletennis:'🏓',handball:'🤾'};
+const _SPORT_LABEL = {soccer:'FOOT',basketball:'BASKET',tennis:'TENNIS',hockey:'HOCKEY',mma:'MMA',boxing:'BOXE',darts:'FLÉCHETTES',cricket:'CRICKET',esports:'eSPORT',americanfootball:'NFL',baseball:'MLB',rugby:'RUGBY',volleyball:'VOLLEY',tabletennis:'PING',handball:'HAND'};
+const _DAY_LABEL   = {today:"Aujourd'hui",tomorrow:'Demain',later:'Plus tard',unknown:'?'};
+
+let _sort  = 'sport';
+let _sport = 'all';
+let _day   = 'all';
+
+function _sigDay(iso){
+  if(!iso) return 'unknown';
+  const now = new Date();
+  const t   = (d,n)=>new Date(d.getFullYear(),d.getMonth(),d.getDate()+n).toISOString().slice(0,10);
+  const sig = iso.slice(0,10);
+  if(sig===t(now,0)) return 'today';
+  if(sig===t(now,1)) return 'tomorrow';
+  return 'later';
+}
+
+function _buildSportChips(){
+  const sports = [...new Set(SIGNALS.map(s=>s.sport).filter(Boolean))];
+  sports.sort((a,b)=>(_SPORT_ORDER[a]??15)-(_SPORT_ORDER[b]??15));
+  const container=document.getElementById('sport-chips');
+  container.innerHTML='';
+  sports.forEach(sp=>{
+    const btn=document.createElement('button');
+    btn.className='fchip';
+    btn.dataset.sport=sp;
+    btn.textContent=(_SPORT_EMOJI[sp]||'🎯')+' '+(_SPORT_LABEL[sp]||sp);
+    btn.onclick=()=>setSport(sp);
+    container.appendChild(btn);
+  });
+}
+
+function setSport(sp){
+  _sport = (_sport===sp&&sp!=='all') ? 'all' : sp;
+  document.querySelectorAll('.fchip[data-sport]').forEach(b=>b.classList.toggle('on',b.dataset.sport===_sport));
+  applyFilters();
+}
+function setDay(d){
+  _day = (_day===d&&d!=='all') ? 'all' : d;
+  document.querySelectorAll('.fchip[data-day]').forEach(b=>b.classList.toggle('day-on',b.dataset.day===_day));
+  applyFilters();
+}
+function setSort(s){
+  _sort=s;
+  document.querySelectorAll('.fsort-btn').forEach(b=>b.classList.toggle('on',b.dataset.sort===s));
+  applyFilters();
+}
+
+function applyFilters(){
+  const list   = document.getElementById('signals-list');
+  const allSig = [...list.querySelectorAll('.sig[data-idx]')];
+
+  // Tick countdown on all visible sigs
+  allSig.forEach(el=>{
     const ts=el.dataset.matchtime;
-    if(!ts) return;
-    el.style.display = new Date(ts)<Date.now() ? 'none' : '';
     el.querySelectorAll('.sig-cd[data-ts]').forEach(cd=>{
-      const r=_cd(ts);
-      cd.textContent = r ? '· '+r : '';
-      cd.className = 'sig-cd'+(r&&r.includes('min')&&!r.includes('h')?' urgent':'');
+      const r=_cd(ts); cd.textContent=r?'· '+r:'';
+      cd.className='sig-cd'+(r&&r.includes('min')&&!r.includes('h')?' urgent':'');
     });
   });
-  document.querySelectorAll('.sport-sep[data-sport]').forEach(sep=>{
-    const sport=sep.dataset.sport;
-    const vis=[...document.querySelectorAll(`.sig[data-sport="${sport}"]`)].some(e=>e.style.display!=='none');
-    sep.style.display=vis?'':'none';
+
+  // Filter
+  const now=Date.now();
+  const visible=allSig.filter(el=>{
+    const ts=el.dataset.matchtime;
+    if(ts && new Date(ts)<now) return false;
+    if(_sport!=='all' && el.dataset.sport!==_sport) return false;
+    if(_day!=='all' && _sigDay(ts)!==_day) return false;
+    return true;
   });
-  setTimeout(refresh,60000);
+
+  // Sort
+  if(_sort==='edge'){
+    visible.sort((a,b)=>parseFloat(b.dataset.edge)-parseFloat(a.dataset.edge));
+  } else if(_sort==='time'){
+    visible.sort((a,b)=>(a.dataset.matchtime||'9999').localeCompare(b.dataset.matchtime||'9999'));
+  } else if(_sort==='quality'){
+    visible.sort((a,b)=>parseInt(a.dataset.quality)-parseInt(b.dataset.quality)||parseFloat(b.dataset.edge)-parseFloat(a.dataset.edge));
+  } else { // sport
+    visible.sort((a,b)=>{
+      const sa=_SPORT_ORDER[a.dataset.sport]??15, sb=_SPORT_ORDER[b.dataset.sport]??15;
+      return sa!==sb ? sa-sb : parseFloat(b.dataset.edge)-parseFloat(a.dataset.edge);
+    });
+  }
+
+  // Rebuild DOM
+  list.querySelectorAll('.sport-sep,.day-sep').forEach(e=>e.remove());
+  allSig.forEach(el=>el.style.display='none');
+
+  const empty=document.getElementById('filter-empty');
+  if(visible.length===0){ empty.style.display='block'; }
+  else {
+    empty.style.display='none';
+    let lastGroup=null;
+    visible.forEach(el=>{
+      el.style.display='';
+      let gk=null;
+      if(_sort==='sport'&&_sport==='all') gk='sport:'+el.dataset.sport;
+      else if(_sort==='time') gk='day:'+_sigDay(el.dataset.matchtime);
+      if(gk&&gk!==lastGroup){
+        const sep=document.createElement('div');
+        if(gk.startsWith('sport:')){
+          const sp=el.dataset.sport;
+          const cnt=visible.filter(e=>e.dataset.sport===sp).length;
+          sep.className='sport-sep';
+          sep.innerHTML=`${_SPORT_EMOJI[sp]||'🎯'} <em>${_SPORT_LABEL[sp]||sp}</em>&nbsp;${cnt}`;
+        } else {
+          sep.className='day-sep';
+          sep.textContent=_DAY_LABEL[_sigDay(el.dataset.matchtime)]||'';
+        }
+        lastGroup=gk;
+        list.insertBefore(sep,el);
+      }
+      list.appendChild(el);
+    });
+  }
+
+  // Count badge
+  const n=visible.length;
+  document.getElementById('filter-count').textContent=n?`${n} signal${n>1?'s':''}`:'';
 }
-refresh();
+
+// Init
+_buildSportChips();
+applyFilters();
+setInterval(applyFilters,60000);
 
 const SIGNALS={{ signals|tojson }};
 let _kpct=0;
