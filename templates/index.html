@@ -318,13 +318,25 @@ function applyFilters(){
   const list   = document.getElementById('signals-list');
   const allSig = [...list.querySelectorAll('.sig[data-idx]')];
 
-  // Tick countdown on all visible sigs
+  // Tick countdown + manage URGENT badge on each sig
   allSig.forEach(el=>{
     const ts=el.dataset.matchtime;
     el.querySelectorAll('.sig-cd[data-ts]').forEach(cd=>{
       const r=_cd(ts); cd.textContent=r?'· '+r:'';
       cd.className='sig-cd'+(r&&r.includes('min')&&!r.includes('h')?' urgent':'');
     });
+    // URGENT badge: inject when < 15 min, remove otherwise
+    const minsLeft = ts ? (new Date(ts)-Date.now())/60000 : Infinity;
+    const isUrgent = minsLeft > 0 && minsLeft < 15;
+    let ub = el.querySelector('.sig-urgent');
+    if(isUrgent && !ub){
+      ub = document.createElement('span');
+      ub.className = 'sig-urgent';
+      ub.textContent = '⚡ URGENT';
+      el.querySelector('.sig-r1')?.appendChild(ub);
+    } else if(!isUrgent && ub){
+      ub.remove();
+    }
   });
 
   // Filter
@@ -391,7 +403,7 @@ function applyFilters(){
 // Init
 _buildSportChips();
 applyFilters();
-setInterval(applyFilters,60000);
+setInterval(applyFilters,30000);
 
 const SIGNALS={{ signals|tojson }};
 let _kpct=0;
