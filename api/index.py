@@ -78,8 +78,15 @@ def dashboard():
                 if prev is None or (s.get("edge_pct") or 0) > (prev.get("edge_pct") or 0):
                     seen[key] = s
 
-            # Filter to HIGH_VALUE + VALUE only, sort by sport priority → soonest → edge desc
-            filtered = [s for s in seen.values() if s.get("risk_flag") in _HIGH_QUALITY]
+            # Drop signals whose match has already started
+            from datetime import datetime, timezone as _tz
+            _now = datetime.now(_tz.utc).isoformat()
+            # Filter to HIGH_VALUE + VALUE only, future matches only
+            filtered = [
+                s for s in seen.values()
+                if s.get("risk_flag") in _HIGH_QUALITY
+                and (not s.get("match_time") or s["match_time"] > _now)
+            ]
             signals = sorted(
                 filtered,
                 key=lambda s: (
