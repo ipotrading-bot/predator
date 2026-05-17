@@ -58,7 +58,7 @@ _DASH_SPORT_ORDER = {
     "boxing": 11, "darts": 12, "cricket": 13, "soccer": 14,
 }
 
-_HIGH_QUALITY = {"HIGH_VALUE", "VALUE"}
+_HIGH_QUALITY = {"HIGH_VALUE", "VALUE", "LOW_VALUE"}
 
 
 def _parse_match_time(s: str):
