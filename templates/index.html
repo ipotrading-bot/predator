@@ -327,19 +327,18 @@ footer { display: none; }
 <nav>
   <div class="nav-logo">&#9658; PREDATOR</div>
   <div class="nav-pages">
-    <a href="/" class="on">DASHBOARD</a>
-    <a href="/ledger">LEDGER</a>
-    <a href="/audit">AUDIT CLV</a>
-    <a href="/worldcup">WC 2026</a>
+    <a href="/" class="on">ACCUEIL</a>
+    <a href="/ledger">BILAN</a>
+    <a href="/audit">AUDIT</a>
+    <a href="/worldcup">eSPORT</a>
   </div>
-  {% set clean  = signals | rejectattr('risk_flag', 'equalto', 'SUSPECT_DATA') | list %}
-  {% set elites = clean | selectattr('risk_flag', 'in', ['HIGH_VALUE','VALUE']) | list %}
-  {% set edges  = clean | map(attribute='edge_pct') | list %}
+  {% set elites = signals | selectattr('risk_flag', 'in', ['HIGH_VALUE','VALUE']) | list %}
+  {% set edges  = signals | map(attribute='edge_pct') | list %}
   <div class="nav-mid">
     <span style="color:var(--bd2)">·</span>
-    <span><b class="b">{{ clean|length }}</b> signaux</span>
+    <span><b class="b">{{ signals|length }}</b> signaux</span>
     <span style="color:var(--bd2)">·</span>
-    <span><b class="g">{{ elites|length }}</b> elite</span>
+    <span><b class="g">{{ elites|length }}</b> top</span>
     {% if edges %}
     <span style="color:var(--bd2)">·</span>
     <span><b class="y">+{{ "%.1f"|format(edges|max) }}%</b> best</span>
@@ -356,21 +355,23 @@ footer { display: none; }
 
   {% if last_scan %}
   <div class="scan-meta">
-    <span>Scan {{ last_scan.at[11:16] }} UTC &middot; {{ last_scan.matches }} matchs &middot; {{ last_scan.signals }} signaux</span>
-    <span>30 min</span>
+    <span>Dernier scan {{ last_scan.at[11:16] }} UTC &middot; {{ last_scan.matches }} matchs &middot; {{ last_scan.signals }} signaux</span>
+    <span>toutes les 30 min</span>
   </div>
   {% endif %}
 
   {% if signals %}
 
   {% set sport_cfg = [
-    ('basketball','🏀','BASKETBALL'),
+    ('basketball','🏀','BASKET'),
+    ('hockey',    '🏒','HOCKEY'),
+    ('esports',   '🎮','eSPORT'),
     ('tennis',    '🎾','TENNIS'),
-    ('soccer',    '⚽','SOCCER'),
     ('mma',       '🥋','MMA'),
-    ('boxing',    '🥊','BOXING'),
-    ('darts',     '🎯','DARTS'),
+    ('boxing',    '🥊','BOXE'),
+    ('darts',     '🎯','FLÉCHETTES'),
     ('cricket',   '🏏','CRICKET'),
+    ('soccer',    '⚽','FOOT'),
   ] %}
   {% set ns = namespace(idx=0) %}
 
@@ -402,7 +403,8 @@ footer { display: none; }
         <div class="sig-r1">
           <span class="sig-icon">{{ emoji }}</span>
           <span class="sig-match">{{ s.match }}<span class="sig-league"> · {{ s.league or '—' }}</span></span>
-          <span class="sig-badge b-{{ s.risk_flag }}">{{ s.risk_flag|replace('_',' ') }}</span>
+          {% set flag_fr = {'HIGH_VALUE':'TOP VALEUR','VALUE':'VALEUR','LOW_VALUE':'FAIBLE','SUSPECT_DATA':'SUSPECT'}[s.risk_flag] if s.risk_flag in ['HIGH_VALUE','VALUE','LOW_VALUE','SUSPECT_DATA'] else s.risk_flag %}
+          <span class="sig-badge b-{{ s.risk_flag }}">{{ flag_fr }}</span>
           {% if s.match_time %}
             <span class="sig-date">{{ mdate }} {{ mhour }}</span>
             <span class="sig-cd" data-ts="{{ s.match_time }}"></span>
@@ -434,15 +436,15 @@ footer { display: none; }
 
   {% else %}
   <div class="empty">
-    <div>Aucun signal actif.</div>
-    <div>GitHub Actions tourne toutes les 30 min.</div>
+    <div>Aucun signal haute valeur.</div>
+    <div>Le scan tourne toutes les 30 min via GitHub Actions.</div>
     <button onclick="triggerScan()">&#9654; LANCER UN SCAN</button>
   </div>
   {% endif %}
 
 </main>
 
-<footer>PREDATOR PAIM v8.5 &nbsp;·&nbsp; Pinnacle Sharp &rarr; 1XBet &nbsp;·&nbsp; Lead-Lag Arbitrage</footer>
+<footer>PREDATOR PAIM v8.5 &nbsp;·&nbsp; Pinnacle Sharp &rarr; 1XBet &nbsp;·&nbsp; Arbitrage Lead-Lag</footer>
 
 <!-- ── FAB SCAN (mobile) ──────────────────── -->
 <button class="fab-scan" id="fabScan" onclick="triggerScan()">&#9654;</button>
@@ -451,19 +453,19 @@ footer { display: none; }
 <nav class="bnav">
   <a href="/" class="on">
     <svg viewBox="0 0 24 24"><rect x="3" y="3" width="7" height="7" rx="1.5"/><rect x="14" y="3" width="7" height="7" rx="1.5"/><rect x="3" y="14" width="7" height="7" rx="1.5"/><rect x="14" y="14" width="7" height="7" rx="1.5"/></svg>
-    Dashboard
+    Accueil
   </a>
   <a href="/ledger">
     <svg viewBox="0 0 24 24"><path d="M9 5H7a2 2 0 00-2 2v12a2 2 0 002 2h10a2 2 0 002-2V7a2 2 0 00-2-2h-2M9 5a2 2 0 002 2h2a2 2 0 002-2M9 5a2 2 0 012-2h2a2 2 0 012 2M12 12h4m-4 4h4m-8-4h.01m-.01 4h.01"/></svg>
-    Ledger
+    Bilan
   </a>
   <a href="/audit">
     <svg viewBox="0 0 24 24"><polyline points="22 12 18 12 15 21 9 3 6 12 2 12"/></svg>
     Audit
   </a>
   <a href="/worldcup">
-    <svg viewBox="0 0 24 24"><path d="M8 21h8m-4-4v4M5 3h14l-1 7a7 7 0 01-12 0L5 3z"/><path d="M5 3a2 2 0 00-2 2v1h18V5a2 2 0 00-2-2"/></svg>
-    WC 2026
+    <svg viewBox="0 0 24 24"><path d="M5 3h14l-1 7a7 7 0 01-12 0L5 3z"/><circle cx="12" cy="20" r="1"/><line x1="12" y1="17" x2="12" y2="21"/></svg>
+    eSport
   </a>
 </nav>
 
@@ -483,7 +485,7 @@ footer { display: none; }
     <div class="m-meta"><b id="m-time">—</b> &nbsp;·&nbsp; <span id="m-sub">—</span> &nbsp;<span id="m-cd" style="color:var(--t2)"></span></div>
   </div>
 
-  <div id="m-stale">&#9888; Kelly non calculé — relancez un scan pour une mise précise.</div>
+  <div id="m-stale">&#9888; Mise non calculée — relancez un scan pour une mise précise.</div>
 
   <div class="m-ss">
     <div class="m-sel">
@@ -589,7 +591,7 @@ function _exp(m,sp){
 
 function openModal(idx){
   const s=SIGNALS[idx]; if(!s) return;
-  const E={soccer:'⚽',basketball:'🏀',tennis:'🎾',mma:'🥋',boxing:'🥊',darts:'🎯',cricket:'🏏'};
+  const E={soccer:'⚽',basketball:'🏀',tennis:'🎾',mma:'🥋',boxing:'🥊',darts:'🎯',cricket:'🏏',hockey:'🏒',esports:'🎮'};
   const emoji=E[s.sport]||'🎯';
   const team=(s.selection_name&&!s.selection_name.includes(' vs '))
     ?s.selection_name
@@ -620,7 +622,8 @@ function openModal(idx){
   document.getElementById('m-why').textContent   = why;
   document.getElementById('m-edge').textContent  = (s.edge_pct>0?'+':'')+(s.edge_pct||0).toFixed(1)+'%';
   document.getElementById('m-pin').textContent   = s.pinnacle_price?s.pinnacle_price.toFixed(2):'—';
-  document.getElementById('m-risk').textContent  = (s.risk_flag||'').replace(/_/g,' ');
+  const flagFr={HIGH_VALUE:'TOP VALEUR',VALUE:'VALEUR',LOW_VALUE:'FAIBLE',SUSPECT_DATA:'SUSPECT'};
+  document.getElementById('m-risk').textContent  = flagFr[s.risk_flag]||(s.risk_flag||'').replace(/_/g,' ');
   document.getElementById('m-risk').style.color  = rCol;
 
   updateStake();

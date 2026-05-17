@@ -15,7 +15,7 @@ import requests
 from dotenv import load_dotenv
 from supabase import create_client
 
-from core.harvester import fetch_matches, fetch_pinnacle_prices, fetch_estimated_prices, fetch_mma_events
+from core.harvester import fetch_matches, fetch_pinnacle_prices, fetch_estimated_prices, fetch_mma_events, fetch_esports_events
 from core.math_engine import to_binary, devig_prob
 from core.odds_api import fetch_odds
 from core.oracle import get_pinnacle_price
@@ -52,20 +52,20 @@ TELEGRAM_TOKEN = os.environ.get("TELEGRAM_BOT_TOKEN")
 TELEGRAM_CHAT  = os.environ.get("TELEGRAM_CHAT_ID")
 
 ELITE_EDGE  = _ELITE_EDGE   # % — send Telegram alert (from core.constants)
-_MAJOR_SPORTS = {"soccer", "basketball", "tennis", "hockey"}  # Sports where edge > SUSPECT_EDGE is flagged
+_MAJOR_SPORTS = {"soccer", "basketball", "tennis", "hockey", "esports"}  # Sports where edge > SUSPECT_EDGE is flagged
 
 # Fast mode (default): 20 events, tight quota — speed over coverage
 # Deep mode (DEEP_SCAN=1): 100 events, wide quota — 48h full slate
 MAX_MATCHES = 100 if DEEP_SCAN else 20
 
-SPORT_EMOJI  = {"soccer": "⚽", "tennis": "🎾", "basketball": "🏀", "boxing": "🥊", "mma": "🥋", "darts": "🎯", "cricket": "🏏", "hockey": "🏒"}
+SPORT_EMOJI  = {"soccer": "⚽", "tennis": "🎾", "basketball": "🏀", "boxing": "🥊", "mma": "🥋", "darts": "🎯", "cricket": "🏏", "hockey": "🏒", "esports": "🎮"}
 
 # Portfolio Balancer: max signals per sport per scan — prevents soccer flooding
-_QUOTA_FAST = {"soccer": 5, "basketball": 3, "hockey": 3, "tennis": 3, "boxing": 3, "mma": 3, "darts": 2, "cricket": 2}
-_QUOTA_DEEP = {"soccer": 12, "basketball": 8, "hockey": 6, "tennis": 10, "boxing": 5, "mma": 5, "darts": 4, "cricket": 4}
+_QUOTA_FAST = {"soccer": 3, "basketball": 3, "hockey": 3, "tennis": 3, "boxing": 3, "mma": 3, "darts": 2, "cricket": 2, "esports": 2}
+_QUOTA_DEEP = {"soccer": 6, "basketball": 8, "hockey": 6, "tennis": 10, "boxing": 5, "mma": 5, "darts": 4, "cricket": 4, "esports": 4}
 SPORT_QUOTA = _QUOTA_DEEP if DEEP_SCAN else _QUOTA_FAST
 # Telegram report order: highest alpha first
-_SPORT_ORDER = ["basketball", "hockey", "mma", "darts", "boxing", "cricket", "tennis", "soccer"]
+_SPORT_ORDER = ["basketball", "hockey", "esports", "mma", "darts", "boxing", "cricket", "tennis", "soccer"]
 
 # EU market sessions (UTC) — aligns with European bookmaker line movement
 _SESSIONS = {
@@ -543,6 +543,13 @@ def run():
     if mma_events:
         matches = (matches or []) + mma_events
         log.info("🥋 MMA OK — %d combats UFC (Melbet soft)", len(mma_events))
+
+    # ── eSports — Gemini Search (1XBet vs Pinnacle) — always runs ────
+    log.info("🎮 eSports — Gemini Search (CS2/LoL/Valorant/DOTA2)...")
+    esports_events = fetch_esports_events()
+    if esports_events:
+        matches = (matches or []) + esports_events
+        log.info("🎮 eSports OK — %d matchs", len(esports_events))
 
     # ── Tier 2: Gemini + Google Search — DISABLED (trop lent) ───────
     # Saute directement en Tier 3 (Estimateur) si Tier 1 vide

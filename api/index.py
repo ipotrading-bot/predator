@@ -46,7 +46,12 @@ def _get_meta(sb, key: str) -> dict | None:
 
 # ── Dashboard ────────────────────────────────────────────────────────
 
-_DASH_SPORT_ORDER = {"basketball": 0, "tennis": 1, "soccer": 2}
+_DASH_SPORT_ORDER = {
+    "basketball": 0, "hockey": 1, "esports": 2,
+    "tennis": 3, "mma": 4, "boxing": 5, "darts": 6, "cricket": 7, "soccer": 8,
+}
+
+_HIGH_QUALITY = {"HIGH_VALUE", "VALUE"}
 
 
 @app.route("/")
@@ -56,13 +61,15 @@ def dashboard():
     try:
         sb = _db()
         if sb:
-            res = sb.table("signals").select("*").order("created_at", desc=True).limit(50).execute()
+            res = sb.table("signals").select("*").order("created_at", desc=True).limit(100).execute()
             raw = res.data or []
+            # Filter to HIGH_VALUE and VALUE only — discard LOW_VALUE noise
+            filtered = [s for s in raw if s.get("risk_flag") in _HIGH_QUALITY]
             # Sort: sport priority → match_time asc (soonest first) → edge desc
             signals = sorted(
-                raw,
+                filtered,
                 key=lambda s: (
-                    _DASH_SPORT_ORDER.get(s.get("sport", ""), 3),
+                    _DASH_SPORT_ORDER.get(s.get("sport", ""), 9),
                     s.get("match_time") or "9999",
                     -(s.get("edge_pct") or 0),
                 ),

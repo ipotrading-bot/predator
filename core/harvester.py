@@ -514,3 +514,104 @@ def fetch_mma_events() -> list[dict]:
 
     log.info("MMA/Gemini: %d events found (Melbet vs Pinnacle)", len(events))
     return events
+
+
+def fetch_esports_events() -> list[dict]:
+    """
+    Gemini 2.0 Flash + Google Search → upcoming eSports matches with BOTH
+    1XBet (soft) and Pinnacle (sharp) decimal ML odds.
+    Cibles : CS2, League of Legends, Valorant, DOTA2 — tournois top tier.
+    """
+    api_key = os.environ.get("GEMINI_API_KEY")
+    if not api_key:
+        return []
+
+    from datetime import date
+    today = date.today().isoformat()
+
+    prompt = (
+        f"Today is {today}. Use Google Search to find upcoming eSports matches "
+        f"in CS2, League of Legends, Valorant, or DOTA2 scheduled in the next 3 days. "
+        f"Focus on top-tier tournaments (ESL Pro League, BLAST, LCS, LEC, VCT, The International).\n\n"
+        f"For each match, search for:\n"
+        f"1. Current 1XBet decimal moneyline odds (no draw — only winner odds)\n"
+        f"2. Current Pinnacle decimal moneyline odds\n\n"
+        f"Return ONLY a valid JSON array. Omit any match where you cannot confirm both books have lines:\n"
+        f'[{{"match":"Team A vs Team B","home":"Team A","away":"Team B",'
+        f'"game":"CS2","event":"ESL Pro League","commence_time":"2026-05-17T18:00:00Z",'
+        f'"odds_1xbet":{{"1":1.85,"X":0,"2":2.00}},'
+        f'"odds_pinnacle":{{"1":1.75,"X":0,"2":2.10}}}}]\n\n'
+        f"X must always be 0 (no draw in eSports). "
+        f"Only include matches with confirmed lines on BOTH 1XBet AND Pinnacle."
+    )
+
+    payload = {
+        "contents": [{"role": "user", "parts": [{"text": prompt}]}],
+        "tools": [{"google_search": {}}],
+        "generationConfig": {"temperature": 0.1, "maxOutputTokens": 2048},
+    }
+
+    r = None
+    for attempt in range(3):
+        try:
+            r = requests.post(f"{GEMINI_FLASH_URL}?key={api_key}", json=payload, timeout=60)
+        except Exception as e:
+            log.error("eSports/Gemini request error: %s", e)
+            return []
+        if r.status_code == 429:
+            wait = 65 if attempt == 0 else 30
+            log.warning("eSports/Gemini rate limit — waiting %ds", wait)
+            time.sleep(wait)
+            r = None
+            continue
+        break
+
+    if r is None or r.status_code != 200:
+        if r is not None:
+            log.error("eSports/Gemini HTTP %d: %s", r.status_code, r.text[:200])
+        return []
+
+    try:
+        parts = r.json().get("candidates", [{}])[0].get("content", {}).get("parts", [])
+        text = next((p["text"] for p in reversed(parts) if p.get("text", "").strip()), "")
+        text = re.sub(r'```(?:json)?|```', '', text).strip()
+        m_arr = re.search(r'\[[\s\S]*\]', text)
+        if not m_arr:
+            log.warning("eSports/Gemini: aucun tableau JSON dans la réponse")
+            return []
+        raw = json.loads(m_arr.group())
+    except Exception as e:
+        log.error("eSports/Gemini parse error: %s", e)
+        return []
+
+    events = []
+    for i, ev in enumerate(raw):
+        try:
+            home = str(ev.get("home", "")).strip()
+            away = str(ev.get("away", "")).strip()
+            if not home or not away:
+                continue
+            om = ev.get("odds_1xbet", {})
+            op = ev.get("odds_pinnacle", {})
+            xbet_h = _odd(om.get("1")); xbet_a = _odd(om.get("2"))
+            pin_h  = _odd(op.get("1")); pin_a  = _odd(op.get("2"))
+            if xbet_h <= 1.01 or xbet_a <= 1.01 or pin_h <= 1.01 or pin_a <= 1.01:
+                continue
+            game = ev.get("game", "eSports")
+            events.append({
+                "id":            f"esports_gemini_{i}",
+                "match":         ev.get("match", f"{home} vs {away}"),
+                "home":          home,
+                "away":          away,
+                "league":        f"{game} — {ev.get('event', 'Tournoi')}",
+                "sport":         "esports",
+                "sport_id":      9,
+                "commence_time": ev.get("commence_time", ""),
+                "odds_1xbet":    {"1": xbet_h, "X": 0.0, "2": xbet_a},
+                "odds_pinnacle": {"1": pin_h,  "X": 0.0, "2": pin_a},
+            })
+        except Exception:
+            continue
+
+    log.info("eSports/Gemini: %d matchs trouvés", len(events))
+    return events
