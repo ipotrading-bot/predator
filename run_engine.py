@@ -52,20 +52,20 @@ TELEGRAM_TOKEN = os.environ.get("TELEGRAM_BOT_TOKEN")
 TELEGRAM_CHAT  = os.environ.get("TELEGRAM_CHAT_ID")
 
 ELITE_EDGE  = _ELITE_EDGE   # % — send Telegram alert (from core.constants)
-_MAJOR_SPORTS = {"soccer", "basketball", "tennis"}   # Sports where edge > SUSPECT_EDGE is flagged
+_MAJOR_SPORTS = {"soccer", "basketball", "tennis", "hockey"}  # Sports where edge > SUSPECT_EDGE is flagged
 
 # Fast mode (default): 20 events, tight quota — speed over coverage
 # Deep mode (DEEP_SCAN=1): 100 events, wide quota — 48h full slate
 MAX_MATCHES = 100 if DEEP_SCAN else 20
 
-SPORT_EMOJI  = {"soccer": "⚽", "tennis": "🎾", "basketball": "🏀", "boxing": "🥊", "mma": "🥋", "darts": "🎯", "cricket": "🏏"}
+SPORT_EMOJI  = {"soccer": "⚽", "tennis": "🎾", "basketball": "🏀", "boxing": "🥊", "mma": "🥋", "darts": "🎯", "cricket": "🏏", "hockey": "🏒"}
 
 # Portfolio Balancer: max signals per sport per scan — prevents soccer flooding
-_QUOTA_FAST = {"soccer": 5, "basketball": 3, "tennis": 3, "boxing": 3, "mma": 3, "darts": 2, "cricket": 2}
-_QUOTA_DEEP = {"soccer": 12, "basketball": 8, "tennis": 10, "boxing": 5, "mma": 5, "darts": 4, "cricket": 4}
+_QUOTA_FAST = {"soccer": 5, "basketball": 3, "hockey": 3, "tennis": 3, "boxing": 3, "mma": 3, "darts": 2, "cricket": 2}
+_QUOTA_DEEP = {"soccer": 12, "basketball": 8, "hockey": 6, "tennis": 10, "boxing": 5, "mma": 5, "darts": 4, "cricket": 4}
 SPORT_QUOTA = _QUOTA_DEEP if DEEP_SCAN else _QUOTA_FAST
 # Telegram report order: highest alpha first
-_SPORT_ORDER = ["basketball", "mma", "darts", "boxing", "cricket", "tennis", "soccer"]
+_SPORT_ORDER = ["basketball", "hockey", "mma", "darts", "boxing", "cricket", "tennis", "soccer"]
 
 # EU market sessions (UTC) — aligns with European bookmaker line movement
 _SESSIONS = {

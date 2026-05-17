@@ -18,6 +18,7 @@ XBET_KEY     = "onexbet"
 # Priority sports first — scanned before secondary leagues
 SPORT_KEYS = {
     # ── PRIORITY ─────────────────────────────────────────────────────
+    "icehockey_nhl":                     "hockey",      # NHL Playoffs — binary, sharp Pinnacle market
     "basketball_nba":                    "basketball",  # NBA Playoffs
     "tennis_atp_masters_1000":           "tennis",      # ATP Masters 1000
     # ── Tennis (clay season + lower tiers) ───────────────────────────
@@ -58,6 +59,7 @@ SPORT_KEYS = {
 # Markets fetched per sport (API supports h2h,spreads,totals in one call)
 _MARKETS_BY_SPORT = {
     "basketball": "h2h,spreads,totals",
+    "hockey":     "h2h,spreads",         # NHL ML + puck line (spreads), no totals needed
     "tennis":     "h2h,totals",          # No spreads market in tennis
     "darts":      "h2h",                 # ML only — no draw in darts
     "cricket":    "h2h",                 # T20 ML only — no draw in T20
@@ -160,7 +162,7 @@ def _parse_event(ev: dict, sport_type: str) -> dict | None:
         "away":          away,
         "league":        ev.get("sport_title", ""),
         "sport":         sport_type,
-        "sport_id":      {"soccer": 1, "tennis": 3, "basketball": 4, "boxing": 5, "darts": 6, "cricket": 7}.get(sport_type, 1),
+        "sport_id":      {"soccer": 1, "tennis": 3, "basketball": 4, "boxing": 5, "darts": 6, "cricket": 7, "hockey": 8}.get(sport_type, 1),
         "commence_time": ev.get("commence_time", ""),
         "odds_1xbet":    xbet_h2h,
         "odds_pinnacle": pin_h2h,
