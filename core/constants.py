@@ -8,6 +8,7 @@ ELITE_EDGE   = 2.5    # % — VALUE / HIGH_VALUE boundary
 MIN_STAKE    = 10     # € — below this Kelly stake, signal is not actionable
 BANKROLL_REF = 1000   # € — reference bankroll for Telegram/Modal stake display
 MAX_EDGE     = 15.0   # % — hard cap; above = data mapping error, reject
+SUSPECT_EDGE = 10.0   # % — safety trigger: major sport edge above this = SUSPECT_DATA
 
 
 def risk_flag(edge_pct: float) -> str:

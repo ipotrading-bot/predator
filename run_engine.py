@@ -24,7 +24,7 @@ from core.paim_engine import (
     compute_alpha, MIN_EDGE, strict_team_match,
     market_label, SHARP_PROB_BY_MARKET,
 )
-from core.constants import ELITE_EDGE as _ELITE_EDGE, kelly_stake as _kelly_stake, risk_flag as _risk_flag
+from core.constants import ELITE_EDGE as _ELITE_EDGE, kelly_stake as _kelly_stake, risk_flag as _risk_flag, SUSPECT_EDGE as _SUSPECT_EDGE
 
 load_dotenv()
 
@@ -52,6 +52,7 @@ TELEGRAM_TOKEN = os.environ.get("TELEGRAM_BOT_TOKEN")
 TELEGRAM_CHAT  = os.environ.get("TELEGRAM_CHAT_ID")
 
 ELITE_EDGE  = _ELITE_EDGE   # % — send Telegram alert (from core.constants)
+_MAJOR_SPORTS = {"soccer", "basketball", "tennis"}   # Sports where edge > SUSPECT_EDGE is flagged
 
 # Fast mode (default): 20 events, tight quota — speed over coverage
 # Deep mode (DEEP_SCAN=1): 100 events, wide quota — 48h full slate
@@ -221,7 +222,21 @@ def _emit(signals, sb, now, log, name, sport, league, mkt_key, mkt_label,
     if sharp_prob <= 0:
         log.info("DISCARD | %s %s | %s — sharp_prob=0 (stale/missing data)", emoji, name, mkt_label)
         return
-    risk = _risk(edge)
+
+    # Safety Trigger: edge > 10% on a major sport is statistically impossible
+    # without a data mapping error — flag SUSPECT_DATA and alert for manual check.
+    if edge > _SUSPECT_EDGE and sport in _MAJOR_SPORTS:
+        risk = "SUSPECT_DATA"
+        log.warning("SUSPECT | %s %s | %s — Edge=+%.2f%% > 10%% — VALIDATION MANUELLE REQUISE",
+                    emoji, name, mkt_label, edge)
+        _telegram(
+            f"⚠️ *SIGNAL SUSPECT* — validation manuelle requise\n"
+            f"{emoji} *{name}* | `{mkt_label} @ {xbet_odd:.2f}`\n"
+            f"Edge *+{edge:.1f}%* > 10% sur {sport} → probable inversion ou erreur de données.\n"
+            f"Vérifier manuellement avant de parier."
+        )
+    else:
+        risk = _risk(edge)
 
     b = xbet_odd - 1
     kelly_full = (sharp_prob * b - (1 - sharp_prob)) / b if b > 0 else 0.0
@@ -268,26 +283,30 @@ def _process_h2h(m, name, sport, league, home, away, emoji, signals, sb, now, lo
         pin_price = m["_oracle_price"]
         xbet_price, _, xbet_fav = to_binary(m["odds_1xbet"], sport, home, away)
         pin_fav = m.get("_oracle_team", "")
+        # Strict Matching: if oracle returned no team name, outcome alignment
+        # is unverifiable — discard rather than risk a cross-outcome comparison.
+        if not pin_fav:
+            log.info("DISCARD | %s %s — oracle team unknown, outcome alignment unverifiable", emoji, name)
+            return
         sharp_prob = 1.0  # Oracle already filtered
     else:
         xbet_price, _, xbet_fav = to_binary(m["odds_1xbet"], sport, home, away)
-        pin_price,  _, pin_fav  = to_binary(m.get("odds_pinnacle", {}), sport, home, away)
-        # Pinnacle devigged probability from raw h2h odds
+        # Strict Matching: lock Pinnacle lookup to the same position as 1XBet
+        # (fav_key "1"=home, "2"=away). Never run to_binary() on Pinnacle
+        # independently — it could pick a different favourite and silently
+        # compare Como's 1XBet odd against Parma's Pinnacle odd.
+        fav_key = "1" if xbet_fav == home else "2"
+        opp_key = "2" if fav_key == "1" else "1"
         po = m.get("odds_pinnacle", {})
         if sport == "soccer":
             from core.math_engine import calc_dnb
-            dnb_o = calc_dnb(
-                po.get("1", 0) if xbet_fav == home else po.get("2", 0),
-                po.get("X", 0)
-            )
-            dnb_other = calc_dnb(
-                po.get("2", 0) if xbet_fav == home else po.get("1", 0),
-                po.get("X", 0)
-            )
-            sharp_prob = devig_prob(dnb_o, dnb_other)
+            pin_price = calc_dnb(float(po.get(fav_key, 0) or 0), float(po.get("X", 0) or 0))
+            dnb_other = calc_dnb(float(po.get(opp_key, 0) or 0), float(po.get("X", 0) or 0))
+            sharp_prob = devig_prob(pin_price, dnb_other)
         else:
-            p1, p2 = po.get("1", 0), po.get("2", 0)
-            sharp_prob = devig_prob(p1, p2) if xbet_fav == home else devig_prob(p2, p1)
+            pin_price  = float(po.get(fav_key, 0) or 0)
+            sharp_prob = devig_prob(pin_price, float(po.get(opp_key, 0) or 0))
+        pin_fav = xbet_fav  # Same outcome guaranteed — no cross-book mismatch possible
 
     if xbet_price <= 1.01 or pin_price <= 1.01:
         return
