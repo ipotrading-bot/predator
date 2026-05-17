@@ -120,8 +120,6 @@ _OPTIONAL_COLS = {"selection_name", "kelly_pct", "advice", "sharp_sources", "con
 def _save(sb, signal) -> bool:
     """Delete-then-insert to avoid duplicates. Returns True on success."""
     payload = dict(signal)
-    # Delete by match_id+market_key first (most precise), then fallback to match+market
-    # No status filter — replaces stale signals from all previous scans
     mid  = payload.get("match_id", "")
     mkey = payload.get("market_key", "")
     try:
@@ -130,15 +128,18 @@ def _save(sb, signal) -> bool:
         else:
             sb.table("signals").delete().eq("match", payload["match"]).eq("market", payload.get("market", "")).execute()
     except Exception:
-        pass  # Non-fatal — insert will still proceed
+        pass
     try:
         sb.table("signals").insert(payload).execute()
         return True
     except Exception as e:
-        if any(c in str(e) for c in _OPTIONAL_COLS):
+        err = str(e)
+        # Graceful fallback: strip optional columns if any are missing from DB schema
+        if "does not exist" in err or "column" in err.lower():
             core = {k: v for k, v in payload.items() if k not in _OPTIONAL_COLS}
             try:
                 sb.table("signals").insert(core).execute()
+                log.warning("Supabase insert (stripped optional cols): %s", err[:120])
                 return True
             except Exception as e2:
                 log.error("Supabase insert: %s", e2)
@@ -238,22 +239,8 @@ def _purge_old_signals(sb):
         log.info("Purged: legacy soccer Moneyline")
     except Exception as e:
         log.error("Supabase purge (soccer Moneyline): %s", e)
-    try:
-        sb.table("signals").delete().eq("sport", "boxing").lt("match_time", datetime.now(timezone.utc).isoformat()).execute()
-        log.info("Purged: past boxing matches")
-    except Exception as e:
-        log.error("Supabase purge (past boxing): %s", e)
-    try:
-        sb.table("signals").delete().eq("sport", "mma").lt("match_time", datetime.now(timezone.utc).isoformat()).execute()
-        log.info("Purged: past MMA fights")
-    except Exception as e:
-        log.error("Supabase purge (past MMA): %s", e)
-    for _dead_sport in ("darts", "cricket"):
-        try:
-            sb.table("signals").delete().eq("sport", _dead_sport).lt("match_time", datetime.now(timezone.utc).isoformat()).execute()
-            log.info("Purged: past %s events", _dead_sport)
-        except Exception as e:
-            log.error("Supabase purge (past %s): %s", _dead_sport, e)
+    # sport-specific past-match purges removed — already covered by global
+    # "delete where status=active AND match_time < now" above
 
 
 def _risk(edge_pct: float) -> str:

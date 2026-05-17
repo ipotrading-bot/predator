@@ -241,7 +241,7 @@ def ledger():
                         sb.table("meta").upsert({
                             "key":   f"threshold_{sport}",
                             "value": str(new_t),
-                        }).execute()
+                        }, on_conflict="key").execute()
                         log.info("Ledger: threshold %s → %.1f%%", sport, new_t)
                     except Exception as e:
                         log.warning("Ledger threshold update %s: %s", sport, e)
@@ -350,7 +350,7 @@ def worldcup():
     try:
         sb = _db()
         if sb:
-            res = sb.table("signals").select("*").order("created_at", desc=True).limit(200).execute()
+            res = sb.table("signals").select("*").neq("status", "expired").order("created_at", desc=True).limit(200).execute()
             raw = res.data or []
             signals = sorted(
                 [s for s in raw if _is_wc_signal(s)],
@@ -371,7 +371,7 @@ def api_worldcup():
         sb = _db()
         if not sb:
             return jsonify({"error": "no db"}), 503
-        res = sb.table("signals").select("*").order("created_at", desc=True).limit(200).execute()
+        res = sb.table("signals").select("*").neq("status", "expired").order("created_at", desc=True).limit(200).execute()
         raw = res.data or []
         wc  = [s for s in raw if _is_wc_signal(s)]
         return jsonify(wc)
@@ -387,7 +387,7 @@ def api_signals():
         sb = _db()
         if not sb:
             return jsonify({"error": "no db"}), 503
-        res = sb.table("signals").select("*").order("created_at", desc=True).limit(50).execute()
+        res = sb.table("signals").select("*").neq("status", "expired").order("created_at", desc=True).limit(50).execute()
         return jsonify(res.data or [])
     except Exception as e:
         return jsonify({"error": str(e)}), 500
