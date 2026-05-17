@@ -41,5 +41,8 @@ jobs:
           SUPABASE_KEY:       ${{ secrets.SUPABASE_KEY }}
           TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
           TELEGRAM_CHAT_ID:   ${{ secrets.TELEGRAM_CHAT_ID }}
+          BETFAIR_APP_KEY:    ${{ secrets.BETFAIR_APP_KEY }}
+          BETFAIR_USERNAME:   ${{ secrets.BETFAIR_USERNAME }}
+          BETFAIR_PASSWORD:   ${{ secrets.BETFAIR_PASSWORD }}
           DEEP_SCAN:          "1"
         run: python run_engine.py
