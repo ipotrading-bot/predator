@@ -15,7 +15,7 @@ import requests
 from dotenv import load_dotenv
 from supabase import create_client
 
-from core.harvester import fetch_matches, fetch_pinnacle_prices, fetch_estimated_prices, fetch_mma_events, fetch_esports_events, fetch_alternative_sports_batch
+from core.harvester import fetch_matches, fetch_pinnacle_prices, fetch_estimated_prices, fetch_mma_events, fetch_esports_events, fetch_alternative_sports_batch, fetch_betfair_prices
 from core.math_engine import to_binary, devig_prob
 from core.odds_api import fetch_odds
 from core.oracle import get_pinnacle_price
@@ -581,6 +581,44 @@ def run():
     if alt_events:
         matches = (matches or []) + alt_events
         log.info("🏓🏐🤾 Sports alternatifs OK — %d matchs", len(alt_events))
+
+    # ── Tier 1.5: Betfair Exchange (sharp prices peer-to-peer) ─────────
+    # Activé uniquement si BETFAIR_APP_KEY est configuré.
+    # Enrichit les matchs dont les prix Pinnacle viennent de l'estimateur Gemini
+    # en les remplaçant par des prix Betfair (0% marge avant commission 5%).
+    betfair_prices: dict = {}
+    if os.environ.get("BETFAIR_APP_KEY"):
+        log.info("💹 Tier 1.5 — Betfair Exchange (commission -5%%)...")
+        betfair_prices = fetch_betfair_prices(
+            sports=["soccer", "tennis", "basketball", "hockey", "mma", "cricket"],
+            hours_ahead=hours_ahead,
+        )
+        if betfair_prices:
+            log.info("💹 Betfair OK — %d marchés Betfair chargés", len(betfair_prices))
+            enriched = 0
+            for m in matches:
+                if not m.get("_estimated"):
+                    continue
+                h   = m.get("home", "").lower().strip()
+                a   = m.get("away", "").lower().strip()
+                bf  = betfair_prices.get(f"{h}_{a}")
+                if not bf:
+                    # Essai inversé (away_home)
+                    bf_r = betfair_prices.get(f"{a}_{h}")
+                    if bf_r:
+                        bf = {"1": bf_r["2"], "X": bf_r["X"], "2": bf_r["1"]}
+                if bf and bf.get("1", 0) > 1.01 and bf.get("2", 0) > 1.01:
+                    m["odds_pinnacle"] = {"1": bf["1"], "X": bf.get("X", 0.0), "2": bf["2"]}
+                    m["_betfair"]      = True
+                    m.pop("_estimated", None)
+                    enriched += 1
+                    log.info("💹 Betfair enrichi — %s (%.2f / %.2f)", m["match"], bf["1"], bf["2"])
+            if enriched:
+                log.info("💹 Betfair: %d matchs enrichis (remplace estimateur Gemini)", enriched)
+                if sharp_source == "Gemini/Estimateur":
+                    sharp_source = "Betfair+Gemini"
+        else:
+            log.info("💹 Betfair: 0 marchés (marché vide ou hors session)")
 
     # ── Tier 2: Gemini + Google Search — DISABLED (trop lent) ───────
     # Saute directement en Tier 3 (Estimateur) si Tier 1 vide

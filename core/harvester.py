@@ -12,6 +12,7 @@ import json
 import time
 import random
 import requests
+from datetime import datetime, timedelta, timezone
 
 from core.paim_engine import SPORT_LABELS, strict_team_match
 
@@ -723,3 +724,181 @@ def fetch_alternative_sports_batch() -> list[dict]:
     log.info("AltSports/Gemini: %d matchs — %s",
              len(events), " | ".join(f"{s}={n}" for s, n in counts.items()))
     return events
+
+
+# ── Betfair Exchange (Tier 1.5 — sharp prices peer-to-peer) ──────────
+
+_BETFAIR_LOGIN_URL  = "https://identitysso.betfair.com/api/login"
+_BETFAIR_API_URL    = "https://api.betfair.com/exchange/betting/rest/v1.0"
+_BETFAIR_COMMISSION = 0.05   # Standard 5% commission on net winnings
+
+_BETFAIR_EVENT_TYPES: dict[str, str] = {
+    "soccer":           "1",
+    "tennis":           "2",
+    "basketball":       "7522",
+    "cricket":          "4",
+    "rugby":            "451485",
+    "boxing":           "6",
+    "mma":              "26420387",
+    "hockey":           "7524",
+    "americanfootball": "6423",
+    "darts":            "3503",
+    "baseball":         "7511",
+}
+
+_betfair_session: dict = {}
+
+
+def _betfair_login() -> bool:
+    username = os.environ.get("BETFAIR_USERNAME", "")
+    password = os.environ.get("BETFAIR_PASSWORD", "")
+    app_key  = os.environ.get("BETFAIR_APP_KEY",  "")
+    if not all([username, password, app_key]):
+        return False
+    try:
+        r = requests.post(
+            _BETFAIR_LOGIN_URL,
+            data={"username": username, "password": password},
+            headers={
+                "Content-Type":  "application/x-www-form-urlencoded",
+                "Accept":        "application/json",
+                "X-Application": app_key,
+            },
+            timeout=15,
+        )
+        data = r.json()
+        if data.get("status") == "SUCCESS":
+            _betfair_session["token"]   = data["token"]
+            _betfair_session["app_key"] = app_key
+            log.info("Betfair: session ouverte")
+            return True
+        log.warning("Betfair login: %s", data.get("error", "FAILED"))
+        return False
+    except Exception as e:
+        log.error("Betfair login: %s", e)
+        return False
+
+
+def _bf_request(endpoint: str, body: dict):
+    token   = _betfair_session.get("token",   "")
+    app_key = _betfair_session.get("app_key", "")
+    if not token:
+        return None
+    try:
+        r = requests.post(
+            f"{_BETFAIR_API_URL}/{endpoint}/",
+            json=body,
+            headers={
+                "X-Authentication": token,
+                "X-Application":    app_key,
+                "Content-Type":     "application/json",
+                "Accept":           "application/json",
+            },
+            timeout=20,
+        )
+        return r.json() if r.status_code == 200 else None
+    except Exception as e:
+        log.error("Betfair %s: %s", endpoint, e)
+        return None
+
+
+def fetch_betfair_prices(sports: list = None, hours_ahead: int = 48) -> dict:
+    """
+    Betfair Exchange Tier 1.5 — back prices for Win/MATCH_ODDS markets.
+    Returns {norm_key: {"match": str, "home": str, "away": str,
+                        "1": float, "X": float, "2": float}}
+    norm_key = "home_lower_away_lower" for fuzzy lookup.
+    Prices are commission-adjusted (×0.95 on profit) — comparable to Pinnacle closing lines.
+    Returns {} when BETFAIR_APP_KEY is not set or login fails.
+    """
+    if not os.environ.get("BETFAIR_APP_KEY"):
+        return {}
+    if not _betfair_session.get("token"):
+        if not _betfair_login():
+            return {}
+
+    if sports is None:
+        sports = ["soccer", "tennis", "basketball", "hockey", "mma", "cricket"]
+
+    event_type_ids = [_BETFAIR_EVENT_TYPES[s] for s in sports if s in _BETFAIR_EVENT_TYPES]
+    if not event_type_ids:
+        return {}
+
+    now   = datetime.now(timezone.utc)
+    until = now + timedelta(hours=hours_ahead)
+
+    catalogue = _bf_request("listMarketCatalogue", {
+        "filter": {
+            "eventTypeIds":    event_type_ids,
+            "marketTypeCodes": ["MATCH_ODDS"],
+            "marketStartTime": {
+                "from": now.strftime("%Y-%m-%dT%H:%M:%SZ"),
+                "to":   until.strftime("%Y-%m-%dT%H:%M:%SZ"),
+            },
+            "inPlayOnly": False,
+        },
+        "maxResults":       "50",
+        "marketProjection": ["RUNNER_DESCRIPTION", "EVENT"],
+        "sort":             "FIRST_TO_START",
+    })
+
+    if not catalogue:
+        log.info("Betfair: 0 marchés retournés")
+        return {}
+
+    market_ids = [m["marketId"] for m in catalogue][:25]
+    books = _bf_request("listMarketBook", {
+        "marketIds":       market_ids,
+        "priceProjection": {
+            "priceData":             ["EX_BEST_OFFERS"],
+            "exBestOffersOverrides": {"bestPricesDepth": 1},
+        },
+    })
+
+    if not books:
+        return {}
+
+    cat_map = {m["marketId"]: m for m in catalogue}
+    result: dict = {}
+
+    for book in books:
+        try:
+            mid      = book["marketId"]
+            cat_desc = cat_map.get(mid, {}).get("runners", [])
+            names    = {r["selectionId"]: r.get("runnerName", "?") for r in cat_desc}
+
+            prices: dict[str, float] = {}
+            for runner in book.get("runners", []):
+                sid   = runner["selectionId"]
+                rname = names.get(sid, "?")
+                backs = runner.get("ex", {}).get("availableToBack", [])
+                if backs and float(backs[0].get("price", 0)) > 1.01:
+                    raw = float(backs[0]["price"])
+                    # Commission-adjust so price is net of 5% Betfair fee
+                    prices[rname] = round(1 + (raw - 1) * (1 - _BETFAIR_COMMISSION), 4)
+
+            if len(prices) < 2:
+                continue
+
+            draw_price = next((p for n, p in prices.items() if "draw" in n.lower()), 0.0)
+            teams      = [(n, p) for n, p in prices.items() if "draw" not in n.lower()]
+            if len(teams) < 2:
+                continue
+
+            home_name, home_p = teams[0]
+            away_name, away_p = teams[1]
+            norm_key = f"{home_name.lower().strip()}_{away_name.lower().strip()}"
+
+            result[norm_key] = {
+                "match": f"{home_name} vs {away_name}",
+                "home":  home_name,
+                "away":  away_name,
+                "1":     home_p,
+                "X":     draw_price,
+                "2":     away_p,
+            }
+        except Exception:
+            continue
+
+    log.info("Betfair: %d marchés avec prix (commission -5%%)", len(result))
+    return result
