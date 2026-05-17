@@ -84,7 +84,7 @@ def dashboard():
     try:
         sb = _db()
         if sb:
-            res = sb.table("signals").select("*").order("created_at", desc=True).limit(200).execute()
+            res = sb.table("signals").select("*").neq("status", "expired").order("created_at", desc=True).limit(200).execute()
             raw = res.data or []
 
             # Deduplicate: keep NEWEST signal per (match_id, market_key).

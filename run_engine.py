@@ -173,11 +173,10 @@ def _purge_old_signals(sb):
     except Exception as e:
         log.error("Supabase purge (pending): %s", e)
     try:
-        # Mark as expired (not deleted) → feeds audit pipeline + Ledger CLV
-        sb.table("signals").update({"status": "expired"}).eq("status", "active").lt("match_time", now_iso).execute()
-        log.info("Expired: active signals with match_time in the past → audit queue")
+        sb.table("signals").delete().eq("status", "active").lt("match_time", now_iso).execute()
+        log.info("Purged: past matches (match_time < now)")
     except Exception as e:
-        log.error("Supabase expire (past match_time): %s", e)
+        log.error("Supabase purge (past match_time): %s", e)
 
     # ── Age-based purge — keep last 48h only ──────────────────────────
     try:
