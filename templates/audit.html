@@ -197,6 +197,38 @@ td { padding: 8px 12px; vertical-align: middle; font-size: 11px; }
 .st-closed { color: var(--green); background: rgba(0,224,58,.06); border: 1px solid rgba(0,224,58,.15); }
 .st-other  { color: var(--t2);    background: var(--bg2);          border: 1px solid var(--bd); }
 
+/* ─── GLOBAL KPI BAR ──────────────────────────── */
+.kpi-bar {
+  display: flex; gap: 6px; margin-bottom: 12px; flex-wrap: wrap;
+}
+.kpi-card {
+  flex: 1; min-width: 100px;
+  background: var(--bg1); border: 1px solid var(--bd);
+  border-radius: var(--r); padding: 10px 12px;
+  display: flex; flex-direction: column; gap: 3px;
+}
+.kpi-card.primary { border-color: var(--blue); background: rgba(0,180,230,.04); }
+.kpi-val  { font-size: 20px; font-weight: 700; line-height: 1; }
+.kpi-lbl  { font-size: 8px; color: var(--t2); letter-spacing: 1px; text-transform: uppercase; }
+.kpi-sub  { font-size: 9px; color: var(--t3); margin-top: 2px; }
+.kv-green  { color: var(--green); }
+.kv-yellow { color: var(--yellow); }
+.kv-red    { color: var(--red); }
+.kv-blue   { color: var(--blue); }
+.kv-gray   { color: var(--t2); }
+
+/* RUN AUDIT button */
+#auditBtn {
+  height: 30px; padding: 0 13px;
+  background: rgba(0,180,230,.06);
+  border: 1px solid rgba(0,180,230,.22); border-radius: 5px;
+  color: var(--blue); font-family: var(--font);
+  font-size: 9px; font-weight: 700; letter-spacing: 1.5px;
+  cursor: pointer; transition: all .15s; white-space: nowrap;
+}
+#auditBtn:hover { background: rgba(0,180,230,.13); border-color: var(--blue); }
+@media (max-width: 639px) { #auditBtn { display: none; } }
+
 /* ─── EMPTY ───────────────────────────────────── */
 .empty { text-align: center; padding: 80px 20px; color: var(--t2); font-size: 11px; line-height: 2.6; }
 .empty-icon { font-size: 36px; color: var(--t3); margin-bottom: 12px; }
@@ -220,6 +252,7 @@ footer { display: none; }
   </div>
   <div class="nav-right">
     <span id="clock">—</span>
+    <button id="auditBtn" onclick="triggerAudit()">&#9654; AUDIT</button>
   </div>
 </nav>
 
@@ -230,6 +263,55 @@ footer { display: none; }
     <div class="page-title">&#9632; AUDIT CLV &mdash; CERVEAU STATISTIQUE</div>
     <div class="page-sub">v8.5 &middot; Closing Line Value par sport &middot; Indicateur de sant&eacute; n&deg;1 &middot; CLV &gt; 0 = alpha r&eacute;el captur&eacute;</div>
   </div>
+
+  <!-- ── GLOBAL KPI BAR ─────────────────────────── -->
+  {% if global_stats %}
+  <div class="kpi-bar">
+
+    <div class="kpi-card primary">
+      {% if global_stats.hit_rate is not none %}
+        <div class="kpi-val {% if global_stats.hit_rate >= 55 %}kv-green{% elif global_stats.hit_rate >= 45 %}kv-yellow{% else %}kv-red{% endif %}">
+          {{ global_stats.hit_rate }}%
+        </div>
+      {% else %}
+        <div class="kpi-val kv-gray">—</div>
+      {% endif %}
+      <div class="kpi-lbl">Hit Rate</div>
+      <div class="kpi-sub">{{ global_stats.wins or 0 }}W · {{ global_stats.losses or 0 }}L · {{ global_stats.pushes or 0 }}P</div>
+    </div>
+
+    <div class="kpi-card">
+      {% if global_stats.avg_clv is not none %}
+        <div class="kpi-val {% if global_stats.avg_clv >= 1.5 %}kv-green{% elif global_stats.avg_clv >= 0 %}kv-yellow{% else %}kv-red{% endif %}">
+          {{ '+' if global_stats.avg_clv > 0 else '' }}{{ global_stats.avg_clv }}%
+        </div>
+      {% else %}
+        <div class="kpi-val kv-gray">—</div>
+      {% endif %}
+      <div class="kpi-lbl">CLV Moyenne</div>
+      <div class="kpi-sub">{{ global_stats.total or 0 }} signaux audités</div>
+    </div>
+
+    <div class="kpi-card">
+      {% if global_stats.brier is not none %}
+        <div class="kpi-val {% if global_stats.brier <= 0.15 %}kv-green{% elif global_stats.brier <= 0.25 %}kv-yellow{% else %}kv-red{% endif %}">
+          {{ global_stats.brier }}
+        </div>
+      {% else %}
+        <div class="kpi-val kv-gray">—</div>
+      {% endif %}
+      <div class="kpi-lbl">Brier Score</div>
+      <div class="kpi-sub">&lt;0.15 = précision élite · 0 = parfait</div>
+    </div>
+
+    <div class="kpi-card">
+      <div class="kpi-val kv-blue">{{ global_stats.settled or 0 }}</div>
+      <div class="kpi-lbl">Settled</div>
+      <div class="kpi-sub">{{ global_stats.total or 0 }} total audités</div>
+    </div>
+
+  </div>
+  {% endif %}
 
 {% if audit_data %}
 
@@ -435,6 +517,21 @@ footer { display: none; }
   document.getElementById('clock').textContent = new Date().toISOString().slice(11,16)+' UTC';
   setTimeout(tick,1000);
 })();
+
+async function triggerAudit(){
+  const btn = document.getElementById('auditBtn');
+  if(!btn) return;
+  btn.textContent = '⏳'; btn.disabled = true; btn.style.opacity = '.5';
+  try {
+    const r = await fetch('/api/audit/run', {method:'POST'});
+    if(r.ok){ btn.textContent = '✓ OK'; }
+    else     { btn.textContent = '✗ ERR'; btn.style.color = 'var(--red)'; }
+  } catch(e){ btn.textContent = '✗ NET'; btn.style.color = 'var(--red)'; }
+  setTimeout(()=>{
+    btn.disabled=false; btn.style.opacity='1'; btn.style.color='';
+    btn.textContent='▶ AUDIT';
+  }, 4000);
+}
 </script>
 </body>
 </html>
