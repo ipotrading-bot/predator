@@ -17,75 +17,32 @@ XBET_KEY     = "onexbet"
 CIRCA_KEY    = "circa"        # Circa Sports — sharp US book
 CRIS_KEY     = "bookmaker"    # Bookmaker.eu — CRIS network
 
-# Priority sports first — scanned before secondary leagues
+# ── Quota-lean sport keys — valid until 2026-06-01 ────────────────────
+# Budget: 500 req/month, 14 days remaining → max 35 req/day.
+# 12 keys × 3 scans/day = 36/day → 504 total (quota guard stops at 15 remaining).
+# Only keys active in May–June and historically producing signals.
 SPORT_KEYS = {
-    # ── PRIORITY ─────────────────────────────────────────────────────
-    "icehockey_nhl":                     "hockey",      # NHL Playoffs — binary, sharp Pinnacle market
+    # ── North America Playoffs (binary, peak lag) ─────────────────────
+    "icehockey_nhl":                     "hockey",      # NHL Playoffs — Conference Finals + Cup
     "basketball_nba":                    "basketball",  # NBA Playoffs
-    "tennis_atp_masters_1000":           "tennis",      # ATP Masters 1000
-    # ── Tennis (clay season + lower tiers) ───────────────────────────
+    "baseball_mlb":                      "baseball",    # Regular season
+    # ── European Cups (Finals window May 21 / 28 / 31) ───────────────
+    "soccer_uefa_champs_league":         "soccer",      # CL Final 2026-05-31
+    "soccer_uefa_europa_league":         "soccer",      # EL Final 2026-05-21
+    "soccer_uefa_conference_league":     "soccer",      # ECL Final 2026-05-28
+    # ── South America (highest lag Pinnacle → 1XBet) ─────────────────
+    "soccer_conmebol_copa_libertadores": "soccer",      # Copa Lib — most productive
+    "soccer_brazil_campeonato":          "soccer",      # Brasileirão Serie A
+    "soccer_argentina_primera_division": "soccer",      # Argentine Primera
+    # ── EPL (season finale) ──────────────────────────────────────────
+    "soccer_epl":                        "soccer",      # Final matchday ~2026-05-19
+    # ── Roland Garros (starts 2026-05-25) ────────────────────────────
     "tennis_atp_french_open":            "tennis",
     "tennis_wta_french_open":            "tennis",
-    "tennis_atp_roland_garros":          "tennis",
-    "tennis_wta_roland_garros":          "tennis",
-    "tennis_atp_italian_open":           "tennis",
-    "tennis_wta_italian_open":           "tennis",
-    "tennis_atp_500":                    "tennis",      # ATP 500 (Hamburg, Vienna…)
-    "tennis_atp_250":                    "tennis",      # ATP 250 — more lag on soft books
-    "tennis_wta_500":                    "tennis",      # WTA 500
-    "tennis_wta_250":                    "tennis",      # WTA 250
-    "tennis_challenger_tour":            "tennis",      # Challenger — highest lag
-    # ── Darts (PDC) ──────────────────────────────────────────────────
-    "darts_betway_premier_league":       "darts",       # PDC Premier League Darts
-    "darts_master":                      "darts",       # Masters / other PDC
-    # ── Cricket (T20 only — no draw) ─────────────────────────────────
-    "cricket_ipl":                       "cricket",     # IPL T20
-    "cricket_international_t20":         "cricket",     # International T20s
-    # ── American Football (NFL) ──────────────────────────────────────
-    "americanfootball_nfl":              "americanfootball",
-    "americanfootball_ncaaf":            "americanfootball",
-    # ── Baseball (MLB) ───────────────────────────────────────────────
-    "baseball_mlb":                      "baseball",
-    # ── Rugby ────────────────────────────────────────────────────────
-    "rugbyunion_premiership":            "rugby",
-    "rugbyunion_super_rugby":            "rugby",
-    "rugbyleague_nrl":                   "rugby",
-    # ── Volleyball ───────────────────────────────────────────────────
-    "volleyball_womens_world_championship": "volleyball",
-    # ── Boxing ───────────────────────────────────────────────────────
-    "boxing_boxing":                     "boxing",
-    # ── Soccer ───────────────────────────────────────────────────────
-    "soccer_fifa_world_cup":             "soccer",      # FIFA WC 2026 — priority over club leagues
-    "soccer_uefa_champs_league":         "soccer",
-    "soccer_uefa_europa_league":         "soccer",
-    "soccer_uefa_conference_league":     "soccer",
-    "soccer_epl":                        "soccer",
-    "soccer_spain_la_liga":              "soccer",
-    "soccer_italy_serie_a":              "soccer",
-    "soccer_france_ligue_one":           "soccer",
-    "soccer_germany_bundesliga":         "soccer",
-    "soccer_netherlands_eredivisie":     "soccer",
-    "soccer_portugal_primeira_liga":     "soccer",
-    "soccer_turkey_super_league":        "soccer",
-    # ── Soccer — Amériques (fort lag Pinnacle → 1XBet) ───────────────
-    "soccer_brazil_campeonato":          "soccer",   # Brasileirão Serie A
-    "soccer_argentina_primera_division": "soccer",   # Argentine Primera
-    "soccer_conmebol_copa_libertadores": "soccer",   # Copa Libertadores
-    "soccer_mexico_ligamx":              "soccer",   # Liga MX
-    "soccer_usa_mls":                    "soccer",   # MLS
-    # ── Soccer — Asie / Océanie ───────────────────────────────────────
-    "soccer_korea_kleague1":             "soccer",   # K League 1
-    "soccer_japan_j_league":             "soccer",   # J-League
-    "soccer_australia_aleague":          "soccer",   # A-League
-    # ── Soccer — Autres compétitions européennes ──────────────────────
-    "soccer_belgium_first_div":          "soccer",   # Jupiler Pro League
-    "soccer_scotland_premiership":       "soccer",   # SPFL Premiership
-    "soccer_greece_super_league":        "soccer",   # Super League Greece
-    "soccer_czech_republic_liga":        "soccer",   # Czech First League
-    "soccer_poland_ekstraklasa":         "soccer",   # Ekstraklasa
-    # ── Basketball — Europe ───────────────────────────────────────────
-    "basketball_euroleague":             "basketball",  # EuroLeague
 }
+
+# Full sport keys — restore after upgrading OddsAPI plan (need ≥ 30k req/month)
+# _SPORT_KEYS_FULL = {49 keys — see git history}
 
 # Markets fetched per sport (API supports h2h,spreads,totals in one call)
 _MARKETS_BY_SPORT = {
@@ -252,7 +209,11 @@ def fetch_odds(api_key: str = None, hours_ahead: int = 24,
     time_to   = until.strftime("%Y-%m-%dT%H:%M:%SZ")
 
     all_events = []
+    quota_remaining = 9999  # updated after first successful response
     for sport_key, sport_type in keys_to_scan.items():
+        if quota_remaining < 15:
+            log.warning("OddsAPI quota guard — %d remaining, stopping scan early", quota_remaining)
+            break
         markets = _MARKETS_BY_SPORT.get(sport_type, "h2h")
         url = f"{BASE_URL}/sports/{sport_key}/odds/"
         params = {
@@ -268,6 +229,10 @@ def fetch_odds(api_key: str = None, hours_ahead: int = 24,
             r = requests.get(url, params=params, timeout=15)
             remaining = r.headers.get("x-requests-remaining", "?")
             used      = r.headers.get("x-requests-used", "?")
+            try:
+                quota_remaining = int(remaining)
+            except (ValueError, TypeError):
+                pass
 
             if r.status_code == 404:
                 continue  # Not in season

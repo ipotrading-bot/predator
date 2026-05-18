@@ -1,20 +1,22 @@
 name: Predator Engine
 
-# All cron times are UTC/GMT — GitHub Actions runs on UTC.
+# QUOTA MODE — active until 2026-06-01
+# OddsAPI budget: 500 req/month → max 35 req/day (12 lean keys × 3 scans = 36/day)
+# Quota guard in odds_api.py stops scan if remaining < 15.
 #
-# EU MARKET WINDOW  06:00–21:30 UTC — every 30 min
-#   └ 06:00 UTC = European bookmaker lines refresh (max inefficiency)
-#   └ 06:00–11:59 UTC = EU-OPEN  : fresh pre-match lines
-#   └ 12:00–17:59 UTC = EU-MID   : afternoon fixtures
-#   └ 18:00–21:30 UTC = EU-CLOSE : prime-time kickoffs
+# 10:00 UTC — EU morning  : Copa Libertadores overnight + EU pre-match lines
+# 17:00 UTC — EU prime    : Top EU fixtures, NBA/NHL approaching
+# 22:00 UTC — US evening  : NBA/NHL tip-off window, SA evening games
 #
-# NBA OVERNIGHT     00:00–05:00 UTC — hourly
-#   └ Covers US evening slate (EST-5h = UTC): tip-offs 17:00–02:00 ET
+# RESTORE after OddsAPI upgrade (≥ 30k req/month plan):
+#   - cron: '*/30 6-22 * * *'
+#   - cron: '0 0-5 * * *'
 
 on:
   schedule:
-    - cron: '*/30 6-22 * * *'   # EU market window — every 30 min, 06:00–22:30 UTC (WC 18h ET = 22h UTC)
-    - cron: '0 0-5 * * *'       # NBA overnight window — hourly, 00:00–05:00 UTC
+    - cron: '0 10 * * *'   # EU morning scan    — 10:00 UTC
+    - cron: '0 17 * * *'   # EU prime-time scan — 17:00 UTC
+    - cron: '0 22 * * *'   # US evening scan    — 22:00 UTC (NBA/NHL tip-off)
   workflow_dispatch:
 
 env:
