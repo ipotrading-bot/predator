@@ -268,7 +268,7 @@ def audit():
             # ── Active signals — always available ─────────────────────
             try:
                 act_res = (sb.table("signals")
-                           .select("sport,edge_pct,sharp_prob,kelly_pct,signal_tier,scanned_at,match,market,selection_name,odd_soft,odd_sharp")
+                           .select("sport,edge_pct,sharp_prob,kelly_pct,risk_flag,scanned_at,match,market,selection_name,xbet_odd,pinnacle_price")
                            .eq("status", "active")
                            .order("scanned_at", desc=True)
                            .limit(300)
@@ -300,7 +300,7 @@ def audit():
                     continue
                 tiers = {"HIGH_VALUE": 0, "VALUE": 0, "LOW_VALUE": 0}
                 for r in sport_rows:
-                    t = r.get("signal_tier") or "LOW_VALUE"
+                    t = r.get("risk_flag") or "LOW_VALUE"
                     if t in tiers:
                         tiers[t] += 1
                 audit_data[sport] = {
@@ -341,9 +341,9 @@ def audit():
                 all_edges = [r["edge_pct"] for r in active_rows if r.get("edge_pct")]
                 global_stats["total"]        = len(active_rows)
                 global_stats["avg_edge"]     = round(sum(all_edges) / len(all_edges), 2) if all_edges else 0
-                global_stats["high_value"]   = sum(1 for r in active_rows if r.get("signal_tier") == "HIGH_VALUE")
-                global_stats["value"]        = sum(1 for r in active_rows if r.get("signal_tier") == "VALUE")
-                global_stats["low_value"]    = sum(1 for r in active_rows if r.get("signal_tier") == "LOW_VALUE")
+                global_stats["high_value"]   = sum(1 for r in active_rows if r.get("risk_flag") == "HIGH_VALUE")
+                global_stats["value"]        = sum(1 for r in active_rows if r.get("risk_flag") == "VALUE")
+                global_stats["low_value"]    = sum(1 for r in active_rows if r.get("risk_flag") == "LOW_VALUE")
                 global_stats["sports_count"] = len(audit_data)
                 global_stats["has_clv"]      = bool(clv_rows)
 

@@ -33,6 +33,7 @@
   <div class="nav-pages">
     <a href="/" class="on">ACCUEIL</a>
     <a href="/ledger">BILAN</a>
+    <a href="/audit">AUDIT</a>
     <a href="/worldcup">⚽ WC 2026</a>
   </div>
   {% set elites = signals | selectattr('risk_flag', 'in', ['HIGH_VALUE','VALUE']) | list %}
@@ -180,6 +181,10 @@
   <a href="/ledger">
     <svg viewBox="0 0 24 24"><path d="M9 5H7a2 2 0 00-2 2v12a2 2 0 002 2h10a2 2 0 002-2V7a2 2 0 00-2-2h-2M9 5a2 2 0 002 2h2a2 2 0 002-2M9 5a2 2 0 012-2h2a2 2 0 012 2M12 12h4m-4 4h4m-8-4h.01m-.01 4h.01"/></svg>
     Bilan
+  </a>
+  <a href="/audit">
+    <svg viewBox="0 0 24 24"><polyline points="22 12 18 12 15 21 9 3 6 12 2 12"/></svg>
+    Audit
   </a>
   <a href="/worldcup">
     <svg viewBox="0 0 24 24"><circle cx="12" cy="12" r="10"/><path d="M12 2a15.3 15.3 0 0 1 4 10 15.3 15.3 0 0 1-4 10 15.3 15.3 0 0 1-4-10 15.3 15.3 0 0 1 4-10z"/><line x1="2" y1="12" x2="22" y2="12"/></svg>

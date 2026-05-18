@@ -88,6 +88,34 @@ def _update_signal(sb, sig: dict, payload: dict):
             log.error("Insert signal %s: %s", sig_id, e)
 
 
+def _log_to_ledger(sb, sig: dict, clv: float, outcome: str):
+    match_time = sig.get("match_time")
+    scanned_at = sig.get("scanned_at")
+    ttm = None
+    if match_time and scanned_at:
+        try:
+            mt = datetime.fromisoformat(match_time.replace("Z", "+00:00"))
+            sc = datetime.fromisoformat(scanned_at.replace("Z", "+00:00"))
+            ttm = int((mt - sc).total_seconds() / 60)
+        except Exception:
+            pass
+    try:
+        sb.table("ai_learning_ledger").insert({
+            "match":                 sig["match"],
+            "sport":                 sig.get("sport"),
+            "league":                sig.get("league"),
+            "market_type":           sig.get("market_key"),
+            "time_to_match_minutes": ttm,
+            "initial_edge":          sig.get("edge_pct"),
+            "sharp_divergence_std":  None,
+            "clv_final":             clv,
+            "was_clv_positive":      clv >= 0,
+            "outcome":               outcome,
+        }).execute()
+    except Exception as e:
+        log.warning("ai_learning_ledger: %s", e)
+
+
 def audit_one(sb, sig: dict, oracle_calls: list, settle_calls: list, now: datetime) -> str:
     """
     Audit a single signal.
@@ -136,6 +164,7 @@ def audit_one(sb, sig: dict, oracle_calls: list, settle_calls: list, now: dateti
         "closing_line": float(closing_price) if closing_price else None,
         "closed_at":    now_iso,
     })
+    _log_to_ledger(sb, sig, float(clv), status)
     return status
 
 
