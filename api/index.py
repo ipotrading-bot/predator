@@ -84,7 +84,7 @@ def dashboard():
     try:
         sb = _db()
         if sb:
-            res = sb.table("signals").select("*").neq("status", "expired").order("created_at", desc=True).limit(200).execute()
+            res = sb.table("signals").select("*").eq("status", "active").order("created_at", desc=True).limit(200).execute()
             raw = res.data or []
 
             # Deduplicate: keep NEWEST signal per (match_id, market_key).
@@ -265,73 +265,96 @@ def audit():
     try:
         sb = _db()
         if sb:
+            # ── Active signals — always available ─────────────────────
             try:
-                res = (sb.table("signals")
-                       .select("sport,clv_pct,edge_pct,scanned_at,closed_at,status,match,market,outcome,sharp_prob")
-                       .in_("status", ["settled", "closed"])
-                       .order("created_at", desc=True)
-                       .limit(300)
-                       .execute())
-                rows = [r for r in (res.data or []) if r.get("clv_pct") is not None]
+                act_res = (sb.table("signals")
+                           .select("sport,edge_pct,sharp_prob,kelly_pct,signal_tier,scanned_at,match,market,selection_name,odd_soft,odd_sharp")
+                           .eq("status", "active")
+                           .order("scanned_at", desc=True)
+                           .limit(300)
+                           .execute())
+                active_rows = act_res.data or []
             except Exception as e:
-                log.warning("Audit signals query: %s", e)
-                rows = []
+                log.warning("Audit active query: %s", e)
+                active_rows = []
 
-            for sport in ["basketball", "tennis", "soccer", "mma", "boxing", "darts", "cricket"]:
-                sv = [r["clv_pct"] for r in rows if r.get("sport") == sport]
-                if sv:
-                    hits = sum(1 for c in sv if c >= 0)
-                    audit_data[sport] = {
-                        "count":    len(sv),
-                        "hit_rate": round(hits / len(sv) * 100, 1),
-                        "avg_clv":  round(sum(sv) / len(sv), 2),
-                        "best":     round(max(sv), 2),
-                        "worst":    round(min(sv), 2),
-                        "recent":   sv[:10],
-                    }
+            # ── CLV data — only available once settlement is implemented ──
+            clv_rows: list = []
+            try:
+                clv_res = (sb.table("signals")
+                           .select("sport,clv_pct,edge_pct,scanned_at,match,market,status")
+                           .in_("status", ["settled", "closed"])
+                           .not_.is_("clv_pct", "null")
+                           .order("scanned_at", desc=True)
+                           .limit(200)
+                           .execute())
+                clv_rows = clv_res.data or []
+            except Exception:
+                pass
 
+            # ── Per-sport stats from active signals ───────────────────
+            for sport in sorted(set(r.get("sport", "") for r in active_rows) - {""}):
+                sport_rows = [r for r in active_rows if r.get("sport") == sport]
+                edges = [r["edge_pct"] for r in sport_rows if r.get("edge_pct")]
+                if not edges:
+                    continue
+                tiers = {"HIGH_VALUE": 0, "VALUE": 0, "LOW_VALUE": 0}
+                for r in sport_rows:
+                    t = r.get("signal_tier") or "LOW_VALUE"
+                    if t in tiers:
+                        tiers[t] += 1
+                audit_data[sport] = {
+                    "count":       len(edges),
+                    "avg_edge":    round(sum(edges) / len(edges), 2),
+                    "best_edge":   round(max(edges), 2),
+                    "tiers":       tiers,
+                    "recent_edges": edges[:10],
+                }
+
+            # ── Merge CLV data if available ───────────────────────────
+            for sport in set(r.get("sport", "") for r in clv_rows):
+                if not sport:
+                    continue
+                sv = [r["clv_pct"] for r in clv_rows if r.get("sport") == sport]
+                if not sv:
+                    continue
+                hits = sum(1 for c in sv if c >= 0)
+                entry = audit_data.setdefault(sport, {"count": 0, "avg_edge": 0, "best_edge": 0, "tiers": {}, "recent_edges": []})
+                entry["clv_count"] = len(sv)
+                entry["hit_rate"]  = round(hits / len(sv) * 100, 1)
+                entry["avg_clv"]   = round(sum(sv) / len(sv), 2)
+
+            # ── Thresholds (learning layer) ───────────────────────────
             try:
                 t_res = sb.table("meta").select("key,value").like("key", "threshold_%").execute()
                 for row in (t_res.data or []):
-                    sport = row["key"].replace("threshold_", "")
-                    thresholds[sport] = float(row["value"])
-            except Exception as e:
-                log.warning("Audit thresholds query: %s", e)
+                    sport_key = row["key"].replace("threshold_", "")
+                    thresholds[sport_key] = float(row["value"])
+            except Exception:
+                pass
 
-            recent_signals = rows[:20]
+            # ── Recent signals table ──────────────────────────────────
+            recent_signals = active_rows[:20]
 
-            if rows:
-                settled  = [r for r in rows if r.get("outcome") in ("WIN", "LOSS", "PUSH")]
-                wins     = sum(1 for r in settled if r["outcome"] == "WIN")
-                losses   = sum(1 for r in settled if r["outcome"] == "LOSS")
-                pushes   = sum(1 for r in settled if r["outcome"] == "PUSH")
-                decisive = wins + losses
-                global_stats["total"]    = len(rows)
-                global_stats["settled"]  = len(settled)
-                global_stats["wins"]     = wins
-                global_stats["losses"]   = losses
-                global_stats["pushes"]   = pushes
-                global_stats["hit_rate"] = round(wins / decisive * 100, 1) if decisive else None
-                global_stats["avg_clv"]  = round(sum(r["clv_pct"] for r in rows) / len(rows), 2)
-                _outcome_map = {"WIN": 1.0, "LOSS": 0.0, "PUSH": 0.5}
-                bs_rows = [r for r in settled if r.get("sharp_prob") and r.get("sharp_prob") > 0]
-                if bs_rows:
-                    global_stats["brier"] = round(
-                        sum((r["sharp_prob"] - _outcome_map[r["outcome"]]) ** 2 for r in bs_rows)
-                        / len(bs_rows), 4)
+            # ── Global KPIs ───────────────────────────────────────────
+            if active_rows:
+                all_edges = [r["edge_pct"] for r in active_rows if r.get("edge_pct")]
+                global_stats["total"]        = len(active_rows)
+                global_stats["avg_edge"]     = round(sum(all_edges) / len(all_edges), 2) if all_edges else 0
+                global_stats["high_value"]   = sum(1 for r in active_rows if r.get("signal_tier") == "HIGH_VALUE")
+                global_stats["value"]        = sum(1 for r in active_rows if r.get("signal_tier") == "VALUE")
+                global_stats["low_value"]    = sum(1 for r in active_rows if r.get("signal_tier") == "LOW_VALUE")
+                global_stats["sports_count"] = len(audit_data)
+                global_stats["has_clv"]      = bool(clv_rows)
 
     except Exception as e:
         log.error("Audit: %s", e)
 
-    try:
-        return render_template("audit.html",
-                               audit_data=audit_data,
-                               thresholds=thresholds,
-                               recent_signals=recent_signals,
-                               global_stats=global_stats)
-    except Exception as e:
-        log.error("Audit render: %s", e)
-        return "<h2>Audit indisponible — aucune donnée CLV encore enregistrée.</h2><a href='/'>← Retour</a>", 200
+    return render_template("audit.html",
+                           audit_data=audit_data,
+                           thresholds=thresholds,
+                           recent_signals=recent_signals,
+                           global_stats=global_stats)
 
 
 # ── JSON API ─────────────────────────────────────────────────────────
@@ -357,7 +380,7 @@ def worldcup():
     try:
         sb = _db()
         if sb:
-            res = sb.table("signals").select("*").neq("status", "expired").order("created_at", desc=True).limit(200).execute()
+            res = sb.table("signals").select("*").eq("status", "active").order("created_at", desc=True).limit(200).execute()
             raw = res.data or []
             signals = sorted(
                 [s for s in raw if _is_wc_signal(s)],
@@ -378,7 +401,7 @@ def api_worldcup():
         sb = _db()
         if not sb:
             return jsonify({"error": "no db"}), 503
-        res = sb.table("signals").select("*").neq("status", "expired").order("created_at", desc=True).limit(200).execute()
+        res = sb.table("signals").select("*").eq("status", "active").order("created_at", desc=True).limit(200).execute()
         raw = res.data or []
         wc  = [s for s in raw if _is_wc_signal(s)]
         return jsonify(wc)
@@ -394,7 +417,7 @@ def api_signals():
         sb = _db()
         if not sb:
             return jsonify({"error": "no db"}), 503
-        res = sb.table("signals").select("*").neq("status", "expired").order("created_at", desc=True).limit(50).execute()
+        res = sb.table("signals").select("*").eq("status", "active").order("created_at", desc=True).limit(50).execute()
         return jsonify(res.data or [])
     except Exception as e:
         return jsonify({"error": str(e)}), 500
