@@ -265,13 +265,17 @@ def audit():
     try:
         sb = _db()
         if sb:
-            res = (sb.table("signals")
-                   .select("sport,clv_pct,edge_pct,scanned_at,closed_at,status,match,market,outcome,sharp_prob")
-                   .in_("status", ["settled", "closed", "expired"])
-                   .order("closed_at", desc=True)
-                   .limit(300)
-                   .execute())
-            rows = [r for r in (res.data or []) if r.get("clv_pct") is not None]
+            try:
+                res = (sb.table("signals")
+                       .select("sport,clv_pct,edge_pct,scanned_at,closed_at,status,match,market,outcome,sharp_prob")
+                       .in_("status", ["settled", "closed"])
+                       .order("created_at", desc=True)
+                       .limit(300)
+                       .execute())
+                rows = [r for r in (res.data or []) if r.get("clv_pct") is not None]
+            except Exception as e:
+                log.warning("Audit signals query: %s", e)
+                rows = []
 
             for sport in ["basketball", "tennis", "soccer", "mma", "boxing", "darts", "cricket"]:
                 sv = [r["clv_pct"] for r in rows if r.get("sport") == sport]
@@ -286,45 +290,48 @@ def audit():
                         "recent":   sv[:10],
                     }
 
-            t_res = sb.table("meta").select("key,value").like("key", "threshold_%").execute()
-            for row in (t_res.data or []):
-                sport = row["key"].replace("threshold_", "")
-                thresholds[sport] = float(row["value"])
+            try:
+                t_res = sb.table("meta").select("key,value").like("key", "threshold_%").execute()
+                for row in (t_res.data or []):
+                    sport = row["key"].replace("threshold_", "")
+                    thresholds[sport] = float(row["value"])
+            except Exception as e:
+                log.warning("Audit thresholds query: %s", e)
 
             recent_signals = rows[:20]
 
-            # ── Global KPIs ──────────────────────────────────────────────
-            settled = [r for r in rows if r.get("outcome") in ("WIN", "LOSS", "PUSH")]
-            wins    = sum(1 for r in settled if r["outcome"] == "WIN")
-            losses  = sum(1 for r in settled if r["outcome"] == "LOSS")
-            pushes  = sum(1 for r in settled if r["outcome"] == "PUSH")
-            decisive = wins + losses
-            global_stats["total"]    = len(rows)
-            global_stats["settled"]  = len(settled)
-            global_stats["wins"]     = wins
-            global_stats["losses"]   = losses
-            global_stats["pushes"]   = pushes
-            global_stats["hit_rate"] = round(wins / decisive * 100, 1) if decisive else None
-            global_stats["avg_clv"]  = round(sum(r["clv_pct"] for r in rows) / len(rows), 2) if rows else None
-
-            # Brier Score: BS = mean((sharp_prob - outcome_binary)²)
-            _outcome_map = {"WIN": 1.0, "LOSS": 0.0, "PUSH": 0.5}
-            bs_rows = [r for r in settled if r.get("sharp_prob") and r.get("sharp_prob") > 0]
-            if bs_rows:
-                global_stats["brier"] = round(
-                    sum((r["sharp_prob"] - _outcome_map[r["outcome"]]) ** 2 for r in bs_rows)
-                    / len(bs_rows),
-                    4,
-                )
+            if rows:
+                settled  = [r for r in rows if r.get("outcome") in ("WIN", "LOSS", "PUSH")]
+                wins     = sum(1 for r in settled if r["outcome"] == "WIN")
+                losses   = sum(1 for r in settled if r["outcome"] == "LOSS")
+                pushes   = sum(1 for r in settled if r["outcome"] == "PUSH")
+                decisive = wins + losses
+                global_stats["total"]    = len(rows)
+                global_stats["settled"]  = len(settled)
+                global_stats["wins"]     = wins
+                global_stats["losses"]   = losses
+                global_stats["pushes"]   = pushes
+                global_stats["hit_rate"] = round(wins / decisive * 100, 1) if decisive else None
+                global_stats["avg_clv"]  = round(sum(r["clv_pct"] for r in rows) / len(rows), 2)
+                _outcome_map = {"WIN": 1.0, "LOSS": 0.0, "PUSH": 0.5}
+                bs_rows = [r for r in settled if r.get("sharp_prob") and r.get("sharp_prob") > 0]
+                if bs_rows:
+                    global_stats["brier"] = round(
+                        sum((r["sharp_prob"] - _outcome_map[r["outcome"]]) ** 2 for r in bs_rows)
+                        / len(bs_rows), 4)
 
     except Exception as e:
         log.error("Audit: %s", e)
 
-    return render_template("audit.html",
-                           audit_data=audit_data,
-                           thresholds=thresholds,
-                           recent_signals=recent_signals,
-                           global_stats=global_stats)
+    try:
+        return render_template("audit.html",
+                               audit_data=audit_data,
+                               thresholds=thresholds,
+                               recent_signals=recent_signals,
+                               global_stats=global_stats)
+    except Exception as e:
+        log.error("Audit render: %s", e)
+        return "<h2>Audit indisponible — aucune donnée CLV encore enregistrée.</h2><a href='/'>← Retour</a>", 200
 
 
 # ── JSON API ─────────────────────────────────────────────────────────

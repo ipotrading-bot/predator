@@ -455,7 +455,7 @@ function openModal(idx){
   document.getElementById('m-sub').textContent   = s.league||'—';
   document.getElementById('m-time').textContent  = mt;
   document.getElementById('m-cd').textContent    = cd?'· dans '+cd:'';
-  document.getElementById('m-stale').style.display = _kpct===0?'block':'none';
+  document.getElementById('m-stale').style.display = (s.kelly_pct===null||s.kelly_pct===undefined)?'block':'none';
   document.getElementById('m-team').textContent  = team;
   document.getElementById('m-mkt').textContent   = (s.market||'—')+'  ·  @ '+(s.xbet_odd||0).toFixed(2);
   document.getElementById('m-exp').textContent   = _exp(s.market,s.sport);
