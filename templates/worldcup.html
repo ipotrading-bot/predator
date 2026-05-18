@@ -40,7 +40,6 @@
   <div class="nav-pages">
     <a href="/">ACCUEIL</a>
     <a href="/ledger">BILAN</a>
-    <a href="/audit">AUDIT</a>
     <a href="/worldcup" class="on">⚽ WC 2026</a>
   </div>
   {% set wc_clean  = signals | rejectattr('risk_flag', 'equalto', 'SUSPECT_DATA') | list %}
@@ -126,10 +125,6 @@
   <a href="/ledger">
     <svg viewBox="0 0 24 24"><path d="M9 5H7a2 2 0 00-2 2v12a2 2 0 002 2h10a2 2 0 002-2V7a2 2 0 00-2-2h-2M9 5a2 2 0 002 2h2a2 2 0 002-2M9 5a2 2 0 012-2h2a2 2 0 012 2M12 12h4m-4 4h4m-8-4h.01m-.01 4h.01"/></svg>
     Ledger
-  </a>
-  <a href="/audit">
-    <svg viewBox="0 0 24 24"><polyline points="22 12 18 12 15 21 9 3 6 12 2 12"/></svg>
-    Audit
   </a>
   <a href="/worldcup" class="on">
     <svg viewBox="0 0 24 24"><path d="M8 21h8m-4-4v4M5 3h14l-1 7a7 7 0 01-12 0L5 3z"/><path d="M5 3a2 2 0 00-2 2v1h18V5a2 2 0 00-2-2"/></svg>
