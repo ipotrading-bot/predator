@@ -8,6 +8,7 @@ All timestamps : UTC/GMT — no local-time contamination.
 import json
 import logging
 import os
+import random
 import time
 from datetime import datetime, timedelta, timezone
 
@@ -31,7 +32,8 @@ load_dotenv()
 # ── Deep-scan mode (DEEP_SCAN=1) ─────────────────────────────────────
 # Triggered by .github/workflows/deep_scan.yml or manually.
 # Lifts per-sport quotas + scans 48h ahead with up to 100 events.
-DEEP_SCAN = os.environ.get("DEEP_SCAN", "0") == "1"
+DEEP_SCAN    = os.environ.get("DEEP_SCAN",    "0") == "1"
+GOLDEN_HOUR  = os.environ.get("GOLDEN_HOUR", "0") == "1"
 
 # ── UTC logger ────────────────────────────────────────────────────────
 _fmt = logging.Formatter(
@@ -63,6 +65,23 @@ SPORT_EMOJI  = {
     "mma": "🥋", "darts": "🎯", "cricket": "🏏", "hockey": "🏒",
     "esports": "🎮", "americanfootball": "🏈", "baseball": "⚾",
     "rugby": "🏉", "volleyball": "🏐", "tabletennis": "🏓", "handball": "🤾",
+}
+
+# Golden Hour — sports with highest intra-hour line movement pre-game
+# NBA tip-offs 20:00–02:00 UTC | Soccer EU 12:00–22:00 UTC
+GOLDEN_SPORT_KEYS = {
+    "basketball_nba":            "basketball",
+    "icehockey_nhl":             "hockey",
+    "soccer_epl":                "soccer",
+    "soccer_spain_la_liga":      "soccer",
+    "soccer_italy_serie_a":      "soccer",
+    "soccer_germany_bundesliga": "soccer",
+    "soccer_france_ligue_one":   "soccer",
+    "soccer_uefa_champs_league": "soccer",
+    "soccer_uefa_europa_league": "soccer",
+    "tennis_atp_masters_1000":   "tennis",
+    "tennis_atp_french_open":    "tennis",
+    "tennis_wta_french_open":    "tennis",
 }
 
 # Portfolio Balancer: max signals per sport per scan
@@ -527,7 +546,7 @@ def _telegram_grouped(signals: list, now, session: str, matches: int,
         body += f"\n{emoji} *{sport.upper()}*\n"
         for s in group:
             prob  = s.get("sharp_prob", 0) or 0
-            stake = _kelly_stake(s["xbet_odd"], prob, sport=s.get("sport", "soccer"))
+            stake = round(_kelly_stake(s["xbet_odd"], prob, sport=s.get("sport", "soccer")))
             team  = s.get("selection_name") or s["match"]
             if " vs " in team:
                 team = team.split(" vs ")[0].strip()
@@ -564,7 +583,12 @@ def run():
     now     = datetime.now(timezone.utc)
     session = _market_session(now.hour)
     log.info("━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━")
-    mode = "DEEP 48h" if DEEP_SCAN else "FAST 72h"
+    if GOLDEN_HOUR:
+        mode = "GOLDEN HOUR ⚡ T-120min"
+    elif DEEP_SCAN:
+        mode = "DEEP 48h"
+    else:
+        mode = "FAST 72h"
     log.info("PAIM v8.5 — %s | Multi-Sport + Portfolio Balancer | Session: %s", mode, session)
     log.info("Scan start: %s | max_events=%d | quotas=%s",
              now.strftime("%Y-%m-%d %H:%M:%S UTC"), MAX_MATCHES,
@@ -599,9 +623,17 @@ def run():
     sharp_source   = "?"
 
     # ── Tier 1: The Odds API ──────────────────────────────────────────
-    hours_ahead = int(os.environ.get("HOURS_AHEAD", 48 if DEEP_SCAN else 72))
-    log.info("⚡ Tier 1 — The Odds API (%dh window)...", hours_ahead)
-    oddsapi_events = fetch_odds(hours_ahead=hours_ahead)
+    if GOLDEN_HOUR:
+        hours_ahead  = 2  # T-120min window only
+        scan_keys    = GOLDEN_SPORT_KEYS
+        log.info("⚡ GOLDEN HOUR — OddsAPI (%dh window) | %d sports ciblés: %s",
+                 hours_ahead, len(scan_keys), " ".join(scan_keys.keys()))
+    else:
+        hours_ahead = int(os.environ.get("HOURS_AHEAD", 48 if DEEP_SCAN else 72))
+        scan_keys   = None  # Use default SPORT_KEYS (all 38 leagues)
+        log.info("⚡ Tier 1 — The Odds API (%dh window)...", hours_ahead)
+
+    oddsapi_events = fetch_odds(hours_ahead=hours_ahead, sport_keys=scan_keys)
     if oddsapi_events:
         matches      = oddsapi_events[:MAX_MATCHES]
         sharp_source = "OddsAPI/Pinnacle"
@@ -609,26 +641,25 @@ def run():
         log.info("✅ Tier 1 OK — %d/%d events | sports: %s",
                  len(matches), len(oddsapi_events), " ".join(sorted(sports_found)))
 
-    # ── MMA/UFC — Gemini Search (Melbet vs Pinnacle) — always runs ────
-    log.info("🥋 MMA — Gemini Search (Melbet vs Pinnacle)...")
-    mma_events = fetch_mma_events()
-    if mma_events:
-        matches = (matches or []) + mma_events
-        log.info("🥋 MMA OK — %d combats UFC (Melbet soft)", len(mma_events))
+    # ── MMA/eSports/Alternatifs — skipped in Golden Hour (no urgency) ──
+    if not GOLDEN_HOUR:
+        log.info("🥋 MMA — Gemini Search (Melbet vs Pinnacle)...")
+        mma_events = fetch_mma_events()
+        if mma_events:
+            matches = (matches or []) + mma_events
+            log.info("🥋 MMA OK — %d combats UFC (Melbet soft)", len(mma_events))
 
-    # ── eSports — Gemini Search (1XBet vs Pinnacle) — always runs ────
-    log.info("🎮 eSports — Gemini Search (CS2/LoL/Valorant/DOTA2)...")
-    esports_events = fetch_esports_events()
-    if esports_events:
-        matches = (matches or []) + esports_events
-        log.info("🎮 eSports OK — %d matchs", len(esports_events))
+        log.info("🎮 eSports — Gemini Search (CS2/LoL/Valorant/DOTA2)...")
+        esports_events = fetch_esports_events()
+        if esports_events:
+            matches = (matches or []) + esports_events
+            log.info("🎮 eSports OK — %d matchs", len(esports_events))
 
-    # ── Sports alternatifs batch — TT + Volleyball + Handball (1 seul appel Gemini) ──
-    log.info("🏓🏐🤾 Sports alternatifs — Gemini Search (Table Tennis / Volleyball / Handball)...")
-    alt_events = fetch_alternative_sports_batch()
-    if alt_events:
-        matches = (matches or []) + alt_events
-        log.info("🏓🏐🤾 Sports alternatifs OK — %d matchs", len(alt_events))
+        log.info("🏓🏐🤾 Sports alternatifs — Gemini Search (Table Tennis / Volleyball / Handball)...")
+        alt_events = fetch_alternative_sports_batch()
+        if alt_events:
+            matches = (matches or []) + alt_events
+            log.info("🏓🏐🤾 Sports alternatifs OK — %d matchs", len(alt_events))
 
     # ── Tier 1.5: Betfair Exchange (sharp prices peer-to-peer) ─────────
     # Activé uniquement si BETFAIR_APP_KEY est configuré.
@@ -801,6 +832,8 @@ def run():
 
     # ── C. Telegram UNIQUEMENT si persistance Supabase réussie ─────────
     if not signals or saved_count > 0:
+        # Shadow Layer: execution jitter — simule latence humaine (1.5–4.0s)
+        time.sleep(random.uniform(1.5, 4.0))
         _telegram_grouped(signals, now, session, len(matches), sharp_source, no_pin_count)
 
     elite = [s for s in signals if s["edge_pct"] >= ELITE_EDGE]

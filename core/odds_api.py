@@ -230,10 +230,12 @@ def _parse_event(ev: dict, sport_type: str) -> dict | None:
 
 # ── Public API ────────────────────────────────────────────────────────
 
-def fetch_odds(api_key: str = None, hours_ahead: int = 24) -> list[dict]:
+def fetch_odds(api_key: str = None, hours_ahead: int = 24,
+               sport_keys: dict | None = None) -> list[dict]:
     """
     Fetch events in the next `hours_ahead` hours with h2h + spreads + totals.
     Priority: NBA → Tennis Masters → Soccer.
+    sport_keys: override the default SPORT_KEYS dict (used by Golden Hour mode).
     Returns [] if API key missing or quota exhausted (engine falls back to Gemini).
     """
     if not api_key:
@@ -242,13 +244,15 @@ def fetch_odds(api_key: str = None, hours_ahead: int = 24) -> list[dict]:
         log.error("No ODDS_API_KEY — add to .env and GitHub Secrets")
         return []
 
+    keys_to_scan = sport_keys if sport_keys is not None else SPORT_KEYS
+
     now       = datetime.now(timezone.utc)
     until     = now + timedelta(hours=hours_ahead)
     time_from = now.strftime("%Y-%m-%dT%H:%M:%SZ")
     time_to   = until.strftime("%Y-%m-%dT%H:%M:%SZ")
 
     all_events = []
-    for sport_key, sport_type in SPORT_KEYS.items():
+    for sport_key, sport_type in keys_to_scan.items():
         markets = _MARKETS_BY_SPORT.get(sport_type, "h2h")
         url = f"{BASE_URL}/sports/{sport_key}/odds/"
         params = {

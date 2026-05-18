@@ -1,0 +1,46 @@
+name: Predator Golden Hour
+
+# Scan toutes les 5 min sur les sports NBA/NHL/Soccer Top 5
+# Fenêtre T-120min uniquement — ne détecte des events que si commence_time < NOW()+2h
+# Quota OddsAPI optimisé : seulement 12 sport_keys ciblés (vs 38 en mode normal)
+#
+# Actif 24h/24 — retourne automatiquement 0 events (exit rapide) quand aucune
+# rencontre imminente, ce qui préserve le quota.
+
+on:
+  schedule:
+    - cron: '*/5 * * * *'   # Toutes les 5 minutes, 24h/24
+  workflow_dispatch:
+
+env:
+  FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: true
+
+jobs:
+  golden-scan:
+    runs-on: ubuntu-latest
+    timeout-minutes: 8
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+          cache: 'pip'
+
+      - name: Install dependencies
+        run: pip install -r requirements.txt
+
+      - name: Run Golden Hour scan (T-120min)
+        env:
+          GOLDEN_HOUR:        "1"
+          ODDS_API_KEY:       ${{ secrets.ODDS_API_KEY }}
+          GEMINI_API_KEY:     ${{ secrets.GEMINI_API_KEY }}
+          SUPABASE_URL:       ${{ secrets.SUPABASE_URL }}
+          SUPABASE_KEY:       ${{ secrets.SUPABASE_KEY }}
+          TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
+          TELEGRAM_CHAT_ID:   ${{ secrets.TELEGRAM_CHAT_ID }}
+          BETFAIR_APP_KEY:    ${{ secrets.BETFAIR_APP_KEY }}
+          BETFAIR_USERNAME:   ${{ secrets.BETFAIR_USERNAME }}
+          BETFAIR_PASSWORD:   ${{ secrets.BETFAIR_PASSWORD }}
+        run: python run_engine.py
