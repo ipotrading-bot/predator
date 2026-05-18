@@ -18,21 +18,24 @@ CIRCA_KEY    = "circa"        # Circa Sports — sharp US book
 CRIS_KEY     = "bookmaker"    # Bookmaker.eu — CRIS network
 
 # ── Quota-lean sport keys — valid until 2026-06-01 ────────────────────
-# Budget: 500 req/month, 14 days remaining → max 35 req/day.
-# 12 keys × 3 scans/day = 36/day → 504 total (quota guard stops at 15 remaining).
-# Only keys active in May–June and historically producing signals.
+# Budget: ~150 req remaining + guard stops at 15.
+# 15 keys × 3 scans/day = 45/day — guard fires first if budget low.
 SPORT_KEYS = {
     # ── North America Playoffs (binary, peak lag) ─────────────────────
-    "icehockey_nhl":                     "hockey",      # NHL Playoffs — Conference Finals + Cup
-    "basketball_nba":                    "basketball",  # NBA Playoffs
+    "icehockey_nhl":                     "hockey",      # NHL Conf Finals + Cup Final
+    "basketball_nba":                    "basketball",  # NBA Conf Finals
     "baseball_mlb":                      "baseball",    # Regular season
     # ── European Cups (Finals window May 21 / 28 / 31) ───────────────
     "soccer_uefa_champs_league":         "soccer",      # CL Final 2026-05-31
     "soccer_uefa_europa_league":         "soccer",      # EL Final 2026-05-21
     "soccer_uefa_conference_league":     "soccer",      # ECL Final 2026-05-28
+    # ── Big-5 Final Matchdays (May 24–25 — all teams simultaneous) ────
+    "soccer_spain_la_liga":              "soccer",      # La Liga J38 ~2026-05-24
+    "soccer_italy_serie_a":              "soccer",      # Serie A J38 ~2026-05-25
+    "soccer_france_ligue_1":             "soccer",      # Ligue 1 J34 ~2026-05-24
     # ── South America (highest lag Pinnacle → 1XBet) ─────────────────
-    "soccer_conmebol_copa_libertadores": "soccer",      # Copa Lib — most productive
-    "soccer_brazil_campeonato":          "soccer",      # Brasileirão Serie A
+    "soccer_conmebol_copa_libertadores": "soccer",      # Copa Lib R16
+    "soccer_brazil_campeonato":          "soccer",      # Brasileirão
     "soccer_argentina_primera_division": "soccer",      # Argentine Primera
     # ── EPL (season finale) ──────────────────────────────────────────
     "soccer_epl":                        "soccer",      # Final matchday ~2026-05-19
