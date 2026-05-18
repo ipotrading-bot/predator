@@ -353,16 +353,23 @@ def _process_h2h(m, name, sport, league, home, away, emoji, signals, sb, now, lo
         po = m.get("odds_pinnacle", {})
         if sport == "soccer":
             from core.math_engine import calc_dnb
-            pin_price = calc_dnb(float(po.get(fav_key, 0) or 0), float(po.get("X", 0) or 0))
-            dnb_other = calc_dnb(float(po.get(opp_key, 0) or 0), float(po.get("X", 0) or 0))
+            # Pinnacle DNB — correct 3-arg formula (fav, opp, draw)
+            pin_fav_raw = float(po.get(fav_key, 0) or 0)
+            pin_opp_raw = float(po.get(opp_key, 0) or 0)
+            pin_draw    = float(po.get("X", 0) or 0)
+            pin_price = calc_dnb(pin_fav_raw, pin_opp_raw, pin_draw)
+            dnb_other = calc_dnb(pin_opp_raw, pin_fav_raw, pin_draw)
 
             # Weighted Shin: build source prices for BOTH sides
             source_prices_fav = {"pinnacle": pin_price}
             source_prices_opp = {"pinnacle": dnb_other}
             for src_key, src_name in (("odds_circa", "circa"), ("odds_cris", "cris")):
                 so = m.get(src_key) or {}
-                sp_f = calc_dnb(float(so.get(fav_key, 0) or 0), float(so.get("X", 0) or 0))
-                sp_o = calc_dnb(float(so.get(opp_key, 0) or 0), float(so.get("X", 0) or 0))
+                s_fav  = float(so.get(fav_key, 0) or 0)
+                s_opp  = float(so.get(opp_key, 0) or 0)
+                s_draw = float(so.get("X", 0) or 0)
+                sp_f = calc_dnb(s_fav, s_opp, s_draw)
+                sp_o = calc_dnb(s_opp, s_fav, s_draw)
                 if sp_f > 1.01:
                     source_prices_fav[src_name] = sp_f
                 if sp_o > 1.01:

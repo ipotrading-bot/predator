@@ -60,7 +60,7 @@ MMA_SPORTS = {"mma", "boxing"}
 
 def convert_to_ah0(v1: float, vx: float, v2: float) -> tuple[float, float]:
     """Return (DNB_home, DNB_away) from raw 1X2 odds."""
-    return calc_dnb(v1, vx), calc_dnb(v2, vx)
+    return calc_dnb(v1, v2, vx), calc_dnb(v2, v1, vx)
 
 
 def strict_team_match(name_a: str, name_b: str, threshold: float = 0.60) -> bool:

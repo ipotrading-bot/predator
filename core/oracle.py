@@ -140,13 +140,14 @@ def _parse_soccer(text: str) -> tuple[float | None, str | None]:
         home_odd = float(m_h.group(1))
         draw_odd = float(m_d.group(1))
         away_odd = float(m_a.group(1))
-        dnb_h = calc_dnb(home_odd, draw_odd)
-        dnb_a = calc_dnb(away_odd, draw_odd)
+        dnb_h = calc_dnb(home_odd, away_odd, draw_odd)
+        dnb_a = calc_dnb(away_odd, home_odd, draw_odd)
 
         home_name = m_ht.group(1) if m_ht else ""
         away_name = m_at.group(1) if m_at else ""
 
-        if dnb_h >= dnb_a and dnb_h > 1.01:
+        # Use raw odds to identify favorite (not DNB which could still fail)
+        if home_odd <= away_odd and dnb_h > 1.01:
             return (dnb_h, home_name) if home_name else (None, None)
         elif dnb_a > 1.01:
             return (dnb_a, away_name) if away_name else (None, None)
