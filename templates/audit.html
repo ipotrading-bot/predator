@@ -8,7 +8,7 @@
 <meta name="apple-mobile-web-app-capable" content="yes">
 <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
 <meta name="apple-mobile-web-app-title" content="PREDATOR">
-<title>PREDATOR · AUDIT CLV</title>
+<title>PREDATOR · AUDIT</title>
 <link rel="manifest" href="/manifest.json">
 <link rel="icon" type="image/png" sizes="32x32" href="/static/icons/favicon-32.png">
 <link rel="shortcut icon" href="/favicon.ico">
@@ -18,7 +18,6 @@
 <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&family=JetBrains+Mono:wght@400;500;700&display=swap" rel="stylesheet">
 <link rel="stylesheet" href="/static/css/predator.css">
 <style>
-/* Audit page overrides */
 .wrap { max-width: 960px; }
 .nav-logo { color: var(--blue); }
 .nav-logo img { filter: drop-shadow(0 0 8px rgba(56,189,248,.35)); }
@@ -26,6 +25,7 @@
 .page-hdr { margin-bottom: 14px; border-bottom: none; background: transparent; padding-left: 0; padding-right: 0; }
 .page-title { color: var(--blue); font-size: 15px; letter-spacing: 1.5px; }
 .page-sub { font-size: 10px; color: var(--t2); margin-top: 5px; }
+.audit-note { font-size: 10px; color: var(--t3); background: rgba(56,189,248,.07); border: 1px solid rgba(56,189,248,.15); border-radius: 6px; padding: 8px 12px; margin-bottom: 14px; }
 </style>
 </head>
 <body>
@@ -37,11 +37,10 @@
     <a href="/">ACCUEIL</a>
     <a href="/ledger">BILAN</a>
     <a href="/audit" class="on">AUDIT</a>
-    <a href="/worldcup">⚽ WC 2026</a>
+    <a href="/worldcup">&#9917; WC 2026</a>
   </div>
   <div class="nav-right">
-    <span id="clock">—</span>
-    <button id="auditBtn" onclick="triggerAudit()">&#9654; AUDIT</button>
+    <span id="clock">&#8212;</span>
   </div>
 </nav>
 
@@ -49,8 +48,8 @@
 <main class="wrap">
 
   <div class="page-hdr">
-    <div class="page-title">&#9632; AUDIT CLV &mdash; CERVEAU STATISTIQUE</div>
-    <div class="page-sub">v8.5 &middot; Closing Line Value par sport &middot; Indicateur de sant&eacute; n&deg;1 &middot; CLV &gt; 0 = alpha r&eacute;el captur&eacute;</div>
+    <div class="page-title">&#9632; AUDIT &mdash; ANALYSE DES SIGNAUX</div>
+    <div class="page-sub">Edge distribution par sport &middot; Signaux actifs &middot; CLV disponible apr&egrave;s impl&eacute;mentation du settlement</div>
   </div>
 
   <!-- ── GLOBAL KPI BAR ─────────────────────────── -->
@@ -58,45 +57,33 @@
   <div class="kpi-bar">
 
     <div class="kpi-card primary">
-      {% if global_stats.hit_rate is not none %}
-        <div class="kpi-val {% if global_stats.hit_rate >= 55 %}kv-green{% elif global_stats.hit_rate >= 45 %}kv-yellow{% else %}kv-red{% endif %}">
-          {{ global_stats.hit_rate }}%
+      <div class="kpi-val kv-blue">{{ global_stats.total or 0 }}</div>
+      <div class="kpi-lbl">Signaux actifs</div>
+      <div class="kpi-sub">{{ global_stats.sports_count or 0 }} sports couverts</div>
+    </div>
+
+    <div class="kpi-card">
+      {% if global_stats.avg_edge %}
+        <div class="kpi-val {% if global_stats.avg_edge >= 2.5 %}kv-green{% elif global_stats.avg_edge >= 1.5 %}kv-yellow{% else %}kv-gray{% endif %}">
+          +{{ global_stats.avg_edge }}%
         </div>
       {% else %}
         <div class="kpi-val kv-gray">—</div>
       {% endif %}
-      <div class="kpi-lbl">Hit Rate</div>
-      <div class="kpi-sub">{{ global_stats.wins or 0 }}W · {{ global_stats.losses or 0 }}L · {{ global_stats.pushes or 0 }}P</div>
+      <div class="kpi-lbl">Edge moyen</div>
+      <div class="kpi-sub">Avantage vs marché sharp</div>
     </div>
 
     <div class="kpi-card">
-      {% if global_stats.avg_clv is not none %}
-        <div class="kpi-val {% if global_stats.avg_clv >= 1.5 %}kv-green{% elif global_stats.avg_clv >= 0 %}kv-yellow{% else %}kv-red{% endif %}">
-          {{ '+' if global_stats.avg_clv > 0 else '' }}{{ global_stats.avg_clv }}%
-        </div>
-      {% else %}
-        <div class="kpi-val kv-gray">—</div>
-      {% endif %}
-      <div class="kpi-lbl">CLV Moyenne</div>
-      <div class="kpi-sub">{{ global_stats.total or 0 }} signaux audités</div>
+      <div class="kpi-val kv-green">{{ global_stats.high_value or 0 }}</div>
+      <div class="kpi-lbl">HIGH VALUE</div>
+      <div class="kpi-sub">Edge &ge; 2.5%</div>
     </div>
 
     <div class="kpi-card">
-      {% if global_stats.brier is not none %}
-        <div class="kpi-val {% if global_stats.brier <= 0.15 %}kv-green{% elif global_stats.brier <= 0.25 %}kv-yellow{% else %}kv-red{% endif %}">
-          {{ global_stats.brier }}
-        </div>
-      {% else %}
-        <div class="kpi-val kv-gray">—</div>
-      {% endif %}
-      <div class="kpi-lbl">Brier Score</div>
-      <div class="kpi-sub">&lt;0.15 = précision élite · 0 = parfait</div>
-    </div>
-
-    <div class="kpi-card">
-      <div class="kpi-val kv-blue">{{ global_stats.settled or 0 }}</div>
-      <div class="kpi-lbl">Settled</div>
-      <div class="kpi-sub">{{ global_stats.total or 0 }} total audités</div>
+      <div class="kpi-val kv-yellow">{{ global_stats.value or 0 }}</div>
+      <div class="kpi-lbl">VALUE</div>
+      <div class="kpi-sub">Edge 1.5–2.5%</div>
     </div>
 
   </div>
@@ -105,13 +92,18 @@
 {% if audit_data %}
 
   {% set sport_cfg_audit = [
-    ('basketball','🏀','BASKET', '#ff6622'),
-    ('tennis',    '🎾','TENNIS', '#00ccaa'),
-    ('soccer',    '⚽','SOCCER', '#00e03a'),
-    ('mma',       '🥋','MMA',    '#cc88ff'),
-    ('boxing',    '🥊','BOXING', '#ff4488'),
-    ('darts',     '🎯','DARTS',  '#00b4e6'),
-    ('cricket',   '🏏','CRICKET','#f5c518'),
+    ('basketball','&#127936;','BASKET', '#ff6622'),
+    ('hockey',    '&#127944;','HOCKEY', '#38bdf8'),
+    ('baseball',  '&#9918;','BASEBALL','#f5c518'),
+    ('tennis',    '&#127934;','TENNIS', '#00ccaa'),
+    ('soccer',    '&#9917;','SOCCER', '#00e03a'),
+    ('mma',       '&#129355;','MMA',    '#cc88ff'),
+    ('boxing',    '&#129354;','BOXING', '#ff4488'),
+    ('darts',     '&#127919;','DARTS',  '#00b4e6'),
+    ('cricket',   '&#127951;','CRICKET','#f5c518'),
+    ('rugby',     '&#127945;','RUGBY',  '#ff9900'),
+    ('americanfootball','&#127944;','NFL','#7c3aed'),
+    ('volleyball','&#127952;','VOLLEY', '#ec4899'),
   ] %}
 
   <!-- ── SPORT CARDS ─────────────────────────── -->
@@ -124,67 +116,78 @@
     <div class="sport-card">
       <div class="sc-hdr">
         <span class="sc-name">{{ emoji }} {{ label }}</span>
-        {% if d.avg_clv >= 1.5 %}
-          <span class="sc-badge perf">OK</span>
-        {% elif d.avg_clv >= 0 %}
-          <span class="sc-badge stable">~</span>
+        {% if d.avg_edge is defined and d.avg_edge >= 2.5 %}
+          <span class="sc-badge perf">HOT</span>
+        {% elif d.avg_edge is defined and d.avg_edge >= 1.5 %}
+          <span class="sc-badge stable">OK</span>
         {% else %}
-          <span class="sc-badge erosion">⚠</span>
+          <span class="sc-badge erosion">LOW</span>
         {% endif %}
       </div>
 
-      {% if d.recent %}
-      {% set mav = namespace(v=0.01) %}
-      {% for v in d.recent %}{% if v|abs > mav.v %}{% set mav.v = v|abs %}{% endif %}{% endfor %}
+      {% if d.recent_edges %}
+      {% set maxv = namespace(v=0.01) %}
+      {% for v in d.recent_edges %}{% if v > maxv.v %}{% set maxv.v = v %}{% endif %}{% endfor %}
       <div class="sc-spark">
-        {% for v in d.recent %}
-        {% set pct = [(v / mav.v * 100)|abs, 100]|min %}
+        {% for v in d.recent_edges %}
+        {% set pct = [(v / maxv.v * 100), 100]|min %}
         <div class="sc-spark-bar" style="
-          height:{{ [pct|int,4]|max }}%;
-          background:{{ color if v >= 0 else 'var(--red)' }};
-        " title="{{ '+' if v >= 0 else '' }}{{ '%.2f'|format(v) }}%"></div>
+          height:{{ [pct|int, 4]|max }}%;
+          background:{{ color }};
+          opacity:0.85;
+        " title="+{{ '%.2f'|format(v) }}%"></div>
         {% endfor %}
       </div>
       {% endif %}
 
       <div class="sc-stats">
         <div class="sc-stat">
-          <div class="sc-val" style="color:{{ color }}">{{ '%.1f'|format(d.avg_clv) }}%</div>
-          <div class="sc-lbl">CLV</div>
+          <div class="sc-val" style="color:{{ color }}">+{{ '%.1f'|format(d.avg_edge) }}%</div>
+          <div class="sc-lbl">Edge moy.</div>
         </div>
         <div class="sc-stat">
-          <div class="sc-val" style="color:{{ 'var(--green)' if d.hit_rate >= 60 else ('var(--yellow)' if d.hit_rate >= 40 else 'var(--red)') }}">{{ d.hit_rate }}%</div>
-          <div class="sc-lbl">Hit</div>
+          <div class="sc-val" style="color:var(--green)">+{{ '%.1f'|format(d.best_edge) }}%</div>
+          <div class="sc-lbl">Meilleur</div>
         </div>
         <div class="sc-stat">
           <div class="sc-val" style="color:var(--t2);font-size:12px">{{ d.count }}</div>
-          <div class="sc-lbl">n</div>
+          <div class="sc-lbl">Signaux</div>
         </div>
       </div>
+
+      {% if d.tiers %}
+      <div style="display:flex;gap:4px;margin-top:6px;font-size:9px">
+        {% if d.tiers.HIGH_VALUE %}<span style="color:var(--green);background:rgba(0,224,58,.1);padding:1px 5px;border-radius:3px">H:{{ d.tiers.HIGH_VALUE }}</span>{% endif %}
+        {% if d.tiers.VALUE %}<span style="color:var(--yellow);background:rgba(250,204,21,.1);padding:1px 5px;border-radius:3px">V:{{ d.tiers.VALUE }}</span>{% endif %}
+        {% if d.tiers.LOW_VALUE %}<span style="color:var(--t2);background:rgba(255,255,255,.05);padding:1px 5px;border-radius:3px">L:{{ d.tiers.LOW_VALUE }}</span>{% endif %}
+      </div>
+      {% endif %}
+
+      {% if d.avg_clv is defined %}
+      <div style="margin-top:6px;font-size:9px;color:var(--t3);border-top:1px solid var(--border);padding-top:4px">
+        CLV: <span style="color:{% if d.avg_clv >= 0 %}var(--green){% else %}var(--red){% endif %}">{{ '+' if d.avg_clv > 0 else '' }}{{ '%.1f'|format(d.avg_clv) }}%</span>
+        &nbsp;&middot;&nbsp; Hit: <span>{{ d.hit_rate }}%</span>
+        &nbsp;&middot;&nbsp; n={{ d.clv_count }}
+      </div>
+      {% endif %}
     </div>
     {% endif %}
     {% endfor %}
   </div>
 
-  <!-- ── CLV BAR CHART ───────────────────────── -->
+  <!-- ── EDGE BAR CHART ─────────────────────── -->
   <div class="clv-chart">
-    <div class="clv-chart-title">&#9632; CLV MOYENNE PAR SPORT</div>
+    <div class="clv-chart-title">&#9632; EDGE MOYEN PAR SPORT</div>
     <div class="chart-bars">
       {% for sport_key, emoji, label, color in sport_cfg_audit %}
       {% if audit_data.get(sport_key) %}
       {% set d = audit_data[sport_key] %}
-      {% set bh = [(d.avg_clv * 12)|abs|int, 72]|min %}
+      {% set bh = [(d.avg_edge * 12)|int, 72]|min %}
       {% set bh = [bh, 3]|max %}
       <div class="bar-group">
-        <div class="bar-val-lbl" style="color:{{ 'var(--green)' if d.avg_clv >= 0 else 'var(--red)' }}">
-          {{ '+' if d.avg_clv >= 0 else '' }}{{ '%.1f'|format(d.avg_clv) }}%
-        </div>
+        <div class="bar-val-lbl" style="color:var(--green)">+{{ '%.1f'|format(d.avg_edge) }}%</div>
         <div class="bar-wrap">
-          <div class="bar" style="
-            height:{{ bh }}px;
-            background:{{ color if d.avg_clv >= 0 else 'var(--red)' }};
-            opacity:{{ '0.9' if d.avg_clv >= 1.5 else '0.5' }};
-          "></div>
+          <div class="bar" style="height:{{ bh }}px;background:{{ color }};opacity:0.85;"></div>
         </div>
         <div class="bar-sport">{{ emoji }}</div>
         <div class="bar-name">{{ label }}</div>
@@ -194,17 +197,16 @@
       {% endfor %}
     </div>
     <div class="chart-legend">
-      <span style="color:var(--green)">&#9632; &ge;1.5% Performant</span>
-      <span style="color:var(--yellow)">&#9632; 0–1.5% Stable</span>
-      <span style="color:var(--red)">&#9632; &lt;0% Érosion</span>
-      <span style="color:var(--t3)">CLV &gt; 0 = vous battez le marché avant clôture</span>
+      <span style="color:var(--green)">&#9632; &ge;2.5% HOT</span>
+      <span style="color:var(--yellow)">&#9632; 1.5–2.5% OK</span>
+      <span style="color:var(--t3)">Edge = avantage vs Pinnacle avant ajustement 1XBet</span>
     </div>
   </div>
 
   <!-- ── DYNAMIC THRESHOLDS ─────────────────── -->
   {% if thresholds %}
   <div class="thresholds">
-    <div class="thr-title">&#9632; SEUILS DYNAMIQUES — LEARNING LAYER</div>
+    <div class="thr-title">&#9632; SEUILS DYNAMIQUES &mdash; LEARNING LAYER</div>
     <div class="thr-list">
       {% for sport_key, emoji, label, color in sport_cfg_audit %}
       {% if thresholds.get(sport_key) %}
@@ -219,46 +221,52 @@
   </div>
   {% endif %}
 
-  <!-- ── LAST 20 AUDITED ────────────────────── -->
+  <!-- ── RECENT ACTIVE SIGNALS ─────────────── -->
   {% if recent_signals %}
-  <div class="sec-title" style="margin-top:14px">&#9632; 20 DERNIERS SIGNAUX AUDITÉS</div>
+  <div class="sec-title" style="margin-top:14px">&#9632; SIGNAUX ACTIFS R&Eacute;CENTS</div>
   <div class="tbl-box">
   <table class="audit-table">
     <thead>
       <tr>
         <th>Sport</th>
         <th>Match</th>
-        <th>Marché</th>
+        <th>S&eacute;lection</th>
+        <th>Odd</th>
         <th>Edge</th>
-        <th>CLV</th>
-        <th>Status</th>
-        <th>Clôture UTC</th>
+        <th>Tier</th>
+        <th>Scan UTC</th>
       </tr>
     </thead>
     <tbody>
       {% for s in recent_signals %}
-      {% set clv = s.clv_pct %}
+      {% set edge = s.edge_pct or 0 %}
       <tr>
         <td>
-          {% if s.sport == 'basketball' %}🏀
-          {% elif s.sport == 'tennis' %}🎾
-          {% elif s.sport == 'soccer' %}⚽
-          {% elif s.sport == 'mma' %}🥋
-          {% elif s.sport == 'boxing' %}🥊
-          {% elif s.sport == 'darts' %}🎯
-          {% elif s.sport == 'cricket' %}🏏
-          {% else %}🎯{% endif %}
+          {% if s.sport == 'basketball' %}&#127936;
+          {% elif s.sport == 'hockey' %}&#127944;
+          {% elif s.sport == 'baseball' %}&#9918;
+          {% elif s.sport == 'tennis' %}&#127934;
+          {% elif s.sport == 'soccer' %}&#9917;
+          {% elif s.sport == 'mma' %}&#129355;
+          {% elif s.sport == 'boxing' %}&#129354;
+          {% elif s.sport == 'darts' %}&#127919;
+          {% elif s.sport == 'cricket' %}&#127951;
+          {% else %}&#127919;{% endif %}
         </td>
         <td style="color:#ddd;font-weight:700;white-space:nowrap">{{ s.match }}</td>
-        <td style="color:var(--t2)">{{ s.market or '—' }}</td>
-        <td style="color:var(--blue)">{% if s.edge_pct %}+{{ '%.2f'|format(s.edge_pct) }}%{% else %}—{% endif %}</td>
-        <td class="{% if clv > 0 %}clv-pos{% elif clv < 0 %}clv-neg{% else %}clv-zero{% endif %}">
-          {{ '+' if clv > 0 else '' }}{{ '%.2f'|format(clv) }}% {{ '✓' if clv >= 0 else '✗' }}
-        </td>
+        <td style="color:var(--t2)">{{ s.selection_name or s.market or '—' }}</td>
+        <td style="color:var(--blue);font-family:'JetBrains Mono',monospace">{{ '%.2f'|format(s.xbet_odd) if s.xbet_odd else '—' }}</td>
+        <td style="color:{% if edge >= 2.5 %}var(--green){% elif edge >= 1.5 %}var(--yellow){% else %}var(--t2){% endif %};font-weight:600">+{{ '%.2f'|format(edge) }}%</td>
         <td>
-          <span class="status-badge {% if s.status == 'closed' %}st-closed{% else %}st-other{% endif %}">{{ s.status }}</span>
+          {% if s.risk_flag == 'HIGH_VALUE' %}
+            <span class="status-badge" style="background:rgba(0,224,58,.15);color:var(--green)">HIGH</span>
+          {% elif s.risk_flag == 'VALUE' %}
+            <span class="status-badge" style="background:rgba(250,204,21,.12);color:var(--yellow)">VALUE</span>
+          {% else %}
+            <span class="status-badge" style="background:rgba(255,255,255,.06);color:var(--t2)">LOW</span>
+          {% endif %}
         </td>
-        <td style="color:var(--t2)">{{ s.closed_at[:16]|replace('T',' ') if s.closed_at else '—' }}</td>
+        <td style="color:var(--t2)">{{ s.scanned_at[:16]|replace('T',' ') if s.scanned_at else '—' }}</td>
       </tr>
       {% endfor %}
     </tbody>
@@ -270,16 +278,16 @@
 
 <div class="empty">
   <div class="empty-icon">&#9632;</div>
-  <div>Aucun signal audité pour l'instant.</div>
-  <div style="font-size:10px;margin-top:6px">Le moteur d'audit tourne toutes les 6h via GitHub Actions.</div>
-  <div style="font-size:10px;margin-top:4px">Les signaux actifs seront audités 3h après le scan.</div>
+  <div>Aucun signal actif pour l'instant.</div>
+  <div style="font-size:10px;margin-top:6px">Le scan tourne 3x/jour &mdash; 10h, 17h, 22h UTC.</div>
+  <div style="font-size:10px;margin-top:4px">Les signaux apparaissent ici d&egrave;s le prochain cycle.</div>
 </div>
 
 {% endif %}
 
 </main>
 
-<footer>PREDATOR PAIM v8.5 &nbsp;&middot;&nbsp; Audit CLV &nbsp;&middot;&nbsp; Closing Line Value &mdash; la seule m&eacute;trique qui prouve si le bot bat le march&eacute;</footer>
+<footer>PREDATOR PAIM v8.6 &nbsp;&middot;&nbsp; Audit Edge &nbsp;&middot;&nbsp; Distribution d&apos;alpha par sport</footer>
 
 <!-- ── BOTTOM NAV (mobile) ────────────────── -->
 <nav class="bnav">
@@ -306,21 +314,6 @@
   document.getElementById('clock').textContent = new Date().toISOString().slice(11,16)+' UTC';
   setTimeout(tick,1000);
 })();
-
-async function triggerAudit(){
-  const btn = document.getElementById('auditBtn');
-  if(!btn) return;
-  btn.textContent = '⏳'; btn.disabled = true; btn.style.opacity = '.5';
-  try {
-    const r = await fetch('/api/audit/run', {method:'POST'});
-    if(r.ok){ btn.textContent = '✓ OK'; }
-    else     { btn.textContent = '✗ ERR'; btn.style.color = 'var(--red)'; }
-  } catch(e){ btn.textContent = '✗ NET'; btn.style.color = 'var(--red)'; }
-  setTimeout(()=>{
-    btn.disabled=false; btn.style.opacity='1'; btn.style.color='';
-    btn.textContent='▶ AUDIT';
-  }, 4000);
-}
 </script>
 </body>
 </html>
