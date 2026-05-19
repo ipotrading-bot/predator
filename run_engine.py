@@ -1,5 +1,5 @@
 """
-run_engine.py — PREDATOR PAIM v8.5 — Hunter Multi-Sport + Portfolio Balancer
+run_engine.py — PREDATOR PAIM v8.8 — Hunter Multi-Sport + Portfolio Balancer
 Markets: h2h (NBA/Tennis) | spreads (NBA/Soccer) | totals (all)
 Sharp filter: Prob. Sharp (Shin devigged) >= threshold per market type
 Pipeline: OddsAPI → Gemini Search → Gemini Estimator → AH0.0/ML/PS/OU → Edge → Balancer → Supabase
@@ -285,6 +285,19 @@ def _emit(signals, sb, now, log, name, sport, league, mkt_key, mkt_label,
         log.warning("SUSPECT | %s %s | %s — Edge=+%.2f%% > 10%% — DISCARD (erreur données probable)",
                     emoji, name, mkt_label, edge)
         return
+
+    # J+36h filter: signaux éloignés doivent être HIGH_VALUE (≥ 5%) pour justifier immobilisation capital
+    if match_time:
+        try:
+            mt_dt = datetime.fromisoformat(match_time.replace("Z", "+00:00"))
+            hours_ahead_mt = (mt_dt - now).total_seconds() / 3600
+            if hours_ahead_mt > 36 and edge < _ELITE_EDGE * 2:
+                log.info("J+2 FILTER | %s %s | %s — edge %.2f%% < 5%% (T+%.0fh)",
+                         emoji, name, mkt_label, edge, hours_ahead_mt)
+                return
+        except Exception:
+            pass
+
     risk = _risk(edge)
 
     b = xbet_odd - 1
@@ -506,6 +519,19 @@ def _portfolio_balance(candidates: list) -> list:
 
 
 _RISK_DOT = {"HIGH_VALUE": "🟢", "VALUE": "🟡", "LOW_VALUE": "⚪", "SUSPECT_DATA": "🔴"}
+
+
+def _urgency_sort(s: dict, now) -> tuple:
+    """Sort key: signaux < 4h d'abord (par heure ASC), puis par edge DESC."""
+    mt = s.get("match_time") or ""
+    try:
+        mt_dt = datetime.fromisoformat(mt.replace("Z", "+00:00"))
+        mins  = (mt_dt - now).total_seconds() / 60
+        if 0 < mins <= 240:
+            return (0, mins, -(s.get("edge_pct") or 0))
+    except Exception:
+        pass
+    return (1, 9999.0, -(s.get("edge_pct") or 0))
 _SESSION_ICON = {"EU-OPEN": "📈", "EU-MID": "⚡", "EU-CLOSE": "🎯", "OVERNIGHT": "🌙"}
 
 
@@ -539,9 +565,9 @@ def _telegram_grouped(signals: list, now, session: str, matches: int,
         f"`{sharp_source}`{estimated}{no_pin}\n"
     )
 
-    # Group ALL signals by sport, sorted by edge desc within each sport
+    # Group by sport — signaux urgents (< 4h) en tête par sport, puis par edge
     by_sport: dict[str, list] = {}
-    for s in sorted(signals, key=lambda x: x["edge_pct"], reverse=True):
+    for s in sorted(signals, key=lambda x: _urgency_sort(x, now)):
         by_sport.setdefault(s["sport"], []).append(s)
 
     body = ""
@@ -562,8 +588,18 @@ def _telegram_grouped(signals: list, now, session: str, matches: int,
             dt    = f" · {mt[8:10]}/{mt[5:7]} {mt[11:16]}" if mt else ""
             prob_s  = f" · {int(prob * 100)}%" if prob > 0 else ""
             stake_s = f" · *{stake}€/k*" if stake > 0 else ""
+            # HIGH VELOCITY: NBA/Soccer < 60 min avant coup d'envoi
+            velocity = ""
+            if mt:
+                try:
+                    mt_dt = datetime.fromisoformat(mt.replace("Z", "+00:00"))
+                    mins_left = (mt_dt - now).total_seconds() / 60
+                    if 0 < mins_left <= 60 and s.get("sport") in {"basketball", "soccer"}:
+                        velocity = "🔥 "
+                except Exception:
+                    pass
             body += (
-                f"{dot} *{team.upper()}*  `{s['market']} @ {s['xbet_odd']:.2f}`{dt}\n"
+                f"{dot} {velocity}*{team.upper()}*  `{s['market']} @ {s['xbet_odd']:.2f}`{dt}\n"
                 f"    `+{s['edge_pct']:.1f}%`{prob_s}{stake_s}\n"
             )
 
@@ -596,7 +632,7 @@ def run():
         mode = "DEEP 48h"
     else:
         mode = "FAST 72h"
-    log.info("PAIM v8.5 — %s | Multi-Sport + Portfolio Balancer | Session: %s", mode, session)
+    log.info("PAIM v8.8 — %s | Multi-Sport + Portfolio Balancer | Session: %s", mode, session)
     log.info("Scan start: %s | max_events=%d | quotas=%s",
              now.strftime("%Y-%m-%d %H:%M:%S UTC"), MAX_MATCHES,
              " ".join(f"{k}={v}" for k, v in SPORT_QUOTA.items()))
@@ -712,7 +748,7 @@ def run():
         log.info("📡 Tier 2 — Harvest 1XBet + Gemini Search Pinnacle...")
         xbet_matches = fetch_matches()
         if not xbet_matches:
-            msg = "📡 PREDATOR v8.5: 0 matchs trouvés — 1XBet inaccessible."
+            msg = "📡 PREDATOR v8.8: 0 matchs trouvés — 1XBet inaccessible."
             log.warning(msg)
             _telegram(msg)
             if sb:
@@ -759,7 +795,7 @@ def run():
         if not xbet_matches:
             xbet_matches = fetch_matches()
         if not xbet_matches:
-            msg = "📡 PREDATOR v8.5: 0 matchs — toutes sources épuisées."
+            msg = "📡 PREDATOR v8.8: 0 matchs — toutes sources épuisées."
             log.warning(msg)
             _telegram(msg)
             if sb:
@@ -777,7 +813,7 @@ def run():
             log.info("✅ Tier 3 OK — %d matchs estimés (non-arbitrage, value)", len(matches))
 
     if not matches:
-        msg = "📡 PREDATOR v8.5: 0 signaux — toutes sources épuisées."
+        msg = "📡 PREDATOR v8.8: 0 signaux — toutes sources épuisées."
         log.warning(msg)
         _telegram(msg)
         if sb:

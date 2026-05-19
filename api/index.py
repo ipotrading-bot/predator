@@ -77,6 +77,16 @@ def _parse_match_time(s: str):
     return None
 
 
+def _mk_dash_sort(s: dict, now) -> tuple:
+    """Urgence d'abord (< 4h → tier 0 par heure ASC), sinon par sport+edge."""
+    mt = _parse_match_time(s.get("match_time") or "")
+    if mt:
+        secs = (mt - now).total_seconds()
+        if 0 < secs <= 14400:
+            return (0, s.get("match_time") or "9999", 0, -(s.get("edge_pct") or 0))
+    return (1, "0", _DASH_SPORT_ORDER.get(s.get("sport", ""), 9), -(s.get("edge_pct") or 0))
+
+
 @app.route("/")
 def dashboard():
     signals   = []
@@ -104,14 +114,7 @@ def dashboard():
                 if s.get("risk_flag") in _HIGH_QUALITY
                 and (not s.get("match_time") or (_parse_match_time(s["match_time"]) or _now) > _now)
             ]
-            signals = sorted(
-                filtered,
-                key=lambda s: (
-                    _DASH_SPORT_ORDER.get(s.get("sport", ""), 9),
-                    s.get("match_time") or "9999",
-                    -(s.get("edge_pct") or 0),
-                ),
-            )
+            signals = sorted(filtered, key=lambda s: _mk_dash_sort(s, _now))
             # Parse sharp_sources JSON string → dict, consensus_score → int
             for s in signals:
                 ss = s.get("sharp_sources")

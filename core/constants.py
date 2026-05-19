@@ -5,8 +5,8 @@ rapport, dashboard, and audit must import from here — never redefined inline.
 """
 
 ELITE_EDGE   = 2.5    # % — VALUE / HIGH_VALUE boundary
-MIN_STAKE    = 10     # € — below this Kelly stake, signal is not actionable
-BANKROLL_REF = 1000   # € — reference bankroll for Telegram/Modal stake display
+MIN_STAKE    = 2      # € — below this Kelly stake, signal is not actionable
+BANKROLL_REF = 150    # € — 100 000 XOF (taux fixe 655.96 XOF/€)
 MAX_EDGE     = 15.0   # % — hard cap; above = data mapping error, reject
 SUSPECT_EDGE = 10.0   # % — safety trigger: major sport edge above this = SUSPECT_DATA
 

@@ -336,6 +336,18 @@ function applyFilters(){
     } else if(!isUrgent && ub){
       ub.remove();
     }
+    // HIGH VELOCITY badge: basketball/soccer < 60 min
+    const sport = el.dataset.sport;
+    const isVelocity = minsLeft > 0 && minsLeft <= 60 && (sport === 'basketball' || sport === 'soccer');
+    let vb = el.querySelector('.sig-velocity');
+    if(isVelocity && !vb){
+      vb = document.createElement('span');
+      vb.className = 'sig-velocity';
+      vb.textContent = '🔥 HIGH VELOCITY';
+      el.querySelector('.sig-r1')?.appendChild(vb);
+    } else if(!isVelocity && vb){
+      vb.remove();
+    }
   });
 
   // Filter
