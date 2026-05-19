@@ -10,6 +10,7 @@
 <meta name="apple-mobile-web-app-title" content="PREDATOR">
 <meta name="application-name" content="PREDATOR">
 <meta name="description" content="Arbitrage Lead-Lag — Pinnacle Sharp vs 1XBet">
+<meta http-equiv="refresh" content="300">
 <title>PREDATOR</title>
 <link rel="manifest" href="/manifest.json">
 <link rel="icon" type="image/png" sizes="32x32" href="/static/icons/favicon-32.png">
@@ -117,6 +118,7 @@
         <span class="sig-match">{{ s.match }}<span class="sig-league"> · {{ s.league or '—' }}</span></span>
         {% set flag_fr = {'HIGH_VALUE':'TOP VALEUR','VALUE':'VALEUR','LOW_VALUE':'FAIBLE','SUSPECT_DATA':'SUSPECT'}[s.risk_flag] if s.risk_flag in ['HIGH_VALUE','VALUE','LOW_VALUE','SUSPECT_DATA'] else s.risk_flag %}
         <span class="sig-badge b-{{ s.risk_flag }}">{{ flag_fr }}</span>
+        {% if s.get('_recent') %}<span class="sig-badge" style="background:rgba(100,100,100,.15);color:var(--t3);border-color:var(--bd)">✓ SETTLÉ</span>{% endif %}
         {% if s.match_time %}
           <span class="sig-date">{{ mdate }} {{ mhour }}</span>
           <span class="sig-cd" data-ts="{{ s.match_time }}"></span>
@@ -131,7 +133,7 @@
           +{{ "%.1f"|format(s.edge_pct) }}%
         </span>
         {% if kelly > 0 %}
-          <span class="sig-mise">{{ (kelly/100*1000)|round|int }}€/k</span>
+          <span class="sig-mise">{{ (kelly/100*(bankroll_ref or 150))|round|int }}€</span>
         {% else %}
           <span class="sig-mise" style="color:var(--t3)">—</span>
         {% endif %}
@@ -335,6 +337,17 @@ function applyFilters(){
       el.querySelector('.sig-r1')?.appendChild(ub);
     } else if(!isUrgent && ub){
       ub.remove();
+    }
+    // EN COURS badge: match already started but within 2h grace window
+    const isLive = minsLeft < 0 && minsLeft > -120;
+    let lb = el.querySelector('.sig-live');
+    if(isLive && !lb){
+      lb = document.createElement('span');
+      lb.className = 'sig-live';
+      lb.textContent = '🔴 EN COURS';
+      el.querySelector('.sig-r1')?.appendChild(lb);
+    } else if(!isLive && lb){
+      lb.remove();
     }
     // HIGH VELOCITY badge: basketball/soccer < 60 min
     const sport = el.dataset.sport;

@@ -6,7 +6,7 @@ Routes: / (Dashboard)  /ledger (CLV Bilan)  /audit (CLV par sport)
 import json
 import logging
 import os
-from datetime import datetime, timezone as _tz
+from datetime import datetime, timedelta, timezone as _tz
 
 import requests
 from dotenv import load_dotenv
@@ -107,14 +107,37 @@ def dashboard():
                 if key not in seen:
                     seen[key] = s
 
-            # Drop signals whose match has already started (proper datetime parse)
             _now = datetime.now(_tz.utc)
+            # Grace period: keep signals up to 2h after kick-off (live betting window)
+            _grace = _now - timedelta(hours=2)
             filtered = [
                 s for s in seen.values()
                 if s.get("risk_flag") in _HIGH_QUALITY
-                and (not s.get("match_time") or (_parse_match_time(s["match_time"]) or _now) > _now)
+                and (not s.get("match_time") or (_parse_match_time(s["match_time"]) or _now) > _grace)
             ]
             signals = sorted(filtered, key=lambda s: _mk_dash_sort(s, _now))
+
+            # Fallback: if fewer than 3 active signals, supplement with recently settled (last 6h)
+            if len(signals) < 3:
+                try:
+                    cutoff6h = (_now - timedelta(hours=6)).isoformat()
+                    res2 = (sb.table("signals")
+                            .select("*")
+                            .in_("status", ["settled", "closed", "expired"])
+                            .gt("scanned_at", cutoff6h)
+                            .order("scanned_at", desc=True)
+                            .limit(5)
+                            .execute())
+                    recent = res2.data or []
+                    existing_ids = {s.get("match_id", "") + s.get("market_key", "") for s in signals}
+                    for r in recent:
+                        rid = r.get("match_id", "") + r.get("market_key", "")
+                        if rid not in existing_ids:
+                            r["_recent"] = True
+                            signals.append(r)
+                except Exception:
+                    pass
+
             # Parse sharp_sources JSON string → dict, consensus_score → int
             for s in signals:
                 ss = s.get("sharp_sources")
@@ -130,7 +153,10 @@ def dashboard():
             last_scan = _get_meta(sb, "last_scan")
     except Exception as e:
         log.error("Dashboard: %s", e)
-    return render_template("index.html", signals=signals, last_scan=last_scan)
+
+    from core.constants import BANKROLL_REF
+    return render_template("index.html", signals=signals, last_scan=last_scan,
+                           bankroll_ref=BANKROLL_REF)
 
 
 # ── Ledger ───────────────────────────────────────────────────────────
