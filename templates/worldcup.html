@@ -30,6 +30,30 @@
 .m-stake { background: rgba(245,197,24,.02); border-bottom-color: rgba(245,197,24,.06); }
 #bankroll-input:focus { border-color: var(--gold); }
 #m-kelly-pct { color: var(--gold); }
+/* WC Fixtures Schedule */
+.wc-sched { margin: 0 0 18px; }
+.sched-hdr { display: flex; justify-content: space-between; align-items: center; margin-bottom: 8px; flex-wrap: wrap; gap: 6px; }
+.sched-hdr > span { color: var(--gold); font-size: 9px; font-weight: 700; letter-spacing: 1.5px; }
+.sched-tabs { display: flex; gap: 4px; }
+.st { background: transparent; border: 1px solid rgba(245,197,24,.18); color: var(--t2); border-radius: 4px; padding: 3px 8px; font-size: 8px; font-weight: 700; letter-spacing: .6px; cursor: pointer; font-family: var(--font); }
+.st.active { background: rgba(245,197,24,.12); border-color: var(--gold); color: var(--gold); }
+.fix-row { background: var(--bg1); border: 1px solid var(--bd); border-left: 2px solid var(--bd2); border-radius: 8px; padding: 9px 12px; margin-bottom: 5px; }
+.fix-top { display: flex; justify-content: space-between; align-items: center; margin-bottom: 4px; }
+.fix-meta { font-size: 8px; color: var(--t2); letter-spacing: .5px; font-family: var(--font-data); }
+.fix-vig  { font-size: 8px; color: var(--t2); font-family: var(--font-data); }
+.fix-teams { font-size: 12px; font-weight: 700; color: var(--t1); margin-bottom: 6px; }
+.fix-odds { display: flex; gap: 5px; align-items: center; margin-bottom: 5px; flex-wrap: wrap; }
+.fix-o { background: rgba(255,255,255,.04); border: 1px solid var(--bd2); border-radius: 4px; padding: 3px 8px; font-size: 10px; font-weight: 600; font-family: var(--font-data); }
+.fix-o .lbl { font-size: 7px; color: var(--t2); font-family: var(--font); }
+.fix-o.fav { border-color: rgba(0,232,127,.3); background: rgba(0,232,127,.06); color: var(--green); }
+.fix-combo { background: rgba(255,255,255,.02) !important; border-color: var(--bd) !important; opacity: .75; }
+.fix-probs { display: flex; gap: 4px; flex-wrap: wrap; }
+.fix-p { font-size: 9px; padding: 2px 6px; border-radius: 3px; font-family: var(--font-data); font-weight: 600; }
+.fix-ph { background: rgba(0,232,127,.10); color: var(--green); }
+.fix-pd { background: rgba(255,255,255,.05); color: var(--t2); }
+.fix-pa { background: rgba(56,189,248,.08); color: var(--blue); }
+.fix-ph.top { background: rgba(0,232,127,.22); font-weight: 800; }
+.fix-pa.top { background: rgba(56,189,248,.16); font-weight: 800; }
 </style>
 </head>
 <body>
@@ -85,6 +109,19 @@
   </div>
   {% endif %}
 
+  <!-- WC FIXTURES SCHEDULE -->
+  <div class="wc-sched" id="wc-sched">
+    <div class="sched-hdr">
+      <span>&#9670; COTES 1XBET &mdash; PHASE DE GROUPES</span>
+      <div class="sched-tabs" id="schedTabs">
+        <button class="st active" data-r="1">TOUR 1</button>
+        <button class="st" data-r="2">TOUR 2</button>
+        <button class="st" data-r="0">TOUS</button>
+      </div>
+    </div>
+    <div id="sched-body"></div>
+  </div>
+
   <!-- GROUP FILTER (rendered by JS) -->
   <div class="group-filter" id="groupFilter">
     <button class="gf active" data-group="">ALL</button>
@@ -115,7 +152,7 @@
 
 </main>
 
-<footer>PREDATOR PAIM v8.5 &nbsp;·&nbsp; FIFA WC 2026 TERMINAL &nbsp;·&nbsp; Seuil Alpha 2.0% &nbsp;·&nbsp; Doctrine Asian Handicap +0.5</footer>
+<footer>PREDATOR PAIM v8.8 &nbsp;·&nbsp; FIFA WC 2026 TERMINAL &nbsp;·&nbsp; Seuil Alpha 2.0% &nbsp;·&nbsp; Doctrine Asian Handicap +0.5</footer>
 
 <!-- ── BOTTOM NAV (mobile) ────────────────────── -->
 <nav class="bnav">
@@ -249,6 +286,103 @@ refresh();
 
 // ── Data + helpers ──
 const SIGNALS = {{ signals|tojson }};
+
+// ── WC Fixtures (cotes 1XBet hardcodées) ────────────
+const WC_FIXTURES = [
+  // TOUR 1 — 11-17 juin 2026
+  {r:1,dt:"2026-06-11",h:"France",          a:"Sénégal",         g:"A",o1:1.28,oX:5.50,o2:11.0, o1X:1.07,o12:1.06,oX2:3.20},
+  {r:1,dt:"2026-06-11",h:"Iran",             a:"Nouvelle-Zélande",g:"B",o1:2.05,oX:3.20,o2:3.55, o1X:1.55,o12:1.45,oX2:2.15},
+  {r:1,dt:"2026-06-12",h:"Irak",             a:"Norvège",         g:"C",o1:3.60,oX:3.20,o2:2.10, o1X:1.90,o12:1.38,oX2:1.62},
+  {r:1,dt:"2026-06-12",h:"Mexique",          a:"Afrique du Sud",  g:"D",o1:1.95,oX:3.30,o2:4.20, o1X:1.40,o12:1.30,oX2:2.40},
+  {r:1,dt:"2026-06-13",h:"Corée du Sud",     a:"Rép. tchèque",    g:"E",o1:2.95,oX:3.20,o2:2.55, o1X:1.85,o12:1.65,oX2:1.85},
+  {r:1,dt:"2026-06-13",h:"Canada",           a:"Bosnie",          g:"F",o1:2.10,oX:3.30,o2:3.65, o1X:1.55,o12:1.42,oX2:2.20},
+  {r:1,dt:"2026-06-14",h:"USA",              a:"Paraguay",        g:"G",o1:2.05,oX:3.30,o2:3.70, o1X:1.55,o12:1.42,oX2:2.20},
+  {r:1,dt:"2026-06-14",h:"Qatar",            a:"Suisse",          g:"H",o1:5.50,oX:4.00,o2:1.68, o1X:2.80,o12:1.25,oX2:1.35},
+  {r:1,dt:"2026-06-15",h:"Brésil",           a:"Maroc",           g:"I",o1:1.48,oX:4.20,o2:7.50, o1X:1.22,o12:1.12,oX2:2.85},
+  {r:1,dt:"2026-06-15",h:"Haïti",            a:"Écosse",          g:"J",o1:6.00,oX:4.20,o2:1.70, o1X:2.95,o12:1.25,oX2:1.35},
+  {r:1,dt:"2026-06-15",h:"Australie",        a:"Turquie",         g:"K",o1:2.65,oX:3.25,o2:2.75, o1X:1.72,o12:1.65,oX2:1.90},
+  {r:1,dt:"2026-06-16",h:"Allemagne",        a:"Curaçao",         g:"L",o1:1.12,oX:7.00,o2:25.0, o1X:1.04,o12:1.03,oX2:4.00},
+  {r:1,dt:"2026-06-16",h:"Pays-Bas",         a:"Japon",           g:"A",o1:1.72,oX:3.60,o2:5.50, o1X:1.30,o12:1.20,oX2:2.75},
+  {r:1,dt:"2026-06-16",h:"Côte d'Ivoire",    a:"Équateur",        g:"B",o1:2.60,oX:3.20,o2:2.85, o1X:1.68,o12:1.55,oX2:1.90},
+  {r:1,dt:"2026-06-17",h:"Suède",            a:"Tunisie",         g:"C",o1:1.85,oX:3.40,o2:4.60, o1X:1.38,o12:1.25,oX2:2.45},
+  {r:1,dt:"2026-06-17",h:"Espagne",          a:"Cap Vert",        g:"D",o1:1.18,oX:6.50,o2:18.0, o1X:1.05,o12:1.04,oX2:4.50},
+  {r:1,dt:"2026-06-17",h:"Belgique",         a:"Égypte",          g:"E",o1:1.52,oX:3.90,o2:6.50, o1X:1.23,o12:1.15,oX2:2.80},
+  {r:1,dt:"2026-06-17",h:"Arabie saoudite",  a:"Uruguay",         g:"F",o1:4.80,oX:3.60,o2:1.78, o1X:2.55,o12:1.28,oX2:1.42},
+  {r:1,dt:"2026-06-17",h:"Argentine",        a:"Algérie",         g:"G",o1:1.28,oX:5.50,o2:11.0, o1X:1.07,o12:1.06,oX2:3.20},
+  {r:1,dt:"2026-06-17",h:"Autriche",         a:"Jordanie",        g:"H",o1:1.45,oX:4.00,o2:8.50, o1X:1.20,o12:1.12,oX2:3.10},
+  {r:1,dt:"2026-06-17",h:"Portugal",         a:"DR Congo",        g:"I",o1:1.18,oX:6.50,o2:18.0, o1X:1.05,o12:1.04,oX2:4.50},
+  {r:1,dt:"2026-06-17",h:"Angleterre",       a:"Croatie",         g:"J",o1:1.78,oX:3.50,o2:5.00, o1X:1.30,o12:1.22,oX2:2.60},
+  {r:1,dt:"2026-06-17",h:"Ghana",            a:"Panama",          g:"K",o1:2.35,oX:3.20,o2:3.15, o1X:1.60,o12:1.52,oX2:2.00},
+  // TOUR 2 — 18-22 juin 2026
+  {r:2,dt:"2026-06-18",h:"Ouzbékistan",      a:"Colombie",        g:"L",o1:4.50,oX:3.60,o2:1.85, o1X:2.50,o12:1.28,oX2:1.42},
+  {r:2,dt:"2026-06-18",h:"Rép. tchèque",     a:"Afrique du Sud",  g:"A",o1:2.05,oX:3.30,o2:3.85, o1X:1.50,o12:1.38,oX2:2.25},
+  {r:2,dt:"2026-06-19",h:"Suisse",           a:"Bosnie",          g:"B",o1:1.80,oX:3.45,o2:5.00, o1X:1.32,o12:1.22,oX2:2.50},
+  {r:2,dt:"2026-06-19",h:"Canada",           a:"Qatar",           g:"C",o1:1.60,oX:3.80,o2:6.00, o1X:1.27,o12:1.18,oX2:2.85},
+  {r:2,dt:"2026-06-19",h:"Mexique",          a:"Corée du Sud",    g:"D",o1:2.50,oX:3.20,o2:2.95, o1X:1.65,o12:1.58,oX2:1.95},
+  {r:2,dt:"2026-06-20",h:"USA",              a:"Australie",       g:"E",o1:2.20,oX:3.25,o2:3.45, o1X:1.55,o12:1.45,oX2:2.10},
+  {r:2,dt:"2026-06-20",h:"Écosse",           a:"Maroc",           g:"F",o1:2.60,oX:3.20,o2:2.80, o1X:1.68,o12:1.58,oX2:1.90},
+  {r:2,dt:"2026-06-20",h:"Brésil",           a:"Haïti",           g:"G",o1:1.12,oX:7.00,o2:25.0, o1X:1.04,o12:1.03,oX2:4.00},
+  {r:2,dt:"2026-06-21",h:"Turquie",          a:"Paraguay",        g:"H",o1:2.30,oX:3.20,o2:3.30, o1X:1.60,o12:1.52,oX2:2.00},
+  {r:2,dt:"2026-06-21",h:"Pays-Bas",         a:"Suède",           g:"I",o1:1.90,oX:3.35,o2:4.40, o1X:1.38,o12:1.28,oX2:2.30},
+  {r:2,dt:"2026-06-21",h:"Allemagne",        a:"Côte d'Ivoire",   g:"J",o1:1.52,oX:3.90,o2:6.50, o1X:1.23,o12:1.15,oX2:2.80},
+  {r:2,dt:"2026-06-22",h:"Équateur",         a:"Curaçao",         g:"K",o1:1.55,oX:3.75,o2:6.00, o1X:1.25,o12:1.15,oX2:2.65},
+  {r:2,dt:"2026-06-22",h:"Tunisie",          a:"Japon",           g:"L",o1:3.50,oX:3.15,o2:2.20, o1X:1.95,o12:1.50,oX2:1.68},
+  {r:2,dt:"2026-06-22",h:"Espagne",          a:"Arabie saoudite", g:"A",o1:1.18,oX:6.50,o2:18.0, o1X:1.05,o12:1.04,oX2:4.50},
+  {r:2,dt:"2026-06-22",h:"Belgique",         a:"Iran",            g:"B",o1:1.52,oX:3.90,o2:6.50, o1X:1.23,o12:1.15,oX2:2.80},
+  {r:2,dt:"2026-06-22",h:"Uruguay",          a:"Cap Vert",        g:"C",o1:1.22,oX:6.00,o2:15.0, o1X:1.06,o12:1.05,oX2:3.80},
+  {r:2,dt:"2026-06-22",h:"Nouvelle-Zélande", a:"Égypte",          g:"D",o1:2.80,oX:3.15,o2:2.75, o1X:1.75,o12:1.65,oX2:1.88},
+];
+
+function _devig(o1,oX,o2){
+  const s=1/o1+1/oX+1/o2;
+  return {vig:(s-1)*100, ph:1/o1/s, pd:1/oX/s, pa:1/o2/s};
+}
+
+function buildSchedule(r){
+  const body=document.getElementById('sched-body');
+  if(!body) return;
+  const data=r===0?WC_FIXTURES:WC_FIXTURES.filter(f=>f.r===r);
+  body.innerHTML=data.map(f=>{
+    const {vig,ph,pd,pa}=_devig(f.o1,f.oX,f.o2);
+    const dt=f.dt.slice(8,10)+'/'+f.dt.slice(5,7);
+    const favHome=f.o1<=f.o2&&f.o1<=f.oX;
+    const favAway=f.o2<f.o1&&f.o2<=f.oX;
+    const o1c='fix-o'+(favHome?' fav':'');
+    const o2c='fix-o'+(favAway?' fav':'');
+    const phc='fix-p fix-ph'+(ph>0.5?' top':'');
+    const pac='fix-p fix-pa'+(pa>0.5?' top':'');
+    const h1=f.h.split(/[\s’']/)[0].toUpperCase();
+    const a1=f.a.split(/[\s’']/)[0].toUpperCase();
+    return `<div class="fix-row">
+<div class="fix-top"><span class="fix-meta">T${f.r} · ${dt} · GRP ${f.g}</span><span class="fix-vig">Vig ${vig.toFixed(1)}%</span></div>
+<div class="fix-teams">${f.h} <span style="color:var(--t2)">vs</span> ${f.a}</div>
+<div class="fix-odds">
+  <span class="${o1c}"><span class="lbl">1 </span>${f.o1.toFixed(2)}</span>
+  <span class="fix-o"><span class="lbl">X </span>${f.oX.toFixed(2)}</span>
+  <span class="${o2c}"><span class="lbl">2 </span>${f.o2.toFixed(2)}</span>
+  <span class="fix-o fix-combo"><span class="lbl">1X </span>${f.o1X.toFixed(2)}</span>
+  <span class="fix-o fix-combo"><span class="lbl">12 </span>${f.o12.toFixed(2)}</span>
+  <span class="fix-o fix-combo"><span class="lbl">X2 </span>${f.oX2.toFixed(2)}</span>
+</div>
+<div class="fix-probs">
+  <span class="${phc}">${h1} ${(ph*100).toFixed(0)}%</span>
+  <span class="fix-p fix-pd">NUL ${(pd*100).toFixed(0)}%</span>
+  <span class="${pac}">${a1} ${(pa*100).toFixed(0)}%</span>
+</div>
+</div>`;
+  }).join('');
+}
+
+(function initSchedule(){
+  document.getElementById('schedTabs')?.addEventListener('click',e=>{
+    const btn=e.target.closest('.st');
+    if(!btn) return;
+    document.querySelectorAll('.st').forEach(b=>b.classList.remove('active'));
+    btn.classList.add('active');
+    buildSchedule(parseInt(btn.dataset.r)||0);
+  });
+  buildSchedule(1);
+})();
 
 function _group(league){
   const m = (league||'').match(/group\s+([A-L])/i);
