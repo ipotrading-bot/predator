@@ -34,6 +34,7 @@ load_dotenv()
 # Lifts per-sport quotas + scans 48h ahead with up to 100 events.
 DEEP_SCAN    = os.environ.get("DEEP_SCAN",    "0") == "1"
 GOLDEN_HOUR  = os.environ.get("GOLDEN_HOUR", "0") == "1"
+GUERRILLA    = os.environ.get("GUERRILLA",   "0") == "1"  # skip OddsAPI → Tier 2 direct
 
 # ── UTC logger ────────────────────────────────────────────────────────
 _fmt = logging.Formatter(
@@ -626,7 +627,9 @@ def run():
     now     = datetime.now(timezone.utc)
     session = _market_session(now.hour)
     log.info("━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━")
-    if GOLDEN_HOUR:
+    if GUERRILLA:
+        mode = "GUERRILLA 🥷 Sans OddsAPI"
+    elif GOLDEN_HOUR:
         mode = "GOLDEN HOUR ⚡ T-120min"
     elif DEEP_SCAN:
         mode = "DEEP 48h"
@@ -666,7 +669,10 @@ def run():
     sharp_source   = "?"
 
     # ── Tier 1: The Odds API ──────────────────────────────────────────
-    if GOLDEN_HOUR:
+    if GUERRILLA:
+        hours_ahead = int(os.environ.get("HOURS_AHEAD", 48))
+        log.info("🥷 GUERRILLA — OddsAPI ignoré, Tier 2 direct (1XBet + Pinnacle/Gemini Search)")
+    elif GOLDEN_HOUR:
         hours_ahead  = 2  # T-120min window only
         scan_keys    = GOLDEN_SPORT_KEYS
         log.info("⚡ GOLDEN HOUR — OddsAPI (%dh window) | %d sports ciblés: %s",
@@ -676,13 +682,14 @@ def run():
         scan_keys   = None  # Use default SPORT_KEYS (all 38 leagues)
         log.info("⚡ Tier 1 — The Odds API (%dh window)...", hours_ahead)
 
-    oddsapi_events = fetch_odds(hours_ahead=hours_ahead, sport_keys=scan_keys)
-    if oddsapi_events:
-        matches      = oddsapi_events[:MAX_MATCHES]
-        sharp_source = "OddsAPI/Pinnacle"
-        sports_found = set(e.get("sport","?") for e in matches)
-        log.info("✅ Tier 1 OK — %d/%d events | sports: %s",
-                 len(matches), len(oddsapi_events), " ".join(sorted(sports_found)))
+    if not GUERRILLA:
+        oddsapi_events = fetch_odds(hours_ahead=hours_ahead, sport_keys=scan_keys)
+        if oddsapi_events:
+            matches      = oddsapi_events[:MAX_MATCHES]
+            sharp_source = "OddsAPI/Pinnacle"
+            sports_found = set(e.get("sport","?") for e in matches)
+            log.info("✅ Tier 1 OK — %d/%d events | sports: %s",
+                     len(matches), len(oddsapi_events), " ".join(sorted(sports_found)))
 
     # ── MMA/eSports/Alternatifs — skipped in Golden Hour (no urgency) ──
     if not GOLDEN_HOUR:
@@ -742,9 +749,8 @@ def run():
         else:
             log.info("💹 Betfair: 0 marchés (marché vide ou hors session)")
 
-    # ── Tier 2: Gemini + Google Search — DISABLED (trop lent) ───────
-    # Saute directement en Tier 3 (Estimateur) si Tier 1 vide
-    if False and not matches:
+    # ── Tier 2: Gemini + Google Search — activé si OddsAPI vide/GUERRILLA ──
+    if not matches:
         log.info("📡 Tier 2 — Harvest 1XBet + Gemini Search Pinnacle...")
         xbet_matches = fetch_matches()
         if not xbet_matches:

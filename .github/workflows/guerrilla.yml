@@ -1,0 +1,36 @@
+name: Predator Guerrilla Scan
+
+# Scan sans OddsAPI — 1XBet direct feed + Pinnacle via Gemini Search
+# Déclencher manuellement quand le quota OddsAPI est épuisé
+
+on:
+  workflow_dispatch:
+
+env:
+  FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: true
+
+jobs:
+  guerrilla-scan:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+          cache: 'pip'
+
+      - name: Install dependencies
+        run: pip install -r requirements.txt
+
+      - name: Run Guerrilla scan (sans OddsAPI)
+        env:
+          GUERRILLA:          "1"
+          GEMINI_API_KEY:     ${{ secrets.GEMINI_API_KEY }}
+          SUPABASE_URL:       ${{ secrets.SUPABASE_URL }}
+          SUPABASE_KEY:       ${{ secrets.SUPABASE_KEY }}
+          TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
+          TELEGRAM_CHAT_ID:   ${{ secrets.TELEGRAM_CHAT_ID }}
+        run: python run_engine.py
