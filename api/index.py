@@ -117,16 +117,16 @@ def dashboard():
             ]
             signals = sorted(filtered, key=lambda s: _mk_dash_sort(s, _now))
 
-            # Fallback: if fewer than 3 active signals, supplement with recently settled (last 6h)
+            # Fallback: if fewer than 3 active signals, supplement with recently settled (last 24h)
             if len(signals) < 3:
                 try:
-                    cutoff6h = (_now - timedelta(hours=6)).isoformat()
+                    cutoff6h = (_now - timedelta(hours=24)).isoformat()
                     res2 = (sb.table("signals")
                             .select("*")
                             .in_("status", ["settled", "closed", "expired"])
                             .gt("scanned_at", cutoff6h)
                             .order("scanned_at", desc=True)
-                            .limit(5)
+                            .limit(10)
                             .execute())
                     recent = res2.data or []
                     existing_ids = {s.get("match_id", "") + s.get("market_key", "") for s in signals}
@@ -495,19 +495,22 @@ def trigger_scan():
     pat = os.environ.get("GITHUB_PAT")
     if not pat:
         return jsonify({"error": "GITHUB_PAT not configured"}), 503
-    try:
-        resp = requests.post(
-            "https://api.github.com/repos/ipotrading-bot/predator/actions/workflows/engine.yml/dispatches",
-            headers={
-                "Authorization": f"Bearer {pat}",
-                "Accept": "application/vnd.github+json",
-                "X-GitHub-Api-Version": "2022-11-28",
-            },
-            json={"ref": "main"},
-            timeout=10,
-        )
-        if resp.status_code == 204:
-            return jsonify({"status": "triggered"}), 200
-        return jsonify({"error": resp.text}), resp.status_code
-    except Exception as e:
-        return jsonify({"error": str(e)}), 500
+    headers = {
+        "Authorization": f"Bearer {pat}",
+        "Accept": "application/vnd.github+json",
+        "X-GitHub-Api-Version": "2022-11-28",
+    }
+    # Guerrilla first (no OddsAPI quota), fallback to engine
+    for workflow in ("guerrilla.yml", "engine.yml"):
+        try:
+            resp = requests.post(
+                f"https://api.github.com/repos/ipotrading-bot/predator/actions/workflows/{workflow}/dispatches",
+                headers=headers,
+                json={"ref": "main"},
+                timeout=10,
+            )
+            if resp.status_code == 204:
+                return jsonify({"status": "triggered", "workflow": workflow}), 200
+        except Exception:
+            continue
+    return jsonify({"error": "all workflows failed"}), 500
