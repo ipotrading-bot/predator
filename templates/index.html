@@ -61,7 +61,7 @@
   {% if last_scan %}
   <div class="scan-meta">
     <span>Dernier scan {{ last_scan.at[11:16] }} UTC &middot; {{ last_scan.matches }} matchs &middot; {{ last_scan.signals }} signaux</span>
-    <span>toutes les 30 min</span>
+    <span id="next-scan-label">3×/jour · 10h · 17h · 22h UTC</span>
   </div>
   {% endif %}
 
@@ -162,14 +162,14 @@
   {% else %}
   <div class="empty">
     <div>Aucun signal haute valeur.</div>
-    <div>Le scan tourne toutes les 30 min via GitHub Actions.</div>
+    <div id="empty-next">Prochain scan automatique : <span id="empty-countdown">—</span></div>
     <button onclick="triggerScan()">&#9654; LANCER UN SCAN</button>
   </div>
   {% endif %}
 
 </main>
 
-<footer>PREDATOR PAIM v8.5 &nbsp;·&nbsp; Pinnacle Sharp &rarr; 1XBet &nbsp;·&nbsp; Arbitrage Lead-Lag</footer>
+<footer>PREDATOR PAIM v8.8 &nbsp;·&nbsp; Pinnacle Sharp &rarr; 1XBet &nbsp;·&nbsp; Arbitrage Lead-Lag</footer>
 
 <!-- ── FAB SCAN (mobile) ──────────────────── -->
 <button class="fab-scan" id="fabScan" onclick="triggerScan()">&#9654;</button>
@@ -508,6 +508,28 @@ function closeModal(){
   document.body.classList.remove('locked');
 }
 document.addEventListener('keydown',e=>{ if(e.key==='Escape') closeModal(); });
+
+// ── Prochain scan ──
+(function nextScan(){
+  const SCAN_HOURS = [10, 17, 22]; // UTC
+  function update(){
+    const now = new Date();
+    const utcH = now.getUTCHours(), utcM = now.getUTCMinutes();
+    const nowMins = utcH * 60 + utcM;
+    let nextH = SCAN_HOURS.find(h => h * 60 > nowMins);
+    if(!nextH) nextH = SCAN_HOURS[0]; // demain matin
+    const nextMins = nextH * 60;
+    const diffMins = nextMins > nowMins ? nextMins - nowMins : (24*60 - nowMins + nextMins);
+    const h = Math.floor(diffMins/60), m = diffMins%60;
+    const txt = `${String(nextH).padStart(2,'0')}:00 UTC (dans ${h}h${String(m).padStart(2,'0')}m)`;
+    const el = document.getElementById('empty-countdown');
+    const lbl = document.getElementById('next-scan-label');
+    if(el) el.textContent = txt;
+    if(lbl) lbl.textContent = `3×/jour · prochain ${String(nextH).padStart(2,'0')}h UTC`;
+  }
+  update();
+  setInterval(update, 60000);
+})();
 
 async function triggerScan(){
   const btn=document.getElementById('scanBtn');

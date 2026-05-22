@@ -103,7 +103,7 @@ def _fetch_from_1xbet(sport_id):
 
 
 def _fetch_from_gemini(sport_id):
-    """Gemini fallback for a given sport. Returns list of validated matches or []."""
+    """Gemini + Google Search fallback — finds REAL upcoming matches. Returns list or []."""
     api_key = os.environ.get("GEMINI_API_KEY")
     if not api_key:
         return []
@@ -117,10 +117,12 @@ def _fetch_from_gemini(sport_id):
 
     draw_field = ',"X":3.40' if is_soccer else ',"X":0'
     prompt = (
-        f"Today is {today}. List 6 important {sport_desc} matches scheduled today or tomorrow. "
-        f"For each match estimate realistic decimal odds for 1XBet. "
-        f"{'IMPORTANT: always include the draw odd X for football.' if is_soccer else ''}"
-        f"Return ONLY a valid JSON array:\n"
+        f"Today is {today}. Use Google Search to find 6 REAL {sport_desc} matches "
+        f"actually scheduled today or in the next 48 hours. "
+        f"DO NOT invent or hallucinate matches — only include confirmed scheduled games. "
+        f"For each real match found, estimate realistic 1XBet decimal odds. "
+        f"{'Include the draw odd X for every football match.' if is_soccer else 'Set X to 0 for non-soccer.'}"
+        f"\nReturn ONLY a valid JSON array (no other text):\n"
         f'[{{"match":"Team A vs Team B","home":"Team A","away":"Team B",'
         f'"league":"League Name","sport":"{sport_name}",'
         f'"odds_1xbet":{{"1":2.10{draw_field},"2":3.20}}}}]'
@@ -128,12 +130,13 @@ def _fetch_from_gemini(sport_id):
 
     payload = {
         "contents": [{"role": "user", "parts": [{"text": prompt}]}],
-        "generationConfig": {"temperature": 0.3, "maxOutputTokens": 1024},
+        "tools": [{"google_search": {}}],
+        "generationConfig": {"temperature": 0.1, "maxOutputTokens": 1024},
     }
 
     try:
         for attempt in range(3):
-            r = requests.post(f"{GEMINI_URL}?key={api_key}", json=payload, timeout=30)
+            r = requests.post(f"{GEMINI_FLASH_URL}?key={api_key}", json=payload, timeout=45)
             if r.status_code == 429:
                 wait = 65 if attempt == 0 else 30
                 log.warning("Gemini rate limit (%s) — waiting %ds", sport_name, wait)
