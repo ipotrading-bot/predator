@@ -438,6 +438,21 @@ def api_worldcup():
         return jsonify({"error": str(e)}), 500
 
 
+@app.route("/api/wc-schedule")
+def api_wc_schedule():
+    """Real WC fixture odds from OddsAPI (saved by engine, 168h window)."""
+    try:
+        sb = _db()
+        if not sb:
+            return jsonify([])
+        meta = _get_meta(sb, "wc_schedule")
+        if meta is None:
+            return jsonify([])
+        return jsonify(meta)
+    except Exception as e:
+        return jsonify({"error": str(e)}), 500
+
+
 # ── JSON API ─────────────────────────────────────────────────────────
 
 @app.route("/api/signals")

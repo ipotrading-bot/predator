@@ -287,7 +287,16 @@ refresh();
 // ── Data + helpers ──
 const SIGNALS = {{ signals|tojson }};
 
-// ── WC Fixtures (cotes 1XBet hardcodées) ────────────
+// ── WC Fixtures — enrichies par vraies côtes OddsAPI si disponibles ──
+let _wcLiveOdds = {};   // keyed by "Home vs Away"
+fetch('/api/wc-schedule').then(r=>r.json()).then(data=>{
+  if(!Array.isArray(data)) return;
+  data.forEach(ev=>{
+    _wcLiveOdds[ev.match] = ev;
+  });
+  buildSchedule(parseInt(document.querySelector('.st.active')?.dataset.r||'1'));
+}).catch(()=>{});
+
 const WC_FIXTURES = [
   // TOUR 1 — 11-17 juin 2026
   {r:1,dt:"2026-06-11",h:"France",          a:"Sénégal",         g:"A",o1:1.28,oX:5.50,o2:11.0, o1X:1.07,o12:1.06,oX2:3.20},
@@ -339,27 +348,35 @@ function _devig(o1,oX,o2){
 }
 
 function buildSchedule(r){
-  const body=document.getElementById('sched-body');
+  const body=document.getElementById(‘sched-body’);
   if(!body) return;
   const data=r===0?WC_FIXTURES:WC_FIXTURES.filter(f=>f.r===r);
   body.innerHTML=data.map(f=>{
-    const {vig,ph,pd,pa}=_devig(f.o1,f.oX,f.o2);
-    const dt=f.dt.slice(8,10)+'/'+f.dt.slice(5,7);
-    const favHome=f.o1<=f.o2&&f.o1<=f.oX;
-    const favAway=f.o2<f.o1&&f.o2<=f.oX;
-    const o1c='fix-o'+(favHome?' fav':'');
-    const o2c='fix-o'+(favAway?' fav':'');
-    const phc='fix-p fix-ph'+(ph>0.5?' top':'');
-    const pac='fix-p fix-pa'+(pa>0.5?' top':'');
-    const h1=f.h.split(/[\s’']/)[0].toUpperCase();
-    const a1=f.a.split(/[\s’']/)[0].toUpperCase();
+    // Inject real odds from OddsAPI if available
+    const live = _wcLiveOdds[f.h+’ vs ‘+f.a] || _wcLiveOdds[f.h+’ vs ‘+f.a.replace(/\s/g,’_’)];
+    const o1 = (live && live.xbt_1 > 1.01) ? live.xbt_1 : f.o1;
+    const oX = (live && live.xbt_x > 1.01) ? live.xbt_x : f.oX;
+    const o2 = (live && live.xbt_2 > 1.01) ? live.xbt_2 : f.o2;
+    const isLive = !!(live && live.xbt_1 > 1.01);
+    const {vig,ph,pd,pa}=_devig(o1,oX,o2);
+    const dt=f.dt.slice(8,10)+’/’+f.dt.slice(5,7);
+    const favHome=o1<=o2&&o1<=oX;
+    const favAway=o2<o1&&o2<=oX;
+    const o1c=’fix-o’+(favHome?’ fav’:’’);
+    const o2c=’fix-o’+(favAway?’ fav’:’’);
+    const phc=’fix-p fix-ph’+(ph>0.5?’ top’:’’);
+    const pac=’fix-p fix-pa’+(pa>0.5?’ top’:’’);
+    const h1=f.h.split(/[\s’’]/)[0].toUpperCase();
+    const a1=f.a.split(/[\s’’]/)[0].toUpperCase();
+    const liveTag = isLive ? ‘<span style="color:var(--gold);font-size:7px;letter-spacing:.8px;font-weight:700">● LIVE</span>’ : ‘’;
+    const pinNote = (live && live.pin_1 > 1.01) ? `<span style="font-size:7px;color:var(--t3)"> Pin:${live.pin_1.toFixed(2)}/${live.pin_x.toFixed(2)}/${live.pin_2.toFixed(2)}</span>` : ‘’;
     return `<div class="fix-row">
-<div class="fix-top"><span class="fix-meta">T${f.r} · ${dt} · GRP ${f.g}</span><span class="fix-vig">Vig ${vig.toFixed(1)}%</span></div>
+<div class="fix-top"><span class="fix-meta">T${f.r} · ${dt} · GRP ${f.g} ${liveTag}</span><span class="fix-vig">Vig ${vig.toFixed(1)}%${pinNote}</span></div>
 <div class="fix-teams">${f.h} <span style="color:var(--t2)">vs</span> ${f.a}</div>
 <div class="fix-odds">
-  <span class="${o1c}"><span class="lbl">1 </span>${f.o1.toFixed(2)}</span>
-  <span class="fix-o"><span class="lbl">X </span>${f.oX.toFixed(2)}</span>
-  <span class="${o2c}"><span class="lbl">2 </span>${f.o2.toFixed(2)}</span>
+  <span class="${o1c}"><span class="lbl">1 </span>${o1.toFixed(2)}</span>
+  <span class="fix-o"><span class="lbl">X </span>${oX.toFixed(2)}</span>
+  <span class="${o2c}"><span class="lbl">2 </span>${o2.toFixed(2)}</span>
   <span class="fix-o fix-combo"><span class="lbl">1X </span>${f.o1X.toFixed(2)}</span>
   <span class="fix-o fix-combo"><span class="lbl">12 </span>${f.o12.toFixed(2)}</span>
   <span class="fix-o fix-combo"><span class="lbl">X2 </span>${f.oX2.toFixed(2)}</span>
@@ -370,7 +387,7 @@ function buildSchedule(r){
   <span class="${pac}">${a1} ${(pa*100).toFixed(0)}%</span>
 </div>
 </div>`;
-  }).join('');
+  }).join(‘’);
 }
 
 (function initSchedule(){

@@ -731,6 +731,40 @@ def run():
             log.info("✅ Tier 1 OK — %d/%d events | sports: %s",
                      len(matches), len(oddsapi_events), " ".join(sorted(sports_found)))
 
+        # ── WC Schedule — fetch 168h window + save to meta for worldcup page ──
+        if sb and not GOLDEN_HOUR:
+            try:
+                wc_events = fetch_odds(
+                    hours_ahead=168,
+                    sport_keys={"soccer_fifa_world_cup": "soccer"},
+                )
+                if wc_events:
+                    wc_fixtures = []
+                    for ev in wc_events:
+                        pin = ev.get("odds_pinnacle") or {}
+                        xbt = ev.get("odds_1xbet") or {}
+                        wc_fixtures.append({
+                            "match":   ev["match"],
+                            "home":    ev["home"],
+                            "away":    ev["away"],
+                            "time":    ev.get("commence_time", ""),
+                            "league":  ev.get("league", "FIFA World Cup 2026"),
+                            "pin_1":   pin.get("1", 0),
+                            "pin_x":   pin.get("X", 0),
+                            "pin_2":   pin.get("2", 0),
+                            "xbt_1":   xbt.get("1", 0),
+                            "xbt_x":   xbt.get("X", 0),
+                            "xbt_2":   xbt.get("2", 0),
+                        })
+                    sb.table("meta").upsert({
+                        "key": "wc_schedule",
+                        "value": __import__("json").dumps(wc_fixtures),
+                        "updated_at": datetime.now(timezone.utc).isoformat(),
+                    }).execute()
+                    log.info("⚽ WC schedule saved — %d matchs (168h window)", len(wc_fixtures))
+            except Exception as e:
+                log.warning("WC schedule save: %s", e)
+
     # ── MMA/eSports/Alternatifs — skipped in Golden Hour (no urgency) ──
     if not GOLDEN_HOUR:
         log.info("🥋 MMA — Gemini Search (Melbet vs Pinnacle)...")
