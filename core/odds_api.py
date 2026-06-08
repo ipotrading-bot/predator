@@ -1,8 +1,13 @@
 """
-core/odds_api.py — PAIM v8.2 — The Odds API (Hunter Multi-Sport Mode)
+core/odds_api.py — PAIM v8.3 — The Odds API (Hunter Multi-Sport Mode)
 Markets: h2h | spreads | totals selon le sport
-Budget juin 2026 : 20 000 req/mois — 19 sport keys actifs avec couverture Pinnacle+1XBet.
-Priorité absolue : soccer_fifa_world_cup (début 11 juin 2026).
+
+Budget 20 000 req/mois — 30 sport keys actifs — Équation :
+  7×G + 30×(E+D) = 666,67 req/jour  →  G=48, E=8, D=3
+  GH  : 48×7  = 336/j → 10 080/mois
+  Eng :  8×30 = 240/j →  7 200/mois
+  Deep:  3×30 =  90/j →  2 700/mois
+  TOTAL         666/j → 19 980/mois (99,9 %)
 """
 import logging
 import os
@@ -54,15 +59,37 @@ SPORT_KEYS = {
 
     # ── Asie ──────────────────────────────────────────────────────────
     "soccer_china_superleague":              "soccer",      # China Super League
+    "soccer_japan_j_league":                 "soccer",      # J1 League — quotidien
+    "soccer_korea_kleague1":                 "soccer",      # K League 1 — quotidien
+
+    # ── Amériques — ligues d'été actives ──────────────────────────────
+    "soccer_usa_mls":                        "soccer",      # MLS — très actif juin–août
+    "soccer_mexico_ligamx":                  "soccer",      # Liga MX — Apertura 2026
+    "soccer_argentina_primera_division":     "soccer",      # Argentine Primera
+    "soccer_colombia_primera_a":             "soccer",      # Colombia Primera A
+
+    # ── Australie — saisons hiver plein ───────────────────────────────
+    "aussierules_afl":                       "aussierules", # AFL — ~9 matchs/semaine
+    "rugby_nrl":                             "rugbyleague", # NRL — ~8 matchs/semaine
+
+    # ── Tennis saison gazon (début ~09/06) ────────────────────────────
+    "tennis_atp_queens_club":                "tennis",      # Queens Club ATP
+    "tennis_atp_halle":                      "tennis",      # Halle Open ATP
+
+    # ── Cricket — Tests + ODI ──────────────────────────────────────────
+    "cricket_test_match":                    "cricket",     # Test cricket en cours
+    "cricket_odis":                          "cricket",     # One Day Internationals
 }
 
 # Markets fetched per sport (API supports h2h,spreads,totals in one call)
 _MARKETS_BY_SPORT = {
     "basketball":       "h2h,spreads,totals",
     "hockey":           "h2h,spreads,totals",  # NHL ML + puck line + O/U
-    "americanfootball": "h2h,spreads,totals", # NFL ML + point spread + O/U
-    "baseball":         "h2h,totals",         # MLB ML + O/U (no spreads)
+    "americanfootball": "h2h,spreads,totals",  # NFL ML + point spread + O/U
+    "baseball":         "h2h,totals",          # MLB ML + O/U (no spreads)
     "rugby":            "h2h,spreads,totals",
+    "rugbyleague":      "h2h,spreads,totals",  # NRL — même structure que rugby union
+    "aussierules":      "h2h,spreads,totals",  # AFL — ligne = 6.5+ pts typique
     "volleyball":       "h2h,totals",
     "tennis":           "h2h,totals",
     "darts":            "h2h",
@@ -169,7 +196,7 @@ def _parse_event(ev: dict, sport_type: str) -> dict | None:
         "away":          away,
         "league":        ev.get("sport_title", ""),
         "sport":         sport_type,
-        "sport_id":      {"soccer": 1, "tennis": 3, "basketball": 4, "boxing": 5, "darts": 6, "cricket": 7, "hockey": 8, "americanfootball": 10, "baseball": 11, "rugby": 12, "volleyball": 13}.get(sport_type, 1),
+        "sport_id":      {"soccer": 1, "tennis": 3, "basketball": 4, "boxing": 5, "darts": 6, "cricket": 7, "hockey": 8, "americanfootball": 10, "baseball": 11, "rugby": 12, "volleyball": 13, "tabletennis": 14, "handball": 15, "aussierules": 16, "rugbyleague": 17}.get(sport_type, 1),
         "commence_time": ev.get("commence_time", ""),
         "odds_1xbet":    xbet_h2h,
         "odds_pinnacle": pin_h2h,
@@ -180,7 +207,7 @@ def _parse_event(ev: dict, sport_type: str) -> dict | None:
         event["odds_cris"] = cris_h2h
 
     # ── Spreads (binary sports only — tennis/boxing/darts/cricket/baseball have no spreads) ──
-    if sport_type not in ("tennis", "boxing", "darts", "cricket", "baseball", "volleyball"):
+    if sport_type not in ("tennis", "boxing", "darts", "cricket", "baseball", "volleyball", "rugbyleague"):
         xs = _extract_spreads(bookmakers, XBET_KEY,     home, away)
         ps = _extract_spreads(bookmakers, PINNACLE_KEY, home, away)
         if xs and ps:
@@ -199,7 +226,7 @@ def _parse_event(ev: dict, sport_type: str) -> dict | None:
 
 # ── Public API ────────────────────────────────────────────────────────
 
-def fetch_odds(api_key: str = None, hours_ahead: int = 24,
+def fetch_odds(api_key: str | None = None, hours_ahead: int = 24,
                sport_keys: dict | None = None) -> list[dict]:
     """
     Fetch events in the next `hours_ahead` hours with h2h + spreads + totals.
@@ -212,6 +239,7 @@ def fetch_odds(api_key: str = None, hours_ahead: int = 24,
     if not api_key:
         log.error("No ODDS_API_KEY — add to .env and GitHub Secrets")
         return []
+    assert api_key is not None  # narrow type after early return
 
     keys_to_scan = sport_keys if sport_keys is not None else SPORT_KEYS
 

@@ -1,13 +1,25 @@
 name: Predator Golden Hour
 
-# Scan toutes les 20 min — 7 sport_keys prioritaires (WC+NBA+NHL+MLB+KBO+NPB+Copa)
-# Fenêtre T-120min — détecte les mouvements de ligne Pinnacle→1XBet pré-match.
-# Budget 20k req/mois : 72 exec/j × 7 sports = 504 req/j max → 15 120 req/mois.
-# Engine + Deep (19 sports × 8×/j) = 4 560 req/mois → TOTAL MAX ≈ 19 680/mois.
+# ══════════════════════════════════════════════════════════════════
+# BUDGET 20 000 req/mois — Optimisation mathématique (30 sport keys)
+#
+#   Équation : 7×G + 30×(E+D) = 666,67 req/jour
+#   Solution : G=48/j (I=30min) | E=8/j | D=3/j
+#
+#   Golden Hour : 48 exec/j × 7  keys =  336 req/j → 10 080/mois
+#   Engine      :  8 exec/j × 30 keys =  240 req/j →  7 200/mois
+#   Deep Scan   :  3 exec/j × 30 keys =   90 req/j →  2 700/mois
+#   ──────────────────────────────────────────────────────────────
+#   TOTAL                              =  666 req/j → 19 980/mois
+#   Usage budget                                      99,9 % ✓
+# ══════════════════════════════════════════════════════════════════
+#
+# Fenêtre T-120min — détecte les mouvements de ligne Pinnacle→1XBet
+# pré-match. Intervalle 30 min = couverture correcte pour tous sports.
 
 on:
   schedule:
-    - cron: '*/20 * * * *'  # Toutes les 20 minutes, 24h/24
+    - cron: '*/30 * * * *'  # Toutes les 30 minutes, 24h/24 (48/jour)
   workflow_dispatch:
 
 env:

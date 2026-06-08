@@ -31,6 +31,8 @@ KELLY_FRACTION = {
     "tabletennis":      0.20,
     "handball":         0.20,
     "rugby":            0.20,
+    "rugbyleague":      0.20,   # NRL — marché Pinnacle liquide
+    "aussierules":      0.20,   # AFL — sharp avec Pinnacle/Betfair
     "baseball":         0.18,
     "mma":              0.15,   # Condition combattant incertaine
     "cricket":          0.15,

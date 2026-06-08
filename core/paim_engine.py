@@ -28,7 +28,7 @@ def _normalize_team(name: str) -> str:
         s = re.sub(pattern, repl, s, flags=re.I)
     return ' '.join(s.split())
 
-SPORT_LABELS    = {1: "soccer", 3: "tennis", 4: "basketball", 5: "mma", 6: "darts", 7: "cricket", 8: "hockey"}
+SPORT_LABELS    = {1: "soccer", 3: "tennis", 4: "basketball", 5: "mma", 6: "darts", 7: "cricket", 8: "hockey", 16: "aussierules", 17: "rugbyleague"}
 MAX_EDGE        = 15.0   # Hard cap — data error above this
 SHARP_PROB_MIN  = 0.65   # Minimum Pinnacle devigged probability (Shin quality gate)
 
@@ -40,7 +40,7 @@ SHARP_PROB_BY_MARKET = {
     "totals":        0.52,   # Same for totals
 }
 
-_SPORT_PFX = {"basketball": "NBA", "hockey": "NHL", "tennis": "TEN", "soccer": "SOC", "boxing": "BOX", "mma": "MMA", "darts": "DRT", "cricket": "CRK"}
+_SPORT_PFX = {"basketball": "NBA", "hockey": "NHL", "tennis": "TEN", "soccer": "SOC", "boxing": "BOX", "mma": "MMA", "darts": "DRT", "cricket": "CRK", "aussierules": "AFL", "rugbyleague": "NRL", "baseball": "MLB", "rugby": "RUG"}
 
 
 def market_label(key: str, side: str, point: float, sport: str) -> str:

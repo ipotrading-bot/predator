@@ -1,15 +1,24 @@
 name: Predator Deep Scan 48h
 
-# Deep scan — horizon 48h, couverture complète 19 sports + tous marchés
-# vs engine.yml : MAX_MATCHES 50→100 | SPORT_QUOTA large (soccer=16, baseball=12)
+# ══════════════════════════════════════════════════════════════════
+# BUDGET 20 000 req/mois — Optimisation mathématique (30 sport keys)
 #
-# 05:55 UTC — avant EU-OPEN : KBO/NPB nuit + WC/Copa pré-journée (slate complet)
-# 18:30 UTC — prime-time    : WC + Copa soirée + NBA/NHL pré-match + MLB
+#   Solution : G=48/j (I=30min) | E=8/j | D=3/j
+#   Ce fichier : D = 3 scans/jour × 30 keys = 90 req/j → 2 700/mois
+#
+# Deep scan — horizon 48h, couverture complète 30 sports + tous marchés
+# vs engine.yml : MAX_MATCHES 50→100 | SPORT_QUOTA large
+#
+#   05:30 UTC — avant EU-OPEN  : KBO/NPB nuit + WC/Copa pré-journée
+#   12:30 UTC — EU-MID         : SA afternoon + MLB opening
+#   19:30 UTC — EU-CLOSE       : WC/Copa soirée + NBA/NHL pré-match
+# ══════════════════════════════════════════════════════════════════
 
 on:
   schedule:
-    - cron: '55 5  * * *'   # 05:55 UTC — avant EU-OPEN (KBO/NPB nuit)
-    - cron: '30 18 * * *'   # 18:30 UTC — prime-time WC/Copa/NBA pré-match
+    - cron: '30 5  * * *'   # 05:30 UTC — avant EU-OPEN (KBO/NPB nuit)
+    - cron: '30 12 * * *'   # 12:30 UTC — EU-MID (SA afternoon + MLB)
+    - cron: '30 19 * * *'   # 19:30 UTC — prime-time WC/Copa/NBA/NHL
   workflow_dispatch:
 
 env:
@@ -18,7 +27,7 @@ env:
 jobs:
   deep-scan:
     runs-on: ubuntu-latest
-    timeout-minutes: 25      # Longer timeout — more events, more API calls
+    timeout-minutes: 25
 
     steps:
       - uses: actions/checkout@v4

@@ -81,7 +81,8 @@ SPORT_EMOJI  = {
     "soccer": "⚽", "tennis": "🎾", "basketball": "🏀", "boxing": "🥊",
     "mma": "🥋", "darts": "🎯", "cricket": "🏏", "hockey": "🏒",
     "esports": "🎮", "americanfootball": "🏈", "baseball": "⚾",
-    "rugby": "🏉", "volleyball": "🏐", "tabletennis": "🏓", "handball": "🤾",
+    "rugby": "🏉", "rugbyleague": "🏉", "aussierules": "🦘",
+    "volleyball": "🏐", "tabletennis": "🏓", "handball": "🤾",
 }
 
 # Golden Hour — T-120min — 7 sports à lag maximal et volume élevé (juin 2026)
@@ -108,12 +109,14 @@ GOLDEN_SPORT_KEYS = {
 _QUOTA_FAST = {
     "soccer": 10, "baseball": 8, "basketball": 6, "hockey": 5,
     "tennis": 6, "mma": 4, "americanfootball": 4, "rugby": 3,
+    "rugbyleague": 4, "aussierules": 4,
     "esports": 3, "boxing": 3, "cricket": 3, "volleyball": 3,
     "tabletennis": 3, "handball": 3, "darts": 3,
 }
 _QUOTA_DEEP = {
     "soccer": 16, "baseball": 12, "basketball": 10, "hockey": 8,
     "tennis": 10, "mma": 6, "americanfootball": 6, "rugby": 5,
+    "rugbyleague": 6, "aussierules": 6,
     "esports": 4, "boxing": 4, "cricket": 4, "volleyball": 4,
     "tabletennis": 4, "handball": 4, "darts": 4,
 }
@@ -122,6 +125,7 @@ SPORT_QUOTA = _QUOTA_DEEP if DEEP_SCAN else _QUOTA_FAST
 _SPORT_ORDER = [
     "soccer", "basketball", "hockey", "baseball",
     "tennis", "mma", "americanfootball", "rugby",
+    "rugbyleague", "aussierules",
     "esports", "boxing", "cricket", "volleyball",
     "tabletennis", "handball", "darts",
 ]
