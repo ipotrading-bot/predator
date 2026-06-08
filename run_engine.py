@@ -86,40 +86,42 @@ GOLDEN_SPORT_KEYS = {
     "soccer_conmebol_copa_libertadores":    "soccer",      # Copa Lib — lag SA maximal
 }
 
-# Portfolio Balancer: max signals per sport per scan
+# Portfolio Balancer — quotas max par sport par scan (juin 2026)
+# Baseball élevé : MLB+KBO+NPB = 3 ligues actives simultanément (~19 events/fetch)
+# Soccer élevé  : FIFA WC 2026 dès le 11/06 + Copa Lib + Brasileirão + Scandi
 _QUOTA_FAST = {
-    "basketball": 5, "hockey": 4, "americanfootball": 4, "baseball": 4,
-    "esports": 3, "rugby": 3, "tennis": 5, "mma": 4,
-    "volleyball": 3, "tabletennis": 3, "handball": 3,
-    "boxing": 3, "darts": 3, "cricket": 3, "soccer": 6,
+    "soccer": 10, "baseball": 8, "basketball": 6, "hockey": 5,
+    "tennis": 6, "mma": 4, "americanfootball": 4, "rugby": 3,
+    "esports": 3, "boxing": 3, "cricket": 3, "volleyball": 3,
+    "tabletennis": 3, "handball": 3, "darts": 3,
 }
 _QUOTA_DEEP = {
-    "basketball": 8, "hockey": 6, "americanfootball": 6, "baseball": 6,
-    "esports": 4, "rugby": 4, "tennis": 10, "mma": 5,
-    "volleyball": 4, "tabletennis": 4, "handball": 4,
-    "boxing": 4, "darts": 4, "cricket": 4, "soccer": 6,
+    "soccer": 16, "baseball": 12, "basketball": 10, "hockey": 8,
+    "tennis": 10, "mma": 6, "americanfootball": 6, "rugby": 5,
+    "esports": 4, "boxing": 4, "cricket": 4, "volleyball": 4,
+    "tabletennis": 4, "handball": 4, "darts": 4,
 }
 SPORT_QUOTA = _QUOTA_DEEP if DEEP_SCAN else _QUOTA_FAST
-# Telegram report order: highest alpha first
+# Telegram report order — sports les plus générateurs de signals en tête
 _SPORT_ORDER = [
-    "basketball", "hockey", "americanfootball", "baseball",
-    "esports", "rugby", "tennis", "mma",
-    "volleyball", "tabletennis", "handball",
-    "boxing", "darts", "cricket", "soccer",
+    "soccer", "basketball", "hockey", "baseball",
+    "tennis", "mma", "americanfootball", "rugby",
+    "esports", "boxing", "cricket", "volleyball",
+    "tabletennis", "handball", "darts",
 ]
 
-# EU market sessions (UTC) — aligns with European bookmaker line movement
+# Sessions marché (UTC) — alignées sur les fenêtres d'inefficience
 _SESSIONS = {
-    (6,  12): "EU-OPEN  📈",   # 06:00–11:59 UTC — fresh lines, max inefficiency
-    (12, 18): "EU-MID   ⚡",   # 12:00–17:59 UTC — afternoon fixtures
-    (18, 22): "EU-CLOSE 🎯",   # 18:00–21:59 UTC — prime-time kickoffs
+    (6,  12): "EU-OPEN  📈",   # 06:00–11:59 — KBO/NPB morning + lignes EU fraîches
+    (12, 18): "EU-MID   ⚡",   # 12:00–17:59 — SA + WC afternoon + MLB opening
+    (18, 22): "EU-CLOSE 🎯",   # 18:00–21:59 — Copa/WC soirée + NBA/NHL pré-match
 }
 
 def _market_session(hour_utc: int) -> str:
     for (start, end), label in _SESSIONS.items():
         if start <= hour_utc < end:
             return label
-    return "OVERNIGHT 🌙"      # 22:00–05:59 UTC — NBA / off-peak
+    return "OVERNIGHT 🌙"      # 22:00–05:59 UTC — NBA/NHL tip-off + MLB late
 
 
 # ── helpers ──────────────────────────────────────────────────────────

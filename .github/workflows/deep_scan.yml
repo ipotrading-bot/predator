@@ -1,18 +1,16 @@
 name: Predator Deep Scan 48h
 
-# Deep scan — 48h horizon, full multi-sport multi-market coverage
-# Runs every morning before EU-OPEN + manual trigger from GitHub Actions UI.
+# Deep scan — horizon 48h, couverture complète 19 sports + tous marchés
+# vs engine.yml : MAX_MATCHES 50→100 | SPORT_QUOTA large (soccer=16, baseball=12)
 #
-# vs normal engine.yml:
-#   - MAX_MATCHES : 20  →  100  (all sports, full slate)
-#   - SPORT_QUOTA : tight → wide (soccer=12, tennis=10, basketball=8, …)
-#   - Time window : 72h  →  48h (focused on next 2 days)
+# 05:55 UTC — avant EU-OPEN : KBO/NPB nuit + WC/Copa pré-journée (slate complet)
+# 18:30 UTC — prime-time    : WC + Copa soirée + NBA/NHL pré-match + MLB
 
 on:
   schedule:
-    - cron: '55 5 * * *'    # 05:55 UTC daily — before EU-OPEN (06:00 UTC)
-    - cron: '0 18 * * *'    # 18:00 UTC daily — prime-time evening sweep
-  workflow_dispatch:         # Manual trigger: Actions → deep_scan → Run workflow
+    - cron: '55 5  * * *'   # 05:55 UTC — avant EU-OPEN (KBO/NPB nuit)
+    - cron: '30 18 * * *'   # 18:30 UTC — prime-time WC/Copa/NBA pré-match
+  workflow_dispatch:
 
 env:
   FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: true
