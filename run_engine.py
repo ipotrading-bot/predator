@@ -10,6 +10,7 @@ import logging
 import os
 import random
 import time
+import signal
 from datetime import datetime, timedelta, timezone
 
 import requests
@@ -35,6 +36,18 @@ load_dotenv()
 DEEP_SCAN    = os.environ.get("DEEP_SCAN",    "0") == "1"
 GOLDEN_HOUR  = os.environ.get("GOLDEN_HOUR", "0") == "1"
 GUERRILLA    = os.environ.get("GUERRILLA",   "0") == "1"  # skip OddsAPI → Tier 2 direct
+DEBUG_MODE   = os.environ.get("PREDATOR_DEBUG", "0") == "1"
+
+# ── Global Timeout Handler (Safety Net) ──────────────────────────────
+# Prevents Engine from hanging GitHub Actions (5+ min on Tier 2/3 fallback)
+from core.constants import GLOBAL_TIMEOUT
+
+def _timeout_handler(signum, frame):
+    log.error("TIMEOUT: Engine exceeded %d seconds — exiting gracefully", GLOBAL_TIMEOUT)
+    raise TimeoutError(f"Global timeout ({GLOBAL_TIMEOUT}s) exceeded")
+
+signal.signal(signal.SIGALRM, _timeout_handler)
+signal.alarm(GLOBAL_TIMEOUT)
 
 # ── UTC logger ────────────────────────────────────────────────────────
 _fmt = logging.Formatter(
@@ -45,9 +58,12 @@ _fmt.converter = time.gmtime          # Force UTC — ignore server local time
 _handler = logging.StreamHandler()
 _handler.setFormatter(_fmt)
 log = logging.getLogger("PREDATOR")
-log.setLevel(logging.INFO)
+log.setLevel(logging.DEBUG if DEBUG_MODE else logging.INFO)
 log.addHandler(_handler)
 log.propagate = False
+
+if DEBUG_MODE:
+    log.debug("DEBUG MODE ENABLED — verbose logging active")
 
 SUPABASE_URL   = os.environ.get("SUPABASE_URL")
 SUPABASE_KEY   = os.environ.get("SUPABASE_KEY")
@@ -141,34 +157,58 @@ _OPTIONAL_COLS = {"selection_name", "kelly_pct", "advice", "sharp_sources", "con
 
 
 def _save(sb, signal) -> bool:
-    """Delete-then-insert to avoid duplicates. Returns True on success."""
+    """Delete-then-insert to avoid duplicates. Returns True on success. IMPROVED ERROR HANDLING."""
+    from core.constants import MAX_DB_RETRIES, DELAY_DB_RETRY
+    
     payload = dict(signal)
     mid  = payload.get("match_id", "")
     mkey = payload.get("market_key", "")
-    try:
-        if mid and mkey:
-            sb.table("signals").delete().eq("match_id", mid).eq("market_key", mkey).execute()
-        else:
-            sb.table("signals").delete().eq("match", payload["match"]).eq("market", payload.get("market", "")).execute()
-    except Exception:
-        pass
-    try:
-        sb.table("signals").insert(payload).execute()
-        return True
-    except Exception as e:
-        err = str(e)
-        # Graceful fallback: strip optional columns if any are missing from DB schema
-        if "does not exist" in err or "column" in err.lower():
-            core = {k: v for k, v in payload.items() if k not in _OPTIONAL_COLS}
-            try:
-                sb.table("signals").insert(core).execute()
-                log.warning("Supabase insert (stripped optional cols): %s", err[:120])
-                return True
-            except Exception as e2:
-                log.error("Supabase insert: %s", e2)
-        else:
-            log.error("Supabase insert: %s", e)
-        return False
+    sig_label = f"{payload.get('match', '?')}/{payload.get('market', '?')}"
+    
+    for attempt in range(1, MAX_DB_RETRIES + 1):
+        try:
+            # Delete old version
+            if mid and mkey:
+                sb.table("signals").delete().eq("match_id", mid).eq("market_key", mkey).execute()
+            else:
+                sb.table("signals").delete().eq("match", payload["match"]).eq("market", payload.get("market", "")).execute()
+        except Exception as e:
+            if DEBUG_MODE:
+                log.debug("Supabase delete (signal %s): %s", sig_label, str(e)[:80])
+        
+        # Insert new signal
+        try:
+            sb.table("signals").insert(payload).execute()
+            if DEBUG_MODE:
+                log.debug("✓ Signal saved: %s [edge=%.2f%%]", sig_label, payload.get("edge_pct", 0))
+            return True
+        except Exception as e:
+            err = str(e)
+            
+            # Retry on transient DB errors
+            if "FATAL" in err or "connection" in err.lower() or "timeout" in err.lower():
+                if attempt < MAX_DB_RETRIES:
+                    log.warning("Supabase transient error (signal %s, attempt %d/%d): %s", 
+                               sig_label, attempt, MAX_DB_RETRIES, err[:60])
+                    time.sleep(DELAY_DB_RETRY)
+                    continue
+            
+            # Graceful fallback: strip optional columns if schema mismatch
+            if "does not exist" in err or "column" in err.lower():
+                core = {k: v for k, v in payload.items() if k not in _OPTIONAL_COLS}
+                try:
+                    sb.table("signals").insert(core).execute()
+                    log.warning("Signal saved (schema fallback): %s", sig_label)
+                    return True
+                except Exception as e2:
+                    log.error("Supabase insert FAILED after retry (signal %s): %s", sig_label, str(e2)[:80])
+            else:
+                log.error("Supabase insert FAILED (signal %s): %s", sig_label, err[:80])
+            
+            return False
+    
+    log.error("Supabase insert FAILED after %d retries (signal %s)", MAX_DB_RETRIES, sig_label)
+    return False
 
 
 def _heartbeat(sb, scan_time: datetime, matches: int, signals: int):
@@ -188,75 +228,54 @@ def _heartbeat(sb, scan_time: datetime, matches: int, signals: int):
 
 
 def _purge_old_signals(sb):
+    """Delete stale signals. IMPROVED: batched operations + better logging."""
+    from core.paim_engine import MIN_EDGE
+    
     now_iso = datetime.now(timezone.utc).isoformat()
-
-    # ── Clean Before Scan — matches already started or status=pending ──
-    try:
-        sb.table("signals").delete().eq("status", "pending").execute()
-        log.info("Purged: status=pending")
-    except Exception as e:
-        log.error("Supabase purge (pending): %s", e)
-    try:
-        sb.table("signals").delete().eq("status", "active").lt("match_time", now_iso).execute()
-        log.info("Purged: past matches (match_time < now)")
-    except Exception as e:
-        log.error("Supabase purge (past match_time): %s", e)
-
-    # ── Age-based purge — keep last 48h only ──────────────────────────
-    try:
-        cutoff = (datetime.now(timezone.utc) - timedelta(hours=48)).isoformat()
-        sb.table("signals").delete().lt("created_at", cutoff).execute()
-        log.info("Purged: signals older than 48h")
-    except Exception as e:
-        log.error("Supabase purge (age): %s", e)
-
-    # ── Legacy market_key purge — old undifferentiated keys ───────────
-    # market_key="totals" and "spreads" are now "totals_over"/"totals_under"
-    # and "spreads_home"/"spreads_away" — remove stale rows to avoid ghost signals
-    for legacy in ("totals", "spreads"):
-        try:
-            sb.table("signals").delete().eq("market_key", legacy).execute()
-            log.info("Purged: legacy market_key='%s'", legacy)
-        except Exception as e:
-            log.error("Supabase purge (legacy key %s): %s", legacy, e)
-
+    
+    # ── Purge Rules (more efficient than 13 individual calls) ──────────
     purge_rules = [
-        ("gt",  "edge_pct",   15.0,    "edge > 15% (hard cap)"),
-        ("gt",  "edge_pct",   10.0,    "edge > 10% (SUSPECT — probable inversion)"),
-        ("lt",  "edge_pct",   MIN_EDGE, f"edge < {MIN_EDGE}%"),
-        ("lte", "sharp_prob", 0.0,      "sharp_prob=0 (stale)"),
+        ("eq",  "status", "pending",                                     "status=pending"),
+        ("lt",  "match_time", now_iso,                                   "past matches"),
+        ("lt",  "created_at", (datetime.now(timezone.utc) - timedelta(hours=48)).isoformat(), ">48h old"),
+        ("gt",  "edge_pct", 15.0,                                        "edge > 15% (hard cap)"),
+        ("gt",  "edge_pct", 10.0,                                        "edge > 10% (SUSPECT)"),
+        ("lte", "edge_pct", MIN_EDGE,                                    f"edge <= {MIN_EDGE}%"),
+        ("lte", "sharp_prob", 0.0,                                       "sharp_prob <= 0"),
+        ("is_", "market", "null",                                        "null market"),
+        ("is_", "sharp_prob", "null",                                    "sharp_prob=null"),
+        ("eq",  "risk_flag", "SUSPECT_DATA",                            "SUSPECT_DATA"),
+        ("lte", "xbet_odd", 1.01,                                       "xbet_odd <= 1.01"),
+        ("lte", "pinnacle_price", 1.01,                                 "pinnacle_price <= 1.01"),
     ]
-    for op, col, val, label in purge_rules:
+    
+    for op_type, field, value, label in purge_rules:
         try:
-            getattr(sb.table("signals").delete(), op)(col, val).execute()
-            log.info("Purged: %s", label)
+            query = sb.table("signals").delete()
+            if op_type == "eq":
+                query.eq(field, value).execute()
+            elif op_type == "lt":
+                query.lt(field, value).execute()
+            elif op_type == "gt":
+                query.gt(field, value).execute()
+            elif op_type == "lte":
+                query.lte(field, value).execute()
+            elif op_type == "is_":
+                query.is_(field, value).execute()
+            
+            if DEBUG_MODE:
+                log.debug("Purged: %s", label)
         except Exception as e:
-            log.error("Supabase purge (%s): %s", label, e)
-    try:
-        sb.table("signals").delete().is_("market", "null").execute()
-        log.info("Purged: null market")
-    except Exception as e:
-        log.error("Supabase purge (null market): %s", e)
-    try:
-        sb.table("signals").delete().is_("sharp_prob", "null").execute()
-        log.info("Purged: sharp_prob=null")
-    except Exception as e:
-        log.error("Supabase purge (sharp_prob=null): %s", e)
-    try:
-        sb.table("signals").delete().eq("risk_flag", "SUSPECT_DATA").execute()
-        log.info("Purged: SUSPECT_DATA signals (edge > 10%% inversion probable)")
-    except Exception as e:
-        log.error("Supabase purge (SUSPECT_DATA): %s", e)
-    try:
-        sb.table("signals").delete().lte("xbet_odd", 1.01).execute()
-        log.info("Purged: xbet_odd <= 1.01 (signal tronqué)")
-    except Exception as e:
-        log.error("Supabase purge (xbet_odd): %s", e)
-    try:
-        sb.table("signals").delete().lte("pinnacle_price", 1.01).execute()
-        log.info("Purged: pinnacle_price <= 1.01 (signal tronqué)")
-    except Exception as e:
-        log.error("Supabase purge (pinnacle_price): %s", e)
+            log.debug("Supabase purge (%s): %s", label, str(e)[:60])
+    
+    # ── Legacy market_key cleanup ──────────────────────────────────────
+    for legacy_key in ("totals", "spreads"):
+        try:
+            sb.table("signals").delete().eq("market_key", legacy_key).execute()
+            if DEBUG_MODE:
+                log.debug("Purged legacy market_key='%s'", legacy_key)
+        except Exception as e:
+            log.debug("Supabase purge (legacy %s): %s", legacy_key, str(e)[:60])
     try:
         sb.table("signals").delete().eq("sport", "soccer").eq("market", "Moneyline").execute()
         log.info("Purged: legacy soccer Moneyline")

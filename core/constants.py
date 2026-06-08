@@ -10,6 +10,15 @@ BANKROLL_REF = 150    # € — 100 000 XOF (taux fixe 655.96 XOF/€)
 MAX_EDGE     = 15.0   # % — hard cap; above = data mapping error, reject
 SUSPECT_EDGE = 10.0   # % — safety trigger: major sport edge above this = SUSPECT_DATA
 
+# ── Retry & Rate Limiting (Centralized) ──────────────────────────────
+DELAY_XBET_MIN       = 2.0      # Seconds — min delay between 1XBet requests
+DELAY_XBET_MAX       = 5.0      # Seconds — max delay (random jitter)
+DELAY_GEMINI_RATE    = 65.0     # Seconds — Gemini rate limit backoff
+DELAY_DB_RETRY       = 1.0      # Seconds — Supabase transient error retry
+MAX_DB_RETRIES       = 3        # Attempts — max retries before giving up
+GLOBAL_TIMEOUT       = 540      # Seconds — 9 minutes, safety net for GitHub Actions
+DEBUG_MODE           = False    # Will be set from env var PREDATOR_DEBUG
+
 # Fractional Kelly per sport — sharper markets = higher confidence = higher fraction
 KELLY_FRACTION = {
     "basketball":       0.30,   # NBA très sharp, confiance élevée
