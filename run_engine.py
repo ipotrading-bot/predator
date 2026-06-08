@@ -283,11 +283,13 @@ def _emit(signals, sb, now, log, name, sport, league, mkt_key, mkt_label,
         log.info("DISCARD | %s %s | %s — sharp_prob=0 (stale/missing data)", emoji, name, mkt_label)
         return
 
-    # Safety Trigger: edge > 10% on a major sport = data mapping error.
-    # Never save to DB — alert only, then discard.
-    if edge > _SUSPECT_EDGE and sport in _MAJOR_SPORTS:
-        log.warning("SUSPECT | %s %s | %s — Edge=+%.2f%% > 10%% — DISCARD (erreur données probable)",
-                    emoji, name, mkt_label, edge)
+    # Safety Trigger: edge trop élevé = probable erreur de données.
+    # H2H : seuil strict 10% (risque inversion team mapping).
+    # Totals/Spreads : seuil large 15% (pas d'inversion possible, lag légitime sur baseball/KBO).
+    suspect_cap = _SUSPECT_EDGE if mkt_key == "h2h" else _SUSPECT_EDGE * 1.5
+    if edge > suspect_cap and sport in _MAJOR_SPORTS:
+        log.warning("SUSPECT | %s %s | %s — Edge=+%.2f%% > %.0f%% — DISCARD",
+                    emoji, name, mkt_label, edge, suspect_cap)
         return
 
     # J+36h filter: signaux éloignés doivent être HIGH_VALUE (≥ 5%) pour justifier immobilisation capital
@@ -454,7 +456,15 @@ def _process_totals(m, name, sport, league, emoji, signals, sb, now, log, min_ed
     prob_min = SHARP_PROB_BY_MARKET["totals"]
     xt = m["totals_1xbet"]
     pt = m["totals_pinnacle"]
-    point = pt.get("point", xt.get("point", 0.0))
+
+    # Line-mismatch guard: 1XBet et Pinnacle sur des totaux différents = faux edge.
+    xt_line = float(xt.get("point") or 0)
+    pt_line = float(pt.get("point") or 0)
+    if xt_line and pt_line and abs(xt_line - pt_line) > 0.5:
+        log.info("LINESKIP | %s %s totals — 1XBet %.1f ≠ Pinnacle %.1f",
+                 emoji, name, xt_line, pt_line)
+        return
+    point = pt_line or xt_line
 
     for side, other in [("over", "under"), ("under", "over")]:
         x_odd = float(xt.get(side, 0))
@@ -478,6 +488,14 @@ def _process_spreads(m, name, sport, league, home, away, emoji, signals, sb, now
     prob_min = SHARP_PROB_BY_MARKET["spreads"]
     xs = m["spreads_1xbet"]
     ps = m["spreads_pinnacle"]
+
+    # Line-mismatch guard: handicaps différents entre books = faux edge.
+    xs_line = float(xs.get("point") or 0)
+    ps_line = float(ps.get("point") or 0)
+    if xs_line and ps_line and abs(abs(xs_line) - abs(ps_line)) > 0.5:
+        log.info("LINESKIP | %s %s spreads — 1XBet %.1f ≠ Pinnacle %.1f",
+                 emoji, name, xs_line, ps_line)
+        return
     home_point = float(ps.get("point", xs.get("point", 0.0)))
     away_point = -home_point
 
@@ -751,6 +769,16 @@ def run():
                     sharp_source = "Betfair+Gemini"
         else:
             log.info("💹 Betfair: 0 marchés (marché vide ou hors session)")
+
+    # ── Golden Hour early-exit — aucun event OddsAPI dans T-2h ──────────
+    # Si OddsAPI ne trouve rien dans la fenêtre 2h, les lignes ne bougent pas.
+    # Tier 2/3 (Gemini Search) ne sert à rien ici : trop lent, rate-limited,
+    # et les prix estimés ont moins de valeur que le vrai mouvement Pinnacle.
+    if GOLDEN_HOUR and not matches:
+        log.info("⚡ GOLDEN HOUR — 0 events dans T-2h → exit rapide (lignes stables)")
+        if sb:
+            _heartbeat(sb, now, 0, 0)
+        return
 
     # ── Tier 2: Gemini + Google Search — activé si OddsAPI vide/GUERRILLA ──
     if not matches:
