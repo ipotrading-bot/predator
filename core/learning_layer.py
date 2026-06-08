@@ -9,23 +9,23 @@ from datetime import datetime, timezone
 
 log = logging.getLogger("LEARN")
 
-# Per-sport baseline (mirrors MIN_EDGE=1.5 from paim_engine)
+# Per-sport baseline — uniquement les sports actifs, seuil relevé à 2.0 % minimum.
+# Objectif : moins de signaux, mais plus fiables (gagner ou ne pas jouer).
 SPORT_DEFAULTS: dict[str, float] = {
-    "soccer":     1.5,
-    "basketball": 1.5,
-    "tennis":     1.5,
-    "mma":        2.0,   # Higher baseline — Gemini price estimation adds uncertainty
-    "boxing":     1.5,
-    "darts":      1.5,
-    "cricket":    1.5,
+    "soccer":      2.0,   # WC + Copa Lib + MLS + Brasileirão
+    "basketball":  2.0,   # NBA Finals — marché très sharp, edge réel commence à 2%
+    "hockey":      2.0,   # NHL Cup Finals
+    "baseball":    2.0,   # MLB + KBO + NPB — lag timezone documenté
+    "rugbyleague": 2.0,   # NRL
+    "aussierules": 2.0,   # AFL
 }
-_THRESHOLD_MIN = 1.5   # Never weaker than the global baseline
-_THRESHOLD_MAX = 5.0   # Hard cap — above this no signals would ever pass
-_STEP_UP       = 0.3   # Added when CLV hit-rate < 60 %
-_STEP_DOWN     = 0.2   # Removed when CLV hit-rate > 80 %
+_THRESHOLD_MIN = 2.0   # Jamais en-dessous de 2.0% (relevé depuis 1.5%)
+_THRESHOLD_MAX = 6.0   # Hard cap — relevé de 5.0 pour permettre ajustement sur sports bruyants
+_STEP_UP       = 0.4   # Pénalisation plus forte si CLV hit-rate < 60% (relevé 0.3→0.4)
+_STEP_DOWN     = 0.2   # Récompense inchangée — prudence sur la baisse de seuil
 _MIN_SAMPLES   = 10    # Minimum closed signals before any adjustment
 _TARGET_LO     = 0.60  # Below this  → raise threshold (too many weak signals)
-_TARGET_HI     = 0.80  # Above this  → lower threshold (room for more signals)
+_TARGET_HI     = 0.82  # Above this  → lower threshold (relevé 0.80→0.82 : plus exigeant)
 
 
 def load_thresholds(sb) -> dict[str, float]:

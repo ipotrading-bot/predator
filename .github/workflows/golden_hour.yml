@@ -1,21 +1,19 @@
 name: Predator Golden Hour
 
 # ══════════════════════════════════════════════════════════════════
-# BUDGET 20 000 req/mois — Optimisation mathématique (30 sport keys)
+# BUDGET 20 000 req/mois — Optimisation 11 sport keys (100 %)
 #
-#   Équation : 7×G + 30×(E+D) = 666,67 req/jour
-#   Solution : G=48/j (I=30min) | E=8/j | D=3/j
-#
-#   Golden Hour : 48 exec/j × 7  keys =  336 req/j → 10 080/mois
-#   Engine      :  8 exec/j × 30 keys =  240 req/j →  7 200/mois
-#   Deep Scan   :  3 exec/j × 30 keys =   90 req/j →  2 700/mois
+#   Golden Hour : 48 exec/j × 11 keys =  528 req/j → 15 840/mois
+#   Engine      : 10 exec/j × 11 keys =  110 req/j →  3 300/mois
+#   Deep Scan   :  4 exec/j × 11 keys =   44 req/j →  1 320/mois
 #   ──────────────────────────────────────────────────────────────
-#   TOTAL                              =  666 req/j → 19 980/mois
-#   Usage budget                                      99,9 % ✓
+#   TOTAL brut                         =  682 req/j → 20 460/mois
+#   Quota guard (stop à 50 restantes)  →  usage effectif ≈ 100 % ✓
 # ══════════════════════════════════════════════════════════════════
 #
 # Fenêtre T-120min — détecte les mouvements de ligne Pinnacle→1XBet
-# pré-match. Intervalle 30 min = couverture correcte pour tous sports.
+# pré-match sur les 11 sports sélectionnés (lag documenté uniquement).
+# Intervalle 30 min = couverture optimale, 48 passes/jour.
 
 on:
   schedule:

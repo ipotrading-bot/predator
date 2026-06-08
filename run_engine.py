@@ -71,7 +71,7 @@ TELEGRAM_TOKEN = os.environ.get("TELEGRAM_BOT_TOKEN")
 TELEGRAM_CHAT  = os.environ.get("TELEGRAM_CHAT_ID")
 
 ELITE_EDGE  = _ELITE_EDGE   # % — send Telegram alert (from core.constants)
-_MAJOR_SPORTS = {"soccer", "basketball", "tennis", "hockey", "esports", "americanfootball", "baseball", "rugby", "volleyball"}
+_MAJOR_SPORTS = {"soccer", "basketball", "hockey", "baseball", "rugbyleague", "aussierules"}
 
 # Fast mode (default): 20 events, tight quota — speed over coverage
 # Deep mode (DEEP_SCAN=1): 100 events, wide quota — 48h full slate
@@ -101,34 +101,34 @@ GOLDEN_SPORT_KEYS = {
     "baseball_kbo":                         "baseball",    # KBO Corée — lag Asie ✓
     "baseball_npb":                         "baseball",    # NPB Japon — lag Asie ✓
     "soccer_conmebol_copa_libertadores":    "soccer",      # Copa Lib — lag SA maximal
+    "soccer_brazil_campeonato":             "soccer",      # Brasileirão — quotidien
+    "soccer_usa_mls":                       "soccer",      # MLS — actif juin–août
+    "aussierules_afl":                      "aussierules", # AFL — fenêtre AU morning
+    "rugby_nrl":                            "rugbyleague", # NRL — fenêtre AU evening
 }
 
-# Portfolio Balancer — quotas max par sport par scan (juin 2026)
-# Baseball élevé : MLB+KBO+NPB = 3 ligues actives simultanément (~19 events/fetch)
-# Soccer élevé  : FIFA WC 2026 dès le 11/06 + Copa Lib + Brasileirão + Scandi
+# Portfolio Balancer — quotas max par sport par scan (11 sports actifs uniquement)
+# Baseball élevé : MLB+KBO+NPB = 3 ligues simultanées (~19 events/fetch)
+# Soccer élevé  : FIFA WC 2026 + Copa Lib + Brasileirão + MLS
 _QUOTA_FAST = {
-    "soccer": 10, "baseball": 8, "basketball": 6, "hockey": 5,
-    "tennis": 6, "mma": 4, "americanfootball": 4, "rugby": 3,
-    "rugbyleague": 4, "aussierules": 4,
-    "esports": 3, "boxing": 3, "cricket": 3, "volleyball": 3,
-    "tabletennis": 3, "handball": 3, "darts": 3,
+    "soccer":      12,   # WC(4) + Copa Lib(2) + Brasileirão(3) + MLS(3)
+    "baseball":    10,   # MLB(5) + KBO(3) + NPB(2)
+    "basketball":   8,   # NBA Finals
+    "hockey":       6,   # NHL Cup Finals
+    "rugbyleague":  5,   # NRL
+    "aussierules":  5,   # AFL
 }
 _QUOTA_DEEP = {
-    "soccer": 16, "baseball": 12, "basketball": 10, "hockey": 8,
-    "tennis": 10, "mma": 6, "americanfootball": 6, "rugby": 5,
-    "rugbyleague": 6, "aussierules": 6,
-    "esports": 4, "boxing": 4, "cricket": 4, "volleyball": 4,
-    "tabletennis": 4, "handball": 4, "darts": 4,
+    "soccer":      20,
+    "baseball":    16,
+    "basketball":  12,
+    "hockey":       8,
+    "rugbyleague":  8,
+    "aussierules":  8,
 }
 SPORT_QUOTA = _QUOTA_DEEP if DEEP_SCAN else _QUOTA_FAST
-# Telegram report order — sports les plus générateurs de signals en tête
-_SPORT_ORDER = [
-    "soccer", "basketball", "hockey", "baseball",
-    "tennis", "mma", "americanfootball", "rugby",
-    "rugbyleague", "aussierules",
-    "esports", "boxing", "cricket", "volleyball",
-    "tabletennis", "handball", "darts",
-]
+# Telegram report order — sports les plus générateurs de signaux en tête
+_SPORT_ORDER = ["soccer", "basketball", "hockey", "baseball", "rugbyleague", "aussierules"]
 
 # Sessions marché (UTC) — alignées sur les fenêtres d'inefficience
 _SESSIONS = {

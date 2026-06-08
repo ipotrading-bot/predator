@@ -4,11 +4,11 @@ All thresholds, risk classification, and Kelly calculation used by engine,
 rapport, dashboard, and audit must import from here — never redefined inline.
 """
 
-ELITE_EDGE   = 2.5    # % — VALUE / HIGH_VALUE boundary
-MIN_STAKE    = 2      # € — below this Kelly stake, signal is not actionable
+ELITE_EDGE   = 3.0    # % — VALUE / HIGH_VALUE boundary (relevé 2.5→3.0 : seuil d'alerte Telegram plus strict)
+MIN_STAKE    = 3      # € — below this Kelly stake, signal is not actionable (relevé 2→3 : confiance minimale)
 BANKROLL_REF = 150    # € — 100 000 XOF (taux fixe 655.96 XOF/€)
-MAX_EDGE     = 15.0   # % — hard cap; above = data mapping error, reject
-SUSPECT_EDGE = 10.0   # % — safety trigger: major sport edge above this = SUSPECT_DATA
+MAX_EDGE     = 12.0   # % — hard cap; above = data mapping error, reject (abaissé 15→12 : moins tolérant)
+SUSPECT_EDGE = 8.0    # % — safety trigger: major sport edge above this = SUSPECT_DATA (abaissé 10→8)
 
 # ── Retry & Rate Limiting (Centralized) ──────────────────────────────
 DELAY_XBET_MIN       = 2.0      # Seconds — min delay between 1XBet requests
@@ -19,25 +19,16 @@ MAX_DB_RETRIES       = 3        # Attempts — max retries before giving up
 GLOBAL_TIMEOUT       = 540      # Seconds — 9 minutes, safety net for GitHub Actions
 DEBUG_MODE           = False    # Will be set from env var PREDATOR_DEBUG
 
-# Fractional Kelly per sport — sharper markets = higher confidence = higher fraction
+# Fractional Kelly par sport — uniquement les 11 sports actifs sélectionnés
+# Principe : sharper market = fraction plus haute = mise plus agressive
+# Sports exclus (cricket, darts, boxing, tennis, etc.) → retirés pour réduire bruit
 KELLY_FRACTION = {
-    "basketball":       0.30,   # NBA très sharp, confiance élevée
-    "hockey":           0.25,   # NHL — bon marché sharp
-    "americanfootball": 0.25,   # NFL — marché liquide
-    "esports":          0.22,   # Croissant, lag 1XBet notable
-    "tennis":           0.20,   # Incertitude surface/fatigue
-    "soccer":           0.20,   # Modèle plus incertain
-    "volleyball":       0.20,
-    "tabletennis":      0.20,
-    "handball":         0.20,
-    "rugby":            0.20,
-    "rugbyleague":      0.20,   # NRL — marché Pinnacle liquide
-    "aussierules":      0.20,   # AFL — sharp avec Pinnacle/Betfair
-    "baseball":         0.18,
-    "mma":              0.15,   # Condition combattant incertaine
-    "cricket":          0.15,
-    "darts":            0.15,
-    "boxing":           0.10,   # Sport le moins efficient
+    "basketball":  0.30,   # NBA — marché le plus sharp au monde, confiance max
+    "hockey":      0.25,   # NHL — sharp, liquid, peu de bruit
+    "soccer":      0.22,   # FIFA WC + Copa Lib + MLS + Brasileirão — relevé légèrement
+    "baseball":    0.22,   # MLB + KBO + NPB — volume élevé + lag timezone documenté
+    "rugbyleague": 0.20,   # NRL — Pinnacle très sharp, marché australien fiable
+    "aussierules": 0.20,   # AFL — Pinnacle + Betfair très actifs
 }
 
 

@@ -22,63 +22,46 @@ XBET_KEY     = "onexbet"
 CIRCA_KEY    = "circa"        # Circa Sports — sharp US book
 CRIS_KEY     = "bookmaker"    # Bookmaker.eu — CRIS network
 
-# ── Sport keys actifs — Juin 2026 ─────────────────────────────────────
-# Sélection basée sur test live : seuls les sports avec Pinnacle+1XBet disponibles.
-# Ligues EU Big-5 terminées (EPL/La Liga/Serie A/Ligue 1/UCL/EL/ECL) → exclues.
-# À restaurer en août : soccer_epl, soccer_spain_la_liga, soccer_germany_bundesliga, etc.
+# ── Sport keys actifs — sélection RENTABILITÉ MAXIMALE ───────────────
+# Critères de sélection :
+#   1. Lag Pinnacle→1XBet documenté (source d'edge réel)
+#   2. Kelly fraction élevée (≥ 0.18 — confiance marché)
+#   3. Volume quotidien suffisant (≥ 3 matchs/jour en moyenne)
+#   4. Données Pinnacle + 1XBet confirmées disponibles
 #
-# Budget : Engine 6×/j × 19 = 114/j | Deep 2×/j × 19 = 38/j | Total : ~4 560/mois.
+# EXCLUS (signal/bruit trop faible) :
+#   - Cricket / Darts / Boxing (Kelly 0.10–0.15, marchés peu efficients)
+#   - Ligues Scandi / Irlande / Chine / Japon / Corée soccer (lag faible, volumes bas)
+#   - Copa Sudamericana / Brazil B / Chile / Colombia / Argentina (Pinnacle peu liquide)
+#   - Tennis (saison de transition gazon — incertitude surface/forme)
+#   - Liga MX (structures cotes non fiables sur 1XBet)
+#
+# Budget : Engine 6×/j × 11 = 66/j | Deep 2×/j × 11 = 22/j | Total : ~2 640/mois.
 SPORT_KEYS = {
-    # ── PRIORITÉ ABSOLUE — FIFA World Cup 2026 (début 11 juin) ────────
-    "soccer_fifa_world_cup":                 "soccer",      # 48 matchs phase groupes → LAG MAXIMAL
+    # ── PRIORITÉ 1 — FIFA World Cup 2026 (lag maximal garanti) ────────
+    "soccer_fifa_world_cup":                 "soccer",      # 48 matchs phase groupes — lag +2h documenté
 
-    # ── Amérique du Nord — Playoffs + saison (quotidien, lag élevé) ───
-    "basketball_nba":                        "basketball",  # NBA Finals (juin)
-    "icehockey_nhl":                         "hockey",      # NHL Stanley Cup Finals
-    "baseball_mlb":                          "baseball",    # MLB — 10+ matchs/jour
-    "baseball_kbo":                          "baseball",    # KBO Corée — Pinnacle+1XBet ✓
-    "baseball_npb":                          "baseball",    # NPB Japon — Pinnacle+1XBet ✓
+    # ── PRIORITÉ 2 — Playoffs Amérique du Nord (sharps = Kelly 0.25–0.30) ──
+    "basketball_nba":                        "basketball",  # NBA Finals — marché le + sharp au monde
+    "icehockey_nhl":                         "hockey",      # NHL Stanley Cup Finals — mouvement max
+    "baseball_mlb":                          "baseball",    # MLB — 10+ matchs/jour, lag US→EU ✓
 
-    # ── Amérique du Sud — Lag Pinnacle→1XBet maximal ──────────────────
-    "soccer_conmebol_copa_libertadores":     "soccer",      # Copa Lib R16/QF
-    "soccer_conmebol_copa_sudamericana":     "soccer",      # Copa Sud — actif juin
-    "soccer_brazil_campeonato":              "soccer",      # Brasileirão (quotidien)
-    "soccer_brazil_serie_b":                 "soccer",      # Brazil B — Pinnacle+1XBet ✓
-    "soccer_chile_campeonato":               "soccer",      # Chile Primera
+    # ── PRIORITÉ 3 — Baseball Asie (lag timezone = fenêtre AM UTC) ────
+    "baseball_kbo":                          "baseball",    # KBO Corée — lag Asie 06:00–13:00 UTC ✓
+    "baseball_npb":                          "baseball",    # NPB Japon — lag Asie 06:00–13:00 UTC ✓
 
-    # ── Tennis juin — Roland Garros + début saison gazon ──────────────
-    "tennis_atp_french_open":                "tennis",      # Roland Garros (jusqu'au ~09/06)
-    "tennis_wta_french_open":                "tennis",      # Roland Garros WTA
-    "tennis_wta_queens_club_champ":          "tennis",      # WTA Queen's Club (mi-juin)
+    # ── PRIORITÉ 4 — Copa Libertadores (lag SA soirée = fenêtre 21:00 UTC) ─
+    "soccer_conmebol_copa_libertadores":     "soccer",      # R16/QF — lag SA maximal documenté
 
-    # ── Ligues européennes été — jeux weekend (Scandi + Irlande) ──────
-    "soccer_norway_eliteserien":             "soccer",      # Eliteserien — weekend
-    "soccer_sweden_allsvenskan":             "soccer",      # Allsvenskan — weekend
-    "soccer_finland_veikkausliiga":          "soccer",      # Veikkausliiga — weekend
-    "soccer_league_of_ireland":              "soccer",      # League of Ireland — weekend
+    # ── PRIORITÉ 5 — Brasileirão (quotidien, lag BR→EU cohérent) ─────
+    "soccer_brazil_campeonato":              "soccer",      # Série A Brésil — marché sharp actif
 
-    # ── Asie ──────────────────────────────────────────────────────────
-    "soccer_china_superleague":              "soccer",      # China Super League
-    "soccer_japan_j_league":                 "soccer",      # J1 League — quotidien
-    "soccer_korea_kleague1":                 "soccer",      # K League 1 — quotidien
+    # ── PRIORITÉ 6 — MLS (très actif juin–août, lag NA→EU) ───────────
+    "soccer_usa_mls":                        "soccer",      # MLS — volumes élevés, 1XBet actif
 
-    # ── Amériques — ligues d'été actives ──────────────────────────────
-    "soccer_usa_mls":                        "soccer",      # MLS — très actif juin–août
-    "soccer_mexico_ligamx":                  "soccer",      # Liga MX — Apertura 2026
-    "soccer_argentina_primera_division":     "soccer",      # Argentine Primera
-    "soccer_colombia_primera_a":             "soccer",      # Colombia Primera A
-
-    # ── Australie — saisons hiver plein ───────────────────────────────
-    "aussierules_afl":                       "aussierules", # AFL — ~9 matchs/semaine
-    "rugby_nrl":                             "rugbyleague", # NRL — ~8 matchs/semaine
-
-    # ── Tennis saison gazon (début ~09/06) ────────────────────────────
-    "tennis_atp_queens_club":                "tennis",      # Queens Club ATP
-    "tennis_atp_halle":                      "tennis",      # Halle Open ATP
-
-    # ── Cricket — Tests + ODI ──────────────────────────────────────────
-    "cricket_test_match":                    "cricket",     # Test cricket en cours
-    "cricket_odis":                          "cricket",     # One Day Internationals
+    # ── PRIORITÉ 7 — Australie (marchés Pinnacle très sharps) ────────
+    "aussierules_afl":                       "aussierules", # AFL — ~9 matchs/semaine, Pinnacle ✓
+    "rugby_nrl":                             "rugbyleague", # NRL — ~8 matchs/semaine, Pinnacle ✓
 }
 
 # Markets fetched per sport (API supports h2h,spreads,totals in one call)

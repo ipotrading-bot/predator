@@ -1,32 +1,41 @@
 name: Predator Engine
 
 # ══════════════════════════════════════════════════════════════════
-# BUDGET 20 000 req/mois — Optimisation mathématique (30 sport keys)
+# BUDGET 20 000 req/mois — Optimisation 11 sport keys (100 %)
 #
-#   Solution : G=48/j (I=30min) | E=8/j | D=3/j
-#   Ce fichier : E = 8 scans/jour × 30 keys = 240 req/j → 7 200/mois
+#   Golden Hour : 48 exec/j × 11 keys =  528 req/j → 15 840/mois
+#   Engine      : 10 exec/j × 11 keys =  110 req/j →  3 300/mois
+#   Deep Scan   :  4 exec/j × 11 keys =   44 req/j →  1 320/mois
+#   ──────────────────────────────────────────────────────────────
+#   TOTAL                              =  682 req/j → 20 460/mois
+#   Quota guard (50 req restantes)     →  usage effectif ≈ 100 % ✓
+# ══════════════════════════════════════════════════════════════════
 #
-# Sessions alignées sur les fenêtres d'inefficience marché :
-#   01:00 — Nuit US late / Copa late
-#   04:00 — Pré-KBO/NPB matin Asie
-#   07:00 — EU morning : Asia closing + lignes EU fraîches
-#   10:00 — EU midday  : SA opening + MLB preview
-#   13:00 — EU afternoon : Brasileirão + Argentine journée
-#   16:00 — EU prime-time : Copa/WC pré-match
-#   19:00 — NBA/NHL pre-game : T-3h avant tip-off (mouvement max)
-#   22:00 — US evening : Copa + NBA/NHL en cours
+# Sessions alignées sur les fenêtres d'inefficience marché (11 sports) :
+#   00:00 — Minuit UTC : NBA/NHL tip-off + MLB late
+#   02:00 — Nuit US late / Copa late / KBO pré-ouverture
+#   04:00 — Pré-KBO/NPB matin Asie (06:00–13:00 UTC = fenêtre lag max)
+#   07:00 — EU morning : Asia closing + lignes EU fraîches + AFL morning
+#   09:00 — EU mid-morning : KBO/NPB live + NRL/AFL pré-match
+#   11:00 — EU midday : SA opening + MLB preview + Brasileirão
+#   13:00 — EU afternoon : Copa Lib pré-match + MLS opening
+#   16:00 — EU prime-time : WC/Copa soirée pré-match (mouvement max)
+#   18:00 — EU close : NBA/NHL pre-game T-4h + Copa in-play
+#   22:00 — US evening : NBA/NHL tip-off live + MLB final + Copa nuit
 # ══════════════════════════════════════════════════════════════════
 
 on:
   schedule:
-    - cron: '0 1  * * *'   # Nuit US / Copa late       — 01:00 UTC
-    - cron: '0 4  * * *'   # Pré-KBO/NPB Asie          — 04:00 UTC
-    - cron: '0 7  * * *'   # EU morning                — 07:00 UTC
-    - cron: '0 10 * * *'   # EU midday                 — 10:00 UTC
-    - cron: '0 13 * * *'   # EU afternoon / Brasileirão — 13:00 UTC
-    - cron: '0 16 * * *'   # EU prime-time             — 16:00 UTC
-    - cron: '0 19 * * *'   # NBA/NHL pre-game T-3h     — 19:00 UTC
-    - cron: '0 22 * * *'   # US evening                — 22:00 UTC
+    - cron: '0 0  * * *'   # Minuit UTC : NBA/NHL tip-off + MLB late    — 00:00 UTC
+    - cron: '0 2  * * *'   # Nuit US late / KBO pré-ouverture           — 02:00 UTC
+    - cron: '0 4  * * *'   # Pré-KBO/NPB matin Asie (lag max)          — 04:00 UTC
+    - cron: '0 7  * * *'   # EU morning : Asia closing + AFL            — 07:00 UTC
+    - cron: '0 9  * * *'   # EU mid-morning : KBO/NPB live + NRL        — 09:00 UTC
+    - cron: '0 11 * * *'   # EU midday : SA + MLB preview               — 11:00 UTC
+    - cron: '0 13 * * *'   # EU afternoon : Copa Lib + MLS              — 13:00 UTC
+    - cron: '0 16 * * *'   # EU prime-time : WC/Copa pré-match          — 16:00 UTC
+    - cron: '0 18 * * *'   # EU close : NBA/NHL pre-game T-4h           — 18:00 UTC
+    - cron: '0 22 * * *'   # US evening : NBA/NHL tip-off + Copa nuit   — 22:00 UTC
   workflow_dispatch:
 
 env:
