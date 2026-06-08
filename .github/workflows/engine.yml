@@ -1,22 +1,24 @@
 name: Predator Engine
 
-# QUOTA MODE — active until 2026-06-01
-# OddsAPI budget: 500 req/month → max 35 req/day (12 lean keys × 3 scans = 36/day)
-# Quota guard in odds_api.py stops scan if remaining < 15.
+# Budget 20 000 req/mois — 8 sport_keys actifs juin 2026
+# 8 keys × 6 scans/day = 48 req/day Engine (1 440/mois)
+# Quota guard dans odds_api.py stoppe si remaining < 50.
 #
-# 10:00 UTC — EU morning  : Copa Libertadores overnight + EU pre-match lines
-# 17:00 UTC — EU prime    : Top EU fixtures, NBA/NHL approaching
-# 22:00 UTC — US evening  : NBA/NHL tip-off window, SA evening games
-#
-# RESTORE after OddsAPI upgrade (≥ 30k req/month plan):
-#   - cron: '*/30 6-22 * * *'
-#   - cron: '0 0-5 * * *'
+# 08:00 UTC — EU morning early : Copa Lib overnight + pré-match EU
+# 11:00 UTC — EU midday        : Lignes SA ouvertes + NBA/NHL preview
+# 14:00 UTC — EU afternoon     : Brasileirão + Argentine en journée
+# 17:00 UTC — EU prime         : NBA/NHL approchant
+# 20:00 UTC — NBA/NHL pre-game : T-3h avant tip-off (mouvement max)
+# 23:00 UTC — US evening       : Copa + NBA/NHL en cours (inplay edges)
 
 on:
   schedule:
-    - cron: '0 10 * * *'   # EU morning scan    — 10:00 UTC
-    - cron: '0 17 * * *'   # EU prime-time scan — 17:00 UTC
-    - cron: '0 22 * * *'   # US evening scan    — 22:00 UTC (NBA/NHL tip-off)
+    - cron: '0 8  * * *'   # EU morning early   — 08:00 UTC
+    - cron: '0 11 * * *'   # EU midday          — 11:00 UTC
+    - cron: '0 14 * * *'   # EU afternoon       — 14:00 UTC
+    - cron: '0 17 * * *'   # EU prime-time      — 17:00 UTC
+    - cron: '0 20 * * *'   # NBA/NHL pre-game   — 20:00 UTC
+    - cron: '0 23 * * *'   # US evening         — 23:00 UTC
   workflow_dispatch:
 
 env:

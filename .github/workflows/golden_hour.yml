@@ -1,15 +1,13 @@
 name: Predator Golden Hour
 
-# Scan toutes les 5 min sur les sports NBA/NHL/Soccer Top 5
-# Fenêtre T-120min uniquement — ne détecte des events que si commence_time < NOW()+2h
-# Quota OddsAPI optimisé : seulement 12 sport_keys ciblés (vs 38 en mode normal)
-#
-# Actif 24h/24 — retourne automatiquement 0 events (exit rapide) quand aucune
-# rencontre imminente, ce qui préserve le quota.
+# Scan toutes les 20 min — 7 sport_keys prioritaires (WC+NBA+NHL+MLB+KBO+NPB+Copa)
+# Fenêtre T-120min — détecte les mouvements de ligne Pinnacle→1XBet pré-match.
+# Budget 20k req/mois : 72 exec/j × 7 sports = 504 req/j max → 15 120 req/mois.
+# Engine + Deep (19 sports × 8×/j) = 4 560 req/mois → TOTAL MAX ≈ 19 680/mois.
 
 on:
   schedule:
-    - cron: '*/5 * * * *'   # Toutes les 5 minutes, 24h/24
+    - cron: '*/20 * * * *'  # Toutes les 20 minutes, 24h/24
   workflow_dispatch:
 
 env:

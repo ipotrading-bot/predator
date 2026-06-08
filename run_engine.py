@@ -68,21 +68,22 @@ SPORT_EMOJI  = {
     "rugby": "🏉", "volleyball": "🏐", "tabletennis": "🏓", "handball": "🤾",
 }
 
-# Golden Hour — sports with highest intra-hour line movement pre-game
-# NBA tip-offs 20:00–02:00 UTC | Soccer EU 12:00–22:00 UTC
+# Golden Hour — T-120min — 7 sports à lag maximal et volume élevé (juin 2026)
+# Budget : 72 exec/j (*/20) × 7 sports = 504 req/j max | ~15 120 req/mois.
+# Sélection : Pinnacle+1XBet confirmés + mouvement de ligne pré-match élevé.
+#
+# WC 2026 (début 11/06) : 3-4 matchs/jour → fenêtres 2h très actives
+# KBO/NPB : 09:00–13:00 UTC → lag Asie sur books EU = prime pour Predator
+# Copa Lib : 21:00–23:00 UTC → SA evening, lag 1XBet bien documenté
+# NBA/NHL Finals : 22:00–02:00 UTC → tip-off windows, mouvement max
 GOLDEN_SPORT_KEYS = {
-    "basketball_nba":            "basketball",
-    "icehockey_nhl":             "hockey",
-    "soccer_epl":                "soccer",
-    "soccer_spain_la_liga":      "soccer",
-    "soccer_italy_serie_a":      "soccer",
-    "soccer_germany_bundesliga": "soccer",
-    "soccer_france_ligue_one":   "soccer",
-    "soccer_uefa_champs_league": "soccer",
-    "soccer_uefa_europa_league": "soccer",
-    "tennis_atp_masters_1000":   "tennis",
-    "tennis_atp_french_open":    "tennis",
-    "tennis_wta_french_open":    "tennis",
+    "soccer_fifa_world_cup":                "soccer",      # ← PRIORITÉ 1 — WC 2026
+    "basketball_nba":                       "basketball",  # NBA Finals
+    "icehockey_nhl":                        "hockey",      # NHL Cup Finals
+    "baseball_mlb":                         "baseball",    # MLB — 10+ matchs/jour
+    "baseball_kbo":                         "baseball",    # KBO Corée — lag Asie ✓
+    "baseball_npb":                         "baseball",    # NPB Japon — lag Asie ✓
+    "soccer_conmebol_copa_libertadores":    "soccer",      # Copa Lib — lag SA maximal
 }
 
 # Portfolio Balancer: max signals per sport per scan

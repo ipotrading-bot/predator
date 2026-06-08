@@ -1,8 +1,8 @@
 """
-core/odds_api.py — PAIM v8.0 — The Odds API (Hunter Multi-Sport Mode)
-Markets: h2h (NBA + Tennis) | spreads (NBA + Soccer) | totals (all sports)
-Priority: basketball_nba → tennis_atp_masters_1000 → Soccer leagues
-Returns one event dict per event with all available markets embedded.
+core/odds_api.py — PAIM v8.2 — The Odds API (Hunter Multi-Sport Mode)
+Markets: h2h | spreads | totals selon le sport
+Budget juin 2026 : 20 000 req/mois — 19 sport keys actifs avec couverture Pinnacle+1XBet.
+Priorité absolue : soccer_fifa_world_cup (début 11 juin 2026).
 """
 import logging
 import os
@@ -17,35 +17,44 @@ XBET_KEY     = "onexbet"
 CIRCA_KEY    = "circa"        # Circa Sports — sharp US book
 CRIS_KEY     = "bookmaker"    # Bookmaker.eu — CRIS network
 
-# ── Quota-lean sport keys — valid until 2026-06-01 ────────────────────
-# Budget: ~150 req remaining + guard stops at 15.
-# 15 keys × 3 scans/day = 45/day — guard fires first if budget low.
+# ── Sport keys actifs — Juin 2026 ─────────────────────────────────────
+# Sélection basée sur test live : seuls les sports avec Pinnacle+1XBet disponibles.
+# Ligues EU Big-5 terminées (EPL/La Liga/Serie A/Ligue 1/UCL/EL/ECL) → exclues.
+# À restaurer en août : soccer_epl, soccer_spain_la_liga, soccer_germany_bundesliga, etc.
+#
+# Budget : Engine 6×/j × 19 = 114/j | Deep 2×/j × 19 = 38/j | Total : ~4 560/mois.
 SPORT_KEYS = {
-    # ── North America Playoffs (binary, peak lag) ─────────────────────
-    "icehockey_nhl":                     "hockey",      # NHL Conf Finals + Cup Final
-    "basketball_nba":                    "basketball",  # NBA Conf Finals
-    "baseball_mlb":                      "baseball",    # Regular season
-    # ── European Cups (Finals window May 21 / 28 / 31) ───────────────
-    "soccer_uefa_champs_league":         "soccer",      # CL Final 2026-05-31
-    "soccer_uefa_europa_league":         "soccer",      # EL Final 2026-05-21
-    "soccer_uefa_conference_league":     "soccer",      # ECL Final 2026-05-28
-    # ── Big-5 Final Matchdays (May 24–25 — all teams simultaneous) ────
-    "soccer_spain_la_liga":              "soccer",      # La Liga J38 ~2026-05-24
-    "soccer_italy_serie_a":              "soccer",      # Serie A J38 ~2026-05-25
-    "soccer_france_ligue_1":             "soccer",      # Ligue 1 J34 ~2026-05-24
-    # ── South America (highest lag Pinnacle → 1XBet) ─────────────────
-    "soccer_conmebol_copa_libertadores": "soccer",      # Copa Lib R16
-    "soccer_brazil_campeonato":          "soccer",      # Brasileirão
-    "soccer_argentina_primera_division": "soccer",      # Argentine Primera
-    # ── EPL (season finale) ──────────────────────────────────────────
-    "soccer_epl":                        "soccer",      # Final matchday ~2026-05-19
-    # ── Roland Garros (starts 2026-05-25) ────────────────────────────
-    "tennis_atp_french_open":            "tennis",
-    "tennis_wta_french_open":            "tennis",
-}
+    # ── PRIORITÉ ABSOLUE — FIFA World Cup 2026 (début 11 juin) ────────
+    "soccer_fifa_world_cup":                 "soccer",      # 48 matchs phase groupes → LAG MAXIMAL
 
-# Full sport keys — restore after upgrading OddsAPI plan (need ≥ 30k req/month)
-# _SPORT_KEYS_FULL = {49 keys — see git history}
+    # ── Amérique du Nord — Playoffs + saison (quotidien, lag élevé) ───
+    "basketball_nba":                        "basketball",  # NBA Finals (juin)
+    "icehockey_nhl":                         "hockey",      # NHL Stanley Cup Finals
+    "baseball_mlb":                          "baseball",    # MLB — 10+ matchs/jour
+    "baseball_kbo":                          "baseball",    # KBO Corée — Pinnacle+1XBet ✓
+    "baseball_npb":                          "baseball",    # NPB Japon — Pinnacle+1XBet ✓
+
+    # ── Amérique du Sud — Lag Pinnacle→1XBet maximal ──────────────────
+    "soccer_conmebol_copa_libertadores":     "soccer",      # Copa Lib R16/QF
+    "soccer_conmebol_copa_sudamericana":     "soccer",      # Copa Sud — actif juin
+    "soccer_brazil_campeonato":              "soccer",      # Brasileirão (quotidien)
+    "soccer_brazil_serie_b":                 "soccer",      # Brazil B — Pinnacle+1XBet ✓
+    "soccer_chile_campeonato":               "soccer",      # Chile Primera
+
+    # ── Tennis juin — Roland Garros + début saison gazon ──────────────
+    "tennis_atp_french_open":                "tennis",      # Roland Garros (jusqu'au ~09/06)
+    "tennis_wta_french_open":                "tennis",      # Roland Garros WTA
+    "tennis_wta_queens_club_champ":          "tennis",      # WTA Queen's Club (mi-juin)
+
+    # ── Ligues européennes été — jeux weekend (Scandi + Irlande) ──────
+    "soccer_norway_eliteserien":             "soccer",      # Eliteserien — weekend
+    "soccer_sweden_allsvenskan":             "soccer",      # Allsvenskan — weekend
+    "soccer_finland_veikkausliiga":          "soccer",      # Veikkausliiga — weekend
+    "soccer_league_of_ireland":              "soccer",      # League of Ireland — weekend
+
+    # ── Asie ──────────────────────────────────────────────────────────
+    "soccer_china_superleague":              "soccer",      # China Super League
+}
 
 # Markets fetched per sport (API supports h2h,spreads,totals in one call)
 _MARKETS_BY_SPORT = {
@@ -214,7 +223,7 @@ def fetch_odds(api_key: str = None, hours_ahead: int = 24,
     all_events = []
     quota_remaining = 9999  # updated after first successful response
     for sport_key, sport_type in keys_to_scan.items():
-        if quota_remaining < 15:
+        if quota_remaining < 50:
             log.warning("OddsAPI quota guard — %d remaining, stopping scan early", quota_remaining)
             break
         markets = _MARKETS_BY_SPORT.get(sport_type, "h2h")
