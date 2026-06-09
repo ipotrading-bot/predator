@@ -1013,11 +1013,10 @@ def run():
         if saved_count == 0:
             log.error("Telegram skipped — all %d signals failed to persist", len(signals))
 
-    # ── C. Telegram UNIQUEMENT si persistance Supabase réussie ─────────
-    if not signals or saved_count > 0:
-        # Shadow Layer: execution jitter — simule latence humaine (1.5–4.0s)
-        time.sleep(random.uniform(1.5, 4.0))
-        _telegram_grouped(signals, now, session, len(matches), sharp_source, no_pin_count)
+    # ── C. Telegram — toujours envoyé (découplé de Supabase) ──────────
+    # Shadow Layer: execution jitter — simule latence humaine (1.5–4.0s)
+    time.sleep(random.uniform(1.5, 4.0))
+    _telegram_grouped(signals, now, session, len(matches), sharp_source, no_pin_count)
 
     elite = [s for s in signals if s["edge_pct"] >= ELITE_EDGE]
     log.info("Done. %d candidates | %d balanced | %d elite.",

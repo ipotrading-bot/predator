@@ -4,11 +4,11 @@ All thresholds, risk classification, and Kelly calculation used by engine,
 rapport, dashboard, and audit must import from here — never redefined inline.
 """
 
-ELITE_EDGE   = 3.0    # % — VALUE / HIGH_VALUE boundary (relevé 2.5→3.0 : seuil d'alerte Telegram plus strict)
-MIN_STAKE    = 3      # € — below this Kelly stake, signal is not actionable (relevé 2→3 : confiance minimale)
+ELITE_EDGE   = 2.5    # % — VALUE / HIGH_VALUE boundary
+MIN_STAKE    = 2      # € — below this Kelly stake, signal is not actionable
 BANKROLL_REF = 150    # € — 100 000 XOF (taux fixe 655.96 XOF/€)
-MAX_EDGE     = 12.0   # % — hard cap; above = data mapping error, reject (abaissé 15→12 : moins tolérant)
-SUSPECT_EDGE = 8.0    # % — safety trigger: major sport edge above this = SUSPECT_DATA (abaissé 10→8)
+MAX_EDGE     = 15.0   # % — hard cap; above = data mapping error, reject
+SUSPECT_EDGE = 10.0   # % — safety trigger: major sport edge above this = SUSPECT_DATA (cap totals=15%)
 
 # ── Retry & Rate Limiting (Centralized) ──────────────────────────────
 DELAY_XBET_MIN       = 2.0      # Seconds — min delay between 1XBet requests
