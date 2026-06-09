@@ -421,7 +421,7 @@ def _process_h2h(m, name, sport, league, home, away, emoji, signals, sb, now, lo
 
             con_fav, sources_found, is_volatile, consensus_score = calculate_consensus_price(source_prices_fav, sport)
             if is_volatile:
-                log.info("VOLATILE | %s %s — STD>0.02 — DISCARD", emoji, name)
+                log.info("VOLATILE | %s %s — CV>1.2% — DISCARD", emoji, name)
                 return
             con_opp, _, _, _ = calculate_consensus_price(source_prices_opp, sport)
             if con_fav > 1.01:
@@ -447,7 +447,7 @@ def _process_h2h(m, name, sport, league, home, away, emoji, signals, sb, now, lo
 
             con_fav, sources_found, is_volatile, consensus_score = calculate_consensus_price(source_prices_fav, sport)
             if is_volatile:
-                log.info("VOLATILE | %s %s — STD>0.02 — DISCARD", emoji, name)
+                log.info("VOLATILE | %s %s — CV>1.2% — DISCARD", emoji, name)
                 return
             con_opp, _, _, _ = calculate_consensus_price(source_prices_opp, sport)
             if con_fav > 1.01:

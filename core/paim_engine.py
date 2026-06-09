@@ -90,8 +90,11 @@ _CONSENSUS_WEIGHTS: dict[str, dict[str, float]] = {
     "soccer":     {"pinnacle": 0.40, "circa": 0.10, "cris": 0.20, "isn": 0.30},
     "tennis":     {"pinnacle": 0.60, "circa": 0.05, "cris": 0.25, "isn": 0.10},
 }
-_DEFAULT_WEIGHTS      = {"pinnacle": 0.50, "circa": 0.20, "cris": 0.20, "isn": 0.10}
-_DIVERGENCE_STD_LIMIT = 0.02   # Inner Circle threshold: STD > 0.02 in decimal odds → VOLATILE
+_DEFAULT_WEIGHTS   = {"pinnacle": 0.50, "circa": 0.20, "cris": 0.20, "isn": 0.10}
+# CV = STD / mean — scale-invariant divergence measure.
+# STD absolue de 0.02 sur cote 1.10 = +1.8% écart (énorme),
+# même 0.02 sur cote 3.50 = +0.6% (normal). CV corrige ce biais.
+_DIVERGENCE_CV_LIMIT = 0.012   # 1.2% CV → équivalent à STD 0.02 sur cote ~1.67
 
 
 def calculate_consensus_price(
@@ -102,8 +105,11 @@ def calculate_consensus_price(
     Weighted consensus fair price from up to 4 sharp sources.
     prices_by_source: {"pinnacle": 2.05, "circa": 2.10, "cris": 0.0, "isn": 2.07}
     Returns (consensus_price, sources_found, is_volatile, consensus_score).
-    consensus_score: 0-100 — 100 = perfect agreement, 0 = at divergence limit.
-    Divergence is measured as sample STD of active source prices (no pandas/scipy).
+    consensus_score: 0-100 — 100 = perfect agreement, 0 = at CV limit.
+
+    Divergence: Coefficient of Variation (STD/mean) — scale-invariant.
+    Prevents false VOLATILE rejection on high-odds underdogs where absolute
+    STD of 0.02 is meaningless at odds 3.0+ but was blocking valid signals.
     """
     weights = (_CONSENSUS_WEIGHTS.get(sport) or _DEFAULT_WEIGHTS).copy()
     sources_found: dict[str, bool] = {}
@@ -121,14 +127,15 @@ def calculate_consensus_price(
 
     vals = list(active.values())
 
-    # STD-based divergence (Inner Circle method — no import needed)
     consensus_score = 100
     if len(vals) >= 2:
         mean = sum(vals) / len(vals)
+        # Sample STD (Bessel correction)
         std  = (sum((v - mean) ** 2 for v in vals) / (len(vals) - 1)) ** 0.5
-        if std > _DIVERGENCE_STD_LIMIT:
+        cv   = std / mean if mean > 0 else 0.0   # Coefficient of Variation
+        if cv > _DIVERGENCE_CV_LIMIT:
             return 0.0, sources_found, True, 0
-        consensus_score = max(0, round((1 - std / _DIVERGENCE_STD_LIMIT) * 100))
+        consensus_score = max(0, round((1 - cv / _DIVERGENCE_CV_LIMIT) * 100))
 
     # Proportional weight redistribution for absent sources
     total_w = sum(weights[s] for s in active)
