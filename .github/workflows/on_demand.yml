@@ -1,0 +1,73 @@
+name: Predator On-Demand Scan
+
+# Vérifie Supabase toutes les 5 min pour une demande de scan manuelle.
+# Déclenché par le bouton Scanner dans le dashboard — aucun PAT requis.
+
+on:
+  schedule:
+    - cron: '*/5 * * * *'  # Toutes les 5 minutes
+  workflow_dispatch:
+
+env:
+  FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: true
+
+jobs:
+  check-and-scan:
+    runs-on: ubuntu-latest
+    timeout-minutes: 12
+
+    steps:
+      - name: Check scan request in Supabase
+        id: check
+        env:
+          SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
+          SUPABASE_KEY: ${{ secrets.SUPABASE_KEY }}
+        run: |
+          RESULT=$(curl -sf \
+            -H "apikey: $SUPABASE_KEY" \
+            -H "Authorization: Bearer $SUPABASE_KEY" \
+            "$SUPABASE_URL/rest/v1/meta?key=eq.scan_request&select=value" \
+            2>/dev/null || echo "[]")
+          COUNT=$(echo "$RESULT" | python3 -c "import json,sys; print(len(json.load(sys.stdin)))" 2>/dev/null || echo "0")
+          echo "count=$COUNT" >> "$GITHUB_OUTPUT"
+          if [ "$COUNT" -gt "0" ]; then
+            echo "Demande de scan détectée — démarrage"
+          else
+            echo "Aucune demande de scan — arrêt"
+          fi
+
+      - name: Clear scan request flag
+        if: steps.check.outputs.count > 0
+        env:
+          SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
+          SUPABASE_KEY: ${{ secrets.SUPABASE_KEY }}
+        run: |
+          curl -sf -X DELETE \
+            -H "apikey: $SUPABASE_KEY" \
+            -H "Authorization: Bearer $SUPABASE_KEY" \
+            "$SUPABASE_URL/rest/v1/meta?key=eq.scan_request" \
+            > /dev/null
+
+      - uses: actions/checkout@v4
+        if: steps.check.outputs.count > 0
+
+      - uses: actions/setup-python@v5
+        if: steps.check.outputs.count > 0
+        with:
+          python-version: '3.11'
+          cache: 'pip'
+
+      - name: Install dependencies
+        if: steps.check.outputs.count > 0
+        run: pip install -r requirements.txt
+
+      - name: Run On-Demand scan (guerrilla — sans OddsAPI)
+        if: steps.check.outputs.count > 0
+        env:
+          GUERRILLA:          "1"
+          GEMINI_API_KEY:     ${{ secrets.GEMINI_API_KEY }}
+          SUPABASE_URL:       ${{ secrets.SUPABASE_URL }}
+          SUPABASE_KEY:       ${{ secrets.SUPABASE_KEY }}
+          TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
+          TELEGRAM_CHAT_ID:   ${{ secrets.TELEGRAM_CHAT_ID }}
+        run: python run_engine.py

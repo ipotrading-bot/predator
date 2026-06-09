@@ -871,3 +871,26 @@ td { padding: 10px 12px; vertical-align: middle; font-size: 11px; }
   display: flex; align-items: center; gap: 8px;
 }
 .group-sep::after { content: ''; flex: 1; height: 1px; background: rgba(245,197,24,.12); }
+
+/* ── Toast notification ────────────────────────── */
+#toast {
+  position: fixed; bottom: calc(76px + var(--sbot));
+  left: 50%; transform: translateX(-50%) translateY(20px);
+  background: var(--bg3); border: 1px solid var(--bd2);
+  border-radius: 24px; padding: 10px 20px;
+  font-size: 13px; font-weight: 500; color: var(--t1);
+  white-space: nowrap; z-index: 200;
+  box-shadow: 0 8px 32px rgba(0,0,0,.5);
+  opacity: 0; pointer-events: none;
+  transition: opacity .22s, transform .22s;
+}
+#toast.show {
+  opacity: 1; pointer-events: auto;
+  transform: translateX(-50%) translateY(0);
+}
+#toast.ok   { border-color: var(--green); color: var(--green); }
+#toast.err  { border-color: var(--red);   color: var(--red); }
+#toast.warn { border-color: var(--yellow); color: var(--yellow); }
+@media (min-width: 640px) {
+  #toast { bottom: 24px; }
+}

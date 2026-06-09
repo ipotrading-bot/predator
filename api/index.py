@@ -507,25 +507,17 @@ def health():
 
 @app.route("/api/scan", methods=["POST"])
 def trigger_scan():
-    pat = os.environ.get("GITHUB_PAT")
-    if not pat:
-        return jsonify({"error": "GITHUB_PAT not configured"}), 503
-    headers = {
-        "Authorization": f"Bearer {pat}",
-        "Accept": "application/vnd.github+json",
-        "X-GitHub-Api-Version": "2022-11-28",
-    }
-    # Guerrilla first (no OddsAPI quota), fallback to engine
-    for workflow in ("guerrilla.yml", "engine.yml"):
-        try:
-            resp = requests.post(
-                f"https://api.github.com/repos/ipotrading-bot/predator/actions/workflows/{workflow}/dispatches",
-                headers=headers,
-                json={"ref": "main"},
-                timeout=10,
-            )
-            if resp.status_code == 204:
-                return jsonify({"status": "triggered", "workflow": workflow}), 200
-        except Exception:
-            continue
-    return jsonify({"error": "all workflows failed"}), 500
+    sb = _db()
+    if not sb:
+        return jsonify({"error": "Base de données non configurée"}), 503
+    try:
+        import json as _json
+        from datetime import datetime, timezone as _tz
+        sb.table("meta").upsert({
+            "key":   "scan_request",
+            "value": _json.dumps({"requested_at": datetime.now(_tz.utc).isoformat()}),
+        }, on_conflict="key").execute()
+        return jsonify({"status": "queued", "message": "Scan demandé — résultats dans 1 à 5 min"}), 200
+    except Exception as exc:
+        log.error("scan queue error: %s", exc)
+        return jsonify({"error": str(exc)}), 500
