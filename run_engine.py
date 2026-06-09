@@ -95,6 +95,7 @@ SPORT_EMOJI  = {
 # NBA/NHL Finals : 22:00–02:00 UTC → tip-off windows, mouvement max
 GOLDEN_SPORT_KEYS = {
     "soccer_fifa_world_cup":                "soccer",      # ← PRIORITÉ 1 — WC 2026
+    "soccer_international_friendlies":      "soccer",      # Amicaux nationaux — pré-WC mai–juin 2026
     "basketball_nba":                       "basketball",  # NBA Finals
     "icehockey_nhl":                        "hockey",      # NHL Cup Finals
     "baseball_mlb":                         "baseball",    # MLB — 10+ matchs/jour
@@ -111,7 +112,7 @@ GOLDEN_SPORT_KEYS = {
 # Baseball élevé : MLB+KBO+NPB = 3 ligues simultanées (~19 events/fetch)
 # Soccer élevé  : FIFA WC 2026 + Copa Lib + Brasileirão + MLS
 _QUOTA_FAST = {
-    "soccer":      12,   # WC(4) + Copa Lib(2) + Brasileirão(3) + MLS(3)
+    "soccer":      14,   # WC(4) + Amicaux(4) + Copa Lib(2) + Brasileirão(2) + MLS(2)
     "baseball":    10,   # MLB(5) + KBO(3) + NPB(2)
     "basketball":   8,   # NBA Finals
     "hockey":       6,   # NHL Cup Finals
@@ -119,7 +120,7 @@ _QUOTA_FAST = {
     "aussierules":  5,   # AFL
 }
 _QUOTA_DEEP = {
-    "soccer":      20,
+    "soccer":      24,
     "baseball":    16,
     "basketball":  12,
     "hockey":       8,

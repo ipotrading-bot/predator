@@ -50,13 +50,16 @@ SPORT_KEYS = {
     "baseball_kbo":                          "baseball",    # KBO Corée — lag Asie 06:00–13:00 UTC ✓
     "baseball_npb":                          "baseball",    # NPB Japon — lag Asie 06:00–13:00 UTC ✓
 
-    # ── PRIORITÉ 4 — Copa Libertadores (lag SA soirée = fenêtre 21:00 UTC) ─
+    # ── PRIORITÉ 4 — Matchs amicaux internationaux (fenêtre WC pré-tournoi) ─
+    "soccer_international_friendlies":       "soccer",      # Amicaux équipes nationales — actifs mai–juin 2026
+
+    # ── PRIORITÉ 5 — Copa Libertadores (lag SA soirée = fenêtre 21:00 UTC) ─
     "soccer_conmebol_copa_libertadores":     "soccer",      # R16/QF — lag SA maximal documenté
 
-    # ── PRIORITÉ 5 — Brasileirão (quotidien, lag BR→EU cohérent) ─────
+    # ── PRIORITÉ 6 — Brasileirão (quotidien, lag BR→EU cohérent) ─────
     "soccer_brazil_campeonato":              "soccer",      # Série A Brésil — marché sharp actif
 
-    # ── PRIORITÉ 6 — MLS (très actif juin–août, lag NA→EU) ───────────
+    # ── PRIORITÉ 7 — MLS (très actif juin–août, lag NA→EU) ───────────
     "soccer_usa_mls":                        "soccer",      # MLS — volumes élevés, 1XBet actif
 
     # ── PRIORITÉ 7 — Australie (marchés Pinnacle très sharps) ────────
