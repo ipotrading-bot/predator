@@ -50,8 +50,9 @@ SPORT_KEYS = {
     "baseball_kbo":                          "baseball",    # KBO Corée — lag Asie 06:00–13:00 UTC ✓
     "baseball_npb":                          "baseball",    # NPB Japon — lag Asie 06:00–13:00 UTC ✓
 
-    # ── PRIORITÉ 4 — Matchs amicaux internationaux (fenêtre WC pré-tournoi) ─
+    # ── PRIORITÉ 4 — Matchs amicaux (fenêtre WC pré-tournoi juin 2026) ──
     "soccer_international_friendlies":       "soccer",      # Amicaux équipes nationales — actifs mai–juin 2026
+    "soccer_club_friendly":                  "soccer",      # Amicaux de clubs — pré-saison juin–juillet
 
     # ── PRIORITÉ 5 — Copa Libertadores (lag SA soirée = fenêtre 21:00 UTC) ─
     "soccer_conmebol_copa_libertadores":     "soccer",      # R16/QF — lag SA maximal documenté
@@ -61,6 +62,10 @@ SPORT_KEYS = {
 
     # ── PRIORITÉ 7 — MLS (très actif juin–août, lag NA→EU) ───────────
     "soccer_usa_mls":                        "soccer",      # MLS — volumes élevés, 1XBet actif
+
+    # ── PRIORITÉ 8 — Autres ligues actives en juin ───────────────────
+    "soccer_argentina_primera_division":     "soccer",      # Liga Argentina — marché SA sharp
+    "soccer_mexico_ligamx":                  "soccer",      # Liga MX — actif été
 
     # ── PRIORITÉ 7 — Australie (marchés Pinnacle très sharps) ────────
     "aussierules_afl":                       "aussierules", # AFL — ~9 matchs/semaine, Pinnacle ✓

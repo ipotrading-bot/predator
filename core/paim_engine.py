@@ -35,9 +35,9 @@ SHARP_PROB_MIN  = 0.65   # Minimum Pinnacle devigged probability (Shin quality g
 # Per-market probability thresholds — spreads/totals are symmetric by design
 SHARP_PROB_BY_MARKET = {
     "h2h":          0.65,   # NBA/Tennis ML — strong-favourite filter
-    "h2h_soccer":   0.52,   # Soccer AH 0.0 — binary by construction (~50-63%), 0.65 would block all
-    "spreads":       0.52,   # Slight skew is enough (spreads price ~50/50 by construction)
-    "totals":        0.52,   # Same for totals
+    "h2h_soccer":   0.50,   # Soccer AH 0.0 — seuil binaire pur ; 0.52 bloquait les amicaux équilibrés
+    "spreads":       0.50,   # Seuil binaire pur — symétrique par construction
+    "totals":        0.50,   # Idem totals
 }
 
 _SPORT_PFX = {"basketball": "NBA", "hockey": "NHL", "tennis": "TEN", "soccer": "SOC", "boxing": "BOX", "mma": "MMA", "darts": "DRT", "cricket": "CRK", "aussierules": "AFL", "rugbyleague": "NRL", "baseball": "MLB", "rugby": "RUG"}

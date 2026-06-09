@@ -388,16 +388,12 @@ def audit():
 
 # ── JSON API ─────────────────────────────────────────────────────────
 
-_WC_KEYWORDS = ["world cup", "fifa", "wc 2026", "mondial", "coupe du monde"]
+_WC_KEYWORDS = ["world cup", "fifa world cup", "wc 2026", "mondial", "coupe du monde", "fifa world"]
 
 
 def _is_wc_signal(s: dict) -> bool:
     league = (s.get("league") or "").lower()
-    sport  = (s.get("sport")  or "").lower()
-    return (
-        any(kw in league for kw in _WC_KEYWORDS)
-        or "soccer_fifa_world_cup" in sport
-    )
+    return any(kw in league for kw in _WC_KEYWORDS)
 
 
 # ── World Cup Terminal ────────────────────────────────────────────────
