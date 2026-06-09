@@ -7,20 +7,23 @@
   "customizations": {
     "vscode": {
       "extensions": [
-        "ms-python.python",
-        "ms-python.vscode-pylance",
-        "ms-python.debugpy",
-        "usernamehw.errorlens"
+        "ms-python.python"
       ],
       "settings": {
         "python.defaultInterpreterPath": "/usr/local/bin/python",
-        "editor.formatOnSave": true,
-        "[python]": {
-          "editor.defaultFormatter": "ms-python.vscode-pylance"
+        "editor.formatOnSave": false,
+        "python.analysis.typeCheckingMode": "off",
+        "python.analysis.autoImportCompletions": false,
+        "python.analysis.indexing": false,
+        "editor.minimap.enabled": false,
+        "editor.renderWhitespace": "none",
+        "files.watcherExclude": {
+          "**/__pycache__/**": true,
+          "**/.git/**": true
         }
       }
     }
   },
-  "postCreateCommand": "pip install --no-cache-dir -r requirements.txt && vercel telemetry disable",
+  "postCreateCommand": "pip install -q --no-cache-dir -r requirements.txt",
   "forwardPorts": [5000]
 }
