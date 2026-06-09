@@ -2,7 +2,6 @@
   "name": "Predator Python",
   "image": "mcr.microsoft.com/devcontainers/python:3.11",
   "features": {
-    "ghcr.io/devcontainers/features/git:1": {},
     "ghcr.io/devcontainers/features/github-cli:1": {}
   },
   "customizations": {
@@ -11,23 +10,17 @@
         "ms-python.python",
         "ms-python.vscode-pylance",
         "ms-python.debugpy",
-        "eamodio.gitlens",
-        "github.vscode-pull-request-github",
-        "mtxr.sqltools",
-        "mtxr.sqltools-driver-pg",
-        "humao.rest-client",
-        "usernamehw.errorlens",
-        "yzhang.markdown-all-in-one",
-        "weiskopfsodefa.vercel-vscode-by-sodefa",
-        "rooveterinaryinc.roo-cline"
+        "usernamehw.errorlens"
       ],
       "settings": {
         "python.defaultInterpreterPath": "/usr/local/bin/python",
-        "python.linting.enabled": true,
-        "python.formatting.provider": "black"
+        "editor.formatOnSave": true,
+        "[python]": {
+          "editor.defaultFormatter": "ms-python.vscode-pylance"
+        }
       }
     }
   },
-  "postCreateCommand": "pip install -r requirements.txt",
-  "forwardPorts": [3000, 5000, 8000]
+  "postCreateCommand": "pip install --no-cache-dir -r requirements.txt && vercel telemetry disable",
+  "forwardPorts": [5000]
 }
