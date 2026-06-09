@@ -335,15 +335,15 @@ def _emit(signals, sb, now, log, name, sport, league, mkt_key, mkt_label,
     kelly_pct  = round(max(0.0, kelly_full * kelly_fraction) * 100, 2)
 
     advice = (
-        f"Edge +{edge:.1f}% détecté — 1XBet {xbet_odd:.2f} vs Pinnacle {pin_odd:.2f}. "
+        f"Edge +{edge:.1f}% détecté — Melbet {xbet_odd:.2f} vs Pinnacle {pin_odd:.2f}. "
         f"Prob.Sharp {int(sharp_prob * 100)}%. "
-        f"1XBet n'a pas encore ajusté sa cote sur ce mouvement Sharp."
+        f"Melbet n'a pas encore ajusté sa cote sur ce mouvement Sharp."
     )
 
     # Normalize match_time to ISO UTC (+00:00)
     mt = match_time.replace("Z", "+00:00") if match_time else ""
 
-    log.info("SIGNAL  | %s %s | %s: 1XBet=%.3f Pin=%.3f Edge=+%.2f%% Prob=%.0f%% %s",
+    log.info("SIGNAL  | %s %s | %s: Melbet=%.3f Pin=%.3f Edge=+%.2f%% Prob=%.0f%% %s",
              emoji, name, mkt_label, xbet_odd, pin_odd, edge, sharp_prob * 100, risk)
     signal = {
         "match":          name,
@@ -458,7 +458,7 @@ def _process_h2h(m, name, sport, league, home, away, emoji, signals, sb, now, lo
     if xbet_price <= 1.01 or pin_price <= 1.01:
         return
     if not strict_team_match(xbet_fav, pin_fav):
-        log.info("SPLIT   | %s %s — 1XBet=%s Sharp=%s", emoji, name, xbet_fav, pin_fav)
+        log.info("SPLIT   | %s %s — Melbet=%s Sharp=%s", emoji, name, xbet_fav, pin_fav)
         return
     if sharp_prob < prob_min:
         log.info("LOWPROB | %s %s h2h — Prob.Sharp=%.0f%% < %.0f%%",
@@ -839,17 +839,17 @@ def run():
 
     # ── Tier 2: Gemini + Google Search — activé si OddsAPI vide/GUERRILLA ──
     if not matches:
-        log.info("📡 Tier 2 — Harvest 1XBet + Gemini Search Pinnacle...")
+        log.info("📡 Tier 2 — Harvest Melbet + Gemini Search Pinnacle...")
         xbet_matches = fetch_matches()
         if not xbet_matches:
-            msg = "📡 PREDATOR v8.8: 0 matchs trouvés — 1XBet inaccessible."
+            msg = "📡 PREDATOR v8.8: 0 matchs trouvés — Melbet inaccessible."
             log.warning(msg)
             _telegram(msg)
             if sb:
                 _heartbeat(sb, now, 0, 0)
             return
 
-        log.info("%d matchs 1XBet | Requête Pinnacle → Gemini Search...", len(xbet_matches))
+        log.info("%d matchs Melbet | Requête Pinnacle → Gemini Search...", len(xbet_matches))
         pinnacle_map = fetch_pinnacle_prices(xbet_matches)
 
         MAX_ORACLE = 3

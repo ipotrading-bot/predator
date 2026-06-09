@@ -68,7 +68,7 @@ def _send(text: str):
         log.error("Telegram erreur: %s", e)
 
 
-def _market_1xbet(mkt_key: str, sport: str, mkt_label: str) -> str:
+def _market_melbet(mkt_key: str, sport: str, mkt_label: str) -> str:
     if mkt_key == "h2h" and sport == "soccer":
         return "Asian Handicap → ligne «0»"
     if mkt_key == "h2h":
@@ -98,7 +98,7 @@ def _signal_line(s: dict) -> str | None:
         return None   # Below MIN_STAKE — skip this signal
     risk      = s.get("risk_flag", "")
     risk_icon = "🔥" if risk == "HIGH_VALUE" else ("✅" if risk == "VALUE" else "📌")
-    xbet_mkt  = _market_1xbet(mkt_key, sport, mkt_lbl)
+    xbet_mkt  = _market_melbet(mkt_key, sport, mkt_lbl)
     prob_str  = f" | Prob {int(prob*100)}%" if prob > 0 else " | Prob N/A"
 
     line  = f"{risk_icon} *{team.upper()}*  `{mkt_lbl} @ {xbet_odd:.2f}`\n"

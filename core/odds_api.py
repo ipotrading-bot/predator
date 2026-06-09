@@ -24,17 +24,17 @@ CRIS_KEY     = "bookmaker"    # Bookmaker.eu — CRIS network
 
 # ── Sport keys actifs — sélection RENTABILITÉ MAXIMALE ───────────────
 # Critères de sélection :
-#   1. Lag Pinnacle→1XBet documenté (source d'edge réel)
+#   1. Lag Pinnacle→Melbet documenté (source d'edge réel)
 #   2. Kelly fraction élevée (≥ 0.18 — confiance marché)
 #   3. Volume quotidien suffisant (≥ 3 matchs/jour en moyenne)
-#   4. Données Pinnacle + 1XBet confirmées disponibles
+#   4. Données Pinnacle + Melbet confirmées disponibles
 #
 # EXCLUS (signal/bruit trop faible) :
 #   - Cricket / Darts / Boxing (Kelly 0.10–0.15, marchés peu efficients)
 #   - Ligues Scandi / Irlande / Chine / Japon / Corée soccer (lag faible, volumes bas)
 #   - Copa Sudamericana / Brazil B / Chile / Colombia / Argentina (Pinnacle peu liquide)
 #   - Tennis (saison de transition gazon — incertitude surface/forme)
-#   - Liga MX (structures cotes non fiables sur 1XBet)
+#   - Liga MX (structures cotes non fiables sur Melbet)
 #
 # Budget : Engine 6×/j × 11 = 66/j | Deep 2×/j × 11 = 22/j | Total : ~2 640/mois.
 SPORT_KEYS = {
