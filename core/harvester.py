@@ -138,7 +138,7 @@ def _fetch_from_gemini(sport_id):
         for attempt in range(3):
             r = requests.post(f"{GEMINI_FLASH_URL}?key={api_key}", json=payload, timeout=45)
             if r.status_code == 429:
-                wait = 65 if attempt == 0 else 30
+                wait = 40 if attempt == 0 else 20
                 log.warning("Gemini rate limit (%s) — waiting %ds", sport_name, wait)
                 time.sleep(wait)
                 continue
@@ -266,7 +266,7 @@ def fetch_pinnacle_prices(matches: list) -> dict:
             log.error("Pinnacle/Gemini request error: %s", e)
             return {}
         if r.status_code == 429:
-            wait = 65 if attempt == 0 else 30
+            wait = 40 if attempt == 0 else 20
             log.warning("Pinnacle/Gemini rate limit — waiting %ds (attempt %d)", wait, attempt + 1)
             time.sleep(wait)
             r = None
@@ -371,7 +371,7 @@ def fetch_estimated_prices(matches: list) -> dict:
             log.error("Estimator/Gemini request error: %s", e)
             return {}
         if r.status_code == 429:
-            wait = 65 if attempt == 0 else 30
+            wait = 40 if attempt == 0 else 20
             log.warning("Estimator/Gemini rate limit — waiting %ds", wait)
             time.sleep(wait)
             r = None
@@ -462,7 +462,7 @@ def fetch_mma_events() -> list[dict]:
             log.error("MMA/Gemini request error: %s", e)
             return []
         if r.status_code == 429:
-            wait = 65 if attempt == 0 else 30
+            wait = 40 if attempt == 0 else 20
             log.warning("MMA/Gemini rate limit — waiting %ds", wait)
             time.sleep(wait)
             r = None
@@ -563,7 +563,7 @@ def fetch_esports_events() -> list[dict]:
             log.error("eSports/Gemini request error: %s", e)
             return []
         if r.status_code == 429:
-            wait = 65 if attempt == 0 else 30
+            wait = 40 if attempt == 0 else 20
             log.warning("eSports/Gemini rate limit — waiting %ds", wait)
             time.sleep(wait)
             r = None
@@ -665,7 +665,7 @@ def fetch_alternative_sports_batch() -> list[dict]:
             log.error("AltSports/Gemini request error: %s", e)
             return []
         if r.status_code == 429:
-            wait = 65 if attempt == 0 else 30
+            wait = 40 if attempt == 0 else 20
             log.warning("AltSports/Gemini rate limit — waiting %ds", wait)
             time.sleep(wait)
             r = None

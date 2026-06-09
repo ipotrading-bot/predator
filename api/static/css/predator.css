@@ -103,14 +103,17 @@ nav:not(.bnav) {
 .nav-pages a:hover { color: var(--t1); background: rgba(255,255,255,.04); }
 
 .nav-mid {
-  flex: 1; display: flex; align-items: center;
-  gap: 8px; padding-left: 14px; overflow: hidden;
+  flex: 1; min-width: 0; display: flex; align-items: center;
+  gap: 6px; padding-left: 12px; overflow: hidden;
 }
-.nav-mid span { font-size: 10px; color: var(--t3); white-space: nowrap; font-family: var(--font-data); }
+.nav-mid .nd  { font-size: 10px; color: var(--bd2); white-space: nowrap; flex-shrink: 0; font-family: var(--font-data); }
+.nav-mid .ns  { font-size: 10px; color: var(--t3); white-space: nowrap; flex-shrink: 0; font-family: var(--font-data); }
 .nav-mid b    { font-weight: 700; }
 .nav-mid .g   { color: var(--green); }
 .nav-mid .b   { color: var(--blue); }
 .nav-mid .y   { color: var(--yellow); }
+.nav-mid .nd-txt { }
+@media (max-width: 479px) { .nav-mid .nd-txt { display: none; } }
 
 .nav-right {
   display: flex; align-items: center; gap: 8px;
@@ -189,6 +192,19 @@ nav:not(.bnav) {
   font-size: 10px; color: var(--t2); margin-bottom: 14px;
   display: flex; justify-content: space-between;
   font-family: var(--font-data);
+  transition: color .2s;
+}
+.scan-meta.stale { color: var(--orange); }
+.scan-meta.stale::before {
+  content: '⚠ ';
+}
+
+/* ── Signal legend (PCRI / CS) ─────────────────── */
+.sig-legend {
+  font-size: 9px; color: var(--t3); padding: 5px 0 7px;
+  border-top: 1px solid var(--bd);
+  display: flex; gap: 10px; flex-wrap: wrap;
+  font-family: var(--font-data); letter-spacing: .3px;
 }
 
 /* ── Filter bar ────────────────────────────────── */
@@ -297,12 +313,20 @@ nav:not(.bnav) {
 
 /* row 1 — identity */
 .sig-r1 {
-  display: flex; align-items: center; gap: 8px; margin-bottom: 8px;
+  display: flex; flex-direction: column; gap: 5px; margin-bottom: 8px;
+}
+.sig-r1-top {
+  display: flex; align-items: center; gap: 8px;
+}
+.sig-r1-bot {
+  display: flex; align-items: center; gap: 6px; flex-wrap: wrap;
 }
 .sig-icon { font-size: 16px; line-height: 1; flex-shrink: 0; }
 .sig-match {
   font-size: 11px; color: var(--t2); flex: 1;
-  min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+  min-width: 0;
+  display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical;
+  overflow: hidden;
 }
 .sig-league { color: var(--t3); }
 .sig-badge {
@@ -315,7 +339,8 @@ nav:not(.bnav) {
 .b-SUSPECT_DATA { background: rgba(255,107,53,.07);  color: var(--orange); border: 1px solid rgba(255,107,53,.2); }
 .b-TRAP_COUNTER { background: rgba(245,197,24,.11);  color: var(--gold);   border: 1px solid rgba(245,197,24,.35); }
 
-.sig-date { font-size: 11px; color: var(--blue); font-weight: 600; flex-shrink: 0; white-space: nowrap; font-family: var(--font-data); }
+.sig-date { font-size: 11px; color: var(--blue); font-weight: 600; flex-shrink: 0; white-space: nowrap; font-family: var(--font-data); margin-left: auto; }
+.sig-r1-bot .sig-srcs { margin-right: 2px; }
 .sig-cd   { font-size: 10px; color: var(--t2); flex-shrink: 0; font-family: var(--font-data); }
 .sig-cd.urgent { color: var(--orange); font-weight: 700; }
 

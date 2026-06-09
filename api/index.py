@@ -58,7 +58,7 @@ _DASH_SPORT_ORDER = {
     "boxing": 11, "darts": 12, "cricket": 13, "soccer": 14,
 }
 
-_HIGH_QUALITY = {"HIGH_VALUE", "VALUE", "LOW_VALUE"}
+_HIGH_QUALITY = {"HIGH_VALUE", "VALUE"}
 
 
 def _parse_match_time(s: str):
@@ -132,7 +132,7 @@ def dashboard():
                     existing_ids = {s.get("match_id", "") + s.get("market_key", "") for s in signals}
                     for r in recent:
                         rid = r.get("match_id", "") + r.get("market_key", "")
-                        if rid not in existing_ids:
+                        if rid not in existing_ids and r.get("risk_flag") in _HIGH_QUALITY:
                             r["_recent"] = True
                             signals.append(r)
                 except Exception:

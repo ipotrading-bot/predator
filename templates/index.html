@@ -40,13 +40,13 @@
   {% set elites = signals | selectattr('risk_flag', 'in', ['HIGH_VALUE','VALUE']) | list %}
   {% set edges  = signals | map(attribute='edge_pct') | list %}
   <div class="nav-mid">
-    <span style="color:var(--bd2)">·</span>
-    <span><b class="b">{{ signals|length }}</b> signaux</span>
-    <span style="color:var(--bd2)">·</span>
-    <span><b class="g">{{ elites|length }}</b> top</span>
+    <span class="nd">·</span>
+    <span class="ns"><b class="b">{{ signals|length }}</b> sig</span>
+    <span class="nd">·</span>
+    <span class="ns"><b class="g">{{ elites|length }}</b> top</span>
     {% if edges %}
-    <span style="color:var(--bd2)">·</span>
-    <span><b class="y">+{{ "%.1f"|format(edges|max) }}%</b> best</span>
+    <span class="nd">·</span>
+    <span class="ns"><b class="y">+{{ "%.1f"|format(edges|max) }}%</b><span class="nd-txt"> best</span></span>
     {% endif %}
   </div>
   <div class="nav-right">
@@ -59,9 +59,8 @@
 <main class="wrap">
 
   {% if last_scan %}
-  <div class="scan-meta">
-    <span>Dernier scan {{ last_scan.at[11:16] }} UTC &middot; {{ last_scan.matches }} matchs &middot; {{ last_scan.signals }} signaux</span>
-    <span id="next-scan-label">3×/jour · 10h · 17h · 22h UTC</span>
+  <div class="scan-meta" id="scan-meta" data-at="{{ last_scan.at }}">
+    Dernier scan {{ last_scan.at[11:16] }} UTC &middot; {{ last_scan.matches }} matchs &middot; <span id="next-scan-label">prochain &lt;30min</span>
   </div>
   {% endif %}
 
@@ -85,6 +84,11 @@
       <button class="fchip"        data-day="tomorrow" onclick="setDay('tomorrow')">Demain</button>
       <button class="fchip"        data-day="later"    onclick="setDay('later')">+Tard</button>
       <span id="filter-count"></span>
+    </div>
+    <div class="sig-legend">
+      <span>P=Pinnacle</span><span>C=Circa</span><span>R=CRIS</span><span>I=ISN</span>
+      <span style="margin-left:4px">CS=Consensus Score (0-100)</span>
+      <span style="margin-left:4px">K%=Fraction Kelly</span>
     </div>
   </div>
 
@@ -114,17 +118,34 @@
        data-matchtime="{{ s.match_time or '' }}">
     <div class="sig-body">
       <div class="sig-r1">
-        <span class="sig-icon">{{ emoji }}</span>
-        <span class="sig-match">{{ s.match }}<span class="sig-league"> · {{ s.league or '—' }}</span></span>
-        {% set flag_fr = {'HIGH_VALUE':'TOP VALEUR','VALUE':'VALEUR','LOW_VALUE':'FAIBLE','SUSPECT_DATA':'SUSPECT'}[s.risk_flag] if s.risk_flag in ['HIGH_VALUE','VALUE','LOW_VALUE','SUSPECT_DATA'] else s.risk_flag %}
-        <span class="sig-badge b-{{ s.risk_flag }}">{{ flag_fr }}</span>
-        {% if s.get('_recent') %}<span class="sig-badge" style="background:rgba(100,100,100,.15);color:var(--t3);border-color:var(--bd)">✓ SETTLÉ</span>{% endif %}
-        {% if s.match_time %}
-          <span class="sig-date">{{ mdate }} {{ mhour }}</span>
-          <span class="sig-cd" data-ts="{{ s.match_time }}"></span>
-        {% else %}
-          <span class="sig-date" style="color:var(--t3)">heure?</span>
-        {% endif %}
+        <div class="sig-r1-top">
+          <span class="sig-icon">{{ emoji }}</span>
+          <span class="sig-match">{{ s.match }}<span class="sig-league"> · {{ s.league or '—' }}</span></span>
+        </div>
+        <div class="sig-r1-bot">
+          {% set flag_fr = {'HIGH_VALUE':'TOP VALEUR','VALUE':'VALEUR','SUSPECT_DATA':'SUSPECT'}[s.risk_flag] if s.risk_flag in ['HIGH_VALUE','VALUE','SUSPECT_DATA'] else s.risk_flag %}
+          <span class="sig-badge b-{{ s.risk_flag }}">{{ flag_fr }}</span>
+          {% if s.get('_recent') %}<span class="sig-badge" style="background:rgba(100,100,100,.15);color:var(--t3);border-color:var(--bd)">✓ SETTLÉ</span>{% endif %}
+          {% set ss = s.sharp_sources %}
+          {% if ss %}
+          <span class="sig-srcs" title="Sources sharps actives">
+            <span class="src-dot{% if ss.get('pinnacle') %} src-on{% endif %}" title="Pinnacle">P</span>
+            <span class="src-dot{% if ss.get('circa') %} src-on{% endif %}" title="Circa">C</span>
+            <span class="src-dot{% if ss.get('cris') %} src-on{% endif %}" title="CRIS">R</span>
+            <span class="src-dot{% if ss.get('isn') %} src-on{% endif %}" title="ISN">I</span>
+          </span>
+          {% endif %}
+          {% if s.consensus_score is not none and s.consensus_score != '' %}
+            {% set cs = s.consensus_score|int %}
+            <span class="cscore {% if cs >= 80 %}cs-elite{% elif cs >= 55 %}cs-good{% else %}cs-ok{% endif %}" title="Consensus Score : accord entre bookmakers sharps (0-100)">CS:{{ cs }}</span>
+          {% endif %}
+          {% if s.match_time %}
+            <span class="sig-date">{{ mdate }} {{ mhour }}</span>
+            <span class="sig-cd" data-ts="{{ s.match_time }}"></span>
+          {% else %}
+            <span class="sig-date" style="color:var(--t3)">heure?</span>
+          {% endif %}
+        </div>
       </div>
       <div class="sig-r2">
         <span class="sig-team">{{ team }}</span>
@@ -133,22 +154,9 @@
           +{{ "%.1f"|format(s.edge_pct) }}%
         </span>
         {% if kelly > 0 %}
-          <span class="sig-mise">{{ (kelly/100*(bankroll_ref or 150))|round|int }}€</span>
+          <span class="sig-mise" title="Kelly fraction — ajustez la bankroll dans le détail">K:{{ "%.1f"|format(kelly) }}%</span>
         {% else %}
           <span class="sig-mise" style="color:var(--t3)">—</span>
-        {% endif %}
-        {% set ss = s.sharp_sources %}
-        {% if ss %}
-        <span class="sig-srcs" title="Sharp sources">
-          <span class="src-dot{% if ss.get('pinnacle') %} src-on{% endif %}" title="Pinnacle">P</span>
-          <span class="src-dot{% if ss.get('circa') %} src-on{% endif %}" title="Circa">C</span>
-          <span class="src-dot{% if ss.get('cris') %} src-on{% endif %}" title="CRIS">R</span>
-          <span class="src-dot{% if ss.get('isn') %} src-on{% endif %}" title="ISN">I</span>
-        </span>
-        {% endif %}
-        {% if s.consensus_score is not none and s.consensus_score != '' %}
-          {% set cs = s.consensus_score|int %}
-          <span class="cscore {% if cs >= 80 %}cs-elite{% elif cs >= 55 %}cs-good{% else %}cs-ok{% endif %}" title="Consensus Score (0-100)">{{ cs }}</span>
         {% endif %}
         <span class="sig-cta">&#9654;</span>
       </div>
@@ -337,7 +345,7 @@ function applyFilters(){
       ub = document.createElement('span');
       ub.className = 'sig-urgent';
       ub.textContent = '⚡ URGENT';
-      el.querySelector('.sig-r1')?.appendChild(ub);
+      el.querySelector('.sig-r1-bot')?.appendChild(ub);
     } else if(!isUrgent && ub){
       ub.remove();
     }
@@ -348,7 +356,7 @@ function applyFilters(){
       lb = document.createElement('span');
       lb.className = 'sig-live';
       lb.textContent = '🔴 EN COURS';
-      el.querySelector('.sig-r1')?.appendChild(lb);
+      el.querySelector('.sig-r1-bot')?.appendChild(lb);
     } else if(!isLive && lb){
       lb.remove();
     }
@@ -360,7 +368,7 @@ function applyFilters(){
       vb = document.createElement('span');
       vb.className = 'sig-velocity';
       vb.textContent = '🔥 HIGH VELOCITY';
-      el.querySelector('.sig-r1')?.appendChild(vb);
+      el.querySelector('.sig-r1-bot')?.appendChild(vb);
     } else if(!isVelocity && vb){
       vb.remove();
     }
@@ -512,26 +520,34 @@ function closeModal(){
 }
 document.addEventListener('keydown',e=>{ if(e.key==='Escape') closeModal(); });
 
-// ── Prochain scan ──
+// ── Prochain scan — Golden Hour toutes les 30 min ──
 (function nextScan(){
-  const SCAN_HOURS = [10, 17, 22]; // UTC
   function update(){
     const now = new Date();
-    const utcH = now.getUTCHours(), utcM = now.getUTCMinutes();
-    const nowMins = utcH * 60 + utcM;
-    let nextH = SCAN_HOURS.find(h => h * 60 > nowMins);
-    if(!nextH) nextH = SCAN_HOURS[0]; // demain matin
-    const nextMins = nextH * 60;
-    const diffMins = nextMins > nowMins ? nextMins - nowMins : (24*60 - nowMins + nextMins);
-    const h = Math.floor(diffMins/60), m = diffMins%60;
-    const txt = `${String(nextH).padStart(2,'0')}:00 UTC (dans ${h}h${String(m).padStart(2,'0')}m)`;
+    const utcM = now.getUTCMinutes(), utcS = now.getUTCSeconds();
+    // Next :00 or :30 mark
+    const minsIntoSlot = utcM % 30;
+    const diffMins = 30 - minsIntoSlot;
+    const diffSecs = diffMins * 60 - utcS;
+    const m = Math.floor(diffSecs / 60), s = diffSecs % 60;
+    const txt = `dans ${m}m${String(s).padStart(2,'0')}s`;
     const el = document.getElementById('empty-countdown');
     const lbl = document.getElementById('next-scan-label');
-    if(el) el.textContent = txt;
-    if(lbl) lbl.textContent = `3×/jour · prochain ${String(nextH).padStart(2,'0')}h UTC`;
+    if(el) el.textContent = `prochain scan ${txt}`;
+    if(lbl) lbl.textContent = `prochain ${txt}`;
   }
   update();
-  setInterval(update, 60000);
+  setInterval(update, 1000);
+})();
+
+// ── Fraîcheur des données ──
+(function checkStaleness(){
+  const el = document.getElementById('scan-meta');
+  if(!el) return;
+  const at = el.dataset.at;
+  if(!at) return;
+  const ageH = (Date.now() - new Date(at)) / 3600000;
+  if(ageH > 4) el.classList.add('stale');
 })();
 
 let _toastTimer;

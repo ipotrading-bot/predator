@@ -216,6 +216,36 @@ def _save(sb, signal) -> bool:
     return False
 
 
+def _get_cached(sb, key: str, ttl_hours: float):
+    """Return cached list from Supabase meta if within TTL, else None."""
+    try:
+        row = sb.table("meta").select("value, updated_at").eq("key", key).maybe_single().execute()
+        if not row.data:
+            return None
+        updated = datetime.fromisoformat(row.data["updated_at"])
+        age_h = (datetime.now(timezone.utc) - updated).total_seconds() / 3600
+        if age_h < ttl_hours:
+            data = json.loads(row.data["value"])
+            log.info("Cache HIT [%s] — age %.1fh < %.0fh TTL (%d items)", key, age_h, ttl_hours, len(data))
+            return data
+    except Exception as e:
+        log.debug("Cache get [%s]: %s", key, e)
+    return None
+
+
+def _set_cached(sb, key: str, value: list):
+    """Store list in Supabase meta table."""
+    try:
+        sb.table("meta").upsert({
+            "key":        key,
+            "value":      json.dumps(value),
+            "updated_at": datetime.now(timezone.utc).isoformat(),
+        }, on_conflict="key").execute()
+        log.debug("Cache SET [%s] — %d items", key, len(value))
+    except Exception as e:
+        log.warning("Cache set [%s]: %s", key, e)
+
+
 def _heartbeat(sb, scan_time: datetime, matches: int, signals: int):
     try:
         sb.table("meta").upsert({
@@ -772,21 +802,35 @@ def run():
                 log.warning("WC schedule save: %s", e)
 
     # ── MMA/eSports/Alternatifs — skipped in Golden Hour (no urgency) ──
+    # Cached in Supabase meta: MMA/eSports 8h TTL, alt sports 4h TTL.
+    # Saves 3 Gemini Search calls (≈3 RPM) on every Engine scan that hits cache.
     if not GOLDEN_HOUR:
         log.info("🥋 MMA — Gemini Search (Melbet vs Pinnacle)...")
-        mma_events = fetch_mma_events()
+        mma_events = _get_cached(sb, "cache_mma", 8) if sb else None
+        if mma_events is None:
+            mma_events = fetch_mma_events()
+            if mma_events and sb:
+                _set_cached(sb, "cache_mma", mma_events)
         if mma_events:
             matches = (matches or []) + mma_events
             log.info("🥋 MMA OK — %d combats UFC (Melbet soft)", len(mma_events))
 
         log.info("🎮 eSports — Gemini Search (CS2/LoL/Valorant/DOTA2)...")
-        esports_events = fetch_esports_events()
+        esports_events = _get_cached(sb, "cache_esports", 8) if sb else None
+        if esports_events is None:
+            esports_events = fetch_esports_events()
+            if esports_events and sb:
+                _set_cached(sb, "cache_esports", esports_events)
         if esports_events:
             matches = (matches or []) + esports_events
             log.info("🎮 eSports OK — %d matchs", len(esports_events))
 
         log.info("🏓🏐🤾 Sports alternatifs — Gemini Search (Table Tennis / Volleyball / Handball)...")
-        alt_events = fetch_alternative_sports_batch()
+        alt_events = _get_cached(sb, "cache_altsports", 4) if sb else None
+        if alt_events is None:
+            alt_events = fetch_alternative_sports_batch()
+            if alt_events and sb:
+                _set_cached(sb, "cache_altsports", alt_events)
         if alt_events:
             matches = (matches or []) + alt_events
             log.info("🏓🏐🤾 Sports alternatifs OK — %d matchs", len(alt_events))
