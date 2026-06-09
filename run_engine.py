@@ -26,7 +26,7 @@ from core.paim_engine import (
     compute_alpha, MIN_EDGE, strict_team_match,
     market_label, SHARP_PROB_BY_MARKET, calculate_consensus_price,
 )
-from core.constants import ELITE_EDGE as _ELITE_EDGE, kelly_stake as _kelly_stake, risk_flag as _risk_flag, SUSPECT_EDGE as _SUSPECT_EDGE, KELLY_FRACTION as _KELLY_FRACTION
+from core.constants import ELITE_EDGE as _ELITE_EDGE, kelly_stake as _kelly_stake, risk_flag as _risk_flag, SUSPECT_EDGE as _SUSPECT_EDGE, KELLY_FRACTION as _KELLY_FRACTION, AH0_VALUE_THRESHOLD as _AH0_VALUE_THRESHOLD
 
 load_dotenv()
 
@@ -326,7 +326,8 @@ def _risk(edge_pct: float) -> str:
 
 def _emit(signals, sb, now, log, name, sport, league, mkt_key, mkt_label,
           xbet_odd, pin_odd, sharp_prob, emoji, selection_name="", min_edge=None,
-          match_time="", match_id="", sharp_sources=None, consensus_score=None):
+          match_time="", match_id="", sharp_sources=None, consensus_score=None,
+          ah0_value: bool = False):
     """Compute edge, apply quality gates, collect signal for bulk-save."""
     effective_min = min_edge if min_edge is not None else MIN_EDGE
     edge, status = compute_alpha(xbet_odd, pin_odd, min_edge=effective_min)
@@ -360,6 +361,9 @@ def _emit(signals, sb, now, log, name, sport, league, mkt_key, mkt_label,
             pass
 
     risk = _risk(edge)
+    # Soccer AH0 Value Rule : si la cote DNB du favori > 1.5, upgrade LOW_VALUE → VALUE
+    if ah0_value and risk == "LOW_VALUE":
+        risk = "VALUE"
 
     b = xbet_odd - 1
     kelly_full = (sharp_prob * b - (1 - sharp_prob)) / b if b > 0 else 0.0
@@ -497,13 +501,19 @@ def _process_h2h(m, name, sport, league, home, away, emoji, signals, sb, now, lo
                  emoji, name, sharp_prob * 100, prob_min * 100)
         return
 
+    # Soccer AH0 Value Rule : cote DNB fav > 1.5 → signal de valeur intrinsèque
+    ah0_value = sport == "soccer" and xbet_price > _AH0_VALUE_THRESHOLD
+    # Abaisser le seuil d'edge à 0.8% pour ne pas étouffer ces signaux
+    h2h_min_edge = min(min_edge if min_edge is not None else MIN_EDGE, 0.8) if ah0_value else min_edge
+
     lbl = market_label("h2h", "", 0.0, sport)
     _emit(signals, sb, now, log, name, sport, league,
           "h2h", lbl, xbet_price, pin_price, sharp_prob, emoji,
-          selection_name=xbet_fav, min_edge=min_edge,
+          selection_name=xbet_fav, min_edge=h2h_min_edge,
           match_time=m.get("commence_time", ""), match_id=m.get("id", ""),
           sharp_sources=sources_found if sources_found else None,
-          consensus_score=consensus_score if sources_found else None)
+          consensus_score=consensus_score if sources_found else None,
+          ah0_value=ah0_value)
 
 
 def _process_totals(m, name, sport, league, emoji, signals, sb, now, log, min_edge=None):
