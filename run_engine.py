@@ -316,13 +316,14 @@ def _emit(signals, sb, now, log, name, sport, league, mkt_key, mkt_label,
                     emoji, name, mkt_label, edge, suspect_cap)
         return
 
-    # J+36h filter: signaux éloignés doivent être HIGH_VALUE (≥ 5%) pour justifier immobilisation capital
+    # J+72h filter: signaux très éloignés doivent être HIGH_VALUE (≥ 6%) pour justifier immobilisation capital
+    # Fenêtre portée 36h→72h : capture WC + Copa Lib 2 jours avant match (meilleure liquidité pré-tournoi)
     if match_time:
         try:
             mt_dt = datetime.fromisoformat(match_time.replace("Z", "+00:00"))
             hours_ahead_mt = (mt_dt - now).total_seconds() / 3600
-            if hours_ahead_mt > 36 and edge < _ELITE_EDGE * 2:
-                log.info("J+2 FILTER | %s %s | %s — edge %.2f%% < 5%% (T+%.0fh)",
+            if hours_ahead_mt > 72 and edge < _ELITE_EDGE * 2:
+                log.info("J+3 FILTER | %s %s | %s — edge %.2f%% < 6%% (T+%.0fh)",
                          emoji, name, mkt_label, edge, hours_ahead_mt)
                 return
         except Exception:
