@@ -4,8 +4,9 @@ All thresholds, risk classification, and Kelly calculation used by engine,
 rapport, dashboard, and audit must import from here — never redefined inline.
 """
 
-ELITE_EDGE           = 2.5    # % — VALUE / HIGH_VALUE boundary (NBA, hockey, etc.)
-SOCCER_ELITE_EDGE    = 1.5    # % — Soccer AH0 : marché plus serré, VALUE dès 1.5%
+ELITE_EDGE             = 2.5    # % — VALUE / HIGH_VALUE boundary (défaut)
+SOCCER_ELITE_EDGE      = 1.5    # % — Soccer AH0 : marché serré, VALUE dès 1.5%
+BASKETBALL_ELITE_EDGE  = 2.0    # % — NBA Finales : VALUE dès 2.0% (edges typiques 1.5–2.5%)
 AH0_VALUE_THRESHOLD  = 1.5    # Soccer DNB : favori à 1.5+ = valeur intrinsèque
 PURGE_EDGE_FLOOR     = 0.5    # % — floor purge : ne jamais supprimer au-dessus de ça
 MIN_STAKE    = 2      # € — below this Kelly stake, signal is not actionable

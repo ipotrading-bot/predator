@@ -30,12 +30,12 @@ def _normalize_team(name: str) -> str:
 
 SPORT_LABELS    = {1: "soccer", 3: "tennis", 4: "basketball", 5: "mma", 6: "darts", 7: "cricket", 8: "hockey", 16: "aussierules", 17: "rugbyleague"}
 MAX_EDGE        = 15.0   # Hard cap — data error above this
-SHARP_PROB_MIN  = 0.65   # Minimum Pinnacle devigged probability (Shin quality gate)
+SHARP_PROB_MIN  = 0.55   # Minimum Pinnacle devigged probability (abaissé — Finales NBA ~60/40)
 
 # Per-market probability thresholds — spreads/totals are symmetric by design
 SHARP_PROB_BY_MARKET = {
-    "h2h":          0.65,   # NBA/Tennis ML — strong-favourite filter
-    "h2h_soccer":   0.50,   # Soccer AH 0.0 — seuil binaire pur ; 0.52 bloquait les amicaux équilibrés
+    "h2h":          0.55,   # NBA/Hockey ML — 0.65 bloquait toutes les Finales NBA compétitives
+    "h2h_soccer":   0.50,   # Soccer AH 0.0 — seuil binaire pur
     "spreads":       0.50,   # Seuil binaire pur — symétrique par construction
     "totals":        0.50,   # Idem totals
 }

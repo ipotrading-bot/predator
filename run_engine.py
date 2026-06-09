@@ -26,7 +26,7 @@ from core.paim_engine import (
     compute_alpha, MIN_EDGE, strict_team_match,
     market_label, SHARP_PROB_BY_MARKET, calculate_consensus_price,
 )
-from core.constants import ELITE_EDGE as _ELITE_EDGE, SOCCER_ELITE_EDGE as _SOCCER_ELITE_EDGE, kelly_stake as _kelly_stake, risk_flag as _risk_flag, SUSPECT_EDGE as _SUSPECT_EDGE, KELLY_FRACTION as _KELLY_FRACTION, AH0_VALUE_THRESHOLD as _AH0_VALUE_THRESHOLD, PURGE_EDGE_FLOOR as _PURGE_EDGE_FLOOR
+from core.constants import ELITE_EDGE as _ELITE_EDGE, SOCCER_ELITE_EDGE as _SOCCER_ELITE_EDGE, BASKETBALL_ELITE_EDGE as _BASKETBALL_ELITE_EDGE, kelly_stake as _kelly_stake, risk_flag as _risk_flag, SUSPECT_EDGE as _SUSPECT_EDGE, KELLY_FRACTION as _KELLY_FRACTION, AH0_VALUE_THRESHOLD as _AH0_VALUE_THRESHOLD, PURGE_EDGE_FLOOR as _PURGE_EDGE_FLOOR
 
 load_dotenv()
 
@@ -363,12 +363,14 @@ def _emit(signals, sb, now, log, name, sport, league, mkt_key, mkt_label,
         except Exception:
             pass
 
-    # Soccer : seuil VALUE à 1.5% (AH0 plus serré que NBA) — évite LOW_VALUE invisible
+    # Seuil VALUE sport-spécifique — évite LOW_VALUE invisible sur le dashboard
     if sport == "soccer":
-        elite = _SOCCER_ELITE_EDGE
-        risk = "HIGH_VALUE" if edge >= elite * 2 else ("VALUE" if edge >= elite else "LOW_VALUE")
+        elite = _SOCCER_ELITE_EDGE        # 1.5% — AH0 marché serré
+    elif sport == "basketball":
+        elite = _BASKETBALL_ELITE_EDGE    # 2.0% — NBA Finales edges typiques 1.5–2.5%
     else:
-        risk = _risk(edge)
+        elite = _ELITE_EDGE               # 2.5% — autres sports
+    risk = "HIGH_VALUE" if edge >= elite * 2 else ("VALUE" if edge >= elite else "LOW_VALUE")
     # Soccer AH0 Value Rule : si la cote DNB du favori > 1.5, upgrade LOW_VALUE → VALUE
     if ah0_value and risk == "LOW_VALUE":
         risk = "VALUE"

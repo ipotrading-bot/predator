@@ -13,7 +13,7 @@ log = logging.getLogger("LEARN")
 # Objectif : moins de signaux, mais plus fiables (gagner ou ne pas jouer).
 SPORT_DEFAULTS: dict[str, float] = {
     "soccer":      1.2,   # WC + Copa Lib + MLS + Brasileirão + Amicaux — abaissé pour capturer plus de signaux
-    "basketball":  2.0,   # NBA Finals — marché très sharp, edge réel commence à 2%
+    "basketball":  1.5,   # NBA Finals — abaissé ; prob gate 0.65 bloquait tous les signaux
     "hockey":      2.0,   # NHL Cup Finals
     "baseball":    2.0,   # MLB + KBO + NPB — lag timezone documenté
     "rugbyleague": 2.0,   # NRL
