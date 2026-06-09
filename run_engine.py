@@ -26,7 +26,7 @@ from core.paim_engine import (
     compute_alpha, MIN_EDGE, strict_team_match,
     market_label, SHARP_PROB_BY_MARKET, calculate_consensus_price,
 )
-from core.constants import ELITE_EDGE as _ELITE_EDGE, kelly_stake as _kelly_stake, risk_flag as _risk_flag, SUSPECT_EDGE as _SUSPECT_EDGE, KELLY_FRACTION as _KELLY_FRACTION, AH0_VALUE_THRESHOLD as _AH0_VALUE_THRESHOLD
+from core.constants import ELITE_EDGE as _ELITE_EDGE, SOCCER_ELITE_EDGE as _SOCCER_ELITE_EDGE, kelly_stake as _kelly_stake, risk_flag as _risk_flag, SUSPECT_EDGE as _SUSPECT_EDGE, KELLY_FRACTION as _KELLY_FRACTION, AH0_VALUE_THRESHOLD as _AH0_VALUE_THRESHOLD, PURGE_EDGE_FLOOR as _PURGE_EDGE_FLOOR
 
 load_dotenv()
 
@@ -278,7 +278,7 @@ def _purge_old_signals(sb):
         ("lt",  "created_at", (datetime.now(timezone.utc) - timedelta(hours=48)).isoformat(), ">48h old"),
         ("gt",  "edge_pct", 15.0,                                        "edge > 15% (hard cap)"),
         ("gt",  "edge_pct", 10.0,                                        "edge > 10% (SUSPECT)"),
-        ("lte", "edge_pct", MIN_EDGE,                                    f"edge <= {MIN_EDGE}%"),
+        ("lte", "edge_pct", _PURGE_EDGE_FLOOR,                          f"edge <= {_PURGE_EDGE_FLOOR}% (bruit)"),
         ("lte", "sharp_prob", 0.0,                                       "sharp_prob <= 0"),
         ("is_", "market", "null",                                        "null market"),
         ("is_", "sharp_prob", "null",                                    "sharp_prob=null"),
@@ -363,7 +363,12 @@ def _emit(signals, sb, now, log, name, sport, league, mkt_key, mkt_label,
         except Exception:
             pass
 
-    risk = _risk(edge)
+    # Soccer : seuil VALUE à 1.5% (AH0 plus serré que NBA) — évite LOW_VALUE invisible
+    if sport == "soccer":
+        elite = _SOCCER_ELITE_EDGE
+        risk = "HIGH_VALUE" if edge >= elite * 2 else ("VALUE" if edge >= elite else "LOW_VALUE")
+    else:
+        risk = _risk(edge)
     # Soccer AH0 Value Rule : si la cote DNB du favori > 1.5, upgrade LOW_VALUE → VALUE
     if ah0_value and risk == "LOW_VALUE":
         risk = "VALUE"
