@@ -61,10 +61,11 @@ def fetch_pending(sb) -> list[dict]:
         return []
 
 
-def _update_signal(sb, sig: dict, payload: dict):
+def _update_signal(sb, sig: dict, payload: dict) -> bool:
     """
     Persist audit result via DELETE + INSERT (RLS anon key blocks UPDATE).
     sig is the full signal row from fetch_pending(); payload contains the new fields.
+    Returns True on success, False if the signal was lost.
     """
     sig_id = sig["id"]
     merged = {**sig, **payload}
@@ -73,19 +74,22 @@ def _update_signal(sb, sig: dict, payload: dict):
         sb.table("signals").delete().eq("id", sig_id).execute()
     except Exception as e:
         log.error("Delete signal %s: %s", sig_id, e)
-        return
+        return False
     try:
         sb.table("signals").insert(merged).execute()
+        return True
     except Exception as e:
         # Retry without optional audit columns if schema is stale
         if any(c in str(e) for c in _AUDIT_COLS):
             core = {k: v for k, v in merged.items() if k not in _AUDIT_COLS}
             try:
                 sb.table("signals").insert(core).execute()
+                return True
             except Exception as e2:
-                log.error("Insert signal %s (fallback): %s", sig_id, e2)
-        else:
-            log.error("Insert signal %s: %s", sig_id, e)
+                log.critical("SIGNAL %s LOST after delete — fallback insert failed: %s", sig_id, e2)
+                return False
+        log.critical("SIGNAL %s LOST after delete — insert failed: %s", sig_id, e)
+        return False
 
 
 def _log_to_ledger(sb, sig: dict, clv: float, outcome: str):
@@ -98,7 +102,7 @@ def _log_to_ledger(sb, sig: dict, clv: float, outcome: str):
             sc = datetime.fromisoformat(scanned_at.replace("Z", "+00:00"))
             ttm = int((mt - sc).total_seconds() / 60)
         except Exception:
-            pass
+            log.debug("_ttm parse failed for match_time=%s scanned_at=%s", match_time, scanned_at)
     try:
         sb.table("ai_learning_ledger").insert({
             "match":                 sig["match"],
@@ -109,7 +113,7 @@ def _log_to_ledger(sb, sig: dict, clv: float, outcome: str):
             "initial_edge":          sig.get("edge_pct"),
             "sharp_divergence_std":  None,
             "clv_final":             clv,
-            "was_clv_positive":      clv >= 0,
+            "was_clv_positive":      clv > 0,
             "outcome":               outcome,
         }).execute()
     except Exception as e:
@@ -158,13 +162,16 @@ def audit_one(sb, sig: dict, oracle_calls: list, settle_calls: list, now: dateti
         status   = "expired"
         log.info("EXPIRED  | %s (proxy CLV %+.2f%%)", match, clv)
 
-    _update_signal(sb, sig, {
+    ok = _update_signal(sb, sig, {
         "status":       status,
         "clv_pct":      float(clv),
         "closing_line": float(closing_price) if closing_price else None,
         "closed_at":    now_iso,
     })
-    _log_to_ledger(sb, sig, float(clv), status)
+    if ok:
+        _log_to_ledger(sb, sig, float(clv), status)
+    else:
+        log.error("Skipping ledger write for lost signal %s", sig["id"])
     return status
 
 
