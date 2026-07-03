@@ -34,7 +34,7 @@ log.setLevel(logging.INFO)
 log.addHandler(_handler)
 log.propagate = False
 
-AUDIT_LAG_H   = 3      # Wait this many hours after scan before auditing
+AUDIT_LAG_H   = int(os.environ.get("AUDIT_LAG_H", 3))  # Override via env for manual runs
 ORACLE_BUDGET = 30     # Max Gemini oracle calls per audit run
 SETTLE_BUDGET = 25     # Max Gemini settlement calls per audit run
 
