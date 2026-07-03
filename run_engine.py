@@ -292,7 +292,7 @@ def _archive_before_purge(sb, signals: list):
                 "time_to_match_minutes": ttm,
                 "initial_edge":          sig.get("edge_pct"),
                 "clv_final":             float(clv),
-                "was_clv_positive":      clv >= 0,
+                "was_clv_positive":      clv > 0,
                 "outcome":               "expired",
             }).execute()
             archived += 1

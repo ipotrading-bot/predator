@@ -176,6 +176,10 @@ def settle_signal(sb, sig: dict, now_iso: str) -> bool:
     sig_id = merged.pop("id", None)
     try:
         sb.table("signals").delete().eq("id", sig_id).execute()
+    except Exception as e:
+        log.error("settle_signal delete [%s]: %s", match, e)
+        return False
+    try:
         sb.table("signals").insert(merged).execute()
         log.info("SETTLED  | %s %d-%d | outcome=%s | CLV %+.2f%%",
                  match, hs, as_, outcome, clv)
@@ -183,18 +187,19 @@ def settle_signal(sb, sig: dict, now_iso: str) -> bool:
         if any(c in str(e) for c in _SETTLEMENT_OPTIONAL):
             core = {k: v for k, v in merged.items() if k not in _SETTLEMENT_OPTIONAL}
             try:
-                sb.table("signals").delete().eq("id", sig_id).execute()
                 sb.table("signals").insert(core).execute()
+                log.info("SETTLED (schema fallback) | %s", match)
             except Exception as e2:
-                log.error("settle_signal fallback [%s]: %s", match, e2)
+                log.critical("SIGNAL %s LOST after delete — settle fallback failed: %s", sig_id, e2)
                 return False
         else:
-            log.error("settle_signal [%s]: %s", match, e)
+            log.critical("SIGNAL %s LOST after delete — settle insert failed: %s", sig_id, e)
             return False
 
     # Feed ai_learning_ledger with real settled outcome
     try:
         sb.table("ai_learning_ledger").insert({
+            "signal_id":             sig_id,
             "match":                 match,
             "sport":                 sport,
             "league":                sig.get("league"),
@@ -202,7 +207,7 @@ def settle_signal(sb, sig: dict, now_iso: str) -> bool:
             "time_to_match_minutes": ttm,
             "initial_edge":          sig.get("edge_pct"),
             "clv_final":             float(clv),
-            "was_clv_positive":      clv >= 0,
+            "was_clv_positive":      clv > 0,
             "outcome":               outcome,
         }).execute()
     except Exception as e:
