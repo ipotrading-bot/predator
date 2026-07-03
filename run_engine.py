@@ -26,7 +26,7 @@ from core.paim_engine import (
     compute_alpha, MIN_EDGE, strict_team_match,
     market_label, SHARP_PROB_BY_MARKET, calculate_consensus_price,
 )
-from core.constants import ELITE_EDGE as _ELITE_EDGE, SOCCER_ELITE_EDGE as _SOCCER_ELITE_EDGE, BASKETBALL_ELITE_EDGE as _BASKETBALL_ELITE_EDGE, kelly_stake as _kelly_stake, risk_flag as _risk_flag, SUSPECT_EDGE as _SUSPECT_EDGE, KELLY_FRACTION as _KELLY_FRACTION, AH0_VALUE_THRESHOLD as _AH0_VALUE_THRESHOLD, PURGE_EDGE_FLOOR as _PURGE_EDGE_FLOOR, MLB_LINEUP_WINDOW_H as _MLB_LINEUP_WINDOW_H
+from core.constants import ELITE_EDGE as _ELITE_EDGE, SOCCER_ELITE_EDGE as _SOCCER_ELITE_EDGE, BASKETBALL_ELITE_EDGE as _BASKETBALL_ELITE_EDGE, kelly_stake as _kelly_stake, risk_flag as _risk_flag, SUSPECT_EDGE as _SUSPECT_EDGE, KELLY_FRACTION as _KELLY_FRACTION, AH0_VALUE_THRESHOLD as _AH0_VALUE_THRESHOLD, PURGE_EDGE_FLOOR as _PURGE_EDGE_FLOOR, MLB_LINEUP_WINDOW_H as _MLB_LINEUP_WINDOW_H, PUSH_PROB_ROUND_LINE as _PUSH_PROB_ROUND_LINE
 
 load_dotenv()
 
@@ -597,6 +597,13 @@ def _process_totals(m, name, sport, league, emoji, signals, sb, now, log, min_ed
         return
     point = pt_line or xt_line
 
+    # Round-line push detection: integer totals (8.0, 9.0) can push.
+    # Half-lines (.5) never push — no adjustment needed.
+    is_round_line = point > 0 and (point % 1 == 0)
+    if is_round_line:
+        log.info("ROUNDLINE | %s %s totals %.1f — P(push)=%.0f%% → sharp_prob adjusted",
+                 emoji, name, point, _PUSH_PROB_ROUND_LINE * 100)
+
     for side, other in [("over", "under"), ("under", "over")]:
         x_odd = float(xt.get(side, 0))
         p_odd = float(pt.get(side, 0))
@@ -604,6 +611,10 @@ def _process_totals(m, name, sport, league, emoji, signals, sb, now, log, min_ed
         if x_odd <= 1.01 or p_odd <= 1.01:
             continue
         sharp_prob = devig_prob(p_odd, p_lay)
+        # Push-adjusted probability: P(win | no push) = P(win) / (1 - P(push))
+        # This mechanically lowers EV on round lines vs half-lines, as intended.
+        if is_round_line:
+            sharp_prob = round(sharp_prob * (1 - _PUSH_PROB_ROUND_LINE), 4)
         if sharp_prob < prob_min:
             continue
         lbl = market_label("totals", side, point, sport)

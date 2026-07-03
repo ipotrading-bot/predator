@@ -23,6 +23,12 @@ MAX_DB_RETRIES       = 3        # Attempts — max retries before giving up
 GLOBAL_TIMEOUT       = 540      # Seconds — 9 minutes, safety net for GitHub Actions
 DEBUG_MODE           = False    # Will be set from env var PREDATOR_DEBUG
 
+# ── Round-line push penalty (totals on integer lines e.g. 9.0, 8.0) ────
+# P(push) on MLB integer totals historically ~8–12% (score lands exactly on line).
+# Reduces effective sharp_prob: p_adj = p_win / (1 - p_push)
+# Half-lines (.5) have P(push)=0 — no adjustment needed.
+PUSH_PROB_ROUND_LINE = 0.10    # 10% — conservative MLB/baseball estimate
+
 # ── MLB Totals lineup confirmation window ─────────────────────────────
 # Starting pitchers are officially confirmed ~1h before first pitch.
 # Signals generated more than MLB_LINEUP_WINDOW_H hours before game time
