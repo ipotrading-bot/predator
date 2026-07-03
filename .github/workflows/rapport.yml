@@ -5,7 +5,7 @@ name: Predator Rapport
 
 on:
   schedule:
-    - cron: '5 6 * * *'    # 06:05 UTC — rapport matin (après scan 06:00)
+    - cron: '5 7 * * *'    # 07:05 UTC — rapport matin (après scan 07:00)
     - cron: '5 18 * * *'   # 18:05 UTC — rapport soir  (après scan 18:00)
   workflow_dispatch:         # Déclenchement manuel depuis GitHub Actions
 

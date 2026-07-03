@@ -281,7 +281,7 @@ def _archive_before_purge(sb, signals: list):
                 mt = datetime.fromisoformat(match_time.replace("Z", "+00:00"))
                 sc = datetime.fromisoformat(scanned_at.replace("Z", "+00:00"))
                 ttm = int((mt - sc).total_seconds() / 60)
-            except Exception:
+            except (ValueError, OverflowError):
                 pass
         try:
             sb.table("ai_learning_ledger").insert({
@@ -416,7 +416,7 @@ def _emit(signals, sb, now, log, name, sport, league, mkt_key, mkt_label,
                 log.info("MLB LINEUP FILTER | %s | %s — T+%.0fh > 6h (lineup unconfirmed)",
                          name, mkt_label, hours_ahead_mt)
                 return
-        except Exception:
+        except (ValueError, OverflowError):
             pass
 
     # Seuil VALUE sport-spécifique — évite LOW_VALUE invisible sur le dashboard
@@ -693,7 +693,7 @@ def _urgency_sort(s: dict, now) -> tuple:
         mins  = (mt_dt - now).total_seconds() / 60
         if 0 < mins <= 240:
             return (0, mins, -(s.get("edge_pct") or 0))
-    except Exception:
+    except (ValueError, OverflowError):
         pass
     return (1, 9999.0, -(s.get("edge_pct") or 0))
 _SESSION_ICON = {"EU-OPEN": "📈", "EU-MID": "⚡", "EU-CLOSE": "🎯", "OVERNIGHT": "🌙"}
@@ -734,13 +734,13 @@ def _telegram_grouped(signals: list, now, session: str, matches: int,
     for s in sorted(signals, key=lambda x: _urgency_sort(x, now)):
         by_sport.setdefault(s["sport"], []).append(s)
 
-    body = ""
+    body_parts: list[str] = []
     for sport in _SPORT_ORDER:
         group = by_sport.get(sport, [])
         if not group:
             continue
         emoji = SPORT_EMOJI.get(sport, "🎯")
-        body += f"\n{emoji} *{sport.upper()}*\n"
+        lines: list[str] = [f"\n{emoji} *{sport.upper()}*\n"]
         for s in group:
             prob  = s.get("sharp_prob", 0) or 0
             stake = round(_kelly_stake(s["xbet_odd"], prob, sport=s.get("sport", "soccer")))
@@ -760,13 +760,15 @@ def _telegram_grouped(signals: list, now, session: str, matches: int,
                     mins_left = (mt_dt - now).total_seconds() / 60
                     if 0 < mins_left <= 60 and s.get("sport") in {"basketball", "soccer"}:
                         velocity = "🔥 "
-                except Exception:
+                except (ValueError, OverflowError):
                     pass
-            body += (
+            lines.append(
                 f"{dot} {velocity}*{team.upper()}*  `{s['market']} @ {s['xbet_odd']:.2f}`{dt}\n"
                 f"    `+{s['edge_pct']:.1f}%`{prob_s}{stake_s}\n"
             )
+        body_parts.append("".join(lines))
 
+    body = "".join(body_parts)
     # Telegram 4096-char limit: send in chunks if needed
     full = header + body
     if len(full) <= 4000:
