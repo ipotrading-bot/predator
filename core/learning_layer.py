@@ -56,16 +56,16 @@ def compute_and_save(sb) -> dict[str, float]:
 
     for sport in SPORT_DEFAULTS:
         try:
-            res = (sb.table("signals")
-                   .select("clv_pct")
+            res = (sb.table("ai_learning_ledger")
+                   .select("clv_final, outcome")
                    .eq("sport", sport)
-                   .in_("status", ["settled", "closed", "expired"])
-                   .order("closed_at", desc=True)
+                   .order("created_at", desc=True)
                    .limit(50)
                    .execute())
 
-            values = [r["clv_pct"] for r in (res.data or [])
-                      if r.get("clv_pct") is not None]
+            values = [r["clv_final"] for r in (res.data or [])
+                      if r.get("clv_final") is not None
+                      and r.get("outcome") not in ("expired", None)]
 
             if len(values) < _MIN_SAMPLES:
                 log.info("[%s] %d samples < %d — threshold unchanged (%.1f%%)",
