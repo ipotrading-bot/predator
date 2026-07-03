@@ -98,7 +98,7 @@ def determine_outcome(sport: str, market_key: str, selection_name: str,
         won = (is_home and home_score > away_score) or (not is_home and away_score > home_score)
         return "WIN" if won else "LOSS"
 
-    if market_key == "totals":
+    if "totals" in market_key:
         total = home_score + away_score
         try:
             line = float(re.search(r'[\d.]+', sel).group())
@@ -107,6 +107,20 @@ def determine_outcome(sport: str, market_key: str, selection_name: str,
         if total == line:
             return "PUSH"
         return "WIN" if ("over" in sel and total > line) or ("under" in sel and total < line) else "LOSS"
+
+    if "spreads" in market_key:
+        try:
+            point = float(re.search(r'[-+]?[\d.]+', sel).group())
+        except Exception:
+            return "UNKNOWN"
+        if "spreads_home" in market_key:
+            adjusted = home_score + point
+        else:
+            adjusted = away_score + point
+        opp = away_score if "spreads_home" in market_key else home_score
+        if adjusted == opp:
+            return "PUSH"
+        return "WIN" if adjusted > opp else "LOSS"
 
     return "UNKNOWN"
 
@@ -120,23 +134,37 @@ def settle_signal(sb, sig: dict, now_iso: str) -> bool:
     sport   = sig.get("sport", "soccer")
     scanned = (sig.get("scanned_at") or "")[:10]
 
-    result = fetch_match_result(match, sport, scanned)
+    # Use match_time date for Gemini search accuracy (not scanned_at)
+    match_date = (sig.get("match_time") or sig.get("scanned_at") or "")[:10]
+
+    result = fetch_match_result(match, sport, match_date)
     if not result or not result.get("completed"):
         return False
 
-    hs = result["home_score"]
+    hs  = result["home_score"]
     as_ = result["away_score"]
-    home = sig.get("match", "").split(" vs ")[0].strip() if " vs " in sig.get("match", "") else ""
-    away = sig.get("match", "").split(" vs ")[1].strip() if " vs " in sig.get("match", "") else ""
+    home = match.split(" vs ")[0].strip() if " vs " in match else ""
+    away = match.split(" vs ")[1].strip() if " vs " in match else ""
     outcome = determine_outcome(
         sport, sig.get("market_key", "h2h"),
         sig.get("selection_name", ""),
         home, away, hs, as_,
     )
 
-    # CLV from original Pinnacle price (best proxy if no closing line yet)
     orig_pin = sig.get("pinnacle_price") or 0.0
     clv = round((sig["xbet_odd"] / orig_pin - 1) * 100, 2) if orig_pin > 1.01 else 0.0
+
+    match_time = sig.get("match_time")
+    scanned_at = sig.get("scanned_at")
+    ttm = None
+    if match_time and scanned_at:
+        try:
+            from datetime import datetime as _dt
+            mt = _dt.fromisoformat(match_time.replace("Z", "+00:00"))
+            sc = _dt.fromisoformat(scanned_at.replace("Z", "+00:00"))
+            ttm = int((mt - sc).total_seconds() / 60)
+        except Exception:
+            pass
 
     # DELETE + INSERT — RLS anon key blocks UPDATE
     merged = {**sig, **{
@@ -149,18 +177,35 @@ def settle_signal(sb, sig: dict, now_iso: str) -> bool:
     try:
         sb.table("signals").delete().eq("id", sig_id).execute()
         sb.table("signals").insert(merged).execute()
-        log.info("SETTLED  | %s %s→%s | outcome=%s | CLV %+.2f%%",
+        log.info("SETTLED  | %s %d-%d | outcome=%s | CLV %+.2f%%",
                  match, hs, as_, outcome, clv)
-        return True
     except Exception as e:
         if any(c in str(e) for c in _SETTLEMENT_OPTIONAL):
             core = {k: v for k, v in merged.items() if k not in _SETTLEMENT_OPTIONAL}
             try:
                 sb.table("signals").delete().eq("id", sig_id).execute()
                 sb.table("signals").insert(core).execute()
-                return True
             except Exception as e2:
                 log.error("settle_signal fallback [%s]: %s", match, e2)
+                return False
         else:
             log.error("settle_signal [%s]: %s", match, e)
-        return False
+            return False
+
+    # Feed ai_learning_ledger with real settled outcome
+    try:
+        sb.table("ai_learning_ledger").insert({
+            "match":                 match,
+            "sport":                 sport,
+            "league":                sig.get("league"),
+            "market_type":           sig.get("market_key"),
+            "time_to_match_minutes": ttm,
+            "initial_edge":          sig.get("edge_pct"),
+            "clv_final":             float(clv),
+            "was_clv_positive":      clv >= 0,
+            "outcome":               outcome,
+        }).execute()
+    except Exception as e:
+        log.warning("ai_learning_ledger [%s]: %s", match, e)
+
+    return True
