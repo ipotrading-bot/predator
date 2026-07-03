@@ -23,6 +23,13 @@ MAX_DB_RETRIES       = 3        # Attempts — max retries before giving up
 GLOBAL_TIMEOUT       = 540      # Seconds — 9 minutes, safety net for GitHub Actions
 DEBUG_MODE           = False    # Will be set from env var PREDATOR_DEBUG
 
+# ── MLB Totals lineup confirmation window ─────────────────────────────
+# Starting pitchers are officially confirmed ~1h before first pitch.
+# Signals generated more than MLB_LINEUP_WINDOW_H hours before game time
+# are based on a total line that doesn't yet reflect the actual starter.
+# ERA, recent form, and matchup are not priced in until lineup is locked.
+MLB_LINEUP_WINDOW_H  = 6       # Hours — discard MLB totals signals beyond this
+
 # Fractional Kelly par sport — uniquement les 11 sports actifs sélectionnés
 # Principe : sharper market = fraction plus haute = mise plus agressive
 # Sports exclus (cricket, darts, boxing, tennis, etc.) → retirés pour réduire bruit

@@ -26,7 +26,7 @@ from core.paim_engine import (
     compute_alpha, MIN_EDGE, strict_team_match,
     market_label, SHARP_PROB_BY_MARKET, calculate_consensus_price,
 )
-from core.constants import ELITE_EDGE as _ELITE_EDGE, SOCCER_ELITE_EDGE as _SOCCER_ELITE_EDGE, BASKETBALL_ELITE_EDGE as _BASKETBALL_ELITE_EDGE, kelly_stake as _kelly_stake, risk_flag as _risk_flag, SUSPECT_EDGE as _SUSPECT_EDGE, KELLY_FRACTION as _KELLY_FRACTION, AH0_VALUE_THRESHOLD as _AH0_VALUE_THRESHOLD, PURGE_EDGE_FLOOR as _PURGE_EDGE_FLOOR
+from core.constants import ELITE_EDGE as _ELITE_EDGE, SOCCER_ELITE_EDGE as _SOCCER_ELITE_EDGE, BASKETBALL_ELITE_EDGE as _BASKETBALL_ELITE_EDGE, kelly_stake as _kelly_stake, risk_flag as _risk_flag, SUSPECT_EDGE as _SUSPECT_EDGE, KELLY_FRACTION as _KELLY_FRACTION, AH0_VALUE_THRESHOLD as _AH0_VALUE_THRESHOLD, PURGE_EDGE_FLOOR as _PURGE_EDGE_FLOOR, MLB_LINEUP_WINDOW_H as _MLB_LINEUP_WINDOW_H
 
 load_dotenv()
 
@@ -408,6 +408,13 @@ def _emit(signals, sb, now, log, name, sport, league, mkt_key, mkt_label,
             if hours_ahead_mt > 72 and edge < _ELITE_EDGE * 2:
                 log.info("J+3 FILTER | %s %s | %s — edge %.2f%% < 6%% (T+%.0fh)",
                          emoji, name, mkt_label, edge, hours_ahead_mt)
+                return
+            # MLB Totals lineup filter: starters confirmed ~1h before first pitch.
+            # Signals generated >6h before game time are pre-lineup — ERA/matchup
+            # not yet priced in. Discard to avoid acting on stale total lines.
+            if sport == "baseball" and "totals" in mkt_key and hours_ahead_mt > _MLB_LINEUP_WINDOW_H:
+                log.info("MLB LINEUP FILTER | %s | %s — T+%.0fh > 6h (lineup unconfirmed)",
+                         name, mkt_label, hours_ahead_mt)
                 return
         except Exception:
             pass
