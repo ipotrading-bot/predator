@@ -265,17 +265,66 @@ def _heartbeat(sb, scan_time: datetime, matches: int, signals: int):
         log.error("Supabase heartbeat: %s", e)
 
 
+def _archive_before_purge(sb, signals: list):
+    """Archive active signals to ai_learning_ledger before purging (proxy CLV, outcome=expired)."""
+    if not signals:
+        return
+    archived = 0
+    for sig in signals:
+        orig_pin = sig.get("pinnacle_price") or 0.0
+        clv = round((sig["xbet_odd"] / orig_pin - 1) * 100, 2) if orig_pin > 1.01 else 0.0
+        match_time = sig.get("match_time")
+        scanned_at = sig.get("scanned_at")
+        ttm = None
+        if match_time and scanned_at:
+            try:
+                mt = datetime.fromisoformat(match_time.replace("Z", "+00:00"))
+                sc = datetime.fromisoformat(scanned_at.replace("Z", "+00:00"))
+                ttm = int((mt - sc).total_seconds() / 60)
+            except Exception:
+                pass
+        try:
+            sb.table("ai_learning_ledger").insert({
+                "match":                 sig["match"],
+                "sport":                 sig.get("sport"),
+                "league":                sig.get("league"),
+                "market_type":           sig.get("market_key"),
+                "time_to_match_minutes": ttm,
+                "initial_edge":          sig.get("edge_pct"),
+                "clv_final":             float(clv),
+                "was_clv_positive":      clv >= 0,
+                "outcome":               "expired",
+            }).execute()
+            archived += 1
+        except Exception as e:
+            log.debug("archive_before_purge [%s]: %s", sig.get("match", "?"), str(e)[:60])
+    if archived:
+        log.info("Archived %d/%d signals to ledger before purge", archived, len(signals))
+
+
 def _purge_old_signals(sb):
     """Delete stale signals. IMPROVED: batched operations + better logging."""
     from core.paim_engine import MIN_EDGE
-    
+
     now_iso = datetime.now(timezone.utc).isoformat()
-    
+    cutoff_48h = (datetime.now(timezone.utc) - timedelta(hours=48)).isoformat()
+
+    # ── Archive active signals >48h before purging (preserve ledger history) ──
+    try:
+        stale = (sb.table("signals")
+                 .select("*")
+                 .eq("status", "active")
+                 .lt("created_at", cutoff_48h)
+                 .execute())
+        _archive_before_purge(sb, stale.data or [])
+    except Exception as e:
+        log.debug("fetch stale for archive: %s", e)
+
     # ── Purge Rules (more efficient than 13 individual calls) ──────────
     purge_rules = [
-        ("eq",  "status", "pending",                                     "status=pending"),
-        ("lt",  "match_time", now_iso,                                   "past matches"),
-        ("lt",  "created_at", (datetime.now(timezone.utc) - timedelta(hours=48)).isoformat(), ">48h old"),
+        ("eq",  "status", "pending",   "status=pending"),
+        ("lt",  "match_time", now_iso, "past matches"),
+        ("lt",  "created_at", cutoff_48h, ">48h old"),
         ("gt",  "edge_pct", 15.0,                                        "edge > 15% (hard cap)"),
         ("gt",  "edge_pct", 10.0,                                        "edge > 10% (SUSPECT)"),
         ("lte", "edge_pct", _PURGE_EDGE_FLOOR,                          f"edge <= {_PURGE_EDGE_FLOOR}% (bruit)"),

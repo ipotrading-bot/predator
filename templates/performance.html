@@ -1,0 +1,312 @@
+<!DOCTYPE html>
+<html lang="fr">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+<meta name="theme-color" content="#00E87F">
+<meta name="mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+<meta name="apple-mobile-web-app-title" content="PREDATOR">
+<title>PREDATOR · PERFORMANCE</title>
+<link rel="manifest" href="/manifest.json">
+<link rel="icon" type="image/png" sizes="32x32" href="/static/icons/favicon-32.png">
+<link rel="shortcut icon" href="/favicon.ico">
+<link rel="apple-touch-icon" sizes="192x192" href="/static/icons/icon-192.png">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&family=JetBrains+Mono:wght@400;500;700&display=swap" rel="stylesheet">
+<link rel="stylesheet" href="/static/css/predator.css">
+<style>
+.wrap { max-width: none; padding: 0 0 calc(72px + var(--sbot)); }
+@media (min-width: 640px) { .wrap { padding-bottom: 52px; } }
+.nav-pages a.on, .bnav a.on { color: var(--green); }
+
+.perf-kpis {
+  display: flex; overflow-x: auto; scrollbar-width: none;
+  border-bottom: 1px solid var(--bd); background: var(--bg1);
+}
+.perf-kpis::-webkit-scrollbar { display: none; }
+.pk {
+  flex: 0 0 auto; min-width: 120px;
+  padding: 18px 20px; border-right: 1px solid var(--bd); text-align: center;
+}
+.pk:last-child { border-right: none; }
+.pk-v { font-size: 26px; font-weight: 800; line-height: 1; font-family: var(--font-data); }
+.pk-l { font-size: 9px; color: var(--t2); text-transform: uppercase; letter-spacing: .5px; margin-top: 6px; line-height: 1.5; }
+.pk-s { font-size: 9px; color: var(--t3); margin-top: 3px; font-family: var(--font-data); }
+@media (min-width: 640px) { .perf-kpis { overflow-x: visible; } .pk { flex: 1; min-width: 0; } }
+
+.sec-hdr {
+  font-size: 10px; font-weight: 600; letter-spacing: 1.5px;
+  text-transform: uppercase; color: var(--t2);
+  padding: 20px 16px 12px;
+  display: flex; align-items: center; gap: 8px;
+}
+.sec-hdr::after { content: ''; flex: 1; height: 1px; background: var(--bd); }
+.sec-hdr em { color: var(--blue); font-style: normal; font-family: var(--font-data); }
+@media (min-width: 640px) { .sec-hdr { padding: 22px 24px 12px; } }
+
+.month-grid {
+  display: grid; grid-template-columns: repeat(2, 1fr);
+  gap: 10px; padding: 0 16px 20px;
+}
+@media (min-width: 640px) { .month-grid { grid-template-columns: repeat(3, 1fr); gap: 12px; padding: 0 24px 24px; } }
+@media (min-width: 960px) { .month-grid { grid-template-columns: repeat(4, 1fr); } }
+
+.mc {
+  background: var(--bg1); border: 1px solid var(--bd);
+  border-radius: var(--r); padding: 14px 15px;
+}
+.mc-month {
+  font-size: 11px; font-weight: 700; color: var(--t1);
+  margin-bottom: 12px; font-family: var(--font-data);
+  display: flex; justify-content: space-between; align-items: center;
+}
+.mc-wr { font-size: 9px; font-weight: 700; padding: 2px 8px; border-radius: 100px; }
+.wr-good { background: rgba(0,232,127,.08);  color: var(--green);  border: 1px solid rgba(0,232,127,.2); }
+.wr-ok   { background: rgba(245,197,24,.08); color: var(--yellow); border: 1px solid rgba(245,197,24,.2); }
+.wr-bad  { background: rgba(251,78,110,.08); color: var(--red);    border: 1px solid rgba(251,78,110,.2); }
+.wr-none { background: transparent;          color: var(--t3);     border: 1px solid var(--bd2); }
+
+.mc-stats { display: flex; gap: 8px; margin-bottom: 10px; }
+.mc-stat { flex: 1; }
+.mc-sv { font-size: 18px; font-weight: 800; line-height: 1; font-family: var(--font-data); }
+.mc-sl { font-size: 8px; color: var(--t2); text-transform: uppercase; letter-spacing: .5px; margin-top: 4px; }
+.mc-foot {
+  padding-top: 8px; border-top: 1px solid var(--bd);
+  display: flex; justify-content: space-between;
+  font-size: 9px; color: var(--t3); font-family: var(--font-data);
+}
+
+.tbl-outer { padding: 0 16px 24px; overflow-x: auto; -webkit-overflow-scrolling: touch; }
+@media (min-width: 640px) { .tbl-outer { padding: 0 24px 28px; } }
+
+.perf-table { width: 100%; border-collapse: collapse; min-width: 680px; }
+.perf-table thead th {
+  font-size: 9px; font-weight: 600; letter-spacing: .8px;
+  text-transform: uppercase; color: var(--t2);
+  padding: 10px 12px; border-bottom: 1px solid var(--bd);
+  background: var(--bg1); text-align: left; white-space: nowrap;
+}
+.perf-table tbody tr { border-bottom: 1px solid var(--bd); transition: background .1s; }
+.perf-table tbody tr:last-child { border-bottom: none; }
+.perf-table tbody tr:hover { background: var(--bg2); }
+.perf-table td { padding: 9px 12px; vertical-align: middle; font-size: 11px; }
+
+.oc-win  { display:inline-block; padding:2px 9px; border-radius:100px; font-size:9px; font-weight:700; background:rgba(0,232,127,.08);  color:var(--green);  border:1px solid rgba(0,232,127,.2); }
+.oc-loss { display:inline-block; padding:2px 9px; border-radius:100px; font-size:9px; font-weight:700; background:rgba(251,78,110,.08); color:var(--red);    border:1px solid rgba(251,78,110,.2); }
+.oc-push { display:inline-block; padding:2px 9px; border-radius:100px; font-size:9px; font-weight:700; background:rgba(56,189,248,.08);  color:var(--blue);   border:1px solid rgba(56,189,248,.2); }
+.oc-exp  { display:inline-block; padding:2px 9px; border-radius:100px; font-size:9px; font-weight:700; background:transparent; color:var(--t3); border:1px solid var(--bd2); font-style:italic; }
+
+.perf-empty { text-align: center; padding: 80px 20px; color: var(--t2); font-size: 12px; line-height: 2.6; }
+.perf-empty-icon { font-size: 32px; color: var(--bd2); margin-bottom: 14px; }
+</style>
+</head>
+<body>
+
+<nav class="topnav">
+  <a href="/" class="nav-logo"><img src="/static/icons/icon-96.png" alt="PREDATOR"> PREDATOR</a>
+  <div class="nav-pages">
+    <a href="/">ACCUEIL</a>
+    <a href="/ledger">BILAN</a>
+    <a href="/audit">AUDIT</a>
+    <a href="/performance" class="on">PERF</a>
+  </div>
+  <div class="nav-right">
+    <span id="clock">—</span>
+  </div>
+</nav>
+
+<div class="wrap">
+
+  <div class="page-hdr">
+    <div class="page-title">&#9660; PERFORMANCE — RÉSULTATS RÉELS</div>
+    <div class="page-sub">
+      Historique complet des signaux audités &middot; WIN / LOSS / PUSH &middot; CLV réalisé<br>
+      Source : <b>ai_learning_ledger</b> — alimenté par l'audit engine toutes les 6h
+    </div>
+  </div>
+
+  {% if global_s %}
+
+  <div class="perf-kpis">
+    <div class="pk">
+      <div class="pk-v" style="color:var(--t1)">{{ global_s.total }}</div>
+      <div class="pk-l">Signaux<br>archivés</div>
+      <div class="pk-s">{{ global_s.settled }} settlés</div>
+    </div>
+    <div class="pk">
+      <div class="pk-v" style="color:{% if global_s.win_rate >= 65 %}var(--green){% elif global_s.win_rate >= 50 %}var(--yellow){% else %}var(--red){% endif %}">
+        {{ "%.1f"|format(global_s.win_rate) }}%
+      </div>
+      <div class="pk-l">Win Rate<br><span style="color:var(--t3)">(cible ≥65%)</span></div>
+      <div class="pk-s">{{ global_s.wins }}W &middot; {{ global_s.losses }}L{% if global_s.pushes %} &middot; {{ global_s.pushes }}P{% endif %}</div>
+    </div>
+    {% if global_s.avg_clv is not none %}
+    <div class="pk">
+      <div class="pk-v" style="color:{% if global_s.avg_clv >= 0 %}var(--green){% else %}var(--red){% endif %}">
+        {% if global_s.avg_clv > 0 %}+{% endif %}{{ "%.2f"|format(global_s.avg_clv) }}%
+      </div>
+      <div class="pk-l">CLV<br>Moyen</div>
+      <div class="pk-s">Closing Line Value</div>
+    </div>
+    {% endif %}
+    {% if global_s.clv_hit is not none %}
+    <div class="pk">
+      <div class="pk-v" style="color:{% if global_s.clv_hit >= 65 %}var(--green){% elif global_s.clv_hit >= 50 %}var(--yellow){% else %}var(--red){% endif %}">
+        {{ "%.1f"|format(global_s.clv_hit) }}%
+      </div>
+      <div class="pk-l">CLV Hit<br>Rate</div>
+      <div class="pk-s">CLV &ge; 0</div>
+    </div>
+    {% endif %}
+    {% if global_s.avg_edge is not none %}
+    <div class="pk">
+      <div class="pk-v" style="color:var(--blue)">+{{ "%.2f"|format(global_s.avg_edge) }}%</div>
+      <div class="pk-l">Edge<br>Moyen</div>
+      <div class="pk-s">Au moment du scan</div>
+    </div>
+    {% endif %}
+  </div>
+
+  {% if monthly %}
+  <div class="sec-hdr">&#9632; PAR MOIS <em>{{ monthly|length }} mois</em></div>
+  <div class="month-grid">
+    {% for m in monthly %}
+    {% set wr = m.win_rate %}
+    {% set wr_cls = 'wr-good' if wr and wr >= 65 else ('wr-ok' if wr and wr >= 50 else ('wr-bad' if wr else 'wr-none')) %}
+    <div class="mc">
+      <div class="mc-month">
+        {{ m.month }}
+        <span class="mc-wr {{ wr_cls }}">{% if wr %}{{ "%.0f"|format(wr) }}%{% else %}—{% endif %}</span>
+      </div>
+      <div class="mc-stats">
+        <div class="mc-stat">
+          <div class="mc-sv" style="color:var(--green)">{{ m.wins }}</div>
+          <div class="mc-sl">Wins</div>
+        </div>
+        <div class="mc-stat">
+          <div class="mc-sv" style="color:var(--red)">{{ m.losses }}</div>
+          <div class="mc-sl">Losses</div>
+        </div>
+        <div class="mc-stat">
+          <div class="mc-sv" style="color:var(--t2)">{{ m.total }}</div>
+          <div class="mc-sl">Total</div>
+        </div>
+      </div>
+      <div class="mc-foot">
+        <span>CLV :
+          {% if m.avg_clv is not none %}
+            <span style="color:{% if m.avg_clv >= 0 %}var(--green){% else %}var(--red){% endif %}">{% if m.avg_clv > 0 %}+{% endif %}{{ "%.1f"|format(m.avg_clv) }}%</span>
+          {% else %}—{% endif %}
+        </span>
+        <span>Edge :
+          {% if m.avg_edge is not none %}
+            <span style="color:var(--blue)">+{{ "%.1f"|format(m.avg_edge) }}%</span>
+          {% else %}—{% endif %}
+        </span>
+      </div>
+    </div>
+    {% endfor %}
+  </div>
+  {% endif %}
+
+  {% if rows %}
+  <div class="sec-hdr">&#9632; HISTORIQUE <em>{{ rows|length }} entrées</em></div>
+  <div class="tbl-outer">
+    <table class="perf-table">
+      <thead>
+        <tr>
+          <th>Sport</th>
+          <th>Match</th>
+          <th>Marché</th>
+          <th>Edge</th>
+          <th>CLV</th>
+          <th>Résultat</th>
+          <th>T-match</th>
+          <th>Date</th>
+        </tr>
+      </thead>
+      <tbody>
+        {% set E = {'soccer':'⚽','basketball':'🏀','tennis':'🎾','hockey':'🏒','mma':'🥋','boxing':'🥊','darts':'🎯','cricket':'🏏','esports':'🎮','americanfootball':'🏈','baseball':'⚾','rugby':'🏉','volleyball':'🏐','tabletennis':'🏓','handball':'🤾'} %}
+        {% for r in rows %}
+        {% set oc = r.outcome or '' %}
+        <tr>
+          <td>{{ E.get(r.sport or '', '🎯') }}</td>
+          <td>
+            <div style="color:var(--t1);font-weight:700;white-space:nowrap">{{ r.match or '—' }}</div>
+            {% if r.league %}<div style="color:var(--t3);font-size:10px">{{ r.league }}</div>{% endif %}
+          </td>
+          <td style="color:var(--t2)">{{ r.market_type or '—' }}</td>
+          <td style="color:var(--blue);font-weight:700;font-family:var(--font-data)">
+            {% if r.initial_edge is not none %}+{{ "%.1f"|format(r.initial_edge) }}%{% else %}—{% endif %}
+          </td>
+          <td class="{% if r.clv_final is not none and r.clv_final >= 0 %}clv-pos{% elif r.clv_final is not none %}clv-neg{% else %}clv-nil{% endif %}">
+            {% if r.clv_final is not none %}{% if r.clv_final > 0 %}+{% endif %}{{ "%.2f"|format(r.clv_final) }}%{% else %}—{% endif %}
+          </td>
+          <td>
+            {% if oc == 'WIN' %}<span class="oc-win">WIN</span>
+            {% elif oc == 'LOSS' %}<span class="oc-loss">LOSS</span>
+            {% elif oc == 'PUSH' %}<span class="oc-push">PUSH</span>
+            {% else %}<span class="oc-exp">expired</span>{% endif %}
+          </td>
+          <td style="color:var(--t3);font-family:var(--font-data);font-size:10px">
+            {% if r.time_to_match_minutes is not none %}
+              {{ (r.time_to_match_minutes // 60)|int }}h{{ '%02d'|format((r.time_to_match_minutes % 60)|int) }}
+            {% else %}—{% endif %}
+          </td>
+          <td class="ts">{{ r.created_at[:16]|replace('T',' ') if r.created_at else '—' }}</td>
+        </tr>
+        {% endfor %}
+      </tbody>
+    </table>
+  </div>
+  {% endif %}
+
+  {% else %}
+  <div class="perf-empty">
+    <div class="perf-empty-icon">&#9634;</div>
+    <div>Aucune donnée de performance disponible.</div>
+    <div>L'audit engine alimente cette page toutes les 6h.</div>
+    <div style="margin-top:6px;font-size:10px;color:var(--t3)">Workflow : <strong style="color:var(--t2)">Predator Audit</strong> &middot; GitHub Actions</div>
+  </div>
+  {% endif %}
+
+</div>
+
+<footer>PREDATOR PERFORMANCE v8.9 &nbsp;&middot;&nbsp; WIN/LOSS/PUSH &nbsp;&middot;&nbsp; CLV réalisé &nbsp;&middot;&nbsp; ai_learning_ledger</footer>
+
+<nav class="bnav">
+  <a href="/">
+    <svg viewBox="0 0 24 24"><rect x="3" y="3" width="7" height="7" rx="1.5"/><rect x="14" y="3" width="7" height="7" rx="1.5"/><rect x="3" y="14" width="7" height="7" rx="1.5"/><rect x="14" y="14" width="7" height="7" rx="1.5"/></svg>
+    Accueil
+  </a>
+  <a href="/ledger">
+    <svg viewBox="0 0 24 24"><path d="M9 5H7a2 2 0 00-2 2v12a2 2 0 002 2h10a2 2 0 002-2V7a2 2 0 00-2-2h-2M9 5a2 2 0 002 2h2a2 2 0 002-2M9 5a2 2 0 012-2h2a2 2 0 012 2M12 12h4m-4 4h4m-8-4h.01m-.01 4h.01"/></svg>
+    Bilan
+  </a>
+  <a href="/audit">
+    <svg viewBox="0 0 24 24"><polyline points="22 12 18 12 15 21 9 3 6 12 2 12"/></svg>
+    Audit
+  </a>
+  <a href="/performance" class="on">
+    <svg viewBox="0 0 24 24"><line x1="18" y1="20" x2="18" y2="10"/><line x1="12" y1="20" x2="12" y2="4"/><line x1="6" y1="20" x2="6" y2="14"/></svg>
+    Perf
+  </a>
+</nav>
+
+<script>
+(function tick(){
+  const d = new Date();
+  const pad = n => String(n).padStart(2,'0');
+  const days = ['Sun','Mon','Tue','Wed','Thu','Fri','Sat'];
+  const months = ['Jan','Feb','Mar','Apr','May','Jun','Jul','Aug','Sep','Oct','Nov','Dec'];
+  document.getElementById('clock').textContent =
+    days[d.getUTCDay()]+', '+pad(d.getUTCDate())+' '+months[d.getUTCMonth()]+' '+d.getUTCFullYear()+
+    ' '+pad(d.getUTCHours())+':'+pad(d.getUTCMinutes())+':'+pad(d.getUTCSeconds())+' UTC';
+  setTimeout(tick,1000);
+})();
+</script>
+</body>
+</html>

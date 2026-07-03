@@ -35,8 +35,8 @@ log.addHandler(_handler)
 log.propagate = False
 
 AUDIT_LAG_H   = 3      # Wait this many hours after scan before auditing
-ORACLE_BUDGET = 10     # Max Gemini oracle calls per audit run
-SETTLE_BUDGET = 8      # Max Gemini settlement calls per audit run
+ORACLE_BUDGET = 30     # Max Gemini oracle calls per audit run
+SETTLE_BUDGET = 25     # Max Gemini settlement calls per audit run
 
 _AUDIT_COLS = {"closing_line", "clv_pct", "closed_at"}
 
@@ -53,7 +53,7 @@ def fetch_pending(sb) -> list[dict]:
                .eq("status", "active")
                .lt("scanned_at", cutoff)
                .order("scanned_at", desc=False)
-               .limit(50)
+               .limit(100)
                .execute())
         return res.data or []
     except Exception as e:

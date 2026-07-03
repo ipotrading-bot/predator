@@ -388,65 +388,73 @@ def audit():
 
 # ── JSON API ─────────────────────────────────────────────────────────
 
-_WC_KEYWORDS = ["world cup", "fifa world cup", "wc 2026", "mondial", "coupe du monde", "fifa world"]
 
-
-def _is_wc_signal(s: dict) -> bool:
-    league = (s.get("league") or "").lower()
-    return any(kw in league for kw in _WC_KEYWORDS)
-
-
-# ── World Cup Terminal ────────────────────────────────────────────────
-
-@app.route("/worldcup")
-def worldcup():
-    signals   = []
-    last_scan = None
+@app.route("/performance")
+def performance():
+    rows: list      = []
+    monthly: list   = []
+    global_s: dict  = {}
     try:
         sb = _db()
         if sb:
-            res = sb.table("signals").select("*").eq("status", "active").order("created_at", desc=True).limit(200).execute()
-            raw = res.data or []
-            signals = sorted(
-                [s for s in raw if _is_wc_signal(s)],
-                key=lambda s: (
-                    s.get("match_time") or "9999",
-                    -(s.get("edge_pct") or 0),
-                ),
-            )
-            last_scan = _get_meta(sb, "last_scan")
+            res = (sb.table("ai_learning_ledger")
+                   .select("*")
+                   .order("created_at", desc=True)
+                   .limit(500)
+                   .execute())
+            rows = res.data or []
+
+            if rows:
+                settled = [r for r in rows if r.get("outcome") in ("WIN", "LOSS", "PUSH")]
+                wins    = sum(1 for r in settled if r.get("outcome") == "WIN")
+                losses  = sum(1 for r in settled if r.get("outcome") == "LOSS")
+                pushes  = sum(1 for r in settled if r.get("outcome") == "PUSH")
+                clv_all = [r["clv_final"] for r in rows if r.get("clv_final") is not None]
+                edges   = [r["initial_edge"] for r in rows if r.get("initial_edge") is not None]
+
+                global_s = {
+                    "total":      len(rows),
+                    "settled":    len(settled),
+                    "wins":       wins,
+                    "losses":     losses,
+                    "pushes":     pushes,
+                    "win_rate":   round(wins / max(wins + losses, 1) * 100, 1),
+                    "avg_clv":    round(sum(clv_all) / len(clv_all), 2) if clv_all else None,
+                    "avg_edge":   round(sum(edges) / len(edges), 2) if edges else None,
+                    "clv_hit":    round(sum(1 for c in clv_all if c >= 0) / max(len(clv_all), 1) * 100, 1) if clv_all else None,
+                }
+
+                # Monthly breakdown
+                months_map: dict = {}
+                for r in rows:
+                    ca = r.get("created_at") or ""
+                    mo = ca[:7]  # "2026-07"
+                    if not mo:
+                        continue
+                    m = months_map.setdefault(mo, {"month": mo, "total": 0, "wins": 0, "losses": 0, "pushes": 0, "expired": 0, "clv_sum": 0.0, "clv_n": 0, "edge_sum": 0.0, "edge_n": 0})
+                    m["total"] += 1
+                    oc = r.get("outcome")
+                    if oc == "WIN":     m["wins"]    += 1
+                    elif oc == "LOSS":  m["losses"]  += 1
+                    elif oc == "PUSH":  m["pushes"]  += 1
+                    else:               m["expired"]  += 1
+                    if r.get("clv_final") is not None:
+                        m["clv_sum"] += r["clv_final"]; m["clv_n"] += 1
+                    if r.get("initial_edge") is not None:
+                        m["edge_sum"] += r["initial_edge"]; m["edge_n"] += 1
+
+                for m in months_map.values():
+                    denom = m["wins"] + m["losses"]
+                    m["win_rate"] = round(m["wins"] / denom * 100, 1) if denom else None
+                    m["avg_clv"]  = round(m["clv_sum"]  / m["clv_n"],  2) if m["clv_n"]  else None
+                    m["avg_edge"] = round(m["edge_sum"] / m["edge_n"], 2) if m["edge_n"] else None
+
+                monthly = sorted(months_map.values(), key=lambda x: x["month"], reverse=True)
+
     except Exception as e:
-        log.error("WorldCup: %s", e)
-    return render_template("worldcup.html", signals=signals, last_scan=last_scan)
+        log.error("Performance: %s", e)
 
-
-@app.route("/api/worldcup")
-def api_worldcup():
-    try:
-        sb = _db()
-        if not sb:
-            return jsonify({"error": "no db"}), 503
-        res = sb.table("signals").select("*").eq("status", "active").order("created_at", desc=True).limit(200).execute()
-        raw = res.data or []
-        wc  = [s for s in raw if _is_wc_signal(s)]
-        return jsonify(wc)
-    except Exception as e:
-        return jsonify({"error": str(e)}), 500
-
-
-@app.route("/api/wc-schedule")
-def api_wc_schedule():
-    """Real WC fixture odds from OddsAPI (saved by engine, 168h window)."""
-    try:
-        sb = _db()
-        if not sb:
-            return jsonify([])
-        meta = _get_meta(sb, "wc_schedule")
-        if meta is None:
-            return jsonify([])
-        return jsonify(meta)
-    except Exception as e:
-        return jsonify({"error": str(e)}), 500
+    return render_template("performance.html", rows=rows, monthly=monthly, global_s=global_s)
 
 
 # ── JSON API ─────────────────────────────────────────────────────────
