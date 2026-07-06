@@ -72,6 +72,12 @@ def devig_prob(own_odd: float, other_odd: float) -> float:
     return round(r1 / total, 4)
 
 
+def is_round_number_line(point: float) -> bool:
+    """True if a totals line is a whole number (e.g. 8.0, 9.0) — these can
+    push. Half-lines (.5) never push — P(push)=0, no adjustment needed."""
+    return bool(point) and point > 0 and point % 1 == 0
+
+
 def to_binary(odds: dict, sport: str, home: str = "", away: str = "") -> tuple[float, str | None, str]:
     """
     Convert raw 1N2 odds to a binary market price.

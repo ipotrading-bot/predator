@@ -18,7 +18,7 @@ from dotenv import load_dotenv
 from supabase import create_client
 
 from core.harvester import fetch_matches, fetch_pinnacle_prices, fetch_estimated_prices, fetch_mma_events, fetch_esports_events, fetch_alternative_sports_batch, fetch_betfair_prices
-from core.math_engine import to_binary, devig_prob
+from core.math_engine import to_binary, devig_prob, is_round_number_line
 from core.odds_api import fetch_odds
 from core.oracle import get_pinnacle_price
 from core.learning_layer import load_thresholds as _load_thresholds
@@ -627,7 +627,11 @@ def _process_totals(m, name, sport, league, emoji, signals, sb, now, log, min_ed
 
     # Round-line push detection: integer totals (8.0, 9.0) can push.
     # Half-lines (.5) never push — no adjustment needed.
-    is_round_line = point > 0 and (point % 1 == 0)
+    # PUSH_PROB_ROUND_LINE (10%) is calibrated specifically for MLB/baseball
+    # integer totals — applying it to other sports' round lines (basketball,
+    # hockey, soccer, rugbyleague, aussierules) would bake in a push
+    # probability with no empirical basis for those markets.
+    is_round_line = sport == "baseball" and is_round_number_line(point)
     if is_round_line:
         log.info("ROUNDLINE | %s %s totals %.1f — P(push)=%.0f%% → sharp_prob adjusted",
                  emoji, name, point, _PUSH_PROB_ROUND_LINE * 100)

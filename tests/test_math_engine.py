@@ -5,7 +5,7 @@ Run: pytest tests/ -v
 import pytest
 
 from core.paim_engine import compute_alpha
-from core.math_engine import devig_prob
+from core.math_engine import devig_prob, is_round_number_line
 
 
 class TestComputeAlpha:
@@ -44,22 +44,20 @@ class TestDevigProb:
 
 
 class TestRoundLineDetection:
-    """Mirrors the is_round_line logic in run_engine.py::_process_totals.
-    Kept here as an explicit regression guard for the push-risk fix."""
-
-    @staticmethod
-    def is_round_line(point):
-        return bool(point) and float(point).is_integer()
+    """Exercises the actual is_round_number_line() used by
+    run_engine.py::_process_totals to gate the MLB push-probability
+    adjustment (PUSH_PROB_ROUND_LINE) — regression guard for the push-risk
+    fix, against the real function rather than a copy of its logic."""
 
     def test_whole_number_totals_flagged_as_round(self):
-        assert self.is_round_line(8) is True
-        assert self.is_round_line(9) is True
-        assert self.is_round_line(10.0) is True
+        assert is_round_number_line(8) is True
+        assert is_round_number_line(9) is True
+        assert is_round_number_line(10.0) is True
 
     def test_half_point_totals_not_flagged(self):
-        assert self.is_round_line(8.5) is False
-        assert self.is_round_line(9.5) is False
+        assert is_round_number_line(8.5) is False
+        assert is_round_number_line(9.5) is False
 
     def test_none_or_zero_point_not_flagged(self):
-        assert self.is_round_line(None) is False
-        assert self.is_round_line(0) is False
+        assert is_round_number_line(None) is False
+        assert is_round_number_line(0) is False
