@@ -177,9 +177,13 @@ def audit_one(sb, sig: dict, oracle_calls: list, settle_calls: list, now: dateti
 
 
 def run():
+    # Prefer service_role (bypasses RLS, meant for backend writes) — fall
+    # back to the anon key for backward compatibility until the secret is
+    # configured. This module only ever deletes/inserts/upserts, it never
+    # serves public reads, so it has no business using the anon key.
     sb = create_client(
         os.environ["SUPABASE_URL"],
-        os.environ["SUPABASE_KEY"],
+        os.environ.get("SUPABASE_SERVICE_KEY") or os.environ["SUPABASE_KEY"],
     )
 
     pending = fetch_pending(sb)

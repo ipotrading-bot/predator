@@ -66,7 +66,11 @@ if DEBUG_MODE:
     log.debug("DEBUG MODE ENABLED — verbose logging active")
 
 SUPABASE_URL   = os.environ.get("SUPABASE_URL")
-SUPABASE_KEY   = os.environ.get("SUPABASE_KEY")
+# Prefer the service_role key (bypasses RLS, meant for backend writes) —
+# fall back to the anon key for backward compatibility until the secret
+# is configured. run_engine.py only ever writes/deletes, it never reads
+# back for public display, so it has no business using the anon key at all.
+SUPABASE_KEY   = os.environ.get("SUPABASE_SERVICE_KEY") or os.environ.get("SUPABASE_KEY")
 TELEGRAM_TOKEN = os.environ.get("TELEGRAM_BOT_TOKEN")
 TELEGRAM_CHAT  = os.environ.get("TELEGRAM_CHAT_ID")
 

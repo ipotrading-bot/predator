@@ -43,7 +43,13 @@ def _ttm(match_time, scanned_at):
         return None
 
 def run():
-    sb = create_client(os.environ["SUPABASE_URL"], os.environ["SUPABASE_KEY"])
+    # Prefer service_role (bypasses RLS) — fall back to anon for backward
+    # compatibility until the secret is configured. This is a write-only
+    # repair script, never a public-facing reader.
+    sb = create_client(
+        os.environ["SUPABASE_URL"],
+        os.environ.get("SUPABASE_SERVICE_KEY") or os.environ["SUPABASE_KEY"],
+    )
 
     # 1) Which signal_ids are already in the ledger? (avoid duplicates)
     existing = sb.table("ai_learning_ledger").select("signal_id").execute()
