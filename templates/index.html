@@ -85,11 +85,6 @@
       <button class="fchip"        data-day="later"    onclick="setDay('later')">+Tard</button>
       <span id="filter-count"></span>
     </div>
-    <div class="sig-legend">
-      <span>P=Pinnacle</span><span>C=Circa</span><span>R=CRIS</span><span>I=ISN</span>
-      <span style="margin-left:4px">CS=Consensus Score (0-100)</span>
-      <span style="margin-left:4px">K%=Fraction Kelly</span>
-    </div>
   </div>
 
   {# ── Signal list (flat — sorted by JS) ── #}
@@ -126,19 +121,6 @@
           {% set flag_fr = {'HIGH_VALUE':'TOP VALEUR','VALUE':'VALEUR','SUSPECT_DATA':'SUSPECT'}[s.risk_flag] if s.risk_flag in ['HIGH_VALUE','VALUE','SUSPECT_DATA'] else s.risk_flag %}
           <span class="sig-badge b-{{ s.risk_flag }}">{{ flag_fr }}</span>
           {% if s.get('_recent') %}<span class="sig-badge" style="background:rgba(100,100,100,.15);color:var(--t3);border-color:var(--bd)">✓ SETTLÉ</span>{% endif %}
-          {% set ss = s.sharp_sources %}
-          {% if ss %}
-          <span class="sig-srcs" title="Sources sharps actives">
-            <span class="src-dot{% if ss.get('pinnacle') %} src-on{% endif %}" title="Pinnacle">P</span>
-            <span class="src-dot{% if ss.get('circa') %} src-on{% endif %}" title="Circa">C</span>
-            <span class="src-dot{% if ss.get('cris') %} src-on{% endif %}" title="CRIS">R</span>
-            <span class="src-dot{% if ss.get('isn') %} src-on{% endif %}" title="ISN">I</span>
-          </span>
-          {% endif %}
-          {% if s.consensus_score is not none and s.consensus_score != '' %}
-            {% set cs = s.consensus_score|int %}
-            <span class="cscore {% if cs >= 80 %}cs-elite{% elif cs >= 55 %}cs-good{% else %}cs-ok{% endif %}" title="Consensus Score : accord entre bookmakers sharps (0-100)">CS:{{ cs }}</span>
-          {% endif %}
           {% if s.match_time %}
             <span class="sig-date">{{ mdate }} {{ mhour }}</span>
             <span class="sig-cd" data-ts="{{ s.match_time }}"></span>
@@ -226,6 +208,17 @@
       <div class="m-stat"><div class="m-sv" id="m-pin"  style="color:var(--blue)">—</div><div class="m-sl">Pinnacle</div></div>
       <div class="m-stat"><div class="m-sv" id="m-risk">—</div><div class="m-sl">Signal</div></div>
     </div>
+  </div>
+
+  <div class="m-sources" id="m-sources">
+    <span class="m-sources-lbl">Sources sharps</span>
+    <span class="sig-srcs" id="m-srcs-dots">
+      <span class="src-dot" data-s="pinnacle" title="Pinnacle">P</span>
+      <span class="src-dot" data-s="circa" title="Circa">C</span>
+      <span class="src-dot" data-s="cris" title="CRIS">R</span>
+      <span class="src-dot" data-s="isn" title="ISN">I</span>
+    </span>
+    <span class="cscore" id="m-cscore" title="Consensus Score : accord entre bookmakers sharps (0-100)"></span>
   </div>
 
   <div class="m-steps">
@@ -486,6 +479,19 @@ function openModal(idx){
   document.getElementById('m-team').textContent  = team;
   document.getElementById('m-mkt').textContent   = (s.market||'—')+'  ·  @ '+(s.xbet_odd||0).toFixed(2);
   document.getElementById('m-exp').textContent   = _exp(s.market,s.sport);
+
+  const ss=s.sharp_sources||{};
+  const hasCS = s.consensus_score!==null && s.consensus_score!==undefined && s.consensus_score!=='';
+  document.getElementById('m-sources').style.display = (s.sharp_sources||hasCS) ? 'flex' : 'none';
+  document.querySelectorAll('#m-srcs-dots .src-dot').forEach(d=>d.classList.toggle('src-on',!!ss[d.dataset.s]));
+  const csEl=document.getElementById('m-cscore');
+  if(hasCS){
+    const cs=parseInt(s.consensus_score);
+    csEl.textContent='CS:'+cs;
+    csEl.className='cscore '+(cs>=80?'cs-elite':cs>=55?'cs-good':'cs-ok');
+    csEl.style.display='';
+  } else { csEl.style.display='none'; }
+
   document.getElementById('s-match').textContent  = s.match;
   document.getElementById('s-market').textContent = _mkt(s.market,s.sport);
   document.getElementById('s-team').textContent   = team;
