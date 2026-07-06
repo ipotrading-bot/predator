@@ -507,7 +507,12 @@ def _process_h2h(m, name, sport, league, home, away, emoji, signals, sb, now, lo
         if not pin_fav:
             log.info("DISCARD | %s %s — oracle team unknown, outcome alignment unverifiable", emoji, name)
             return
-        sharp_prob = 1.0  # Oracle already filtered
+        # Oracle returns a single-source price with no opposing-side odd to
+        # devig against, so we can't compute a true Shin/power probability.
+        # Naive implied prob (1/price) is a conservative stand-in: unlike a
+        # hardcoded 1.0, it still trips the sharp_prob quality gate below
+        # and doesn't inflate the Kelly stake to the theoretical maximum.
+        sharp_prob = round(1 / pin_price, 4) if pin_price > 1.01 else 0.0
     else:
         xbet_price, _, xbet_fav = to_binary(m["odds_1xbet"], sport, home, away)
         # Strict Matching: lock Pinnacle lookup to the same position as 1XBet
