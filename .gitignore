@@ -1,4 +1,5 @@
 .env
+.claude/settings.local.json
 .vscode/
 .streamlit/secrets.toml
 __pycache__/

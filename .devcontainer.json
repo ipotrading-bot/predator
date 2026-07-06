@@ -30,6 +30,6 @@
       }
     }
   },
-  "postCreateCommand": "pip install -q --no-cache-dir -r requirements.txt",
+  "postCreateCommand": "pip install -q --no-cache-dir -r requirements.txt && bash -lc 'nvm install --lts'",
   "forwardPorts": [5000]
 }
