@@ -40,7 +40,7 @@ SUPABASE_KEY   = os.environ.get("SUPABASE_KEY")
 
 BANKROLL       = 1000   # Bankroll de référence pour les mises Kelly
 SPORT_EMOJI    = {"soccer": "⚽", "basketball": "🏀", "tennis": "🎾"}
-SPORT_ORDER    = ["basketball", "tennis", "soccer"]
+SPORT_ORDER    = ["soccer", "basketball", "hockey", "baseball", "rugbyleague", "aussierules"]
 ELITE_EDGE     = _ELITE_EDGE
 SCAN_STALE_H   = 2      # Alerte si aucun scan depuis X heures
 WC_ALPHA_MIN   = 2.0    # Seuil Edge spécifique WC (vs 2.5% général)
@@ -240,7 +240,8 @@ def run():
         by_sport.setdefault(sp, []).append(s)
 
     body = ""
-    for sport in SPORT_ORDER:
+    ordered_sports = list(SPORT_ORDER) + sorted(s for s in by_sport if s not in SPORT_ORDER)
+    for sport in ordered_sports:
         group = by_sport.get(sport, [])
         if not group:
             continue

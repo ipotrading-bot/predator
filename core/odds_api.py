@@ -35,7 +35,6 @@ CRIS_KEY     = "bookmaker"    # Bookmaker.eu — CRIS network
 #   - Ligues Scandi / Irlande / Chine / Japon / Corée soccer (lag faible, volumes bas)
 #   - Copa Sudamericana / Brazil B / Chile / Colombia / Argentina (Pinnacle peu liquide)
 #   - Tennis (saison de transition gazon — incertitude surface/forme)
-#   - Liga MX (structures cotes non fiables sur Melbet)
 #
 # Budget : Engine 6×/j × 11 = 66/j | Deep 2×/j × 11 = 22/j | Total : ~2 640/mois.
 SPORT_KEYS = {
@@ -44,16 +43,13 @@ SPORT_KEYS = {
 
     # ── PRIORITÉ 2 — Playoffs Amérique du Nord (sharps = Kelly 0.25–0.30) ──
     "basketball_nba":                        "basketball",  # NBA Finals — marché le + sharp au monde
+    "basketball_wnba":                       "basketball",  # WNBA — juin-sept, comble le vide NBA/NHL off-season
     "icehockey_nhl":                         "hockey",      # NHL Stanley Cup Finals — mouvement max
     "baseball_mlb":                          "baseball",    # MLB — 10+ matchs/jour, lag US→EU ✓
 
     # ── PRIORITÉ 3 — Baseball Asie (lag timezone = fenêtre AM UTC) ────
     "baseball_kbo":                          "baseball",    # KBO Corée — lag Asie 06:00–13:00 UTC ✓
     "baseball_npb":                          "baseball",    # NPB Japon — lag Asie 06:00–13:00 UTC ✓
-
-    # ── PRIORITÉ 4 — Matchs amicaux (fenêtre WC pré-tournoi juin 2026) ──
-    "soccer_international_friendlies":       "soccer",      # Amicaux équipes nationales — actifs mai–juin 2026
-    "soccer_club_friendly":                  "soccer",      # Amicaux de clubs — pré-saison juin–juillet
 
     # ── PRIORITÉ 5 — Copa Libertadores (lag SA soirée = fenêtre 21:00 UTC) ─
     "soccer_conmebol_copa_libertadores":     "soccer",      # R16/QF — lag SA maximal documenté
@@ -70,7 +66,7 @@ SPORT_KEYS = {
 
     # ── PRIORITÉ 7 — Australie (marchés Pinnacle très sharps) ────────
     "aussierules_afl":                       "aussierules", # AFL — ~9 matchs/semaine, Pinnacle ✓
-    "rugby_nrl":                             "rugbyleague", # NRL — ~8 matchs/semaine, Pinnacle ✓
+    "rugbyleague_nrl":                       "rugbyleague", # NRL — ~8 matchs/semaine, Pinnacle ✓
 }
 
 # Markets fetched per sport (API supports h2h,spreads,totals in one call)

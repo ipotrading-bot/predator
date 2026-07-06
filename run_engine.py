@@ -99,27 +99,26 @@ SPORT_EMOJI  = {
 # NBA/NHL Finals : 22:00–02:00 UTC → tip-off windows, mouvement max
 GOLDEN_SPORT_KEYS = {
     "soccer_fifa_world_cup":                "soccer",      # ← PRIORITÉ 1 — WC 2026
-    "soccer_international_friendlies":      "soccer",      # Amicaux équipes nationales — juin 2026
-    "soccer_club_friendly":                 "soccer",      # Amicaux clubs — pré-saison juin–juillet
     "soccer_conmebol_copa_libertadores":    "soccer",      # Copa Lib — lag SA maximal
     "soccer_brazil_campeonato":             "soccer",      # Brasileirão — quotidien
     "soccer_usa_mls":                       "soccer",      # MLS — actif juin–août
     "soccer_argentina_primera_division":    "soccer",      # Liga Argentina — marché SA sharp
     "soccer_mexico_ligamx":                 "soccer",      # Liga MX — actif été
     "basketball_nba":                       "basketball",  # NBA Finals
+    "basketball_wnba":                      "basketball",  # WNBA — remplit le créneau NBA off-season
     "icehockey_nhl":                        "hockey",      # NHL Cup Finals
     "baseball_mlb":                         "baseball",    # MLB — 10+ matchs/jour
     "baseball_kbo":                         "baseball",    # KBO Corée — lag Asie ✓
     "baseball_npb":                         "baseball",    # NPB Japon — lag Asie ✓
     "aussierules_afl":                      "aussierules", # AFL — fenêtre AU morning
-    "rugby_nrl":                            "rugbyleague", # NRL — fenêtre AU evening
+    "rugbyleague_nrl":                      "rugbyleague", # NRL — fenêtre AU evening
 }
 
 # Portfolio Balancer — quotas max par sport par scan (11 sports actifs uniquement)
 # Baseball élevé : MLB+KBO+NPB = 3 ligues simultanées (~19 events/fetch)
 # Soccer élevé  : FIFA WC 2026 + Copa Lib + Brasileirão + MLS
 _QUOTA_FAST = {
-    "soccer":      20,   # WC(5)+Amicaux(5)+Club friendly(4)+Copa Lib(2)+Brasileirão(2)+MLS(2)
+    "soccer":      20,   # WC(5)+Copa Lib(2)+Brasileirão(2)+MLS(2)
     "baseball":    10,   # MLB(5) + KBO(3) + NPB(2)
     "basketball":   8,   # NBA Finals
     "hockey":       6,   # NHL Cup Finals
@@ -776,7 +775,8 @@ def _telegram_grouped(signals: list, now, session: str, matches: int,
         by_sport.setdefault(s["sport"], []).append(s)
 
     body_parts: list[str] = []
-    for sport in _SPORT_ORDER:
+    ordered_sports = list(_SPORT_ORDER) + sorted(s for s in by_sport if s not in _SPORT_ORDER)
+    for sport in ordered_sports:
         group = by_sport.get(sport, [])
         if not group:
             continue
