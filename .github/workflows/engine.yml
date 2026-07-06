@@ -26,16 +26,20 @@ name: Predator Engine
 
 on:
   schedule:
-    - cron: '0 0  * * *'   # Minuit UTC : NBA/NHL tip-off + MLB late    — 00:00 UTC
-    - cron: '0 2  * * *'   # Nuit US late / KBO pré-ouverture           — 02:00 UTC
-    - cron: '0 4  * * *'   # Pré-KBO/NPB matin Asie (lag max)          — 04:00 UTC
-    - cron: '0 7  * * *'   # EU morning : Asia closing + AFL            — 07:00 UTC
-    - cron: '0 9  * * *'   # EU mid-morning : KBO/NPB live + NRL        — 09:00 UTC
-    - cron: '0 11 * * *'   # EU midday : SA + MLB preview               — 11:00 UTC
-    - cron: '0 13 * * *'   # EU afternoon : Copa Lib + MLS              — 13:00 UTC
-    - cron: '0 16 * * *'   # EU prime-time : WC/Copa pré-match          — 16:00 UTC
-    - cron: '0 18 * * *'   # EU close : NBA/NHL pre-game T-4h           — 18:00 UTC
-    - cron: '0 22 * * *'   # US evening : NBA/NHL tip-off + Copa nuit   — 22:00 UTC
+    # Minute offset to :03 (not :00) — golden_hour.yml fires every :00 and
+    # :30. Both workflows run run_engine.py's _purge_old_signals()/_save()
+    # (non-atomic delete+insert) against the same signals rows; landing on
+    # the exact same minute maximized the chance of a concurrent overlap.
+    - cron: '3 0  * * *'   # Minuit UTC : NBA/NHL tip-off + MLB late    — 00:00 UTC
+    - cron: '3 2  * * *'   # Nuit US late / KBO pré-ouverture           — 02:00 UTC
+    - cron: '3 4  * * *'   # Pré-KBO/NPB matin Asie (lag max)          — 04:00 UTC
+    - cron: '3 7  * * *'   # EU morning : Asia closing + AFL            — 07:00 UTC
+    - cron: '3 9  * * *'   # EU mid-morning : KBO/NPB live + NRL        — 09:00 UTC
+    - cron: '3 11 * * *'   # EU midday : SA + MLB preview               — 11:00 UTC
+    - cron: '3 13 * * *'   # EU afternoon : Copa Lib + MLS              — 13:00 UTC
+    - cron: '3 16 * * *'   # EU prime-time : WC/Copa pré-match          — 16:00 UTC
+    - cron: '3 18 * * *'   # EU close : NBA/NHL pre-game T-4h           — 18:00 UTC
+    - cron: '3 22 * * *'   # US evening : NBA/NHL tip-off + Copa nuit   — 22:00 UTC
   workflow_dispatch:
 
 env:
