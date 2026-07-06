@@ -2,12 +2,13 @@
 core/odds_api.py — PAIM v8.3 — The Odds API (Hunter Multi-Sport Mode)
 Markets: h2h | spreads | totals selon le sport
 
-Budget 20 000 req/mois — 30 sport keys actifs — Équation :
-  7×G + 30×(E+D) = 666,67 req/jour  →  G=48, E=8, D=3
-  GH  : 48×7  = 336/j → 10 080/mois
-  Eng :  8×30 = 240/j →  7 200/mois
-  Deep:  3×30 =  90/j →  2 700/mois
-  TOTAL         666/j → 19 980/mois (99,9 %)
+Budget 20 000 req/mois — SPORT_KEYS ci-dessous fait foi pour le nombre de
+clés actives (15 au moment d'écrire ceci — vérifier `len(SPORT_KEYS)`
+plutôt que de recopier un chiffre ici, qui a déjà divergé une fois).
+Cadence réelle (Golden Hour / Engine / Deep Scan) : voir les commentaires
+de budget dans .github/workflows/golden_hour.yml, engine.yml et
+deep_scan.yml — ce sont eux la source de vérité pour le calcul de quota,
+pas ce docstring.
 """
 import logging
 import os
