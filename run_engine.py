@@ -104,6 +104,11 @@ GOLDEN_SPORT_KEYS = {
     "soccer_usa_mls":                       "soccer",      # MLS — actif juin–août
     "soccer_argentina_primera_division":    "soccer",      # Liga Argentina — marché SA sharp
     "soccer_mexico_ligamx":                 "soccer",      # Liga MX — actif été
+    "soccer_epl":                           "soccer",      # EPL — reprise 21/08, Pinnacle+1xBet ✓
+    "soccer_spain_la_liga":                 "soccer",      # La Liga — reprise 16/08, Pinnacle+1xBet ✓
+    "soccer_germany_bundesliga":            "soccer",      # Bundesliga — reprise 28/08, Pinnacle+1xBet ✓
+    "soccer_italy_serie_a":                 "soccer",      # Serie A — reprise 22/08, Pinnacle+1xBet ✓
+    "soccer_france_ligue_one":              "soccer",      # Ligue 1 — reprise 22/08, Pinnacle+1xBet ✓
     "basketball_nba":                       "basketball",  # NBA Finals
     "basketball_wnba":                      "basketball",  # WNBA — remplit le créneau NBA off-season
     "icehockey_nhl":                        "hockey",      # NHL Cup Finals

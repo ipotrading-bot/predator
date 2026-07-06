@@ -64,6 +64,13 @@ SPORT_KEYS = {
     "soccer_argentina_primera_division":     "soccer",      # Liga Argentina — marché SA sharp
     "soccer_mexico_ligamx":                  "soccer",      # Liga MX — actif été
 
+    # ── PRIORITÉ 9 — Big 5 européen (dormant été, reprise mi/fin-août 2026) ──
+    "soccer_epl":                            "soccer",      # EPL — reprise 21/08, Pinnacle+1xBet ✓
+    "soccer_spain_la_liga":                  "soccer",      # La Liga — reprise 16/08, Pinnacle+1xBet ✓
+    "soccer_germany_bundesliga":             "soccer",      # Bundesliga — reprise 28/08, Pinnacle+1xBet ✓
+    "soccer_italy_serie_a":                  "soccer",      # Serie A — reprise 22/08, Pinnacle+1xBet ✓
+    "soccer_france_ligue_one":               "soccer",      # Ligue 1 — reprise 22/08, Pinnacle+1xBet ✓
+
     # ── PRIORITÉ 7 — Australie (marchés Pinnacle très sharps) ────────
     "aussierules_afl":                       "aussierules", # AFL — ~9 matchs/semaine, Pinnacle ✓
     "rugbyleague_nrl":                       "rugbyleague", # NRL — ~8 matchs/semaine, Pinnacle ✓
