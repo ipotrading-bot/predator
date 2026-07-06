@@ -18,6 +18,17 @@ SPORT_DEFAULTS: dict[str, float] = {
     "baseball":    2.0,   # MLB + KBO + NPB — lag timezone documenté
     "rugbyleague": 2.0,   # NRL
     "aussierules": 2.0,   # AFL
+    # Sports Gemini-only (core/harvester.py fetch_mma_events/fetch_esports_events/
+    # fetch_alternative_sports_batch) — pas de source OddsAPI dédiée, moins de
+    # données de calibration. Absents d'ici jusqu'ici, ils étaient scannés et
+    # génèraient des signaux sans jamais participer à l'apprentissage adaptatif
+    # (dyn_thresholds.get() retombait silencieusement sur MIN_EDGE global).
+    # Seuil conservateur, aligné sur les sports les plus "bruyants" ci-dessus.
+    "mma":         2.0,
+    "esports":     2.0,
+    "tabletennis": 2.0,
+    "volleyball":  2.0,
+    "handball":    2.0,
 }
 _THRESHOLD_MIN = 1.0   # Floor soccer — permet de capter amicaux et WC avec petit edge
 _THRESHOLD_MAX = 6.0   # Hard cap — relevé de 5.0 pour permettre ajustement sur sports bruyants
