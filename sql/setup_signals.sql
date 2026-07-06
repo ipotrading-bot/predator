@@ -1,5 +1,14 @@
 -- PREDATOR PAIM v7.0 — Full schema reset
 -- CASCADE drops dependent views (performance_summary, monthly_performance)
+--
+-- ⚠️  ONE-TIME BOOTSTRAP ONLY — DO NOT RE-RUN ON A LIVE DATABASE.
+-- Unlike every migrate_v*.sql in this folder (all idempotent, ADD COLUMN
+-- IF NOT EXISTS), this script starts with DROP TABLE ... CASCADE and will
+-- irreversibly delete every row in `signals` (and any dependent view) if
+-- executed again. It exists only to recreate the schema from scratch in a
+-- brand-new Supabase project. If `signals` already has data you care
+-- about, do not paste this file into the SQL Editor — use the migrate_v*
+-- files instead, in order.
 
 DROP TABLE IF EXISTS public.signals CASCADE;
 
