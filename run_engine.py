@@ -334,34 +334,44 @@ def _purge_old_signals(sb):
         log.debug("Supabase purge (past matches, active only): %s", str(e)[:60])
 
     # ── Purge Rules (more efficient than 13 individual calls) ──────────
+    # active_only=True: these are data-quality gates meant to discard bad
+    # ACTIVE candidates before betting — NOT to be applied to settled/closed/
+    # expired rows, which must survive for the 48h /ledger + /audit window
+    # (see the status='active' scoping rationale above). A settled signal
+    # can legitimately have edge_pct > 10 (MAX_EDGE caps it at 15, not 10 —
+    # 10-15% is merely a pre-bet SUSPECT_DATA trigger, not a data error once
+    # the outcome is known) and must not be deleted for that reason alone.
     purge_rules = [
-        ("eq",  "status", "pending",   "status=pending"),
-        ("lt",  "created_at", cutoff_48h, ">48h old"),
-        ("gt",  "edge_pct", 15.0,                                        "edge > 15% (hard cap)"),
-        ("gt",  "edge_pct", 10.0,                                        "edge > 10% (SUSPECT)"),
-        ("lte", "edge_pct", _PURGE_EDGE_FLOOR,                          f"edge <= {_PURGE_EDGE_FLOOR}% (bruit)"),
-        ("lte", "sharp_prob", 0.0,                                       "sharp_prob <= 0"),
-        ("is_", "market", "null",                                        "null market"),
-        ("is_", "sharp_prob", "null",                                    "sharp_prob=null"),
-        ("eq",  "risk_flag", "SUSPECT_DATA",                            "SUSPECT_DATA"),
-        ("lte", "xbet_odd", 1.01,                                       "xbet_odd <= 1.01"),
-        ("lte", "pinnacle_price", 1.01,                                 "pinnacle_price <= 1.01"),
+        ("eq",  "status", "pending",   "status=pending",                        False),
+        ("lt",  "created_at", cutoff_48h, ">48h old",                           False),
+        ("gt",  "edge_pct", 15.0,                                        "edge > 15% (hard cap)",           True),
+        ("gt",  "edge_pct", 10.0,                                        "edge > 10% (SUSPECT)",            True),
+        ("lte", "edge_pct", _PURGE_EDGE_FLOOR,                          f"edge <= {_PURGE_EDGE_FLOOR}% (bruit)", True),
+        ("lte", "sharp_prob", 0.0,                                       "sharp_prob <= 0",                 True),
+        ("is_", "market", "null",                                        "null market",                      True),
+        ("is_", "sharp_prob", "null",                                    "sharp_prob=null",                 True),
+        ("eq",  "risk_flag", "SUSPECT_DATA",                            "SUSPECT_DATA",                     True),
+        ("lte", "xbet_odd", 1.01,                                       "xbet_odd <= 1.01",                True),
+        ("lte", "pinnacle_price", 1.01,                                 "pinnacle_price <= 1.01",           True),
     ]
-    
-    for op_type, field, value, label in purge_rules:
+
+    for op_type, field, value, label, active_only in purge_rules:
         try:
             query = sb.table("signals").delete()
+            if active_only:
+                query = query.eq("status", "active")
             if op_type == "eq":
-                query.eq(field, value).execute()
+                query = query.eq(field, value)
             elif op_type == "lt":
-                query.lt(field, value).execute()
+                query = query.lt(field, value)
             elif op_type == "gt":
-                query.gt(field, value).execute()
+                query = query.gt(field, value)
             elif op_type == "lte":
-                query.lte(field, value).execute()
+                query = query.lte(field, value)
             elif op_type == "is_":
-                query.is_(field, value).execute()
-            
+                query = query.is_(field, value)
+            query.execute()
+
             if DEBUG_MODE:
                 log.debug("Purged: %s", label)
         except Exception as e:
