@@ -285,6 +285,7 @@ def _archive_before_purge(sb, signals: list):
                 pass
         try:
             sb.table("ai_learning_ledger").insert({
+                "signal_id":             sig.get("id"),
                 "match":                 sig["match"],
                 "sport":                 sig.get("sport"),
                 "league":                sig.get("league"),

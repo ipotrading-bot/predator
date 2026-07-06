@@ -105,6 +105,7 @@ def _log_to_ledger(sb, sig: dict, clv: float, outcome: str):
             log.debug("_ttm parse failed for match_time=%s scanned_at=%s", match_time, scanned_at)
     try:
         sb.table("ai_learning_ledger").insert({
+            "signal_id":             sig.get("id"),
             "match":                 sig["match"],
             "sport":                 sig.get("sport"),
             "league":                sig.get("league"),
