@@ -183,7 +183,7 @@
 <div id="toast"></div>
 
 <!-- ── FAB SCAN (mobile) ──────────────────── -->
-<button class="fab-scan" id="fabScan" onclick="triggerScan()">&#9654;</button>
+<button class="fab-scan" id="fabScan" onclick="triggerScan()" aria-label="Lancer un scan">&#9654;</button>
 
 <!-- ── BOTTOM NAV (mobile) ────────────────── -->
 <nav class="bnav">
@@ -199,13 +199,13 @@
 
 <!-- ── MODAL ──────────────────────────────── -->
 <div id="modal-overlay" onclick="closeModal()"></div>
-<div id="modal" role="dialog" aria-modal="true">
+<div id="modal" role="dialog" aria-modal="true" aria-labelledby="modal-title">
 
   <div class="m-drag"><i></i></div>
 
   <div class="m-hdr">
-    <span class="m-title">&#9658; PLACER LE PARI — 1XBET</span>
-    <button class="m-close" onclick="closeModal()">&#10005;</button>
+    <span class="m-title" id="modal-title">&#9658; PLACER LE PARI — 1XBET</span>
+    <button class="m-close" onclick="closeModal()" aria-label="Fermer">&#10005;</button>
   </div>
 
   <div class="m-matchblock">

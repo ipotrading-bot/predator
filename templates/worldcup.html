@@ -176,13 +176,13 @@
 
 <!-- ── MODAL ──────────────────────────────────── -->
 <div id="modal-overlay" onclick="closeModal()"></div>
-<div id="modal" role="dialog" aria-modal="true">
+<div id="modal" role="dialog" aria-modal="true" aria-labelledby="modal-title">
 
   <div class="m-drag"><i></i></div>
 
   <div class="m-hdr">
-    <span class="m-title">&#127942; WC 2026 — PLACER LE PARI</span>
-    <button class="m-close" onclick="closeModal()">&#10005;</button>
+    <span class="m-title" id="modal-title">&#127942; WC 2026 — PLACER LE PARI</span>
+    <button class="m-close" onclick="closeModal()" aria-label="Fermer">&#10005;</button>
   </div>
 
   <div class="m-matchblock">
