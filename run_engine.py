@@ -156,10 +156,15 @@ def _market_session(hour_utc: int) -> str:
 
 def _telegram(text):
     if not TELEGRAM_TOKEN or not TELEGRAM_CHAT:
+        log.warning("Telegram non configuré — message non envoyé")
         return
     try:
         url = f"https://api.telegram.org/bot{TELEGRAM_TOKEN}/sendMessage"
-        requests.post(url, json={"chat_id": TELEGRAM_CHAT, "text": text, "parse_mode": "Markdown"}, timeout=10)
+        r = requests.post(url, json={"chat_id": TELEGRAM_CHAT, "text": text, "parse_mode": "Markdown"}, timeout=10)
+        if r.status_code != 200:
+            log.error("Telegram HTTP %d: %s", r.status_code, r.text[:300])
+        else:
+            log.info("Telegram envoyé (%d chars)", len(text))
     except Exception as e:
         log.error("Telegram: %s", e)
 

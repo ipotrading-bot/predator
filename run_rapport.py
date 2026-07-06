@@ -57,13 +57,16 @@ def _send(text: str):
         log.warning("Telegram non configuré — message non envoyé")
         return
     try:
-        requests.post(
+        r = requests.post(
             f"https://api.telegram.org/bot{TELEGRAM_TOKEN}/sendMessage",
             json={"chat_id": TELEGRAM_CHAT, "text": text,
                   "parse_mode": "Markdown", "disable_web_page_preview": True},
             timeout=15,
         )
-        log.info("Telegram envoyé (%d chars)", len(text))
+        if r.status_code != 200:
+            log.error("Telegram HTTP %d: %s", r.status_code, r.text[:300])
+        else:
+            log.info("Telegram envoyé (%d chars)", len(text))
     except Exception as e:
         log.error("Telegram erreur: %s", e)
 
