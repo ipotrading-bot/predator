@@ -509,17 +509,31 @@ def health():
     return jsonify({"status": "ok", "version": "8.5", "source": "harvester+gemini"})
 
 
+_SCAN_REQUEST_COOLDOWN_S = 120  # on_demand.yml polls every 5 min — no point queuing faster
+
+
 @app.route("/api/scan", methods=["POST"])
 def trigger_scan():
     sb = _db()
     if not sb:
         return jsonify({"error": "Base de données non configurée"}), 503
     try:
-        import json as _json
-        from datetime import datetime, timezone as _tz
+        pending = _get_meta(sb, "scan_request")
+        if pending and pending.get("requested_at"):
+            try:
+                requested_at = datetime.fromisoformat(pending["requested_at"].replace("Z", "+00:00"))
+                age_s = (datetime.now(_tz.utc) - requested_at).total_seconds()
+            except Exception:
+                age_s = None
+            if age_s is not None and age_s < _SCAN_REQUEST_COOLDOWN_S:
+                return jsonify({
+                    "status":  "already_queued",
+                    "message": "Un scan est déjà en attente — réessayez dans quelques minutes",
+                }), 429
+
         sb.table("meta").upsert({
             "key":   "scan_request",
-            "value": _json.dumps({"requested_at": datetime.now(_tz.utc).isoformat()}),
+            "value": json.dumps({"requested_at": datetime.now(_tz.utc).isoformat()}),
         }, on_conflict="key").execute()
         return jsonify({"status": "queued", "message": "Scan demandé — résultats dans 1 à 5 min"}), 200
     except Exception as exc:
