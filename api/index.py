@@ -525,3 +525,7 @@ def trigger_scan():
     except Exception as exc:
         log.error("scan queue error: %s", exc)
         return jsonify({"error": str(exc)}), 500
+
+
+if __name__ == "__main__":
+    app.run(host="0.0.0.0", port=int(os.environ.get("PORT", 5000)), debug=False)

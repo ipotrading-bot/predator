@@ -149,43 +149,25 @@ http://localhost:5000
 
 ## 📡 API Endpoints
 
-### Core
+### Pages (Dashboard Flask)
 
 | Endpoint | Method | Description |
 |----------|--------|-------------|
-| `/` | GET | Dashboard HTML |
-| `/api/stats` | GET | Statistiques du bot |
-| `/api/signals/live` | GET | Signaux en cours (7/9 system) |
-| `/api/scan` | POST | Déclencher un scan PAIM |
-| `/api/health` | GET | Health check des services |
+| `/` | GET | Dashboard — signaux actifs |
+| `/ledger` | GET | Bilan CLV par sport |
+| `/audit` | GET | Audit CLV détaillé + seuils dynamiques |
+| `/performance` | GET | Rapport de performance AI learning (`ai_learning_ledger`) |
 
-### Analytics
-
-| Endpoint | Method | Description |
-|----------|--------|-------------|
-| `/api/audit/metrics` | GET | Métriques avancées (Sharpe, Brier, etc.) |
-| `/api/equity-curve` | GET | Données courbe d'équité |
-| `/api/ledger` | GET | Historique des transactions |
-| `/api/report` | GET | Rapport de performance (JSON) |
-| `/api/report/pdf` | GET | Rapport PDF téléchargeable |
-
-### Intelligence
+### API
 
 | Endpoint | Method | Description |
 |----------|--------|-------------|
-| `/api/groq/status` | GET | Statut Groq AI |
-| `/api/groq/filter` | POST | Filtrage rapide d'un signal |
-| `/api/news` | GET | News sportives |
-| `/api/news/context` | GET | Analyse contexte news pour un signal |
-| `/api/news/market-moving` | GET | News impactant les cotes |
+| `/api/signals` | GET | Signaux actifs (JSON) |
+| `/api/scan` | POST | Déclencher un scan PAIM (via `on_demand.yml`) |
+| `/api/audit/run` | POST | Déclencher `audit.yml` (requiert `GITHUB_PAT`) |
+| `/api/health` | GET | Health check |
 
-### System
-
-| Endpoint | Method | Description |
-|----------|--------|-------------|
-| `/api/exposure` | GET | Exposition actuelle |
-| `/api/ticker` | GET | Market ticker items |
-| `/api/logs/recent` | GET | Logs récents du scan |
+Toutes les routes sont définies dans [`api/index.py`](api/index.py) — c'est la seule source de vérité, cette table doit rester synchronisée avec ce fichier.
 
 ---
 
@@ -194,43 +176,29 @@ http://localhost:5000
 ```
 predator/
 ├── api/
-│   ├── index.py          # Flask main app
-│   ├── analytics.py      # QuantStats integration
-│   ├── audit.py          # Audit endpoint
-│   ├── gemini_client.py  # Google Gemini client
-│   ├── groq_client.py    # Groq AI client (NEW)
-│   ├── health.py         # Health check
-│   ├── logger.py         # BetterStack logging (NEW)
-│   ├── news_client.py    # News API integration (NEW)
-│   ├── odds_client.py    # Odds fetcher
-│   ├── rate_limiter.py   # API rate limiting
-│   ├── scan.py           # Scan trigger endpoint
-│   ├── signals.py        # Live signals endpoint
-│   ├── supabase_client.py # Database client
-│   └── telegram_client.py # Telegram notifications
+│   ├── index.py          # Flask app — toutes les routes (pages + API)
+│   └── static/           # CSS, icônes, manifest PWA
 ├── core/
-│   ├── math_engine.py    # Calculs mathématiques
-│   ├── math_logic.py     # Logique PAIM
-│   ├── notifications.py  # Système de notifications
-│   ├── paim_engine.py    # Moteur principal PAIM
-│   ├── risk_manager.py   # Gestion des risques
-│   └── signal_validator.py # Validation des signaux
-├── data/
-│   ├── odds_fetcher.py   # Récupération des cotes
-│   └── supabase_client.py # Client database
-├── signals/
-│   ├── obfuscator.py     # Obfuscation des signaux
-│   └── scanner.py        # Scanner de marché
-├── templates/
-│   └── index.html        # Dashboard HTML (NEW UI)
-├── tgbot/
-│   ├── __init__.py
-│   └── bot.py            # Telegram bot
-├── config.py             # Configuration centralisée
-├── main.py               # Entry point
-├── requirements.txt      # Python dependencies
-└── vercel.json           # Vercel deployment config
+│   ├── odds_api.py        # Tier 1 — The Odds API (Pinnacle + 1XBet réel)
+│   ├── harvester.py        # Tier 2/3 — Gemini Search (1XBet, MMA, eSports, alt sports)
+│   ├── oracle.py            # Prix Pinnacle unitaire (fallback, max 3 appels/scan)
+│   ├── math_engine.py     # Devigging (Power method), calc_dnb, to_binary
+│   ├── paim_engine.py      # compute_alpha, consensus, strict_team_match
+│   ├── settlement.py        # Résultat réel du match → outcome WIN/LOSS/PUSH
+│   ├── audit_engine.py     # Pipeline settlement + CLV (run_audit.py)
+│   ├── learning_layer.py  # Seuils MIN_EDGE adaptatifs par sport
+│   └── constants.py         # Single source of truth (seuils, Kelly, risk_flag)
+├── templates/               # index / ledger / audit / performance / worldcup (non servie)
+├── sql/                      # Migrations Supabase (à exécuter manuellement)
+├── run_engine.py            # Pipeline de scan complet (Portfolio Balancer inclus)
+├── run_audit.py             # Entry point de core/audit_engine.py
+├── run_rapport.py           # Rapport Telegram bi-quotidien
+├── backfill_ledger.py       # Script one-shot de réparation ai_learning_ledger
+├── requirements.txt
+└── vercel.json               # Déploiement Vercel (importe api.index:app)
 ```
+
+Les automatisations (scans, audit, rapport, backfill) sont pilotées par les workflows GitHub Actions dans [`.github/workflows/`](.github/workflows/), pas par les fichiers `main.py`/`config.py` d'une ancienne version de ce README.
 
 ---
 

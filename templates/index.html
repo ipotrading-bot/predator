@@ -33,6 +33,8 @@
   </a>
   <div class="nav-pages">
     <a href="/" class="on">ACCUEIL</a>
+    <a href="/ledger">BILAN</a>
+    <a href="/audit">AUDIT</a>
     <a href="/performance">PERF</a>
   </div>
   {% set elites = signals | selectattr('risk_flag', 'in', ['HIGH_VALUE','VALUE']) | list %}

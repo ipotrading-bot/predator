@@ -320,10 +320,22 @@ def _purge_old_signals(sb):
     except Exception as e:
         log.debug("fetch stale for archive: %s", e)
 
+    # ── Past-match purge — scoped to status=active ONLY ────────────────
+    # BUGFIX: this used to be `.lt("match_time", now_iso)` with no status
+    # filter, which deleted settled/closed/expired signals the instant
+    # their match kicked off — almost always BEFORE run_audit.py (6h cadence)
+    # ever got a chance to settle them and log them to ai_learning_ledger.
+    # That silently starved the Ledger/Audit pages and the AI learning layer
+    # (compute_and_save) of data. Scoping to status=active preserves terminal
+    # signals for audit_engine while still purging genuinely stale active ones.
+    try:
+        sb.table("signals").delete().eq("status", "active").lt("match_time", now_iso).execute()
+    except Exception as e:
+        log.debug("Supabase purge (past matches, active only): %s", str(e)[:60])
+
     # ── Purge Rules (more efficient than 13 individual calls) ──────────
     purge_rules = [
         ("eq",  "status", "pending",   "status=pending"),
-        ("lt",  "match_time", now_iso, "past matches"),
         ("lt",  "created_at", cutoff_48h, ">48h old"),
         ("gt",  "edge_pct", 15.0,                                        "edge > 15% (hard cap)"),
         ("gt",  "edge_pct", 10.0,                                        "edge > 10% (SUSPECT)"),
