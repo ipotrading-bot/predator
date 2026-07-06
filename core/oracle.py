@@ -7,10 +7,9 @@ Returns (price: float | None, team_name: str | None)
 import logging
 import os
 import re
-import time
-import requests
 from datetime import date as _date
 
+from core.http_utils import post_with_retry
 from core.math_engine import calc_dnb
 
 log = logging.getLogger("PREDATOR.oracle")
@@ -95,20 +94,8 @@ def _query_book(
         "generationConfig": {"temperature": 0.1, "maxOutputTokens": 200},
     }
 
-    r = None
-    for attempt in range(3):
-        try:
-            r = requests.post(f"{GEMINI_URL}?key={api_key}", json=payload, timeout=25)
-        except Exception as e:
-            log.error("Request error (%s): %s", book_name, e)
-            return None, None
-        if r.status_code == 429:
-            wait = 65 if attempt == 0 else 30
-            log.warning("Rate limit (%s) — waiting %ds", book_name, wait)
-            time.sleep(wait)
-            r = None
-            continue
-        break
+    r = post_with_retry(f"{GEMINI_URL}?key={api_key}", payload, timeout=25,
+                         label=f"Oracle/{book_name}")
 
     if r is None or r.status_code != 200:
         if r is not None:

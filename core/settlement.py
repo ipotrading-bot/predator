@@ -7,9 +7,8 @@ import json
 import logging
 import os
 import re
-import time
 
-import requests
+from core.http_utils import post_with_retry
 
 log = logging.getLogger("PREDATOR.settlement")
 
@@ -45,18 +44,8 @@ def fetch_match_result(match_name: str, sport: str, match_date: str = "") -> dic
         "generationConfig": {"temperature": 0.0, "maxOutputTokens": 80},
     }
 
-    r = None
-    for attempt in range(2):
-        try:
-            r = requests.post(f"{GEMINI_URL}?key={api_key}", json=payload, timeout=25)
-        except Exception as e:
-            log.error("settlement request [%s]: %s", match_name, e)
-            return None
-        if r.status_code == 429:
-            time.sleep(30 if attempt else 65)
-            r = None
-            continue
-        break
+    r = post_with_retry(f"{GEMINI_URL}?key={api_key}", payload, timeout=25,
+                         max_attempts=2, label=f"Settlement/{match_name}")
 
     if r is None or r.status_code != 200:
         return None

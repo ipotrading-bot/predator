@@ -14,6 +14,7 @@ import random
 import requests
 from datetime import datetime, timedelta, timezone
 
+from core.http_utils import post_with_retry
 from core.paim_engine import SPORT_LABELS, strict_team_match
 
 # ── UTC sub-logger (inherits handler from PREDATOR root) ─────────────
@@ -134,18 +135,12 @@ def _fetch_from_gemini(sport_id):
         "generationConfig": {"temperature": 0.1, "maxOutputTokens": 1024},
     }
 
-    try:
-        for attempt in range(3):
-            r = requests.post(f"{GEMINI_FLASH_URL}?key={api_key}", json=payload, timeout=45)
-            if r.status_code == 429:
-                wait = 40 if attempt == 0 else 20
-                log.warning("Gemini rate limit (%s) — waiting %ds", sport_name, wait)
-                time.sleep(wait)
-                continue
-            break
-        if r.status_code != 200:
-            return []
+    r = post_with_retry(f"{GEMINI_FLASH_URL}?key={api_key}", payload, timeout=45,
+                         rate_limit_wait=(40, 20), label=f"Gemini/{sport_name}")
+    if r is None or r.status_code != 200:
+        return []
 
+    try:
         parts = r.json().get("candidates", [{}])[0].get("content", {}).get("parts", [])
         text = next((p["text"] for p in reversed(parts) if p.get("text", "").strip()), "")
         text = re.sub(r'```(?:json)?|```', '', text)
@@ -258,20 +253,8 @@ def fetch_pinnacle_prices(matches: list) -> dict:
         "generationConfig": {"temperature": 0.1, "maxOutputTokens": 2048},
     }
 
-    r = None
-    for attempt in range(3):
-        try:
-            r = requests.post(f"{GEMINI_FLASH_URL}?key={api_key}", json=payload, timeout=60)
-        except Exception as e:
-            log.error("Pinnacle/Gemini request error: %s", e)
-            return {}
-        if r.status_code == 429:
-            wait = 40 if attempt == 0 else 20
-            log.warning("Pinnacle/Gemini rate limit — waiting %ds (attempt %d)", wait, attempt + 1)
-            time.sleep(wait)
-            r = None
-            continue
-        break
+    r = post_with_retry(f"{GEMINI_FLASH_URL}?key={api_key}", payload, timeout=60,
+                         rate_limit_wait=(40, 20), label="Pinnacle/Gemini")
 
     if r is None or r.status_code != 200:
         if r is not None:
@@ -363,20 +346,8 @@ def fetch_estimated_prices(matches: list) -> dict:
         "generationConfig": {"temperature": 0.2, "maxOutputTokens": 2048},
     }
 
-    r = None
-    for attempt in range(3):
-        try:
-            r = requests.post(f"{GEMINI_URL}?key={api_key}", json=payload, timeout=45)
-        except Exception as e:
-            log.error("Estimator/Gemini request error: %s", e)
-            return {}
-        if r.status_code == 429:
-            wait = 40 if attempt == 0 else 20
-            log.warning("Estimator/Gemini rate limit — waiting %ds", wait)
-            time.sleep(wait)
-            r = None
-            continue
-        break
+    r = post_with_retry(f"{GEMINI_URL}?key={api_key}", payload, timeout=45,
+                         rate_limit_wait=(40, 20), label="Estimator/Gemini")
 
     if r is None or r.status_code != 200:
         if r is not None:
@@ -454,20 +425,8 @@ def fetch_mma_events() -> list[dict]:
         "generationConfig": {"temperature": 0.1, "maxOutputTokens": 2048},
     }
 
-    r = None
-    for attempt in range(3):
-        try:
-            r = requests.post(f"{GEMINI_FLASH_URL}?key={api_key}", json=payload, timeout=60)
-        except Exception as e:
-            log.error("MMA/Gemini request error: %s", e)
-            return []
-        if r.status_code == 429:
-            wait = 40 if attempt == 0 else 20
-            log.warning("MMA/Gemini rate limit — waiting %ds", wait)
-            time.sleep(wait)
-            r = None
-            continue
-        break
+    r = post_with_retry(f"{GEMINI_FLASH_URL}?key={api_key}", payload, timeout=60,
+                         rate_limit_wait=(40, 20), label="MMA/Gemini")
 
     if r is None or r.status_code != 200:
         if r is not None:
@@ -555,20 +514,8 @@ def fetch_esports_events() -> list[dict]:
         "generationConfig": {"temperature": 0.1, "maxOutputTokens": 2048},
     }
 
-    r = None
-    for attempt in range(3):
-        try:
-            r = requests.post(f"{GEMINI_FLASH_URL}?key={api_key}", json=payload, timeout=60)
-        except Exception as e:
-            log.error("eSports/Gemini request error: %s", e)
-            return []
-        if r.status_code == 429:
-            wait = 40 if attempt == 0 else 20
-            log.warning("eSports/Gemini rate limit — waiting %ds", wait)
-            time.sleep(wait)
-            r = None
-            continue
-        break
+    r = post_with_retry(f"{GEMINI_FLASH_URL}?key={api_key}", payload, timeout=60,
+                         rate_limit_wait=(40, 20), label="eSports/Gemini")
 
     if r is None or r.status_code != 200:
         if r is not None:
@@ -657,20 +604,8 @@ def fetch_alternative_sports_batch() -> list[dict]:
         "generationConfig": {"temperature": 0.1, "maxOutputTokens": 3000},
     }
 
-    r = None
-    for attempt in range(3):
-        try:
-            r = requests.post(f"{GEMINI_FLASH_URL}?key={api_key}", json=payload, timeout=60)
-        except Exception as e:
-            log.error("AltSports/Gemini request error: %s", e)
-            return []
-        if r.status_code == 429:
-            wait = 40 if attempt == 0 else 20
-            log.warning("AltSports/Gemini rate limit — waiting %ds", wait)
-            time.sleep(wait)
-            r = None
-            continue
-        break
+    r = post_with_retry(f"{GEMINI_FLASH_URL}?key={api_key}", payload, timeout=60,
+                         rate_limit_wait=(40, 20), label="AltSports/Gemini")
 
     if r is None or r.status_code != 200:
         if r is not None:
