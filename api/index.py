@@ -240,9 +240,15 @@ def ledger():
                 }
 
                 sports_stats = {}
-                threshold_updates = []
 
-                # All sports present in signals
+                # All sports present in signals. Display only — this route
+                # used to also auto-adjust and upsert thresholds into `meta`,
+                # but it runs on the anon key, which RLS has blocked from
+                # writing `meta` since migrate_v9_3: the upsert failed on
+                # every page view (silent log.warning), and had it ever
+                # succeeded it would have fought core/learning_layer.py's
+                # adjustment algorithm. Threshold updates belong to the
+                # audit workflow (learning_layer), not to a dashboard read.
                 all_sports = sorted(set(s.get("sport", "") for s in signals if s.get("sport")))
                 for sport in all_sports:
                     sv = [s["clv_pct"] for s in signals if s.get("sport") == sport]
@@ -254,16 +260,6 @@ def ledger():
                     cur_t   = thresholds.get(sport, _DEFAULT_T.get(sport, 2.0))
                     def_t   = _DEFAULT_T.get(sport, 2.0)
 
-                    # Auto-adjust threshold based on CLV verdict
-                    new_t = cur_t
-                    if verdict == "SUSPENDU" and cur_t < 5.0:
-                        new_t = min(5.0, round(cur_t + 0.5, 1))
-                    elif verdict == "BOOST" and len(sv) >= 5 and cur_t > 1.5:
-                        new_t = max(1.5, round(cur_t - 0.2, 1))
-
-                    if new_t != cur_t:
-                        threshold_updates.append((sport, new_t))
-
                     sports_stats[sport] = {
                         "count":     len(sv),
                         "hit_rate":  hit,
@@ -274,17 +270,6 @@ def ledger():
                         "emoji":     _SPORT_EMOJI.get(sport, "🎯"),
                         "label":     _SPORT_LABEL.get(sport, sport.capitalize()),
                     }
-
-                # Push threshold updates to Supabase meta
-                for sport, new_t in threshold_updates:
-                    try:
-                        sb.table("meta").upsert({
-                            "key":   f"threshold_{sport}",
-                            "value": str(new_t),
-                        }, on_conflict="key").execute()
-                        log.info("Ledger: threshold %s → %.1f%%", sport, new_t)
-                    except Exception as e:
-                        log.warning("Ledger threshold update %s: %s", sport, e)
 
                 stats["sports"] = sports_stats
 

@@ -20,6 +20,7 @@ from datetime import datetime, timedelta, timezone
 from dotenv import load_dotenv
 
 from core.db import get_db, log_to_ledger, replace_signal_row, MissingCredentialsError
+from core.http_utils import gemini_quota_dead
 from core.learning_layer import compute_and_save as _learn
 from core.oracle import get_pinnacle_price
 from core.settlement import settle_signal
@@ -119,6 +120,14 @@ def audit_one(sb, sig: dict, oracle_calls: list, settle_calls: list, now: dateti
             return "settled"
         log.info("No score yet for %s — falling back to CLV audit", match)
 
+    # Both passes below are Gemini-backed. Once the DAILY quota is dead,
+    # Pass 1 can never settle and Pass 2 can never fetch a closing line —
+    # proceeding would stamp this signal 'expired' (terminal, never
+    # retried) with a garbage proxy CLV. Leave it 'active' instead so the
+    # next 6h audit run — after the quota reset — settles it for real.
+    if gemini_quota_dead():
+        return "skipped"
+
     # ── Pass 2 : CLV — fetch current Pinnacle closing line ────────────
     closing_price: float | None = None
 
@@ -178,14 +187,20 @@ def run():
     now = datetime.now(timezone.utc)
     oracle_budget = [ORACLE_BUDGET]
     settle_budget = [SETTLE_BUDGET]
-    counts = {"settled": 0, "closed": 0, "expired": 0}
+    counts = {"settled": 0, "closed": 0, "expired": 0, "skipped": 0}
 
-    for sig in pending:
+    for i, sig in enumerate(pending):
+        if gemini_quota_dead():
+            counts["skipped"] += len(pending) - i
+            log.warning("Gemini daily quota exhausted — %d signals left active "
+                        "for the next audit run (post quota reset ~07:00 UTC)",
+                        len(pending) - i)
+            break
         status = audit_one(sb, sig, oracle_budget, settle_budget, now)
         counts[status] = counts.get(status, 0) + 1
 
-    log.info("Audit done: %d settled | %d closed | %d expired",
-             counts["settled"], counts["closed"], counts["expired"])
+    log.info("Audit done: %d settled | %d closed | %d expired | %d skipped",
+             counts["settled"], counts["closed"], counts["expired"], counts["skipped"])
     log.info("Oracle: %d/%d | Settlement: %d/%d calls used",
              ORACLE_BUDGET - oracle_budget[0], ORACLE_BUDGET,
              SETTLE_BUDGET - settle_budget[0], SETTLE_BUDGET)

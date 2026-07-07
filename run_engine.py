@@ -18,6 +18,7 @@ from dotenv import load_dotenv
 
 from core.db import get_db, MissingCredentialsError
 from core.harvester import fetch_matches, fetch_pinnacle_prices, fetch_estimated_prices, fetch_mma_events, fetch_esports_events, fetch_alternative_sports_batch, fetch_betfair_prices
+from core.http_utils import gemini_quota_dead
 from core.math_engine import to_binary, devig_prob, is_round_number_line
 from core.odds_api import fetch_odds
 from core.oracle import get_pinnacle_price
@@ -564,7 +565,7 @@ def _process_h2h(m, name, sport, league, home, away, emoji, signals, sb, now, lo
 
             con_fav, sources_found, is_volatile, consensus_score = calculate_consensus_price(source_prices_fav, sport)
             if is_volatile:
-                log.info("VOLATILE | %s %s — CV>1.2% — DISCARD", emoji, name)
+                log.info("VOLATILE | %s %s — CV>1.2%% — DISCARD", emoji, name)
                 return
             con_opp, _, _, _ = calculate_consensus_price(source_prices_opp, sport)
             if con_fav > 1.01:
@@ -590,7 +591,7 @@ def _process_h2h(m, name, sport, league, home, away, emoji, signals, sb, now, lo
 
             con_fav, sources_found, is_volatile, consensus_score = calculate_consensus_price(source_prices_fav, sport)
             if is_volatile:
-                log.info("VOLATILE | %s %s — CV>1.2% — DISCARD", emoji, name)
+                log.info("VOLATILE | %s %s — CV>1.2%% — DISCARD", emoji, name)
                 return
             con_opp, _, _, _ = calculate_consensus_price(source_prices_opp, sport)
             if con_fav > 1.01:
@@ -1057,6 +1058,8 @@ def run():
         xbet_matches = fetch_matches()
         if not xbet_matches:
             msg = "📡 PREDATOR v8.8: 0 matchs trouvés — Melbet inaccessible."
+            if gemini_quota_dead():
+                msg += "\n⚠️ Quota Gemini journalier épuisé — fallback Gemini indisponible (reset ~07:00 UTC)."
             log.warning(msg)
             _telegram(msg)
             if sb:
@@ -1108,6 +1111,8 @@ def run():
             xbet_matches = fetch_matches()
         if not xbet_matches:
             msg = "📡 PREDATOR v8.8: 0 matchs — toutes sources épuisées."
+            if gemini_quota_dead():
+                msg += "\n⚠️ Quota Gemini journalier épuisé (reset ~07:00 UTC)."
             log.warning(msg)
             _telegram(msg)
             if sb:
@@ -1128,6 +1133,8 @@ def run():
 
     if not matches:
         msg = "📡 PREDATOR v8.8: 0 signaux — toutes sources épuisées."
+        if gemini_quota_dead():
+            msg += "\n⚠️ Quota Gemini journalier épuisé (reset ~07:00 UTC)."
         log.warning(msg)
         _telegram(msg)
         if sb:

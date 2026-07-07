@@ -70,9 +70,11 @@ def _market_melbet(mkt_key: str, sport: str, mkt_label: str) -> str:
         return "Asian Handicap → ligne «0»"
     if mkt_key == "h2h":
         return "Résultat → Moneyline (1×2)"
-    if mkt_key == "totals":
+    # Stored keys are directional ("totals_over", "spreads_home", …) — an
+    # exact == "totals"/"spreads" match here never fired.
+    if mkt_key.startswith("totals"):
         return f"Total → {mkt_label}"
-    if mkt_key == "spreads":
+    if mkt_key.startswith("spreads"):
         return f"Handicap → {mkt_label}"
     return mkt_label or "Voir Handicap/Total"
 
@@ -90,7 +92,10 @@ def _signal_line(s: dict) -> str | None:
     mkt_key   = s.get("market_key", "h2h")
     mkt_lbl   = s.get("market", "AH 0.0")
     sport     = s.get("sport", "soccer")
-    stake     = _kelly_stake(xbet_odd, prob)
+    # kelly_stake defaults to bankroll=BANKROLL_REF (150€) and sport="soccer" —
+    # omitting these printed stakes ~6.7× smaller than the "/1000€" the
+    # message claims, with the wrong per-sport Kelly fraction on top.
+    stake     = _kelly_stake(xbet_odd, prob, BANKROLL, sport)
     if stake == 0:
         return None   # Below MIN_STAKE — skip this signal
     risk      = s.get("risk_flag", "")
@@ -212,7 +217,7 @@ def run():
             edge     = s.get("edge_pct", 0)
             odd      = s.get("xbet_odd", 0)
             prob     = s.get("sharp_prob", 0)
-            stake    = _kelly_stake(odd, prob)
+            stake    = _kelly_stake(odd, prob, BANKROLL, s.get("sport", "soccer"))
             is_trap  = edge >= WC_ALPHA_MIN and odd >= 2.20
             icon     = "🔥 TRAP" if is_trap else ("🟢" if edge >= 3.0 else "🟡")
             league   = s.get("league", "")
@@ -250,7 +255,7 @@ def run():
 
     footer = (
         f"━━━━━━━━━━━━━━━━━━━━━━━━━━\n"
-        f"💡 _Mises Kelly ×0.25 sur base 1000€_\n"
+        f"💡 _Mises Kelly fractionnel (×0.20–0.30 selon sport) sur base 1000€_\n"
         f"🔥 Elite | ✅ Value | 📌 Low Value"
     )
 
