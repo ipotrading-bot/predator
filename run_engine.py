@@ -1160,7 +1160,7 @@ def run():
                 saved_count += 1
         log.info("Supabase: %d/%d signals persisted", saved_count, len(signals))
         if saved_count == 0:
-            log.error("Telegram skipped — all %d signals failed to persist", len(signals))
+            log.error("All %d signals failed to persist to Supabase — Telegram will still send them", len(signals))
 
     # ── C. Telegram — toujours envoyé (découplé de Supabase) ──────────
     # Shadow Layer: execution jitter — simule latence humaine (1.5–4.0s)
