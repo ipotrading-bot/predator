@@ -18,6 +18,11 @@ name: Predator Golden Hour
 # mais à ce volume il va se déclencher souvent — voir le fix du 2026-07-07
 # qui empêche au moins la perte totale des events déjà récupérés ce
 # scan-là quand ça arrive (HTTP 422 faisait `return []` au lieu de `break`).
+#
+# 2026-07-07 : run réel tué par le timeout de 8 min (job 28865964902,
+# 12:25→12:34 UTC), aucun signal écrit, scan suivant absorbé par le trou —
+# timeout remonté à 12 min (aligné sur on_demand.yml) pour absorber le
+# fallback Gemini (Oracle, jusqu'à 3 calls) sans se faire tuer en plein run.
 # ══════════════════════════════════════════════════════════════════
 #
 # Fenêtre T-120min — détecte les mouvements de ligne Pinnacle→1XBet
@@ -54,7 +59,7 @@ env:
 jobs:
   golden-scan:
     runs-on: ubuntu-latest
-    timeout-minutes: 8
+    timeout-minutes: 12
 
     steps:
       - name: Verify required secrets are present
