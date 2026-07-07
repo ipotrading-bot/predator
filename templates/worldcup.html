@@ -406,6 +406,16 @@ function _group(league){
   return m ? m[1].toUpperCase() : null;
 }
 
+// s.match/s.league/selection_name ultimately come from external odds
+// providers/Gemini search, not from our own code — escape before building
+// the innerHTML string below so a malformed upstream response can't inject
+// markup/script.
+function _esc(str){
+  const d = document.createElement('div');
+  d.textContent = str==null ? '' : String(str);
+  return d.innerHTML;
+}
+
 function _sigCard(s, idx){
   const trap  = (s.edge_pct||0) >= 2.0 && (s.xbet_odd||0) >= 2.20 && s.risk_flag !== 'SUSPECT_DATA';
   const cls   = trap ? 'trap' : ({HIGH_VALUE:'high',VALUE:'value',SUSPECT_DATA:'suspect'}[s.risk_flag]||'');
@@ -421,21 +431,21 @@ function _sigCard(s, idx){
   const dateStr = mt ? mt.slice(8,10)+'/'+mt.slice(5,7)+' '+mt.slice(11,16) : '';
   const badge = trap
     ? '<span class="sig-badge b-TRAP_COUNTER">&#128293; TRAP</span>'
-    : `<span class="sig-badge b-${s.risk_flag||'LOW_VALUE'}">${(s.risk_flag||'LOW VALUE').replace(/_/g,' ')}</span>`;
-  const cdAttr = mt ? `data-ts="${mt}"` : '';
+    : `<span class="sig-badge b-${s.risk_flag||'LOW_VALUE'}">${_esc((s.risk_flag||'LOW VALUE').replace(/_/g,' '))}</span>`;
+  const cdAttr = mt ? `data-ts="${_esc(mt)}"` : '';
   const dateEl = mt
     ? `<span class="sig-date">${dateStr}</span><span class="sig-cd" ${cdAttr}></span>`
     : `<span class="sig-date" style="color:var(--t3)">heure?</span>`;
 
-  return `<div class="sig ${cls}" onclick="openModal(${idx})" data-matchtime="${mt}" data-league="${s.league||''}">
+  return `<div class="sig ${cls}" onclick="openModal(${idx})" data-matchtime="${_esc(mt)}" data-league="${_esc(s.league||'')}">
   <div class="sig-body">
     <div class="sig-r1">
       <span class="sig-icon">&#9917;</span>
-      <span class="sig-match">${s.match}<span class="sig-league"> &middot; ${s.league||'—'}</span></span>
+      <span class="sig-match">${_esc(s.match)}<span class="sig-league"> &middot; ${_esc(s.league||'—')}</span></span>
       ${badge}${dateEl}
     </div>
     <div class="sig-r2">
-      <span class="sig-team">${team}</span>
+      <span class="sig-team">${_esc(team)}</span>
       <span class="sig-odd">@ ${odd}</span>
       <span class="sig-edge ${eCls}">+${edge.toFixed(1)}%</span>
       <span class="sig-mise" ${miseCol}>${mise}</span>

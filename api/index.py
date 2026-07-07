@@ -149,7 +149,13 @@ def dashboard():
                 elif ss is None:
                     s["sharp_sources"] = {}
                 cs = s.get("consensus_score")
-                s["consensus_score"] = int(cs) if cs is not None else None
+                try:
+                    s["consensus_score"] = int(cs) if cs is not None else None
+                except (TypeError, ValueError):
+                    # A single malformed value here (e.g. a non-integer string)
+                    # used to propagate to the outer try/except and blank the
+                    # ENTIRE dashboard's signal list, not just this row.
+                    s["consensus_score"] = None
             last_scan = _get_meta(sb, "last_scan")
     except Exception as e:
         log.error("Dashboard: %s", e)
