@@ -509,7 +509,7 @@ def health():
     return jsonify({"status": "ok", "version": "8.5", "source": "harvester+gemini"})
 
 
-_SCAN_REQUEST_COOLDOWN_S = 120  # on_demand.yml polls every 5 min — no point queuing faster
+_SCAN_REQUEST_COOLDOWN_S = 120  # golden_hour.yml picks this up on its next run (every 30 min)
 
 
 @app.route("/api/scan", methods=["POST"])
@@ -535,7 +535,7 @@ def trigger_scan():
             "key":   "scan_request",
             "value": json.dumps({"requested_at": datetime.now(_tz.utc).isoformat()}),
         }, on_conflict="key").execute()
-        return jsonify({"status": "queued", "message": "Scan demandé — résultats dans 1 à 5 min"}), 200
+        return jsonify({"status": "queued", "message": "Scan demandé — résultats sous 30 min max (prochain passage planifié)"}), 200
     except Exception as exc:
         log.error("scan queue error: %s", exc)
         return jsonify({"error": str(exc)}), 500

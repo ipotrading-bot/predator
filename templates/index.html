@@ -569,7 +569,7 @@ async function triggerScan(){
     const data=await r.json().catch(()=>({}));
     if(r.ok){
       unlock(btn,'▶ SCAN'); unlock(fab,'▶');
-      showToast('✓ Scan demandé — résultats dans 1 à 5 min','ok',6000);
+      showToast('✓ Scan demandé — résultats sous 30 min max','ok',6000);
     } else {
       unlock(btn,'▶ SCAN'); unlock(fab,'▶');
       const msg=data.error||'Erreur '+r.status;
