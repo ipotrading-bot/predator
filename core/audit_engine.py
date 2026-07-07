@@ -18,8 +18,8 @@ import time
 from datetime import datetime, timedelta, timezone
 
 from dotenv import load_dotenv
-from supabase import create_client
 
+from core.db import get_db, log_to_ledger, replace_signal_row, MissingCredentialsError
 from core.learning_layer import compute_and_save as _learn
 from core.oracle import get_pinnacle_price
 from core.settlement import settle_signal
@@ -92,71 +92,12 @@ def fetch_pending(sb) -> list[dict]:
 
 
 def _update_signal(sb, sig: dict, payload: dict) -> bool:
-    """
-    Persist audit result via DELETE + INSERT (RLS anon key blocks UPDATE).
-    sig is the full signal row from fetch_pending(); payload contains the new fields.
-    Returns True on success, False if the signal was lost.
-    """
-    sig_id = sig["id"]
+    """Persist audit result via DELETE + INSERT (RLS blocks UPDATE outright
+    on this table's policies). Returns True on success, False if the signal
+    was lost. Shared with core/settlement.py's settle_signal() — see
+    core/db.py:replace_signal_row for the implementation."""
     merged = {**sig, **payload}
-    merged.pop("id", None)  # Supabase will reject explicit id on insert
-    try:
-        sb.table("signals").delete().eq("id", sig_id).execute()
-    except Exception as e:
-        log.error("Delete signal %s: %s", sig_id, e)
-        return False
-    try:
-        sb.table("signals").insert(merged).execute()
-        return True
-    except Exception as e:
-        # Retry without optional audit columns if schema is stale
-        if any(c in str(e) for c in _AUDIT_COLS):
-            core = {k: v for k, v in merged.items() if k not in _AUDIT_COLS}
-            try:
-                sb.table("signals").insert(core).execute()
-                return True
-            except Exception as e2:
-                log.critical("SIGNAL %s LOST after delete — fallback insert failed: %s", sig_id, e2)
-                return False
-        log.critical("SIGNAL %s LOST after delete — insert failed: %s", sig_id, e)
-        return False
-
-
-def _log_to_ledger(sb, sig: dict, clv: float, outcome: str):
-    match_time = sig.get("match_time")
-    scanned_at = sig.get("scanned_at")
-    ttm = None
-    if match_time and scanned_at:
-        try:
-            mt = datetime.fromisoformat(match_time.replace("Z", "+00:00"))
-            sc = datetime.fromisoformat(scanned_at.replace("Z", "+00:00"))
-            ttm = int((mt - sc).total_seconds() / 60)
-        except Exception:
-            log.debug("_ttm parse failed for match_time=%s scanned_at=%s", match_time, scanned_at)
-    try:
-        sb.table("ai_learning_ledger").insert({
-            "signal_id":             sig.get("id"),
-            "match":                 sig["match"],
-            "sport":                 sig.get("sport"),
-            "league":                sig.get("league"),
-            "market_type":           sig.get("market_key"),
-            "market":                sig.get("market"),
-            "selection":             sig.get("selection_name"),
-            "odds":                  sig.get("xbet_odd"),
-            "time_to_match_minutes": ttm,
-            "initial_edge":          sig.get("edge_pct"),
-            "sharp_divergence_std":  None,
-            "clv_final":             clv,
-            "was_clv_positive":      clv > 0,
-            "outcome":               outcome,
-        }).execute()
-    except Exception as e:
-        # See core/settlement.py's settle_signal for why this is CRITICAL,
-        # not a routine warning — a schema mismatch here means /performance
-        # and the learning layer silently never see this outcome.
-        log.critical("ai_learning_ledger INSERT FAILED [%s] — check migration "
-                      "sql/migrate_v9_4_ledger_display_fields.sql is applied: %s",
-                      sig.get("match"), e)
+    return replace_signal_row(sb, sig["id"], merged, optional_cols=_AUDIT_COLS)
 
 
 def audit_one(sb, sig: dict, oracle_calls: list, settle_calls: list, now: datetime) -> str:
@@ -208,21 +149,22 @@ def audit_one(sb, sig: dict, oracle_calls: list, settle_calls: list, now: dateti
         "closed_at":    now_iso,
     })
     if ok:
-        _log_to_ledger(sb, sig, float(clv), status)
+        log_to_ledger(sb, sig, float(clv), status)
     else:
         log.error("Skipping ledger write for lost signal %s", sig["id"])
     return status
 
 
 def run():
-    # Prefer service_role (bypasses RLS, meant for backend writes) — fall
-    # back to the anon key for backward compatibility until the secret is
-    # configured. This module only ever deletes/inserts/upserts, it never
-    # serves public reads, so it has no business using the anon key.
-    sb = create_client(
-        os.environ["SUPABASE_URL"],
-        os.environ.get("SUPABASE_SERVICE_KEY") or os.environ["SUPABASE_KEY"],
-    )
+    # This module only ever deletes/inserts/upserts, it never serves public
+    # reads — write=True fails fast and loud if SUPABASE_SERVICE_KEY is
+    # missing or resolves to the wrong role, instead of silently falling
+    # back to the anon key and failing every write downstream with RLS 42501.
+    try:
+        sb = get_db(write=True)
+    except MissingCredentialsError as e:
+        log.critical("%s", e)
+        raise SystemExit(1)
 
     pending = fetch_pending(sb)
     log.info("━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━")

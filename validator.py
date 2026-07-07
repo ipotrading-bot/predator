@@ -6,8 +6,9 @@ NOT imported by the engine — standalone diagnostic tool only.
 import os
 import requests
 import google.generativeai as genai
-from supabase import create_client
 from dotenv import load_dotenv
+
+from core.db import get_db
 
 load_dotenv()
 
@@ -39,10 +40,9 @@ def validate_all_systems():
 
     # 3. SUPABASE
     try:
-        supabase = create_client(
-            os.environ.get("SUPABASE_URL", ""),
-            os.environ.get("SUPABASE_KEY", ""),
-        )
+        supabase = get_db(write=False)
+        if supabase is None:
+            raise RuntimeError("SUPABASE_URL/SUPABASE_KEY not set")
         supabase.table("signals").select("id").limit(1).execute()
         print("OK  SUPABASE : CONNECTE")
     except Exception as e:

@@ -51,11 +51,13 @@ KELLY_FRACTION = {
 }
 
 
-def risk_flag(edge_pct: float) -> str:
-    """Consistent risk label stored in DB and used by all consumers."""
-    if edge_pct >= ELITE_EDGE * 2:   # >= 5.0 %
+def risk_flag(edge_pct: float, elite: float = ELITE_EDGE) -> str:
+    """Consistent risk label stored in DB and used by all consumers.
+    `elite` lets callers pass a sport-specific boundary (SOCCER_ELITE_EDGE,
+    BASKETBALL_ELITE_EDGE) — defaults to the generic ELITE_EDGE."""
+    if edge_pct >= elite * 2:
         return "HIGH_VALUE"
-    if edge_pct >= ELITE_EDGE:        # >= 2.5 %
+    if edge_pct >= elite:
         return "VALUE"
     return "LOW_VALUE"
 

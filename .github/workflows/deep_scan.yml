@@ -26,7 +26,7 @@ on:
     - cron: '33 23 * * *'   # 23:30 UTC — NBA/NHL live + MLB final + Copa nuit
   workflow_dispatch:
 
-# Shared with golden_hour.yml/engine.yml/audit.yml/on_demand.yml — the
+# Shared with golden_hour.yml/engine.yml/audit.yml — the
 # minute-offset above only avoids same-minute starts, it doesn't prevent
 # overlap once a run takes several minutes (this job's timeout is 25min).
 # See golden_hour.yml for the full rationale.
@@ -47,14 +47,26 @@ jobs:
         env:
           SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
           SUPABASE_KEY: ${{ secrets.SUPABASE_KEY }}
+          SUPABASE_SERVICE_KEY: ${{ secrets.SUPABASE_SERVICE_KEY }}
           ODDS_API_KEY: ${{ secrets.ODDS_API_KEY }}
         run: |
           missing=""
           [ -z "$SUPABASE_URL" ]  && missing="$missing SUPABASE_URL"
           [ -z "$SUPABASE_KEY" ]  && missing="$missing SUPABASE_KEY"
+          [ -z "$SUPABASE_SERVICE_KEY" ] && missing="$missing SUPABASE_SERVICE_KEY"
           [ -z "$ODDS_API_KEY" ]  && missing="$missing ODDS_API_KEY"
           if [ -n "$missing" ]; then
             echo "::error::Missing secrets:$missing — job would otherwise exit 0 having scanned/persisted nothing"
+            exit 1
+          fi
+          # 2026-07-07 incident: SUPABASE_SERVICE_KEY was present but held the
+          # anon/publishable key, not the service_role secret — it authenticates
+          # fine (no 401) then fails every single write with RLS 42501, silently,
+          # for as long as nobody notices the "0/N persisted" log line. Decode
+          # the JWT locally (no network call) and fail loud right here instead.
+          role=$(python3 -c "import base64,json,os; s=os.environ.get('SUPABASE_SERVICE_KEY','').split('.'); print(json.loads(base64.urlsafe_b64decode(s[1]+'='*(-len(s[1])%4))).get('role','?') if len(s)>1 else '?')" 2>/dev/null || echo "?")
+          if [ "$role" != "service_role" ]; then
+            echo "::error::SUPABASE_SERVICE_KEY decodes to role='$role', not 'service_role' — this is the anon/publishable key, not the service_role secret. Writes will be rejected by RLS (42501). Fix: Supabase dashboard -> Project Settings -> API Keys -> copy the 'service_role' secret into this GitHub secret (not 'anon'/'public')."
             exit 1
           fi
 

@@ -163,7 +163,7 @@ http://localhost:5000
 | Endpoint | Method | Description |
 |----------|--------|-------------|
 | `/api/signals` | GET | Signaux actifs (JSON) |
-| `/api/scan` | POST | Déclencher un scan PAIM (via `on_demand.yml`) |
+| `/api/scan` | POST | Demander un scan PAIM — pose le flag `meta.scan_request`, ramassé par `golden_hour.yml` (≤ 30 min) |
 | `/api/audit/run` | POST | Déclencher `audit.yml` (requiert `GITHUB_PAT`) |
 | `/api/health` | GET | Health check |
 

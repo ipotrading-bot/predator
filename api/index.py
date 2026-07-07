@@ -11,7 +11,8 @@ from datetime import datetime, timedelta, timezone as _tz
 import requests
 from dotenv import load_dotenv
 from flask import Flask, jsonify, render_template, send_from_directory
-from supabase import create_client
+
+from core.db import get_db as _get_db_client, MissingCredentialsError
 
 log = logging.getLogger("PREDATOR.api")
 
@@ -30,10 +31,14 @@ def no_cache(response):
     return response
 
 
-def _db():
-    url = os.environ.get("SUPABASE_URL")
-    key = os.environ.get("SUPABASE_KEY")
-    return create_client(url, key) if url and key else None
+def _db(write: bool = False):
+    """write=False (default, every route except /api/scan): anon key, safe
+    for reads, returns None if unconfigured so routes degrade gracefully.
+    write=True (/api/scan only): requires SUPABASE_SERVICE_KEY — raises
+    MissingCredentialsError if it's absent/wrong, which the one call site
+    below turns into an honest error response instead of a silent RLS
+    failure on the meta-table upsert."""
+    return _get_db_client(write=write)
 
 
 def _get_meta(sb, key: str) -> dict | None:
@@ -520,7 +525,15 @@ _SCAN_REQUEST_COOLDOWN_S = 120  # golden_hour.yml picks this up on its next run 
 
 @app.route("/api/scan", methods=["POST"])
 def trigger_scan():
-    sb = _db()
+    # This route WRITES to meta (scan_request) — RLS rejects that from the
+    # anon key, so it needs the same service_role client the batch scripts
+    # use, not the read-only _db() the rest of this file relies on.
+    try:
+        sb = _db(write=True)
+    except MissingCredentialsError as e:
+        log.error("scan trigger: %s", e)
+        return jsonify({"error": "SUPABASE_SERVICE_KEY manquant/invalide sur ce déploiement — "
+                                  "le bouton Scanner ne peut pas écrire la demande"}), 503
     if not sb:
         return jsonify({"error": "Base de données non configurée"}), 503
     try:

@@ -85,7 +85,7 @@ not a bug, unless one of those keys starts appearing in real `signals` rows.
 | `deep_scan.yml` | 4x/day | 48h-window, all markets |
 | `audit.yml` | every 6h | settlement + CLV + learning layer |
 | `rapport.yml` | 07:05 & 18:05 UTC | Telegram performance report |
-| `on_demand.yml` | `workflow_dispatch` only, no schedule | manual/debug re-run of the on-demand scan |
+| `guerrilla.yml` | manual only | scan without OddsAPI (1XBet direct + Gemini) when OddsAPI quota is exhausted |
 | `backfill.yml` | manual only | one-shot `ai_learning_ledger` repair |
 
 When a fix touches purge, audit, or learning-layer logic, sanity-check it against
@@ -97,12 +97,19 @@ own `*/5 * * * *` schedule (288 triggers/day, ~81% of every scheduled trigger in
 the repo combined). GitHub Actions silently delays/drops scheduled runs under
 that kind of load — `golden_hour.yml`, despite being declared `*/30`, was
 actually landing 1–4.5h apart, leaving the dashboard's "Dernier scan" hours
-stale. Fix: the schedule was removed from `on_demand.yml` entirely and its
+stale. Fix: the schedule was removed from `on_demand.yml`, and its
 `meta.scan_request` check was folded into a step at the top of
 `golden_hour.yml` (free — it rides golden_hour's existing 30-min cadence
-instead of its own separate schedule). When `scan_request` is pending,
-golden_hour runs `run_engine.py` with `GUERRILLA=1` instead of `GOLDEN_HOUR=1`
-for that tick (matching on_demand's old sans-OddsAPI behavior) and clears the
-flag. If dashboard "Scan" button latency or scan cadence looks off again,
-check this step first before re-adding a dedicated poller — a new dedicated
-schedule is exactly the mistake that caused the original throttling.
+instead of its own separate schedule). `on_demand.yml` itself was deleted
+outright on 2026-07-07 — once golden_hour.yml absorbed the check, the file
+was pure dead weight (a `workflow_dispatch`-only duplicate of logic that now
+lives in golden_hour.yml) and it additionally never passed
+`SUPABASE_SERVICE_KEY` to `run_engine.py`, so any manual trigger of it was
+guaranteed to fail every write via RLS regardless of secret correctness. When
+`scan_request` is pending, golden_hour runs `run_engine.py` with
+`GUERRILLA=1` instead of `GOLDEN_HOUR=1` for that tick and clears the flag
+(using `SUPABASE_SERVICE_KEY` for the DELETE — the anon key can't write
+`meta` either, see [[project_predator_supabase]]). If dashboard "Scan" button
+latency or scan cadence looks off again, check this step first before
+re-adding a dedicated poller — a new dedicated schedule is exactly the
+mistake that caused the original throttling.

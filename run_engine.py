@@ -15,8 +15,8 @@ from datetime import datetime, timedelta, timezone
 
 import requests
 from dotenv import load_dotenv
-from supabase import create_client
 
+from core.db import get_db, MissingCredentialsError
 from core.harvester import fetch_matches, fetch_pinnacle_prices, fetch_estimated_prices, fetch_mma_events, fetch_esports_events, fetch_alternative_sports_batch, fetch_betfair_prices
 from core.math_engine import to_binary, devig_prob, is_round_number_line
 from core.odds_api import fetch_odds
@@ -65,12 +65,6 @@ log.propagate = False
 if DEBUG_MODE:
     log.debug("DEBUG MODE ENABLED — verbose logging active")
 
-SUPABASE_URL   = os.environ.get("SUPABASE_URL")
-# Prefer the service_role key (bypasses RLS, meant for backend writes) —
-# fall back to the anon key for backward compatibility until the secret
-# is configured. run_engine.py only ever writes/deletes, it never reads
-# back for public display, so it has no business using the anon key at all.
-SUPABASE_KEY   = os.environ.get("SUPABASE_SERVICE_KEY") or os.environ.get("SUPABASE_KEY")
 TELEGRAM_TOKEN = os.environ.get("TELEGRAM_BOT_TOKEN")
 TELEGRAM_CHAT  = os.environ.get("TELEGRAM_CHAT_ID")
 
@@ -420,10 +414,6 @@ def _purge_old_signals(sb):
     # "delete where status=active AND match_time < now" above
 
 
-def _risk(edge_pct: float) -> str:
-    return _risk_flag(edge_pct)
-
-
 def _emit(signals, sb, now, log, name, sport, league, mkt_key, mkt_label,
           xbet_odd, pin_odd, sharp_prob, emoji, selection_name="", min_edge=None,
           match_time="", match_id="", sharp_sources=None, consensus_score=None,
@@ -474,7 +464,7 @@ def _emit(signals, sb, now, log, name, sport, league, mkt_key, mkt_label,
         elite = _BASKETBALL_ELITE_EDGE    # 2.0% — NBA Finales edges typiques 1.5–2.5%
     else:
         elite = _ELITE_EDGE               # 2.5% — autres sports
-    risk = "HIGH_VALUE" if edge >= elite * 2 else ("VALUE" if edge >= elite else "LOW_VALUE")
+    risk = _risk_flag(edge, elite)
     # Soccer AH0 Value Rule : si la cote DNB du favori > 1.5, upgrade LOW_VALUE → VALUE
     if ah0_value and risk == "LOW_VALUE":
         risk = "VALUE"
@@ -880,12 +870,24 @@ def run():
              now.strftime("%Y-%m-%d %H:%M:%S UTC"), MAX_MATCHES,
              " ".join(f"{k}={v}" for k, v in SPORT_QUOTA.items()))
 
+    # Credential failure must NOT block Telegram below — it's intentionally
+    # decoupled from Supabase (see "toujours envoyé" further down) and stays
+    # the user's only signal feed if the DB is misconfigured. So we log
+    # CRITICAL and keep going with sb=None, but still fail the job (non-zero
+    # exit) at the very end so GitHub Actions surfaces it loudly instead of
+    # a silent multi-hour string of per-signal RLS errors.
+    credentials_failed = False
     try:
-        sb = create_client(SUPABASE_URL, SUPABASE_KEY)
-        _purge_old_signals(sb)
-    except Exception as e:
-        log.error("Supabase init failed: %s", e)
+        sb = get_db(write=True)
+    except MissingCredentialsError as e:
+        log.critical("%s", e)
         sb = None
+        credentials_failed = True
+    if sb:
+        try:
+            _purge_old_signals(sb)
+        except Exception as e:
+            log.error("Purge failed (continuing): %s", e)
 
     # Load sport-specific MIN_EDGE thresholds from learning layer
     dyn_thresholds: dict[str, float] = {}
@@ -1045,6 +1047,8 @@ def run():
         log.info("⚡ GOLDEN HOUR — 0 events dans T-2h → exit rapide (lignes stables)")
         if sb:
             _heartbeat(sb, now, 0, 0)
+        if credentials_failed:
+            raise SystemExit(1)
         return
 
     # ── Tier 2: Gemini + Google Search — activé si OddsAPI vide/GUERRILLA ──
@@ -1057,6 +1061,8 @@ def run():
             _telegram(msg)
             if sb:
                 _heartbeat(sb, now, 0, 0)
+            if credentials_failed:
+                raise SystemExit(1)
             return
 
         log.info("%d matchs Melbet | Requête Pinnacle → Gemini Search...", len(xbet_matches))
@@ -1106,6 +1112,8 @@ def run():
             _telegram(msg)
             if sb:
                 _heartbeat(sb, now, 0, 0)
+            if credentials_failed:
+                raise SystemExit(1)
             return
         estimated_map = fetch_estimated_prices(xbet_matches)
         for m in xbet_matches[:MAX_MATCHES]:
@@ -1124,6 +1132,8 @@ def run():
         _telegram(msg)
         if sb:
             _heartbeat(sb, now, 0, 0)
+        if credentials_failed:
+            raise SystemExit(1)
         return
 
     candidates = []
@@ -1190,6 +1200,11 @@ def run():
     log.info("━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━")
     if sb:
         _heartbeat(sb, now, len(matches), len(signals))
+
+    if credentials_failed:
+        # Telegram already sent above — now fail the job so GitHub Actions
+        # shows red instead of a silent green run that persisted nothing.
+        raise SystemExit(1)
 
 
 if __name__ == "__main__":

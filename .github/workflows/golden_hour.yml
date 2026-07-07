@@ -34,15 +34,16 @@ name: Predator Golden Hour
 # ~81% de tous les triggers cron planifiés du repo) rien que pour ça, et
 # GitHub Actions retarde/ignore les schedules sous forte charge : ce fichier,
 # pourtant déclaré */30, tournait en réalité toutes les 1 à 4h30. Ce poller
-# a été supprimé (schedule retiré d'on_demand.yml) ; la vérification du flag
-# se fait maintenant ici, gratuitement, à chaque exécution déjà planifiée.
+# a été supprimé (on_demand.yml — schedule retiré puis fichier supprimé le
+# 2026-07-07, il ne faisait plus que dupliquer ce check) ; la vérification du
+# flag se fait maintenant ici, gratuitement, à chaque exécution déjà planifiée.
 
 on:
   schedule:
     - cron: '*/30 * * * *'  # Toutes les 30 minutes, 24h/24 (48/jour)
   workflow_dispatch:
 
-# Shared with engine.yml/deep_scan.yml/audit.yml/on_demand.yml — all read/write
+# Shared with engine.yml/deep_scan.yml/audit.yml — all read/write
 # the same `signals`/`ai_learning_ledger` rows via non-atomic delete+insert
 # (run_engine.py _save/_archive_before_purge, core/audit_engine.py settlement).
 # Without this, two of these workflows overlapping in wall-clock time can
@@ -66,14 +67,26 @@ jobs:
         env:
           SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
           SUPABASE_KEY: ${{ secrets.SUPABASE_KEY }}
+          SUPABASE_SERVICE_KEY: ${{ secrets.SUPABASE_SERVICE_KEY }}
           ODDS_API_KEY: ${{ secrets.ODDS_API_KEY }}
         run: |
           missing=""
           [ -z "$SUPABASE_URL" ]  && missing="$missing SUPABASE_URL"
           [ -z "$SUPABASE_KEY" ]  && missing="$missing SUPABASE_KEY"
+          [ -z "$SUPABASE_SERVICE_KEY" ] && missing="$missing SUPABASE_SERVICE_KEY"
           [ -z "$ODDS_API_KEY" ]  && missing="$missing ODDS_API_KEY"
           if [ -n "$missing" ]; then
             echo "::error::Missing secrets:$missing — job would otherwise exit 0 having scanned/persisted nothing"
+            exit 1
+          fi
+          # 2026-07-07 incident: SUPABASE_SERVICE_KEY was present but held the
+          # anon/publishable key, not the service_role secret — it authenticates
+          # fine (no 401) then fails every single write with RLS 42501, silently,
+          # for as long as nobody notices the "0/N persisted" log line. Decode
+          # the JWT locally (no network call) and fail loud right here instead.
+          role=$(python3 -c "import base64,json,os; s=os.environ.get('SUPABASE_SERVICE_KEY','').split('.'); print(json.loads(base64.urlsafe_b64decode(s[1]+'='*(-len(s[1])%4))).get('role','?') if len(s)>1 else '?')" 2>/dev/null || echo "?")
+          if [ "$role" != "service_role" ]; then
+            echo "::error::SUPABASE_SERVICE_KEY decodes to role='$role', not 'service_role' — this is the anon/publishable key, not the service_role secret. Writes will be rejected by RLS (42501). Fix: Supabase dashboard -> Project Settings -> API Keys -> copy the 'service_role' secret into this GitHub secret (not 'anon'/'public')."
             exit 1
           fi
 
@@ -82,6 +95,12 @@ jobs:
         env:
           SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
           SUPABASE_KEY: ${{ secrets.SUPABASE_KEY }}
+          # RLS blocks DELETE on `meta` for the anon key, same as `signals` —
+          # this used the anon key for the DELETE below until 2026-07-07,
+          # which meant the flag could silently fail to clear and keep
+          # re-triggering guerrilla mode every 30min. Read still uses the
+          # anon key (SELECT is allowed); only the DELETE needs service_role.
+          SUPABASE_SERVICE_KEY: ${{ secrets.SUPABASE_SERVICE_KEY }}
         run: |
           RESULT=$(curl -sf \
             -H "apikey: $SUPABASE_KEY" \
@@ -92,9 +111,10 @@ jobs:
           if [ "$COUNT" -gt "0" ]; then
             echo "manual=true" >> "$GITHUB_OUTPUT"
             curl -sf -X DELETE \
-              -H "apikey: $SUPABASE_KEY" \
-              -H "Authorization: Bearer $SUPABASE_KEY" \
-              "$SUPABASE_URL/rest/v1/meta?key=eq.scan_request" > /dev/null
+              -H "apikey: $SUPABASE_SERVICE_KEY" \
+              -H "Authorization: Bearer $SUPABASE_SERVICE_KEY" \
+              "$SUPABASE_URL/rest/v1/meta?key=eq.scan_request" > /dev/null \
+              || echo "::warning::scan_request flag DELETE failed — it may re-trigger guerrilla mode next run"
             echo "Demande de scan manuelle détectée — mode guerrilla (sans OddsAPI)"
           else
             echo "manual=false" >> "$GITHUB_OUTPUT"

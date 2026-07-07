@@ -9,7 +9,7 @@ on:
     - cron: '0 */6 * * *'   # Every 6h: 00:00 06:00 12:00 18:00 UTC
   workflow_dispatch:
 
-# Shared with golden_hour.yml/engine.yml/deep_scan.yml/on_demand.yml. Without
+# Shared with golden_hour.yml/engine.yml/deep_scan.yml. Without
 # this, a purge in one of those workflows can race a settlement UPDATE this
 # job is mid-way through on the same still-'active' signal row (purge wins,
 # the UPDATE silently affects 0 rows, the outcome is lost). Also prevents two
@@ -25,19 +25,39 @@ env:
 jobs:
   audit:
     runs-on: ubuntu-latest
-    timeout-minutes: 20
+    # Settlement is rate-limited (Gemini: 65s/30s backoff on 429) and each
+    # signal can need several Oracle fallback calls on top of that — 2026-07-07
+    # saw a 17-signal backlog take >20min and get killed mid-run by GitHub's
+    # timeout (job 28874758363), losing 7 signals to concurrent RLS failures
+    # on top of that. 45min gives real headroom for a backlog without
+    # papering over the real fix, which is not letting a backlog form (see
+    # the SERVICE_KEY role check below — the 2026-07-07 backlog itself was
+    # caused by settlement re-inserts failing RLS and never actually clearing).
+    timeout-minutes: 45
 
     steps:
       - name: Verify required secrets are present
         env:
           SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
           SUPABASE_KEY: ${{ secrets.SUPABASE_KEY }}
+          SUPABASE_SERVICE_KEY: ${{ secrets.SUPABASE_SERVICE_KEY }}
         run: |
           missing=""
           [ -z "$SUPABASE_URL" ]  && missing="$missing SUPABASE_URL"
           [ -z "$SUPABASE_KEY" ]  && missing="$missing SUPABASE_KEY"
+          [ -z "$SUPABASE_SERVICE_KEY" ] && missing="$missing SUPABASE_SERVICE_KEY"
           if [ -n "$missing" ]; then
             echo "::error::Missing secrets:$missing — job would otherwise exit 0 having audited nothing"
+            exit 1
+          fi
+          # 2026-07-07 incident: SUPABASE_SERVICE_KEY was present but held the
+          # anon/publishable key, not the service_role secret — it authenticates
+          # fine (no 401) then fails every single write with RLS 42501, silently,
+          # for as long as nobody notices the "SIGNAL X LOST" critical logs.
+          # Decode the JWT locally (no network call) and fail loud right here.
+          role=$(python3 -c "import base64,json,os; s=os.environ.get('SUPABASE_SERVICE_KEY','').split('.'); print(json.loads(base64.urlsafe_b64decode(s[1]+'='*(-len(s[1])%4))).get('role','?') if len(s)>1 else '?')" 2>/dev/null || echo "?")
+          if [ "$role" != "service_role" ]; then
+            echo "::error::SUPABASE_SERVICE_KEY decodes to role='$role', not 'service_role' — this is the anon/publishable key, not the service_role secret. Writes will be rejected by RLS (42501). Fix: Supabase dashboard -> Project Settings -> API Keys -> copy the 'service_role' secret into this GitHub secret (not 'anon'/'public')."
             exit 1
           fi
 

@@ -12,11 +12,11 @@ Usage:
   python backfill_ledger.py
 """
 import logging
-import os
 import time
 from datetime import datetime
 from dotenv import load_dotenv
-from supabase import create_client
+
+from core.db import get_db, MissingCredentialsError
 
 load_dotenv()
 
@@ -43,13 +43,14 @@ def _ttm(match_time, scanned_at):
         return None
 
 def run():
-    # Prefer service_role (bypasses RLS) — fall back to anon for backward
-    # compatibility until the secret is configured. This is a write-only
-    # repair script, never a public-facing reader.
-    sb = create_client(
-        os.environ["SUPABASE_URL"],
-        os.environ.get("SUPABASE_SERVICE_KEY") or os.environ["SUPABASE_KEY"],
-    )
+    # This is a write-only repair script, never a public-facing reader —
+    # write=True fails fast if SUPABASE_SERVICE_KEY is missing/wrong instead
+    # of silently degrading to the anon key (RLS would reject every insert).
+    try:
+        sb = get_db(write=True)
+    except MissingCredentialsError as e:
+        log.critical("%s", e)
+        raise SystemExit(1)
 
     # 1) Which signal_ids are already in the ledger? (avoid duplicates)
     existing = sb.table("ai_learning_ledger").select("signal_id").execute()

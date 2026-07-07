@@ -8,12 +8,13 @@ import logging
 import os
 import re
 
+from core.db import log_to_ledger, replace_signal_row
 from core.http_utils import post_with_retry
 
 log = logging.getLogger("PREDATOR.settlement")
 
 GEMINI_URL = "https://generativelanguage.googleapis.com/v1beta/models/gemini-2.0-flash:generateContent"
-_SETTLEMENT_OPTIONAL = {"outcome", "settled_at"}
+_SETTLEMENT_OPTIONAL = frozenset({"outcome", "settled_at"})
 
 
 def fetch_match_result(match_name: str, sport: str, match_date: str = "") -> dict | None:
@@ -143,74 +144,21 @@ def settle_signal(sb, sig: dict, now_iso: str) -> bool:
     orig_pin = sig.get("pinnacle_price") or 0.0
     clv = round((sig["xbet_odd"] / orig_pin - 1) * 100, 2) if orig_pin > 1.01 else 0.0
 
-    match_time = sig.get("match_time")
-    scanned_at = sig.get("scanned_at")
-    ttm = None
-    if match_time and scanned_at:
-        try:
-            from datetime import datetime as _dt
-            mt = _dt.fromisoformat(match_time.replace("Z", "+00:00"))
-            sc = _dt.fromisoformat(scanned_at.replace("Z", "+00:00"))
-            ttm = int((mt - sc).total_seconds() / 60)
-        except Exception:
-            pass
-
-    # DELETE + INSERT — RLS anon key blocks UPDATE
+    # DELETE + INSERT — RLS blocks UPDATE outright on this table's policies.
+    # Shared with core/audit_engine.py's _update_signal() — see
+    # core/db.py:replace_signal_row for the implementation.
     merged = {**sig, **{
         "status":    "settled",
         "clv_pct":   float(clv),
         "closed_at": now_iso,
         "outcome":   outcome,
     }}
-    sig_id = merged.pop("id", None)
-    try:
-        sb.table("signals").delete().eq("id", sig_id).execute()
-    except Exception as e:
-        log.error("settle_signal delete [%s]: %s", match, e)
+    if not replace_signal_row(sb, sig["id"], merged, optional_cols=_SETTLEMENT_OPTIONAL):
         return False
-    try:
-        sb.table("signals").insert(merged).execute()
-        log.info("SETTLED  | %s %d-%d | outcome=%s | CLV %+.2f%%",
-                 match, hs, as_, outcome, clv)
-    except Exception as e:
-        if any(c in str(e) for c in _SETTLEMENT_OPTIONAL):
-            core = {k: v for k, v in merged.items() if k not in _SETTLEMENT_OPTIONAL}
-            try:
-                sb.table("signals").insert(core).execute()
-                log.info("SETTLED (schema fallback) | %s", match)
-            except Exception as e2:
-                log.critical("SIGNAL %s LOST after delete — settle fallback failed: %s", sig_id, e2)
-                return False
-        else:
-            log.critical("SIGNAL %s LOST after delete — settle insert failed: %s", sig_id, e)
-            return False
+    log.info("SETTLED  | %s %d-%d | outcome=%s | CLV %+.2f%%", match, hs, as_, outcome, clv)
 
-    # Feed ai_learning_ledger with real settled outcome
-    try:
-        sb.table("ai_learning_ledger").insert({
-            "signal_id":             sig_id,
-            "match":                 match,
-            "sport":                 sport,
-            "league":                sig.get("league"),
-            "market_type":           sig.get("market_key"),
-            "market":                sig.get("market"),
-            "selection":             sig.get("selection_name"),
-            "odds":                  sig.get("xbet_odd"),
-            "time_to_match_minutes": ttm,
-            "initial_edge":          sig.get("edge_pct"),
-            "clv_final":             float(clv),
-            "was_clv_positive":      clv > 0,
-            "outcome":               outcome,
-        }).execute()
-    except Exception as e:
-        # Settlement of the `signals` row above already succeeded — don't
-        # return False here (audit_one would re-run CLV audit on an already-
-        # settled signal). But a failure here means /performance and the
-        # learning layer silently never see this outcome, most likely
-        # because sql/migrate_v9_4_ledger_display_fields.sql (market,
-        # selection, odds columns) hasn't been applied to this DB yet —
-        # log at CRITICAL so it's not lost among routine warnings.
-        log.critical("ai_learning_ledger INSERT FAILED [%s] — check migration "
-                      "sql/migrate_v9_4_ledger_display_fields.sql is applied: %s", match, e)
+    # Feed ai_learning_ledger with real settled outcome — see core/db.py for
+    # why a failure here is CRITICAL rather than a routine warning.
+    log_to_ledger(sb, sig, float(clv), outcome)
 
     return True

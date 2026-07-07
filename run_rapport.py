@@ -13,13 +13,9 @@ from datetime import datetime, timedelta, timezone
 
 import requests
 from dotenv import load_dotenv
-from supabase import create_client
 
-from core.constants import (
-    ELITE_EDGE as _ELITE_EDGE,
-    kelly_stake as _kelly_stake,
-    risk_flag as _risk_flag,
-)
+from core.constants import ELITE_EDGE as _ELITE_EDGE, kelly_stake as _kelly_stake
+from core.db import get_db
 
 load_dotenv()
 
@@ -35,8 +31,6 @@ log.propagate = False
 
 TELEGRAM_TOKEN = os.environ.get("TELEGRAM_BOT_TOKEN")
 TELEGRAM_CHAT  = os.environ.get("TELEGRAM_CHAT_ID")
-SUPABASE_URL   = os.environ.get("SUPABASE_URL")
-SUPABASE_KEY   = os.environ.get("SUPABASE_KEY")
 
 BANKROLL       = 1000   # Bankroll de référence pour les mises Kelly
 SPORT_EMOJI    = {"soccer": "⚽", "basketball": "🏀", "tennis": "🎾"}
@@ -117,9 +111,11 @@ def run():
     log.info("━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━")
     log.info("PREDATOR RAPPORT — %s", now.strftime("%Y-%m-%d %H:%M UTC"))
 
-    # ── Connexion Supabase ────────────────────────────────────────────
+    # ── Connexion Supabase (lecture seule — clé anon suffit) ───────────
     try:
-        sb = create_client(SUPABASE_URL, SUPABASE_KEY)
+        sb = get_db(write=False)
+        if sb is None:
+            raise RuntimeError("SUPABASE_URL/SUPABASE_KEY not configured")
     except Exception as e:
         log.error("Supabase KO: %s", e)
         _send(
