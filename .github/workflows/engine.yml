@@ -1,17 +1,14 @@
 name: Predator Engine
 
 # ══════════════════════════════════════════════════════════════════
-# BUDGET 20 000 req/mois — Optimisation 11 sport keys (100 %)
-#
-#   Golden Hour : 48 exec/j × 11 keys =  528 req/j → 15 840/mois
-#   Engine      : 10 exec/j × 11 keys =  110 req/j →  3 300/mois
-#   Deep Scan   :  4 exec/j × 11 keys =   44 req/j →  1 320/mois
-#   ──────────────────────────────────────────────────────────────
-#   TOTAL                              =  682 req/j → 20 460/mois
-#   Quota guard (50 req restantes)     →  usage effectif ≈ 100 % ✓
+# BUDGET — voir golden_hour.yml pour le détail : SPORT_KEYS a 19 clés
+# réelles (pas 11), donc l'usage réel (~35 857 req/mois) dépasse de ~79%
+# le budget de 20 000/mois annoncé ici à l'origine. Décision produit à
+# prendre (réduire SPORT_KEYS ou confirmer le palier OddsAPI), pas un
+# bug de code — voir le commentaire détaillé dans golden_hour.yml.
 # ══════════════════════════════════════════════════════════════════
 #
-# Sessions alignées sur les fenêtres d'inefficience marché (11 sports) :
+# Sessions alignées sur les fenêtres d'inefficience marché :
 #   00:00 — Minuit UTC : NBA/NHL tip-off + MLB late
 #   02:00 — Nuit US late / Copa late / KBO pré-ouverture
 #   04:00 — Pré-KBO/NPB matin Asie (06:00–13:00 UTC = fenêtre lag max)
@@ -41,6 +38,14 @@ on:
     - cron: '3 18 * * *'   # EU close : NBA/NHL pre-game T-4h           — 18:00 UTC
     - cron: '3 22 * * *'   # US evening : NBA/NHL tip-off + Copa nuit   — 22:00 UTC
   workflow_dispatch:
+
+# Shared with golden_hour.yml/deep_scan.yml/audit.yml/on_demand.yml — the
+# minute-offset above only avoids same-minute starts, it doesn't prevent
+# overlap once a run takes several minutes. See golden_hour.yml for the
+# full rationale.
+concurrency:
+  group: predator-signals-write
+  cancel-in-progress: false
 
 env:
   FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: true

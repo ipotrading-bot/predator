@@ -9,6 +9,16 @@ on:
     - cron: '0 */6 * * *'   # Every 6h: 00:00 06:00 12:00 18:00 UTC
   workflow_dispatch:
 
+# Shared with golden_hour.yml/engine.yml/deep_scan.yml/on_demand.yml. Without
+# this, a purge in one of those workflows can race a settlement UPDATE this
+# job is mid-way through on the same still-'active' signal row (purge wins,
+# the UPDATE silently affects 0 rows, the outcome is lost). Also prevents two
+# overlapping audit.yml runs (scheduled + manual) from double-settling the
+# same signal.
+concurrency:
+  group: predator-signals-write
+  cancel-in-progress: false
+
 env:
   FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: true
 

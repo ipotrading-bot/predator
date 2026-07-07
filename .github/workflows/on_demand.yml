@@ -16,6 +16,13 @@ name: Predator On-Demand Scan
 on:
   workflow_dispatch:
 
+# Shared with golden_hour.yml/engine.yml/deep_scan.yml/audit.yml — this is
+# manual-trigger-only now, but if someone fires it while another of those is
+# running it would still race the same signals/ai_learning_ledger rows.
+concurrency:
+  group: predator-signals-write
+  cancel-in-progress: false
+
 env:
   FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: true
 

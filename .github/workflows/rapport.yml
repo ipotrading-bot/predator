@@ -1,6 +1,6 @@
 name: Predator Rapport
 
-# Rapport Telegram à 06:05 UTC et 18:05 UTC (après le scan de 06:00 / 18:00)
+# Rapport Telegram à 07:05 UTC et 18:05 UTC (après le scan de 07:00 / 18:00)
 # Envoie : équipe, marché, cote, mise Kelly, alerte erreur si moteur KO
 
 on:

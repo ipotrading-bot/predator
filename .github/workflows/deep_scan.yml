@@ -1,10 +1,10 @@
 name: Predator Deep Scan 48h
 
 # ══════════════════════════════════════════════════════════════════
-# BUDGET 20 000 req/mois — Optimisation 11 sport keys (100 %)
-#
-#   Ce fichier : D = 4 scans/jour × 11 keys = 44 req/j → 1 320/mois
-#   (relevé de 3→4 pour maximiser la couverture 48h)
+# BUDGET — voir golden_hour.yml pour le détail : SPORT_KEYS a 19 clés
+# réelles (pas 11), donc ce fichier consomme ~76 req/j → ~2 313/mois,
+# pas 44/1 320. Le total réel du repo dépasse de ~79% le budget de
+# 20 000/mois annoncé ici à l'origine.
 #
 # Deep scan — horizon 48h, MAX_MATCHES=100, tous marchés (h2h+spreads+totals)
 # Décalé de 30 min par rapport à Engine pour éviter les doublons en DB.
@@ -25,6 +25,14 @@ on:
     - cron: '33 17 * * *'   # 17:30 UTC — Copa soirée + NBA/NHL T-5h
     - cron: '33 23 * * *'   # 23:30 UTC — NBA/NHL live + MLB final + Copa nuit
   workflow_dispatch:
+
+# Shared with golden_hour.yml/engine.yml/audit.yml/on_demand.yml — the
+# minute-offset above only avoids same-minute starts, it doesn't prevent
+# overlap once a run takes several minutes (this job's timeout is 25min).
+# See golden_hour.yml for the full rationale.
+concurrency:
+  group: predator-signals-write
+  cancel-in-progress: false
 
 env:
   FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: true

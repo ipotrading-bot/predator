@@ -1,18 +1,27 @@
 name: Predator Golden Hour
 
 # ══════════════════════════════════════════════════════════════════
-# BUDGET 20 000 req/mois — Optimisation 11 sport keys (100 %)
+# BUDGET — SPORT_KEYS (core/odds_api.py) a 19 clés actives réelles, pas 11 :
+# ce chiffre a déjà dérivé une fois (voir docstring d'odds_api.py) et a
+# recommencé à dériver silencieusement depuis l'ajout des ligues Big-5.
 #
-#   Golden Hour : 48 exec/j × 11 keys =  528 req/j → 15 840/mois
-#   Engine      : 10 exec/j × 11 keys =  110 req/j →  3 300/mois
-#   Deep Scan   :  4 exec/j × 11 keys =   44 req/j →  1 320/mois
+#   Golden Hour : 48 exec/j × 19 keys =  912 req/j → ~27 760/mois
+#   Engine      : 10 exec/j × 19 keys =  190 req/j →  ~5 784/mois
+#   Deep Scan   :  4 exec/j × 19 keys =   76 req/j →  ~2 313/mois
 #   ──────────────────────────────────────────────────────────────
-#   TOTAL brut                         =  682 req/j → 20 460/mois
-#   Quota guard (stop à 50 restantes)  →  usage effectif ≈ 100 % ✓
+#   TOTAL réel                         = 1178 req/j → ~35 857/mois
+#   Budget annoncé                     = 20 000/mois — DÉPASSÉ de ~79 %
+#
+# ⚠️ Décision produit à prendre (pas un bug de code) : réduire SPORT_KEYS ou
+# confirmer/upgrader le palier OddsAPI réellement souscrit. Le quota guard
+# (`quota_remaining < 50` dans core/odds_api.py) empêche un blocage total,
+# mais à ce volume il va se déclencher souvent — voir le fix du 2026-07-07
+# qui empêche au moins la perte totale des events déjà récupérés ce
+# scan-là quand ça arrive (HTTP 422 faisait `return []` au lieu de `break`).
 # ══════════════════════════════════════════════════════════════════
 #
 # Fenêtre T-120min — détecte les mouvements de ligne Pinnacle→1XBet
-# pré-match sur les 11 sports sélectionnés (lag documenté uniquement).
+# pré-match sur les sports sélectionnés (lag documenté uniquement).
 # Intervalle 30 min = couverture optimale, 48 passes/jour.
 #
 # Absorbe aussi la demande de scan manuel (bouton Scanner du dashboard) —
@@ -27,6 +36,17 @@ on:
   schedule:
     - cron: '*/30 * * * *'  # Toutes les 30 minutes, 24h/24 (48/jour)
   workflow_dispatch:
+
+# Shared with engine.yml/deep_scan.yml/audit.yml/on_demand.yml — all read/write
+# the same `signals`/`ai_learning_ledger` rows via non-atomic delete+insert
+# (run_engine.py _save/_archive_before_purge, core/audit_engine.py settlement).
+# Without this, two of these workflows overlapping in wall-clock time can
+# double-write or race a purge against an in-flight settlement update.
+# cancel-in-progress: false — queue the newer run rather than kill one
+# mid-write, which would be worse than waiting.
+concurrency:
+  group: predator-signals-write
+  cancel-in-progress: false
 
 env:
   FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: true
