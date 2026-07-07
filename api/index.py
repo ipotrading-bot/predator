@@ -532,8 +532,11 @@ def trigger_scan():
         sb = _db(write=True)
     except MissingCredentialsError as e:
         log.error("scan trigger: %s", e)
-        return jsonify({"error": "SUPABASE_SERVICE_KEY manquant/invalide sur ce déploiement — "
-                                  "le bouton Scanner ne peut pas écrire la demande"}), 503
+        # Surface the specific diagnostic (e.g. "decodes to role='anon'") —
+        # it doesn't leak the secret itself, only the JWT's role claim, and
+        # it's the difference between "not set" and "set to the wrong key"
+        # without needing to go dig through Vercel's function logs.
+        return jsonify({"error": f"Écriture Supabase impossible sur ce déploiement : {e}"}), 503
     if not sb:
         return jsonify({"error": "Base de données non configurée"}), 503
     try:
