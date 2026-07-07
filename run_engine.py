@@ -26,7 +26,7 @@ from core.paim_engine import (
     compute_alpha, MIN_EDGE, strict_team_match,
     market_label, SHARP_PROB_BY_MARKET, calculate_consensus_price,
 )
-from core.constants import ELITE_EDGE as _ELITE_EDGE, SOCCER_ELITE_EDGE as _SOCCER_ELITE_EDGE, BASKETBALL_ELITE_EDGE as _BASKETBALL_ELITE_EDGE, kelly_stake as _kelly_stake, risk_flag as _risk_flag, SUSPECT_EDGE as _SUSPECT_EDGE, KELLY_FRACTION as _KELLY_FRACTION, AH0_VALUE_THRESHOLD as _AH0_VALUE_THRESHOLD, PURGE_EDGE_FLOOR as _PURGE_EDGE_FLOOR, MLB_LINEUP_WINDOW_H as _MLB_LINEUP_WINDOW_H, PUSH_PROB_ROUND_LINE as _PUSH_PROB_ROUND_LINE
+from core.constants import ELITE_EDGE as _ELITE_EDGE, SOCCER_ELITE_EDGE as _SOCCER_ELITE_EDGE, BASKETBALL_ELITE_EDGE as _BASKETBALL_ELITE_EDGE, risk_flag as _risk_flag, SUSPECT_EDGE as _SUSPECT_EDGE, KELLY_FRACTION as _KELLY_FRACTION, AH0_VALUE_THRESHOLD as _AH0_VALUE_THRESHOLD, PURGE_EDGE_FLOOR as _PURGE_EDGE_FLOOR, MLB_LINEUP_WINDOW_H as _MLB_LINEUP_WINDOW_H, PUSH_PROB_ROUND_LINE as _PUSH_PROB_ROUND_LINE
 
 load_dotenv()
 
@@ -768,21 +768,22 @@ def _telegram_grouped(signals: list, now, session: str, matches: int,
     """Send all signals grouped by sport, sorted by edge desc."""
     sess      = session.strip()
     icon      = _session_icon(sess)
-    estimated = " ⚠️" if sharp_source == "Gemini/Estimateur" else ""
+    estimated = " ⚠️ (cotes estimées)" if sharp_source == "Gemini/Estimateur" else ""
     n_high    = sum(1 for s in signals if s.get("risk_flag") == "HIGH_VALUE")
     n_val     = sum(1 for s in signals if s.get("risk_flag") == "VALUE")
-    no_pin    = f" · ❓{no_pin_count}" if no_pin_count > 0 else ""
+    no_pin    = f" · ❓{no_pin_count} sans confirmation Pinnacle" if no_pin_count > 0 else ""
 
     if not signals:
         _telegram(
             f"⚫ PREDATOR · {now.strftime('%H:%M')} UTC · {sess} {icon}\n"
-            f"0 signaux · {matches} events · {sharp_source}"
+            f"0 pari trouvé sur {matches} matchs analysés · {sharp_source}"
         )
         return
 
     header = (
         f"📡 *PREDATOR* · {now.strftime('%H:%M')} UTC · {sess} {icon}\n"
-        f"🟢×{n_high}  🟡×{n_val}  —  {len(signals)} signaux · {matches} events\n"
+        f"{len(signals)} paris trouvés sur {matches} matchs analysés\n"
+        f"🟢 Fort×{n_high}  🟡 Moyen×{n_val}\n"
         f"`{sharp_source}`{estimated}{no_pin}\n"
     )
 
@@ -800,29 +801,45 @@ def _telegram_grouped(signals: list, now, session: str, matches: int,
         emoji = SPORT_EMOJI.get(sport, "🎯")
         lines: list[str] = [f"\n{emoji} *{sport.upper()}*\n"]
         for s in group:
-            prob  = s.get("sharp_prob", 0) or 0
-            stake = round(_kelly_stake(s["xbet_odd"], prob, sport=s.get("sport", "soccer")))
-            team  = s.get("selection_name") or s["match"]
-            if " vs " in team:
-                team = team.split(" vs ")[0].strip()
-            dot   = _RISK_DOT.get(s.get("risk_flag", ""), "⚪")
-            mt    = s.get("match_time") or ""
-            dt    = f" · {mt[8:10]}/{mt[5:7]} {mt[11:16]}" if mt else ""
-            prob_s  = f" · {int(prob * 100)}%" if prob > 0 else ""
-            stake_s = f" · *{stake}€/k*" if stake > 0 else ""
+            prob    = s.get("sharp_prob", 0) or 0
+            mkt_key = s.get("market_key", "")
+            dot     = _RISK_DOT.get(s.get("risk_flag", ""), "⚪")
+            mt      = s.get("match_time") or ""
+            dt      = f" · {mt[8:10]}/{mt[5:7]} {mt[11:16]}" if mt else ""
+
+            # Build one self-contained headline — avoid repeating the same
+            # team/point info in both the selection name and the market label.
+            if mkt_key.startswith("totals"):
+                headline = s["market"]  # e.g. "NBA Under 173.0" — already complete
+            elif mkt_key.startswith("spreads"):
+                sel = s.get("selection_name") or s["match"]
+                team, _, point = sel.rpartition(" ")
+                headline = f"{team.upper()} Handicap {point}"
+            else:
+                team = s.get("selection_name") or s["match"]
+                if " vs " in team:
+                    team = team.split(" vs ")[0].strip()
+                bet = "Sans le nul" if sport == "soccer" else "Vainqueur"
+                headline = f"{team.upper()} — {bet}"
+
             # HIGH VELOCITY: NBA/Soccer < 60 min avant coup d'envoi
             velocity = ""
             if mt:
                 try:
                     mt_dt = datetime.fromisoformat(mt.replace("Z", "+00:00"))
                     mins_left = (mt_dt - now).total_seconds() / 60
-                    if 0 < mins_left <= 60 and s.get("sport") in {"basketball", "soccer"}:
+                    if 0 < mins_left <= 60 and sport in {"basketball", "soccer"}:
                         velocity = "🔥 "
                 except (ValueError, OverflowError):
                     pass
+
+            detail = f"Avantage +{s['edge_pct']:.1f}%"
+            if prob > 0:
+                detail += f" · Confiance {int(prob * 100)}%"
+
             lines.append(
-                f"{dot} {velocity}*{team.upper()}*  `{s['market']} @ {s['xbet_odd']:.2f}`{dt}\n"
-                f"    `+{s['edge_pct']:.1f}%`{prob_s}{stake_s}\n"
+                f"{dot} {velocity}*{headline}*  `@ {s['xbet_odd']:.2f}`{dt}\n"
+                f"    {detail}\n"
             )
         body_parts.append("".join(lines))
 
