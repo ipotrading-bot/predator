@@ -80,14 +80,29 @@ not a bug, unless one of those keys starts appearing in real `signals` rows.
 
 | Workflow | Cadence | Purpose |
 |---|---|---|
-| `golden_hour.yml` | every 30 min | T-120min line-movement scan, purges on every run |
+| `golden_hour.yml` | every 30 min | T-120min line-movement scan, purges on every run; also checks `meta.scan_request` (see below) |
 | `engine.yml` | ~10x/day | full 72h-window scan |
 | `deep_scan.yml` | 4x/day | 48h-window, all markets |
 | `audit.yml` | every 6h | settlement + CLV + learning layer |
 | `rapport.yml` | 07:05 & 18:05 UTC | Telegram performance report |
-| `on_demand.yml` | every 5 min (polls `meta.scan_request`) | dashboard "Scan" button |
+| `on_demand.yml` | `workflow_dispatch` only, no schedule | manual/debug re-run of the on-demand scan |
 | `backfill.yml` | manual only | one-shot `ai_learning_ledger` repair |
 
 When a fix touches purge, audit, or learning-layer logic, sanity-check it against
 this cadence table — anything that runs more often than `audit.yml` (6h) can race
 ahead of settlement if it isn't carefully scoped to `status='active'`.
+
+**2026-07-07 incident**: `on_demand.yml` used to poll `meta.scan_request` on its
+own `*/5 * * * *` schedule (288 triggers/day, ~81% of every scheduled trigger in
+the repo combined). GitHub Actions silently delays/drops scheduled runs under
+that kind of load — `golden_hour.yml`, despite being declared `*/30`, was
+actually landing 1–4.5h apart, leaving the dashboard's "Dernier scan" hours
+stale. Fix: the schedule was removed from `on_demand.yml` entirely and its
+`meta.scan_request` check was folded into a step at the top of
+`golden_hour.yml` (free — it rides golden_hour's existing 30-min cadence
+instead of its own separate schedule). When `scan_request` is pending,
+golden_hour runs `run_engine.py` with `GUERRILLA=1` instead of `GOLDEN_HOUR=1`
+for that tick (matching on_demand's old sans-OddsAPI behavior) and clears the
+flag. If dashboard "Scan" button latency or scan cadence looks off again,
+check this step first before re-adding a dedicated poller — a new dedicated
+schedule is exactly the mistake that caused the original throttling.

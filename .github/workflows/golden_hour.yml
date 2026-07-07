@@ -14,6 +14,14 @@ name: Predator Golden Hour
 # Fenêtre T-120min — détecte les mouvements de ligne Pinnacle→1XBet
 # pré-match sur les 11 sports sélectionnés (lag documenté uniquement).
 # Intervalle 30 min = couverture optimale, 48 passes/jour.
+#
+# Absorbe aussi la demande de scan manuel (bouton Scanner du dashboard) —
+# on_demand.yml pollait Supabase toutes les 5 min (288 déclenchements/jour,
+# ~81% de tous les triggers cron planifiés du repo) rien que pour ça, et
+# GitHub Actions retarde/ignore les schedules sous forte charge : ce fichier,
+# pourtant déclaré */30, tournait en réalité toutes les 1 à 4h30. Ce poller
+# a été supprimé (schedule retiré d'on_demand.yml) ; la vérification du flag
+# se fait maintenant ici, gratuitement, à chaque exécution déjà planifiée.
 
 on:
   schedule:
@@ -29,6 +37,29 @@ jobs:
     timeout-minutes: 8
 
     steps:
+      - name: Check manual scan request
+        id: check
+        env:
+          SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
+          SUPABASE_KEY: ${{ secrets.SUPABASE_KEY }}
+        run: |
+          RESULT=$(curl -sf \
+            -H "apikey: $SUPABASE_KEY" \
+            -H "Authorization: Bearer $SUPABASE_KEY" \
+            "$SUPABASE_URL/rest/v1/meta?key=eq.scan_request&select=value" \
+            2>/dev/null || echo "[]")
+          COUNT=$(echo "$RESULT" | python3 -c "import json,sys; print(len(json.load(sys.stdin)))" 2>/dev/null || echo "0")
+          if [ "$COUNT" -gt "0" ]; then
+            echo "manual=true" >> "$GITHUB_OUTPUT"
+            curl -sf -X DELETE \
+              -H "apikey: $SUPABASE_KEY" \
+              -H "Authorization: Bearer $SUPABASE_KEY" \
+              "$SUPABASE_URL/rest/v1/meta?key=eq.scan_request" > /dev/null
+            echo "Demande de scan manuelle détectée — mode guerrilla (sans OddsAPI)"
+          else
+            echo "manual=false" >> "$GITHUB_OUTPUT"
+          fi
+
       - uses: actions/checkout@v4
 
       - uses: actions/setup-python@v5
@@ -41,7 +72,8 @@ jobs:
 
       - name: Run Golden Hour scan (T-120min)
         env:
-          GOLDEN_HOUR:        "1"
+          GOLDEN_HOUR:        ${{ steps.check.outputs.manual != 'true' && '1' || '' }}
+          GUERRILLA:          ${{ steps.check.outputs.manual == 'true' && '1' || '' }}
           ODDS_API_KEY:       ${{ secrets.ODDS_API_KEY }}
           GEMINI_API_KEY:     ${{ secrets.GEMINI_API_KEY }}
           SUPABASE_URL:       ${{ secrets.SUPABASE_URL }}
