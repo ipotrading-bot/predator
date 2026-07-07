@@ -3,12 +3,14 @@ core/odds_api.py — PAIM v8.3 — The Odds API (Hunter Multi-Sport Mode)
 Markets: h2h | spreads | totals selon le sport
 
 Budget 20 000 req/mois — SPORT_KEYS ci-dessous fait foi pour le nombre de
-clés actives (15 au moment d'écrire ceci — vérifier `len(SPORT_KEYS)`
-plutôt que de recopier un chiffre ici, qui a déjà divergé une fois).
+clés actives (19 au 2026-07-07 — vérifier `len(SPORT_KEYS)` plutôt que de
+recopier un chiffre ici ; ce chiffre a déjà divergé deux fois, la 2e après
+l'ajout des ligues Big-5 sans mise à jour des commentaires de budget).
 Cadence réelle (Golden Hour / Engine / Deep Scan) : voir les commentaires
 de budget dans .github/workflows/golden_hour.yml, engine.yml et
 deep_scan.yml — ce sont eux la source de vérité pour le calcul de quota,
-pas ce docstring.
+pas ce docstring. Au 2026-07-07 l'usage réel dépasse le budget annoncé de
+~79% (19 clés, pas 11) — décision produit en attente, voir golden_hour.yml.
 """
 import logging
 import os
@@ -275,8 +277,9 @@ def fetch_odds(api_key: str | None = None, hours_ahead: int = 24,
                 log.error("Auth error — check ODDS_API_KEY")
                 return []
             if r.status_code == 422:
-                log.warning("Quota exhausted — falling back to Gemini")
-                return []
+                log.warning("Quota exhausted after %d sport keys — keeping %d events fetched so far",
+                            list(keys_to_scan).index(sport_key), len(all_events))
+                break
             if r.status_code != 200:
                 log.warning("%s: HTTP %d", sport_key, r.status_code)
                 continue

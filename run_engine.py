@@ -119,7 +119,8 @@ GOLDEN_SPORT_KEYS = {
     "rugbyleague_nrl":                      "rugbyleague", # NRL — fenêtre AU evening
 }
 
-# Portfolio Balancer — quotas max par sport par scan (11 sports actifs uniquement)
+# Portfolio Balancer — quotas max par sport par scan (6 sport-types actifs uniquement,
+# pas à confondre avec les 19 SPORT_KEYS d'odds_api.py — voir constants.py KELLY_FRACTION)
 # Baseball élevé : MLB+KBO+NPB = 3 ligues simultanées (~19 events/fetch)
 # Soccer élevé  : FIFA WC 2026 + Copa Lib + Brasileirão + MLS
 _QUOTA_FAST = {
@@ -314,7 +315,15 @@ def _archive_before_purge(sb, signals: list):
             }).execute()
             archived += 1
         except Exception as e:
-            log.debug("archive_before_purge [%s]: %s", sig.get("match", "?"), str(e)[:60])
+            # Worst of the three ledger-insert sites: this signal is about to
+            # be purged from `signals` right after this call, so a swallowed
+            # failure here means the row is gone with NO trace anywhere, not
+            # even a queryable `signals` row. Was previously log.debug with
+            # the message truncated to 60 chars — nearly invisible. See
+            # core/settlement.py's settle_signal for the likely cause
+            # (sql/migrate_v9_4_ledger_display_fields.sql not yet applied).
+            log.critical("ai_learning_ledger INSERT FAILED before purge [%s] — "
+                          "signal will be LOST with no trace: %s", sig.get("match", "?"), e)
     if archived:
         log.info("Archived %d/%d signals to ledger before purge", archived, len(signals))
 
@@ -1044,6 +1053,9 @@ def run():
                 m["odds_pinnacle"] = pin_odds
                 matches.append(m)
             elif oracle_used < MAX_ORACLE:
+                oracle_used += 1  # count the attempt, not just successes — else a run of
+                                  # failures never trips MAX_ORACLE and every remaining
+                                  # match falls through to an uncapped Gemini call
                 sport = m.get("sport", "soccer")
                 pin_price, pin_team = get_pinnacle_price(
                     m["match"], sport=sport, league=m.get("league", "")
@@ -1052,7 +1064,6 @@ def run():
                     m["_oracle_price"] = pin_price
                     m["_oracle_team"]  = pin_team or ""
                     matches.append(m)
-                    oracle_used += 1
                     log.info("ORACLE  | %s — %.3f", m["match"], pin_price)
                 else:
                     no_pin_count += 1

@@ -71,8 +71,14 @@ def strict_team_match(name_a: str, name_b: str, threshold: float = 0.60) -> bool
         return True
     a = name_a.lower().strip()
     b = name_b.lower().strip()
-    if a in b or b in a:
-        return True
+    # No raw pre-normalization substring shortcut here on purpose: a plain
+    # `a in b or b in a` on un-stripped names (before tag-stripping/abbrev
+    # expansion below) matches on arbitrary short substrings — e.g. a
+    # generic token shared by two unrelated clubs in different leagues —
+    # and would silently bind one match's odds to a different match.
+    # Requiring normalization first (tag-strip + abbrev expand) before any
+    # containment check is strictly safer and covers the same legitimate
+    # cases (e.g. "Barcelona" vs "FC Barcelona").
     na = _normalize_team(a)
     nb = _normalize_team(b)
     if na and nb and (na in nb or nb in na):

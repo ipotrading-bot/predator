@@ -36,7 +36,9 @@ PUSH_PROB_ROUND_LINE = 0.10    # 10% — conservative MLB/baseball estimate
 # ERA, recent form, and matchup are not priced in until lineup is locked.
 MLB_LINEUP_WINDOW_H  = 6       # Hours — discard MLB totals signals beyond this
 
-# Fractional Kelly par sport — uniquement les 11 sports actifs sélectionnés
+# Fractional Kelly par sport — uniquement les 6 sport-types actifs sélectionnés
+# (à ne pas confondre avec les 19 SPORT_KEYS d'odds_api.py, plus fins : plusieurs
+# ligues/compétitions collapsent vers le même sport-type ici)
 # Principe : sharper market = fraction plus haute = mise plus agressive
 # Sports exclus (cricket, darts, boxing, tennis, etc.) → retirés pour réduire bruit
 KELLY_FRACTION = {

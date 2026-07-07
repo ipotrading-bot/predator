@@ -151,7 +151,12 @@ def _log_to_ledger(sb, sig: dict, clv: float, outcome: str):
             "outcome":               outcome,
         }).execute()
     except Exception as e:
-        log.warning("ai_learning_ledger: %s", e)
+        # See core/settlement.py's settle_signal for why this is CRITICAL,
+        # not a routine warning — a schema mismatch here means /performance
+        # and the learning layer silently never see this outcome.
+        log.critical("ai_learning_ledger INSERT FAILED [%s] — check migration "
+                      "sql/migrate_v9_4_ledger_display_fields.sql is applied: %s",
+                      sig.get("match"), e)
 
 
 def audit_one(sb, sig: dict, oracle_calls: list, settle_calls: list, now: datetime) -> str:

@@ -203,6 +203,14 @@ def settle_signal(sb, sig: dict, now_iso: str) -> bool:
             "outcome":               outcome,
         }).execute()
     except Exception as e:
-        log.warning("ai_learning_ledger [%s]: %s", match, e)
+        # Settlement of the `signals` row above already succeeded — don't
+        # return False here (audit_one would re-run CLV audit on an already-
+        # settled signal). But a failure here means /performance and the
+        # learning layer silently never see this outcome, most likely
+        # because sql/migrate_v9_4_ledger_display_fields.sql (market,
+        # selection, odds columns) hasn't been applied to this DB yet —
+        # log at CRITICAL so it's not lost among routine warnings.
+        log.critical("ai_learning_ledger INSERT FAILED [%s] — check migration "
+                      "sql/migrate_v9_4_ledger_display_fields.sql is applied: %s", match, e)
 
     return True
