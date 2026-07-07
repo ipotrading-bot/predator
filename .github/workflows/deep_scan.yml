@@ -43,6 +43,21 @@ jobs:
     timeout-minutes: 25
 
     steps:
+      - name: Verify required secrets are present
+        env:
+          SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
+          SUPABASE_KEY: ${{ secrets.SUPABASE_KEY }}
+          ODDS_API_KEY: ${{ secrets.ODDS_API_KEY }}
+        run: |
+          missing=""
+          [ -z "$SUPABASE_URL" ]  && missing="$missing SUPABASE_URL"
+          [ -z "$SUPABASE_KEY" ]  && missing="$missing SUPABASE_KEY"
+          [ -z "$ODDS_API_KEY" ]  && missing="$missing ODDS_API_KEY"
+          if [ -n "$missing" ]; then
+            echo "::error::Missing secrets:$missing — job would otherwise exit 0 having scanned/persisted nothing"
+            exit 1
+          fi
+
       - uses: actions/checkout@v4
 
       - uses: actions/setup-python@v5
