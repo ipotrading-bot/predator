@@ -1,11 +1,19 @@
 name: Predator On-Demand Scan
 
-# Vérifie Supabase toutes les 5 min pour une demande de scan manuelle.
+# Vérifie Supabase toutes les 15 min pour une demande de scan manuelle.
 # Déclenché par le bouton Scanner dans le dashboard — aucun PAT requis.
+#
+# Était */5 (288 déclenchements/jour) — GitHub Actions retarde/ignore les
+# cron schedules sous forte charge, et ce poller à lui seul représentait
+# ~81% de tous les triggers planifiés du repo (~354/jour au total). Résultat
+# constaté : golden_hour.yml (déclaré */30) tournait en réalité toutes les
+# 1 à 4h30, d'où les scans "Dernier scan" figés de plusieurs heures sur le
+# dashboard. Passage à */15 (96/jour) pour désengorger la queue de crons
+# GitHub et redonner à golden_hour une chance de tourner à sa cadence réelle.
 
 on:
   schedule:
-    - cron: '*/5 * * * *'  # Toutes les 5 minutes
+    - cron: '*/15 * * * *'  # Toutes les 15 minutes
   workflow_dispatch:
 
 env:
