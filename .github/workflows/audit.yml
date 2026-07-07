@@ -55,7 +55,17 @@ jobs:
           # fine (no 401) then fails every single write with RLS 42501, silently,
           # for as long as nobody notices the "SIGNAL X LOST" critical logs.
           # Decode the JWT locally (no network call) and fail loud right here.
-          role=$(python3 -c "import base64,json,os; s=os.environ.get('SUPABASE_SERVICE_KEY','').split('.'); print(json.loads(base64.urlsafe_b64decode(s[1]+'='*(-len(s[1])%4))).get('role','?') if len(s)>1 else '?')" 2>/dev/null || echo "?")
+          # Handles both the legacy JWT format (role claim in the payload)
+          # and Supabase's newer sb_secret_.../sb_publishable_... keys
+          # (role is the prefix, not a JWT at all — decoding one as base64
+          # silently returns role='?', which is what happened here).
+          if [[ "$SUPABASE_SERVICE_KEY" == sb_secret_* ]]; then
+            role="service_role"
+          elif [[ "$SUPABASE_SERVICE_KEY" == sb_publishable_* ]]; then
+            role="anon"
+          else
+            role=$(python3 -c "import base64,json,os; s=os.environ.get('SUPABASE_SERVICE_KEY','').split('.'); print(json.loads(base64.urlsafe_b64decode(s[1]+'='*(-len(s[1])%4))).get('role','?') if len(s)>1 else '?')" 2>/dev/null || echo "?")
+          fi
           if [ "$role" != "service_role" ]; then
             echo "::error::SUPABASE_SERVICE_KEY decodes to role='$role', not 'service_role' — this is the anon/publishable key, not the service_role secret. Writes will be rejected by RLS (42501). Fix: Supabase dashboard -> Project Settings -> API Keys -> copy the 'service_role' secret into this GitHub secret (not 'anon'/'public')."
             exit 1

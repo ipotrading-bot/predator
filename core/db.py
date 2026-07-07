@@ -11,11 +11,17 @@ produced the 2026-07-07 incident: ~17h of "0/N signals persisted" across
 every scheduled run, each showing green (success) in GitHub Actions because
 nothing ever raised.
 
-get_db(write=True) fails fast and loud instead: it decodes the JWT `role`
-claim locally (no network call) and refuses to hand back a client if the
-resolved key isn't actually service_role — so a wrong/missing key aborts the
-run in its first second with an unambiguous message, not 17 hours later
-across a wall of per-signal RLS errors.
+get_db(write=True) fails fast and loud instead: it resolves the key's
+privilege level locally (no network call) and refuses to hand back a client
+if it isn't actually service_role — so a wrong/missing key aborts the run in
+its first second with an unambiguous message, not 17 hours later across a
+wall of per-signal RLS errors. This covers both Supabase key formats: the
+legacy JWT (role claim in the payload) and the newer opaque
+sb_secret_.../sb_publishable_... keys (role is the prefix) — the first
+version of this fix only handled the JWT format, which passed on GitHub
+Actions but kept failing on Vercel because that deployment's key was the
+newer format and decoded to role=None instead of a clear anon/service_role
+verdict.
 """
 import base64
 import json
@@ -31,10 +37,25 @@ class MissingCredentialsError(RuntimeError):
     pass
 
 
-def _jwt_role(token: str) -> str | None:
-    """Decode (not verify — we trust the value came from our own secret
-    store) the `role` claim of a Supabase JWT. Returns None if the token
-    isn't a parseable JWT."""
+def _key_role(token: str) -> str | None:
+    """Identify the privilege level of a Supabase API key, old or new format.
+
+    Supabase has two key formats in the wild:
+    - Legacy JWT (still issued for most projects as of writing): a
+      `header.payload.signature` token whose payload has a `role` claim of
+      `anon` or `service_role`.
+    - New-style keys (`sb_publishable_...` / `sb_secret_...`): opaque
+      strings, not JWTs — the role is encoded in the prefix itself, there's
+      nothing to decode. A project provisioned/migrated after Supabase's
+      2025 key rotation shows these on its dashboard instead of (or beside)
+      the legacy anon/service_role JWTs.
+
+    Returns 'anon', 'service_role', or None if neither format is recognized.
+    """
+    if token.startswith("sb_secret_"):
+        return "service_role"
+    if token.startswith("sb_publishable_"):
+        return "anon"
     try:
         segment = token.split(".")[1]
         segment += "=" * (-len(segment) % 4)  # restore stripped b64 padding
@@ -72,15 +93,16 @@ def get_db(write: bool = False):
                 "service_role key — RLS rejects INSERT/UPDATE/DELETE from "
                 "the anon key. Refusing to silently fall back to SUPABASE_KEY."
             )
-        role = _jwt_role(service_key)
+        role = _key_role(service_key)
         if role != "service_role":
             raise MissingCredentialsError(
-                f"SUPABASE_SERVICE_KEY decodes to role={role!r}, not "
-                "'service_role' — this is the anon/publishable key, not the "
-                "service_role secret. Writes will be rejected by RLS. Fix: "
-                "Supabase dashboard -> Project Settings -> API Keys -> copy "
-                "the 'service_role' secret key into this GitHub/Vercel "
-                "secret (not 'anon'/'public')."
+                f"SUPABASE_SERVICE_KEY resolves to role={role!r}, not "
+                "'service_role' — this is the anon/publishable key (or an "
+                "unrecognized value), not the service_role/secret key. "
+                "Writes will be rejected by RLS. Fix: Supabase dashboard -> "
+                "Project Settings -> API Keys -> copy the 'service_role' "
+                "(legacy JWT) or 'secret' (sb_secret_... new format) key "
+                "into this GitHub/Vercel secret — not 'anon'/'publishable'."
             )
         return create_client(url, service_key)
 
