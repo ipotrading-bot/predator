@@ -118,7 +118,7 @@
           <span class="sig-match">{{ s.match }}<span class="sig-league"> · {{ s.league or '—' }}</span></span>
         </div>
         <div class="sig-r1-bot">
-          {% set flag_fr = {'HIGH_VALUE':'TOP VALEUR','VALUE':'VALEUR','SUSPECT_DATA':'SUSPECT'}[s.risk_flag] if s.risk_flag in ['HIGH_VALUE','VALUE','SUSPECT_DATA'] else s.risk_flag %}
+          {% set flag_fr = {'HIGH_VALUE':'TOP VALEUR','VALUE':'VALEUR','LOW_VALUE':'FAIBLE','SUSPECT_DATA':'SUSPECT'}[s.risk_flag] if s.risk_flag in ['HIGH_VALUE','VALUE','LOW_VALUE','SUSPECT_DATA'] else s.risk_flag %}
           <span class="sig-badge b-{{ s.risk_flag }}">{{ flag_fr }}</span>
           {% if s.get('_recent') %}<span class="sig-badge" style="background:rgba(100,100,100,.15);color:var(--t3);border-color:var(--bd)">✓ SETTLÉ</span>{% endif %}
           {% if s.match_time %}
@@ -363,7 +363,7 @@ function applyFilters(){
   const now=Date.now();
   const visible=allSig.filter(el=>{
     const ts=el.dataset.matchtime;
-    if(ts && new Date(ts)<now) return false;
+    if(ts && (now-new Date(ts))>7200000) return false;
     if(_sport!=='all' && el.dataset.sport!==_sport) return false;
     if(_day!=='all' && _sigDay(ts)!==_day) return false;
     return true;
