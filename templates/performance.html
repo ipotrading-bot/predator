@@ -123,7 +123,7 @@
   <div class="page-hdr">
     <div class="page-title">&#9660; PERFORMANCE — RÉSULTATS RÉELS</div>
     <div class="page-sub">
-      Historique complet des signaux audités &middot; WIN / LOSS / PUSH &middot; CLV réalisé<br>
+      Historique complet des signaux audités &middot; pronostic vs résultat réel du match<br>
       Source : <b>ai_learning_ledger</b> — alimenté par l'audit engine toutes les 6h
     </div>
   </div>
@@ -134,40 +134,22 @@
     <div class="pk">
       <div class="pk-v" style="color:var(--t1)">{{ global_s.total }}</div>
       <div class="pk-l">Signaux<br>archivés</div>
-      <div class="pk-s">{{ global_s.settled }} settlés</div>
+      <div class="pk-s">{{ global_s.settled }} avec résultat connu</div>
+    </div>
+    <div class="pk">
+      <div class="pk-v" style="color:var(--green)">{{ global_s.wins }}</div>
+      <div class="pk-l">Gagnés</div>
+    </div>
+    <div class="pk">
+      <div class="pk-v" style="color:var(--red)">{{ global_s.losses }}</div>
+      <div class="pk-l">Perdus</div>
     </div>
     <div class="pk">
       <div class="pk-v" style="color:{% if global_s.win_rate >= 65 %}var(--green){% elif global_s.win_rate >= 50 %}var(--yellow){% else %}var(--red){% endif %}">
         {{ "%.1f"|format(global_s.win_rate) }}%
       </div>
       <div class="pk-l">Win Rate<br><span style="color:var(--t3)">(cible ≥65%)</span></div>
-      <div class="pk-s">{{ global_s.wins }}W &middot; {{ global_s.losses }}L{% if global_s.pushes %} &middot; {{ global_s.pushes }}P{% endif %}</div>
     </div>
-    {% if global_s.avg_clv is not none %}
-    <div class="pk">
-      <div class="pk-v" style="color:{% if global_s.avg_clv >= 0 %}var(--green){% else %}var(--red){% endif %}">
-        {% if global_s.avg_clv > 0 %}+{% endif %}{{ "%.2f"|format(global_s.avg_clv) }}%
-      </div>
-      <div class="pk-l">CLV<br>Moyen</div>
-      <div class="pk-s">Closing Line Value</div>
-    </div>
-    {% endif %}
-    {% if global_s.clv_hit is not none %}
-    <div class="pk">
-      <div class="pk-v" style="color:{% if global_s.clv_hit >= 65 %}var(--green){% elif global_s.clv_hit >= 50 %}var(--yellow){% else %}var(--red){% endif %}">
-        {{ "%.1f"|format(global_s.clv_hit) }}%
-      </div>
-      <div class="pk-l">CLV Hit<br>Rate</div>
-      <div class="pk-s">CLV &ge; 0</div>
-    </div>
-    {% endif %}
-    {% if global_s.avg_edge is not none %}
-    <div class="pk">
-      <div class="pk-v" style="color:var(--blue)">+{{ "%.2f"|format(global_s.avg_edge) }}%</div>
-      <div class="pk-l">Edge<br>Moyen</div>
-      <div class="pk-s">Au moment du scan</div>
-    </div>
-    {% endif %}
   </div>
 
   {% if monthly %}
@@ -195,18 +177,6 @@
           <div class="mc-sl">Total</div>
         </div>
       </div>
-      <div class="mc-foot">
-        <span>CLV :
-          {% if m.avg_clv is not none %}
-            <span style="color:{% if m.avg_clv >= 0 %}var(--green){% else %}var(--red){% endif %}">{% if m.avg_clv > 0 %}+{% endif %}{{ "%.1f"|format(m.avg_clv) }}%</span>
-          {% else %}—{% endif %}
-        </span>
-        <span>Edge :
-          {% if m.avg_edge is not none %}
-            <span style="color:var(--blue)">+{{ "%.1f"|format(m.avg_edge) }}%</span>
-          {% else %}—{% endif %}
-        </span>
-      </div>
     </div>
     {% endfor %}
   </div>
@@ -221,10 +191,9 @@
           <th>Sport</th>
           <th>Match</th>
           <th>Marché</th>
-          <th>Edge</th>
-          <th>CLV</th>
+          <th>Pronostic</th>
+          <th>Côte</th>
           <th>Résultat</th>
-          <th>T-match</th>
           <th>Date</th>
         </tr>
       </thead>
@@ -238,23 +207,16 @@
             <div style="color:var(--t1);font-weight:700;white-space:nowrap">{{ r.match or '—' }}</div>
             {% if r.league %}<div style="color:var(--t3);font-size:10px">{{ r.league }}</div>{% endif %}
           </td>
-          <td style="color:var(--t2)">{{ r.market_type or '—' }}</td>
-          <td style="color:var(--blue);font-weight:700;font-family:var(--font-data)">
-            {% if r.initial_edge is not none %}+{{ "%.1f"|format(r.initial_edge) }}%{% else %}—{% endif %}
-          </td>
-          <td class="{% if r.clv_final is not none and r.clv_final >= 0 %}clv-pos{% elif r.clv_final is not none %}clv-neg{% else %}clv-nil{% endif %}">
-            {% if r.clv_final is not none %}{% if r.clv_final > 0 %}+{% endif %}{{ "%.2f"|format(r.clv_final) }}%{% else %}—{% endif %}
+          <td style="color:var(--t2)">{{ r.market or r.market_type or '—' }}</td>
+          <td style="color:var(--t1)">{{ r.selection or '—' }}</td>
+          <td style="color:var(--t1);font-weight:700;font-family:var(--font-data)">
+            {{ "%.2f"|format(r.odds) if r.odds else '—' }}
           </td>
           <td>
-            {% if oc == 'WIN' %}<span class="oc-win">WIN</span>
-            {% elif oc == 'LOSS' %}<span class="oc-loss">LOSS</span>
+            {% if oc == 'WIN' %}<span class="oc-win">✓ GAGNÉ</span>
+            {% elif oc == 'LOSS' %}<span class="oc-loss">✗ PERDU</span>
             {% elif oc == 'PUSH' %}<span class="oc-push">PUSH</span>
-            {% else %}<span class="oc-exp">expired</span>{% endif %}
-          </td>
-          <td style="color:var(--t3);font-family:var(--font-data);font-size:10px">
-            {% if r.time_to_match_minutes is not none %}
-              {{ (r.time_to_match_minutes // 60)|int }}h{{ '%02d'|format((r.time_to_match_minutes % 60)|int) }}
-            {% else %}—{% endif %}
+            {% else %}<span class="oc-exp">résultat inconnu</span>{% endif %}
           </td>
           <td class="ts">{{ r.created_at[:16]|replace('T',' ') if r.created_at else '—' }}</td>
         </tr>
@@ -275,7 +237,7 @@
 
 </div>
 
-<footer>PREDATOR PERFORMANCE v8.9 &nbsp;&middot;&nbsp; WIN/LOSS/PUSH &nbsp;&middot;&nbsp; CLV réalisé &nbsp;&middot;&nbsp; ai_learning_ledger</footer>
+<footer>PREDATOR PERFORMANCE v9.4 &nbsp;&middot;&nbsp; WIN/LOSS/PUSH &nbsp;&middot;&nbsp; ai_learning_ledger</footer>
 
 <nav class="bnav">
   <a href="/">
