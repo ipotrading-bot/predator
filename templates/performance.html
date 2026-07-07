@@ -22,9 +22,19 @@
 @media (min-width: 640px) { .wrap { padding-bottom: 52px; } }
 .nav-pages a.on, .bnav a.on { color: var(--green); }
 
+.wr-hero {
+  margin: 18px 16px 0; padding: 22px 20px; text-align: center;
+  background: var(--bg1); border: 1px solid var(--bd); border-radius: var(--r);
+}
+@media (min-width: 640px) { .wr-hero { margin: 22px 24px 0; } }
+.wr-hero-v { font-size: 52px; font-weight: 800; line-height: 1; font-family: var(--font-data); }
+.wr-hero-l { font-size: 11px; font-weight: 700; letter-spacing: 1px; color: var(--t2); margin-top: 8px; }
+.wr-hero-s { font-size: 11px; color: var(--t3); margin-top: 6px; font-family: var(--font-data); }
+
 .perf-kpis {
   display: flex; overflow-x: auto; scrollbar-width: none;
   border-bottom: 1px solid var(--bd); background: var(--bg1);
+  margin-top: 18px;
 }
 .perf-kpis::-webkit-scrollbar { display: none; }
 .pk {
@@ -130,6 +140,13 @@
 
   {% if global_s %}
 
+  {% set wr_color = 'var(--green)' if global_s.win_rate >= 65 else ('var(--yellow)' if global_s.win_rate >= 50 else 'var(--red)') %}
+  <div class="wr-hero" style="border-color:{{ wr_color }}">
+    <div class="wr-hero-v" style="color:{{ wr_color }}">{{ "%.1f"|format(global_s.win_rate) }}%</div>
+    <div class="wr-hero-l">POURCENTAGE DE GAINS <span style="color:var(--t3)">(cible &ge;65%)</span></div>
+    <div class="wr-hero-s">{{ global_s.wins }} gagnés &middot; {{ global_s.losses }} perdus{% if global_s.pushes %} &middot; {{ global_s.pushes }} push{% endif %}</div>
+  </div>
+
   <div class="perf-kpis">
     <div class="pk">
       <div class="pk-v" style="color:var(--t1)">{{ global_s.total }}</div>
@@ -143,12 +160,6 @@
     <div class="pk">
       <div class="pk-v" style="color:var(--red)">{{ global_s.losses }}</div>
       <div class="pk-l">Perdus</div>
-    </div>
-    <div class="pk">
-      <div class="pk-v" style="color:{% if global_s.win_rate >= 65 %}var(--green){% elif global_s.win_rate >= 50 %}var(--yellow){% else %}var(--red){% endif %}">
-        {{ "%.1f"|format(global_s.win_rate) }}%
-      </div>
-      <div class="pk-l">Win Rate<br><span style="color:var(--t3)">(cible ≥65%)</span></div>
     </div>
   </div>
 
