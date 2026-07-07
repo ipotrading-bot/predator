@@ -1,4 +1,4 @@
-# 🦅 PREDATOR PAIM v2.0 — Hedge Fund Sportif Autonome
+# 🦅 PREDATOR PAIM v8.8 — Hedge Fund Sportif Autonome
 
 > **PHD MIT ARCHITECTURE | DAKAR HUB**
 > 
@@ -187,9 +187,11 @@ predator/
 │   ├── settlement.py        # Résultat réel du match → outcome WIN/LOSS/PUSH
 │   ├── audit_engine.py     # Pipeline settlement + CLV (run_audit.py)
 │   ├── learning_layer.py  # Seuils MIN_EDGE adaptatifs par sport
-│   └── constants.py         # Single source of truth (seuils, Kelly, risk_flag)
-├── templates/               # index / ledger / audit / performance / worldcup (non servie)
+│   ├── constants.py         # Single source of truth (seuils, Kelly, risk_flag)
+│   └── db.py                 # Single source of truth pour les clients Supabase (lecture vs écriture)
+├── templates/               # index / ledger / audit / performance
 ├── sql/                      # Migrations Supabase (à exécuter manuellement)
+├── tests/                    # pytest — core/math_engine, core/constants, core/db
 ├── run_engine.py            # Pipeline de scan complet (Portfolio Balancer inclus)
 ├── run_audit.py             # Entry point de core/audit_engine.py
 ├── run_rapport.py           # Rapport Telegram bi-quotidien
