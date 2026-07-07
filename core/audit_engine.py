@@ -2,7 +2,9 @@
 core/audit_engine.py — PAIM v8.5 — Settlement + CLV Audit
 Runs every 6h via GitHub Actions (run_audit.py entry point).
 
-Pipeline for each signal scanned > AUDIT_LAG_H hours ago with status='active':
+Pipeline for each signal whose match kicked off > SETTLEMENT_GRACE_H hours ago
+(or, for legacy rows with no match_time, scanned > AUDIT_LAG_H hours ago) with
+status='active':
   1. Settlement pass — Gemini Search fetches real match score → status='settled'
      outcome = WIN | LOSS | PUSH | UNKNOWN
   2. CLV pass (if settlement failed) — fetch current Pinnacle closing line
@@ -34,7 +36,8 @@ log.setLevel(logging.INFO)
 log.addHandler(_handler)
 log.propagate = False
 
-AUDIT_LAG_H   = int(os.environ.get("AUDIT_LAG_H", 3))  # Override via env for manual runs
+AUDIT_LAG_H         = int(os.environ.get("AUDIT_LAG_H", 3))          # legacy fallback: scanned_at age, only used when match_time is missing
+SETTLEMENT_GRACE_H  = int(os.environ.get("SETTLEMENT_GRACE_H", 4))   # hours after match_time before we even attempt audit
 ORACLE_BUDGET = 30     # Max Gemini oracle calls per audit run
 SETTLE_BUDGET = 25     # Max Gemini settlement calls per audit run
 
@@ -45,20 +48,47 @@ TERMINAL_STATUSES = ["settled", "closed", "expired"]
 
 
 def fetch_pending(sb) -> list[dict]:
-    """Signals scanned > AUDIT_LAG_H ago that are still active."""
+    """
+    Active signals ready to audit.
+
+    BUGFIX: this used to gate purely on `scanned_at` age (3h after scan),
+    with no regard for `match_time`. A signal scanned hours or days ahead of
+    its kickoff would get audited — and, since the match hadn't even started,
+    Pass 1 (real settlement) always failed and Pass 2 immediately CLV-closed
+    it FOREVER (fetch_pending only ever selects status='active', so a closed
+    signal is never retried). That silently guaranteed most signals would
+    never get a real WIN/LOSS outcome. Gating on match_time + a grace period
+    instead ensures the match has actually had time to finish before we give
+    up on real settlement and fall back to a CLV-only close.
+    """
+    now = datetime.now(timezone.utc)
+    match_cutoff   = (now - timedelta(hours=SETTLEMENT_GRACE_H)).isoformat()
+    scanned_cutoff = (now - timedelta(hours=AUDIT_LAG_H)).isoformat()
+    rows: list[dict] = []
     try:
-        cutoff = (datetime.now(timezone.utc) - timedelta(hours=AUDIT_LAG_H)).isoformat()
         res = (sb.table("signals")
                .select("*")
                .eq("status", "active")
-               .lt("scanned_at", cutoff)
-               .order("scanned_at", desc=False)
+               .lt("match_time", match_cutoff)
+               .order("match_time", desc=False)
                .limit(100)
                .execute())
-        return res.data or []
+        rows.extend(res.data or [])
     except Exception as e:
-        log.error("fetch_pending: %s", e)
-        return []
+        log.error("fetch_pending (match_time): %s", e)
+    try:
+        # Legacy rows with no match_time recorded — fall back to scan age.
+        res2 = (sb.table("signals")
+                .select("*")
+                .eq("status", "active")
+                .is_("match_time", "null")
+                .lt("scanned_at", scanned_cutoff)
+                .limit(100)
+                .execute())
+        rows.extend(res2.data or [])
+    except Exception as e:
+        log.error("fetch_pending (legacy scanned_at): %s", e)
+    return rows
 
 
 def _update_signal(sb, sig: dict, payload: dict) -> bool:
