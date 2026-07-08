@@ -19,7 +19,21 @@ MAX_EDGE     = 15.0   # % — hard cap; above = data mapping error, reject
 SUSPECT_EDGE = 10.0   # % — safety trigger: major sport edge above this = SUSPECT_DATA (cap totals=15%)
 
 # ── Tax (PAIM v9.5) ───────────────────────────────────────────────────
-TAX_RATE = 0.20   # % withheld on net profit of a winning bet — see core/tax_engine.py
+# Set to 0.0 on 2026-07-08 — explicit operator instruction ("les 20%, on
+# s'en soucie plus") after a day of near-zero signal volume, most of it
+# caused by the now-fixed compute_alpha() k=1 gate (see git history
+# around a30cd39), but the operator's call here is broader: stop
+# accounting for the withholding tax in gating/sizing at all, trading
+# tax-adjusted rigor for volume. This does NOT mean the real bookmaker
+# stops withholding 20% on winnings — it means core.tax_engine's math
+# (min_edge_required/optimal_stake_fraction/is_combo_tax_viable, all
+# parameterized on this constant via run_engine.py's _TAX_RATE) now
+# computes as if there were no tax: lower edges pass, and Kelly stakes
+# are sized on the FULL untaxed payout — larger than the true tax-adjusted
+# optimum if 20% genuinely is still withheld in reality. Revert to 0.20
+# (the real rate — see core/tax_engine.py's module docstring for the tax
+# model) to restore tax-aware gating and sizing.
+TAX_RATE = 0.0   # % withheld on net profit of a winning bet — see core/tax_engine.py
 
 # The tax gate lives exclusively in core.tax_engine.suggest_system() /
 # is_combo_tax_viable() now, evaluated on the real assembled combo — NOT
