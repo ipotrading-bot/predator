@@ -369,7 +369,6 @@ def _purge_old_signals(sb):
         ("eq",  "status", "pending",   "status=pending",                        False),
         ("lt",  "created_at", cutoff_48h, ">48h old",                           False),
         ("gt",  "edge_pct", 15.0,                                        "edge > 15% (hard cap)",           True),
-        ("gt",  "edge_pct", 10.0,                                        "edge > 10% (SUSPECT)",            True),
         ("lte", "edge_pct", _PURGE_EDGE_FLOOR,                          f"edge <= {_PURGE_EDGE_FLOOR}% (bruit)", True),
         ("lte", "sharp_prob", 0.0,                                       "sharp_prob <= 0",                 True),
         ("is_", "market", "null",                                        "null market",                      True),
@@ -400,7 +399,24 @@ def _purge_old_signals(sb):
                 log.debug("Purged: %s", label)
         except Exception as e:
             log.debug("Supabase purge (%s): %s", label, str(e)[:60])
-    
+
+    # SUSPECT_DATA purge, scoped to match _emit()'s creation-time suspect_cap
+    # exactly (h2h: 10%, totals/spreads: 15% — the >15% hard cap above already
+    # covers everyone past that). A flat >10% purge here previously deleted
+    # legitimate totals/spreads signals in the 10-15% band within one purge
+    # cycle of being created — e.g. a HIGH_VALUE 11.4% totals signal purged
+    # ~1h after creation, before it could ever settle. See _emit()'s comment
+    # on suspect_cap for why 10-15% is valid for non-h2h markets.
+    try:
+        (sb.table("signals").delete()
+         .eq("status", "active")
+         .eq("market_key", "h2h")
+         .in_("sport", list(_MAJOR_SPORTS))
+         .gt("edge_pct", _SUSPECT_EDGE)
+         .execute())
+    except Exception as e:
+        log.debug("Supabase purge (h2h SUSPECT): %s", str(e)[:60])
+
     # ── Legacy market_key cleanup ──────────────────────────────────────
     for legacy_key in ("totals", "spreads"):
         try:
