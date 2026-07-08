@@ -1,0 +1,75 @@
+name: Predator Closing Line
+
+# Runs hourly to capture the REAL Pinnacle closing price (~5min before
+# kickoff) for signals about to go live — Task 3 of the PAIM v9.5 audit.
+# Independent of audit.yml's 6h settlement/CLV cadence: a 5-minute
+# pre-kickoff window rarely lines up with a 6h schedule, so most matches
+# would otherwise never get a genuine closing-line measurement at all.
+# Manual trigger available for testing.
+
+on:
+  schedule:
+    - cron: '0 * * * *'   # Every hour, on the hour
+  workflow_dispatch:
+
+# Shared with golden_hour.yml/engine.yml/deep_scan.yml/audit.yml — same
+# reasoning as audit.yml: avoid a purge or settlement UPDATE racing this
+# job's write to the same still-'active' signal row.
+concurrency:
+  group: predator-signals-write
+  cancel-in-progress: false
+
+env:
+  FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: true
+
+jobs:
+  closing-line:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+
+    steps:
+      - name: Verify required secrets are present
+        env:
+          SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
+          SUPABASE_KEY: ${{ secrets.SUPABASE_KEY }}
+          SUPABASE_SERVICE_KEY: ${{ secrets.SUPABASE_SERVICE_KEY }}
+        run: |
+          missing=""
+          [ -z "$SUPABASE_URL" ]  && missing="$missing SUPABASE_URL"
+          [ -z "$SUPABASE_KEY" ]  && missing="$missing SUPABASE_KEY"
+          [ -z "$SUPABASE_SERVICE_KEY" ] && missing="$missing SUPABASE_SERVICE_KEY"
+          if [ -n "$missing" ]; then
+            echo "::error::Missing secrets:$missing — job would otherwise exit 0 having captured nothing"
+            exit 1
+          fi
+          # Same RLS role check as audit.yml — see that workflow for the
+          # full 2026-07-07 incident writeup this guards against.
+          if [[ "$SUPABASE_SERVICE_KEY" == sb_secret_* ]]; then
+            role="service_role"
+          elif [[ "$SUPABASE_SERVICE_KEY" == sb_publishable_* ]]; then
+            role="anon"
+          else
+            role=$(python3 -c "import base64,json,os; s=os.environ.get('SUPABASE_SERVICE_KEY','').split('.'); print(json.loads(base64.urlsafe_b64decode(s[1]+'='*(-len(s[1])%4))).get('role','?') if len(s)>1 else '?')" 2>/dev/null || echo "?")
+          fi
+          if [ "$role" != "service_role" ]; then
+            echo "::error::SUPABASE_SERVICE_KEY decodes to role='$role', not 'service_role' — this is the anon/publishable key, not the service_role secret. Writes will be rejected by RLS (42501). Fix: Supabase dashboard -> Project Settings -> API Keys -> copy the 'service_role' secret into this GitHub secret (not 'anon'/'public')."
+            exit 1
+          fi
+
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+          cache: 'pip'
+
+      - name: Install dependencies
+        run: pip install -r requirements.txt
+
+      - name: Capture closing lines
+        env:
+          GEMINI_API_KEY:     ${{ secrets.GEMINI_API_KEY }}
+          SUPABASE_URL:       ${{ secrets.SUPABASE_URL }}
+          SUPABASE_KEY:       ${{ secrets.SUPABASE_KEY }}
+          SUPABASE_SERVICE_KEY: ${{ secrets.SUPABASE_SERVICE_KEY }}
+        run: python run_closing_line.py

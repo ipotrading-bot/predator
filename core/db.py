@@ -158,7 +158,36 @@ def log_to_ledger(sb, sig: dict, clv: float, outcome: str) -> None:
     signal. Failure here is logged CRITICAL (not swallowed as routine) —
     it means /performance and the learning layer silently never see this
     outcome, most commonly because
-    sql/migrate_v9_4_ledger_display_fields.sql hasn't been applied yet."""
+    sql/migrate_v9_4_ledger_display_fields.sql hasn't been applied yet.
+
+    `clv` is CLV only when the caller genuinely re-fetched a price at a
+    later point in time (core/audit_engine.py's oracle pass); when the
+    caller is core/settlement.py's settle_signal(), it is a re-derivation
+    of the entry edge (identical to `initial_edge` below) and must never be
+    used as a real closing-line signal — see core/settlement.py for why.
+    core/learning_layer.py must key its threshold adjustments off `outcome`
+    (real WIN/LOSS), never off this field.
+
+    `kelly_pct` carries the Kelly stake sizing (% of bankroll) recorded on
+    the signal at scan time, so a real ROI can later be computed as a
+    stake-weighted average — Σ(kelly_pct·(odds-1)) if WIN else -kelly_pct,
+    / Σ(kelly_pct) — instead of a flat per-bet average.
+
+    `closing_pinnacle_price`/`clv_pct_real` carry core/audit_engine.py's
+    genuine closing-line capture (Task 3, run_closing_line.py's hourly
+    job) forward past this signal's eventual purge from `signals` — this
+    is the only clv_pct_real* field that IS real CLV; see above for why
+    `clv` isn't.
+
+    `sharp_prob` carries the model's own predicted win probability at scan
+    time — needed for a Brier score (core/stats_utils.py), which a bare
+    win rate can't provide since it says nothing about whether the STATED
+    confidence was trustworthy.
+
+    All of the above require sql/migrate_v9_5_learning_integrity.sql,
+    sql/migrate_v9_6_closing_line.sql, and sql/migrate_v9_7_ledger_brier.sql;
+    until applied, the insert retries once with those columns stripped
+    (same optional_cols pattern as replace_signal_row)."""
     match_time = sig.get("match_time")
     scanned_at = sig.get("scanned_at")
     ttm = None
@@ -170,24 +199,42 @@ def log_to_ledger(sb, sig: dict, clv: float, outcome: str) -> None:
             ttm = int((mt - sc).total_seconds() / 60)
         except Exception:
             log.debug("_ttm parse failed for match_time=%s scanned_at=%s", match_time, scanned_at)
+    _optional = {
+        "kelly_pct":              sig.get("kelly_pct"),
+        "closing_pinnacle_price": sig.get("closing_pinnacle_price"),
+        "clv_pct_real":           sig.get("clv_pct_real"),
+        "sharp_prob":             sig.get("sharp_prob"),
+    }
+    payload = {
+        "signal_id":             sig.get("id"),
+        "match":                 sig["match"],
+        "sport":                 sig.get("sport"),
+        "league":                sig.get("league"),
+        "market_type":           sig.get("market_key"),
+        "market":                sig.get("market"),
+        "selection":             sig.get("selection_name"),
+        "odds":                  sig.get("xbet_odd"),
+        "time_to_match_minutes": ttm,
+        "initial_edge":          sig.get("edge_pct"),
+        "sharp_divergence_std":  None,
+        "clv_final":             clv,
+        "was_clv_positive":      clv > 0,
+        "outcome":               outcome,
+        **_optional,
+    }
     try:
-        sb.table("ai_learning_ledger").insert({
-            "signal_id":             sig.get("id"),
-            "match":                 sig["match"],
-            "sport":                 sig.get("sport"),
-            "league":                sig.get("league"),
-            "market_type":           sig.get("market_key"),
-            "market":                sig.get("market"),
-            "selection":             sig.get("selection_name"),
-            "odds":                  sig.get("xbet_odd"),
-            "time_to_match_minutes": ttm,
-            "initial_edge":          sig.get("edge_pct"),
-            "sharp_divergence_std":  None,
-            "clv_final":             clv,
-            "was_clv_positive":      clv > 0,
-            "outcome":               outcome,
-        }).execute()
+        sb.table("ai_learning_ledger").insert(payload).execute()
     except Exception as e:
-        log.critical("ai_learning_ledger INSERT FAILED [%s] — check migration "
-                      "sql/migrate_v9_4_ledger_display_fields.sql is applied: %s",
+        if any(c in str(e) for c in _optional):
+            try:
+                core = {k: v for k, v in payload.items() if k not in _optional}
+                sb.table("ai_learning_ledger").insert(core).execute()
+                return
+            except Exception as e2:
+                e = e2
+        log.critical("ai_learning_ledger INSERT FAILED [%s] — check migrations "
+                      "sql/migrate_v9_4_ledger_display_fields.sql, "
+                      "sql/migrate_v9_5_learning_integrity.sql, "
+                      "sql/migrate_v9_6_closing_line.sql, and "
+                      "sql/migrate_v9_7_ledger_brier.sql are applied: %s",
                       sig.get("match"), e)

@@ -10,8 +10,21 @@ from core.math_engine import devig_prob, is_round_number_line
 
 class TestComputeAlpha:
     def test_positive_edge_within_range(self):
-        edge, status = compute_alpha(xbet_odd=2.09, pinnacle_price=1.93, min_edge=1.5)
+        # Strong favorite (true_prob=0.80 from pinnacle_price=1.25) — tax
+        # floor at this probability is only ~5.75% (see
+        # core.constants.min_edge_for_k), comfortably cleared by a 10% edge.
+        edge, status = compute_alpha(xbet_odd=1.375, pinnacle_price=1.25, min_edge=1.5)
         assert status == "OK"
+        assert edge == pytest.approx(10.0, abs=0.01)
+
+    def test_near_coinflip_edge_rejected_by_tax_floor_even_if_above_flat_min_edge(self):
+        # Regression guard for PAIM v9.5: at true_prob~0.52 (near even-money),
+        # TAX_RATE=0.20 withheld on winnings-only requires ~13.9% raw edge to
+        # break even (core.tax_engine.min_edge_required) — far above the old
+        # flat min_edge=1.5%. An 8.29% edge here would have passed the old
+        # flat-threshold-only check but is a guaranteed net-of-tax loser.
+        edge, status = compute_alpha(xbet_odd=2.09, pinnacle_price=1.93, min_edge=1.5)
+        assert status == "DISCARD"
         assert edge == pytest.approx(8.29, abs=0.01)
 
     def test_edge_below_min_threshold_discarded(self):

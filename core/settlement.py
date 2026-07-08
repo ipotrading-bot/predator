@@ -142,23 +142,31 @@ def settle_signal(sb, sig: dict, now_iso: str) -> bool:
     )
 
     orig_pin = sig.get("pinnacle_price") or 0.0
-    clv = round((sig["xbet_odd"] / orig_pin - 1) * 100, 2) if orig_pin > 1.01 else 0.0
+    # NOT real CLV: xbet_odd/pinnacle_price are the exact same two values
+    # already used to compute edge_pct at scan time (see paim_engine.compute_alpha),
+    # so this is a re-derivation of the entry edge, not a closing-line
+    # comparison — it is already stored honestly as `initial_edge` in the
+    # ledger (core/db.py:log_to_ledger). Kept here only to populate the
+    # legacy `signals.clv_pct` display column until core/audit_engine.py's
+    # real closing-line pipeline (Task 3) lands. Never treat this as CLV.
+    entry_edge_pct = round((sig["xbet_odd"] / orig_pin - 1) * 100, 2) if orig_pin > 1.01 else 0.0
 
     # DELETE + INSERT — RLS blocks UPDATE outright on this table's policies.
     # Shared with core/audit_engine.py's _update_signal() — see
     # core/db.py:replace_signal_row for the implementation.
     merged = {**sig, **{
         "status":    "settled",
-        "clv_pct":   float(clv),
+        "clv_pct":   float(entry_edge_pct),
         "closed_at": now_iso,
         "outcome":   outcome,
     }}
     if not replace_signal_row(sb, sig["id"], merged, optional_cols=_SETTLEMENT_OPTIONAL):
         return False
-    log.info("SETTLED  | %s %d-%d | outcome=%s | CLV %+.2f%%", match, hs, as_, outcome, clv)
+    log.info("SETTLED  | %s %d-%d | outcome=%s | entry edge %+.2f%%", match, hs, as_, outcome, entry_edge_pct)
 
-    # Feed ai_learning_ledger with real settled outcome — see core/db.py for
-    # why a failure here is CRITICAL rather than a routine warning.
-    log_to_ledger(sb, sig, float(clv), outcome)
+    # Feed ai_learning_ledger with the real settled outcome — this is what
+    # core/learning_layer.py must key off of (never the clv_final/entry-edge
+    # value below, which cannot vary with the actual match result).
+    log_to_ledger(sb, sig, float(entry_edge_pct), outcome)
 
     return True

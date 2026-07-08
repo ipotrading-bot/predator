@@ -13,6 +13,7 @@ from dotenv import load_dotenv
 from flask import Flask, jsonify, render_template, send_from_directory
 
 from core.db import get_db as _get_db_client, MissingCredentialsError
+from core.stats_utils import bucket_predictions, p_breakeven, wilson_ci
 
 log = logging.getLogger("PREDATOR.api")
 
@@ -402,23 +403,64 @@ def performance():
 
             if rows:
                 settled = [r for r in rows if r.get("outcome") in ("WIN", "LOSS", "PUSH")]
+                decisive = [r for r in rows if r.get("outcome") in ("WIN", "LOSS")]
                 wins    = sum(1 for r in settled if r.get("outcome") == "WIN")
                 losses  = sum(1 for r in settled if r.get("outcome") == "LOSS")
                 pushes  = sum(1 for r in settled if r.get("outcome") == "PUSH")
                 clv_all = [r["clv_final"] for r in rows if r.get("clv_final") is not None]
                 edges   = [r["initial_edge"] for r in rows if r.get("initial_edge") is not None]
 
+                # Task 4: never show a win rate without its Wilson 95% CI
+                # and the tax-adjusted breakeven probability for the
+                # segment's average odds — a bare percentage hides both
+                # small-sample noise and whether it's even enough to clear
+                # TAX_RATE.
+                ci_lo, ci_hi = wilson_ci(wins, len(decisive))
+                decisive_odds = [r["odds"] for r in decisive if r.get("odds")]
+                avg_odds = sum(decisive_odds) / len(decisive_odds) if decisive_odds else None
+                breakeven = p_breakeven(avg_odds) if avg_odds else None
+
                 global_s = {
-                    "total":      len(rows),
-                    "settled":    len(settled),
-                    "wins":       wins,
-                    "losses":     losses,
-                    "pushes":     pushes,
-                    "win_rate":   round(wins / max(wins + losses, 1) * 100, 1),
-                    "avg_clv":    round(sum(clv_all) / len(clv_all), 2) if clv_all else None,
-                    "avg_edge":   round(sum(edges) / len(edges), 2) if edges else None,
-                    "clv_hit":    round(sum(1 for c in clv_all if c >= 0) / max(len(clv_all), 1) * 100, 1) if clv_all else None,
+                    "total":        len(rows),
+                    "settled":      len(settled),
+                    "wins":         wins,
+                    "losses":       losses,
+                    "pushes":       pushes,
+                    "win_rate":     round(wins / max(wins + losses, 1) * 100, 1),
+                    "win_rate_lo":  round(ci_lo * 100, 1),
+                    "win_rate_hi":  round(ci_hi * 100, 1),
+                    "p_breakeven":  round(breakeven * 100, 1) if breakeven is not None else None,
+                    "above_breakeven": (breakeven is not None and ci_lo > breakeven),
+                    "avg_clv":      round(sum(clv_all) / len(clv_all), 2) if clv_all else None,
+                    "avg_edge":     round(sum(edges) / len(edges), 2) if edges else None,
+                    "clv_hit":      round(sum(1 for c in clv_all if c >= 0) / max(len(clv_all), 1) * 100, 1) if clv_all else None,
                 }
+
+                # Per-sport win rate + Wilson CI + breakeven
+                sport_perf: dict = {}
+                for sport in sorted(set(r.get("sport", "") for r in decisive) - {""}):
+                    sv = [r for r in decisive if r.get("sport") == sport]
+                    sw = sum(1 for r in sv if r["outcome"] == "WIN")
+                    slo, shi = wilson_ci(sw, len(sv))
+                    sodds = [r["odds"] for r in sv if r.get("odds")]
+                    savg  = sum(sodds) / len(sodds) if sodds else None
+                    sbreak = p_breakeven(savg) if savg else None
+                    sport_perf[sport] = {
+                        "n":              len(sv),
+                        "win_rate":       round(sw / len(sv) * 100, 1),
+                        "win_rate_lo":    round(slo * 100, 1),
+                        "win_rate_hi":    round(shi * 100, 1),
+                        "p_breakeven":    round(sbreak * 100, 1) if sbreak is not None else None,
+                        "above_breakeven": (sbreak is not None and slo > sbreak),
+                    }
+                global_s["by_sport"] = sport_perf
+
+                # Brier score / reliability by predicted-probability bucket
+                # — a win rate alone can't detect miscalibration (e.g. picks
+                # tagged "80% confident" that only win 60% of the time).
+                predictions = [(r["sharp_prob"], 1 if r["outcome"] == "WIN" else 0)
+                              for r in decisive if r.get("sharp_prob") is not None]
+                global_s["brier_buckets"] = bucket_predictions(predictions) if predictions else None
 
                 # Monthly breakdown
                 months_map: dict = {}

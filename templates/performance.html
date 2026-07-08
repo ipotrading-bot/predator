@@ -140,11 +140,21 @@
 
   {% if global_s %}
 
-  {% set wr_color = 'var(--green)' if global_s.win_rate >= 65 else ('var(--yellow)' if global_s.win_rate >= 50 else 'var(--red)') %}
+  {% set wr_color = 'var(--green)' if global_s.above_breakeven else ('var(--yellow)' if global_s.win_rate >= 50 else 'var(--red)') %}
   <div class="wr-hero" style="border-color:{{ wr_color }}">
     <div class="wr-hero-v" style="color:{{ wr_color }}">{{ "%.1f"|format(global_s.win_rate) }}%</div>
     <div class="wr-hero-l">POURCENTAGE DE GAINS <span style="color:var(--t3)">(cible &ge;65%)</span></div>
     <div class="wr-hero-s">{{ global_s.wins }} gagnés &middot; {{ global_s.losses }} perdus{% if global_s.pushes %} &middot; {{ global_s.pushes }} push{% endif %}</div>
+    {% if global_s.win_rate_lo is not none %}
+    <div class="wr-hero-s" style="margin-top:4px">
+      IC 95% [{{ "%.1f"|format(global_s.win_rate_lo) }}% – {{ "%.1f"|format(global_s.win_rate_hi) }}%]
+      {% if global_s.p_breakeven is not none %}
+        &middot; seuil rentable net taxe <b>{{ "%.1f"|format(global_s.p_breakeven) }}%</b>
+        {% if global_s.above_breakeven %}<span style="color:var(--green)">&#10003; au-dessus</span>
+        {% else %}<span style="color:var(--red)">&#10007; pas confirmé</span>{% endif %}
+      {% endif %}
+    </div>
+    {% endif %}
   </div>
 
   <div class="perf-kpis">
@@ -162,6 +172,57 @@
       <div class="pk-l">Perdus</div>
     </div>
   </div>
+
+  {% if global_s.by_sport %}
+  <div class="sec-hdr">&#9632; PAR SPORT <em>IC 95% &middot; seuil rentable</em></div>
+  <div class="tbl-outer">
+    <table class="perf-table">
+      <thead>
+        <tr>
+          <th>Sport</th><th>N</th><th>Win rate</th><th>IC 95%</th><th>Seuil rentable</th><th>Statut</th>
+        </tr>
+      </thead>
+      <tbody>
+        {% set E = {'soccer':'⚽','basketball':'🏀','tennis':'🎾','hockey':'🏒','mma':'🥋','boxing':'🥊','darts':'🎯','cricket':'🏏','esports':'🎮','americanfootball':'🏈','baseball':'⚾','rugby':'🏉','volleyball':'🏐','tabletennis':'🏓','handball':'🤾','rugbyleague':'🏉','aussierules':'🏉'} %}
+        {% for sport, sp in global_s.by_sport.items() %}
+        <tr>
+          <td>{{ E.get(sport, '🎯') }} {{ sport }}</td>
+          <td style="font-family:var(--font-data)">{{ sp.n }}</td>
+          <td style="font-weight:700;font-family:var(--font-data)">{{ "%.1f"|format(sp.win_rate) }}%</td>
+          <td style="color:var(--t2);font-family:var(--font-data)">[{{ "%.1f"|format(sp.win_rate_lo) }}–{{ "%.1f"|format(sp.win_rate_hi) }}%]</td>
+          <td style="color:var(--t2);font-family:var(--font-data)">{% if sp.p_breakeven is not none %}{{ "%.1f"|format(sp.p_breakeven) }}%{% else %}—{% endif %}</td>
+          <td>
+            {% if sp.above_breakeven %}<span class="oc-win">&#10003; rentable</span>
+            {% else %}<span class="oc-exp">non confirmé</span>{% endif %}
+          </td>
+        </tr>
+        {% endfor %}
+      </tbody>
+    </table>
+  </div>
+  {% endif %}
+
+  {% if global_s.brier_buckets %}
+  <div class="sec-hdr">&#9632; CALIBRATION <em>Brier score par confiance annoncée</em></div>
+  <div class="tbl-outer">
+    <table class="perf-table">
+      <thead>
+        <tr><th>Confiance annoncée</th><th>N</th><th>Win rate observé</th><th>Brier</th></tr>
+      </thead>
+      <tbody>
+        {% for label, b in global_s.brier_buckets.items() %}
+        <tr>
+          <td style="font-family:var(--font-data)">{{ label }}</td>
+          <td style="font-family:var(--font-data)">{{ b.n }}</td>
+          <td style="font-family:var(--font-data)">{% if b.win_rate is not none %}{{ "%.1f"|format(b.win_rate * 100) }}%{% else %}—{% endif %}</td>
+          <td style="font-family:var(--font-data)">{% if b.brier is not none %}{{ "%.3f"|format(b.brier) }}{% else %}—{% endif %}</td>
+        </tr>
+        {% endfor %}
+      </tbody>
+    </table>
+    <div style="font-size:10px;color:var(--t3);padding:8px 0 0">Brier: 0 = parfait, 0.25 = pile-ou-face non informatif, 1 = toujours faux. Win rate observé loin de la confiance annoncée = mauvaise calibration.</div>
+  </div>
+  {% endif %}
 
   {% if monthly %}
   <div class="sec-hdr">&#9632; PAR MOIS <em>{{ monthly|length }} mois</em></div>

@@ -42,7 +42,12 @@ SETTLEMENT_GRACE_H  = int(os.environ.get("SETTLEMENT_GRACE_H", 4))   # hours aft
 ORACLE_BUDGET = 30     # Max Gemini oracle calls per audit run
 SETTLE_BUDGET = 25     # Max Gemini settlement calls per audit run
 
+# Task 3 — real closing-line capture (run_closing_line.py, hourly cadence)
+CLOSING_LINE_WINDOW_MIN = 5    # minutes before kickoff a price counts as "the closing line"
+CLOSING_LINE_BUDGET     = 30   # Max Gemini oracle calls per closing-line run
+
 _AUDIT_COLS = {"closing_line", "clv_pct", "closed_at"}
+_CLOSING_LINE_COLS = {"closing_pinnacle_price", "clv_pct_real"}
 
 # Terminal statuses — Ledger reads all of these
 TERMINAL_STATUSES = ["settled", "closed", "expired"]
@@ -162,6 +167,96 @@ def audit_one(sb, sig: dict, oracle_calls: list, settle_calls: list, now: dateti
     else:
         log.error("Skipping ledger write for lost signal %s", sig["id"])
     return status
+
+
+def fetch_closing_line_candidates(sb) -> list[dict]:
+    """
+    Active signals whose match kicks off within the next
+    CLOSING_LINE_WINDOW_MIN minutes and haven't had a closing price
+    captured yet — the genuine "closing line" window, as opposed to this
+    module's own Pass 2 CLV (fetched hours-to-days after kickoff during
+    the 6h audit, at best a proxy) or core/settlement.py's entry-edge
+    re-derivation (see sql/migrate_v9_5_learning_integrity.sql).
+    """
+    now = datetime.now(timezone.utc)
+    window_end = now + timedelta(minutes=CLOSING_LINE_WINDOW_MIN)
+    try:
+        res = (sb.table("signals")
+               .select("*")
+               .eq("status", "active")
+               .is_("closing_pinnacle_price", "null")
+               .gte("match_time", now.isoformat())
+               .lte("match_time", window_end.isoformat())
+               .limit(100)
+               .execute())
+        return res.data or []
+    except Exception as e:
+        log.error("fetch_closing_line_candidates: %s", e)
+        return []
+
+
+def capture_closing_lines(sb, budget: int = CLOSING_LINE_BUDGET) -> int:
+    """
+    For each signal within CLOSING_LINE_WINDOW_MIN of kickoff, re-fetch the
+    current Pinnacle consensus price and store it as closing_pinnacle_price
+    — a real closing-line measurement, distinct from pinnacle_price
+    (captured at scan time, possibly hours or days earlier). clv_pct_real
+    is derived immediately and does NOT wait for the match outcome (that
+    remains core/settlement.py's real WIN/LOSS job) — it's an early,
+    complementary quality signal: if the line moved against the scanned
+    price by kickoff, the original edge was more likely stale data than a
+    real market inefficiency. Runs hourly via run_closing_line.py, not as
+    part of the 6h audit — this window (kickoff ± 5min) rarely aligns with
+    that coarser cadence.
+    """
+    candidates = fetch_closing_line_candidates(sb)
+    remaining = [budget]
+    captured = 0
+    for sig in candidates:
+        if remaining[0] <= 0:
+            log.warning("CLOSING LINE — Gemini oracle budget exhausted, %d signal(s) left for next run",
+                        len(candidates) - captured)
+            break
+        remaining[0] -= 1
+        try:
+            price, _ = get_pinnacle_price(sig["match"], sport=sig.get("sport", "soccer"),
+                                          league=sig.get("league", ""))
+        except Exception as e:
+            log.warning("capture_closing_lines oracle [%s]: %s", sig["match"], e)
+            continue
+        if not price or price <= 1.01:
+            continue
+
+        scan_price = sig.get("pinnacle_price") or 0.0
+        clv_real = round((scan_price / price - 1) * 100, 2) if scan_price > 1.01 else None
+
+        ok = replace_signal_row(sb, sig["id"], {**sig, **{
+            "closing_pinnacle_price": float(price),
+            "clv_pct_real":           clv_real,
+        }}, optional_cols=_CLOSING_LINE_COLS)
+        if ok:
+            captured += 1
+            log.info("CLOSING LINE | %s | scan %.3f -> close %.3f | CLV_real %+.2f%%",
+                     sig["match"], scan_price, price, clv_real if clv_real is not None else 0.0)
+        else:
+            log.error("Failed to persist closing line for signal %s", sig["id"])
+    return captured
+
+
+def run_closing_lines():
+    """Entry point for run_closing_line.py — hourly job, independent of
+    the 6h settlement/CLV audit in run() below."""
+    try:
+        sb = get_db(write=True)
+    except MissingCredentialsError as e:
+        log.critical("%s", e)
+        raise SystemExit(1)
+
+    log.info("━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━")
+    log.info("PAIM CLOSING LINE v9.5 — capturing real closing prices")
+    n = capture_closing_lines(sb)
+    log.info("Closing-line capture done: %d signal(s) updated", n)
+    log.info("━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━")
 
 
 def run():

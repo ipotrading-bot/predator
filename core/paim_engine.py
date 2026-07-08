@@ -6,6 +6,7 @@ import difflib
 from functools import lru_cache
 
 from core.math_engine import calc_dnb
+from core.constants import min_edge_for_k as _min_edge_for_k
 
 # Common abbreviations that cause Pinnacle ↔ 1XBet name divergence
 _ABBREVS = [
@@ -54,6 +55,20 @@ def market_label(key: str, side: str, point: float, sport: str) -> str:
         return f"{pfx} PS {sign}"
     # h2h
     return "AH 0.0" if sport == "soccer" else f"{pfx} ML"
+
+
+def correlation_group(sport: str, league: str, match_time: str) -> str:
+    """
+    Tag identifying signals whose outcomes are NOT safely assumed
+    independent (Task 5) — same sport/league/kickoff-date. Two markets on
+    the same match always share this tag (trivially correlated); two
+    different matches in the same league on the same day are a coarser
+    but still real correlation (shared referee pool, weather, schedule
+    congestion, etc). core/tax_engine.py's suggest_system() refuses by
+    default to combine two legs sharing this tag into one accumulator.
+    """
+    date = (match_time or "")[:10]
+    return f"{sport}:{date}:{league}"
 
 
 # MMA uses the same binary ML logic as boxing/tennis — no draw possible
@@ -156,14 +171,23 @@ def compute_alpha(
 ) -> tuple[float, str]:
     """
     Returns (edge_pct, status).
-    status: "OK"      — valid signal in [min_edge, MAX_EDGE]
+    status: "OK"      — valid signal in [effective_min_edge, MAX_EDGE]
             "DISCARD" — invalid data, negative edge, or outside thresholds.
-    min_edge defaults to the global MIN_EDGE (1.5 %) but can be overridden
-    by the learning_layer for sport-specific adaptive thresholds.
+    min_edge is the sport's learning-layer-adjusted floor (see
+    core/learning_layer.py) — but it alone can't guarantee the signal
+    survives TAX_RATE, since it's tuned on real win/loss, not tax. The
+    effective floor is max(min_edge, tax_engine's own breakeven for THIS
+    signal's true probability (pinnacle_price is already treated as the
+    fair/consensus price throughout this module, so true_prob = 1/price)
+    with a 15% safety margin) — a signal can never be sent below its own
+    mathematical tax breakeven, however permissive the learned threshold is.
     """
     if not xbet_odd or not pinnacle_price or xbet_odd <= 1.01 or pinnacle_price <= 1.01:
         return 0.0, "DISCARD"
     edge = round((xbet_odd / pinnacle_price - 1) * 100, 2)
-    if edge < min_edge or edge > MAX_EDGE:
+    true_prob = 1 / pinnacle_price
+    tax_floor = _min_edge_for_k(1, true_prob)
+    effective_min_edge = max(min_edge, tax_floor)
+    if edge < effective_min_edge or edge > MAX_EDGE:
         return edge, "DISCARD"
     return edge, "OK"

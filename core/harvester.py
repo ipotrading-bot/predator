@@ -30,6 +30,34 @@ XBET_FEED_TPLS = [
     "https://1xbet.com/LineFeed/Get1x2?sport={sport_id}&count=50&lng=en&mode=1",
     "https://1xbet.cm/LineFeed/Get1x2?sport={sport_id}&count=50&lng=en&mode=4",
 ]
+
+# Task 6 — additional soft books for line shopping. Melbet/22bet are widely
+# documented as running the same LineFeed backend as 1xbet (same platform
+# family, near-identical site/app), so the endpoint SHAPE below mirrors
+# XBET_FEED_TPLS exactly — but the exact URL/partner id for each was NOT
+# live-verified from this sandbox: outbound requests to 1xbet.com itself
+# get Cloudflare-redirected to /en/block from this environment's IP (bot/geo
+# gate), so even the already-working 1xbet integration can't be exercised
+# here, let alone a brand-new one. _fetch_from_book() below degrades to []
+# on any failure (same as the pre-existing 1xbet behavior), so a wrong URL
+# here just means that book contributes nothing — confirm these actually
+# return data (check the Predator Engine GitHub Actions logs for
+# "Melbet <sport> OK" / "22bet <sport> OK" lines) before relying on them.
+MELBET_FEED_TPLS = [
+    "https://melbet.com/LineFeed/Get1x2?sport={sport_id}&count=50&lng=en&mode=4&partner=169",
+    "https://melbet.com/LineFeed/Get1x2?sport={sport_id}&count=50&lng=en&mode=4",
+]
+BET22_FEED_TPLS = [
+    "https://22bet.com/LineFeed/Get1x2?sport={sport_id}&count=50&lng=en&mode=4",
+]
+
+# name -> (url templates, referer) — extend this dict to add more books;
+# _fetch_multi_book() below iterates it generically.
+SOFT_BOOKS = {
+    "1xbet":  (XBET_FEED_TPLS,  "https://1xbet.com/en/line/"),
+    "melbet": (MELBET_FEED_TPLS, "https://melbet.com/en/line/"),
+    "22bet":  (BET22_FEED_TPLS,  "https://22bet.com/en/line/"),
+}
 HEADERS = {
     "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36",
     "Accept": "application/json, text/plain, */*",
@@ -84,23 +112,97 @@ def _parse_xbet_json(data, sport_id):
     return matches
 
 
-def _fetch_from_1xbet(sport_id):
-    """Try each URL variant with a small random delay. Returns list of matches or []."""
+def _fetch_from_book(book: str, url_templates: list, referer: str, sport_id: int) -> list:
+    """Try each URL variant for one soft book with a small random delay.
+    Returns list of matches (odds keyed "odds_1xbet" regardless of book —
+    see _fetch_multi_book for why) or [] on total failure. Generalized
+    from the original 1xbet-only fetch (Task 6) so the same retry/parse
+    logic covers every book in SOFT_BOOKS without duplication."""
     sport_name = SPORT_IDS.get(sport_id, str(sport_id))
-    for tpl in XBET_FEED_TPLS:
+    headers = {**HEADERS, "Referer": referer}
+    for tpl in url_templates:
         url = tpl.format(sport_id=sport_id)
         try:
             time.sleep(random.uniform(2, 5))
-            r = requests.get(url, headers=HEADERS, timeout=15)
+            r = requests.get(url, headers=headers, timeout=15)
             if r.status_code == 200:
                 data = r.json()
                 matches = _parse_xbet_json(data, sport_id)
                 if matches:
-                    log.info("1XBet %s OK: %d matches via %s", sport_name, len(matches), url.split("?")[0])
+                    log.info("%s %s OK: %d matches via %s", book, sport_name, len(matches), url.split("?")[0])
                     return matches
         except Exception as e:
-            log.warning("1XBet %s fail (%s): %s", sport_name, url.split("?")[0], e)
+            log.warning("%s %s fail (%s): %s", book, sport_name, url.split("?")[0], e)
     return []
+
+
+def _fetch_from_1xbet(sport_id):
+    """Back-compat wrapper — 1xbet alone, no line shopping. Prefer
+    _fetch_multi_book() for the best-price-across-books behavior."""
+    tpls, referer = SOFT_BOOKS["1xbet"]
+    return _fetch_from_book("1xbet", tpls, referer, sport_id)
+
+
+def _fuzzy_match_event(candidate: dict, pool: list[dict]) -> dict | None:
+    """Find `candidate`'s counterpart in `pool` by team-name fuzzy match
+    (core.paim_engine.strict_team_match) — used to line up the same
+    real-world match across different soft books before comparing prices."""
+    for other in pool:
+        if strict_team_match(candidate["home"], other["home"]) and \
+           strict_team_match(candidate["away"], other["away"]):
+            return other
+    return None
+
+
+def _fetch_multi_book(sport_id: int) -> list:
+    """
+    Task 6 — line shopping: fetch every configured soft book (SOFT_BOOKS)
+    for this sport and, for each real-world match found on 2+ books, keep
+    the BEST (highest) price per outcome across all of them — not just
+    whichever book happened to respond first. `_soft_source` on the
+    returned match records which book contributed each surviving price
+    (or a "+" joined list when outcomes came from different books), for
+    display/debugging attribution.
+
+    Falls back gracefully: if only one book responds, its prices are used
+    as-is (identical behavior to the old single-book fetch).
+    """
+    per_book: dict[str, list] = {}
+    for book, (tpls, referer) in SOFT_BOOKS.items():
+        found = _fetch_from_book(book, tpls, referer, sport_id)
+        if found:
+            per_book[book] = found
+
+    if not per_book:
+        return []
+
+    books_in_order = list(per_book.keys())
+    merged: list[dict] = list(per_book[books_in_order[0]])
+    for m in merged:
+        m["_soft_source"] = books_in_order[0]
+
+    for book in books_in_order[1:]:
+        for cand in per_book[book]:
+            existing = _fuzzy_match_event(cand, merged)
+            if existing is None:
+                cand["_soft_source"] = book
+                merged.append(cand)
+                continue
+            # Same real-world match found on another book — keep the
+            # better price per outcome (line shopping), track provenance.
+            sources = set(existing["_soft_source"].split("+"))
+            improved = False
+            for key in ("1", "X", "2"):
+                new_odd = cand["odds_1xbet"].get(key, 0.0)
+                cur_odd = existing["odds_1xbet"].get(key, 0.0)
+                if new_odd > cur_odd:
+                    existing["odds_1xbet"][key] = new_odd
+                    improved = True
+            if improved:
+                sources.add(book)
+                existing["_soft_source"] = "+".join(sorted(sources))
+
+    return merged
 
 
 def _fetch_from_gemini(sport_id):
@@ -189,11 +291,13 @@ def _fetch_from_gemini(sport_id):
 _GEMINI_INTER_SPORT_SLEEP = 20  # seconds — avoids 429 burst when all sports fallback to Gemini
 
 def fetch_matches():
-    """Fetch matches for all configured sports. Returns combined list."""
+    """Fetch matches for all configured sports, line-shopping the best
+    price per outcome across every book in SOFT_BOOKS (Task 6). Returns
+    combined list."""
     all_matches = []
     gemini_calls = 0
     for sport_id in SPORT_IDS:
-        matches = _fetch_from_1xbet(sport_id)
+        matches = _fetch_multi_book(sport_id)
         if not matches:
             if gemini_calls > 0:
                 time.sleep(_GEMINI_INTER_SPORT_SLEEP)

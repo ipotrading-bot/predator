@@ -16,6 +16,7 @@ from dotenv import load_dotenv
 
 from core.constants import ELITE_EDGE as _ELITE_EDGE, kelly_stake as _kelly_stake
 from core.db import get_db
+from core.stats_utils import p_breakeven as _p_breakeven, wilson_ci as _wilson_ci
 
 load_dotenv()
 
@@ -109,6 +110,44 @@ def _signal_line(s: dict) -> str | None:
     if pin_odd:
         line += f"   ② Prix fair Pinnacle: `{pin_odd:.2f}`\n"
     return line
+
+
+def _performance_block(sb) -> str:
+    """
+    Recent real performance (outcome-driven, Task 4) — Wilson 95% CI and
+    tax-adjusted breakeven probability, never a bare win rate. Pulled from
+    ai_learning_ledger (permanent record), not `signals` (purged ~48h).
+    """
+    try:
+        res = (sb.table("ai_learning_ledger")
+               .select("outcome, odds")
+               .order("created_at", desc=True)
+               .limit(200)
+               .execute())
+        rows = res.data or []
+    except Exception as e:
+        log.warning("Performance block: %s", e)
+        return ""
+
+    decisive = [r for r in rows if r.get("outcome") in ("WIN", "LOSS")]
+    if len(decisive) < 10:
+        return ""
+
+    wins = sum(1 for r in decisive if r["outcome"] == "WIN")
+    lo, hi = _wilson_ci(wins, len(decisive))
+    odds_vals = [r["odds"] for r in decisive if r.get("odds")]
+    avg_odds = sum(odds_vals) / len(odds_vals) if odds_vals else None
+    breakeven = _p_breakeven(avg_odds) if avg_odds else None
+
+    win_rate = wins / len(decisive) * 100
+    line = (
+        f"📈 *Performance réelle* (derniers {len(decisive)} paris réglés)\n"
+        f"   `{win_rate:.1f}%` — IC 95% `[{lo*100:.1f}% – {hi*100:.1f}%]`\n"
+    )
+    if breakeven is not None:
+        status = "✅ confirmé rentable" if lo > breakeven else "⚠️ pas encore confirmé"
+        line += f"   Seuil rentable net taxe: `{breakeven*100:.1f}%` — {status}\n"
+    return line + "\n"
 
 
 def run():
@@ -233,6 +272,7 @@ def run():
         f"📊 `{len(signals)}` signaux · `{len(elite)}` élite ≥2.5% · "
         f"Meilleur edge: `+{best_edge:.1f}%`\n\n"
     )
+    summary += _performance_block(sb)
 
     # Groupement par sport
     by_sport: dict = {}

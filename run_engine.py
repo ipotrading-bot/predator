@@ -1,7 +1,7 @@
 """
 run_engine.py — PREDATOR PAIM v8.8 — Hunter Multi-Sport + Portfolio Balancer
 Markets: h2h (NBA/Tennis) | spreads (NBA/Soccer) | totals (all)
-Sharp filter: Prob. Sharp (Shin devigged) >= threshold per market type
+Sharp filter: Prob. Sharp (Power devigged, see core/math_engine.py) >= threshold per market type
 Pipeline: OddsAPI → Gemini Search → Gemini Estimator → AH0.0/ML/PS/OU → Edge → Balancer → Supabase
 All timestamps : UTC/GMT — no local-time contamination.
 """
@@ -26,8 +26,11 @@ from core.learning_layer import load_thresholds as _load_thresholds
 from core.paim_engine import (
     compute_alpha, MIN_EDGE, strict_team_match,
     market_label, SHARP_PROB_BY_MARKET, calculate_consensus_price,
+    correlation_group as _correlation_group,
 )
-from core.constants import ELITE_EDGE as _ELITE_EDGE, SOCCER_ELITE_EDGE as _SOCCER_ELITE_EDGE, BASKETBALL_ELITE_EDGE as _BASKETBALL_ELITE_EDGE, risk_flag as _risk_flag, SUSPECT_EDGE as _SUSPECT_EDGE, KELLY_FRACTION as _KELLY_FRACTION, AH0_VALUE_THRESHOLD as _AH0_VALUE_THRESHOLD, PURGE_EDGE_FLOOR as _PURGE_EDGE_FLOOR, MLB_LINEUP_WINDOW_H as _MLB_LINEUP_WINDOW_H, PUSH_PROB_ROUND_LINE as _PUSH_PROB_ROUND_LINE
+from core.constants import ELITE_EDGE as _ELITE_EDGE, SOCCER_ELITE_EDGE as _SOCCER_ELITE_EDGE, BASKETBALL_ELITE_EDGE as _BASKETBALL_ELITE_EDGE, risk_flag as _risk_flag, SUSPECT_EDGE as _SUSPECT_EDGE, KELLY_FRACTION as _KELLY_FRACTION, AH0_VALUE_THRESHOLD as _AH0_VALUE_THRESHOLD, PURGE_EDGE_FLOOR as _PURGE_EDGE_FLOOR, MLB_LINEUP_WINDOW_H as _MLB_LINEUP_WINDOW_H, PUSH_PROB_ROUND_LINE as _PUSH_PROB_ROUND_LINE, TAX_RATE as _TAX_RATE, BANKROLL_REF as _BANKROLL_REF
+from core.tax_engine import suggest_system as _suggest_system, is_combo_tax_viable as _is_combo_tax_viable
+import core.risk_manager as _risk_manager
 
 load_dotenv()
 
@@ -170,7 +173,7 @@ def _telegram(text):
 
 
 # Columns optional at DB level — strip only as last-resort fallback
-_OPTIONAL_COLS = {"selection_name", "kelly_pct", "advice", "sharp_sources", "consensus_score"}
+_OPTIONAL_COLS = {"selection_name", "kelly_pct", "advice", "sharp_sources", "consensus_score", "correlation_group"}
 
 
 def _save(sb, signal) -> bool:
@@ -472,7 +475,7 @@ def _emit(signals, sb, now, log, name, sport, league, mkt_key, mkt_label,
 
     b = xbet_odd - 1
     kelly_full = (sharp_prob * b - (1 - sharp_prob)) / b if b > 0 else 0.0
-    kelly_fraction = _KELLY_FRACTION.get(sport, 0.20)
+    kelly_fraction = _KELLY_FRACTION.get(sport, 0.12)   # fallback also inside Task 10's temporary 0.10-0.15 band
     kelly_pct  = round(max(0.0, kelly_full * kelly_fraction) * 100, 2)
 
     advice = (
@@ -506,6 +509,7 @@ def _emit(signals, sb, now, log, name, sport, league, mkt_key, mkt_label,
         "advice":         advice,
         "sharp_sources":  json.dumps(sharp_sources) if sharp_sources else None,
         "consensus_score": consensus_score,
+        "correlation_group": _correlation_group(sport, league or "", mt),
     }
     signals.append(signal)
 
@@ -525,7 +529,7 @@ def _process_h2h(m, name, sport, league, home, away, emoji, signals, sb, now, lo
             log.info("DISCARD | %s %s — oracle team unknown, outcome alignment unverifiable", emoji, name)
             return
         # Oracle returns a single-source price with no opposing-side odd to
-        # devig against, so we can't compute a true Shin/power probability.
+        # devig against, so we can't compute a true Power-devigged probability.
         # Naive implied prob (1/price) is a conservative stand-in: unlike a
         # hardcoded 1.0, it still trips the sharp_prob quality gate below
         # and doesn't inflate the Kelly stake to the theoretical maximum.
@@ -548,7 +552,7 @@ def _process_h2h(m, name, sport, league, home, away, emoji, signals, sb, now, lo
             pin_price = calc_dnb(pin_fav_raw, pin_opp_raw, pin_draw)
             dnb_other = calc_dnb(pin_opp_raw, pin_fav_raw, pin_draw)
 
-            # Weighted Shin: build source prices for BOTH sides
+            # Weighted Power devig: build source prices for BOTH sides
             source_prices_fav = {"pinnacle": pin_price}
             source_prices_opp = {"pinnacle": dnb_other}
             for src_key, src_name in (("odds_circa", "circa"), ("odds_cris", "cris")):
@@ -577,7 +581,7 @@ def _process_h2h(m, name, sport, league, home, away, emoji, signals, sb, now, lo
             pin_price = float(po.get(fav_key, 0) or 0)
             opp_price = float(po.get(opp_key, 0) or 0)
 
-            # Weighted Shin: build source prices for BOTH sides
+            # Weighted Power devig: build source prices for BOTH sides
             source_prices_fav = {"pinnacle": pin_price}
             source_prices_opp = {"pinnacle": opp_price}
             for src_key, src_name in (("odds_circa", "circa"), ("odds_cris", "cris")):
@@ -596,8 +600,8 @@ def _process_h2h(m, name, sport, league, home, away, emoji, signals, sb, now, lo
             con_opp, _, _, _ = calculate_consensus_price(source_prices_opp, sport)
             if con_fav > 1.01:
                 pin_price = con_fav
-            opp_for_shin = con_opp if con_opp > 1.01 else opp_price
-            sharp_prob = devig_prob(pin_price, opp_for_shin)
+            opp_for_devig = con_opp if con_opp > 1.01 else opp_price
+            sharp_prob = devig_prob(pin_price, opp_for_devig)
 
         pin_fav = xbet_fav  # Same outcome guaranteed — no cross-book mismatch possible
 
@@ -754,84 +758,192 @@ def _session_icon(session: str) -> str:
     return ""
 
 
-def _telegram_grouped(signals: list, now, session: str, matches: int,
-                      sharp_source: str, no_pin_count: int):
-    """Send all signals grouped by sport, sorted by edge desc."""
-    sess      = session.strip()
-    icon      = _session_icon(sess)
-    estimated = " ⚠️ (cotes estimées)" if sharp_source == "Gemini/Estimateur" else ""
-    n_high    = sum(1 for s in signals if s.get("risk_flag") == "HIGH_VALUE")
-    n_val     = sum(1 for s in signals if s.get("risk_flag") == "VALUE")
-    no_pin    = f" · ❓{no_pin_count} sans confirmation Pinnacle" if no_pin_count > 0 else ""
+def _window_key(sig: dict) -> str:
+    """Hourly bucket (YYYY-MM-DDTHH) for grouping signals into one system
+    suggestion — combining a match kicking off in 2h with one in 2 days
+    into the same bet slip would blur the time-sensitive urgency that
+    makes either edge real. Signals with no match_time fall into one
+    'unscheduled' bucket rather than being silently dropped."""
+    mt = sig.get("match_time") or ""
+    return mt[:13] if mt else "unscheduled"
 
-    if not signals:
+
+def _suggest_systems_by_window(signals: list, log, sb=None) -> list:
+    """
+    Group signals by time window and ask core.tax_engine.suggest_system()
+    for the best net-of-tax-viable accumulator in each window — replacing
+    the old "alert every signal independently" model (PAIM v9.5, Task 2).
+    A window with no tax-viable combo contributes nothing; individual
+    signals are still persisted to Supabase by the caller regardless (see
+    run()) for settlement/learning, this only gates what Telegram sees.
+
+    Task 7: the bankroll passed into suggest_system() is reduced by
+    whatever's already committed to other active signals (core.risk_manager
+    exposure cap), computed once per run rather than once per window — so
+    a portfolio already at its cap naturally sizes every new system down
+    to stake=0 instead of stacking risk on top of risk.
+    """
+    effective_bankroll = _BANKROLL_REF
+    if sb is not None:
+        try:
+            headroom = _risk_manager.get_exposure_headroom(sb, _BANKROLL_REF)
+            effective_bankroll = max(0.0, headroom)
+            if effective_bankroll < _BANKROLL_REF:
+                log.info("Exposure cap: %.0f/%.0f bankroll headroom remaining", effective_bankroll, _BANKROLL_REF)
+        except Exception as e:
+            log.warning("get_exposure_headroom: %s — using full bankroll", e)
+
+    windows: dict[str, list] = {}
+    for s in signals:
+        windows.setdefault(_window_key(s), []).append(s)
+
+    systems = []
+    for key, group in windows.items():
+        sports_in_group = {s.get("sport", "soccer") for s in group}
+        kelly_mult = min((_KELLY_FRACTION.get(sp, 0.12) for sp in sports_in_group), default=0.12)
+        result = _suggest_system(group, bankroll=effective_bankroll, tax_rate=_TAX_RATE,
+                                  kelly_multiplier=kelly_mult)
+        if result is None:
+            log.info("SYSTEM  | window %s — no tax-viable combo (%d candidate legs)", key, len(group))
+            continue
+        # Final go/no-go re-check right before it's ever eligible for
+        # Telegram — defense in depth even though suggest_system() already
+        # filtered every candidate combo on this internally.
+        legs_for_check = [{"true_prob": s.get("sharp_prob", 0), "odds": s.get("xbet_odd", 0),
+                           "correlation_group": s.get("correlation_group")}
+                          for s in result["legs"]]
+        if not _is_combo_tax_viable(legs_for_check, tax_rate=_TAX_RATE):
+            log.warning("SYSTEM  | window %s — combo failed final tax-viability re-check, discarding", key)
+            continue
+        result["window"] = key
+        systems.append(result)
+        log.info("SYSTEM  | window %s | %d legs | combined %.2f @ %.1f%% | stake %.0f | EV +%.2f",
+                 key, result["k"], result["combined_odds"], result["combined_prob"] * 100,
+                 result["stake"], result["ev"])
+
+    return systems
+
+
+def _refresh_leg_price(leg: dict, fresh_by_sport: dict, log) -> float | None:
+    """
+    Re-derive the current soft-book price for one h2h leg from a freshly
+    re-fetched batch (Task 8). Returns None if unchanged/unresolvable —
+    only h2h is handled: totals/spreads need the same line-matching logic
+    _process_totals/_process_spreads use to pick the right price for the
+    original selection, which isn't worth duplicating for a last-look
+    check; those legs are sent at their scan-time price, unchanged.
+    """
+    if not (leg.get("market_key") or "").startswith("h2h"):
+        return None
+    from core.harvester import SPORT_IDS, _fuzzy_match_event
+    sport_id = next((sid for sid, name in SPORT_IDS.items() if name == leg.get("sport")), None)
+    fresh_events = fresh_by_sport.get(sport_id) if sport_id is not None else None
+    if not fresh_events:
+        return None
+    match = leg.get("match", "")
+    if " vs " not in match:
+        return None
+    home, away = [x.strip() for x in match.split(" vs ", 1)]
+    fresh = _fuzzy_match_event({"home": home, "away": away}, fresh_events)
+    if not fresh:
+        return None
+    sel = leg.get("selection_name") or ""
+    is_home = strict_team_match(sel, home)
+    odds = fresh.get("odds_1xbet", {})
+    new_odd = odds.get("1") if is_home else odds.get("2")
+    return new_odd if new_odd and new_odd > 1.01 else None
+
+
+def _last_look_reprice(systems: list, log) -> list:
+    """
+    Task 8 — right before Telegram send, re-fetch the soft-book price for
+    each h2h leg and re-verify the system is STILL tax-viable at CURRENT
+    prices, not the prices captured at scan time — which can be minutes
+    old by send time (this run alone adds 1.5-4s of deliberate jitter on
+    top of however long the scan/persistence steps took). A system whose
+    price moved against the bettor enough to no longer clear
+    tax_engine.is_combo_tax_viable is dropped rather than sent stale.
+    """
+    if not systems:
+        return systems
+
+    from core.harvester import SPORT_IDS, _fetch_multi_book
+
+    sport_ids_needed = {sid for sid, name in SPORT_IDS.items()
+                        if any(leg.get("sport") == name for sys_ in systems for leg in sys_["legs"])}
+    fresh_by_sport: dict = {}
+    for sid in sport_ids_needed:
+        try:
+            fresh_by_sport[sid] = _fetch_multi_book(sid)
+        except Exception as e:
+            log.warning("Last-look reprice: sport_id=%s fetch failed: %s", sid, e)
+
+    survivors = []
+    for sys_ in systems:
+        repriced_legs = []
+        changed = False
+        for leg in sys_["legs"]:
+            new_odd = _refresh_leg_price(leg, fresh_by_sport, log)
+            if new_odd and new_odd != leg.get("xbet_odd"):
+                repriced_legs.append({**leg, "xbet_odd": new_odd})
+                changed = True
+            else:
+                repriced_legs.append(leg)
+
+        combo_legs = [{"true_prob": leg.get("sharp_prob", 0), "odds": leg.get("xbet_odd", 0),
+                       "correlation_group": leg.get("correlation_group")} for leg in repriced_legs]
+        if _is_combo_tax_viable(combo_legs, tax_rate=_TAX_RATE):
+            if changed:
+                log.info("SYSTEM  | window %s — last-look reprice applied, still viable", sys_.get("window"))
+            sys_["legs"] = repriced_legs
+            survivors.append(sys_)
+        else:
+            log.warning("SYSTEM  | window %s — cancelled at last-look, price moved against the combo",
+                       sys_.get("window"))
+
+    return survivors
+
+
+def _telegram_systems(systems: list, now, session: str, matches: int,
+                      sharp_source: str, no_pin_count: int):
+    """Send tax-viable system suggestions only, one per time window.
+    Individual signals are still persisted to Supabase for settlement/
+    learning (see run()) — Telegram now only ever recommends a combo that
+    has already cleared tax_engine.is_combo_tax_viable(), or nothing."""
+    sess   = session.strip()
+    icon   = _session_icon(sess)
+    no_pin = f" · ❓{no_pin_count} sans confirmation Pinnacle" if no_pin_count > 0 else ""
+
+    if not systems:
         _telegram(
             f"⚫ PREDATOR · {now.strftime('%H:%M')} UTC · {sess} {icon}\n"
-            f"0 pari trouvé sur {matches} matchs analysés · {sharp_source}"
+            f"0 système +EV net de taxe sur {matches} matchs analysés · {sharp_source}"
         )
         return
 
     header = (
         f"📡 *PREDATOR* · {now.strftime('%H:%M')} UTC · {sess} {icon}\n"
-        f"{len(signals)} paris trouvés sur {matches} matchs analysés\n"
-        f"🟢 Fort×{n_high}  🟡 Moyen×{n_val}\n"
-        f"`{sharp_source}`{estimated}{no_pin}\n"
+        f"{len(systems)} système(s) +EV net de taxe sur {matches} matchs analysés\n"
+        f"`{sharp_source}`{no_pin}\n"
     )
 
-    # Group by sport — signaux urgents (< 4h) en tête par sport, puis par edge
-    by_sport: dict[str, list] = {}
-    for s in sorted(signals, key=lambda x: _urgency_sort(x, now)):
-        by_sport.setdefault(s["sport"], []).append(s)
+    def _system_urgency(sys_):
+        return min((_urgency_sort(leg, now) for leg in sys_["legs"]), default=(1, 9999.0, 0))
 
     body_parts: list[str] = []
-    ordered_sports = list(_SPORT_ORDER) + sorted(s for s in by_sport if s not in _SPORT_ORDER)
-    for sport in ordered_sports:
-        group = by_sport.get(sport, [])
-        if not group:
-            continue
-        emoji = SPORT_EMOJI.get(sport, "🎯")
-        lines: list[str] = [f"\n{emoji} *{sport.upper()}*\n"]
-        for s in group:
-            prob    = s.get("sharp_prob", 0) or 0
-            mkt_key = s.get("market_key", "")
-            dot     = _RISK_DOT.get(s.get("risk_flag", ""), "⚪")
-            mt      = s.get("match_time") or ""
-            dt      = f" · {mt[8:10]}/{mt[5:7]} {mt[11:16]}" if mt else ""
-
-            # Build one self-contained headline — avoid repeating the same
-            # team/point info in both the selection name and the market label.
-            if mkt_key.startswith("totals"):
-                headline = s["market"]  # e.g. "NBA Under 173.0" — already complete
-            elif mkt_key.startswith("spreads"):
-                sel = s.get("selection_name") or s["match"]
-                team, _, point = sel.rpartition(" ")
-                headline = f"{team.upper()} Handicap {point}"
-            else:
-                team = s.get("selection_name") or s["match"]
-                if " vs " in team:
-                    team = team.split(" vs ")[0].strip()
-                bet = "Sans le nul" if sport == "soccer" else "Vainqueur"
-                headline = f"{team.upper()} — {bet}"
-
-            # HIGH VELOCITY: NBA/Soccer < 60 min avant coup d'envoi
-            velocity = ""
-            if mt:
-                try:
-                    mt_dt = datetime.fromisoformat(mt.replace("Z", "+00:00"))
-                    mins_left = (mt_dt - now).total_seconds() / 60
-                    if 0 < mins_left <= 60 and sport in {"basketball", "soccer"}:
-                        velocity = "🔥 "
-                except (ValueError, OverflowError):
-                    pass
-
-            detail = f"Avantage +{s['edge_pct']:.1f}%"
-            if prob > 0:
-                detail += f" · Confiance {int(prob * 100)}%"
-
-            lines.append(
-                f"{dot} {velocity}*{headline}*  `@ {s['xbet_odd']:.2f}`{dt}\n"
-                f"    {detail}\n"
-            )
+    for i, sys_ in enumerate(sorted(systems, key=_system_urgency), start=1):
+        legs = sys_["legs"]
+        lines: list[str] = [f"\n🎯 *Système {i}* ({sys_['k']} sélection{'s' if sys_['k'] > 1 else ''})\n"]
+        for leg in legs:
+            sport = leg.get("sport", "?")
+            emoji = SPORT_EMOJI.get(sport, "🎯")
+            sel   = leg.get("selection_name") or leg["match"]
+            lines.append(f"  {emoji} {sel}  `@ {leg['xbet_odd']:.2f}`\n")
+        lines.append(
+            f"  Cote combinée `{sys_['combined_odds']:.2f}` · "
+            f"Prob. combinée {sys_['combined_prob']*100:.1f}% · "
+            f"Mise {sys_['stake']:.0f}€ · EV net taxe +{sys_['ev']:.2f}€\n"
+        )
         body_parts.append("".join(lines))
 
     body = "".join(body_parts)
@@ -842,12 +954,12 @@ def _telegram_grouped(signals: list, now, session: str, matches: int,
     else:
         _telegram(header)
         chunk = ""
-        for line in body.splitlines(keepends=True):
-            if len(chunk) + len(line) > 3800:
+        for part in body_parts:
+            if len(chunk) + len(part) > 3800:
                 _telegram(chunk)
-                chunk = line
+                chunk = part
             else:
-                chunk += line
+                chunk += part
         if chunk.strip():
             _telegram(chunk)
 
@@ -1196,10 +1308,30 @@ def run():
         if saved_count == 0:
             log.error("All %d signals failed to persist to Supabase — Telegram will still send them", len(signals))
 
-    # ── C. Telegram — toujours envoyé (découplé de Supabase) ──────────
-    # Shadow Layer: execution jitter — simule latence humaine (1.5–4.0s)
+    # ── C. Telegram — combo-only, tax-viable systems (PAIM v9.5, Task 2) ──
+    # Individual signals are still persisted to Supabase above for
+    # settlement/learning regardless of what gets announced here — Telegram
+    # itself now only ever recommends one tax-viable accumulator per time
+    # window (or nothing for that window), instead of alerting every signal
+    # as an independent bet. Shadow Layer: execution jitter (1.5–4.0s).
     time.sleep(random.uniform(1.5, 4.0))
-    _telegram_grouped(signals, now, session, len(matches), sharp_source, no_pin_count)
+
+    # Task 7 — circuit breaker: a rolling drawdown blowup pauses emission
+    # entirely until a human clears it (core.risk_manager.resume_emission).
+    # Checked here, not upstream, so scanning/persisting/learning keep
+    # running as normal — only the outward Telegram recommendation stops.
+    if sb and _risk_manager.check_circuit_breaker(sb):
+        log.critical("Circuit breaker active — system emission paused, manual resume required")
+        _telegram(
+            f"🔴 *PAUSE AUTOMATIQUE* · {now.strftime('%H:%M')} UTC\n"
+            f"Drawdown roulant > {_risk_manager.DRAWDOWN_LIMIT_PCT*100:.0f}% sur les "
+            f"{_risk_manager.DRAWDOWN_WINDOW_N} derniers signaux réglés.\n"
+            f"Émission de nouveaux systèmes suspendue — reprise manuelle uniquement."
+        )
+    else:
+        systems = _suggest_systems_by_window(signals, log, sb)
+        systems = _last_look_reprice(systems, log)
+        _telegram_systems(systems, now, session, len(matches), sharp_source, no_pin_count)
 
     elite = [s for s in signals if s["edge_pct"] >= ELITE_EDGE]
     log.info("Done. %d candidates | %d balanced | %d elite.",
