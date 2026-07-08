@@ -3,15 +3,11 @@ core/constants.py — PAIM v9.5 — Single Source of Truth
 All thresholds, risk classification, and Kelly calculation used by engine,
 rapport, dashboard, and audit must import from here — never redefined inline.
 """
-from core.tax_engine import min_edge_required as _min_edge_required
 
 # ELITE_EDGE / SOCCER_ELITE_EDGE / BASKETBALL_ELITE_EDGE are display-tier
 # boundaries (risk_flag() below: LOW_VALUE/VALUE/HIGH_VALUE for the
 # dashboard), not a send/no-send gate — left as fixed, sport-calibrated
-# values. The actual "never send a signal that can't beat tax" gate is
-# min_edge_for_k() below, enforced per-signal (using that signal's own
-# true probability, not a generic reference) in core/paim_engine.py's
-# compute_alpha().
+# values.
 ELITE_EDGE             = 2.5    # % — VALUE / HIGH_VALUE boundary (défaut)
 SOCCER_ELITE_EDGE      = 1.5    # % — Soccer AH0 : marché serré, VALUE dès 1.5%
 BASKETBALL_ELITE_EDGE  = 2.0    # % — NBA Finales : VALUE dès 2.0% (edges typiques 1.5–2.5%)
@@ -25,17 +21,18 @@ SUSPECT_EDGE = 10.0   # % — safety trigger: major sport edge above this = SUSP
 # ── Tax (PAIM v9.5) ───────────────────────────────────────────────────
 TAX_RATE = 0.20   # % withheld on net profit of a winning bet — see core/tax_engine.py
 
-
-def min_edge_for_k(k: int, true_prob: float = 0.55, tax_rate: float = TAX_RATE) -> float:
-    """
-    Tax-aware minimum edge (%) required for a k-leg system at a given true
-    probability, with a 15% safety margin over the theoretical net-of-tax
-    breakeven (core.tax_engine.min_edge_required). Replaces the old fixed
-    MIN_EDGE floor, which didn't account for the bookmaker-withholding tax
-    at all — a signal could clear the old 1.2% floor and still be a
-    guaranteed loser once TAX_RATE is applied to its winnings.
-    """
-    return round(_min_edge_required(k, true_prob, tax_rate) * 1.15, 4)
+# The tax gate lives exclusively in core.tax_engine.suggest_system() /
+# is_combo_tax_viable() now, evaluated on the real assembled combo — NOT
+# here, and not per-individual-signal in core/paim_engine.py's
+# compute_alpha(). An earlier version of this file had a
+# min_edge_for_k(k=1, ...) gate applied per-signal; confirmed live on
+# 2026-07-08 that gating at k=1 (the single most demanding floor — see
+# core.tax_engine.min_edge_required: per-leg requirement shrinks as
+# system size k grows) discarded every real candidate before
+# suggest_system() ever got the chance to combine them into a viable
+# system (22/22 discarded in one scan, including an 11.35% edge).
+# Removed rather than left as dead-but-harmless code — see git history
+# around that date if this needs revisiting.
 
 # ── Retry & Rate Limiting (Centralized) ──────────────────────────────
 DELAY_XBET_MIN       = 2.0      # Seconds — min delay between 1XBet requests

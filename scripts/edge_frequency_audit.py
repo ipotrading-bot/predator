@@ -40,7 +40,7 @@ from core.tax_engine import (
 log = logging.getLogger("PREDATOR.edge_frequency_audit")
 
 DEFAULT_K_RANGE = range(2, 13)   # k = 2..12, per the task spec
-DEFAULT_SAFETY_MARGIN = 1.15     # matches core.constants.min_edge_for_k's margin
+DEFAULT_SAFETY_MARGIN = 1.15     # matches the safety margin over min_edge_required() specified in the task
 DEFAULT_MIN_POSTHOC_SAMPLES = 30 # same bar as core/learning_layer.py's _MIN_SAMPLES
 
 

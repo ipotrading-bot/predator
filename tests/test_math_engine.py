@@ -10,21 +10,25 @@ from core.math_engine import devig_prob, is_round_number_line
 
 class TestComputeAlpha:
     def test_positive_edge_within_range(self):
-        # Strong favorite (true_prob=0.80 from pinnacle_price=1.25) — tax
-        # floor at this probability is only ~5.75% (see
-        # core.constants.min_edge_for_k), comfortably cleared by a 10% edge.
         edge, status = compute_alpha(xbet_odd=1.375, pinnacle_price=1.25, min_edge=1.5)
         assert status == "OK"
         assert edge == pytest.approx(10.0, abs=0.01)
 
-    def test_near_coinflip_edge_rejected_by_tax_floor_even_if_above_flat_min_edge(self):
-        # Regression guard for PAIM v9.5: at true_prob~0.52 (near even-money),
-        # TAX_RATE=0.20 withheld on winnings-only requires ~13.9% raw edge to
-        # break even (core.tax_engine.min_edge_required) — far above the old
-        # flat min_edge=1.5%. An 8.29% edge here would have passed the old
-        # flat-threshold-only check but is a guaranteed net-of-tax loser.
+    def test_near_coinflip_edge_not_gated_on_tax_here(self):
+        # Regression guard for the 2026-07-08 signal-drought incident:
+        # compute_alpha() briefly gated every candidate on
+        # min_edge_for_k(k=1, ...) — the single MOST demanding tax floor,
+        # since per-leg requirement shrinks as system size k grows (see
+        # core.tax_engine.min_edge_required). That discarded 22/22 real
+        # candidates in one live scan, including an 11.35% edge, because
+        # near-even-money markets need ~13-14% at k=1 alone — killing legs
+        # before core.tax_engine.suggest_system() ever got the chance to
+        # combine them into a viable k>1 system. compute_alpha() must only
+        # ever gate on the learned min_edge/MAX_EDGE — tax viability is
+        # core.tax_engine.suggest_system()/is_combo_tax_viable()'s job
+        # alone, evaluated on the real assembled combo.
         edge, status = compute_alpha(xbet_odd=2.09, pinnacle_price=1.93, min_edge=1.5)
-        assert status == "DISCARD"
+        assert status == "OK"
         assert edge == pytest.approx(8.29, abs=0.01)
 
     def test_edge_below_min_threshold_discarded(self):

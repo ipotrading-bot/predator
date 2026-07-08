@@ -1,10 +1,55 @@
 # Audit empirique : amplitude × fréquence de l'edge réelle
-**Date de l'audit : 2026-07-08**
-**Outil : `scripts/edge_frequency_audit.py` (testé, 21 tests unitaires, exécuté contre les données réelles de production)**
+**Date de l'audit : 2026-07-08 (mise à jour 13:29 UTC — voir §-1 ; complété §-2/§-3, pas de nouveau run — voir ces sections)**
+**Outil : `scripts/edge_frequency_audit.py` (testé, 21 tests unitaires, exécuté contre les données réelles de production — dernier run réel : le jeu de 12 signaux/2 jours ci-dessous, PRÉ-fix du bug `compute_alpha()`, voir §-2)**
 
 ## Réponse directe
 
-**Aucun k (2 à 12) ne peut être validé aujourd'hui avec les données réelles disponibles — ni positivement, ni négativement.** Ce n'est pas parce que l'edge ne fonctionne pas : c'est parce qu'il n'existe actuellement que **2 jours de données réelles** (12 signaux au total) en base, ce qui est très en dessous du minimum nécessaire pour répondre à la question posée. Aucune conclusion sur la viabilité commerciale du système ne peut être tirée de cet échantillon — voir §3 pour ce qu'il faudrait pour trancher.
+**Aucun k (2 à 12) ne peut être validé aujourd'hui avec les données réelles disponibles — ni positivement, ni négativement**, et pire : le volume de données n'augmente plus du tout depuis le déploiement de ce matin. Ce n'est plus seulement "pas encore assez de temps a passé" — **voir §-1, découvert en ré-exécutant cet audit l'après-midi du même jour : le pipeline génère actuellement ~0 signal par cycle de scan**, pour une raison identifiée et chiffrée ci-dessous, distincte de la question de fréquence posée par ce prompt. Tant que ce point n'est pas corrigé, aucune quantité de temps supplémentaire n'accumulera de données exploitables.
+
+---
+
+## §-1 — MISE À JOUR CRITIQUE (2026-07-08 13:29 UTC) : le pipeline ne produit plus de signaux
+
+Ré-exécution de cet audit ~9h après le déploiement du code v9.5. Constat en base : `signals` est passé de 11 à **3 lignes actives** (purge normale, aucune ligne ajoutée), `ai_learning_ledger` toujours à **1 ligne**. Pourtant, au moins 8 cycles de scan (`Predator Engine`/`Golden Hour`/`Deep Scan`) ont tourné avec succès sur cette fenêtre.
+
+Inspection directe des logs GitHub Actions du run `Predator Engine` le plus récent : **22 candidats évalués, 22 `DISCARD`, 0 signal émis.** Exemple concret dans les logs : `SOC Under 2.75 — edge 11.35%` — un edge de 11.35%, qui aurait été un signal évident sous l'ancien système, a été rejeté.
+
+**Cause identifiée et vérifiée par calcul direct** (`core.constants.min_edge_for_k`) : pour un marché totals/spreads proche de l'équilibre (`true_prob` 0.50-0.56, cotes Pinnacle 1.80-2.00 typiques), le plancher fiscal par-signal exigé avant toute formation de système est de **12.8% à 14.4%** — un edge de 11.35% reste donc insuffisant à *n'importe quelle* cote réaliste dans cette fourchette.
+
+**Le vrai problème n'est pas le calcul en lui-même (il est mathématiquement cohérent), c'est où il est appliqué :** `compute_alpha()` (Task 2) filtre chaque candidat *individuellement* avec le plancher `min_edge_for_k(k=1, ...)` — le seuil le PLUS exigeant possible (rappel de l'audit précédent : le plancher par-jambe *diminue* avec k). Résultat : une jambe qui serait parfaitement viable *en tant que partie d'un système à 4-6 jambes* (plancher ~5-8%) est rejetée avant même d'atteindre `suggest_system()`, qui ne voit jamais l'occasion de la combiner. Le garde-fou du Task 2 bloque ce que le Task 5 est censé rendre possible.
+
+**Bug secondaire confirmé en même temps** (logs du même run) : `check_circuit_breaker: column ai_learning_ledger.kelly_pct does not exist` — confirme que les migrations v9.5-v9.8 ne sont toujours pas appliquées ; dégradation gracieuse comme prévu (pas de crash), mais le circuit breaker, le ROI réel et la capture de closing line tournent tous à vide depuis ce matin.
+
+**CORRIGÉ (2026-07-08, validé avant implémentation) :** `compute_alpha()` ne gate plus sur `min_edge_for_k(1, ...)` — cette fonction a été retirée de `core/constants.py` (elle n'avait plus aucun appelant). Le seul filtre restant en amont de la formation de système est le plancher appris par sport (`learning_layer`) + le plafond `MAX_EDGE`. `core.tax_engine.suggest_system()`/`is_combo_tax_viable()` reste le seul vrai juge de la viabilité fiscale, évalué sur la combinaison réellement assemblée plutôt que sur une approximation par-jambe au pire cas (k=1). 168 tests passent après le correctif (voir `tests/test_math_engine.py::test_near_coinflip_edge_not_gated_on_tax_here`, qui garde une trace explicite de cet incident).
+
+**Migrations v9.5-v9.8 :** toujours non appliquées à cette heure — reste à faire manuellement dans l'éditeur SQL Supabase avant que le circuit breaker, le ROI réel et la capture de closing line ne deviennent pleinement fonctionnels.
+
+---
+
+## §-2 — Vérification post-fix (2026-07-08, suite) : l'audit a-t-il tourné sur des données réelles APRÈS le fix ?
+
+**Non.** Réponse directe et vérifiée à nouveau ce jour :
+
+- Le fix de `compute_alpha()` décrit en §-1 existe **uniquement dans l'arbre de travail, non commité** (`git status` : `core/paim_engine.py`, `core/constants.py`, ce rapport, `scripts/edge_frequency_audit.py`, `tests/test_math_engine.py` tous encore `M`, aucun commit après `f3ab949`). Il n'a donc **pas été déployé en production** — ni sur GitHub Actions, ni sur Vercel.
+- Conséquence directe : **aucun nouveau signal n'a pu être généré sous le code corrigé.** Le jeu de données présenté en §1-§5 ci-dessous (12 signaux, 2 jours) est exactement celui qui a servi à *diagnostiquer* le bug — pas un nouveau run post-fix. Tant que ce commit n'est pas poussé et qu'un cycle de scan complet n'a pas tourné dessus, il n'existe structurellement aucune donnée post-fix à auditer.
+- Tentative de vérification en direct dans cette session : requête Supabase via l'outil MCP (`mcp__supabase__execute_sql`) → `Unauthorized` (un problème de token distinct du bug de project-ref tronqué déjà corrigé le 07-07 par `6f9b24b` — le `--project-ref` dans `.mcp.json` est correct). Aucune variable `SUPABASE_URL`/`SUPABASE_KEY` n'est présente dans ce shell pour lancer `scripts/edge_frequency_audit.py` directement non plus. **Donc : ni un nouveau run du script, ni une requête directe n'ont pu confirmer ou infirmer un changement de volume de données dans cette session.** À relancer dès que l'accès DB (MCP ou env vars) est rétabli.
+
+**Ce qui a été fait aujourd'hui, précisément :** le bug de `compute_alpha()` a été identifié, corrigé dans le code, couvert par un test de non-régression (`tests/test_math_engine.py::test_near_coinflip_edge_not_gated_on_tax_here`), et sa cause racine documentée. **Ce qui n'a PAS été fait :** déployer ce fix, laisser le pipeline tourner dessus, ni ré-exécuter l'audit empirique (Étapes 1 à 7) sur des données produites après le fix. Les prérequis listés en fin de rapport (§ Conclusion, points 1-2) restent entièrement valables et s'appliquent maintenant aussi au déploiement de ce fix lui-même, pas seulement aux migrations SQL.
+
+---
+
+## §-3 — Le plancher « appris par sport » (`min_edge` de `compute_alpha`) est-il basé sur `clv_final` ?
+
+**Non, pas dans le code actuel.** Vérifié par lecture directe :
+
+- `min_edge` transmis à `compute_alpha()` vient de `core.learning_layer.load_thresholds()` (`run_engine.py:1009,1268`), qui lit `SPORT_DEFAULTS` puis les overrides de la table `meta` écrits par `compute_and_save()`.
+- `compute_and_save()` → `_sport_stats()` (`core/learning_layer.py:71-113`) calcule `hit_rate` **exclusivement** à partir de la colonne `outcome` (`WIN`/`LOSS` réel, posé par `core/settlement.py::settle_signal()` à partir du score de match effectivement récupéré — voir `settlement.py:138-141`) — **jamais** à partir de `clv_final`. Le docstring du module (`learning_layer.py:1-11`) et celui de `_sport_stats()` l'affirment explicitement, avec l'explication du piège : `clv_final` est une re-dérivation de l'edge d'entrée à partir des **mêmes prix de scan** déjà utilisés pour `edge_pct` — comme `MIN_EDGE` ne laisse passer que des edges positifs à l'origine, `clv_final` est quasi toujours ≥ 0 *indépendamment du résultat réel du match*.
+- Ce piège exact a un nom dans le code : `tests/test_learning_layer.py` le documente comme le **« tautology bug »** — « compute_and_save() used to derive hit_rate from clv_final >= 0 [...] A batch of 100% real LOSS outcomes could still show ~100% "hit rate" under the old code » — avec des tests dédiés qui échouent sur l'ancien code et passent sur le nouveau.
+- **Ce bug a déjà été corrigé séparément, avant le travail v9.5 d'aujourd'hui** : commit `d67ca84` (« fix: learning_layer lit ai_learning_ledger (pas signals.clv_pct) », 2026-07-03T11:13:54Z) — 5 jours avant l'incident documenté en §-1. Il est committé, pas dans le diff en cours, donc actif en production dès lors que `compute_and_save()` tourne (appelé depuis `core/audit_engine.py:305`, à chaque cycle d'audit).
+
+**Verdict : la prémisse de la question ne s'applique plus au code actuel — ce n'est pas un bug résiduel à corriger séparément, il l'a déjà été (Tâche 1), avant même ce prompt.**
+
+**Réserve non vérifiable dans cette session** (à vérifier dès que l'accès DB est rétabli, cf. §-2) : les valeurs actuellement en base dans `meta.threshold_*` reflètent le dernier appel de `compute_and_save()` ayant vu ≥30 échantillons décisifs (`_MIN_SAMPLES`) pour un sport donné. Avec `ai_learning_ledger` à **1 seule ligne permanente** (conséquence de l'incident du 07-07, voir §0.c), il est très probable qu'aucun recalcul n'a eu lieu depuis avant cet incident — donc soit ces seuils sont toujours à `SPORT_DEFAULTS` (jamais ajustés), soit ils datent d'un recalcul antérieur au 07-07. Comme le fix du tautology bug (`d67ca84`) précède le 07-07 de 4 jours, un recalcul dans cette fenêtre aurait déjà utilisé la bonne logique — mais je n'ai pas pu confirmer `updated_at` ni les valeurs elles-mêmes en direct (`Unauthorized` sur `mcp__supabase__execute_sql`, voir §-2). Requête à lancer dès que possible : `SELECT key, value, updated_at FROM meta WHERE key LIKE 'threshold_%';`
 
 ---
 
@@ -60,6 +105,26 @@ Deux causes cumulatives, toutes deux réelles et documentées, pas une anomalie 
 
 Directement dépendantes de §3 : aucun jour valide → `n_opportunities=0` et `expected_monthly_log_growth=0.0` pour tout k. Validation post-hoc : `0` combo entièrement réglé pour tout k, très en dessous du seuil de 30 échantillons — rapporté explicitement comme **non significatif**, pas comme "0% de réussite".
 
+### Tableau explicite k / jours valides / log-growth mensuel attendu
+
+Sortie ligne par ligne de `frequency_by_k()` + `magnitude_by_k()` (`scripts/edge_frequency_audit.py`) sur le jeu de données actuel (`total_days=2`, 12 signaux — **le même jeu de données pré-fix qu'en §1-§2, voir §-2** : aucune donnée post-fix n'existe encore pour relancer ce calcul avec un résultat différent) :
+
+| k | jours valides / total | ratio | systèmes estimés/mois | opportunités (magnitude) | log-growth moy./opportunité | opportunités/mois | **log-growth mensuel attendu** |
+|---|---|---|---|---|---|---|---|
+| 2  | 0/2 | 0.0 | 0.0 | 0 | 0.0 | 0.0 | **0.0** |
+| 3  | 0/2 | 0.0 | 0.0 | 0 | 0.0 | 0.0 | **0.0** |
+| 4  | 0/2 | 0.0 | 0.0 | 0 | 0.0 | 0.0 | **0.0** |
+| 5  | 0/2 | 0.0 | 0.0 | 0 | 0.0 | 0.0 | **0.0** |
+| 6  | 0/2 | 0.0 | 0.0 | 0 | 0.0 | 0.0 | **0.0** |
+| 7  | 0/2 | 0.0 | 0.0 | 0 | 0.0 | 0.0 | **0.0** |
+| 8  | 0/2 | 0.0 | 0.0 | 0 | 0.0 | 0.0 | **0.0** |
+| 9  | 0/2 | 0.0 | 0.0 | 0 | 0.0 | 0.0 | **0.0** |
+| 10 | 0/2 | 0.0 | 0.0 | 0 | 0.0 | 0.0 | **0.0** |
+| 11 | 0/2 | 0.0 | 0.0 | 0 | 0.0 | 0.0 | **0.0** |
+| 12 | 0/2 | 0.0 | 0.0 | 0 | 0.0 | 0.0 | **0.0** |
+
+Uniforme à 0 sur toute la plage — pas une erreur de calcul, c'est la conséquence directe et déterministe de `valid_days=0` pour chaque k (§3) : `_best_qualifying_legs_per_group()` ne trouve jamais ≥k jambes qualifiantes le même jour depuis des groupes de corrélation distincts, donc `magnitude_by_k()` n'a aucune journée candidate à passer à `system_expected_value()`, quel que soit k. **Ce tableau ne dit rien sur la viabilité réelle du système** (§ Conclusion) — il dit seulement qu'avec 2 jours et 12 signaux, aucun k n'a pu être ni confirmé ni infirmé, dans un sens comme dans l'autre.
+
 ---
 
 ## Conclusion et recommandations
@@ -72,9 +137,11 @@ Directement dépendantes de §3 : aucun jour valide → `n_opportunities=0` et `
 - Que l'edge 1xBet-vs-Pinnacle a — ou n'a pas — une fréquence suffisante pour un k donné. La question reste ouverte.
 
 **Prérequis avant de pouvoir re-trancher :**
+0. **Committer et déployer le fix `compute_alpha()` (§-1/§-2)** — tant qu'il reste dans l'arbre de travail non commité, aucune donnée post-fix ne peut exister, donc aucun ré-audit n'a de sens. C'est le blocage immédiat, avant même les migrations.
 1. Appliquer les migrations `sql/migrate_v9_5` à `v9_8` (colonnes `kelly_pct`/`sharp_prob`/`closing_pinnacle_price`/`correlation_group`) — sans elles, même un futur ré-audit reposera sur les mêmes approximations de repli.
 2. Laisser tourner le pipeline au moins **3-4 semaines** en continu (couvrant idéalement 20-30 jours de scan effectif) avant de ré-exécuter `python scripts/edge_frequency_audit.py` — c'est le minimum pour que §3/§4 produisent un ratio jours-valides/total-jours qui ne soit pas dominé par le bruit d'échantillonnage.
 3. Idéalement, implémenter le patch de logging des candidats rejetés (§0.a) en parallèle, pour qu'un audit futur puisse aussi répondre à la question du biais de sélection, pas seulement à celle de la fréquence des signaux déjà qualifiants.
 4. Viser ≥30 combos k-jambes entièrement réglés (WIN/LOSS sur chaque jambe) avant de faire confiance à la validation post-hoc de l'Étape 6 pour un k donné — cohérent avec le seuil `_MIN_SAMPLES=30` déjà utilisé dans `core/learning_layer.py`.
+5. Dès que l'accès Supabase (MCP ou `SUPABASE_URL`/`SUPABASE_KEY`) est rétabli, exécuter `SELECT key, value, updated_at FROM meta WHERE key LIKE 'threshold_%';` pour lever la réserve de §-3 sur la fraîcheur des seuils appris par sport.
 
 **Recommandation opérationnelle immédiate :** ne pas prendre de décision d'architecture (abandonner ou renforcer le pari sur 1xBet-vs-Pinnacle) sur la base des données actuelles — ni dans un sens, ni dans l'autre. Re-questionner dans 3-4 semaines avec `scripts/edge_frequency_audit.py`.

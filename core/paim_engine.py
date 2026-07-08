@@ -6,7 +6,6 @@ import difflib
 from functools import lru_cache
 
 from core.math_engine import calc_dnb
-from core.constants import min_edge_for_k as _min_edge_for_k
 
 # Common abbreviations that cause Pinnacle ↔ 1XBet name divergence
 _ABBREVS = [
@@ -171,23 +170,28 @@ def compute_alpha(
 ) -> tuple[float, str]:
     """
     Returns (edge_pct, status).
-    status: "OK"      — valid signal in [effective_min_edge, MAX_EDGE]
+    status: "OK"      — valid signal in [min_edge, MAX_EDGE]
             "DISCARD" — invalid data, negative edge, or outside thresholds.
     min_edge is the sport's learning-layer-adjusted floor (see
-    core/learning_layer.py) — but it alone can't guarantee the signal
-    survives TAX_RATE, since it's tuned on real win/loss, not tax. The
-    effective floor is max(min_edge, tax_engine's own breakeven for THIS
-    signal's true probability (pinnacle_price is already treated as the
-    fair/consensus price throughout this module, so true_prob = 1/price)
-    with a 15% safety margin) — a signal can never be sent below its own
-    mathematical tax breakeven, however permissive the learned threshold is.
+    core/learning_layer.py).
+
+    NOT gated on tax breakeven here (PAIM v9.5 initially did — see git
+    history around 2026-07-08 for the removed `min_edge_for_k(1, ...)`
+    check). That gate used the k=1 floor, the single MOST demanding one
+    (per-leg tax breakeven shrinks as system size k grows — see
+    core.tax_engine.min_edge_required) — applying it before a candidate
+    ever reaches core.tax_engine.suggest_system() killed legs that would
+    have been perfectly viable as part of a k>1 system, before
+    suggest_system() ever got the chance to combine them. Confirmed live:
+    22/22 candidates discarded across a full scan cycle, including an
+    11.35% edge, because near-even-money markets need ~13-14% at k=1.
+    core.tax_engine.suggest_system()/is_combo_tax_viable() is now the
+    ONLY tax gate — it evaluates the real combined probability/odds of
+    whatever combo is actually assembled, not a per-leg approximation.
     """
     if not xbet_odd or not pinnacle_price or xbet_odd <= 1.01 or pinnacle_price <= 1.01:
         return 0.0, "DISCARD"
     edge = round((xbet_odd / pinnacle_price - 1) * 100, 2)
-    true_prob = 1 / pinnacle_price
-    tax_floor = _min_edge_for_k(1, true_prob)
-    effective_min_edge = max(min_edge, tax_floor)
-    if edge < effective_min_edge or edge > MAX_EDGE:
+    if edge < min_edge or edge > MAX_EDGE:
         return edge, "DISCARD"
     return edge, "OK"
