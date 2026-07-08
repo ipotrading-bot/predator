@@ -1,6 +1,6 @@
 # Audit empirique : amplitude × fréquence de l'edge réelle
-**Date de l'audit : 2026-07-08 (mise à jour 13:29 UTC — voir §-1 ; ré-exécution réelle contre les données live — voir §-2/§-3/§-4)**
-**Outil : `scripts/edge_frequency_audit.py` (testé, 21 tests unitaires, ré-exécuté réellement cette session via contournement API — voir §-2/§-4 — contre `signals`+`ai_learning_ledger` live : 4 enregistrements/2 jours, toujours PRÉ-fix du bug `compute_alpha()` faute de cycle de scan post-push)**
+**Date de l'audit : 2026-07-08 (mise à jour 13:29 UTC — voir §-1 ; ré-exécution réelle + réinitialisation des seuils + diagnostic ledger 30 jours — voir §-2 à §-6)**
+**Outil : `scripts/edge_frequency_audit.py` (testé, 21 tests unitaires, ré-exécuté réellement cette session via contournement API — voir §-2/§-4 — contre `signals`+`ai_learning_ledger` live : 4 enregistrements/2 jours, toujours PRÉ-fix du bug `compute_alpha()` faute de cycle de scan post-push). Voir §-6 pour le diagnostic factuel (logs GitHub Actions réels, pas une supposition) de pourquoi le registre reste quasi vide : un bug d'écriture confirmé de ~4 semaines, puis un problème de volume distinct.**
 
 ## Réponse directe
 
@@ -168,6 +168,96 @@ Ce jeu de données (4 enregistrements, 2 jours : 2026-07-06 et 2026-07-08) **rem
 
 ---
 
+## §-5 — Réinitialisation des seuils contaminés (2026-07-08, exécutée)
+
+Recommandation de §-3 exécutée, pas seulement posée. Requête réelle :
+
+```
+$ curl -s -X POST ".../chnyxeyqpdipeogirrpu/database/query" -d "{\"query\":\"
+UPDATE meta SET value='2.0', updated_at=now() WHERE key='threshold_baseball';
+UPDATE meta SET value='1.2', updated_at=now() WHERE key='threshold_soccer';
+SELECT key, value, updated_at FROM meta WHERE key LIKE 'threshold_%' ORDER BY key;\"}"
+
+[{"key":"threshold_baseball","value":"2.0","updated_at":"2026-07-08 14:08:08.278912+00"},
+ {"key":"threshold_soccer","value":"1.2","updated_at":"2026-07-08 14:08:08.278912+00"}]
+```
+
+`threshold_baseball` 1.0→**2.0**, `threshold_soccer` 1.5→**1.2** — les deux `SPORT_DEFAULTS` exacts de `core/learning_layer.py`. Effectif immédiatement : `compute_alpha()` lit `meta` à chaque cycle via `load_thresholds()`, pas de redéploiement nécessaire.
+
+---
+
+## §-6 — Diagnostic réel : pourquoi `ai_learning_ledger` n'a qu'1 ligne et `signals`=3
+
+**Ne pas conflater — ce sont deux bugs différents, actifs à deux moments différents.** Preuve, pas déduction :
+
+**Runs programmés, 30 derniers jours (2026-06-08 → 2026-07-08), via `gh run list` :**
+
+| Workflow | Runs programmés | Succès | Échec/Annulé |
+|---|---|---|---|
+| `engine.yml` (Predator Engine) | 297 | 297 | 0 |
+| `golden_hour.yml` (Golden Hour) | 278 | 274 | 4 cancelled |
+| `deep_scan.yml` (Deep Scan 48h) | 119 | 119 | 0 |
+| `audit.yml` (Predator Audit, settlement + ledger + learning_layer) | 119 | 106 | 13 cancelled |
+
+Un run `audit.yml` "succès" au niveau workflow **ne garantit pas** qu'une écriture `ai_learning_ledger` a réussi, ni même été tentée — voir ci-dessous.
+
+**Phase 1 (confirmée ~2026-06-10 → 2026-07-04) : les signaux SONT générés et se terminalisent, mais l'écriture ledger échoue à 100%, silencieusement.** Logs applicatifs réels (pas le statut du workflow), échantillonnés sur ~25 runs `audit.yml` répartis sur toute la fenêtre :
+
+```
+2026-06-10 15:40-15:50 UTC | WARNING ×7 | ai_learning_ledger: {'message': "Could not find the 'match' column of 'ai_learning_ledger' in the schema cache", 'code': 'PGRST204', ...}
+2026-06-10 15:50:43 UTC    | INFO       | Audit done: 0 settled | 7 closed | 0 expired
+
+2026-06-13 04:00-04:08 UTC | WARNING ×6 | (même erreur PGRST204 'match')
+2026-06-13 04:08:57 UTC    | INFO       | Audit done: 0 settled | 6 closed | 0 expired
+
+2026-06-18 10:28-10:38 UTC | WARNING ×6 | (même erreur)
+2026-06-18 10:38:38 UTC    | INFO       | Audit done: 0 settled | 6 closed | 1 expired
+
+2026-07-01 09:53-10:00 UTC | WARNING ×5 | (même erreur, 5/5 tentatives)
+2026-07-01 10:00:45 UTC    | INFO       | Audit done: 0 settled | 0 closed | 5 expired
+
+2026-07-04 08:41-08:44 UTC | WARNING ×3 | (même erreur PGRST204 'match', 3/3)
+2026-07-04 08:44:45 UTC    | INFO       | Audit done: 0 settled | 3 closed | 0 expired
+2026-07-04 08:44:46 UTC    | ERROR ×6   | learning_layer [soccer/basketball/hockey/baseball/rugbyleague/aussierules]: {'message': 'column ai_learning_ledger.outcome does not exist', 'code': '42703', ...}
+```
+
+`PGRST204 "Could not find the 'match' column ... in the schema cache"` n'est pas "la colonne n'existe pas" (ça, c'est `42703`, vu séparément le 07-04 pour `outcome`) — c'est PostgREST dont le **cache de schéma** n'a pas la colonne, alors qu'elle existe en base (confirmé : `information_schema.columns` la liste aujourd'hui). `core/db.py::log_to_ledger()` inclut `match` comme champ **non-optionnel** (`payload["match"] = sig["match"]`, jamais dans le sous-ensemble retry-sans-colonnes-optionnelles) — donc cette erreur n'est **jamais** rattrapée par le retry, l'insert échoue purement et simplement, pour chaque signal audité, sur au moins 4 semaines. Total sur les runs échantillonnés : dizaines de tentatives d'écriture `ai_learning_ledger` (closed/expired), **0 succès**.
+
+**Transition (2026-07-04 → 2026-07-06, mécanisme exact non confirmable a posteriori) :** entre le run du 07-04 08:44 (`outcome` absente, `match` en cache-miss) et la ligne unique existante datée du 07-06 23:35 (`outcome='LOSS'` présent), les deux problèmes de schéma se sont résolus — colonne `outcome` ajoutée et cache PostgREST rafraîchi. Je n'ai pas de log capturant le moment exact ; c'est la seule écriture `ai_learning_ledger` réussie retrouvée sur toute la fenêtre de 30 jours.
+
+**Phase 2 (confirmée 2026-07-06 20:00 → 2026-07-08 08:31, 6 runs `audit.yml` consécutifs vérifiés individuellement) : plus aucune écriture n'est même tentée, faute de signal éligible.**
+
+```
+2026-07-06 20:00:13 UTC | INFO | PAIM AUDIT v8.5 — 0 signals pending | Nothing to audit.
+2026-07-07 03:35:47 UTC | INFO | PAIM AUDIT v8.5 — 0 signals pending | Nothing to audit.
+2026-07-07 09:45:36 UTC | INFO | PAIM AUDIT v8.5 — 0 signals pending | Nothing to audit.
+2026-07-07 19:57:52 UTC | INFO | PAIM AUDIT v8.5 — 0 signals pending | Nothing to audit.
+2026-07-08 02:51:07 UTC | INFO | PAIM AUDIT v8.5 — 0 signals pending | Nothing to audit.
+2026-07-08 08:32:00 UTC | INFO | PAIM AUDIT v8.5 — 0 signals pending | Nothing to audit.
+```
+
+Note en passant, vérifiée sur le run du 08:31 UTC : l'étape "Verify required secrets are present" **passe** (`conclusion: success` sur les 9 steps du job) — les lignes contenant `role='$role'` et `42501` qu'un premier grep faisait remonter sont le **texte source du script** que GitHub Actions affiche avant exécution (`$role` non substitué), pas une erreur réelle. L'incident RLS 42501 documenté le 07-07 dans [[project_predator_supabase]] est bien résolu au niveau des credentials — ce n'est pas ce qui bloque ici.
+
+`fetch_pending()` exige `status='active'` ET `match_time` antérieur à maintenant−4h (`SETTLEMENT_GRACE_H`). Zéro signal éligible sur 6 cycles consécutifs (36h) ne s'explique que par un volume de génération déjà très faible — confirmé indépendamment en échantillonnant `golden_hour.yml` sur la même période (07-05 → 07-07) :
+
+```
+2026-07-05 03:19 UTC | Tier 1 OK — 4/4 events | ... | Supabase: 3/3 signals persisted
+2026-07-05 19:50 UTC | Tier 1 OK — 5/5 events | ... | Supabase: 1/1 signals persisted
+2026-07-06 18:17 UTC | Tier 1 OK — 1/1 events | ... | (aucun signal persisté)
+2026-07-07 15:25 UTC | Tier 1 OK — 1/1 events | ... | Supabase: 0/1 signals persisted
+```
+
+1 à 4 événements de marché trouvés par cycle, 0 à 3 signaux persistés — un volume de candidats déjà mince **avant** même que le bug `compute_alpha()` k=1 (§-1, découvert le 07-08 après le déploiement v9.5 du matin) ne l'aggrave. Cette phase-là est bien "pas assez de signaux qualifiants" — mais sans rapport avec la phase 1, qui était un pur problème d'écriture pendant que les signaux existaient.
+
+**Réponse explicite et non-conflée à la question posée :**
+- **2026-06-10 → 2026-07-04 (~3-4 semaines) : des signaux sont générés et se terminalisent normalement (plusieurs par cycle d'audit de 6h), mais l'écriture `ai_learning_ledger` échoue à 100%, silencieusement (log niveau WARNING, le job continue et remonte "succès").** C'est un bug d'écriture, pas un problème de volume.
+- **2026-07-06 20:00 → aujourd'hui (~36h+) : aucune écriture n'est tentée car aucun signal n'est éligible à l'audit — le volume de génération brute est réellement bas, indépendamment de tout bug d'écriture, et s'est encore dégradé le 07-08 au matin avec le bug `compute_alpha()` k=1 déjà documenté et corrigé (§-1).**
+- Le fait que `ai_learning_ledger` n'ait qu'1 ligne au total est donc **la conséquence combinée des deux** : ~4 semaines où les écritures auraient dû s'accumuler mais échouaient, suivies de ~36h+ où il n'y a simplement rien eu à écrire.
+
+**Ce que je n'ai pas pu confirmer :** le mécanisme exact de la résolution du problème de schéma entre le 07-04 et le 07-06 (cache PostgREST rafraîchi automatiquement vs intervention manuelle) — aucun log ne capture ce moment précis. Si ce point compte, il faudrait vérifier l'historique Supabase (dashboard → Database → aucune trace de log de ce type n'est conservée au-delà de la fenêtre de rétention standard, à confirmer).
+
+---
+
 ## §0 — Constats préalables (avant tout calcul)
 
 ### a. Biais de sélection confirmé
@@ -246,7 +336,7 @@ Uniforme à 0 sur toute la plage — pas une erreur de calcul, c'est la conséqu
 
 **Ce que cet audit établit avec certitude :**
 - L'infrastructure de mesure (biais de sélection, corrélation, fréquence, magnitude, validation post-hoc) est maintenant construite, testée (21 tests unitaires + exécution réelle réussie), et prête à être ré-exécutée.
-- Le registre de données actuel est **structurellement insuffisant** pour répondre à la question posée — pas à cause d'un bug, mais à cause de l'historique perdu (incident du 07-07) et du fait que le rebuild du pipeline (v9.5) vient tout juste d'être déployé aujourd'hui.
+- Le registre de données actuel est **structurellement insuffisant** pour répondre à la question posée, et ~~pas à cause d'un bug~~ **pour partie À CAUSE d'un bug, confirmé en §-6** : ~4 semaines (06-10 → 07-04) où des signaux étaient générés et terminalisés normalement mais où 100% des écritures `ai_learning_ledger` échouaient silencieusement (schéma PostgREST désynchronisé) — pas seulement l'historique perdu de l'incident du 07-07 ni le rebuild v9.5 d'aujourd'hui. Depuis le 07-06 20:00, c'est un problème de volume de génération pur (0 signal éligible à auditer sur 6 cycles consécutifs), sans rapport avec le bug d'écriture antérieur — voir §-6 pour ne pas conflater les deux.
 
 **Ce que cet audit n'établit PAS (et ne peut pas établir aujourd'hui) :**
 - Que l'edge 1xBet-vs-Pinnacle a — ou n'a pas — une fréquence suffisante pour un k donné. La question reste ouverte.
@@ -257,7 +347,9 @@ Uniforme à 0 sur toute la plage — pas une erreur de calcul, c'est la conséqu
 2. Laisser tourner le pipeline au moins **3-4 semaines** en continu (couvrant idéalement 20-30 jours de scan effectif) avant de ré-exécuter `python scripts/edge_frequency_audit.py` — c'est le minimum pour que §3/§4 produisent un ratio jours-valides/total-jours qui ne soit pas dominé par le bruit d'échantillonnage.
 3. Idéalement, implémenter le patch de logging des candidats rejetés (§0.a) en parallèle, pour qu'un audit futur puisse aussi répondre à la question du biais de sélection, pas seulement à celle de la fréquence des signaux déjà qualifiants.
 4. Viser ≥30 combos k-jambes entièrement réglés (WIN/LOSS sur chaque jambe) avant de faire confiance à la validation post-hoc de l'Étape 6 pour un k donné — cohérent avec le seuil `_MIN_SAMPLES=30` déjà utilisé dans `core/learning_layer.py`.
-5. **Traiter `threshold_baseball=1.0` et `threshold_soccer=1.5` (table `meta`) comme suspects** (§-3, confirmé) — calculés avant le fix du tautology bug (`d67ca84`). Option la plus sûre : les réinitialiser à `SPORT_DEFAULTS` (baseball 2.0%, soccer 1.2%) manuellement dans `meta`, plutôt que d'attendre un recalcul naturel qui a besoin de ≥30 échantillons décisifs par sport — un horizon de plusieurs semaines vu le volume actuel (§0.c).
+5. ~~Traiter `threshold_baseball`/`threshold_soccer` comme suspects et les réinitialiser~~ — **fait** (§-5) : `threshold_baseball` 1.0→2.0, `threshold_soccer` 1.5→1.2, valeurs `SPORT_DEFAULTS`, vérifié en base.
 6. Réparer le sous-processus MCP Supabase de cette session (§-2) — reconnecter via `/mcp` en session interactive, ou redémarrer le Codespace/VS Code — pour ne plus dépendre du contournement API Management à chaque vérification future.
+7. **Surveiller que l'écriture `ai_learning_ledger` reste fonctionnelle** (§-6) — un seul succès confirmé (07-06) après ~4 semaines d'échec silencieux (cache de schéma PostgREST désynchronisé sur la colonne `match`, non rattrapable par le retry existant car `match` n'est pas dans les colonnes optionnelles de `core/db.py::log_to_ledger()`). Rien ne garantit que le cache ne re-dérive pas. Vérifier après les premières écritures post-relance qu'elles atterrissent bien en base, pas seulement que le job GitHub Actions rapporte "succès" — un job peut réussir alors que chaque écriture échoue en silence, exactement ce qui s'est produit pendant un mois.
+8. **Décision à prendre, pas encore tranchée ici** (§-6) : implémenter le patch de logging des candidats rejetés (item 3 ci-dessus) suppose que le chemin d'écriture est fiable — ce qui n'est confirmé que par 1 seule écriture réussie sur 30 jours. Voir la question posée au user en fin de session.
 
 **Recommandation opérationnelle immédiate :** ne pas prendre de décision d'architecture (abandonner ou renforcer le pari sur 1xBet-vs-Pinnacle) sur la base des données actuelles — ni dans un sens, ni dans l'autre. Re-questionner dans 3-4 semaines avec `scripts/edge_frequency_audit.py`.
