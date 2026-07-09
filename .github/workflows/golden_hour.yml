@@ -154,4 +154,6 @@ jobs:
           BETFAIR_APP_KEY:    ${{ secrets.BETFAIR_APP_KEY }}
           BETFAIR_USERNAME:   ${{ secrets.BETFAIR_USERNAME }}
           BETFAIR_PASSWORD:   ${{ secrets.BETFAIR_PASSWORD }}
+          BETFAIR_CERT:       ${{ secrets.BETFAIR_CERT }}
+          BETFAIR_CERT_KEY:   ${{ secrets.BETFAIR_CERT_KEY }}
         run: python run_engine.py

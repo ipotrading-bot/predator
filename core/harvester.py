@@ -770,9 +770,10 @@ def fetch_alternative_sports_batch() -> list[dict]:
 
 # ── Betfair Exchange (Tier 1.5 — sharp prices peer-to-peer) ──────────
 
-_BETFAIR_LOGIN_URL  = "https://identitysso.betfair.com/api/login"
-_BETFAIR_API_URL    = "https://api.betfair.com/exchange/betting/rest/v1.0"
-_BETFAIR_COMMISSION = 0.05   # Standard 5% commission on net winnings
+_BETFAIR_LOGIN_URL      = "https://identitysso.betfair.com/api/login"
+_BETFAIR_CERTLOGIN_URL  = "https://identitysso-cert.betfair.com/api/certlogin"
+_BETFAIR_API_URL        = "https://api.betfair.com/exchange/betting/rest/v1.0"
+_BETFAIR_COMMISSION     = 0.05   # Standard 5% commission on net winnings
 
 _BETFAIR_EVENT_TYPES: dict[str, str] = {
     "soccer":           "1",
@@ -792,29 +793,56 @@ _betfair_session: dict = {}
 
 
 def _betfair_login() -> bool:
-    username = os.environ.get("BETFAIR_USERNAME", "")
-    password = os.environ.get("BETFAIR_PASSWORD", "")
-    app_key  = os.environ.get("BETFAIR_APP_KEY",  "")
-    if not all([username, password, app_key]):
+    """
+    Non-Interactive (bot) login via client-cert mutual TLS — the ONLY login
+    method Betfair supports for unattended/automated callers. The old
+    identitysso.betfair.com/api/login endpoint is the Interactive method
+    (meant for a human completing a browser session) and returns an empty/
+    non-JSON body when called headlessly — confirmed live 2026-07-09
+    ("Betfair login: Expecting value: line 1 column 1 (char 0)" on every
+    scan, 0 markets ever fetched). BETFAIR_CERT/BETFAIR_CERT_KEY hold the
+    PEM cert/key content as GitHub secrets; written to temp files here
+    because requests' `cert=` param requires filesystem paths, not PEM
+    strings. See https://identitysso-cert.betfair.com/api/certlogin docs:
+    response uses `sessionToken`/`loginStatus`, NOT `token`/`status` like
+    the interactive endpoint.
+    """
+    username  = os.environ.get("BETFAIR_USERNAME", "")
+    password  = os.environ.get("BETFAIR_PASSWORD", "")
+    app_key   = os.environ.get("BETFAIR_APP_KEY",  "")
+    cert_pem  = os.environ.get("BETFAIR_CERT", "")
+    key_pem   = os.environ.get("BETFAIR_CERT_KEY", "")
+    if not all([username, password, app_key, cert_pem, key_pem]):
         return False
+    import tempfile
     try:
-        r = requests.post(
-            _BETFAIR_LOGIN_URL,
-            data={"username": username, "password": password},
-            headers={
-                "Content-Type":  "application/x-www-form-urlencoded",
-                "Accept":        "application/json",
-                "X-Application": app_key,
-            },
-            timeout=15,
-        )
+        with tempfile.NamedTemporaryFile(mode="w", suffix=".crt", delete=False) as cf, \
+             tempfile.NamedTemporaryFile(mode="w", suffix=".key", delete=False) as kf:
+            cf.write(cert_pem)
+            kf.write(key_pem)
+            cert_path, key_path = cf.name, kf.name
+        try:
+            r = requests.post(
+                _BETFAIR_CERTLOGIN_URL,
+                data={"username": username, "password": password},
+                headers={
+                    "Content-Type":  "application/x-www-form-urlencoded",
+                    "Accept":        "application/json",
+                    "X-Application": app_key,
+                },
+                cert=(cert_path, key_path),
+                timeout=15,
+            )
+        finally:
+            os.unlink(cert_path)
+            os.unlink(key_path)
         data = r.json()
-        if data.get("status") == "SUCCESS":
-            _betfair_session["token"]   = data["token"]
+        if data.get("loginStatus") == "SUCCESS":
+            _betfair_session["token"]   = data["sessionToken"]
             _betfair_session["app_key"] = app_key
-            log.info("Betfair: session ouverte")
+            log.info("Betfair: session ouverte (cert login)")
             return True
-        log.warning("Betfair login: %s", data.get("error", "FAILED"))
+        log.warning("Betfair login: %s", data.get("loginStatus", "FAILED"))
         return False
     except Exception as e:
         log.error("Betfair login: %s", e)
