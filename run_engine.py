@@ -330,7 +330,6 @@ def _purge_old_signals(sb):
     """Delete stale signals. IMPROVED: batched operations + better logging."""
     from core.paim_engine import MIN_EDGE
 
-    now_iso = datetime.now(timezone.utc).isoformat()
     cutoff_48h = (datetime.now(timezone.utc) - timedelta(hours=48)).isoformat()
 
     # ── Archive active signals >48h before purging (preserve ledger history) ──
@@ -344,16 +343,26 @@ def _purge_old_signals(sb):
     except Exception as e:
         log.debug("fetch stale for archive: %s", e)
 
-    # ── Past-match purge — scoped to status=active ONLY ────────────────
-    # BUGFIX: this used to be `.lt("match_time", now_iso)` with no status
-    # filter, which deleted settled/closed/expired signals the instant
-    # their match kicked off — almost always BEFORE run_audit.py (6h cadence)
-    # ever got a chance to settle them and log them to ai_learning_ledger.
-    # That silently starved the Ledger/Audit pages and the AI learning layer
-    # (compute_and_save) of data. Scoping to status=active preserves terminal
-    # signals for audit_engine while still purging genuinely stale active ones.
+    # ── Past-match purge — scoped to status=active AND a real grace window ──
+    # BUGFIX #1 (earlier): this used to be `.lt("match_time", now_iso)` with
+    # no status filter, deleting settled/closed/expired signals instantly.
+    # Scoping to status=active fixed THAT, but not the actual starvation —
+    # core/audit_engine.py's fetch_pending() deliberately waits
+    # SETTLEMENT_GRACE_H (4h, see audit_engine.py) past match_time before a
+    # signal is even eligible for settlement, and only runs every 6h. This
+    # purge ran on every scan (golden_hour ~30min, engine ~2-3h) with a bare
+    # `lt("match_time", now_iso)` cutoff — i.e. zero grace — so it deleted
+    # every signal the instant its match ended, hours before audit's own
+    # grace period even opened. Confirmed live 2026-07-09: signals 6994/6977
+    # (WNBA, match_time 07-08 23:30 UTC) were gone by the next golden_hour
+    # run at 01:09 UTC (+1h39), audit never got a chance — this is the real
+    # root cause of the long-running ai_learning_ledger drought, not just a
+    # one-off. BUGFIX #2: give audit generous headroom (grace period + several
+    # 6h audit cycles, consistent with the 48h window used elsewhere in this
+    # function) before purging an active-but-unsettled signal at all.
+    purge_match_cutoff = (datetime.now(timezone.utc) - timedelta(hours=24)).isoformat()
     try:
-        sb.table("signals").delete().eq("status", "active").lt("match_time", now_iso).execute()
+        sb.table("signals").delete().eq("status", "active").lt("match_time", purge_match_cutoff).execute()
     except Exception as e:
         log.debug("Supabase purge (past matches, active only): %s", str(e)[:60])
 
