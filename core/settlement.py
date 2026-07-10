@@ -22,7 +22,14 @@ def fetch_match_result(match_name: str, sport: str, match_date: str = "") -> dic
     Gemini Search → final score of a completed match.
     Returns {"home_score": int, "away_score": int, "completed": True} or None.
     """
-    api_key = os.environ.get("GEMINI_API_KEY")
+    # Dedicated key first: settlement is the ONE Gemini call that must
+    # never be starved (it's what feeds ai_learning_ledger / the Performance
+    # page), but golden_hour.yml alone fires 48x/day and burns the shared
+    # GEMINI_API_KEY's daily quota within hours — audit.yml (4x/day) then
+    # always loses the race. GEMINI_API_KEY_AUDIT isolates it on its own
+    # quota. Falls back to the shared key if the dedicated one isn't set
+    # yet, so nothing breaks before that secret is added.
+    api_key = os.environ.get("GEMINI_API_KEY_AUDIT") or os.environ.get("GEMINI_API_KEY")
     if not api_key:
         return None
 

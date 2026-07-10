@@ -139,7 +139,10 @@ def audit_one(sb, sig: dict, oracle_calls: list, settle_calls: list, now: dateti
     if oracle_calls[0] > 0:
         oracle_calls[0] -= 1
         try:
-            price, _ = get_pinnacle_price(match, sport=sport, league=league)
+            # Same dedicated-quota reasoning as settlement.py's fetch_match_result —
+            # this is audit's own CLV fallback, keep it off the scan-starved shared key.
+            audit_key = os.environ.get("GEMINI_API_KEY_AUDIT") or os.environ.get("GEMINI_API_KEY")
+            price, _ = get_pinnacle_price(match, sport=sport, league=league, api_key=audit_key)
             if price and price > 1.01:
                 closing_price = price
         except Exception as e:

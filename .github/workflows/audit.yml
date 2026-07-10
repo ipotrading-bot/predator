@@ -71,6 +71,14 @@ jobs:
             exit 1
           fi
 
+      - name: Warn if GEMINI_API_KEY_AUDIT is not set
+        env:
+          GEMINI_API_KEY_AUDIT: ${{ secrets.GEMINI_API_KEY_AUDIT }}
+        run: |
+          if [ -z "$GEMINI_API_KEY_AUDIT" ]; then
+            echo "::warning::GEMINI_API_KEY_AUDIT not set — settlement is sharing GEMINI_API_KEY's daily quota with golden_hour/engine/deep_scan, which burns it out early every day and starves this job (see 2026-07-10 ledger-drought diagnosis). Add a second free key from Google AI Studio as this secret to fix permanently."
+          fi
+
       - uses: actions/checkout@v4
 
       - uses: actions/setup-python@v5
@@ -83,7 +91,8 @@ jobs:
 
       - name: Run audit engine
         env:
-          GEMINI_API_KEY:     ${{ secrets.GEMINI_API_KEY }}
+          GEMINI_API_KEY:       ${{ secrets.GEMINI_API_KEY }}
+          GEMINI_API_KEY_AUDIT: ${{ secrets.GEMINI_API_KEY_AUDIT }}
           SUPABASE_URL:       ${{ secrets.SUPABASE_URL }}
           SUPABASE_KEY:       ${{ secrets.SUPABASE_KEY }}
           SUPABASE_SERVICE_KEY: ${{ secrets.SUPABASE_SERVICE_KEY }}
