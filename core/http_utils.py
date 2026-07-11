@@ -97,3 +97,32 @@ def post_with_retry(url, payload, timeout, max_attempts=3,
         break
 
     return r
+
+
+GEMINI_MODEL_URL = "https://generativelanguage.googleapis.com/v1beta/models/{model}:generateContent"
+
+
+def post_gemini(models, api_key, payload, timeout, max_attempts=3,
+                 rate_limit_wait=(65, 30), retry_wait=5, label=""):
+    """
+    Try each model in `models`, in order, on the same key/payload — falls
+    through to the next ONLY on HTTP 404 (Google retiring free-tier access
+    to a specific model per-project, observed 2026-07-11 rolling out
+    inconsistently: gemini-2.5-flash-lite works on one project, 404s
+    "no longer available to new users" on another created the same week).
+    429/5xx are already retried within a single model by post_with_retry,
+    so this doesn't duplicate that. Returns the last response, so callers
+    keep their existing `r.status_code` handling unchanged — just pass a
+    model list instead of a single URL.
+    """
+    r = None
+    for i, model in enumerate(models):
+        url = GEMINI_MODEL_URL.format(model=model) + f"?key={api_key}"
+        r = post_with_retry(url, payload, timeout, max_attempts,
+                             rate_limit_wait, retry_wait, label=f"{label}[{model}]")
+        if r is not None and r.status_code == 404 and i < len(models) - 1:
+            log.warning("%s: model %s unavailable on this project (404) — trying %s next",
+                        label, model, models[i + 1])
+            continue
+        return r
+    return r

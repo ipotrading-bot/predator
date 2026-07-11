@@ -9,11 +9,13 @@ import os
 import re
 
 from core.db import log_to_ledger, replace_signal_row
-from core.http_utils import post_with_retry
+from core.http_utils import post_gemini
 
 log = logging.getLogger("PREDATOR.settlement")
 
-GEMINI_URL = "https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash-lite:generateContent"
+# Tried in order; falls through on HTTP 404 (model retired for this
+# project) — see core.http_utils.post_gemini.
+GEMINI_MODELS = ["gemini-2.5-flash-lite", "gemini-3.5-flash", "gemini-2.0-flash"]
 _SETTLEMENT_OPTIONAL = frozenset({"outcome", "settled_at"})
 
 
@@ -59,8 +61,8 @@ def fetch_match_result(match_name: str, sport: str, match_date: str = "") -> dic
         "generationConfig": {"temperature": 0.0, "maxOutputTokens": 500},
     }
 
-    r = post_with_retry(f"{GEMINI_URL}?key={api_key}", payload, timeout=25,
-                         max_attempts=2, label=f"Settlement/{match_name}")
+    r = post_gemini(GEMINI_MODELS, api_key, payload, timeout=25,
+                     max_attempts=2, label=f"Settlement/{match_name}")
 
     if r is None or r.status_code != 200:
         return None
