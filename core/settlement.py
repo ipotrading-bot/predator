@@ -14,8 +14,13 @@ from core.http_utils import post_gemini
 log = logging.getLogger("PREDATOR.settlement")
 
 # Tried in order; falls through on HTTP 404 (model retired for this
-# project) — see core.http_utils.post_gemini.
-GEMINI_MODELS = ["gemini-2.5-flash-lite", "gemini-3.5-flash", "gemini-2.0-flash"]
+# project) or 429/5xx (exhausted/unavailable quota) — see
+# core.http_utils.post_gemini. gemini-3.1-flash-lite tried first: current-
+# generation stable lite model (highest free-tier quota in its generation
+# by Google's usual flash/flash-lite/pro tiering; see the same-day note in
+# core/harvester.py's GEMINI_ALT_MODELS for why 2.0-flash/2.5-flash-lite/
+# 3.5-flash are all kept only as fallbacks now, not the primary choice).
+GEMINI_MODELS = ["gemini-3.1-flash-lite", "gemini-2.5-flash-lite", "gemini-3.5-flash", "gemini-2.0-flash"]
 _SETTLEMENT_OPTIONAL = frozenset({"outcome", "settled_at"})
 
 

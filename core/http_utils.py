@@ -105,24 +105,41 @@ GEMINI_MODEL_URL = "https://generativelanguage.googleapis.com/v1beta/models/{mod
 def post_gemini(models, api_key, payload, timeout, max_attempts=3,
                  rate_limit_wait=(65, 30), retry_wait=5, label=""):
     """
-    Try each model in `models`, in order, on the same key/payload — falls
-    through to the next ONLY on HTTP 404 (Google retiring free-tier access
+    Try each model in `models`, in order, on the same key/payload. Falls
+    through to the next model on HTTP 404 (Google retiring free-tier access
     to a specific model per-project, observed 2026-07-11 rolling out
-    inconsistently: gemini-2.5-flash-lite works on one project, 404s
-    "no longer available to new users" on another created the same week).
-    429/5xx are already retried within a single model by post_with_retry,
-    so this doesn't duplicate that. Returns the last response, so callers
-    keep their existing `r.status_code` handling unchanged — just pass a
-    model list instead of a single URL.
+    inconsistently: gemini-2.5-flash-lite works on one project, 404s "no
+    longer available to new users" on another created the same week) AND on
+    429/5xx (observed same day: a model can have essentially zero usable
+    free-tier quota on a given project — e.g. gemini-3.5-flash 429ing on
+    every one of 3 separate attempts, ~95s apart, across 3 different
+    fetches in the same run — in which case post_with_retry's own
+    wait-and-retry loop just burns ~1-3 minutes per call confirming what
+    the previous call already proved).
+
+    Every model EXCEPT THE LAST only gets ONE attempt here — if a fallback
+    model is available, it's cheaper to try it immediately than to spend
+    the full retry_wait budget re-confirming the current one is broken.
+    The LAST model in the list still gets the full `max_attempts` (nothing
+    left to fall back to, so waiting out a transient per-minute limit is
+    the only remaining option). Returns the last response, so callers keep
+    their existing `r.status_code` handling unchanged — just pass a model
+    list instead of a single URL.
     """
     r = None
     for i, model in enumerate(models):
+        is_last = i == len(models) - 1
         url = GEMINI_MODEL_URL.format(model=model) + f"?key={api_key}"
-        r = post_with_retry(url, payload, timeout, max_attempts,
+        r = post_with_retry(url, payload, timeout, max_attempts if is_last else 1,
                              rate_limit_wait, retry_wait, label=f"{label}[{model}]")
-        if r is not None and r.status_code == 404 and i < len(models) - 1:
-            log.warning("%s: model %s unavailable on this project (404) — trying %s next",
-                        label, model, models[i + 1])
-            continue
+        if r is not None and not is_last:
+            if r.status_code == 404:
+                log.warning("%s: model %s unavailable on this project (404) — trying %s next",
+                            label, model, models[i + 1])
+                continue
+            if r.status_code == 429 or r.status_code >= 500:
+                log.warning("%s: model %s failed (HTTP %d) — trying %s next",
+                            label, model, r.status_code, models[i + 1])
+                continue
         return r
     return r

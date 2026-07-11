@@ -227,3 +227,66 @@ class TestPostGeminiModelFallback:
         )
         r = http_utils.post_gemini(["only-model"], "fake-key", {}, timeout=10, label="test")
         assert r.status_code == 404
+
+    def test_falls_through_to_next_model_on_429_after_one_attempt(self, monkeypatch):
+        # 2026-07-11: gemini-3.5-flash 429'd on every one of 3 separate
+        # attempts (~95s apart, full retry budget each time) across 3
+        # different fetches in the same run — post_with_retry's own
+        # wait-and-retry loop just re-confirmed the same dead model 3x
+        # instead of ever reaching gemini-2.5-flash-lite/gemini-2.0-flash.
+        # A non-last model must only cost ONE attempt before falling
+        # through, not the full retry budget.
+        calls = []
+
+        def fake_post(url, json, timeout):
+            calls.append(url)
+            if "gemini-3.5-flash" in url:
+                return _FakeResponse(429, text='{"error":{"code":429,"status":"RESOURCE_EXHAUSTED"}}')
+            return _FakeResponse(200, {"candidates": [{"content": {"parts": [{"text": "ok"}]}}]})
+
+        monkeypatch.setattr(http_utils.requests, "post", fake_post)
+        r = http_utils.post_gemini(
+            ["gemini-3.5-flash", "gemini-2.5-flash-lite"], "fake-key", {}, timeout=10,
+            rate_limit_wait=(0, 0), retry_wait=0, label="test")
+
+        assert r.status_code == 200
+        assert len(calls) == 2   # exactly one wasted attempt on the dead model, not 3
+        assert "gemini-3.5-flash" in calls[0]
+        assert "gemini-2.5-flash-lite" in calls[1]
+
+    def test_falls_through_to_next_model_on_500(self, monkeypatch):
+        calls = []
+
+        def fake_post(url, json, timeout):
+            calls.append(url)
+            if "model-a" in url:
+                return _FakeResponse(503, text="service unavailable")
+            return _FakeResponse(200, {"candidates": [{"content": {"parts": [{"text": "ok"}]}}]})
+
+        monkeypatch.setattr(http_utils.requests, "post", fake_post)
+        r = http_utils.post_gemini(
+            ["model-a", "model-b"], "fake-key", {}, timeout=10,
+            rate_limit_wait=(0, 0), retry_wait=0, label="test")
+
+        assert r.status_code == 200
+        assert len(calls) == 2
+
+    def test_last_model_still_gets_full_retry_budget_on_429(self, monkeypatch):
+        # Nothing left to fall back to on the last model — retrying (not
+        # instantly giving up) is the only remaining option for a
+        # transient per-minute limit.
+        calls = []
+
+        def fake_post(url, json, timeout):
+            calls.append(url)
+            if len(calls) < 3:
+                return _FakeResponse(429, text='{"error":{"code":429,"status":"RESOURCE_EXHAUSTED"}}')
+            return _FakeResponse(200, {"candidates": [{"content": {"parts": [{"text": "ok"}]}}]})
+
+        monkeypatch.setattr(http_utils.requests, "post", fake_post)
+        r = http_utils.post_gemini(
+            ["only-model"], "fake-key", {}, timeout=10, max_attempts=3,
+            rate_limit_wait=(0, 0), retry_wait=0, label="test")
+
+        assert r.status_code == 200
+        assert len(calls) == 3

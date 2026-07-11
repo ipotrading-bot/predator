@@ -75,7 +75,18 @@ GEMINI_FLASH_URL = "https://generativelanguage.googleapis.com/v1beta/models/gemi
 # guess per key (which keeps breaking as Google changes its mind), MMA/
 # eSports/AltSports now try a list via core.http_utils.post_gemini and
 # keep whichever model actually works on that project.
-GEMINI_ALT_MODELS = ["gemini-3.5-flash", "gemini-2.5-flash-lite", "gemini-2.0-flash"]
+#
+# gemini-3.1-flash-lite tried FIRST (added same day, after live confirmation
+# that gemini-3.5-flash 429s RESOURCE_EXHAUSTED on every attempt on this
+# project — 3.5-flash is Google's current frontier/"most intelligent" flash
+# model per ai.google.dev/gemini-api/docs/models, not the cheap high-volume
+# one; historically the "-lite" variant in each generation carries the most
+# generous free quota, and 3.1-flash-lite is the current-generation stable
+# lite model (unlike 2.0-flash/2.5-flash-lite, both legacy generations
+# Google is visibly sunsetting free access to for newer projects). Full
+# fallback chain kept — core.http_utils.post_gemini only spends ONE attempt
+# per non-last model now, so trying every candidate here is cheap.
+GEMINI_ALT_MODELS = ["gemini-3.1-flash-lite", "gemini-3.5-flash", "gemini-2.5-flash-lite", "gemini-2.0-flash"]
 
 _SPORT_PROMPTS = {
     "soccer":     "top European football/soccer",
