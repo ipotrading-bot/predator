@@ -16,6 +16,7 @@ from dotenv import load_dotenv
 
 from core.constants import ELITE_EDGE as _ELITE_EDGE, kelly_stake as _kelly_stake
 from core.db import get_db
+from core.learning_layer import load_learning_summary as _load_learning_summary
 from core.stats_utils import p_breakeven as _p_breakeven, wilson_ci as _wilson_ci
 
 load_dotenv()
@@ -147,6 +148,22 @@ def _performance_block(sb) -> str:
     if breakeven is not None:
         status = "✅ confirmé rentable" if lo > breakeven else "⚠️ pas encore confirmé"
         line += f"   Seuil rentable net taxe: `{breakeven*100:.1f}%` — {status}\n"
+
+    # core/learning_layer.py's compute_and_save() persists a plain-language
+    # summary of what it changed last audit cycle (threshold moves, edge-band
+    # warnings) — surfacing it here means a threshold correction is
+    # something the operator actually sees, not just a GitHub Actions log
+    # line nobody reads.
+    try:
+        summary = _load_learning_summary(sb)
+    except Exception as e:
+        log.warning("Learning summary: %s", e)
+        summary = []
+    if summary:
+        line += "\n🧠 *Learning* (dernier cycle)\n"
+        for s in summary[:5]:
+            line += f"   • {s}\n"
+
     return line + "\n"
 
 

@@ -192,3 +192,43 @@ class TestCircuitBreaker:
         sb = _FakeSB(meta=[{"key": "risk_circuit_breaker_paused", "value": "true"}])
         risk_manager.resume_emission(sb)
         assert risk_manager.is_emission_paused(sb) is False
+
+
+class TestSportCircuitBreaker:
+    """A sport-scoped drawdown must be detectable/pausable independently of
+    the global breaker — the whole point is to catch a bad streak the
+    global check would dilute away behind other sports' good results."""
+
+    def test_trips_on_large_drawdown_for_that_sport_only(self):
+        rows = [_ledger_row("LOSS", kelly_pct=10, created_at=f"2026-07-01T00:{i:02d}:00") for i in range(20)]
+        sb = _FakeSB(ledger=rows, meta=[])
+        tripped = risk_manager.check_circuit_breaker_by_sport(sb, "soccer", window_n=20, limit_pct=0.25)
+        assert tripped is True
+        assert any(m.get("key") == "risk_circuit_breaker_paused_soccer" and m.get("value") == "true"
+                  for m in sb._meta)
+
+    def test_does_not_trip_on_healthy_record(self):
+        rows = [_ledger_row("WIN", kelly_pct=10, created_at=f"2026-07-01T00:{i:02d}:00") for i in range(20)]
+        sb = _FakeSB(ledger=rows, meta=[])
+        assert risk_manager.check_circuit_breaker_by_sport(sb, "soccer", window_n=20, limit_pct=0.25) is False
+
+    def test_one_sport_tripping_does_not_affect_another(self):
+        rows = [_ledger_row("LOSS", kelly_pct=10, created_at=f"2026-07-01T00:{i:02d}:00") for i in range(20)]
+        sb = _FakeSB(ledger=rows, meta=[])
+        risk_manager.check_circuit_breaker_by_sport(sb, "soccer", window_n=20, limit_pct=0.25)
+        assert risk_manager.is_sport_emission_paused(sb, "soccer") is True
+        assert risk_manager.is_sport_emission_paused(sb, "basketball") is False
+
+    def test_already_paused_stays_tripped_regardless_of_current_window(self):
+        rows = [_ledger_row("WIN", kelly_pct=10, created_at=f"2026-07-01T00:{i:02d}:00") for i in range(20)]
+        sb = _FakeSB(ledger=rows, meta=[{"key": "risk_circuit_breaker_paused_soccer", "value": "true"}])
+        assert risk_manager.check_circuit_breaker_by_sport(sb, "soccer") is True
+
+    def test_resume_sport_emission_clears_only_that_sport(self):
+        sb = _FakeSB(meta=[
+            {"key": "risk_circuit_breaker_paused_soccer", "value": "true"},
+            {"key": "risk_circuit_breaker_paused_basketball", "value": "true"},
+        ])
+        risk_manager.resume_sport_emission(sb, "soccer")
+        assert risk_manager.is_sport_emission_paused(sb, "soccer") is False
+        assert risk_manager.is_sport_emission_paused(sb, "basketball") is True

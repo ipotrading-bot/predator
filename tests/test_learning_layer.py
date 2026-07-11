@@ -12,11 +12,21 @@ code. These tests fail on the pre-fix code (both batches raise the
 threshold, or WIN/LOSS produce identical adjustments) and pass once
 hit_rate is computed from the real `outcome` column instead.
 """
+import json
+
 from core.learning_layer import (
     SPORT_DEFAULTS,
     _MIN_SAMPLES,
+    _SEGMENT_MIN_SAMPLES,
+    _calibration_flag,
+    _clv_stats,
+    _decide_threshold,
+    _edge_band_diagnostic,
+    _market_family,
     _sport_stats,
     compute_and_save,
+    load_learning_summary,
+    load_segment_thresholds,
 )
 
 
@@ -90,14 +100,19 @@ class _FakeSupabase:
         raise AssertionError(f"unexpected table: {name}")
 
 
-def _row(outcome, kelly_pct=10.0, odds=2.0, clv_final=5.0):
+def _row(outcome, kelly_pct=10.0, odds=2.0, clv_final=5.0, market_type=None,
+         initial_edge=None, sharp_prob=None, clv_pct_real=None):
     # clv_final is deliberately positive on every row regardless of outcome
     # — reproducing the exact incident this guards against: entry-edge-as-
     # CLV is ~always >= 0 (MIN_EDGE already rejected negative edges before
     # the signal was sent), so a 100%-LOSS batch would still look like a
     # 100% "hit rate" if anything ever read clv_final again instead of
     # outcome.
-    return {"outcome": outcome, "kelly_pct": kelly_pct, "odds": odds, "clv_final": clv_final}
+    return {
+        "outcome": outcome, "kelly_pct": kelly_pct, "odds": odds, "clv_final": clv_final,
+        "market_type": market_type, "initial_edge": initial_edge,
+        "sharp_prob": sharp_prob, "clv_pct_real": clv_pct_real,
+    }
 
 
 class TestSportStats:
@@ -218,3 +233,197 @@ class TestComputeAndSaveRealOutcome:
         updated = compute_and_save(sb)
 
         assert updated["soccer"] < SPORT_DEFAULTS["soccer"]
+
+
+class TestMarketFamily:
+    def test_h2h_passthrough(self):
+        assert _market_family("h2h") == "h2h"
+
+    def test_totals_side_folded_to_family(self):
+        assert _market_family("totals_over") == "totals"
+        assert _market_family("totals_under") == "totals"
+
+    def test_spreads_side_folded_to_family(self):
+        assert _market_family("spreads_home") == "spreads"
+        assert _market_family("spreads_away") == "spreads"
+
+    def test_missing_or_empty(self):
+        assert _market_family(None) == ""
+        assert _market_family("") == ""
+
+
+class TestClvStats:
+    """Real CLV (clv_pct_real) must drive this, never clv_final/was_clv_positive
+    — clv_final is deliberately positive on every fixture row (see _row's
+    docstring on the tautology it guards against); a correct _clv_stats
+    ignores it entirely."""
+
+    def test_reads_real_clv_not_entry_edge_clv_final(self):
+        # clv_final is positive on every row (the tautology-prone field);
+        # clv_pct_real is negative on every row (the real signal). A correct
+        # implementation must report a negative average / 0% positive rate.
+        rows = [_row("WIN", clv_pct_real=-1.5) for _ in range(10)]
+        stats = _clv_stats(rows)
+        assert stats["n"] == 10
+        assert stats["positive_rate"] == 0.0
+        assert stats["avg_clv"] < 0
+
+    def test_rows_without_real_clv_are_excluded_not_zeroed(self):
+        rows = [_row("WIN") for _ in range(5)]   # clv_pct_real defaults to None
+        stats = _clv_stats(rows)
+        assert stats == {"n": 0, "avg_clv": None, "positive_rate": None}
+
+    def test_mixed_rows_only_count_the_ones_with_real_clv(self):
+        rows = ([_row("WIN", clv_pct_real=2.0) for _ in range(3)]
+                + [_row("LOSS") for _ in range(7)])   # no clv_pct_real
+        stats = _clv_stats(rows)
+        assert stats["n"] == 3
+        assert stats["positive_rate"] == 1.0
+
+
+class TestCalibrationFlag:
+    def test_well_calibrated_high_confidence_not_flagged(self):
+        # 80%+ stated confidence, ~80% real win rate — no overconfidence.
+        rows = ([_row("WIN", sharp_prob=0.85) for _ in range(16)]
+                + [_row("LOSS", sharp_prob=0.85) for _ in range(4)])
+        assert _calibration_flag(rows) is False
+
+    def test_overconfident_high_bucket_is_flagged(self):
+        # Stated 85% confidence but only winning half the time — the sport
+        # can still sit inside the healthy 60-82% overall win-rate band
+        # while this bucket alone is badly miscalibrated.
+        rows = ([_row("WIN", sharp_prob=0.85) for _ in range(10)]
+                + [_row("LOSS", sharp_prob=0.85) for _ in range(10)])
+        assert _calibration_flag(rows) is True
+
+    def test_too_few_samples_not_flagged(self):
+        rows = [_row("LOSS", sharp_prob=0.85) for _ in range(5)]
+        assert _calibration_flag(rows) is False
+
+
+class TestEdgeBandDiagnostic:
+    def test_too_few_samples_returns_none(self):
+        rows = [_row("WIN", initial_edge=5.0) for _ in range(5)]
+        assert _edge_band_diagnostic("soccer", rows) is None
+
+    def test_monotonic_edge_no_warning(self):
+        # Higher edge bucket wins MORE than the lower one — matches the
+        # system's founding assumption, nothing to warn about.
+        rows = ([_row("LOSS", initial_edge=1.0) for _ in range(10)]
+                + [_row("WIN", initial_edge=1.0) for _ in range(5)]
+                + [_row("WIN", initial_edge=9.0) for _ in range(14)]
+                + [_row("LOSS", initial_edge=9.0) for _ in range(1)])
+        assert _edge_band_diagnostic("soccer", rows) is None
+
+    def test_top_bucket_underperforming_triggers_warning(self):
+        # Top edge bucket (8%+, near SUSPECT_EDGE) loses MORE than a lower
+        # bucket — the exact "erreur de données" pattern this diagnostic
+        # exists to surface.
+        rows = ([_row("WIN", initial_edge=1.0) for _ in range(13)]
+                + [_row("LOSS", initial_edge=1.0) for _ in range(2)]
+                + [_row("LOSS", initial_edge=9.0) for _ in range(12)]
+                + [_row("WIN", initial_edge=9.0) for _ in range(3)])
+        warning = _edge_band_diagnostic("soccer", rows)
+        assert warning is not None
+        assert "soccer" in warning
+
+
+class TestDecideThreshold:
+    def _stats(self, hit_rate, n=40, wilson_lower=0.9, p_breakeven=0.5):
+        return {"hit_rate": hit_rate, "n": n, "wilson_lower": wilson_lower,
+                "p_breakeven": p_breakeven, "roi": None}
+
+    _no_clv = {"n": 0, "avg_clv": None, "positive_rate": None}
+
+    def test_overconfident_forces_raise_inside_healthy_band(self):
+        stats = self._stats(hit_rate=0.70)   # inside the healthy 60-82% band
+        new_t, reason = _decide_threshold(2.0, stats, self._no_clv, overconfident=True)
+        assert new_t is not None and new_t > 2.0
+        assert "overconfident" in reason
+
+    def test_negative_real_clv_blocks_a_would_be_lowering(self):
+        stats = self._stats(hit_rate=0.90)   # would otherwise lower
+        clv = {"n": 30, "avg_clv": -1.0, "positive_rate": 0.2}
+        new_t, reason = _decide_threshold(2.0, stats, clv, overconfident=False)
+        assert new_t is None
+        assert "CLV" in reason
+
+    def test_positive_real_clv_does_not_block_lowering(self):
+        stats = self._stats(hit_rate=0.90)
+        clv = {"n": 30, "avg_clv": 1.0, "positive_rate": 0.8}
+        new_t, reason = _decide_threshold(2.0, stats, clv, overconfident=False)
+        assert new_t is not None and new_t < 2.0
+
+    def test_low_hit_rate_still_raises_even_with_positive_clv(self):
+        # Raising stays always-safe regardless of CLV — CLV only tags the
+        # reason (probable variance) so the operator can tell it apart from
+        # genuine edge decay, it never blocks a raise.
+        stats = self._stats(hit_rate=0.40)
+        clv = {"n": 30, "avg_clv": 1.0, "positive_rate": 0.8}
+        new_t, reason = _decide_threshold(2.0, stats, clv, overconfident=False)
+        assert new_t is not None and new_t > 2.0
+        assert "variance" in reason
+
+
+class TestSegmentThresholds:
+    def test_load_segment_thresholds_parses_sport_and_family(self):
+        class _Sel:
+            def like(self, *_a, **_k):
+                return self
+            def execute(self):
+                return _Result([{"key": "threshold_seg_soccer_totals", "value": "3.5"}])
+
+        class _MetaSel:
+            def select(self, *_a, **_k):
+                return _Sel()
+
+        class _SB:
+            def table(self, name):
+                assert name == "meta"
+                return _MetaSel()
+
+        result = load_segment_thresholds(_SB())
+        assert result == {"soccer:totals": 3.5}
+
+    def test_compute_and_save_persists_a_segment_threshold(self):
+        # 30 h2h rows losing badly for soccer — enough to clear
+        # _SEGMENT_MIN_SAMPLES and move the h2h-specific threshold, on top
+        # of (not instead of) the sport-wide one.
+        rows = [_row("LOSS", market_type="h2h") for _ in range(_SEGMENT_MIN_SAMPLES + 5)]
+        sb = _FakeSupabase({"soccer": rows})
+
+        compute_and_save(sb)
+
+        assert any(w["key"] == "threshold_seg_soccer_h2h" for w in sb.meta_writes)
+
+
+class TestLearningSummary:
+    def test_load_learning_summary_parses_persisted_json(self):
+        class _Sel:
+            def eq(self, *_a, **_k):
+                return self
+            def limit(self, *_a, **_k):
+                return self
+            def execute(self):
+                return _Result([{"value": '["soccer: seuil 1.20% -> 1.60%"]'}])
+
+        class _MetaSel:
+            def select(self, *_a, **_k):
+                return _Sel()
+
+        class _SB:
+            def table(self, name):
+                assert name == "meta"
+                return _MetaSel()
+
+        assert load_learning_summary(_SB()) == ["soccer: seuil 1.20% -> 1.60%"]
+
+    def test_compute_and_save_persists_a_summary_for_a_threshold_change(self):
+        rows = [_row("LOSS") for _ in range(_MIN_SAMPLES)]
+        sb = _FakeSupabase({"soccer": rows})
+
+        compute_and_save(sb)
+
+        summary_writes = [w for w in sb.meta_writes if w["key"] == "learning_summary"]
+        assert len(summary_writes) == 1
+        assert any("soccer" in line for line in json.loads(summary_writes[0]["value"]))

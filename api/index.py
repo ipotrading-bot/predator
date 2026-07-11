@@ -14,6 +14,13 @@ from flask import Flask, jsonify, render_template, send_from_directory
 
 from core.constants import TAX_RATE as _TAX_RATE
 from core.db import get_db as _get_db_client, MissingCredentialsError
+from core.learning_layer import (
+    SPORT_DEFAULTS as _SPORT_DEFAULTS,
+    load_thresholds as _load_thresholds,
+    load_segment_thresholds as _load_segment_thresholds,
+    load_learning_summary as _load_learning_summary,
+)
+from core.risk_manager import is_sport_emission_paused as _is_sport_emission_paused
 from core.stats_utils import bucket_predictions, p_breakeven, wilson_ci
 
 log = logging.getLogger("PREDATOR.api")
@@ -403,6 +410,17 @@ def performance():
             rows = res.data or []
 
             if rows:
+                # Learning layer state — current thresholds and why they
+                # last moved (core/learning_layer.py), plus which sports (if
+                # any) have their own circuit breaker tripped
+                # (core/risk_manager.py). Nested under `if rows` so an empty
+                # ledger still falls through to the existing empty-state
+                # page below instead of a half-populated `global_s`.
+                global_s["thresholds"] = _load_thresholds(sb)
+                global_s["segment_thresholds"] = _load_segment_thresholds(sb)
+                global_s["learning_summary"] = _load_learning_summary(sb)
+                global_s["paused_sports"] = [s for s in _SPORT_DEFAULTS if _is_sport_emission_paused(sb, s)]
+
                 settled = [r for r in rows if r.get("outcome") in ("WIN", "LOSS", "PUSH")]
                 decisive = [r for r in rows if r.get("outcome") in ("WIN", "LOSS")]
                 wins    = sum(1 for r in settled if r.get("outcome") == "WIN")

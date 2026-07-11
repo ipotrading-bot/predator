@@ -23,6 +23,7 @@ from core.math_engine import to_binary, devig_prob, is_round_number_line
 from core.odds_api import fetch_odds
 from core.oracle import get_pinnacle_price
 from core.learning_layer import load_thresholds as _load_thresholds
+from core.learning_layer import load_segment_thresholds as _load_segment_thresholds
 from core.paim_engine import (
     compute_alpha, MIN_EDGE, strict_team_match,
     market_label, SHARP_PROB_BY_MARKET, calculate_consensus_price,
@@ -989,6 +990,20 @@ def _telegram_systems(systems: list, now, session: str, matches: int,
             _telegram(chunk)
 
 
+def _segment_min_edge(dyn_thresholds: dict, dyn_segment_thresholds: dict,
+                       sport: str, market_family: str) -> float:
+    """
+    Segment (sport, market family) MIN_EDGE if core/learning_layer.py has
+    gathered enough samples for it yet, else the coarser sport-level
+    threshold — see core/learning_layer.py:compute_and_save()'s segment
+    layer. h2h/totals/spreads within the same sport can have very different
+    reliability (e.g. push risk on totals), so they shouldn't necessarily
+    share one bar once there's enough data to tell them apart.
+    """
+    sport_floor = dyn_thresholds.get(sport, MIN_EDGE)
+    return dyn_segment_thresholds.get(f"{sport}:{market_family}", sport_floor)
+
+
 # ── main ─────────────────────────────────────────────────────────────
 
 def run():
@@ -1029,6 +1044,7 @@ def run():
 
     # Load sport-specific MIN_EDGE thresholds from learning layer
     dyn_thresholds: dict[str, float] = {}
+    dyn_segment_thresholds: dict[str, float] = {}
     if sb:
         try:
             dyn_thresholds = _load_thresholds(sb)
@@ -1037,6 +1053,13 @@ def run():
                          " | ".join(f"{k}={v:.2f}%" for k, v in dyn_thresholds.items()))
         except Exception as e:
             log.warning("load_thresholds: %s — using default %.1f%%", e, MIN_EDGE)
+        try:
+            dyn_segment_thresholds = _load_segment_thresholds(sb)
+            if dyn_segment_thresholds:
+                log.info("Segment thresholds: %s",
+                         " | ".join(f"{k}={v:.2f}%" for k, v in dyn_segment_thresholds.items()))
+        except Exception as e:
+            log.warning("load_segment_thresholds: %s — sport-level thresholds only", e)
 
     # ══ SOURCE PIPELINE — 3 NIVEAUX ══════════════════════════════════
     # Tier 1: The Odds API  → real 1XBet + Pinnacle, même event (idéal)
@@ -1293,21 +1316,23 @@ def run():
             home     = m.get("home", "")
             away     = m.get("away", "")
             emoji    = SPORT_EMOJI.get(sport, "🎯")
-            min_edge = dyn_thresholds.get(sport, MIN_EDGE)
 
             # ── H2H market ───────────────────────────────────────
             _process_h2h(m, name, sport, league, home, away, emoji,
-                         candidates, sb, now, log, min_edge=min_edge)
+                         candidates, sb, now, log,
+                         min_edge=_segment_min_edge(dyn_thresholds, dyn_segment_thresholds, sport, "h2h"))
 
             # ── Totals market (Over/Under) ────────────────────────
             if "totals_1xbet" in m and "totals_pinnacle" in m:
                 _process_totals(m, name, sport, league, emoji,
-                                candidates, sb, now, log, min_edge=min_edge)
+                                candidates, sb, now, log,
+                                min_edge=_segment_min_edge(dyn_thresholds, dyn_segment_thresholds, sport, "totals"))
 
             # ── Spreads market (Handicap) ─────────────────────────
             if "spreads_1xbet" in m and "spreads_pinnacle" in m:
                 _process_spreads(m, name, sport, league, home, away, emoji,
-                                 candidates, sb, now, log, min_edge=min_edge)
+                                 candidates, sb, now, log,
+                                 min_edge=_segment_min_edge(dyn_thresholds, dyn_segment_thresholds, sport, "spreads"))
 
         except Exception as e:
             log.error("Match error [%s]: %s", m.get("match", "?"), e)
@@ -1357,7 +1382,27 @@ def run():
             f"Émission de nouveaux systèmes suspendue — reprise manuelle uniquement."
         )
     else:
-        systems = _suggest_systems_by_window(signals, log, sb)
+        # Per-sport circuit breaker: a sport in its own genuine bad streak
+        # (core.risk_manager.check_circuit_breaker_by_sport) stops
+        # recommending on its own, without pausing every other sport — the
+        # global check above can dilute/hide that. Signals still persist to
+        # Supabase for settlement/learning either way (see comment above);
+        # only the outward Telegram recommendation is filtered.
+        emit_signals = signals
+        if sb:
+            paused_sports = {s for s in {sig.get("sport") for sig in signals}
+                             if s and _risk_manager.check_circuit_breaker_by_sport(sb, s)}
+            if paused_sports:
+                emit_signals = [s for s in signals if s.get("sport") not in paused_sports]
+                log.warning("Sport circuit breaker active for %s — excluded from Telegram systems",
+                           ", ".join(sorted(paused_sports)))
+                _telegram(
+                    f"🟠 *PAUSE PARTIELLE* · {now.strftime('%H:%M')} UTC\n"
+                    f"Sport(s) en pause: `{', '.join(sorted(paused_sports))}` "
+                    f"(drawdown roulant > {_risk_manager.DRAWDOWN_LIMIT_PCT*100:.0f}%).\n"
+                    f"Autres sports non affectés — reprise manuelle uniquement pour ces sports."
+                )
+        systems = _suggest_systems_by_window(emit_signals, log, sb)
         systems = _last_look_reprice(systems, log)
         _telegram_systems(systems, now, session, len(matches), sharp_source, no_pin_count)
 

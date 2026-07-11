@@ -19,6 +19,14 @@ currently active:
      — never automatically, even if the very next signal would have
      looked fine. A losing streak that big means something is off with
      the model or the market, not bad luck to bet through.
+
+     check_circuit_breaker_by_sport() is the same mechanism scoped to one
+     sport — the global check above can dilute/hide a sport in a genuine
+     bad streak behind other sports performing fine, and conversely a
+     global blowup concentrated in one sport pauses everything rather than
+     just the sport that's actually broken. Both checks run independently;
+     either one pausing is enough to stop that sport's (or everything's)
+     outward Telegram recommendation.
 """
 import logging
 from datetime import datetime, timezone
@@ -30,6 +38,7 @@ DRAWDOWN_WINDOW_N    = 20    # last N decisive (WIN/LOSS) ledger rows for the ci
 DRAWDOWN_LIMIT_PCT   = 0.25  # 25% rolling drawdown over that window trips the breaker
 
 _PAUSE_KEY = "risk_circuit_breaker_paused"
+_SPORT_PAUSE_KEY_PREFIX = "risk_circuit_breaker_paused_"
 
 
 def get_current_exposure(sb, bankroll: float) -> float:
@@ -173,6 +182,70 @@ def resume_emission(sb) -> None:
     you've reviewed why the breaker tripped."""
     sb.table("meta").upsert({
         "key":        _PAUSE_KEY,
+        "value":      "false",
+        "updated_at": datetime.now(timezone.utc).isoformat(),
+    }).execute()
+
+
+def is_sport_emission_paused(sb, sport: str) -> bool:
+    """True if `sport`'s own circuit breaker has tripped and not yet been
+    manually cleared (see resume_sport_emission())."""
+    try:
+        res = sb.table("meta").select("value").eq("key", _SPORT_PAUSE_KEY_PREFIX + sport).limit(1).execute()
+        return bool(res.data) and res.data[0].get("value") == "true"
+    except Exception as e:
+        log.warning("is_sport_emission_paused[%s]: %s — assuming not paused", sport, e)
+        return False
+
+
+def check_circuit_breaker_by_sport(sb, sport: str, window_n: int = DRAWDOWN_WINDOW_N,
+                                   limit_pct: float = DRAWDOWN_LIMIT_PCT) -> bool:
+    """
+    Same rolling-drawdown check as check_circuit_breaker(), scoped to one
+    sport's own ai_learning_ledger rows — catches a sport in a genuine bad
+    streak that the global (all-sports) check would dilute away, and lets
+    that sport specifically stop recommending while every other sport keeps
+    running normally. Same "sticky until manually cleared" behavior as the
+    global breaker: checked first, before re-evaluating the window, so a
+    couple of lucky results right after a real blowup in this sport can't
+    silently resume it on their own.
+    """
+    if is_sport_emission_paused(sb, sport):
+        return True
+    try:
+        res = (sb.table("ai_learning_ledger")
+               .select("outcome, kelly_pct, odds, created_at")
+               .eq("sport", sport)
+               .order("created_at", desc=True)
+               .limit(window_n)
+               .execute())
+        rows = res.data or []
+    except Exception as e:
+        log.error("check_circuit_breaker_by_sport[%s]: %s — not pausing on a read error alone", sport, e)
+        return False
+
+    dd = rolling_drawdown(rows)
+    if dd > limit_pct:
+        log.critical("SPORT CIRCUIT BREAKER TRIPPED [%s] — rolling drawdown %.1f%% > %.1f%% "
+                     "over last %d signals", sport, dd * 100, limit_pct * 100, window_n)
+        try:
+            sb.table("meta").upsert({
+                "key":        _SPORT_PAUSE_KEY_PREFIX + sport,
+                "value":      "true",
+                "updated_at": datetime.now(timezone.utc).isoformat(),
+            }).execute()
+        except Exception as e:
+            log.error("check_circuit_breaker_by_sport[%s]: failed to persist pause flag: %s", sport, e)
+        return True
+    return False
+
+
+def resume_sport_emission(sb, sport: str) -> None:
+    """Manually clear `sport`'s circuit breaker — the ONLY way its emission
+    resumes once tripped. Not called anywhere in this codebase by design;
+    run it by hand once you've reviewed why that sport's breaker tripped."""
+    sb.table("meta").upsert({
+        "key":        _SPORT_PAUSE_KEY_PREFIX + sport,
         "value":      "false",
         "updated_at": datetime.now(timezone.utc).isoformat(),
     }).execute()
