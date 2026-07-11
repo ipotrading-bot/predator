@@ -1105,39 +1105,42 @@ def run():
             except Exception as e:
                 log.warning("WC schedule save: %s", e)
 
-    # ── MMA/eSports/Alternatifs — skipped in Golden Hour (no urgency) ──
-    # Cached in Supabase meta: MMA/eSports 8h TTL, alt sports 4h TTL.
-    # Saves 3 Gemini Search calls (≈3 RPM) on every Engine scan that hits cache.
-    if not GOLDEN_HOUR:
-        log.info("🥋 MMA — Gemini Search (Melbet vs Pinnacle)...")
-        mma_events = _get_cached(sb, "cache_mma", 8) if sb else None
-        if mma_events is None:
-            mma_events = fetch_mma_events()
-            if mma_events and sb:
-                _set_cached(sb, "cache_mma", mma_events)
-        if mma_events:
-            matches = (matches or []) + mma_events
-            log.info("🥋 MMA OK — %d combats UFC (Melbet soft)", len(mma_events))
+    # ── MMA/eSports/Alternatifs — now included in Golden Hour too ──────
+    # Cached in Supabase meta: MMA/eSports 8h TTL, alt sports 4h TTL —
+    # cache is shared across golden_hour/engine/deep_scan runs, so running
+    # this every 30min mostly hits cache and only pays for a fresh Gemini
+    # Search call when the TTL actually expires. Uses GEMINI_API_KEY_ALT
+    # (falls back to GEMINI_API_KEY) so it doesn't compete with the main
+    # pipeline's fetch_pinnacle_prices() quota within the same run.
+    log.info("🥋 MMA — Gemini Search (Melbet vs Pinnacle)...")
+    mma_events = _get_cached(sb, "cache_mma", 8) if sb else None
+    if mma_events is None:
+        mma_events = fetch_mma_events()
+        if mma_events and sb:
+            _set_cached(sb, "cache_mma", mma_events)
+    if mma_events:
+        matches = (matches or []) + mma_events
+        log.info("🥋 MMA OK — %d combats UFC (Melbet soft)", len(mma_events))
 
-        log.info("🎮 eSports — Gemini Search (CS2/LoL/Valorant/DOTA2)...")
-        esports_events = _get_cached(sb, "cache_esports", 8) if sb else None
-        if esports_events is None:
-            esports_events = fetch_esports_events()
-            if esports_events and sb:
-                _set_cached(sb, "cache_esports", esports_events)
-        if esports_events:
-            matches = (matches or []) + esports_events
-            log.info("🎮 eSports OK — %d matchs", len(esports_events))
+    log.info("🎮 eSports — Gemini Search (CS2/LoL/Valorant/DOTA2)...")
+    esports_events = _get_cached(sb, "cache_esports", 8) if sb else None
+    if esports_events is None:
+        esports_events = fetch_esports_events()
+        if esports_events and sb:
+            _set_cached(sb, "cache_esports", esports_events)
+    if esports_events:
+        matches = (matches or []) + esports_events
+        log.info("🎮 eSports OK — %d matchs", len(esports_events))
 
-        log.info("🏓🏐🤾 Sports alternatifs — Gemini Search (Table Tennis / Volleyball / Handball)...")
-        alt_events = _get_cached(sb, "cache_altsports", 4) if sb else None
-        if alt_events is None:
-            alt_events = fetch_alternative_sports_batch()
-            if alt_events and sb:
-                _set_cached(sb, "cache_altsports", alt_events)
-        if alt_events:
-            matches = (matches or []) + alt_events
-            log.info("🏓🏐🤾 Sports alternatifs OK — %d matchs", len(alt_events))
+    log.info("🏓🏐🤾 Sports alternatifs — Gemini Search (Table Tennis / Volleyball / Handball)...")
+    alt_events = _get_cached(sb, "cache_altsports", 4) if sb else None
+    if alt_events is None:
+        alt_events = fetch_alternative_sports_batch()
+        if alt_events and sb:
+            _set_cached(sb, "cache_altsports", alt_events)
+    if alt_events:
+        matches = (matches or []) + alt_events
+        log.info("🏓🏐🤾 Sports alternatifs OK — %d matchs", len(alt_events))
 
     # ── Tier 1.5: Betfair Exchange (sharp prices peer-to-peer) ─────────
     # Activé uniquement si BETFAIR_APP_KEY est configuré.

@@ -501,7 +501,10 @@ def fetch_mma_events() -> list[dict]:
     Returns events in the standard engine format with _soft_source="Melbet".
     No OddsAPI calls — fully Gemini-based to avoid quota usage.
     """
-    api_key = os.environ.get("GEMINI_API_KEY")
+    # GEMINI_API_KEY_ALT isolates this from the main pipeline's per-match
+    # fetch_pinnacle_prices() calls, which burn GEMINI_API_KEY's quota first
+    # in every engine/deep_scan/golden_hour run and starve this fetch.
+    api_key = os.environ.get("GEMINI_API_KEY_ALT") or os.environ.get("GEMINI_API_KEY")
     if not api_key:
         return []
 
@@ -589,7 +592,7 @@ def fetch_esports_events() -> list[dict]:
     1XBet (soft) and Pinnacle (sharp) decimal ML odds.
     Cibles : CS2, League of Legends, Valorant, DOTA2 — tournois top tier.
     """
-    api_key = os.environ.get("GEMINI_API_KEY")
+    api_key = os.environ.get("GEMINI_API_KEY_ALT") or os.environ.get("GEMINI_API_KEY")
     if not api_key:
         return []
 
@@ -678,7 +681,7 @@ def fetch_alternative_sports_batch() -> list[dict]:
     Groupé en une seule requête pour éviter les cascades de rate-limit 429.
     Retourne les événements au format standard moteur.
     """
-    api_key = os.environ.get("GEMINI_API_KEY")
+    api_key = os.environ.get("GEMINI_API_KEY_ALT") or os.environ.get("GEMINI_API_KEY")
     if not api_key:
         return []
 
