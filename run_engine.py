@@ -45,14 +45,29 @@ DEBUG_MODE   = os.environ.get("PREDATOR_DEBUG", "0") == "1"
 
 # ── Global Timeout Handler (Safety Net) ──────────────────────────────
 # Prevents Engine from hanging GitHub Actions (5+ min on Tier 2/3 fallback)
+# Installed inside run() (not here at module level) — signal.signal() only
+# works in the main thread of the main interpreter; a module-level call
+# raised ValueError the instant anything imported run_engine from a worker
+# thread (a test runner, a dashboard route off the request thread, etc),
+# before a single line of run()'s actual logic ever executed. See
+# tests/test_run_engine_import.py.
 from core.constants import GLOBAL_TIMEOUT
 
 def _timeout_handler(signum, frame):
     log.error("TIMEOUT: Engine exceeded %d seconds — exiting gracefully", GLOBAL_TIMEOUT)
     raise TimeoutError(f"Global timeout ({GLOBAL_TIMEOUT}s) exceeded")
 
-signal.signal(signal.SIGALRM, _timeout_handler)
-signal.alarm(GLOBAL_TIMEOUT)
+
+def _arm_global_timeout() -> None:
+    """Best-effort SIGALRM safety net. Silently degrades (logs a warning,
+    engine runs without a hard timeout) instead of crashing on either of
+    signal's two documented failure modes: AttributeError (SIGALRM doesn't
+    exist — Windows) or ValueError (not the main thread)."""
+    try:
+        signal.signal(signal.SIGALRM, _timeout_handler)
+        signal.alarm(GLOBAL_TIMEOUT)
+    except (AttributeError, ValueError) as e:
+        log.warning("Global timeout not installed (%s) — running without a hard timeout", e)
 
 # ── UTC logger ────────────────────────────────────────────────────────
 _fmt = logging.Formatter(
@@ -1007,6 +1022,7 @@ def _segment_min_edge(dyn_thresholds: dict, dyn_segment_thresholds: dict,
 # ── main ─────────────────────────────────────────────────────────────
 
 def run():
+    _arm_global_timeout()
     now     = datetime.now(timezone.utc)
     session = _market_session(now.hour)
     log.info("━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━")
