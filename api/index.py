@@ -12,6 +12,7 @@ import requests
 from dotenv import load_dotenv
 from flask import Flask, jsonify, render_template, send_from_directory
 
+from core.constants import TAX_RATE as _TAX_RATE
 from core.db import get_db as _get_db_client, MissingCredentialsError
 from core.stats_utils import bucket_predictions, p_breakeven, wilson_ci
 
@@ -418,7 +419,7 @@ def performance():
                 ci_lo, ci_hi = wilson_ci(wins, len(decisive))
                 decisive_odds = [r["odds"] for r in decisive if r.get("odds")]
                 avg_odds = sum(decisive_odds) / len(decisive_odds) if decisive_odds else None
-                breakeven = p_breakeven(avg_odds) if avg_odds else None
+                breakeven = p_breakeven(avg_odds, _TAX_RATE) if avg_odds else None
 
                 global_s = {
                     "total":        len(rows),
@@ -444,7 +445,7 @@ def performance():
                     slo, shi = wilson_ci(sw, len(sv))
                     sodds = [r["odds"] for r in sv if r.get("odds")]
                     savg  = sum(sodds) / len(sodds) if sodds else None
-                    sbreak = p_breakeven(savg) if savg else None
+                    sbreak = p_breakeven(savg, _TAX_RATE) if savg else None
                     sport_perf[sport] = {
                         "n":              len(sv),
                         "win_rate":       round(sw / len(sv) * 100, 1),
