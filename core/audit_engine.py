@@ -23,6 +23,7 @@ from core.db import get_db, log_to_ledger, replace_signal_row, MissingCredential
 from core.http_utils import gemini_quota_dead
 from core.learning_layer import compute_and_save as _learn
 from core.oracle import get_pinnacle_price
+from core.paim_engine import resolve_selection_side
 from core.settlement import settle_signal
 
 load_dotenv()
@@ -204,34 +205,62 @@ def capture_closing_lines(sb, budget: int = CLOSING_LINE_BUDGET) -> int:
     current Pinnacle consensus price and store it as closing_pinnacle_price
     — a real closing-line measurement, distinct from pinnacle_price
     (captured at scan time, possibly hours or days earlier). clv_pct_real
-    is derived immediately and does NOT wait for the match outcome (that
-    remains core/settlement.py's real WIN/LOSS job) — it's an early,
-    complementary quality signal: if the line moved against the scanned
-    price by kickoff, the original edge was more likely stale data than a
-    real market inefficiency. Runs hourly via run_closing_line.py, not as
-    part of the 6h audit — this window (kickoff ± 5min) rarely aligns with
-    that coarser cadence.
+    is the bettor's true CLV — (xbet_odd / closing_price_of_the_same_side
+    − 1) × 100, positive = the price we got beat the close — derived
+    immediately, without waiting for the match outcome (that remains
+    core/settlement.py's real WIN/LOSS job). Runs hourly via
+    run_closing_line.py, not as part of the 6h audit — this window
+    (kickoff ± 5min) rarely aligns with that coarser cadence.
+
+    KNOWN LIMIT — get_pinnacle_price() only ever quotes the closing ML/DNB
+    FAVORITE (with its team name), so a real CLV can only be computed for
+    h2h signals whose selection still IS that closing favorite (our h2h
+    signals are always emitted on the scan-time favorite — see
+    run_engine._process_h2h). Everything else is never guessed:
+      - totals/spreads candidates are skipped before any oracle budget is
+        spent (the oracle has no price for those markets at all);
+      - an h2h signal whose favorite flipped by kickoff, or whose side
+        can't be resolved (selection and oracle team are each resolved
+        against the match's own two team names — exact equality first, see
+        core.paim_engine.resolve_selection_side), stores the raw fetched
+        price (so the hourly job doesn't re-spend budget on it — the
+        candidate filter is closing_pinnacle_price IS NULL) with
+        clv_pct_real=None.
+    core/learning_layer.py's _clv_stats() excludes None rows, so unresolved
+    sides simply don't participate in threshold decisions.
     """
     candidates = fetch_closing_line_candidates(sb)
     remaining = [budget]
     captured = 0
     for sig in candidates:
+        if (sig.get("market_key") or "") != "h2h":
+            continue
         if remaining[0] <= 0:
             log.warning("CLOSING LINE — Gemini oracle budget exhausted, %d signal(s) left for next run",
                         len(candidates) - captured)
             break
         remaining[0] -= 1
         try:
-            price, _ = get_pinnacle_price(sig["match"], sport=sig.get("sport", "soccer"),
-                                          league=sig.get("league", ""))
+            price, team = get_pinnacle_price(sig["match"], sport=sig.get("sport", "soccer"),
+                                             league=sig.get("league", ""))
         except Exception as e:
             log.warning("capture_closing_lines oracle [%s]: %s", sig["match"], e)
             continue
         if not price or price <= 1.01:
             continue
 
-        scan_price = sig.get("pinnacle_price") or 0.0
-        clv_real = round((scan_price / price - 1) * 100, 2) if scan_price > 1.01 else None
+        # Side check — resolve BOTH the signal's selection and the oracle's
+        # returned team against this match's own two team names (exact
+        # equality first — see resolve_selection_side; a bare fuzzy match
+        # between selection and team would conflate shared-token clubs like
+        # "America MG"/"America RN"). Only an identical resolved side means
+        # the fetched price is the price of the thing we actually bet.
+        home, _, away = (sig.get("match") or "").partition(" vs ")
+        sel_side  = resolve_selection_side(sig.get("selection_name") or "", home, away)
+        team_side = resolve_selection_side(team or "", home, away)
+        same_side = sel_side is not None and team_side is not None and sel_side == team_side
+        xbet_odd = sig.get("xbet_odd") or 0.0
+        clv_real = round((xbet_odd / price - 1) * 100, 2) if same_side and xbet_odd > 1.01 else None
 
         ok = replace_signal_row(sb, sig["id"], {**sig, **{
             "closing_pinnacle_price": float(price),
@@ -239,8 +268,9 @@ def capture_closing_lines(sb, budget: int = CLOSING_LINE_BUDGET) -> int:
         }}, optional_cols=_CLOSING_LINE_COLS)
         if ok:
             captured += 1
-            log.info("CLOSING LINE | %s | scan %.3f -> close %.3f | CLV_real %+.2f%%",
-                     sig["match"], scan_price, price, clv_real if clv_real is not None else 0.0)
+            log.info("CLOSING LINE | %s | bet %.3f -> close %.3f | CLV_real %s",
+                     sig["match"], xbet_odd, price,
+                     f"{clv_real:+.2f}%" if clv_real is not None else "n/a (side unresolved)")
         else:
             log.error("Failed to persist closing line for signal %s", sig["id"])
     return captured

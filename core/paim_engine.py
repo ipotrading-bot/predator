@@ -100,6 +100,34 @@ def strict_team_match(name_a: str, name_b: str, threshold: float = 0.60) -> bool
     return difflib.SequenceMatcher(None, na, nb).ratio() >= threshold
 
 
+def resolve_selection_side(selection: str, home: str, away: str) -> bool | None:
+    """
+    Which side of a "home vs away" pair does `selection` name? True=home,
+    False=away, None=unresolvable. Exact (case/space-insensitive) equality
+    wins first: two clubs sharing a token ("America MG" / "America RN")
+    look alike to strict_team_match's fuzzy ratio, but an exact selection
+    string is unambiguous. Fuzzy matching only decides when it matches
+    exactly ONE side — a selection both teams match (shared token; or an
+    empty string, which strict_team_match treats as a wildcard) or neither
+    matches returns None, so callers can refuse to guess instead of
+    settling/CLV-grading the wrong side.
+    """
+    sel = (selection or "").lower().strip()
+    h   = (home or "").lower().strip()
+    a   = (away or "").lower().strip()
+    if not sel or not h or not a:
+        return None
+    if sel == h and sel != a:
+        return True
+    if sel == a and sel != h:
+        return False
+    home_matches = strict_team_match(sel, h)
+    away_matches = strict_team_match(sel, a)
+    if home_matches == away_matches:
+        return None
+    return home_matches
+
+
 MIN_EDGE = 1.2   # % — floor (lowered for visibility — see all movements)
 
 # ── Sharp Quartet Consensus Engine v7.8 ──────────────────────────────
