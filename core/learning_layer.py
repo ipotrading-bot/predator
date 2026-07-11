@@ -25,6 +25,7 @@ import json
 import logging
 from datetime import datetime, timezone
 
+from core.constants import TAX_RATE as _TAX_RATE
 from core.stats_utils import bucket_predictions, brier_score, p_breakeven, wilson_ci
 
 log = logging.getLogger("LEARN")
@@ -179,7 +180,15 @@ def _sport_stats(rows: list[dict]) -> dict:
 
     odds_vals = [r["odds"] for r in decisive if r.get("odds")]
     avg_odds = sum(odds_vals) / len(odds_vals) if odds_vals else None
-    breakeven = p_breakeven(avg_odds) if avg_odds else None
+    # Explicit constants.TAX_RATE, never p_breakeven's own bare default —
+    # this breakeven gates _decide_threshold's lowering decision (below),
+    # and a caller relying on the default silently re-introduces the exact
+    # bug this fixed: TAX_RATE=0.0 (operator-zeroed) vs the default's 0.20
+    # froze every lowering behind a ~25%-harder breakeven than the account's
+    # real, configured economics. See core/stats_utils.py's p_breakeven()
+    # docstring for why the default itself is left alone rather than
+    # imported from constants there.
+    breakeven = p_breakeven(avg_odds, _TAX_RATE) if avg_odds else None
 
     staked = [r for r in decisive if r.get("kelly_pct") and r.get("odds")]
     if staked:

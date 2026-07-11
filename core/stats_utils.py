@@ -32,11 +32,22 @@ def wilson_ci(wins: int, n: int, z: float = Z_95) -> tuple[float, float]:
 def p_breakeven(avg_odds: float, tax_rate: float = 0.20) -> float:
     """
     Approximate net-of-tax breakeven win probability for a segment's
-    AVERAGE odds: p > 1 / ((1-tax_rate)*avg_odds) — at TAX_RATE=0.20 this
+    AVERAGE odds: p > 1 / ((1-tax_rate)*avg_odds) — at tax_rate=0.20 this
     is exactly 1.25/avg_odds. Deliberately simple (segment-average odds,
     not each bet's exact price) — a fast, at-a-glance dashboard indicator,
     not a go/no-go gate (core/tax_engine.py's per-signal check with that
     signal's own true probability is the actual gate before any send).
+
+    WARNING — this module is generic statistics with no business-config
+    dependency (no import of core.constants) on purpose; the tax_rate=0.20
+    default is NOT necessarily the operator's real, currently-configured
+    rate (core.constants.TAX_RATE has been 0.0 since 2026-07-08 — see that
+    module's docstring). Every caller that gates a real decision (raising/
+    lowering a threshold, sizing a stake, displaying "seuil rentable")
+    MUST pass tax_rate=constants.TAX_RATE explicitly — see
+    core/learning_layer.py's _sport_stats and api/index.py's /performance
+    route for the pattern. A bare p_breakeven(avg_odds) call silently
+    reintroduces a 20% tax assumption the operator turned off.
     """
     if avg_odds <= 1.0:
         return 1.0

@@ -235,6 +235,25 @@ class TestComputeAndSaveRealOutcome:
         assert updated["soccer"] < SPORT_DEFAULTS["soccer"]
 
 
+class TestBreakevenUsesOperatorTaxRate:
+    def test_lowering_allowed_at_realistic_win_rate_in_tax_zero_regime(self):
+        # 43/50 = 86% real win rate at avg odds 1.45. In the operator's
+        # configured tax regime (constants.TAX_RATE = 0.0) the breakeven is
+        # 1/1.45 ≈ 69.0%, and the Wilson lower bound (~73.8%) clears it —
+        # the gate must allow lowering. Before the fix, _sport_stats called
+        # p_breakeven(avg_odds) bare, silently inheriting the function's
+        # own tax_rate=0.20 default: breakeven 1/(0.8*1.45) ≈ 86.2%, which
+        # no realistic sample can clear at these odds — every lowering was
+        # frozen in a regime the operator explicitly zeroed.
+        rows = ([_row("WIN", odds=1.45) for _ in range(43)]
+                + [_row("LOSS", odds=1.45) for _ in range(7)])
+        stats = _sport_stats(rows)
+        assert stats["hit_rate"] > 0.82   # sanity: above _TARGET_HI
+
+        new_t, reason = _decide_threshold(2.0, stats, _clv_stats(rows), overconfident=False)
+        assert new_t == 1.8, f"lowering blocked: {reason}"
+
+
 class TestMarketFamily:
     def test_h2h_passthrough(self):
         assert _market_family("h2h") == "h2h"
