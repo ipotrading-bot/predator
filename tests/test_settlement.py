@@ -186,6 +186,50 @@ class TestDetermineOutcome:
         outcome = settlement.determine_outcome("baseball", "totals", "no number here", "Mets", "Red Sox", 5, 4)
         assert outcome == "UNKNOWN"
 
+    def test_shared_token_teams_exact_selection_still_resolves(self):
+        # "America MG" vs "America RN" share the "america" token. The old
+        # substring check (`sel in home_l or home_l in sel`) only ever
+        # compared against home, never away — with an exact selection this
+        # happens to still work, but it's here as the baseline the next two
+        # tests contrast against.
+        outcome = settlement.determine_outcome(
+            "soccer", "h2h", "America MG", "America MG", "America RN", 2, 1)
+        assert outcome == "WIN"
+
+    def test_shared_token_away_selection_does_not_default_to_home(self):
+        # Selection is the AWAY team, which shares a token with home. The
+        # old code only ever tested substring-in-home — "america rn" is not
+        # a substring of "america mg" and vice versa here, so this exact
+        # case happened to fall through to is_home=False by default. This
+        # pins that the away selection still resolves correctly rather than
+        # relying on that default-False accident.
+        outcome = settlement.determine_outcome(
+            "soccer", "h2h", "America RN", "America MG", "America RN", 1, 2)
+        assert outcome == "WIN"   # away won 2-1
+
+    def test_ambiguous_selection_matching_both_teams_returns_unknown(self):
+        # A selection that fuzzy-matches BOTH shared-token teams (e.g. a
+        # truncated/generic name from an upstream book) must never be
+        # guessed — that's exactly the "faux positif" this bug produced:
+        # the old substring check against home ALONE would silently bind
+        # this to home_score every time, contaminating the ledger with a
+        # coin-flip WIN/LOSS instead of refusing to grade it.
+        outcome = settlement.determine_outcome(
+            "soccer", "h2h", "America", "America MG", "America RN", 2, 1)
+        assert outcome == "UNKNOWN"
+
+    def test_selection_matching_neither_team_returns_unknown(self):
+        outcome = settlement.determine_outcome(
+            "soccer", "h2h", "Real Madrid", "America MG", "America RN", 2, 1)
+        assert outcome == "UNKNOWN"
+
+    def test_basketball_h2h_ambiguous_selection_returns_unknown(self):
+        # Same guard on the non-soccer h2h branch (no draw handling there,
+        # but the ambiguity check must still apply).
+        outcome = settlement.determine_outcome(
+            "basketball", "h2h", "Miami", "Miami Heat", "Miami Hurricanes", 100, 90)
+        assert outcome == "UNKNOWN"
+
 
 class TestPostGeminiModelFallback:
     def test_falls_through_to_next_model_on_404(self, monkeypatch):

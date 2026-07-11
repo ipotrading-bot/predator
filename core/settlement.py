@@ -10,6 +10,7 @@ import re
 
 from core.db import log_to_ledger, replace_signal_row
 from core.http_utils import post_gemini
+from core.paim_engine import resolve_selection_side
 
 log = logging.getLogger("PREDATOR.settlement")
 
@@ -97,18 +98,26 @@ def fetch_match_result(match_name: str, sport: str, match_date: str = "") -> dic
 def determine_outcome(sport: str, market_key: str, selection_name: str,
                       home: str, away: str,
                       home_score: int, away_score: int) -> str:
-    """Returns 'WIN', 'LOSS', or 'PUSH'."""
-    sel    = (selection_name or "").lower().strip()
-    home_l = (home or "").lower().strip()
-    is_home = bool(sel and (sel in home_l or home_l in sel or sel == home_l))
+    """Returns 'WIN', 'LOSS', 'PUSH', or 'UNKNOWN'."""
+    sel = (selection_name or "").lower().strip()
 
     if market_key == "h2h" and sport == "soccer":
+        # Resolve the side BEFORE the draw check would otherwise mask an
+        # unresolvable selection — an ambiguous selection on a genuine draw
+        # happens to be PUSH regardless of side, but a draw is not the only
+        # score that reaches this branch.
+        is_home = resolve_selection_side(selection_name, home, away)
+        if is_home is None:
+            return "UNKNOWN"
         if home_score == away_score:
             return "PUSH"
         won = (is_home and home_score > away_score) or (not is_home and away_score > home_score)
         return "WIN" if won else "LOSS"
 
     if market_key == "h2h":
+        is_home = resolve_selection_side(selection_name, home, away)
+        if is_home is None:
+            return "UNKNOWN"
         won = (is_home and home_score > away_score) or (not is_home and away_score > home_score)
         return "WIN" if won else "LOSS"
 
