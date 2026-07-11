@@ -13,6 +13,42 @@ currently active:
      is already committed, so a maxed-out portfolio naturally sizes new
      stakes down to 0 rather than stacking risk on top of risk.
 
+     DESIGN NOTE — two different sizing bases coexist in this codebase,
+     and this cap only tracks one of them (see get_current_exposure()'s
+     docstring for the full explanation):
+       - kelly_pct (summed here) is each INDIVIDUAL signal's solo Kelly
+         stake, as if that signal were bet alone — computed once at scan
+         time (run_engine.py's _emit()) and persisted on the row. It's
+         also what templates/index.html's dashboard shows and lets the
+         operator size a bet against directly (per-signal, editable
+         bankroll), independent of whether that signal ever becomes part
+         of a Telegram recommendation.
+       - Telegram, by contrast, never recommends a signal's solo
+         kelly_pct — core.tax_engine.suggest_system() (invoked from
+         run_engine._suggest_systems_by_window(), see that function's
+         own note) computes ONE combined stake per time-window
+         accumulator (numerically optimal Kelly on the combo's own
+         probability/odds), which is a different number from the sum of
+         its legs' individual kelly_pct.
+     Net effect: this cap is a conservative PROXY on aggregate solo-Kelly
+     exposure, not a ledger of money actually placed via Telegram — in
+     the common case (bets placed only from Telegram's system
+     recommendations) it over-counts, since it charges every active leg's
+     full solo stake even when only one smaller combined stake was ever
+     recommended for its whole window, and even when a window's legs
+     never combined into any tax-viable system at all (kelly_pct is still
+     summed even though nothing was ever recommended for them). That
+     over-counting is the safe direction for a cap. It is NOT reconciled
+     against the dashboard's kelly_pct-based recommendation, though — an
+     operator acting on both channels for overlapping signals (dashboard
+     per-signal stake AND a Telegram system containing that same leg)
+     could commit real capital beyond what a single run's exposure
+     snapshot accounted for, since headroom is computed once per engine
+     run from already-persisted kelly_pct, not from either channel's
+     actual placed bets. Whether this is a real risk gap depends on which
+     channel the operator actually trades from — flagged here rather than
+     unified without confirming that.
+
   2. Circuit breaker — a rolling drawdown beyond DRAWDOWN_LIMIT_PCT over
      the last DRAWDOWN_WINDOW_N settled (real WIN/LOSS) signals pauses
      new signal emission entirely until a human calls resume_emission()
@@ -50,6 +86,16 @@ def get_current_exposure(sb, bankroll: float) -> float:
     contributes 0. Fails to 0.0 (not "unknown"/exception) on a read error
     — see get_exposure_headroom for why fail-open here is the deliberate,
     documented choice, not an oversight.
+
+    Sizing-base caveat (see the module docstring's DESIGN NOTE for the
+    full explanation): kelly_pct is each signal's SOLO stake, the same
+    number templates/index.html's dashboard shows as a directly-actionable
+    per-signal recommendation. It is NOT the stake Telegram actually
+    recommends — that's a single combined figure per time-window
+    accumulator from core.tax_engine.suggest_system(), computed
+    independently of any individual leg's kelly_pct. This function
+    therefore measures aggregate solo-Kelly exposure, a conservative
+    proxy for (not a direct ledger of) money placed via Telegram.
     """
     try:
         res = sb.table("signals").select("kelly_pct").eq("status", "active").execute()
