@@ -1,7 +1,13 @@
 """
-api/index.py — PREDATOR PAIM v8.5 — Vercel Dashboard + Ledger + Audit
+api/index.py — PREDATOR PAIM v8.8 — Vercel Dashboard + Ledger + Audit
 Routes: / (Dashboard)  /ledger (CLV Bilan)  /audit (CLV par sport)
         /api/signals  /api/health  /api/scan
+
+Version tag kept in sync with README.md and run_engine.py's own v8.8
+header — the single source of truth for the whole-app version number.
+Individual core/ modules carry their own, independent per-module version
+tags (last significant touch to that file) — those are NOT meant to track
+this one.
 """
 import json
 import logging
@@ -563,7 +569,7 @@ def favicon():
 
 @app.route("/api/health")
 def health():
-    return jsonify({"status": "ok", "version": "8.5", "source": "harvester+gemini"})
+    return jsonify({"status": "ok", "version": "8.8", "source": "harvester+gemini"})
 
 
 _SCAN_REQUEST_COOLDOWN_S = 120  # golden_hour.yml picks this up on its next run (every 30 min)
