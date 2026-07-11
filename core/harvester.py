@@ -66,6 +66,15 @@ HEADERS = {
 }
 GEMINI_URL       = "https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash-lite:generateContent"
 GEMINI_FLASH_URL = "https://generativelanguage.googleapis.com/v1beta/models/gemini-2.0-flash:generateContent"
+# 2026-07-11: gemini-2.5-flash-lite itself returned 404 "no longer available
+# to new users" on the GEMINI_API_KEY_ALT project (a genuinely separate,
+# recently created Cloud project — same fix pattern as GEMINI_API_KEY_AUDIT,
+# which DOES have 2.5-flash-lite access). Free-tier model availability is
+# apparently being rolled back per-project on a schedule, not a fixed
+# generation — gemini-3.5-flash is the current GA free-tier flash model as
+# of this date. Scoped to a separate constant so GEMINI_URL (still working
+# for fetch_estimated_prices below) isn't touched.
+GEMINI_ALT_URL   = "https://generativelanguage.googleapis.com/v1beta/models/gemini-3.5-flash:generateContent"
 
 _SPORT_PROMPTS = {
     "soccer":     "top European football/soccer",
@@ -532,12 +541,12 @@ def fetch_mma_events() -> list[dict]:
         "generationConfig": {"temperature": 0.1, "maxOutputTokens": 2048},
     }
 
-    r = post_with_retry(f"{GEMINI_URL}?key={api_key}", payload, timeout=60,
+    r = post_with_retry(f"{GEMINI_ALT_URL}?key={api_key}", payload, timeout=60,
                          rate_limit_wait=(40, 20), label="MMA/Gemini")
 
     if r is None or r.status_code != 200:
         if r is not None:
-            log.error("MMA/Gemini HTTP %d: %s", r.status_code, r.text[:200])
+            log.error("MMA/Gemini HTTP %d: %s", r.status_code, r.text[:500])
         return []
 
     try:
@@ -621,12 +630,12 @@ def fetch_esports_events() -> list[dict]:
         "generationConfig": {"temperature": 0.1, "maxOutputTokens": 2048},
     }
 
-    r = post_with_retry(f"{GEMINI_URL}?key={api_key}", payload, timeout=60,
+    r = post_with_retry(f"{GEMINI_ALT_URL}?key={api_key}", payload, timeout=60,
                          rate_limit_wait=(40, 20), label="eSports/Gemini")
 
     if r is None or r.status_code != 200:
         if r is not None:
-            log.error("eSports/Gemini HTTP %d: %s", r.status_code, r.text[:200])
+            log.error("eSports/Gemini HTTP %d: %s", r.status_code, r.text[:500])
         return []
 
     try:
@@ -711,12 +720,12 @@ def fetch_alternative_sports_batch() -> list[dict]:
         "generationConfig": {"temperature": 0.1, "maxOutputTokens": 3000},
     }
 
-    r = post_with_retry(f"{GEMINI_URL}?key={api_key}", payload, timeout=60,
+    r = post_with_retry(f"{GEMINI_ALT_URL}?key={api_key}", payload, timeout=60,
                          rate_limit_wait=(40, 20), label="AltSports/Gemini")
 
     if r is None or r.status_code != 200:
         if r is not None:
-            log.error("AltSports/Gemini HTTP %d: %s", r.status_code, r.text[:200])
+            log.error("AltSports/Gemini HTTP %d: %s", r.status_code, r.text[:500])
         return []
 
     try:
