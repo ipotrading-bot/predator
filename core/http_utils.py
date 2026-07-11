@@ -62,7 +62,7 @@ def post_with_retry(url, payload, timeout, max_attempts=3,
                 _gemini_daily_quota_dead = True
                 log.critical("%s: Gemini DAILY quota exhausted — skipping all "
                              "further Gemini calls this run (resets ~07:00 UTC) | %s",
-                             label, r.text[:500])
+                             label, r.text[:2000])
                 return r
             if attempt < max_attempts - 1:
                 wait = rate_limit_wait[0] if attempt == 0 else rate_limit_wait[1]
