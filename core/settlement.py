@@ -49,7 +49,14 @@ def fetch_match_result(match_name: str, sport: str, match_date: str = "") -> dic
     payload = {
         "contents": [{"role": "user", "parts": [{"text": prompt}]}],
         "tools": [{"google_search": {}}],
-        "generationConfig": {"temperature": 0.0, "maxOutputTokens": 80},
+        # Was 80 — every other search-grounded call site in this codebase
+        # uses 200-3000. Grounded responses on 2.5+ models spend part of
+        # the output-token budget on internal reasoning before the visible
+        # answer; 80 was plausibly truncating the response before the
+        # closing '}' every time, silently (see the log.warning below —
+        # a near-100% "no score yet" rate on well-covered MLB/WNBA games
+        # is what that looks like from the outside).
+        "generationConfig": {"temperature": 0.0, "maxOutputTokens": 500},
     }
 
     r = post_with_retry(f"{GEMINI_URL}?key={api_key}", payload, timeout=25,
@@ -59,11 +66,14 @@ def fetch_match_result(match_name: str, sport: str, match_date: str = "") -> dic
         return None
 
     try:
-        parts = r.json().get("candidates", [{}])[0].get("content", {}).get("parts", [])
+        candidate = r.json().get("candidates", [{}])[0]
+        parts = candidate.get("content", {}).get("parts", [])
         text  = next((p["text"] for p in reversed(parts) if p.get("text", "").strip()), "")
         text  = re.sub(r'```(?:json)?|```', '', text)
         m     = re.search(r'\{[^{}]+\}', text)
         if not m:
+            log.warning("settlement no-JSON [%s]: finishReason=%s text=%r",
+                        match_name, candidate.get("finishReason"), text[:200])
             return None
         data  = json.loads(m.group())
         if data.get("completed"):
