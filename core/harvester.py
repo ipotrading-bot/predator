@@ -532,7 +532,7 @@ def fetch_mma_events() -> list[dict]:
         "generationConfig": {"temperature": 0.1, "maxOutputTokens": 2048},
     }
 
-    r = post_with_retry(f"{GEMINI_FLASH_URL}?key={api_key}", payload, timeout=60,
+    r = post_with_retry(f"{GEMINI_URL}?key={api_key}", payload, timeout=60,
                          rate_limit_wait=(40, 20), label="MMA/Gemini")
 
     if r is None or r.status_code != 200:
@@ -621,7 +621,7 @@ def fetch_esports_events() -> list[dict]:
         "generationConfig": {"temperature": 0.1, "maxOutputTokens": 2048},
     }
 
-    r = post_with_retry(f"{GEMINI_FLASH_URL}?key={api_key}", payload, timeout=60,
+    r = post_with_retry(f"{GEMINI_URL}?key={api_key}", payload, timeout=60,
                          rate_limit_wait=(40, 20), label="eSports/Gemini")
 
     if r is None or r.status_code != 200:
@@ -711,7 +711,7 @@ def fetch_alternative_sports_batch() -> list[dict]:
         "generationConfig": {"temperature": 0.1, "maxOutputTokens": 3000},
     }
 
-    r = post_with_retry(f"{GEMINI_FLASH_URL}?key={api_key}", payload, timeout=60,
+    r = post_with_retry(f"{GEMINI_URL}?key={api_key}", payload, timeout=60,
                          rate_limit_wait=(40, 20), label="AltSports/Gemini")
 
     if r is None or r.status_code != 200:

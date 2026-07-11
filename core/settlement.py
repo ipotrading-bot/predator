@@ -13,7 +13,7 @@ from core.http_utils import post_with_retry
 
 log = logging.getLogger("PREDATOR.settlement")
 
-GEMINI_URL = "https://generativelanguage.googleapis.com/v1beta/models/gemini-2.0-flash:generateContent"
+GEMINI_URL = "https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash-lite:generateContent"
 _SETTLEMENT_OPTIONAL = frozenset({"outcome", "settled_at"})
 
 

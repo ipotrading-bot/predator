@@ -8,6 +8,7 @@ under-implementing) it at every call site.
 """
 import logging
 import time
+from urllib.parse import urlparse, parse_qs
 
 import requests
 
@@ -23,12 +24,28 @@ log = logging.getLogger("PREDATOR.http")
 # no Telegram, no heartbeat, red X. Once one call reports PerDay
 # exhaustion, every later Gemini call this process makes is pointless —
 # this flag short-circuits them all instantly.
-_gemini_daily_quota_dead = False
+#
+# 2026-07-11: discovered the flag must be scoped per (model, api key) —
+# a single process can hold multiple Gemini keys (GEMINI_API_KEY,
+# _AUDIT, _ALT) pointed at different Google Cloud projects with
+# independent quotas, and even a single key can have a 0 free-tier
+# allocation for one model (e.g. gemini-2.0-flash on a newly created
+# project) while another model on that SAME key (gemini-2.5-flash-lite)
+# works fine. A global bool meant the first 429 anywhere poisoned every
+# later call on every other key/model for the rest of the process.
+_gemini_dead_scopes: set[str] = set()
+
+
+def _quota_scope(url: str) -> str:
+    """(model, key-fragment) identity — never logs/exposes the full key."""
+    model = url.split("/models/")[-1].split(":")[0] if "/models/" in url else url
+    key   = parse_qs(urlparse(url).query).get("key", [""])[0]
+    return f"{model}:{key[-6:]}"
 
 
 def gemini_quota_dead() -> bool:
-    """True once any Gemini call this run hit the DAILY quota limit."""
-    return _gemini_daily_quota_dead
+    """True once ANY Gemini key/model this run hit the DAILY quota limit."""
+    return bool(_gemini_dead_scopes)
 
 
 def post_with_retry(url, payload, timeout, max_attempts=3,
@@ -39,10 +56,10 @@ def post_with_retry(url, payload, timeout, max_attempts=3,
     or None if every attempt raised an exception (no response ever came
     back) — or instantly None once the Gemini daily quota is known dead.
     """
-    global _gemini_daily_quota_dead
     is_gemini = "generativelanguage" in url
-    if _gemini_daily_quota_dead and is_gemini:
-        log.debug("%s: skipped — Gemini daily quota exhausted", label)
+    scope = _quota_scope(url) if is_gemini else None
+    if is_gemini and scope in _gemini_dead_scopes:
+        log.debug("%s: skipped — Gemini daily quota exhausted for this key/model", label)
         return None
 
     r = None
@@ -59,9 +76,9 @@ def post_with_retry(url, payload, timeout, max_attempts=3,
 
         if r.status_code == 429:
             if is_gemini and "PerDay" in r.text:
-                _gemini_daily_quota_dead = True
-                log.critical("%s: Gemini DAILY quota exhausted — skipping all "
-                             "further Gemini calls this run (resets ~07:00 UTC) | %s",
+                _gemini_dead_scopes.add(scope)
+                log.critical("%s: Gemini DAILY quota exhausted for this key/model — "
+                             "skipping further calls to it this run (resets ~07:00 UTC) | %s",
                              label, r.text[:2000])
                 return r
             if attempt < max_attempts - 1:
