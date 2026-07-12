@@ -824,16 +824,16 @@ def _suggest_systems_by_window(signals: list, log, sb=None) -> list:
     a portfolio already at its cap naturally sizes every new system down
     to stake=0 instead of stacking risk on top of risk.
 
-    Sizing-base note (see core.risk_manager's module docstring DESIGN NOTE
-    for the full explanation): the headroom subtracted here is computed
-    from every active signal's solo kelly_pct (each signal's own would-be
-    stake, also what the dashboard shows per-signal) — a DIFFERENT basis
-    from the system stake this function itself returns (one combined,
-    numerically-optimal figure per window, the only thing Telegram ever
-    recommends). The two are intentionally decoupled sizing bases, not one
-    feeding the other; this cap is a conservative proxy on aggregate
-    solo-Kelly exposure, not a running total of what Telegram has actually
-    recommended.
+    Sizing-base note (2026-07-11, operator decision: dashboard is
+    canonical — see core.risk_manager's module docstring DESIGN NOTE for
+    the full explanation): the headroom subtracted here is computed from
+    every active signal's solo kelly_pct (each signal's own would-be
+    stake, also what the dashboard shows per-signal). The system stake
+    this function returns (one combined, numerically-optimal figure per
+    window) is no longer sized independently of that basis —
+    core.tax_engine.suggest_system() caps it at the sum of its own legs'
+    kelly_pct, so what Telegram recommends can never exceed what the
+    dashboard already implies for the same signals.
     """
     effective_bankroll = _BANKROLL_REF
     if sb is not None:

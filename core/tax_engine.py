@@ -323,6 +323,21 @@ def suggest_system(signals: list[dict], bankroll: float,
     contain two legs sharing a correlation_group (see
     core/paim_engine.correlation_group) — see _combine_with_correlation
     for the "discount" alternative.
+
+    Sizing-base unification (2026-07-11, operator decision — see
+    core/risk_manager.py's module docstring for the mismatch this closes):
+    the returned stake is capped at the SUM of the combo's own legs'
+    dashboard kelly_pct (each signal's independently-persisted solo Kelly
+    stake, in currency units at this same `bankroll` — the same figure
+    templates/index.html shows per signal). The dashboard is now the
+    canonical ceiling: a system can never recommend more than what its own
+    component legs already imply on the dashboard, so core.risk_manager's
+    kelly_pct-based exposure ledger is always a valid upper bound on real
+    recommended capital, on both channels. Falls back to the pre-
+    unification tax-engine-optimal stake alone when any leg is missing a
+    persisted kelly_pct (legacy rows, or a caller that built signal dicts
+    by hand rather than through run_engine._emit()) — there is no
+    dashboard figure to reconcile against in that case.
     """
     if not signals:
         return None
@@ -349,6 +364,13 @@ def suggest_system(signals: list[dict], bankroll: float,
                 continue
             frac = optimal_stake_fraction(combined_p, combined_odds, tax_rate, kelly_multiplier)
             stake = frac * bankroll
+
+            # Dashboard-basis cap — see this function's docstring.
+            leg_signals = [leg["signal"] for leg in combo]
+            if all(s.get("kelly_pct") is not None for s in leg_signals):
+                dashboard_cap = sum((s.get("kelly_pct") or 0) / 100 * bankroll for s in leg_signals)
+                stake = min(stake, dashboard_cap)
+
             if stake <= 0:
                 continue
             ev = single_bet_ev_net_tax(stake, combined_odds, combined_p, tax_rate)
@@ -356,7 +378,7 @@ def suggest_system(signals: list[dict], bankroll: float,
                 continue
             if best is None or ev > best["ev"]:
                 best = {
-                    "legs": [leg["signal"] for leg in combo],
+                    "legs": leg_signals,
                     "k": k,
                     "combined_prob": combined_p,
                     "combined_odds": combined_odds,

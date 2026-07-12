@@ -192,6 +192,42 @@ class TestSuggestSystem:
         assert result["stake"] > 0
         assert 1 <= result["k"] <= 3
 
+    def test_stake_never_exceeds_the_dashboard_kelly_pct_ceiling(self):
+        # Sizing-base unification (2026-07-11, operator decision: dashboard
+        # is canonical — see core/risk_manager.py's module docstring). Two
+        # legs whose combined bet is comfortably tax-viable and whose
+        # UNCAPPED tax-engine-optimal stake would be well above the sum of
+        # their own persisted kelly_pct (each leg's dashboard-displayed
+        # solo stake, set here artificially low to force the cap to bind) —
+        # the system must never recommend more than that dashboard sum.
+        sig_a = {**self._sig("A vs B", 0.65, 1.80), "kelly_pct": 1.0}
+        sig_b = {**self._sig("C vs D", 0.65, 1.80), "kelly_pct": 1.0}
+        bankroll = 150
+
+        # Sanity: confirm the pre-fix (uncapped) tax-engine-optimal stake on
+        # this exact combo really would exceed the dashboard ceiling, so a
+        # passing test below proves the cap engaged rather than coincided.
+        uncapped_frac = optimal_stake_fraction(0.65 * 0.65, 1.80 * 1.80, tax_rate=0.20, kelly_multiplier=1.0)
+        dashboard_cap = (sig_a["kelly_pct"] + sig_b["kelly_pct"]) / 100 * bankroll
+        assert uncapped_frac * bankroll > dashboard_cap
+
+        result = suggest_system([sig_a, sig_b], bankroll=bankroll, tax_rate=0.20)
+
+        assert result is not None
+        assert result["k"] == 2
+        assert result["stake"] <= dashboard_cap + 1e-6
+
+    def test_missing_kelly_pct_falls_back_to_tax_engine_optimal(self):
+        # Legacy signals / direct suggest_system() callers (e.g. every other
+        # test in this class) never set kelly_pct — there's no dashboard
+        # figure to reconcile against, so the pre-unification behavior
+        # (tax-engine-optimal stake alone) must still apply unchanged.
+        signals = [self._sig("A vs B", 0.65, 1.80), self._sig("C vs D", 0.65, 1.80)]
+        result = suggest_system(signals, bankroll=150, tax_rate=0.20)
+        assert result is not None
+        uncapped_frac = optimal_stake_fraction(0.65 * 0.65, 1.80 * 1.80, tax_rate=0.20, kelly_multiplier=1.0)
+        assert result["stake"] == pytest.approx(round(uncapped_frac * 150, 2))
+
     def test_signals_missing_odds_or_prob_are_skipped_not_fatal(self):
         signals = [
             {"match": "A vs B", "sharp_prob": None, "xbet_odd": 1.8},
