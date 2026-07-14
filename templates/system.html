@@ -43,14 +43,11 @@
 
 <div class="wrap">
 
-  <!-- PAGE HEADER -->
-  <div class="empty" style="margin-top:18px">
-    <div>Page Système en construction.</div>
-  </div>
+<div id="sbc-root"></div>
 
 </div><!-- /wrap -->
 
-<footer>PREDATOR SYSTÈME v1.0 &nbsp;·&nbsp; État moteur &amp; config &nbsp;·&nbsp; PAIM</footer>
+<footer>PREDATOR SYSTÈME v1.0 &nbsp;·&nbsp; Calculateur système auto-rempli &nbsp;·&nbsp; PAIM</footer>
 
 <!-- BOTTOM NAV -->
 <nav class="bnav">
@@ -78,6 +75,656 @@
     ' '+pad(d.getUTCHours())+':'+pad(d.getUTCMinutes())+':'+pad(d.getUTCSeconds())+' UTC';
   setTimeout(tick,1000);
 })();
+</script>
+
+<!-- System Bet Calculator — React via CDN (no build step in this repo) -->
+<script src="https://unpkg.com/react@18/umd/react.production.min.js" crossorigin></script>
+<script src="https://unpkg.com/react-dom@18/umd/react-dom.production.min.js" crossorigin></script>
+<script src="https://cdn.tailwindcss.com"></script>
+<script>tailwind.config = { corePlugins: { preflight: false } };</script>
+<script src="https://unpkg.com/@babel/standalone/babel.min.js"></script>
+<script type="text/babel">
+{% raw %}
+const { useState, useMemo, useEffect } = React;
+
+/* ---------------------------------------------------------------
+   ICONS — inline SVG (lucide-react needs a bundler; this page has
+   none, so these are hand-drawn equivalents at the same call sites)
+--------------------------------------------------------------- */
+function Icon({ size = 14, children }) {
+  return (
+    <svg width={size} height={size} viewBox="0 0 24 24" fill="none" stroke="currentColor"
+         strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">{children}</svg>
+  );
+}
+const Plus        = ({ size }) => <Icon size={size}><line x1="12" y1="5" x2="12" y2="19"/><line x1="5" y1="12" x2="19" y2="12"/></Icon>;
+const Trash2       = ({ size }) => <Icon size={size}><polyline points="3 6 5 6 21 6"/><path d="M19 6l-1 14a2 2 0 0 1-2 2H8a2 2 0 0 1-2-2L5 6"/><path d="M10 11v6"/><path d="M14 11v6"/><path d="M9 6V4a1 1 0 0 1 1-1h4a1 1 0 0 1 1 1v2"/></Icon>;
+const Info         = ({ size }) => <Icon size={size}><circle cx="12" cy="12" r="10"/><line x1="12" y1="16" x2="12" y2="12"/><line x1="12" y1="8" x2="12.01" y2="8"/></Icon>;
+const ChevronDown   = ({ size }) => <Icon size={size}><polyline points="6 9 12 15 18 9"/></Icon>;
+const ChevronUp     = ({ size }) => <Icon size={size}><polyline points="18 15 12 9 6 15"/></Icon>;
+
+/* ---------------------------------------------------------------
+   TOKENS — palette "carnet de paris quantitatif"
+--------------------------------------------------------------- */
+const C = {
+  bg: "#0A0C10",
+  panel: "#12151C",
+  panel2: "#191D27",
+  border: "#262B38",
+  borderSoft: "#1E222D",
+  text: "#ECEFF4",
+  muted: "#8A93A6",
+  faint: "#5C6478",
+  gold: "#C6A15B",
+  goldSoft: "#8A7240",
+  win: "#33C481",
+  loss: "#E5566B",
+  voidC: "#7C8798",
+  partial: "#E3A23C",
+};
+
+const SANS = '"Inter", ui-sans-serif, system-ui, -apple-system, "Segoe UI", sans-serif';
+const MONO = 'ui-monospace, "IBM Plex Mono", "SF Mono", Menlo, Consolas, monospace';
+
+const FOLD_NAMES = { 1: "Simple", 2: "Double", 3: "Trio", 4: "Quadruple", 5: "Quintuple", 6: "Sextuple", 7: "Septuple", 8: "Octuple", 9: "Nonuple", 10: "Décuple" };
+const foldName = (k) => FOLD_NAMES[k] || `${k}-fold`;
+
+const STATUS_OPTS = [
+  { v: "won", label: "Gagné" },
+  { v: "lost", label: "Perdu" },
+  { v: "void", label: "Nul (remboursé)" },
+  { v: "won_void", label: "Gagné / Nul (cote asiatique partielle)" },
+  { v: "lost_void", label: "Perdu / Nul (cote asiatique partielle)" },
+];
+
+const CURRENCIES = ["XOF", "CHF", "EUR", "USD"];
+
+const PRESETS_BY_N = {
+  1: [{ key: "single", label: "Simple", folds: [1] }],
+  2: [{ key: "double", label: "Double", folds: [2] }],
+  3: [
+    { key: "treble", label: "Trio (Treble)", folds: [3] },
+    { key: "trixie", label: "Trixie", folds: [2, 3] },
+    { key: "patent", label: "Patent", folds: [1, 2, 3] },
+  ],
+  4: [
+    { key: "acc4", label: "Accumulateur", folds: [4] },
+    { key: "yankee", label: "Yankee", folds: [2, 3, 4] },
+    { key: "lucky15", label: "Lucky 15", folds: [1, 2, 3, 4] },
+  ],
+  5: [
+    { key: "acc5", label: "Accumulateur", folds: [5] },
+    { key: "canadian", label: "Canadian / Super Yankee", folds: [2, 3, 4, 5] },
+    { key: "lucky31", label: "Lucky 31", folds: [1, 2, 3, 4, 5] },
+  ],
+  6: [
+    { key: "acc6", label: "Accumulateur", folds: [6] },
+    { key: "heinz", label: "Heinz", folds: [2, 3, 4, 5, 6] },
+    { key: "lucky63", label: "Lucky 63", folds: [1, 2, 3, 4, 5, 6] },
+  ],
+  7: [
+    { key: "acc7", label: "Accumulateur", folds: [7] },
+    { key: "superheinz", label: "Super Heinz", folds: [2, 3, 4, 5, 6, 7] },
+    { key: "lucky127", label: "Lucky 127", folds: [1, 2, 3, 4, 5, 6, 7] },
+  ],
+  8: [
+    { key: "acc8", label: "Accumulateur", folds: [8] },
+    { key: "goliath", label: "Goliath", folds: [2, 3, 4, 5, 6, 7, 8] },
+    { key: "superflag9-alt", label: "Système complet", folds: [1, 2, 3, 4, 5, 6, 7, 8] },
+  ],
+};
+const presetsForN = (n) => {
+  if (n < 1) return [];
+  if (PRESETS_BY_N[n]) return PRESETS_BY_N[n];
+  return [{ key: "acc", label: "Accumulateur", folds: [n] }];
+};
+
+/* Mapping demandé pour l'auto-remplissage : n -> preset "canonique"
+   (Trixie/Yankee/Canadian/Heinz/Super Heinz/Goliath) plutôt que la
+   première option de la liste (qui est souvent l'accumulateur seul). */
+const AUTOFILL_PRESET_KEY_BY_N = {
+  1: "single", 2: "double", 3: "trixie", 4: "yankee",
+  5: "canadian", 6: "heinz", 7: "superheinz", 8: "goliath",
+};
+
+/* ---------------------------------------------------------------
+   MATH — combinatoire, gestion des nuls / cotes asiatiques
+   (moteur inchangé — ne pas modifier ces fonctions)
+--------------------------------------------------------------- */
+function kCombinations(arr, k) {
+  const out = [];
+  const combo = [];
+  (function bt(start) {
+    if (combo.length === k) { out.push([...combo]); return; }
+    for (let i = start; i < arr.length; i++) { combo.push(arr[i]); bt(i + 1); combo.pop(); }
+  })(0);
+  return out;
+}
+
+// Chaque statut se décompose en une liste de branches [poids, multiplicateur].
+// C'est ce qui permet de traiter proprement les cotes asiatiques partielles
+// (Gagné/Nul, Perdu/Nul) au lieu de les arrondir grossièrement.
+function legBranches(sel) {
+  const o = sel.odds;
+  switch (sel.status) {
+    case "won": return [[1, o]];
+    case "lost": return [[1, 0]];
+    case "void": return [[1, 1]];
+    case "won_void": return [[0.5, o], [0.5, 1]];
+    case "lost_void": return [[0.5, 0], [0.5, 1]];
+    default: return [[1, 1]];
+  }
+}
+
+// Facteur de retour attendu R d'une combinaison : produit croisé des branches
+// de chaque sélection. R=0 -> perdue, R=1 -> remboursée, 0<R<1 -> perte partielle,
+// R>1 -> gagnante. Un "Nul" a un multiplicateur de 1, ce qui réduit automatiquement
+// la combinaison au palier inférieur sans fausser le calcul.
+function comboReturnFactor(sels) {
+  let acc = [[1, 1]];
+  for (const sel of sels) {
+    const branches = legBranches(sel);
+    const next = [];
+    for (const [aw, am] of acc) for (const [bw, bm] of branches) next.push([aw * bw, am * bm]);
+    acc = next;
+  }
+  return acc.reduce((s, [w, m]) => s + w * m, 0);
+}
+
+function comboMaxFactor(sels) {
+  return sels.reduce((p, sel) => {
+    if (sel.status === "lost") return 0;
+    if (sel.status === "won" || sel.status === "won_void") return p * sel.odds;
+    return p;
+  }, 1);
+}
+
+function bucketOf(R) {
+  if (R === 0) return "loss";
+  if (R === 1) return "void";
+  if (R > 0 && R < 1) return "partial";
+  return "win";
+}
+const bucketColor = { loss: C.loss, void: C.voidC, partial: C.partial, win: C.win };
+
+/* ---------------------------------------------------------------
+   UI ATOMS
+--------------------------------------------------------------- */
+function Panel({ title, children, right }) {
+  return (
+    <div style={{ background: C.panel, border: `1px solid ${C.border}`, borderRadius: 12 }} className="p-4 md:p-5">
+      <div className="flex items-center justify-between mb-3">
+        <h2 style={{ color: C.text, fontFamily: SANS }} className="text-sm font-semibold tracking-wide uppercase">{title}</h2>
+        {right}
+      </div>
+      {children}
+    </div>
+  );
+}
+function Field({ label, children }) {
+  return (
+    <label className="flex flex-col gap-1">
+      <span style={{ color: C.muted, fontFamily: SANS }} className="text-xs">{label}</span>
+      {children}
+    </label>
+  );
+}
+const inputStyle = { background: C.panel2, border: `1px solid ${C.border}`, color: C.text, fontFamily: MONO };
+function SummaryCard({ label, value, sub, color }) {
+  return (
+    <div style={{ background: C.panel2, border: `1px solid ${C.borderSoft}`, borderRadius: 10 }} className="px-4 py-3">
+      <div style={{ color: C.muted, fontFamily: SANS }} className="text-xs mb-1">{label}</div>
+      <div style={{ color: color || C.text, fontFamily: MONO }} className="text-lg font-semibold">{value}</div>
+      {sub && <div style={{ color: C.faint, fontFamily: SANS }} className="text-xs mt-0.5">{sub}</div>}
+    </div>
+  );
+}
+
+/* ---------------------------------------------------------------
+   AUTO-FILL — signaux PAIM actifs -> ticket système
+--------------------------------------------------------------- */
+
+// Règles : fenêtre 12h à venir, cote > 1.80, exclut réglé/annulé/expiré
+// (déjà exclus par /api/signals qui ne renvoie que status=active), trié
+// par edge_pct desc puis cote desc, plafond 8 (Goliath). Un seul signal
+// par match est conservé (le meilleur edge) : deux jambes du même match
+// sont corrélées et invalident le calcul de combinaison indépendant —
+// ce garde-fou n'était pas dans les 5 règles listées mais est nécessaire
+// à la validité mathématique du système.
+async function fetchQualifyingSignals() {
+  const res = await fetch("/api/signals");
+  if (!res.ok) throw new Error(`HTTP ${res.status}`);
+  const data = await res.json();
+  if (!Array.isArray(data)) throw new Error("unexpected /api/signals response");
+
+  const now = Date.now();
+  const windowEnd = now + 12 * 60 * 60 * 1000;
+
+  const qualifying = data.filter((s) => {
+    if (!s.match_time) return false;
+    const t = Date.parse(s.match_time);
+    if (Number.isNaN(t) || t < now || t > windowEnd) return false;
+    const odds = Number(s.xbet_odd);
+    return odds > 1.8;
+  });
+
+  const bestPerMatch = new Map();
+  for (const s of qualifying) {
+    const key = s.match_id || s.match || "";
+    const prev = bestPerMatch.get(key);
+    if (!prev || (s.edge_pct || 0) > (prev.edge_pct || 0)) bestPerMatch.set(key, s);
+  }
+
+  const ranked = [...bestPerMatch.values()].sort((a, b) => {
+    const edgeDiff = (b.edge_pct || 0) - (a.edge_pct || 0);
+    if (Math.abs(edgeDiff) > 1e-9) return edgeDiff;
+    return (b.xbet_odd || 0) - (a.xbet_odd || 0);
+  });
+
+  return ranked.slice(0, 8);
+}
+
+/* ---------------------------------------------------------------
+   MAIN COMPONENT
+--------------------------------------------------------------- */
+function SystemBetCalculator() {
+  const [selections, setSelections] = useState([]);
+  const [nextId, setNextId] = useState(1);
+  const [selectedFolds, setSelectedFolds] = useState(new Set());
+  const [stake, setStake] = useState(1000);
+  const [currency, setCurrency] = useState("XOF");
+  const [taxEnabled, setTaxEnabled] = useState(true);
+  const [taxRate, setTaxRate] = useState(20);
+  const [taxBase, setTaxBase] = useState("net_system"); // 'net_system' | 'per_line'
+  const [methodOpen, setMethodOpen] = useState(false);
+  const [activeCell, setActiveCell] = useState(null);
+  const [signalsStatus, setSignalsStatus] = useState("loading"); // loading | error | empty | `ok:N`
+
+  const n = selections.length;
+
+  // Clamp les paliers sélectionnés quand n change
+  useEffect(() => {
+    setSelectedFolds((prev) => {
+      const filtered = new Set([...prev].filter((k) => k >= 1 && k <= n));
+      if (filtered.size === 0 && n > 0) filtered.add(n);
+      return filtered;
+    });
+  }, [n]);
+
+  // Auto-remplissage depuis les signaux PAIM actifs, au chargement de la page.
+  useEffect(() => {
+    let cancelled = false;
+    (async () => {
+      setSignalsStatus("loading");
+      try {
+        const picked = await fetchQualifyingSignals();
+        if (cancelled) return;
+        if (picked.length === 0) {
+          setSignalsStatus("empty");
+          return;
+        }
+        const nextSelections = picked.map((s, i) => ({
+          id: i + 1,
+          label: `${s.match || "?"} — ${s.selection_name || "?"}`,
+          odds: Number(s.xbet_odd) || 1.01,
+          status: "won",
+        }));
+        setSelections(nextSelections);
+        setNextId(nextSelections.length + 1);
+        const presetKey = AUTOFILL_PRESET_KEY_BY_N[nextSelections.length];
+        const preset = presetsForN(nextSelections.length).find((p) => p.key === presetKey);
+        if (preset) setSelectedFolds(new Set(preset.folds));
+        setSignalsStatus(`ok:${nextSelections.length}`);
+      } catch (e) {
+        if (!cancelled) setSignalsStatus("error");
+      }
+    })();
+    return () => { cancelled = true; };
+  }, []);
+
+  const sortedFolds = useMemo(() => [...selectedFolds].sort((a, b) => a - b), [selectedFolds]);
+  const presets = presetsForN(n);
+  const activePresetKey = useMemo(() => {
+    const match = presets.find((p) => p.folds.length === selectedFolds.size && p.folds.every((f) => selectedFolds.has(f)));
+    return match ? match.key : "custom";
+  }, [presets, selectedFolds]);
+
+  // Calcul complet
+  const computed = useMemo(() => {
+    const idx = selections.map((_, i) => i);
+    const byFold = sortedFolds.map((k) => {
+      const combos = kCombinations(idx, k).map((indices) => {
+        const sels = indices.map((i) => selections[i]);
+        const R = comboReturnFactor(sels);
+        const maxR = comboMaxFactor(sels);
+        return { k, indices, R, maxR, bucket: bucketOf(R) };
+      });
+      const count = combos.length;
+      const mise = count * stake;
+      const retour = combos.reduce((s, c) => s + c.R * stake, 0);
+      return { k, combos, count, mise, retour, profit: retour - mise };
+    });
+    const totalLignes = byFold.reduce((s, f) => s + f.count, 0);
+    const totalMise = byFold.reduce((s, f) => s + f.mise, 0);
+    const totalRetour = byFold.reduce((s, f) => s + f.retour, 0);
+    const totalProfit = totalRetour - totalMise;
+    const maxRSystem = Math.max(1, ...byFold.flatMap((f) => f.combos.filter((c) => c.R > 1).map((c) => c.R)));
+    let taxAmount = 0;
+    if (taxEnabled && taxRate > 0) {
+      if (taxBase === "net_system") {
+        taxAmount = totalProfit > 0 ? totalProfit * (taxRate / 100) : 0;
+      } else {
+        for (const f of byFold) for (const c of f.combos) {
+          const lineProfit = c.R * stake - stake;
+          if (lineProfit > 0) taxAmount += lineProfit * (taxRate / 100);
+        }
+      }
+    }
+    const netAfterTax = totalRetour - taxAmount;
+    return { byFold, totalLignes, totalMise, totalRetour, totalProfit, maxRSystem, taxAmount, netAfterTax };
+  }, [selections, sortedFolds, stake, taxEnabled, taxRate, taxBase]);
+
+  const fmt = (v) => `${v.toLocaleString("fr-FR", { minimumFractionDigits: 2, maximumFractionDigits: 2 })} ${currency}`;
+
+  const addSelection = () => {
+    if (n >= 10) return;
+    setSelections((s) => [...s, { id: nextId, label: "", odds: 1.9, status: "won" }]);
+    setNextId((x) => x + 1);
+  };
+  const removeSelection = (id) => setSelections((s) => (s.length > 1 ? s.filter((x) => x.id !== id) : s.length === 1 ? [] : s));
+  const updateSelection = (id, patch) => setSelections((s) => s.map((x) => (x.id === id ? { ...x, ...patch } : x)));
+  const toggleFold = (k) => {
+    setSelectedFolds((prev) => {
+      const next = new Set(prev);
+      if (next.has(k)) { if (next.size > 1) next.delete(k); } else next.add(k);
+      return next;
+    });
+  };
+
+  const activeCombo = activeCell != null ? computed.byFold.find((f) => f.k === activeCell.k)?.combos[activeCell.i] : null;
+
+  const statusLine = {
+    loading: "Chargement des signaux PAIM…",
+    error: "Signaux indisponibles — ticket vide, remplissage manuel possible.",
+    empty: "Aucun signal ≥ 1.80 dans les 12h à venir — ticket vide, remplissage manuel possible.",
+  }[signalsStatus] || `Auto-rempli depuis ${signalsStatus.split(":")[1]} signal(aux) actif(s) — fenêtre 12h, cote > 1.80, trié par edge.`;
+
+  return (
+    <div style={{ background: C.bg, minHeight: "60vh" }} className="w-full">
+      <div className="max-w-6xl mx-auto px-4 py-8 md:px-8">
+        {/* Header */}
+        <div className="mb-6">
+          <div style={{ color: C.gold, fontFamily: MONO }} className="text-xs tracking-widest uppercase mb-1">Predator Paim · Outils</div>
+          <h1 style={{ color: C.text }} className="text-2xl md:text-3xl font-semibold mb-2">Calculateur de paris système</h1>
+          <p style={{ color: C.muted }} className="text-sm max-w-2xl">
+            Calcule tous les paliers d'un système (Trixie, Yankee, Heinz, Goliath, etc.), gère correctement les
+            sélections nulles et les cotes asiatiques partielles, et intègre la retenue à la source sur les gains.
+          </p>
+          <p style={{ color: C.faint, fontFamily: MONO }} className="text-xs mt-2">{statusLine}</p>
+        </div>
+
+        <div className="grid grid-cols-1 lg:grid-cols-12 gap-5">
+          {/* LEFT COLUMN */}
+          <div className="lg:col-span-5 space-y-5">
+            {/* Ticket */}
+            <Panel
+              title="Sélections"
+              right={
+                <button onClick={addSelection} disabled={n >= 10}
+                  style={{ color: n >= 10 ? C.faint : C.gold, border: `1px solid ${n >= 10 ? C.border : C.goldSoft}` }}
+                  className="flex items-center gap-1 text-xs px-2 py-1 rounded-md transition">
+                  <Plus size={13} /> Ajouter
+                </button>
+              }
+            >
+              {n === 0 ? (
+                <p style={{ color: C.faint }} className="text-xs">Aucune sélection — ajoute-en une, ou attends l'auto-remplissage.</p>
+              ) : (
+                <div className="space-y-2">
+                  {selections.map((sel, i) => (
+                    <div key={sel.id} style={{ background: C.panel2, border: `1px solid ${C.borderSoft}`, borderRadius: 10 }} className="p-2.5">
+                      <div className="flex items-center gap-2 mb-2">
+                        <span style={{ color: C.gold, fontFamily: MONO, background: "rgba(198,161,91,0.1)" }} className="text-xs w-6 h-6 flex items-center justify-center rounded-md shrink-0">
+                          {i + 1}
+                        </span>
+                        <input
+                          value={sel.label}
+                          onChange={(e) => updateSelection(sel.id, { label: e.target.value })}
+                          placeholder={`Sélection ${i + 1}`}
+                          style={{ ...inputStyle, fontFamily: SANS }}
+                          className="flex-1 min-w-0 text-sm rounded-md px-2 py-1.5"
+                        />
+                        <button onClick={() => removeSelection(sel.id)} disabled={n <= 1}
+                          style={{ color: n <= 1 ? C.faint : C.loss }} className="shrink-0 p-1">
+                          <Trash2 size={14} />
+                        </button>
+                      </div>
+                      <div className="flex gap-2">
+                        <div className="w-20 shrink-0">
+                          <input
+                            type="number" step="0.01" min="1.01" value={sel.odds}
+                            onChange={(e) => updateSelection(sel.id, { odds: Math.max(1.01, parseFloat(e.target.value) || 1.01) })}
+                            style={inputStyle} className="w-full text-sm rounded-md px-2 py-1.5"
+                          />
+                        </div>
+                        <select
+                          value={sel.status}
+                          onChange={(e) => updateSelection(sel.id, { status: e.target.value })}
+                          style={{ ...inputStyle, fontFamily: SANS }}
+                          className="flex-1 min-w-0 text-sm rounded-md px-2 py-1.5"
+                        >
+                          {STATUS_OPTS.map((o) => <option key={o.v} value={o.v}>{o.label}</option>)}
+                        </select>
+                      </div>
+                    </div>
+                  ))}
+                </div>
+              )}
+              {n >= 10 && <div style={{ color: C.faint }} className="text-xs mt-2">Maximum 10 sélections pour garder un affichage lisible.</div>}
+            </Panel>
+
+            {/* System config */}
+            <Panel title="Système">
+              <div className="flex flex-wrap gap-1.5 mb-3">
+                {presets.map((p) => (
+                  <button key={p.key} onClick={() => setSelectedFolds(new Set(p.folds))}
+                    style={{
+                      background: activePresetKey === p.key ? "rgba(198,161,91,0.14)" : "transparent",
+                      border: `1px solid ${activePresetKey === p.key ? C.gold : C.border}`,
+                      color: activePresetKey === p.key ? C.gold : C.muted,
+                    }}
+                    className="text-xs px-2.5 py-1 rounded-full transition">
+                    {p.label}
+                  </button>
+                ))}
+                {presets.length > 0 && (
+                  <button
+                    style={{
+                      background: activePresetKey === "custom" ? "rgba(198,161,91,0.14)" : "transparent",
+                      border: `1px solid ${activePresetKey === "custom" ? C.gold : C.border}`,
+                      color: activePresetKey === "custom" ? C.gold : C.faint,
+                    }}
+                    className="text-xs px-2.5 py-1 rounded-full cursor-default">
+                    Personnalisé
+                  </button>
+                )}
+              </div>
+              <div style={{ color: C.muted }} className="text-xs mb-2">Paliers inclus</div>
+              <div className="flex flex-wrap gap-1.5 mb-4">
+                {Array.from({ length: n }, (_, i) => i + 1).map((k) => (
+                  <button key={k} onClick={() => toggleFold(k)}
+                    style={{
+                      background: selectedFolds.has(k) ? C.gold : "transparent",
+                      color: selectedFolds.has(k) ? C.bg : C.muted,
+                      border: `1px solid ${selectedFolds.has(k) ? C.gold : C.border}`,
+                      fontFamily: MONO,
+                    }}
+                    className="text-xs w-8 h-8 rounded-md font-semibold transition">
+                    {k}
+                  </button>
+                ))}
+              </div>
+              <div className="grid grid-cols-2 gap-3">
+                <Field label="Mise par ligne">
+                  <input type="number" min="0" step="1" value={stake}
+                    onChange={(e) => setStake(Math.max(0, parseFloat(e.target.value) || 0))}
+                    style={inputStyle} className="text-sm rounded-md px-2 py-1.5" />
+                </Field>
+                <Field label="Devise">
+                  <select value={currency} onChange={(e) => setCurrency(e.target.value)}
+                    style={{ ...inputStyle, fontFamily: SANS }} className="text-sm rounded-md px-2 py-1.5">
+                    {CURRENCIES.map((c) => <option key={c} value={c}>{c}</option>)}
+                  </select>
+                </Field>
+              </div>
+            </Panel>
+
+            {/* Fiscal */}
+            <Panel
+              title="Fiscalité"
+              right={
+                <button onClick={() => setTaxEnabled((v) => !v)}
+                  style={{ background: taxEnabled ? C.gold : C.panel2, border: `1px solid ${taxEnabled ? C.gold : C.border}` }}
+                  className="w-9 h-5 rounded-full relative transition">
+                  <span style={{ background: taxEnabled ? C.bg : C.faint, left: taxEnabled ? 18 : 3 }}
+                    className="absolute top-0.5 w-3.5 h-3.5 rounded-full transition-all" />
+                </button>
+              }
+            >
+              {taxEnabled ? (
+                <div className="space-y-3">
+                  <Field label="Taux de retenue à la source (%)">
+                    <input type="number" min="0" max="100" step="0.5" value={taxRate}
+                      onChange={(e) => setTaxRate(Math.max(0, parseFloat(e.target.value) || 0))}
+                      style={inputStyle} className="text-sm rounded-md px-2 py-1.5 w-28" />
+                  </Field>
+                  <Field label="Base de calcul">
+                    <div className="flex gap-2">
+                      <button onClick={() => setTaxBase("net_system")}
+                        style={{ background: taxBase === "net_system" ? "rgba(198,161,91,0.14)" : "transparent", border: `1px solid ${taxBase === "net_system" ? C.gold : C.border}`, color: taxBase === "net_system" ? C.gold : C.muted }}
+                        className="text-xs px-2.5 py-1.5 rounded-md flex-1">Profit net du système</button>
+                      <button onClick={() => setTaxBase("per_line")}
+                        style={{ background: taxBase === "per_line" ? "rgba(198,161,91,0.14)" : "transparent", border: `1px solid ${taxBase === "per_line" ? C.gold : C.border}`, color: taxBase === "per_line" ? C.gold : C.muted }}
+                        className="text-xs px-2.5 py-1.5 rounded-md flex-1">Par ligne gagnante</button>
+                    </div>
+                  </Field>
+                  <p style={{ color: C.faint }} className="text-xs leading-relaxed">
+                    Par défaut : 20% façon retenue LONASE (Sénégal), appliquée sur le profit net du billet.
+                    Ajuste la base pour coller exactement à ton module fiscal PAIM si le calcul y diffère.
+                  </p>
+                </div>
+              ) : (
+                <p style={{ color: C.faint }} className="text-xs">Retenue désactivée — retours affichés bruts.</p>
+              )}
+            </Panel>
+          </div>
+
+          {/* RIGHT COLUMN */}
+          <div className="lg:col-span-7 space-y-5">
+            <Panel title="Résultats">
+              {n === 0 ? (
+                <p style={{ color: C.muted }} className="text-sm">Ajoute au moins une sélection pour lancer le calcul.</p>
+              ) : (
+                <div className="space-y-5">
+                  <div className="grid grid-cols-2 md:grid-cols-3 gap-3">
+                    <SummaryCard label="Lignes" value={computed.totalLignes} />
+                    <SummaryCard label="Mise totale" value={fmt(computed.totalMise)} />
+                    <SummaryCard label="Retour brut" value={fmt(computed.totalRetour)}
+                      color={computed.totalRetour >= computed.totalMise ? C.win : C.loss} />
+                    <SummaryCard label="Profit net" value={fmt(computed.totalProfit)}
+                      color={computed.totalProfit >= 0 ? C.win : C.loss} />
+                    {taxEnabled && <SummaryCard label="Retenue fiscale" value={fmt(computed.taxAmount)} color={C.partial} />}
+                    <SummaryCard
+                      label={taxEnabled ? "Net après impôt" : "Retour net"}
+                      value={fmt(taxEnabled ? computed.netAfterTax : computed.totalRetour)}
+                      color={(taxEnabled ? computed.netAfterTax : computed.totalRetour) >= computed.totalMise ? C.win : C.loss}
+                      sub={`Facteur max ${computed.maxRSystem.toFixed(2)}×`}
+                    />
+                  </div>
+
+                  <div className="space-y-3">
+                    {computed.byFold.map((f) => (
+                      <div key={f.k} style={{ background: C.panel2, border: `1px solid ${C.borderSoft}`, borderRadius: 10 }} className="p-3">
+                        <div className="flex items-center justify-between mb-2">
+                          <span style={{ color: C.text, fontFamily: SANS }} className="text-sm font-medium">
+                            {foldName(f.k)} <span style={{ color: C.faint }} className="font-normal">· {f.count} ligne{f.count > 1 ? "s" : ""}</span>
+                          </span>
+                          <span style={{ color: f.profit >= 0 ? C.win : C.loss, fontFamily: MONO }} className="text-sm font-semibold">
+                            {f.profit >= 0 ? "+" : ""}{fmt(f.profit)}
+                          </span>
+                        </div>
+                        <div className="flex flex-wrap gap-1.5">
+                          {f.combos.map((c, i) => {
+                            const isActive = activeCell && activeCell.k === f.k && activeCell.i === i;
+                            return (
+                              <button key={i} onClick={() => setActiveCell(isActive ? null : { k: f.k, i })}
+                                style={{
+                                  background: isActive ? bucketColor[c.bucket] : `${bucketColor[c.bucket]}22`,
+                                  border: `1px solid ${bucketColor[c.bucket]}`,
+                                  color: isActive ? C.bg : bucketColor[c.bucket],
+                                  fontFamily: MONO,
+                                }}
+                                className="text-xs px-2 py-1 rounded-md transition">
+                                {c.indices.map((idx) => idx + 1).join("·")}
+                              </button>
+                            );
+                          })}
+                        </div>
+                      </div>
+                    ))}
+                  </div>
+
+                  {activeCombo && (
+                    <div style={{ background: C.panel2, border: `1px solid ${C.gold}`, borderRadius: 10 }} className="p-3">
+                      <div style={{ color: C.gold, fontFamily: SANS }} className="text-xs font-semibold uppercase tracking-wide mb-2">
+                        Combinaison {activeCell.k}-fold — {activeCombo.indices.map((i) => i + 1).join(" · ")}
+                      </div>
+                      <div className="space-y-1 mb-2">
+                        {activeCombo.indices.map((idx) => {
+                          const sel = selections[idx];
+                          return (
+                            <div key={idx} className="flex items-center justify-between text-xs">
+                              <span style={{ color: C.muted }}>{sel.label || `Sélection ${idx + 1}`}</span>
+                              <span style={{ color: C.faint, fontFamily: MONO }}>
+                                @{sel.odds.toFixed(2)} · {STATUS_OPTS.find((o) => o.v === sel.status)?.label}
+                              </span>
+                            </div>
+                          );
+                        })}
+                      </div>
+                      <div className="flex items-center justify-between text-sm" style={{ fontFamily: MONO }}>
+                        <span style={{ color: C.muted }}>Facteur de retour R</span>
+                        <span style={{ color: bucketColor[activeCombo.bucket], fontWeight: 600 }}>{activeCombo.R.toFixed(3)}×</span>
+                      </div>
+                    </div>
+                  )}
+
+                  <div style={{ borderTop: `1px solid ${C.borderSoft}` }} className="pt-3">
+                    <button onClick={() => setMethodOpen((v) => !v)} style={{ color: C.muted }} className="flex items-center gap-1.5 text-xs w-full">
+                      <Info size={13} />
+                      <span className="flex-1 text-left">Comment ça marche</span>
+                      {methodOpen ? <ChevronUp size={13} /> : <ChevronDown size={13} />}
+                    </button>
+                    {methodOpen && (
+                      <div style={{ color: C.faint }} className="text-xs leading-relaxed mt-2 space-y-1.5">
+                        <p>Chaque combinaison calcule un facteur de retour R = produit des cotes des sélections gagnantes. R=0 → combinaison perdue, R=1 → remboursée (au moins un nul), 0&lt;R&lt;1 → perte partielle (cote asiatique), R&gt;1 → gagnante.</p>
+                        <p>Les statuts "Gagné/Nul" et "Perdu/Nul" (cotes asiatiques partielles) sont traités comme deux branches à 50% de poids chacune, combinées avec les autres sélections de la combinaison — pas d'arrondi grossier.</p>
+                        <p>Le palier (k-fold) regroupe toutes les combinaisons de k sélections parmi les n du billet — un Trixie sur 3 sélections calcule ainsi 3 doubles + 1 triple.</p>
+                      </div>
+                    )}
+                  </div>
+                </div>
+              )}
+            </Panel>
+          </div>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+ReactDOM.createRoot(document.getElementById("sbc-root")).render(<SystemBetCalculator />);
+{% endraw %}
 </script>
 </body>
 </html>
