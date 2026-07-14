@@ -139,53 +139,24 @@ const STATUS_OPTS = [
 
 const CURRENCIES = ["XOF", "CHF", "EUR", "USD"];
 
-const PRESETS_BY_N = {
-  1: [{ key: "single", label: "Simple", folds: [1] }],
-  2: [{ key: "double", label: "Double", folds: [2] }],
-  3: [
-    { key: "treble", label: "Trio (Treble)", folds: [3] },
-    { key: "trixie", label: "Trixie", folds: [2, 3] },
-    { key: "patent", label: "Patent", folds: [1, 2, 3] },
-  ],
-  4: [
-    { key: "acc4", label: "Accumulateur", folds: [4] },
-    { key: "yankee", label: "Yankee", folds: [2, 3, 4] },
-    { key: "lucky15", label: "Lucky 15", folds: [1, 2, 3, 4] },
-  ],
-  5: [
-    { key: "acc5", label: "Accumulateur", folds: [5] },
-    { key: "canadian", label: "Canadian / Super Yankee", folds: [2, 3, 4, 5] },
-    { key: "lucky31", label: "Lucky 31", folds: [1, 2, 3, 4, 5] },
-  ],
-  6: [
-    { key: "acc6", label: "Accumulateur", folds: [6] },
-    { key: "heinz", label: "Heinz", folds: [2, 3, 4, 5, 6] },
-    { key: "lucky63", label: "Lucky 63", folds: [1, 2, 3, 4, 5, 6] },
-  ],
-  7: [
-    { key: "acc7", label: "Accumulateur", folds: [7] },
-    { key: "superheinz", label: "Super Heinz", folds: [2, 3, 4, 5, 6, 7] },
-    { key: "lucky127", label: "Lucky 127", folds: [1, 2, 3, 4, 5, 6, 7] },
-  ],
-  8: [
-    { key: "acc8", label: "Accumulateur", folds: [8] },
-    { key: "goliath", label: "Goliath", folds: [2, 3, 4, 5, 6, 7, 8] },
-    { key: "superflag9-alt", label: "Système complet", folds: [1, 2, 3, 4, 5, 6, 7, 8] },
-  ],
+const NAMED_SYSTEMS = {
+  "1-1": "Simple", "2-2": "Double", "3-3": "Trio (Treble)",
+  "1-3": "Patent", "2-3": "Trixie",
+  "1-4": "Lucky 15", "2-4": "Yankee",
+  "1-5": "Lucky 31", "2-5": "Canadian / Super Yankee",
+  "1-6": "Lucky 63", "2-6": "Heinz",
+  "1-7": "Lucky 127", "2-7": "Super Heinz",
+  "1-8": "Système complet (8)", "2-8": "Goliath",
 };
-const presetsForN = (n) => {
-  if (n < 1) return [];
-  if (PRESETS_BY_N[n]) return PRESETS_BY_N[n];
-  return [{ key: "acc", label: "Accumulateur", folds: [n] }];
-};
-
-/* Mapping demandé pour l'auto-remplissage : n -> preset "canonique"
-   (Trixie/Yankee/Canadian/Heinz/Super Heinz/Goliath) plutôt que la
-   première option de la liste (qui est souvent l'accumulateur seul). */
-const AUTOFILL_PRESET_KEY_BY_N = {
-  1: "single", 2: "double", 3: "trixie", 4: "yankee",
-  5: "canadian", 6: "heinz", 7: "superheinz", 8: "goliath",
-};
+// Format standard "Système M/N" (identique à betbuzz) : toutes les combinaisons
+// de M à N sélections sont jouées d'un coup. Les noms commerciaux (Trixie,
+// Yankee, Heinz...) ne sont que des alias de plages M-N précises.
+function systemLabel(m, n) {
+  const key = `${m}-${n}`;
+  if (NAMED_SYSTEMS[key]) return NAMED_SYSTEMS[key];
+  if (m === n) return "Accumulateur";
+  return `Système personnalisé (${m} à ${n})`;
+}
 
 /* ---------------------------------------------------------------
    MATH — combinatoire, gestion des nuls / cotes asiatiques
@@ -330,7 +301,7 @@ async function fetchQualifyingSignals() {
 function SystemBetCalculator() {
   const [selections, setSelections] = useState([]);
   const [nextId, setNextId] = useState(1);
-  const [selectedFolds, setSelectedFolds] = useState(new Set());
+  const [sysM, setSysM] = useState(2);
   const [stake, setStake] = useState(1000);
   const [currency, setCurrency] = useState("XOF");
   const [taxEnabled, setTaxEnabled] = useState(true);
@@ -342,13 +313,9 @@ function SystemBetCalculator() {
 
   const n = selections.length;
 
-  // Clamp les paliers sélectionnés quand n change
+  // Clamp le niveau minimum M quand le nombre de sélections N change
   useEffect(() => {
-    setSelectedFolds((prev) => {
-      const filtered = new Set([...prev].filter((k) => k >= 1 && k <= n));
-      if (filtered.size === 0 && n > 0) filtered.add(n);
-      return filtered;
-    });
+    setSysM((m) => Math.min(Math.max(m, 1), Math.max(n, 1)));
   }, [n]);
 
   // Auto-remplissage depuis les signaux PAIM actifs, au chargement de la page.
@@ -371,9 +338,10 @@ function SystemBetCalculator() {
         }));
         setSelections(nextSelections);
         setNextId(nextSelections.length + 1);
-        const presetKey = AUTOFILL_PRESET_KEY_BY_N[nextSelections.length];
-        const preset = presetsForN(nextSelections.length).find((p) => p.key === presetKey);
-        if (preset) setSelectedFolds(new Set(preset.folds));
+        // Système M/N canonique (Trixie/Yankee/Canadian/Heinz/Super Heinz/
+        // Goliath) démarre toujours à M=2 (pas de simples) ; l'effet de clamp
+        // ci-dessus le réduit tout seul à 1 si jamais un seul signal qualifie.
+        setSysM(2);
         setSignalsStatus(`ok:${nextSelections.length}`);
       } catch (e) {
         if (!cancelled) setSignalsStatus("error");
@@ -382,12 +350,13 @@ function SystemBetCalculator() {
     return () => { cancelled = true; };
   }, []);
 
-  const sortedFolds = useMemo(() => [...selectedFolds].sort((a, b) => a - b), [selectedFolds]);
-  const presets = presetsForN(n);
-  const activePresetKey = useMemo(() => {
-    const match = presets.find((p) => p.folds.length === selectedFolds.size && p.folds.every((f) => selectedFolds.has(f)));
-    return match ? match.key : "custom";
-  }, [presets, selectedFolds]);
+  // Système M/N : tous les paliers de M à N sont inclus d'office (comme betbuzz)
+  const sortedFolds = useMemo(() => {
+    const arr = [];
+    for (let k = Math.min(sysM, n); k <= n; k++) arr.push(k);
+    return arr;
+  }, [sysM, n]);
+  const systemLabelText = systemLabel(Math.min(sysM, n), n);
 
   // Calcul complet
   const computed = useMemo(() => {
@@ -431,13 +400,20 @@ function SystemBetCalculator() {
     setSelections((s) => [...s, { id: nextId, label: "", odds: 1.9, status: "won" }]);
     setNextId((x) => x + 1);
   };
-  const removeSelection = (id) => setSelections((s) => (s.length > 1 ? s.filter((x) => x.id !== id) : s.length === 1 ? [] : s));
+  const removeSelection = (id) => setSelections((s) => (s.length > 1 ? s.filter((x) => x.id !== id) : s));
   const updateSelection = (id, patch) => setSelections((s) => s.map((x) => (x.id === id ? { ...x, ...patch } : x)));
-  const toggleFold = (k) => {
-    setSelectedFolds((prev) => {
-      const next = new Set(prev);
-      if (next.has(k)) { if (next.size > 1) next.delete(k); } else next.add(k);
-      return next;
+  const setSelectionCount = (target) => {
+    const t = Math.max(1, Math.min(10, target));
+    setSelections((s) => {
+      if (t === s.length) return s;
+      if (t > s.length) {
+        const extra = [];
+        let id = nextId;
+        for (let i = s.length; i < t; i++) { extra.push({ id, label: "", odds: 1.9, status: "won" }); id++; }
+        setNextId(id);
+        return [...s, ...extra];
+      }
+      return s.slice(0, t);
     });
   };
 
@@ -450,7 +426,7 @@ function SystemBetCalculator() {
   }[signalsStatus] || `Auto-rempli depuis ${signalsStatus.split(":")[1]} signal(aux) actif(s) — fenêtre 12h, cote > 1.80, trié par edge.`;
 
   return (
-    <div style={{ background: C.bg, minHeight: "60vh" }} className="w-full">
+    <div style={{ background: C.bg, minHeight: "60vh", fontFamily: SANS }} className="w-full">
       <div className="max-w-6xl mx-auto px-4 py-8 md:px-8">
         {/* Header */}
         <div className="mb-6">
@@ -523,46 +499,25 @@ function SystemBetCalculator() {
               {n >= 10 && <div style={{ color: C.faint }} className="text-xs mt-2">Maximum 10 sélections pour garder un affichage lisible.</div>}
             </Panel>
 
-            {/* System config */}
+            {/* System config — deux dropdowns M/N, comme betbuzz */}
             <Panel title="Système">
-              <div className="flex flex-wrap gap-1.5 mb-3">
-                {presets.map((p) => (
-                  <button key={p.key} onClick={() => setSelectedFolds(new Set(p.folds))}
-                    style={{
-                      background: activePresetKey === p.key ? "rgba(198,161,91,0.14)" : "transparent",
-                      border: `1px solid ${activePresetKey === p.key ? C.gold : C.border}`,
-                      color: activePresetKey === p.key ? C.gold : C.muted,
-                    }}
-                    className="text-xs px-2.5 py-1 rounded-full transition">
-                    {p.label}
-                  </button>
-                ))}
-                {presets.length > 0 && (
-                  <button
-                    style={{
-                      background: activePresetKey === "custom" ? "rgba(198,161,91,0.14)" : "transparent",
-                      border: `1px solid ${activePresetKey === "custom" ? C.gold : C.border}`,
-                      color: activePresetKey === "custom" ? C.gold : C.faint,
-                    }}
-                    className="text-xs px-2.5 py-1 rounded-full cursor-default">
-                    Personnalisé
-                  </button>
-                )}
+              <div className="grid grid-cols-2 gap-3 mb-3">
+                <Field label="Système (M)">
+                  <select value={Math.min(sysM, n)} onChange={(e) => setSysM(Number(e.target.value))}
+                    style={{ ...inputStyle, fontFamily: MONO }} className="text-sm rounded-md px-2 py-1.5">
+                    {Array.from({ length: n }, (_, i) => i + 1).map((k) => <option key={k} value={k}>{k}</option>)}
+                  </select>
+                </Field>
+                <Field label="Sélections (N)">
+                  <select value={n} onChange={(e) => setSelectionCount(Number(e.target.value))}
+                    style={{ ...inputStyle, fontFamily: MONO }} className="text-sm rounded-md px-2 py-1.5">
+                    {Array.from({ length: 10 }, (_, i) => i + 1).map((k) => <option key={k} value={k}>{k}</option>)}
+                  </select>
+                </Field>
               </div>
-              <div style={{ color: C.muted }} className="text-xs mb-2">Paliers inclus</div>
-              <div className="flex flex-wrap gap-1.5 mb-4">
-                {Array.from({ length: n }, (_, i) => i + 1).map((k) => (
-                  <button key={k} onClick={() => toggleFold(k)}
-                    style={{
-                      background: selectedFolds.has(k) ? C.gold : "transparent",
-                      color: selectedFolds.has(k) ? C.bg : C.muted,
-                      border: `1px solid ${selectedFolds.has(k) ? C.gold : C.border}`,
-                      fontFamily: MONO,
-                    }}
-                    className="text-xs w-8 h-8 rounded-md font-semibold transition">
-                    {k}
-                  </button>
-                ))}
+              <div style={{ background: "rgba(198,161,91,0.1)", border: `1px solid ${C.goldSoft}`, color: C.gold, fontFamily: MONO }}
+                className="text-xs px-2.5 py-1.5 rounded-md mb-4 inline-block">
+                Système {Math.min(sysM, n)}/{n} = {systemLabelText}
               </div>
               <div className="grid grid-cols-2 gap-3">
                 <Field label="Mise par ligne">
@@ -621,27 +576,30 @@ function SystemBetCalculator() {
 
           {/* RIGHT COLUMN */}
           <div className="lg:col-span-7 space-y-5">
-            <Panel title="Résultats">
-              {n === 0 ? (
+            {n === 0 ? (
+              <Panel title="Résultats">
                 <p style={{ color: C.muted }} className="text-sm">Ajoute au moins une sélection pour lancer le calcul.</p>
-              ) : (
-                <div className="space-y-5">
+              </Panel>
+            ) : (
+              <>
+                <Panel title="Résumé">
                   <div className="grid grid-cols-2 md:grid-cols-3 gap-3">
                     <SummaryCard label="Lignes" value={computed.totalLignes} />
                     <SummaryCard label="Mise totale" value={fmt(computed.totalMise)} />
-                    <SummaryCard label="Retour brut" value={fmt(computed.totalRetour)}
-                      color={computed.totalRetour >= computed.totalMise ? C.win : C.loss} />
-                    <SummaryCard label="Profit net" value={fmt(computed.totalProfit)}
-                      color={computed.totalProfit >= 0 ? C.win : C.loss} />
-                    {taxEnabled && <SummaryCard label="Retenue fiscale" value={fmt(computed.taxAmount)} color={C.partial} />}
-                    <SummaryCard
-                      label={taxEnabled ? "Net après impôt" : "Retour net"}
-                      value={fmt(taxEnabled ? computed.netAfterTax : computed.totalRetour)}
-                      color={(taxEnabled ? computed.netAfterTax : computed.totalRetour) >= computed.totalMise ? C.win : C.loss}
-                      sub={`Facteur max ${computed.maxRSystem.toFixed(2)}×`}
-                    />
+                    <SummaryCard label="Retour total" value={fmt(computed.totalRetour)} />
+                    <SummaryCard label="Profit net" value={fmt(computed.totalProfit)} color={computed.totalProfit >= 0 ? C.win : C.loss} />
+                    <SummaryCard label="ROI" value={`${computed.totalMise > 0 ? ((computed.totalProfit / computed.totalMise) * 100).toFixed(1) : "0.0"} %`} color={computed.totalProfit >= 0 ? C.win : C.loss} />
+                    {taxEnabled && <SummaryCard label="Retenue fiscale" value={`− ${fmt(computed.taxAmount)}`} color={C.partial} sub={`${taxRate}% · ${taxBase === "net_system" ? "profit net" : "par ligne"}`} />}
                   </div>
+                  {taxEnabled && (
+                    <div style={{ borderTop: `1px solid ${C.borderSoft}` }} className="mt-3 pt-3 flex items-center justify-between">
+                      <span style={{ color: C.muted }} className="text-xs">Net perçu après retenue</span>
+                      <span style={{ color: C.text, fontFamily: MONO }} className="text-base font-semibold">{fmt(computed.netAfterTax)}</span>
+                    </div>
+                  )}
+                </Panel>
 
+                <Panel title="Détail par palier & combinaisons">
                   <div className="space-y-3">
                     {computed.byFold.map((f) => (
                       <div key={f.k} style={{ background: C.panel2, border: `1px solid ${C.borderSoft}`, borderRadius: 10 }} className="p-3">
@@ -675,7 +633,7 @@ function SystemBetCalculator() {
                   </div>
 
                   {activeCombo && (
-                    <div style={{ background: C.panel2, border: `1px solid ${C.gold}`, borderRadius: 10 }} className="p-3">
+                    <div style={{ background: C.panel2, border: `1px solid ${C.gold}`, borderRadius: 10 }} className="p-3 mt-3">
                       <div style={{ color: C.gold, fontFamily: SANS }} className="text-xs font-semibold uppercase tracking-wide mb-2">
                         Combinaison {activeCell.k}-fold — {activeCombo.indices.map((i) => i + 1).join(" · ")}
                       </div>
@@ -698,24 +656,24 @@ function SystemBetCalculator() {
                       </div>
                     </div>
                   )}
+                </Panel>
 
-                  <div style={{ borderTop: `1px solid ${C.borderSoft}` }} className="pt-3">
-                    <button onClick={() => setMethodOpen((v) => !v)} style={{ color: C.muted }} className="flex items-center gap-1.5 text-xs w-full">
-                      <Info size={13} />
-                      <span className="flex-1 text-left">Comment ça marche</span>
-                      {methodOpen ? <ChevronUp size={13} /> : <ChevronDown size={13} />}
-                    </button>
-                    {methodOpen && (
-                      <div style={{ color: C.faint }} className="text-xs leading-relaxed mt-2 space-y-1.5">
-                        <p>Chaque combinaison calcule un facteur de retour R = produit des cotes des sélections gagnantes. R=0 → combinaison perdue, R=1 → remboursée (au moins un nul), 0&lt;R&lt;1 → perte partielle (cote asiatique), R&gt;1 → gagnante.</p>
-                        <p>Les statuts "Gagné/Nul" et "Perdu/Nul" (cotes asiatiques partielles) sont traités comme deux branches à 50% de poids chacune, combinées avec les autres sélections de la combinaison — pas d'arrondi grossier.</p>
-                        <p>Le palier (k-fold) regroupe toutes les combinaisons de k sélections parmi les n du billet — un Trixie sur 3 sélections calcule ainsi 3 doubles + 1 triple.</p>
-                      </div>
-                    )}
-                  </div>
-                </div>
-              )}
-            </Panel>
+                <Panel title="Méthode">
+                  <button onClick={() => setMethodOpen((v) => !v)} style={{ color: C.muted }} className="flex items-center gap-1.5 text-xs w-full">
+                    <Info size={13} />
+                    <span className="flex-1 text-left">Comment ça marche</span>
+                    {methodOpen ? <ChevronUp size={13} /> : <ChevronDown size={13} />}
+                  </button>
+                  {methodOpen && (
+                    <div style={{ color: C.faint }} className="text-xs leading-relaxed mt-2 space-y-1.5">
+                      <p>Chaque combinaison calcule un facteur de retour R = produit des cotes des sélections gagnantes. R=0 → combinaison perdue, R=1 → remboursée (au moins un nul), 0&lt;R&lt;1 → perte partielle (cote asiatique), R&gt;1 → gagnante.</p>
+                      <p>Les statuts "Gagné/Nul" et "Perdu/Nul" (cotes asiatiques partielles) sont traités comme deux branches à 50% de poids chacune, combinées avec les autres sélections de la combinaison — pas d'arrondi grossier.</p>
+                      <p>Le "Système M/N" joue toutes les combinaisons de M à N sélections parmi les N du billet — un Trixie (2/3) calcule ainsi 3 doubles + 1 triple ; un Yankee (2/4), 6 doubles + 4 triples + 1 quadruple.</p>
+                    </div>
+                  )}
+                </Panel>
+              </>
+            )}
           </div>
         </div>
       </div>
