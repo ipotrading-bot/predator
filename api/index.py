@@ -520,6 +520,11 @@ def performance():
     return render_template("performance.html", rows=rows, monthly=monthly, global_s=global_s)
 
 
+@app.route("/system")
+def system():
+    return render_template("system.html")
+
+
 # ── JSON API ─────────────────────────────────────────────────────────
 
 @app.route("/api/signals")

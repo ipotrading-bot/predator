@@ -1,0 +1,83 @@
+<!DOCTYPE html>
+<html lang="fr">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+<meta name="theme-color" content="#00E87F">
+<meta name="mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+<meta name="apple-mobile-web-app-title" content="PREDATOR">
+<title>PREDATOR · SYSTÈME</title>
+<link rel="manifest" href="/manifest.json">
+<link rel="icon" type="image/png" sizes="32x32" href="/static/icons/favicon-32.png">
+<link rel="shortcut icon" href="/favicon.ico">
+<link rel="apple-touch-icon" sizes="192x192" href="/static/icons/icon-192.png">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&family=JetBrains+Mono:wght@400;500;700&display=swap" rel="stylesheet">
+<link rel="stylesheet" href="/static/css/predator.css">
+<style>
+/* System page overrides */
+.wrap { max-width: none; padding: 0 0 calc(72px + var(--sbot)); }
+@media (min-width: 640px) { .wrap { padding-bottom: 52px; } }
+.nav-pages a.on, .bnav a.on { color: var(--purple); }
+</style>
+</head>
+<body>
+
+<!-- TOP NAV -->
+<nav class="topnav">
+  <a href="/" class="nav-logo"><img src="/static/icons/icon-96.png" alt="PREDATOR"> PREDATOR</a>
+  <div class="nav-pages">
+    <a href="/">ACCUEIL</a>
+    <a href="/ledger">BILAN</a>
+    <a href="/audit">AUDIT</a>
+    <a href="/performance">PERF</a>
+    <a href="/system" class="on">SYSTÈME</a>
+  </div>
+  <div class="nav-right">
+    <span id="clock">—</span>
+  </div>
+</nav>
+
+<div class="wrap">
+
+  <!-- PAGE HEADER -->
+  <div class="empty" style="margin-top:18px">
+    <div>Page Système en construction.</div>
+  </div>
+
+</div><!-- /wrap -->
+
+<footer>PREDATOR SYSTÈME v1.0 &nbsp;·&nbsp; État moteur &amp; config &nbsp;·&nbsp; PAIM</footer>
+
+<!-- BOTTOM NAV -->
+<nav class="bnav">
+  <a href="/">
+    <svg viewBox="0 0 24 24"><rect x="3" y="3" width="7" height="7" rx="1.5"/><rect x="14" y="3" width="7" height="7" rx="1.5"/><rect x="3" y="14" width="7" height="7" rx="1.5"/><rect x="14" y="14" width="7" height="7" rx="1.5"/></svg>
+    Accueil
+  </a>
+  <a href="/system" class="on" aria-label="Système">
+    <svg viewBox="0 0 24 24"><polygon points="13 2 3 14 12 14 11 22 21 10 12 10 13 2" fill="currentColor" stroke="none"/></svg>
+  </a>
+  <a href="/performance">
+    <svg viewBox="0 0 24 24"><polyline points="22 12 18 12 15 21 9 3 6 12 2 12"/><circle cx="12" cy="5" r="1" fill="currentColor" stroke="none"/></svg>
+    Perf
+  </a>
+</nav>
+
+<script>
+(function tick(){
+  const d = new Date();
+  const pad = n => String(n).padStart(2,'0');
+  const days = ['Sun','Mon','Tue','Wed','Thu','Fri','Sat'];
+  const months = ['Jan','Feb','Mar','Apr','May','Jun','Jul','Aug','Sep','Oct','Nov','Dec'];
+  document.getElementById('clock').textContent =
+    days[d.getUTCDay()]+', '+pad(d.getUTCDate())+' '+months[d.getUTCMonth()]+' '+d.getUTCFullYear()+
+    ' '+pad(d.getUTCHours())+':'+pad(d.getUTCMinutes())+':'+pad(d.getUTCSeconds())+' UTC';
+  setTimeout(tick,1000);
+})();
+</script>
+</body>
+</html>
