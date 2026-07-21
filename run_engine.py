@@ -376,7 +376,14 @@ def _purge_old_signals(sb):
     # one-off. BUGFIX #2: give audit generous headroom (grace period + several
     # 6h audit cycles, consistent with the 48h window used elsewhere in this
     # function) before purging an active-but-unsettled signal at all.
-    purge_match_cutoff = (datetime.now(timezone.utc) - timedelta(hours=24)).isoformat()
+    # BUGFIX #3 (2026-07-21): 24h was too tight once audit_engine.py started
+    # RETRYING signals it could not settle (EXPIRE_AFTER_H=36h) instead of
+    # expiring them on the first search failure. A retried signal must survive
+    # long enough to reach its terminal audit — purging at 24h would delete it
+    # mid-retry and it would never reach ai_learning_ledger at all. 48h matches
+    # the window already used elsewhere in this function and leaves a full 6h
+    # audit cycle of headroom past EXPIRE_AFTER_H.
+    purge_match_cutoff = (datetime.now(timezone.utc) - timedelta(hours=48)).isoformat()
     try:
         sb.table("signals").delete().eq("status", "active").lt("match_time", purge_match_cutoff).execute()
     except Exception as e:

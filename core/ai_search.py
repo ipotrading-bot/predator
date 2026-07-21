@@ -61,6 +61,21 @@ def ai_dead() -> bool:
     return _groq_daily_dead
 
 
+def search_exhausted() -> bool:
+    """True quand l'étage 2 (Tavily) ne peut plus rien servir pour ce process.
+
+    Distinct de ai_dead() : le quota JOURNALIER Groq peut être intact alors que
+    compound-mini se fait jeter en rate-limit MINUTE à répétition — dans ce cas
+    Tavily est le seul filet, et une fois son budget de run épuisé,
+    ai_search_complete() renvoie None pour tout le reste du run.
+
+    Les appelants qui écrivent un état TERMINAL (core/audit_engine.py) doivent
+    tester ceci avant de conclure : un None renvoyé dans cet état veut dire
+    « je n'ai pas pu chercher », pas « l'information n'existe pas ».
+    """
+    return _tavily_used >= _TAVILY_RUN_BUDGET
+
+
 def _groq_post(model: str, messages: list, max_tokens: int,
                temperature: float, timeout: int, label: str):
     """Un POST Groq avec retry sur erreurs réseau/429-minute/5xx.

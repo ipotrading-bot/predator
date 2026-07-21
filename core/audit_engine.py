@@ -7,7 +7,10 @@ Pipeline for each signal whose match kicked off > SETTLEMENT_GRACE_H hours ago
 status='active':
   1. Settlement pass — web search (Groq/Tavily) fetches real match score → status='settled'
      outcome = WIN | LOSS | PUSH | UNKNOWN
-  2. CLV pass (if settlement failed) — fetch current Pinnacle closing line
+  2. CLV pass — ONLY once the match is > EXPIRE_AFTER_H old. Before that, a
+     failed settlement leaves the signal 'active' for the next run to retry;
+     'closed'/'expired' are terminal and must never be spent on a signal we
+     merely failed to look up (rate limit, exhausted search budget).
      → status='closed' (real closing line) or 'expired' (proxy original price)
   3. CLV = (xbet_odd / closing_line − 1) × 100
   4. Learning Layer updates sport-specific MIN_EDGE thresholds.
@@ -20,7 +23,7 @@ from datetime import datetime, timedelta, timezone
 from dotenv import load_dotenv
 
 from core.db import get_db, log_to_ledger, replace_signal_row, MissingCredentialsError
-from core.ai_search import ai_dead as gemini_quota_dead
+from core.ai_search import ai_available, ai_dead as gemini_quota_dead, search_exhausted
 from core.learning_layer import compute_and_save as _learn
 from core.oracle import get_pinnacle_price
 from core.paim_engine import resolve_selection_side
@@ -40,6 +43,12 @@ log.propagate = False
 
 AUDIT_LAG_H         = int(os.environ.get("AUDIT_LAG_H", 3))          # legacy fallback: scanned_at age, only used when match_time is missing
 SETTLEMENT_GRACE_H  = int(os.environ.get("SETTLEMENT_GRACE_H", 4))   # hours after match_time before we even attempt audit
+# Hours after match_time before a failed settlement is allowed to become the
+# TERMINAL 'expired'/'closed' status. Below this, a signal we could not settle
+# stays 'active' and the next 6h run retries it. MUST stay comfortably under
+# run_engine.py's past-match purge window (48h) or a retried signal gets
+# deleted before it ever reaches the ledger.
+EXPIRE_AFTER_H      = int(os.environ.get("EXPIRE_AFTER_H", 36))
 ORACLE_BUDGET = 30     # Max oracle (web search) calls per audit run
 SETTLE_BUDGET = 25     # Max settlement (web search) calls per audit run
 
@@ -107,6 +116,29 @@ def _update_signal(sb, sig: dict, payload: dict) -> bool:
     return replace_signal_row(sb, sig["id"], merged, optional_cols=_AUDIT_COLS)
 
 
+def _past_expiry(sig: dict, now: datetime) -> bool:
+    """True once `sig`'s match is old enough that a terminal 'closed'/'expired'
+    is fair — i.e. retrying settlement on a later run is pointless.
+
+    A signal with no usable match_time can't be dated, so it falls back to
+    scan age; if neither parses we return True rather than keeping an
+    undatable row active forever (run_engine.py's purge would drop it anyway).
+    """
+    for field, span in (("match_time", EXPIRE_AFTER_H),
+                        ("scanned_at", EXPIRE_AFTER_H + SETTLEMENT_GRACE_H)):
+        raw = sig.get(field) or ""
+        if not raw:
+            continue
+        try:
+            ts = datetime.fromisoformat(str(raw).replace("Z", "+00:00"))
+        except ValueError:
+            continue
+        if ts.tzinfo is None:
+            ts = ts.replace(tzinfo=timezone.utc)
+        return (now - ts) >= timedelta(hours=span)
+    return True
+
+
 def audit_one(sb, sig: dict, oracle_calls: list, settle_calls: list, now: datetime) -> str:
     """
     Audit a single signal.
@@ -119,6 +151,14 @@ def audit_one(sb, sig: dict, oracle_calls: list, settle_calls: list, now: dateti
     league = sig.get("league", "")
     now_iso = now.isoformat()
 
+    # BOTH passes are AI-search-backed (Groq/Tavily, core/ai_search.py). If the
+    # search layer cannot run at all, Pass 1 can never settle and Pass 2 can
+    # never fetch a closing line — proceeding would stamp this signal 'expired'
+    # (terminal, never retried) with a garbage proxy CLV. Leave it 'active' so
+    # a later run settles it for real.
+    if not ai_available() or gemini_quota_dead():
+        return "skipped"
+
     # ── Pass 1 : Settlement via real score ───────────────────────────
     if settle_calls[0] > 0:
         settle_calls[0] -= 1
@@ -126,12 +166,24 @@ def audit_one(sb, sig: dict, oracle_calls: list, settle_calls: list, now: dateti
             return "settled"
         log.info("No score yet for %s — falling back to CLV audit", match)
 
-    # Both passes below are AI-search-backed (Groq/Tavily, core/ai_search.py).
-    # Once the Groq DAILY quota is dead, Pass 1 can never settle and Pass 2
-    # can never fetch a closing line — proceeding would stamp this signal
-    # 'expired' (terminal, never retried) with a garbage proxy CLV. Leave it
-    # 'active' instead so the next 6h audit run settles it for real.
-    if gemini_quota_dead():
+    # A failed Pass 1 is NOT proof the score is unavailable — it is far more
+    # often proof we could not look. Confirmed live on run 29854918520
+    # (2026-07-21 17:54 UTC): 16 signals settled fine, then compound-mini
+    # started returning "rate limit minute" and the Tavily run budget (25
+    # credits, shared with Pass 2's 3-bookmaker oracle lookups) ran out —
+    # "compound-mini KO et aucune donnée Tavily — abandon". The 6 signals
+    # caught in that window were stamped 'expired' for matches that had been
+    # over for up to 15h and whose scores were on every public scoreboard
+    # (Brewers 8-3 Mets, Rangers 3-10 White Sox, Storm 102-105 Lynx...).
+    # 'expired' is terminal — fetch_pending only ever selects status='active'
+    # — so a transient rate limit permanently cost those signals their real
+    # WIN/LOSS, and the learning layer scored them as unknown.
+    #
+    # So: only let a failure become terminal once the match is old enough that
+    # retrying is genuinely pointless. Before EXPIRE_AFTER_H, stay 'active' and
+    # let the next 6h run try again with a fresh per-run search budget.
+    if gemini_quota_dead() or search_exhausted() or not _past_expiry(sig, now):
+        log.info("RETRY LATER | %s — settlement failed, signal left active", match)
         return "skipped"
 
     # ── Pass 2 : CLV — fetch current Pinnacle closing line ────────────
@@ -298,6 +350,17 @@ def run():
         sb = get_db(write=True)
     except MissingCredentialsError as e:
         log.critical("%s", e)
+        raise SystemExit(1)
+
+    # Fail loudly BEFORE touching any signal. Without GROQ_API_KEY the entire
+    # audit is a no-op that would otherwise mass-expire every pending signal
+    # (see audit_one's guard) — better to exit non-zero so the GitHub Actions
+    # run goes red and the missing secret is visible, than to burn the batch.
+    if not ai_available():
+        log.critical("GROQ_API_KEY absente — recherche de score impossible. "
+                     "Audit interrompu, les signaux restent 'active'. "
+                     "Ajoute le secret GROQ_API_KEY (repo → Settings → "
+                     "Secrets and variables → Actions) pour réactiver le settlement.")
         raise SystemExit(1)
 
     pending = fetch_pending(sb)
