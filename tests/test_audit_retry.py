@@ -108,6 +108,35 @@ class TestStaleFailureStillCloses:
         assert _audit(_sig(hours_ago=5)) == "settled"
 
 
+class TestSettlementOutranksCLV:
+    """Pass 2 (CLV) spends up to 3 Tavily credits per signal from the same
+    per-run budget Pass 1 (settlement) needs, and runs interleaved — signal
+    N's CLV starves signal N+1's score lookup. A real WIN/LOSS is permanent,
+    CLV is a metric, so the last credits belong to settlement."""
+
+    def test_clv_is_skipped_once_budget_hits_the_reserve(self, stubs, monkeypatch):
+        monkeypatch.setattr(audit_engine, "search_credits_left",
+                            lambda: audit_engine.CLV_CREDIT_RESERVE)
+        assert _audit(_sig(hours_ago=72)) == "skipped"
+
+    def test_no_terminal_status_is_written_when_clv_is_skipped(self, stubs, monkeypatch):
+        monkeypatch.setattr(audit_engine, "search_credits_left", lambda: 0)
+        _audit(_sig(hours_ago=72))
+        assert stubs["updates"] == []
+        assert stubs["ledger"] == []
+
+    def test_clv_still_runs_with_budget_to_spare(self, stubs, monkeypatch):
+        monkeypatch.setattr(audit_engine, "search_credits_left",
+                            lambda: audit_engine.CLV_CREDIT_RESERVE + 1)
+        assert _audit(_sig(hours_ago=72)) == "expired"
+
+    def test_settlement_is_never_blocked_by_the_reserve(self, stubs, monkeypatch):
+        # The reserve exists to PROTECT Pass 1 — it must never gate it.
+        monkeypatch.setattr(audit_engine, "search_credits_left", lambda: 0)
+        monkeypatch.setattr(audit_engine, "settle_signal", lambda *a, **k: True)
+        assert _audit(_sig(hours_ago=72)) == "settled"
+
+
 class TestPastExpiryDating:
     def test_uses_match_time_first(self):
         assert audit_engine._past_expiry(_sig(hours_ago=100), NOW) is True

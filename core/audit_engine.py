@@ -23,7 +23,8 @@ from datetime import datetime, timedelta, timezone
 from dotenv import load_dotenv
 
 from core.db import get_db, log_to_ledger, replace_signal_row, MissingCredentialsError
-from core.ai_search import ai_available, ai_dead as gemini_quota_dead, search_exhausted
+from core.ai_search import (ai_available, ai_dead as gemini_quota_dead,
+                            search_credits_left, search_exhausted)
 from core.learning_layer import compute_and_save as _learn
 from core.oracle import get_pinnacle_price
 from core.paim_engine import resolve_selection_side
@@ -49,6 +50,10 @@ SETTLEMENT_GRACE_H  = int(os.environ.get("SETTLEMENT_GRACE_H", 4))   # hours aft
 # run_engine.py's past-match purge window (48h) or a retried signal gets
 # deleted before it ever reaches the ledger.
 EXPIRE_AFTER_H      = int(os.environ.get("EXPIRE_AFTER_H", 36))
+# Tavily credits Pass 2 (CLV) must leave untouched for Pass 1 (settlement).
+# Pass 2 spends up to 3 per signal, Pass 1 at most 1 — this floor keeps roughly
+# a dozen real settlements reachable no matter how much CLV ran before them.
+CLV_CREDIT_RESERVE  = int(os.environ.get("CLV_CREDIT_RESERVE", 12))
 ORACLE_BUDGET = 30     # Max oracle (web search) calls per audit run
 SETTLE_BUDGET = 25     # Max settlement (web search) calls per audit run
 
@@ -187,7 +192,18 @@ def audit_one(sb, sig: dict, oracle_calls: list, settle_calls: list, now: dateti
         return "skipped"
 
     # ── Pass 2 : CLV — fetch current Pinnacle closing line ────────────
+    # Pass 2 costs up to 3 Tavily lookups per signal (Pinnacle, Betfair, Circa
+    # — see core/oracle.py) out of the SAME per-run budget Pass 1 needs, and it
+    # runs interleaved: signal N's CLV spends credits signal N+1's settlement
+    # will want. That is how the 2026-07-21 run starved itself. Settlement wins
+    # every time — a real WIN/LOSS is permanent, CLV is a metric — so once the
+    # budget is down to the reserve, stop buying CLV entirely and leave what is
+    # left to scores.
     closing_price: float | None = None
+    if search_credits_left() <= CLV_CREDIT_RESERVE:
+        log.info("CLV SKIP | %s — %d crédits restants réservés au settlement",
+                 match, search_credits_left())
+        return "skipped"
 
     if oracle_calls[0] > 0:
         oracle_calls[0] -= 1

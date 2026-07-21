@@ -76,6 +76,16 @@ def search_exhausted() -> bool:
     return _tavily_used >= _TAVILY_RUN_BUDGET
 
 
+def search_credits_left() -> int:
+    """Crédits Tavily encore disponibles pour ce process.
+
+    Permet à un appelant de RÉSERVER ce qui reste au travail le plus
+    important : dans core/audit_engine.py, le settlement (résultat réel
+    WIN/LOSS, permanent) prime toujours sur la CLV (une métrique).
+    """
+    return max(0, _TAVILY_RUN_BUDGET - _tavily_used)
+
+
 def _groq_post(model: str, messages: list, max_tokens: int,
                temperature: float, timeout: int, label: str):
     """Un POST Groq avec retry sur erreurs réseau/429-minute/5xx.
