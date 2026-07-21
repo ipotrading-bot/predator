@@ -20,6 +20,7 @@ from flask import Flask, jsonify, render_template, send_from_directory
 
 from core.constants import TAX_RATE as _TAX_RATE
 from core.db import get_db as _get_db_client, MissingCredentialsError
+from core.odds_api import BASE_URL as _ODDS_BASE_URL
 from core.learning_layer import (
     SPORT_DEFAULTS as _SPORT_DEFAULTS,
     load_thresholds as _load_thresholds,
@@ -575,6 +576,30 @@ def favicon():
 @app.route("/api/health")
 def health():
     return jsonify({"status": "ok", "version": "8.8", "source": "harvester+ai_search"})
+
+
+@app.route("/api/odds-quota")
+def api_odds_quota():
+    # GET /v4/sports is the one Odds API endpoint that does NOT consume
+    # quota — it's the documented way to read x-requests-remaining without
+    # burning a request, so this can be polled from the dashboard freely.
+    api_key = os.environ.get("ODDS_API_KEY")
+    if not api_key:
+        return jsonify({"error": "ODDS_API_KEY non configurée"}), 503
+    try:
+        r = requests.get(f"{_ODDS_BASE_URL}/sports", params={"apiKey": api_key}, timeout=10)
+        if r.status_code in (401, 403):
+            return jsonify({"error": "Clé ODDS_API_KEY invalide ou expirée"}), 502
+        if r.status_code != 200:
+            return jsonify({"error": f"HTTP {r.status_code}"}), 502
+        remaining = r.headers.get("x-requests-remaining")
+        used = r.headers.get("x-requests-used")
+        return jsonify({
+            "remaining": int(remaining) if remaining and remaining.isdigit() else None,
+            "used": int(used) if used and used.isdigit() else None,
+        })
+    except Exception as e:
+        return jsonify({"error": str(e)}), 500
 
 
 _SCAN_REQUEST_COOLDOWN_S = 120  # golden_hour.yml picks this up on its next run (every 30 min)

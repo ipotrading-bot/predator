@@ -99,9 +99,6 @@ function Icon({ size = 14, children }) {
 }
 const Plus        = ({ size }) => <Icon size={size}><line x1="12" y1="5" x2="12" y2="19"/><line x1="5" y1="12" x2="19" y2="12"/></Icon>;
 const Trash2       = ({ size }) => <Icon size={size}><polyline points="3 6 5 6 21 6"/><path d="M19 6l-1 14a2 2 0 0 1-2 2H8a2 2 0 0 1-2-2L5 6"/><path d="M10 11v6"/><path d="M14 11v6"/><path d="M9 6V4a1 1 0 0 1 1-1h4a1 1 0 0 1 1 1v2"/></Icon>;
-const Info         = ({ size }) => <Icon size={size}><circle cx="12" cy="12" r="10"/><line x1="12" y1="16" x2="12" y2="12"/><line x1="12" y1="8" x2="12.01" y2="8"/></Icon>;
-const ChevronDown   = ({ size }) => <Icon size={size}><polyline points="6 9 12 15 18 9"/></Icon>;
-const ChevronUp     = ({ size }) => <Icon size={size}><polyline points="18 15 12 9 6 15"/></Icon>;
 
 /* ---------------------------------------------------------------
    TOKENS — palette "carnet de paris quantitatif"
@@ -304,12 +301,15 @@ function SystemBetCalculator() {
   const [sysM, setSysM] = useState(2);
   const [stake, setStake] = useState(1000);
   const [currency, setCurrency] = useState("XOF");
-  const [taxEnabled, setTaxEnabled] = useState(true);
-  const [taxRate, setTaxRate] = useState(20);
-  const [taxBase, setTaxBase] = useState("net_system"); // 'net_system' | 'per_line'
-  const [methodOpen, setMethodOpen] = useState(false);
+  // Fiscalité masquée sur cette page (demande opérateur) mais gardée active
+  // "en sourdine" : la retenue continue d'être calculée dans `computed`
+  // ci-dessous avec les mêmes réglages par défaut, simplement plus affichée.
+  const taxEnabled = true;
+  const taxRate = 20;
+  const taxBase = "net_system"; // 'net_system' | 'per_line'
   const [activeCell, setActiveCell] = useState(null);
   const [signalsStatus, setSignalsStatus] = useState("loading"); // loading | error | empty | `ok:N`
+  const [oddsQuota, setOddsQuota] = useState({ status: "loading" }); // loading | ok | error
 
   const n = selections.length;
 
@@ -348,6 +348,29 @@ function SystemBetCalculator() {
       }
     })();
     return () => { cancelled = true; };
+  }, []);
+
+  // Quota OddsAPI restant, temps réel — poll léger (l'endpoint interroge
+  // /v4/sports côté serveur, le seul appel OddsAPI qui ne consomme pas de quota).
+  useEffect(() => {
+    let cancelled = false;
+    const poll = async () => {
+      try {
+        const res = await fetch("/api/odds-quota");
+        const data = await res.json();
+        if (cancelled) return;
+        if (!res.ok || data.error) {
+          setOddsQuota({ status: "error", message: data.error || `HTTP ${res.status}` });
+        } else {
+          setOddsQuota({ status: "ok", remaining: data.remaining, used: data.used });
+        }
+      } catch (e) {
+        if (!cancelled) setOddsQuota({ status: "error", message: "requête impossible" });
+      }
+    };
+    poll();
+    const id = setInterval(poll, 30000);
+    return () => { cancelled = true; clearInterval(id); };
   }, []);
 
   // Système M/N : tous les paliers de M à N sont inclus d'office (comme betbuzz)
@@ -433,8 +456,8 @@ function SystemBetCalculator() {
           <div style={{ color: C.gold, fontFamily: MONO }} className="text-xs tracking-widest uppercase mb-1">Predator Paim · Outils</div>
           <h1 style={{ color: C.text }} className="text-2xl md:text-3xl font-semibold mb-2">Calculateur de paris système</h1>
           <p style={{ color: C.muted }} className="text-sm max-w-2xl">
-            Calcule tous les paliers d'un système (Trixie, Yankee, Heinz, Goliath, etc.), gère correctement les
-            sélections nulles et les cotes asiatiques partielles, et intègre la retenue à la source sur les gains.
+            Calcule tous les paliers d'un système (Trixie, Yankee, Heinz, Goliath, etc.) et gère correctement les
+            sélections nulles et les cotes asiatiques partielles.
           </p>
           <p style={{ color: C.faint, fontFamily: MONO }} className="text-xs mt-2">{statusLine}</p>
         </div>
@@ -533,45 +556,6 @@ function SystemBetCalculator() {
                 </Field>
               </div>
             </Panel>
-
-            {/* Fiscal */}
-            <Panel
-              title="Fiscalité"
-              right={
-                <button onClick={() => setTaxEnabled((v) => !v)}
-                  style={{ background: taxEnabled ? C.gold : C.panel2, border: `1px solid ${taxEnabled ? C.gold : C.border}` }}
-                  className="w-9 h-5 rounded-full relative transition">
-                  <span style={{ background: taxEnabled ? C.bg : C.faint, left: taxEnabled ? 18 : 3 }}
-                    className="absolute top-0.5 w-3.5 h-3.5 rounded-full transition-all" />
-                </button>
-              }
-            >
-              {taxEnabled ? (
-                <div className="space-y-3">
-                  <Field label="Taux de retenue à la source (%)">
-                    <input type="number" min="0" max="100" step="0.5" value={taxRate}
-                      onChange={(e) => setTaxRate(Math.max(0, parseFloat(e.target.value) || 0))}
-                      style={inputStyle} className="text-sm rounded-md px-2 py-1.5 w-28" />
-                  </Field>
-                  <Field label="Base de calcul">
-                    <div className="flex gap-2">
-                      <button onClick={() => setTaxBase("net_system")}
-                        style={{ background: taxBase === "net_system" ? "rgba(198,161,91,0.14)" : "transparent", border: `1px solid ${taxBase === "net_system" ? C.gold : C.border}`, color: taxBase === "net_system" ? C.gold : C.muted }}
-                        className="text-xs px-2.5 py-1.5 rounded-md flex-1">Profit net du système</button>
-                      <button onClick={() => setTaxBase("per_line")}
-                        style={{ background: taxBase === "per_line" ? "rgba(198,161,91,0.14)" : "transparent", border: `1px solid ${taxBase === "per_line" ? C.gold : C.border}`, color: taxBase === "per_line" ? C.gold : C.muted }}
-                        className="text-xs px-2.5 py-1.5 rounded-md flex-1">Par ligne gagnante</button>
-                    </div>
-                  </Field>
-                  <p style={{ color: C.faint }} className="text-xs leading-relaxed">
-                    Par défaut : 20% façon retenue LONASE (Sénégal), appliquée sur le profit net du billet.
-                    Ajuste la base pour coller exactement à ton module fiscal PAIM si le calcul y diffère.
-                  </p>
-                </div>
-              ) : (
-                <p style={{ color: C.faint }} className="text-xs">Retenue désactivée — retours affichés bruts.</p>
-              )}
-            </Panel>
           </div>
 
           {/* RIGHT COLUMN */}
@@ -589,14 +573,7 @@ function SystemBetCalculator() {
                     <SummaryCard label="Retour total" value={fmt(computed.totalRetour)} />
                     <SummaryCard label="Profit net" value={fmt(computed.totalProfit)} color={computed.totalProfit >= 0 ? C.win : C.loss} />
                     <SummaryCard label="ROI" value={`${computed.totalMise > 0 ? ((computed.totalProfit / computed.totalMise) * 100).toFixed(1) : "0.0"} %`} color={computed.totalProfit >= 0 ? C.win : C.loss} />
-                    {taxEnabled && <SummaryCard label="Retenue fiscale" value={`− ${fmt(computed.taxAmount)}`} color={C.partial} sub={`${taxRate}% · ${taxBase === "net_system" ? "profit net" : "par ligne"}`} />}
                   </div>
-                  {taxEnabled && (
-                    <div style={{ borderTop: `1px solid ${C.borderSoft}` }} className="mt-3 pt-3 flex items-center justify-between">
-                      <span style={{ color: C.muted }} className="text-xs">Net perçu après retenue</span>
-                      <span style={{ color: C.text, fontFamily: MONO }} className="text-base font-semibold">{fmt(computed.netAfterTax)}</span>
-                    </div>
-                  )}
                 </Panel>
 
                 <Panel title="Détail par palier & combinaisons">
@@ -657,24 +634,26 @@ function SystemBetCalculator() {
                     </div>
                   )}
                 </Panel>
-
-                <Panel title="Méthode">
-                  <button onClick={() => setMethodOpen((v) => !v)} style={{ color: C.muted }} className="flex items-center gap-1.5 text-xs w-full">
-                    <Info size={13} />
-                    <span className="flex-1 text-left">Comment ça marche</span>
-                    {methodOpen ? <ChevronUp size={13} /> : <ChevronDown size={13} />}
-                  </button>
-                  {methodOpen && (
-                    <div style={{ color: C.faint }} className="text-xs leading-relaxed mt-2 space-y-1.5">
-                      <p>Chaque combinaison calcule un facteur de retour R = produit des cotes des sélections gagnantes. R=0 → combinaison perdue, R=1 → remboursée (au moins un nul), 0&lt;R&lt;1 → perte partielle (cote asiatique), R&gt;1 → gagnante.</p>
-                      <p>Les statuts "Gagné/Nul" et "Perdu/Nul" (cotes asiatiques partielles) sont traités comme deux branches à 50% de poids chacune, combinées avec les autres sélections de la combinaison — pas d'arrondi grossier.</p>
-                      <p>Le "Système M/N" joue toutes les combinaisons de M à N sélections parmi les N du billet — un Trixie (2/3) calcule ainsi 3 doubles + 1 triple ; un Yankee (2/4), 6 doubles + 4 triples + 1 quadruple.</p>
-                    </div>
-                  )}
-                </Panel>
               </>
             )}
           </div>
+        </div>
+
+        {/* Quota OddsAPI — temps réel, pas de coût de quota (endpoint /v4/sports) */}
+        <div style={{ background: C.panel, border: `1px solid ${C.border}`, borderRadius: 12 }} className="mt-5 p-3 flex items-center justify-between flex-wrap gap-2">
+          <span style={{ color: C.muted, fontFamily: SANS }} className="text-xs uppercase tracking-wide">Quota OddsAPI</span>
+          {oddsQuota.status === "loading" && (
+            <span style={{ color: C.faint, fontFamily: MONO }} className="text-xs">chargement…</span>
+          )}
+          {oddsQuota.status === "error" && (
+            <span style={{ color: C.loss, fontFamily: MONO }} className="text-xs">indisponible — {oddsQuota.message}</span>
+          )}
+          {oddsQuota.status === "ok" && (
+            <span style={{ color: C.text, fontFamily: MONO }} className="text-xs">
+              <span style={{ color: C.gold, fontWeight: 600 }}>{oddsQuota.remaining ?? "?"}</span> restantes
+              {oddsQuota.used != null && <span style={{ color: C.faint }}> · {oddsQuota.used} utilisées</span>}
+            </span>
+          )}
         </div>
       </div>
     </div>
