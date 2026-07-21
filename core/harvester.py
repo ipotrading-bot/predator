@@ -156,6 +156,16 @@ def _fuzzy_match_event(candidate: dict, pool: list[dict]) -> dict | None:
     return None
 
 
+def _fetch_from_api_football(sport_id: int) -> list:
+    """API-Football (api-sports.io) — foot uniquement, fournisseur
+    indépendant d'OddsAPI et du LineFeed 1xbet/Melbet/22bet (donc pas
+    soumis aux mêmes pannes/quotas — voir core/api_football.py)."""
+    if sport_id != 1:
+        return []
+    from core.api_football import fetch_football_matches
+    return fetch_football_matches()
+
+
 def _fetch_multi_book(sport_id: int) -> list:
     """
     Task 6 — line shopping: fetch every configured soft book (SOFT_BOOKS)
@@ -174,6 +184,10 @@ def _fetch_multi_book(sport_id: int) -> list:
         found = _fetch_from_book(book, tpls, referer, sport_id)
         if found:
             per_book[book] = found
+
+    af_matches = _fetch_from_api_football(sport_id)
+    if af_matches:
+        per_book["api_football"] = af_matches
 
     if not per_book:
         return []
