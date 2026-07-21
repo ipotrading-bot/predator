@@ -27,7 +27,7 @@ from core.learning_layer import load_segment_thresholds as _load_segment_thresho
 from core.paim_engine import (
     compute_alpha, MIN_EDGE, strict_team_match,
     market_label, SHARP_PROB_BY_MARKET, calculate_consensus_price,
-    correlation_group as _correlation_group,
+    correlation_group as _correlation_group, resolve_selection_side,
 )
 from core.constants import ELITE_EDGE as _ELITE_EDGE, SOCCER_ELITE_EDGE as _SOCCER_ELITE_EDGE, BASKETBALL_ELITE_EDGE as _BASKETBALL_ELITE_EDGE, risk_flag as _risk_flag, SUSPECT_EDGE as _SUSPECT_EDGE, KELLY_FRACTION as _KELLY_FRACTION, AH0_VALUE_THRESHOLD as _AH0_VALUE_THRESHOLD, PURGE_EDGE_FLOOR as _PURGE_EDGE_FLOOR, MLB_LINEUP_WINDOW_H as _MLB_LINEUP_WINDOW_H, PUSH_PROB_ROUND_LINE as _PUSH_PROB_ROUND_LINE, TAX_RATE as _TAX_RATE, BANKROLL_REF as _BANKROLL_REF
 from core.tax_engine import suggest_system as _suggest_system, is_combo_tax_viable as _is_combo_tax_viable
@@ -963,27 +963,75 @@ def _last_look_reprice(systems: list, log) -> list:
     return survivors
 
 
+def _kickoff(leg: dict, now) -> str:
+    """' · 21:00 UTC' for a match today, ' · 22/07 21:00 UTC' otherwise.
+    Empty string when match_time is unusable — never a fabricated hour."""
+    raw = leg.get("match_time") or ""
+    if not raw:
+        return ""
+    try:
+        mt = datetime.fromisoformat(str(raw).replace("Z", "+00:00"))
+    except ValueError:
+        return ""
+    if mt.tzinfo is None:
+        mt = mt.replace(tzinfo=timezone.utc)
+    same_day = mt.date() == now.date()
+    return f" · {mt.strftime('%H:%M') if same_day else mt.strftime('%d/%m %H:%M')} UTC"
+
+
+def _favourite(leg: dict) -> str:
+    """Team the sharp price makes favourite, or '' when it isn't derivable.
+
+    Only h2h carries a favourite we actually hold data for: sharp_prob is the
+    probability of THIS selection, so >= 50% means the pick is the favourite
+    and < 50% means the opponent is. Totals/spreads signals price a line, not
+    a side — we never store the two teams' moneyline prices for them, so
+    there is nothing to name and this returns ''. Guessing one from the home
+    team would be inventing information the operator would read as fact.
+    """
+    if leg.get("market_key") != "h2h":
+        return ""
+    prob  = leg.get("sharp_prob") or 0.0
+    match = leg.get("match") or ""
+    sel   = leg.get("selection_name") or ""
+    if not prob or " vs " not in match:
+        return ""
+    home, away = (p.strip() for p in match.split(" vs ", 1))
+    if prob >= 0.5:
+        return sel or home
+    is_home = resolve_selection_side(sel, home, away)
+    if is_home is None:
+        return ""
+    return away if is_home else home
+
+
 def _telegram_systems(systems: list, now, session: str, matches: int,
                       sharp_source: str, no_pin_count: int):
     """Send tax-viable system suggestions only, one per time window.
     Individual signals are still persisted to Supabase for settlement/
     learning (see run()) — Telegram now only ever recommends a combo that
-    has already cleared tax_engine.is_combo_tax_viable(), or nothing."""
+    has already cleared tax_engine.is_combo_tax_viable(), or nothing.
+
+    Format (operator request 2026-07-21, "simple lisible et compréhensible"):
+    event, favourite, pick, odds, kick-off, value — and nothing else. Stakes
+    and euro EV are deliberately gone: bankroll sizing printed "Mise 0€ · EV
+    net taxe +0.01€" on every line, which is noise at best and misleading at
+    worst. Value is expressed as a percentage, which needs no bankroll.
+    """
     sess   = session.strip()
     icon   = _session_icon(sess)
-    no_pin = f" · ❓{no_pin_count} sans confirmation Pinnacle" if no_pin_count > 0 else ""
 
     if not systems:
         _telegram(
             f"⚫ PREDATOR · {now.strftime('%H:%M')} UTC · {sess} {icon}\n"
-            f"0 système +EV net de taxe sur {matches} matchs analysés · {sharp_source}"
+            f"Aucun pari de valeur · {matches} matchs analysés"
         )
         return
 
+    no_pin = f"\n⚠️ {no_pin_count} sans confirmation Pinnacle" if no_pin_count > 0 else ""
     header = (
         f"📡 *PREDATOR* · {now.strftime('%H:%M')} UTC · {sess} {icon}\n"
-        f"{len(systems)} système(s) +EV net de taxe sur {matches} matchs analysés\n"
-        f"`{sharp_source}`{no_pin}\n"
+        f"{len(systems)} pari(s) de valeur · {matches} matchs analysés{no_pin}\n"
     )
 
     def _system_urgency(sys_):
@@ -992,17 +1040,22 @@ def _telegram_systems(systems: list, now, session: str, matches: int,
     body_parts: list[str] = []
     for i, sys_ in enumerate(sorted(systems, key=_system_urgency), start=1):
         legs = sys_["legs"]
-        lines: list[str] = [f"\n🎯 *Système {i}* ({sys_['k']} sélection{'s' if sys_['k'] > 1 else ''})\n"]
+        combi = "" if sys_["k"] == 1 else f" — combiné {sys_['k']} sélections"
+        lines: list[str] = [f"\n🎯 *Pari {i}*{combi}\n"]
         for leg in legs:
-            sport = leg.get("sport", "?")
-            emoji = SPORT_EMOJI.get(sport, "🎯")
+            emoji = SPORT_EMOJI.get(leg.get("sport", "?"), "🎯")
             sel   = leg.get("selection_name") or leg["match"]
-            lines.append(f"  {emoji} {sel}  `@ {leg['xbet_odd']:.2f}`\n")
-        lines.append(
-            f"  Cote combinée `{sys_['combined_odds']:.2f}` · "
-            f"Prob. combinée {sys_['combined_prob']*100:.1f}% · "
-            f"Mise {sys_['stake']:.0f}€ · EV net taxe +{sys_['ev']:.2f}€\n"
-        )
+            lines.append(f"{emoji} *{leg.get('match', '?')}*{_kickoff(leg, now)}\n")
+            # Ligne "Favori" seulement quand le favori n'est PAS le pari —
+            # sinon elle répète mot pour mot la ligne suivante.
+            fav = _favourite(leg)
+            if fav and fav != sel:
+                lines.append(f"   Favori : {fav}\n")
+            tag = " (favori)" if fav and fav == sel else ""
+            lines.append(f"   → {sel}{tag} `@ {leg['xbet_odd']:.2f}` · valeur `+{leg.get('edge_pct', 0):.1f}%`\n")
+        if sys_["k"] > 1:
+            combo_value = (sys_["combined_odds"] * sys_["combined_prob"] - 1) * 100
+            lines.append(f"   *Combiné* `@ {sys_['combined_odds']:.2f}` · valeur `+{combo_value:.1f}%`\n")
         body_parts.append("".join(lines))
 
     body = "".join(body_parts)

@@ -2,8 +2,9 @@
 run_rapport.py — PREDATOR PAIM v8.5 — Rapport Telegram 06:05 & 18:05 UTC
 Triggered by .github/workflows/rapport.yml after each main scan window.
 
-Envoie un récapitulatif complet des signaux actifs :
-  - Équipe à miser, marché, cote, mise Kelly (base 1000€)
+Envoie un récapitulatif des signaux actifs, un bloc par pari :
+  - Événement, favori (h2h uniquement), sélection, cote, heure du match, valeur
+  - Aucune mise ni bankroll — supprimées sur demande opérateur (2026-07-21)
   - Alerte erreur si aucun scan récent ou Supabase KO
 """
 import logging
@@ -14,8 +15,9 @@ from datetime import datetime, timedelta, timezone
 import requests
 from dotenv import load_dotenv
 
-from core.constants import ELITE_EDGE as _ELITE_EDGE, kelly_stake as _kelly_stake
+from core.constants import ELITE_EDGE as _ELITE_EDGE
 from core.db import get_db
+from core.paim_engine import resolve_selection_side as _resolve_side
 from core.learning_layer import load_learning_summary as _load_learning_summary
 from core.stats_utils import p_breakeven as _p_breakeven, wilson_ci as _wilson_ci
 
@@ -34,8 +36,15 @@ log.propagate = False
 TELEGRAM_TOKEN = os.environ.get("TELEGRAM_BOT_TOKEN")
 TELEGRAM_CHAT  = os.environ.get("TELEGRAM_CHAT_ID")
 
-BANKROLL       = 1000   # Bankroll de référence pour les mises Kelly
-SPORT_EMOJI    = {"soccer": "⚽", "basketball": "🏀", "tennis": "🎾"}
+# Aligné sur run_engine.SPORT_EMOJI — n'en couvrir que 3 renvoyait le 🎯
+# générique sur la majorité des signaux (baseball, hockey, WNBA…).
+SPORT_EMOJI    = {
+    "soccer": "⚽", "tennis": "🎾", "basketball": "🏀", "boxing": "🥊",
+    "mma": "🥋", "darts": "🎯", "cricket": "🏏", "hockey": "🏒",
+    "esports": "🎮", "americanfootball": "🏈", "baseball": "⚾",
+    "rugby": "🏉", "rugbyleague": "🏉", "aussierules": "🦘",
+    "volleyball": "🏐", "tabletennis": "🏓", "handball": "🤾",
+}
 SPORT_ORDER    = ["soccer", "basketball", "hockey", "baseball", "rugbyleague", "aussierules"]
 ELITE_EDGE     = _ELITE_EDGE
 SCAN_STALE_H   = 2      # Alerte si aucun scan depuis X heures
@@ -67,49 +76,67 @@ def _send(text: str):
         log.error("Telegram erreur: %s", e)
 
 
-def _market_melbet(mkt_key: str, sport: str, mkt_label: str) -> str:
-    if mkt_key == "h2h" and sport == "soccer":
-        return "Asian Handicap → ligne «0»"
-    if mkt_key == "h2h":
-        return "Résultat → Moneyline (1×2)"
-    # Stored keys are directional ("totals_over", "spreads_home", …) — an
-    # exact == "totals"/"spreads" match here never fired.
-    if mkt_key.startswith("totals"):
-        return f"Total → {mkt_label}"
-    if mkt_key.startswith("spreads"):
-        return f"Handicap → {mkt_label}"
-    return mkt_label or "Voir Handicap/Total"
+def _kickoff(s: dict, now: datetime) -> str:
+    """' · 21:00 UTC' today, ' · 22/07 21:00 UTC' otherwise, '' if unknown."""
+    raw = s.get("match_time") or ""
+    if not raw:
+        return ""
+    try:
+        mt = datetime.fromisoformat(str(raw).replace("Z", "+00:00"))
+    except ValueError:
+        return ""
+    if mt.tzinfo is None:
+        mt = mt.replace(tzinfo=timezone.utc)
+    same_day = mt.date() == now.date()
+    return f" · {mt.strftime('%H:%M') if same_day else mt.strftime('%d/%m %H:%M')} UTC"
 
 
-def _signal_line(s: dict) -> str | None:
-    """Format one signal as a Telegram-friendly string."""
+def _favourite(s: dict) -> str:
+    """Team the sharp price makes favourite, '' when not derivable.
+
+    h2h only: sharp_prob is this selection's probability, so >= 50% means the
+    pick IS the favourite. Totals/spreads price a line, not a side — no
+    moneyline is stored for them, so naming a favourite there would be
+    inventing it.
+    """
+    if s.get("market_key") != "h2h":
+        return ""
+    prob  = s.get("sharp_prob") or 0
+    match = s.get("match") or ""
+    sel   = s.get("selection_name") or ""
+    if not prob or " vs " not in match:
+        return ""
+    home, away = (p.strip() for p in match.split(" vs ", 1))
+    if prob >= 0.5:
+        return sel or home
+    is_home = _resolve_side(sel, home, away)
+    if is_home is None:
+        return ""
+    return away if is_home else home
+
+
+def _signal_line(s: dict, now: datetime) -> str | None:
+    """One signal, operator format (2026-07-21): event, favourite, pick, odds,
+    kick-off, value. No stake and no bankroll — Kelly sizing was printing
+    "Mise 0€ /1000€" on nearly every line, which told the operator nothing and
+    silently DROPPED any signal sized below MIN_STAKE from the report."""
     emoji     = SPORT_EMOJI.get(s.get("sport", ""), "🎯")
-    team      = s.get("selection_name") or s.get("match", "?")
-    if " vs " in team:                              # old signal — use home team
-        team = team.split(" vs ")[0].strip()
+    match     = s.get("match") or "?"
+    sel       = s.get("selection_name") or match
     edge      = s.get("edge_pct", 0)
-    prob      = s.get("sharp_prob", 0)
     xbet_odd  = s.get("xbet_odd", 0)
-    pin_odd   = s.get("pinnacle_price", 0)
-    mkt_key   = s.get("market_key", "h2h")
-    mkt_lbl   = s.get("market", "AH 0.0")
-    sport     = s.get("sport", "soccer")
-    # kelly_stake defaults to bankroll=BANKROLL_REF (150€) and sport="soccer" —
-    # omitting these printed stakes ~6.7× smaller than the "/1000€" the
-    # message claims, with the wrong per-sport Kelly fraction on top.
-    stake     = _kelly_stake(xbet_odd, prob, BANKROLL, sport)
-    if stake == 0:
-        return None   # Below MIN_STAKE — skip this signal
     risk      = s.get("risk_flag", "")
     risk_icon = "🔥" if risk == "HIGH_VALUE" else ("✅" if risk == "VALUE" else "📌")
-    xbet_mkt  = _market_melbet(mkt_key, sport, mkt_lbl)
-    prob_str  = f" | Prob {int(prob*100)}%" if prob > 0 else " | Prob N/A"
 
-    line  = f"{risk_icon} *{team.upper()}*  `{mkt_lbl} @ {xbet_odd:.2f}`\n"
-    line += f"   Edge: `+{edge:.1f}%`{prob_str} | Mise: `{stake}€` /1000€\n"
-    line += f"   ① 1XBet → {xbet_mkt} → *{team}*\n"
-    if pin_odd:
-        line += f"   ② Prix fair Pinnacle: `{pin_odd:.2f}`\n"
+    # Le favori n'a sa propre ligne que quand il N'EST PAS le pari : sinon
+    # elle répéterait mot pour mot la ligne suivante. Quand le pari EST le
+    # favori, un simple "(favori)" inline le dit sans ligne en plus.
+    fav = _favourite(s)
+    line = f"{emoji} *{match}*{_kickoff(s, now)}\n"
+    if fav and fav != sel:
+        line += f"   Favori : {fav}\n"
+    tag = " (favori)" if fav and fav == sel else ""
+    line += f"   {risk_icon} {sel}{tag} `@ {xbet_odd:.2f}` · valeur `+{edge:.1f}%`\n"
     return line
 
 
@@ -265,22 +292,9 @@ def run():
     wc_block   = ""
     if wc_signals:
         wc_top = sorted(wc_signals, key=lambda x: x.get("edge_pct", 0), reverse=True)[:3]
-        wc_block = "🏆 *FIFA WORLD CUP 2026 — ALPHA DU JOUR*\n"
+        wc_block = "🏆 *COUPE DU MONDE 2026*\n"
         for s in wc_top:
-            team     = s.get("selection_name") or s.get("match", "?")
-            if " vs " in team:
-                team = team.split(" vs ")[0].strip()
-            edge     = s.get("edge_pct", 0)
-            odd      = s.get("xbet_odd", 0)
-            prob     = s.get("sharp_prob", 0)
-            stake    = _kelly_stake(odd, prob, BANKROLL, s.get("sport", "soccer"))
-            is_trap  = edge >= WC_ALPHA_MIN and odd >= 2.20
-            icon     = "🔥 TRAP" if is_trap else ("🟢" if edge >= 3.0 else "🟡")
-            league   = s.get("league", "")
-            wc_block += f"{icon} *{team.upper()}*  `AH 0.0 @ {odd:.2f}`\n"
-            wc_block += f"   Edge `+{edge:.1f}%` | Mise `{stake}€` /1000€\n"
-            if league:
-                wc_block += f"   _({league})_\n"
+            wc_block += _signal_line(s, now)
         wc_block += "\n"
 
     # Stats globales
@@ -297,11 +311,7 @@ def run():
         sp = s.get("sport", "soccer")
         by_sport.setdefault(sp, []).append(s)
 
-    footer = (
-        f"━━━━━━━━━━━━━━━━━━━━━━━━━━\n"
-        f"💡 _Mises Kelly fractionnel (×0.20–0.30 selon sport) sur base 1000€_\n"
-        f"🔥 Elite | ✅ Value | 📌 Low Value"
-    )
+    footer = "━━━━━━━━━━━━━━━━━━━━━━━━━━\n🔥 Élite | ✅ Value | 📌 Faible"
 
     # Telegram limite un message à 4096 chars. Chaque bloc sport ci-dessous
     # est une unité *entités-balancées* (les `*gras*`/`` `code` `` s'ouvrent
@@ -321,7 +331,7 @@ def run():
         emoji = SPORT_EMOJI.get(sport, "🎯")
         block = f"{emoji} *{sport.upper()}* — {len(group)} signal(s)\n"
         for s in group:
-            line = _signal_line(s)
+            line = _signal_line(s, now)
             if line:
                 block += line + "\n"
         if len(body) + len(block) > budget:
