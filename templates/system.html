@@ -644,7 +644,14 @@ function SystemBetCalculator() {
                     <SummaryCard label="Retour total" value={fmt(computed.totalRetour)} />
                     <SummaryCard label="Profit net" value={fmt(computed.totalProfit)} color={computed.totalProfit >= 0 ? C.win : C.loss} />
                     <SummaryCard label="ROI" value={`${computed.totalMise > 0 ? ((computed.totalProfit / computed.totalMise) * 100).toFixed(1) : "0.0"} %`} color={computed.totalProfit >= 0 ? C.win : C.loss} />
+                    {taxEnabled && <SummaryCard label="Retenue fiscale" value={`− ${fmt(computed.taxAmount)}`} color={C.partial} sub={`${taxRate}% · ${taxBase === "net_system" ? "profit net" : "par ligne"}`} />}
                   </div>
+                  {taxEnabled && (
+                    <div style={{ borderTop: `1px solid ${C.borderSoft}` }} className="mt-3 pt-3 flex items-center justify-between">
+                      <span style={{ color: C.muted }} className="text-xs">Net perçu après retenue</span>
+                      <span style={{ color: C.text, fontFamily: MONO }} className="text-base font-semibold">{fmt(computed.netAfterTax)}</span>
+                    </div>
+                  )}
                 </Panel>
 
                 <Panel title="Détail par palier & combinaisons">

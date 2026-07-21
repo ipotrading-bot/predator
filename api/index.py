@@ -404,6 +404,7 @@ def audit():
 @app.route("/performance")
 def performance():
     rows: list      = []
+    history: list   = []   # sous-ensemble de `rows` affiché dans le tableau HISTORIQUE
     monthly: list   = []
     global_s: dict  = {}
     try:
@@ -430,6 +431,11 @@ def performance():
 
                 settled = [r for r in rows if r.get("outcome") in ("WIN", "LOSS", "PUSH")]
                 decisive = [r for r in rows if r.get("outcome") in ("WIN", "LOSS")]
+                # Le tableau HISTORIQUE ne montre que les matchs dont le
+                # résultat est connu (demande opérateur) — les stats plus haut
+                # continuent de se baser sur `rows` complet, y compris les
+                # signaux encore non audités.
+                history = settled
                 wins    = sum(1 for r in settled if r.get("outcome") == "WIN")
                 losses  = sum(1 for r in settled if r.get("outcome") == "LOSS")
                 pushes  = sum(1 for r in settled if r.get("outcome") == "PUSH")
@@ -518,7 +524,7 @@ def performance():
     except Exception as e:
         log.error("Performance: %s", e)
 
-    return render_template("performance.html", rows=rows, monthly=monthly, global_s=global_s)
+    return render_template("performance.html", rows=rows, history=history, monthly=monthly, global_s=global_s)
 
 
 @app.route("/system")

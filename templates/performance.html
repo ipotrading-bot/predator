@@ -295,8 +295,8 @@
   </div>
   {% endif %}
 
-  {% if rows %}
-  <div class="sec-hdr">&#9632; HISTORIQUE <em>{{ rows|length }} entrées</em></div>
+  {% if history %}
+  <div class="sec-hdr">&#9632; HISTORIQUE <em>{{ history|length }} entrées · résultat connu</em></div>
   <div class="tbl-outer">
     <table class="perf-table">
       <thead>
@@ -312,7 +312,7 @@
       </thead>
       <tbody>
         {% set E = {'soccer':'⚽','basketball':'🏀','tennis':'🎾','hockey':'🏒','mma':'🥋','boxing':'🥊','darts':'🎯','cricket':'🏏','esports':'🎮','americanfootball':'🏈','baseball':'⚾','rugby':'🏉','volleyball':'🏐','tabletennis':'🏓','handball':'🤾'} %}
-        {% for r in rows %}
+        {% for r in history %}
         {% set oc = r.outcome or '' %}
         <tr>
           <td>{{ E.get(r.sport or '', '🎯') }}</td>
