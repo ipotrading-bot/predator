@@ -299,7 +299,11 @@ function SystemBetCalculator() {
   const [selections, setSelections] = useState([]);
   const [nextId, setNextId] = useState(1);
   const [sysM, setSysM] = useState(2);
-  const [stake, setStake] = useState(1000);
+  // Champ texte brut pour permettre de vider/retaper librement sans qu'un
+  // "0" de repli ne se réinsère à chaque frappe (bug remonté : "0500" au lieu
+  // de "500"). La valeur numérique clampée n'est dérivée qu'au moment du calcul.
+  const [stakeInput, setStakeInput] = useState("1000");
+  const stake = Math.max(0, parseFloat(stakeInput) || 0);
   const [currency, setCurrency] = useState("XOF");
   // Fiscalité masquée sur cette page (demande opérateur) mais gardée active
   // "en sourdine" : la retenue continue d'être calculée dans `computed`
@@ -362,7 +366,7 @@ function SystemBetCalculator() {
         if (!res.ok || data.error) {
           setOddsQuota({ status: "error", message: data.error || `HTTP ${res.status}` });
         } else {
-          setOddsQuota({ status: "ok", remaining: data.remaining, used: data.used });
+          setOddsQuota({ status: "ok", remaining: data.remaining, used: data.used, checkedAt: new Date() });
         }
       } catch (e) {
         if (!cancelled) setOddsQuota({ status: "error", message: "requête impossible" });
@@ -544,8 +548,9 @@ function SystemBetCalculator() {
               </div>
               <div className="grid grid-cols-2 gap-3">
                 <Field label="Mise par ligne">
-                  <input type="number" min="0" step="1" value={stake}
-                    onChange={(e) => setStake(Math.max(0, parseFloat(e.target.value) || 0))}
+                  <input type="number" min="0" step="1" value={stakeInput}
+                    onChange={(e) => setStakeInput(e.target.value)}
+                    onBlur={() => setStakeInput(String(stake))}
                     style={inputStyle} className="text-sm rounded-md px-2 py-1.5" />
                 </Field>
                 <Field label="Devise">
@@ -648,12 +653,33 @@ function SystemBetCalculator() {
           {oddsQuota.status === "error" && (
             <span style={{ color: C.loss, fontFamily: MONO }} className="text-xs">indisponible — {oddsQuota.message}</span>
           )}
-          {oddsQuota.status === "ok" && (
-            <span style={{ color: C.text, fontFamily: MONO }} className="text-xs">
-              <span style={{ color: C.gold, fontWeight: 600 }}>{oddsQuota.remaining ?? "?"}</span> restantes
-              {oddsQuota.used != null && <span style={{ color: C.faint }}> · {oddsQuota.used} utilisées</span>}
-            </span>
-          )}
+          {oddsQuota.status === "ok" && (() => {
+            const total = oddsQuota.used != null ? oddsQuota.remaining + oddsQuota.used : null;
+            const pct = total ? Math.max(0, Math.min(100, (oddsQuota.remaining / total) * 100)) : null;
+            const color = pct != null
+              ? (pct < 10 ? C.loss : pct < 25 ? C.partial : C.win)
+              : (oddsQuota.remaining < 500 ? C.loss : oddsQuota.remaining < 2000 ? C.partial : C.win);
+            return (
+              <div className="flex items-center gap-3 flex-wrap">
+                {pct != null && (
+                  <div style={{ width: 90, height: 6, background: C.panel2, borderRadius: 4, overflow: "hidden" }}>
+                    <div style={{ width: `${pct}%`, height: "100%", background: color, transition: "width 0.3s" }} />
+                  </div>
+                )}
+                <span style={{ color, fontFamily: MONO, fontWeight: 600 }} className="text-xs">
+                  {oddsQuota.remaining ?? "?"} restantes{pct != null ? ` (${pct.toFixed(1)}%)` : ""}
+                </span>
+                {oddsQuota.used != null && (
+                  <span style={{ color: C.faint, fontFamily: MONO }} className="text-xs">· {oddsQuota.used} utilisées</span>
+                )}
+                {oddsQuota.checkedAt && (
+                  <span style={{ color: C.faint, fontFamily: MONO }} className="text-xs">
+                    · vérifié {oddsQuota.checkedAt.toLocaleTimeString("fr-FR", { hour12: false })}
+                  </span>
+                )}
+              </div>
+            );
+          })()}
         </div>
       </div>
     </div>
