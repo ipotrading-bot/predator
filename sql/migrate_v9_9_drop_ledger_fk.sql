@@ -1,0 +1,33 @@
+-- migrate_v9_9_drop_ledger_fk.sql
+-- ═══════════════════════════════════════════════════════════════════
+-- LA VRAIE cause de la page /performance gelée (mal attribuée à Gemini
+-- et au purge pendant des mois — 2026-07-21).
+--
+-- ai_learning_ledger.signal_id portait une contrainte de clé étrangère
+-- FOREIGN KEY (signal_id) REFERENCES signals(id) ON DELETE SET NULL.
+--
+-- Pourquoi elle casse TOUTE écriture live du ledger :
+--   1. RLS interdit UPDATE sur signals → core/db.py:replace_signal_row
+--      fait DELETE + INSERT. L'INSERT retire `id` (colonne identity), donc
+--      le signal settled reçoit un NOUVEL id ; l'ancien id est supprimé.
+--   2. core/settlement.py:settle_signal appelle replace_signal_row PUIS
+--      log_to_ledger avec l'ANCIEN id → l'id n'existe plus dans signals →
+--      violation FK 23503, l'insert ledger échoue à CHAQUE fois.
+--   3. De toute façon les lignes signals sont purgées après ~48h alors que
+--      le ledger est un historique PERMANENT — une FK permanent→éphémère
+--      est architecturalement impossible à tenir.
+--
+-- (Les 5 lignes présentes venaient de backfill_ledger.py, qui insère
+-- pendant que le signal existe encore → FK satisfaite à cet instant.
+-- La FK ne nous apporte rien : /performance et core/learning_layer.py
+-- lisent ai_learning_ledger directement, aucun JOIN vers signals.)
+--
+-- Fix : supprimer la contrainte. signal_id reste une simple référence
+-- informative (entier non contraint), ce qui laisse le ledger survivre
+-- au purge de son signal d'origine — exactement ce qu'on veut.
+--
+-- Idempotent : IF EXISTS.
+-- ═══════════════════════════════════════════════════════════════════
+
+ALTER TABLE ai_learning_ledger
+    DROP CONSTRAINT IF EXISTS ai_learning_ledger_signal_id_fkey;
