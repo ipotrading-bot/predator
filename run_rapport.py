@@ -297,30 +297,42 @@ def run():
         sp = s.get("sport", "soccer")
         by_sport.setdefault(sp, []).append(s)
 
-    body = ""
-    ordered_sports = list(SPORT_ORDER) + sorted(s for s in by_sport if s not in SPORT_ORDER)
-    for sport in ordered_sports:
-        group = by_sport.get(sport, [])
-        if not group:
-            continue
-        emoji = SPORT_EMOJI.get(sport, "🎯")
-        body += f"{emoji} *{sport.upper()}* — {len(group)} signal(s)\n"
-        for s in group:
-            line = _signal_line(s)
-            if line:
-                body += line + "\n"
-
     footer = (
         f"━━━━━━━━━━━━━━━━━━━━━━━━━━\n"
         f"💡 _Mises Kelly fractionnel (×0.20–0.30 selon sport) sur base 1000€_\n"
         f"🔥 Elite | ✅ Value | 📌 Low Value"
     )
 
-    msg = header + wc_block + summary + body + footer
+    # Telegram limite un message à 4096 chars. Chaque bloc sport ci-dessous
+    # est une unité *entités-balancées* (les `*gras*`/`` `code` `` s'ouvrent
+    # ET se ferment à l'intérieur du même bloc) — on tronque donc entre deux
+    # blocs complets, jamais au milieu d'une chaîne, pour ne pas couper une
+    # entité en deux et faire apparaître des astérisques/underscores littéraux
+    # au lieu du gras/italique attendu (bug corrigé : l'ancienne version
+    # faisait `msg[:3970]` en aveugle, sans savoir où tombait la coupe).
+    budget = 4000 - len(header) - len(wc_block) - len(summary) - len(footer) - 80
+    body = ""
+    truncated = False
+    ordered_sports = list(SPORT_ORDER) + sorted(s for s in by_sport if s not in SPORT_ORDER)
+    for sport in ordered_sports:
+        group = by_sport.get(sport, [])
+        if not group:
+            continue
+        emoji = SPORT_EMOJI.get(sport, "🎯")
+        block = f"{emoji} *{sport.upper()}* — {len(group)} signal(s)\n"
+        for s in group:
+            line = _signal_line(s)
+            if line:
+                block += line + "\n"
+        if len(body) + len(block) > budget:
+            truncated = True
+            break
+        body += block
 
-    # Telegram a une limite de 4096 chars
-    if len(msg) > 4000:
-        msg = msg[:3970] + "\n…_(tronqué — voir dashboard)_"
+    if truncated:
+        body += "…_(liste tronquée — voir le dashboard pour tous les signaux)_\n\n"
+
+    msg = header + wc_block + summary + body + footer
 
     _send(msg)
     log.info("Rapport envoyé — %d signaux, %d élite", len(signals), len(elite))
