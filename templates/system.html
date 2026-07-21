@@ -252,13 +252,26 @@ function SummaryCard({ label, value, sub, color }) {
    AUTO-FILL — signaux PAIM actifs -> ticket système
 --------------------------------------------------------------- */
 
-// Règles : fenêtre 12h à venir, cote > 1.80, exclut réglé/annulé/expiré
-// (déjà exclus par /api/signals qui ne renvoie que status=active), trié
-// par edge_pct desc puis cote desc, plafond 8 (Goliath). Un seul signal
-// par match est conservé (le meilleur edge) : deux jambes du même match
-// sont corrélées et invalident le calcul de combinaison indépendant —
-// ce garde-fou n'était pas dans les 5 règles listées mais est nécessaire
-// à la validité mathématique du système.
+// Un seul signal par match est conservé (le meilleur edge) : deux jambes du
+// même match sont corrélées et invalident le calcul de combinaison
+// indépendant — partagé par l'auto-remplissage et le picker manuel ci-dessous.
+function dedupeBestPerMatch(list) {
+  const bestPerMatch = new Map();
+  for (const s of list) {
+    const key = s.match_id || s.match || "";
+    const prev = bestPerMatch.get(key);
+    if (!prev || (s.edge_pct || 0) > (prev.edge_pct || 0)) bestPerMatch.set(key, s);
+  }
+  return [...bestPerMatch.values()].sort((a, b) => {
+    const edgeDiff = (b.edge_pct || 0) - (a.edge_pct || 0);
+    if (Math.abs(edgeDiff) > 1e-9) return edgeDiff;
+    return (b.xbet_odd || 0) - (a.xbet_odd || 0);
+  });
+}
+
+// Règles de l'auto-remplissage : fenêtre 12h à venir, cote > 1.80, exclut
+// réglé/annulé/expiré (déjà exclus par /api/signals qui ne renvoie que
+// status=active), trié par edge_pct desc puis cote desc, plafond 8 (Goliath).
 async function fetchQualifyingSignals() {
   const res = await fetch("/api/signals");
   if (!res.ok) throw new Error(`HTTP ${res.status}`);
@@ -276,20 +289,19 @@ async function fetchQualifyingSignals() {
     return odds > 1.8;
   });
 
-  const bestPerMatch = new Map();
-  for (const s of qualifying) {
-    const key = s.match_id || s.match || "";
-    const prev = bestPerMatch.get(key);
-    if (!prev || (s.edge_pct || 0) > (prev.edge_pct || 0)) bestPerMatch.set(key, s);
-  }
+  return dedupeBestPerMatch(qualifying).slice(0, 8);
+}
 
-  const ranked = [...bestPerMatch.values()].sort((a, b) => {
-    const edgeDiff = (b.edge_pct || 0) - (a.edge_pct || 0);
-    if (Math.abs(edgeDiff) > 1e-9) return edgeDiff;
-    return (b.xbet_odd || 0) - (a.xbet_odd || 0);
-  });
-
-  return ranked.slice(0, 8);
+// Signaux actifs bruts (ceux du dashboard), pour le picker manuel "Ajouter" —
+// pas de fenêtre 12h ni de plancher de cote ici : contrairement à
+// l'auto-remplissage, l'opérateur doit pouvoir composer son ticket avec
+// n'importe quel signal actif, pas seulement ceux qui qualifient pour l'auto-fill.
+async function fetchAllActiveSignals() {
+  const res = await fetch("/api/signals");
+  if (!res.ok) throw new Error(`HTTP ${res.status}`);
+  const data = await res.json();
+  if (!Array.isArray(data)) throw new Error("unexpected /api/signals response");
+  return dedupeBestPerMatch(data);
 }
 
 /* ---------------------------------------------------------------
@@ -314,6 +326,8 @@ function SystemBetCalculator() {
   const [activeCell, setActiveCell] = useState(null);
   const [signalsStatus, setSignalsStatus] = useState("loading"); // loading | error | empty | `ok:N`
   const [oddsQuota, setOddsQuota] = useState({ status: "loading" }); // loading | ok | error
+  const [availableSignals, setAvailableSignals] = useState([]);
+  const [pickerOpen, setPickerOpen] = useState(false);
 
   const n = selections.length;
 
@@ -350,6 +364,19 @@ function SystemBetCalculator() {
       } catch (e) {
         if (!cancelled) setSignalsStatus("error");
       }
+    })();
+    return () => { cancelled = true; };
+  }, []);
+
+  // Liste des signaux actifs disponibles pour ajout manuel (picker "Ajouter") —
+  // les vraies cotes du dashboard, pas une ligne vierge à coter au hasard.
+  useEffect(() => {
+    let cancelled = false;
+    (async () => {
+      try {
+        const all = await fetchAllActiveSignals();
+        if (!cancelled) setAvailableSignals(all);
+      } catch (e) { /* le picker affichera juste "aucun signal disponible" */ }
     })();
     return () => { cancelled = true; };
   }, []);
@@ -427,6 +454,16 @@ function SystemBetCalculator() {
     setSelections((s) => [...s, { id: nextId, label: "", odds: 1.9, status: "won" }]);
     setNextId((x) => x + 1);
   };
+  const addFromSignal = (sig) => {
+    if (n >= 10) return;
+    setSelections((s) => [...s, {
+      id: nextId,
+      label: `${sig.match || "?"} — ${sig.selection_name || "?"}`,
+      odds: Number(sig.xbet_odd) || 1.01,
+      status: "won",
+    }]);
+    setNextId((x) => x + 1);
+  };
   const removeSelection = (id) => setSelections((s) => (s.length > 1 ? s.filter((x) => x.id !== id) : s));
   const updateSelection = (id, patch) => setSelections((s) => s.map((x) => (x.id === id ? { ...x, ...patch } : x)));
   const setSelectionCount = (target) => {
@@ -445,6 +482,13 @@ function SystemBetCalculator() {
   };
 
   const activeCombo = activeCell != null ? computed.byFold.find((f) => f.k === activeCell.k)?.combos[activeCell.i] : null;
+
+  // Signaux du picker "Ajouter" pas déjà présents dans le ticket (même clé de
+  // libellé que l'auto-remplissage, donc un signal ajouté puis retiré peut être repris).
+  const pickableSignals = useMemo(() => {
+    const used = new Set(selections.map((s) => s.label));
+    return availableSignals.filter((s) => !used.has(`${s.match || "?"} — ${s.selection_name || "?"}`));
+  }, [availableSignals, selections]);
 
   const statusLine = {
     loading: "Chargement des signaux PAIM…",
@@ -473,13 +517,35 @@ function SystemBetCalculator() {
             <Panel
               title="Sélections"
               right={
-                <button onClick={addSelection} disabled={n >= 10}
+                <button onClick={() => setPickerOpen((v) => !v)} disabled={n >= 10}
                   style={{ color: n >= 10 ? C.faint : C.gold, border: `1px solid ${n >= 10 ? C.border : C.goldSoft}` }}
                   className="flex items-center gap-1 text-xs px-2 py-1 rounded-md transition">
                   <Plus size={13} /> Ajouter
                 </button>
               }
             >
+              {pickerOpen && n < 10 && (
+                <div style={{ background: C.panel2, border: `1px solid ${C.borderSoft}`, borderRadius: 10 }} className="mb-3 p-2 max-h-56 overflow-y-auto">
+                  {pickableSignals.length === 0 ? (
+                    <p style={{ color: C.faint }} className="text-xs px-1.5 py-1">Aucun signal actif disponible — utilise la ligne vide ci-dessous.</p>
+                  ) : (
+                    pickableSignals.map((s, i) => (
+                      <button key={i} onClick={() => { addFromSignal(s); setPickerOpen(false); }}
+                        style={{ color: C.text }}
+                        className="w-full flex items-center justify-between gap-2 text-left text-xs px-1.5 py-1.5 rounded-md hover:bg-white/5">
+                        <span className="truncate">{s.match || "?"} — {s.selection_name || "?"}</span>
+                        <span style={{ color: C.gold, fontFamily: MONO }} className="shrink-0">@{Number(s.xbet_odd || 0).toFixed(2)}</span>
+                      </button>
+                    ))
+                  )}
+                  <div style={{ borderTop: `1px solid ${C.border}` }} className="mt-1 pt-1">
+                    <button onClick={() => { addSelection(); setPickerOpen(false); }}
+                      style={{ color: C.muted }} className="w-full text-left text-xs px-1.5 py-1.5 rounded-md hover:bg-white/5">
+                      + Ligne vide (saisie manuelle)
+                    </button>
+                  </div>
+                </div>
+              )}
               {n === 0 ? (
                 <p style={{ color: C.faint }} className="text-xs">Aucune sélection — ajoute-en une, ou attends l'auto-remplissage.</p>
               ) : (
