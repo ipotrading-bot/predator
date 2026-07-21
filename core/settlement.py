@@ -1,44 +1,27 @@
 """
 core/settlement.py — PAIM v8.5 — Match Settlement Engine
-Fetches actual match scores via Gemini Search → determines WIN/LOSS/PUSH
-→ updates signal status to 'settled' in Supabase.
+Fetches actual match scores via web search (Groq/Tavily, see core/ai_search.py)
+→ determines WIN/LOSS/PUSH → updates signal status to 'settled' in Supabase.
 """
 import json
 import logging
-import os
 import re
 
+from core.ai_search import ai_available, ai_search_complete
 from core.db import log_to_ledger, replace_signal_row
-from core.http_utils import post_gemini
 from core.paim_engine import resolve_selection_side
 
 log = logging.getLogger("PREDATOR.settlement")
 
-# Tried in order; falls through on HTTP 404 (model retired for this
-# project) or 429/5xx (exhausted/unavailable quota) — see
-# core.http_utils.post_gemini. gemini-3.1-flash-lite tried first: current-
-# generation stable lite model (highest free-tier quota in its generation
-# by Google's usual flash/flash-lite/pro tiering; see the same-day note in
-# core/harvester.py's GEMINI_ALT_MODELS for why 2.0-flash/2.5-flash-lite/
-# 3.5-flash are all kept only as fallbacks now, not the primary choice).
-GEMINI_MODELS = ["gemini-3.1-flash-lite", "gemini-2.5-flash-lite", "gemini-3.5-flash", "gemini-2.0-flash"]
 _SETTLEMENT_OPTIONAL = frozenset({"outcome", "settled_at"})
 
 
 def fetch_match_result(match_name: str, sport: str, match_date: str = "") -> dict | None:
     """
-    Gemini Search → final score of a completed match.
+    Recherche web → final score of a completed match.
     Returns {"home_score": int, "away_score": int, "completed": True} or None.
     """
-    # Dedicated key first: settlement is the ONE Gemini call that must
-    # never be starved (it's what feeds ai_learning_ledger / the Performance
-    # page), but golden_hour.yml alone fires 48x/day and burns the shared
-    # GEMINI_API_KEY's daily quota within hours — audit.yml (4x/day) then
-    # always loses the race. GEMINI_API_KEY_AUDIT isolates it on its own
-    # quota. Falls back to the shared key if the dedicated one isn't set
-    # yet, so nothing breaks before that secret is added.
-    api_key = os.environ.get("GEMINI_API_KEY_AUDIT") or os.environ.get("GEMINI_API_KEY")
-    if not api_key:
+    if not ai_available():
         return None
 
     sport_ctx = {"soccer": "football/soccer",
@@ -47,41 +30,28 @@ def fetch_match_result(match_name: str, sport: str, match_date: str = "") -> dic
     context = match_name + (f" (date: {match_date})" if match_date else "")
 
     prompt = (
-        f"Use Google Search to find the FINAL SCORE of this {sport_ctx} match:\n"
+        f"Search the web to find the FINAL SCORE of this {sport_ctx} match:\n"
         f"{context}\n\n"
         f"Return ONLY valid JSON. If match finished:\n"
         f'{{"completed":true,"home_score":2,"away_score":1}}\n'
         f"If not finished or not found:\n"
         f'{{"completed":false}}'
     )
-    payload = {
-        "contents": [{"role": "user", "parts": [{"text": prompt}]}],
-        "tools": [{"google_search": {}}],
-        # Was 80 — every other search-grounded call site in this codebase
-        # uses 200-3000. Grounded responses on 2.5+ models spend part of
-        # the output-token budget on internal reasoning before the visible
-        # answer; 80 was plausibly truncating the response before the
-        # closing '}' every time, silently (see the log.warning below —
-        # a near-100% "no score yet" rate on well-covered MLB/WNBA games
-        # is what that looks like from the outside).
-        "generationConfig": {"temperature": 0.0, "maxOutputTokens": 500},
-    }
 
-    r = post_gemini(GEMINI_MODELS, api_key, payload, timeout=25,
-                     max_attempts=2, label=f"Settlement/{match_name}")
-
-    if r is None or r.status_code != 200:
+    text = ai_search_complete(
+        prompt,
+        queries=[f"{match_name} {sport_ctx} final score result {match_date}".strip()],
+        label=f"Settlement/{match_name}",
+        max_tokens=500, temperature=0.0, timeout=45,
+    )
+    if not text:
         return None
 
     try:
-        candidate = r.json().get("candidates", [{}])[0]
-        parts = candidate.get("content", {}).get("parts", [])
-        text  = next((p["text"] for p in reversed(parts) if p.get("text", "").strip()), "")
         text  = re.sub(r'```(?:json)?|```', '', text)
         m     = re.search(r'\{[^{}]+\}', text)
         if not m:
-            log.warning("settlement no-JSON [%s]: finishReason=%s text=%r",
-                        match_name, candidate.get("finishReason"), text[:200])
+            log.warning("settlement no-JSON [%s]: text=%r", match_name, text[:200])
             return None
         data  = json.loads(m.group())
         if data.get("completed"):

@@ -1,20 +1,21 @@
 """
-core/oracle.py — PAIM v7.6 — Gemini + Google Search → Sharp fair price
+core/oracle.py — PAIM v7.6 — Recherche web (Groq/Tavily) → Sharp fair price
 Multi-source: Pinnacle → Betfair Exchange → Circa Sports
 Non-Pinnacle sources receive a 0.5% reference price penalty (conservative edge).
 Returns (price: float | None, team_name: str | None)
+
+2026-07-21 : Gemini remplacé par core/ai_search.py (groq/compound-mini +
+fallback Tavily) — le grounding Gemini gratuit est mort (limit: 0 sans
+facturation prépayée, vérifié sur 4 clés/projets indépendants).
 """
 import logging
-import os
 import re
 from datetime import date as _date
 
-from core.http_utils import post_with_retry
+from core.ai_search import ai_available, ai_search_complete
 from core.math_engine import calc_dnb
 
 log = logging.getLogger("PREDATOR.oracle")
-
-GEMINI_URL = "https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash-lite:generateContent"
 
 # Fallback chain: (book_name, edge_penalty_pct)
 # Penalty inflates the reference price → reduces effective edge → more conservative
@@ -37,11 +38,13 @@ def get_pinnacle_price(
     Tries Pinnacle → Betfair Exchange → Circa Sports in order.
     Non-Pinnacle prices are inflated by penalty% (reduces effective edge shown to engine).
     Both may be None on complete failure.
+
+    `api_key` est ignoré depuis la migration Groq/Tavily (gardé pour
+    compatibilité avec les callers existants — audit_engine passait
+    l'ancienne clé GEMINI_API_KEY_AUDIT ici).
     """
-    if not api_key:
-        api_key = os.environ.get("GEMINI_API_KEY")
-    if not api_key:
-        log.error("No GEMINI_API_KEY")
+    if not ai_available():
+        log.error("No GROQ_API_KEY — oracle indisponible")
         return None, None
 
     if not match_date:
@@ -53,7 +56,7 @@ def get_pinnacle_price(
     context += f" — {match_date}"
 
     for book_name, penalty in _SHARP_BOOKS:
-        price, team = _query_book(context, sport, api_key, book_name)
+        price, team = _query_book(context, sport, book_name)
         if price and price > 1.01:
             if penalty > 0:
                 price = round(price * (1 + penalty / 100), 4)
@@ -66,13 +69,12 @@ def get_pinnacle_price(
 def _query_book(
     context: str,
     sport: str,
-    api_key: str,
     book_name: str,
 ) -> tuple[float | None, str | None]:
-    """Single Gemini call for one sportsbook. Returns (dnb_price, team) or (None, None)."""
+    """Un appel recherche+LLM pour un sportsbook. Returns (dnb_price, team) or (None, None)."""
     if sport == "soccer":
         prompt = (
-            f"Use Google Search to find {book_name} current 1X2 odds for this soccer match:\n"
+            f"Search the web to find {book_name} current 1X2 odds for this soccer match:\n"
             f"{context}\n"
             f"Include both team names. Return ONLY valid JSON:\n"
             f'{{"home_team":"PSG","home":1.60,"draw":3.80,"away_team":"Lyon","away":9.00}}\n'
@@ -81,34 +83,22 @@ def _query_book(
     else:
         sport_ctx = {"tennis": "tennis", "basketball": "NBA basketball"}.get(sport, sport)
         prompt = (
-            f"Use Google Search to find {book_name} current Moneyline odds for this {sport_ctx}:\n"
+            f"Search the web to find {book_name} current Moneyline odds for this {sport_ctx}:\n"
             f"{context}\n"
             f"Return ONLY valid JSON with favorite decimal odd and team name:\n"
             f'{{"price":1.85,"team":"FavoriteTeam"}}\n'
             f'If not found on {book_name}: {{"price":null}}'
         )
 
-    payload = {
-        "contents": [{"role": "user", "parts": [{"text": prompt}]}],
-        "tools": [{"google_search": {}}],
-        "generationConfig": {"temperature": 0.1, "maxOutputTokens": 200},
-    }
-
-    r = post_with_retry(f"{GEMINI_URL}?key={api_key}", payload, timeout=25,
-                         label=f"Oracle/{book_name}")
-
-    if r is None or r.status_code != 200:
-        if r is not None:
-            log.error("HTTP %d from Gemini (%s)", r.status_code, book_name)
+    text = ai_search_complete(
+        prompt,
+        queries=[f"{book_name} odds {context}"],
+        label=f"Oracle/{book_name}",
+        max_tokens=300, temperature=0.1, timeout=45,
+    )
+    if not text:
         return None, None
-
-    try:
-        parts = r.json().get("candidates", [{}])[0].get("content", {}).get("parts", [])
-        text = next((p["text"] for p in reversed(parts) if p.get("text", "").strip()), "")
-        text = re.sub(r'```(?:json)?|```', '', text)
-    except Exception as e:
-        log.error("Parse error (%s): %s", book_name, e)
-        return None, None
+    text = re.sub(r'```(?:json)?|```', '', text)
 
     if sport == "soccer":
         return _parse_soccer(text)
@@ -143,7 +133,7 @@ def _parse_soccer(text: str) -> tuple[float | None, str | None]:
 
 
 def _parse_moneyline(text: str) -> tuple[float | None, str | None]:
-    """Extract Pinnacle Moneyline price and team name."""
+    """Extract the sharp Moneyline price and team name."""
     m_p = re.search(r'"price"\s*:\s*(\d+\.\d+)', text)
     m_t = re.search(r'"team"\s*:\s*"([^"]+)"', text)
     price = float(m_p.group(1)) if m_p else None

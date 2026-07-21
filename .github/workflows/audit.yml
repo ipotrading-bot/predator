@@ -71,12 +71,16 @@ jobs:
             exit 1
           fi
 
-      - name: Warn if GEMINI_API_KEY_AUDIT is not set
+      - name: Warn if GROQ_API_KEY is not set
         env:
-          GEMINI_API_KEY_AUDIT: ${{ secrets.GEMINI_API_KEY_AUDIT }}
+          GROQ_API_KEY: ${{ secrets.GROQ_API_KEY }}
+          TAVILY_API_KEY: ${{ secrets.TAVILY_API_KEY }}
         run: |
-          if [ -z "$GEMINI_API_KEY_AUDIT" ]; then
-            echo "::warning::GEMINI_API_KEY_AUDIT not set — settlement is sharing GEMINI_API_KEY's daily quota with golden_hour/engine/deep_scan, which burns it out early every day and starves this job (see 2026-07-10 ledger-drought diagnosis). Add a second free key from Google AI Studio as this secret to fix permanently."
+          if [ -z "$GROQ_API_KEY" ]; then
+            echo "::error::GROQ_API_KEY not set — settlement/CLV cannot run at all (Gemini was removed 2026-07-21, core/ai_search.py needs this secret). Create a free key at console.groq.com and add it as this repo secret."
+          fi
+          if [ -z "$TAVILY_API_KEY" ]; then
+            echo "::warning::TAVILY_API_KEY not set — web-search fallback tier disabled; only groq/compound-mini's built-in search is available. Free key at app.tavily.com."
           fi
 
       - uses: actions/checkout@v4
@@ -91,8 +95,8 @@ jobs:
 
       - name: Run audit engine
         env:
-          GEMINI_API_KEY:       ${{ secrets.GEMINI_API_KEY }}
-          GEMINI_API_KEY_AUDIT: ${{ secrets.GEMINI_API_KEY_AUDIT }}
+          GROQ_API_KEY:       ${{ secrets.GROQ_API_KEY }}
+          TAVILY_API_KEY:     ${{ secrets.TAVILY_API_KEY }}
           SUPABASE_URL:       ${{ secrets.SUPABASE_URL }}
           SUPABASE_KEY:       ${{ secrets.SUPABASE_KEY }}
           SUPABASE_SERVICE_KEY: ${{ secrets.SUPABASE_SERVICE_KEY }}

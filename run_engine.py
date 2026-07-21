@@ -2,7 +2,7 @@
 run_engine.py — PREDATOR PAIM v8.8 — Hunter Multi-Sport + Portfolio Balancer
 Markets: h2h (NBA/Tennis) | spreads (NBA/Soccer) | totals (all)
 Sharp filter: Prob. Sharp (Power devigged, see core/math_engine.py) >= threshold per market type
-Pipeline: OddsAPI → Gemini Search → Gemini Estimator → AH0.0/ML/PS/OU → Edge → Balancer → Supabase
+Pipeline: OddsAPI → Web Search (Groq/Tavily) → AI Estimator → AH0.0/ML/PS/OU → Edge → Balancer → Supabase
 All timestamps : UTC/GMT — no local-time contamination.
 """
 import json
@@ -18,7 +18,7 @@ from dotenv import load_dotenv
 
 from core.db import get_db, MissingCredentialsError
 from core.harvester import fetch_matches, fetch_pinnacle_prices, fetch_estimated_prices, fetch_mma_events, fetch_esports_events, fetch_alternative_sports_batch, fetch_betfair_prices
-from core.http_utils import gemini_quota_dead
+from core.ai_search import ai_dead as gemini_quota_dead
 from core.math_engine import to_binary, devig_prob, is_round_number_line
 from core.odds_api import fetch_odds
 from core.oracle import get_pinnacle_price
@@ -1090,8 +1090,8 @@ def run():
 
     # ══ SOURCE PIPELINE — 3 NIVEAUX ══════════════════════════════════
     # Tier 1: The Odds API  → real 1XBet + Pinnacle, même event (idéal)
-    # Tier 2: Gemini Search → batch Pinnacle via Google Search
-    # Tier 3: Gemini Estim. → probabilités internes, toujours disponible
+    # Tier 2: Recherche web → batch Pinnacle (groq/compound-mini + Tavily)
+    # Tier 3: Estimateur IA → probabilités internes, toujours disponible
 
     matches        = []
     xbet_matches   = []   # declared here so Tier 3 can reuse Tier 2's result safely
@@ -1101,7 +1101,7 @@ def run():
     # ── Tier 1: The Odds API ──────────────────────────────────────────
     if GUERRILLA:
         hours_ahead = int(os.environ.get("HOURS_AHEAD", 48))
-        log.info("🥷 GUERRILLA — OddsAPI ignoré, Tier 2 direct (1XBet + Pinnacle/Gemini Search)")
+        log.info("🥷 GUERRILLA — OddsAPI ignoré, Tier 2 direct (1XBet + Pinnacle/recherche web)")
     elif GOLDEN_HOUR:
         hours_ahead  = 2  # T-120min window only
         scan_keys    = GOLDEN_SPORT_KEYS
@@ -1158,11 +1158,11 @@ def run():
     # ── MMA/eSports/Alternatifs — now included in Golden Hour too ──────
     # Cached in Supabase meta: MMA/eSports 8h TTL, alt sports 4h TTL —
     # cache is shared across golden_hour/engine/deep_scan runs, so running
-    # this every 30min mostly hits cache and only pays for a fresh Gemini
-    # Search call when the TTL actually expires. Uses GEMINI_API_KEY_ALT
-    # (falls back to GEMINI_API_KEY) so it doesn't compete with the main
+    # this every 30min mostly hits cache and only pays for a fresh web-search
+    # call (Groq/Tavily, core/ai_search.py) when the TTL actually expires
+    # — no longer competes with the main
     # pipeline's fetch_pinnacle_prices() quota within the same run.
-    log.info("🥋 MMA — Gemini Search (Melbet vs Pinnacle)...")
+    log.info("🥋 MMA — Recherche web (Melbet vs Pinnacle)...")
     mma_events = _get_cached(sb, "cache_mma", 8) if sb else None
     if mma_events is None:
         mma_events = fetch_mma_events()
@@ -1172,7 +1172,7 @@ def run():
         matches = (matches or []) + mma_events
         log.info("🥋 MMA OK — %d combats UFC (Melbet soft)", len(mma_events))
 
-    log.info("🎮 eSports — Gemini Search (CS2/LoL/Valorant/DOTA2)...")
+    log.info("🎮 eSports — Recherche web (CS2/LoL/Valorant/DOTA2)...")
     esports_events = _get_cached(sb, "cache_esports", 8) if sb else None
     if esports_events is None:
         esports_events = fetch_esports_events()
@@ -1182,7 +1182,7 @@ def run():
         matches = (matches or []) + esports_events
         log.info("🎮 eSports OK — %d matchs", len(esports_events))
 
-    log.info("🏓🏐🤾 Sports alternatifs — Gemini Search (Table Tennis / Volleyball / Handball)...")
+    log.info("🏓🏐🤾 Sports alternatifs — Recherche web (Table Tennis / Volleyball / Handball)...")
     alt_events = _get_cached(sb, "cache_altsports", 4) if sb else None
     if alt_events is None:
         alt_events = fetch_alternative_sports_batch()
@@ -1194,7 +1194,7 @@ def run():
 
     # ── Tier 1.5: Betfair Exchange (sharp prices peer-to-peer) ─────────
     # Activé uniquement si BETFAIR_APP_KEY est configuré.
-    # Enrichit les matchs dont les prix Pinnacle viennent de l'estimateur Gemini
+    # Enrichit les matchs dont les prix Pinnacle viennent de l'estimateur IA
     # en les remplaçant par des prix Betfair (0% marge avant commission 5%).
     betfair_prices: dict = {}
     if os.environ.get("BETFAIR_APP_KEY"):
@@ -1224,15 +1224,15 @@ def run():
                     enriched += 1
                     log.info("💹 Betfair enrichi — %s (%.2f / %.2f)", m["match"], bf["1"], bf["2"])
             if enriched:
-                log.info("💹 Betfair: %d matchs enrichis (remplace estimateur Gemini)", enriched)
-                if sharp_source == "Gemini/Estimateur":
-                    sharp_source = "Betfair+Gemini"
+                log.info("💹 Betfair: %d matchs enrichis (remplace estimateur IA)", enriched)
+                if sharp_source == "AI/Estimateur":
+                    sharp_source = "Betfair+AI"
         else:
             log.info("💹 Betfair: 0 marchés (marché vide ou hors session)")
 
     # ── Golden Hour early-exit — aucun event OddsAPI dans T-2h ──────────
     # Si OddsAPI ne trouve rien dans la fenêtre 2h, les lignes ne bougent pas.
-    # Tier 2/3 (Gemini Search) ne sert à rien ici : trop lent, rate-limited,
+    # Tier 2/3 (recherche web) ne sert à rien ici : trop lent, rate-limited,
     # et les prix estimés ont moins de valeur que le vrai mouvement Pinnacle.
     if GOLDEN_HOUR and not matches:
         log.info("⚡ GOLDEN HOUR — 0 events dans T-2h → exit rapide (lignes stables)")
@@ -1242,14 +1242,14 @@ def run():
             raise SystemExit(1)
         return
 
-    # ── Tier 2: Gemini + Google Search — activé si OddsAPI vide/GUERRILLA ──
+    # ── Tier 2: recherche web (Groq/Tavily) — activé si OddsAPI vide/GUERRILLA ──
     if not matches:
-        log.info("📡 Tier 2 — Harvest Melbet + Gemini Search Pinnacle...")
+        log.info("📡 Tier 2 — Harvest Melbet + recherche web Pinnacle...")
         xbet_matches = fetch_matches()
         if not xbet_matches:
             msg = "📡 PREDATOR v8.8: 0 matchs trouvés — Melbet inaccessible."
             if gemini_quota_dead():
-                msg += "\n⚠️ Quota Gemini journalier épuisé — fallback Gemini indisponible (reset ~07:00 UTC)."
+                msg += "\n⚠️ Quota IA journalier épuisé (Groq) — fallback recherche web indisponible."
             log.warning(msg)
             _telegram(msg)
             if sb:
@@ -1258,7 +1258,7 @@ def run():
                 raise SystemExit(1)
             return
 
-        log.info("%d matchs Melbet | Requête Pinnacle → Gemini Search...", len(xbet_matches))
+        log.info("%d matchs Melbet | Requête Pinnacle → recherche web...", len(xbet_matches))
         pinnacle_map = fetch_pinnacle_prices(xbet_matches)
 
         MAX_ORACLE = 3
@@ -1271,7 +1271,7 @@ def run():
             elif oracle_used < MAX_ORACLE:
                 oracle_used += 1  # count the attempt, not just successes — else a run of
                                   # failures never trips MAX_ORACLE and every remaining
-                                  # match falls through to an uncapped Gemini call
+                                  # match falls through to an uncapped oracle call
                 sport = m.get("sport", "soccer")
                 pin_price, pin_team = get_pinnacle_price(
                     m["match"], sport=sport, league=m.get("league", "")
@@ -1289,20 +1289,20 @@ def run():
                 log.warning("⚠️ %s ignoré : Échec prix Sharp", m["match"])
 
         if matches:
-            sharp_source = "Gemini/Pinnacle"
+            sharp_source = "Search/Pinnacle"
             log.info("✅ Tier 2 OK — %d matchs avec prix Sharp", len(matches))
 
-    # ── Tier 3: Gemini Estimateur — fallback direct si Tier 1 vide ───
+    # ── Tier 3: Estimateur IA — fallback direct si Tier 1 vide ───
     if not matches:
-        # MMA always calls Gemini above — wait before flooding again
+        # MMA a déjà appelé la recherche web au-dessus — petite pause anti rate-limit
         time.sleep(20)
-        log.info("🧠 Tier 3 — Gemini Estimateur (connaissance interne, marge 2%%)...")
+        log.info("🧠 Tier 3 — Estimateur IA (connaissance interne, marge 2%%)...")
         if not xbet_matches:
             xbet_matches = fetch_matches()
         if not xbet_matches:
             msg = "📡 PREDATOR v8.8: 0 matchs — toutes sources épuisées."
             if gemini_quota_dead():
-                msg += "\n⚠️ Quota Gemini journalier épuisé (reset ~07:00 UTC)."
+                msg += "\n⚠️ Quota IA journalier épuisé (Groq)."
             log.warning(msg)
             _telegram(msg)
             if sb:
@@ -1318,13 +1318,13 @@ def run():
                 m["_estimated"]    = True
                 matches.append(m)
         if matches:
-            sharp_source = "Gemini/Estimateur"
+            sharp_source = "AI/Estimateur"
             log.info("✅ Tier 3 OK — %d matchs estimés (non-arbitrage, value)", len(matches))
 
     if not matches:
         msg = "📡 PREDATOR v8.8: 0 signaux — toutes sources épuisées."
         if gemini_quota_dead():
-            msg += "\n⚠️ Quota Gemini journalier épuisé (reset ~07:00 UTC)."
+            msg += "\n⚠️ Quota IA journalier épuisé (Groq)."
         log.warning(msg)
         _telegram(msg)
         if sb:

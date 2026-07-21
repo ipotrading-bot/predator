@@ -1,9 +1,14 @@
 """
 core/harvester.py — PAIM v7.5 — Guerrilla Mode
-Soft source : 1XBet direct feed (JSON) → Gemini fallback
-Sharp source: Gemini 2.0 Flash + Google Search → Pinnacle prices
+Soft source : 1XBet direct feed (JSON) → recherche web fallback
+Sharp source: recherche web (Groq/Tavily, core/ai_search.py) → Pinnacle prices
 Sports: 1=Soccer, 3=Tennis, 4=Basketball
 All timestamps : UTC/GMT.
+
+2026-07-21 : Gemini supprimé partout — grounding gratuit mort (limit: 0
+sans facturation prépayée Gemini, vérifié sur 4 clés/projets). Remplacé
+par core/ai_search.py : groq/compound-mini (recherche web intégrée) +
+fallback Tavily/llama-3.3-70b. Les GEMINI_API_KEY* ne sont plus lus.
 """
 import logging
 import os
@@ -14,7 +19,7 @@ import random
 import requests
 from datetime import datetime, timedelta, timezone
 
-from core.http_utils import post_with_retry, post_gemini
+from core.ai_search import ai_available, ai_complete, ai_search_complete
 from core.paim_engine import SPORT_LABELS, strict_team_match
 
 # ── UTC sub-logger (inherits handler from PREDATOR root) ─────────────
@@ -64,30 +69,6 @@ HEADERS = {
     "Accept-Language": "en-US,en;q=0.9",
     "Referer": "https://1xbet.com/en/line/",
 }
-GEMINI_URL       = "https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash-lite:generateContent"
-GEMINI_FLASH_URL = "https://generativelanguage.googleapis.com/v1beta/models/gemini-2.0-flash:generateContent"
-# 2026-07-11: gemini-2.5-flash-lite itself returned 404 "no longer available
-# to new users" on the GEMINI_API_KEY_ALT project (a genuinely separate,
-# recently created Cloud project — same fix pattern as GEMINI_API_KEY_AUDIT,
-# which DOES have 2.5-flash-lite access). Free-tier model availability is
-# apparently being rolled back per-project on a rolling/inconsistent
-# schedule, not a fixed generation cutoff — so instead of hardcoding one
-# guess per key (which keeps breaking as Google changes its mind), MMA/
-# eSports/AltSports now try a list via core.http_utils.post_gemini and
-# keep whichever model actually works on that project.
-#
-# gemini-3.1-flash-lite tried FIRST (added same day, after live confirmation
-# that gemini-3.5-flash 429s RESOURCE_EXHAUSTED on every attempt on this
-# project — 3.5-flash is Google's current frontier/"most intelligent" flash
-# model per ai.google.dev/gemini-api/docs/models, not the cheap high-volume
-# one; historically the "-lite" variant in each generation carries the most
-# generous free quota, and 3.1-flash-lite is the current-generation stable
-# lite model (unlike 2.0-flash/2.5-flash-lite, both legacy generations
-# Google is visibly sunsetting free access to for newer projects). Full
-# fallback chain kept — core.http_utils.post_gemini only spends ONE attempt
-# per non-last model now, so trying every candidate here is cheap.
-GEMINI_ALT_MODELS = ["gemini-3.1-flash-lite", "gemini-3.5-flash", "gemini-2.5-flash-lite", "gemini-2.0-flash"]
-
 _SPORT_PROMPTS = {
     "soccer":     "top European football/soccer",
     "tennis":     "ATP or WTA tennis (Roland Garros, Italian Open, or similar)",
@@ -227,9 +208,8 @@ def _fetch_multi_book(sport_id: int) -> list:
 
 
 def _fetch_from_gemini(sport_id):
-    """Gemini + Google Search fallback — finds REAL upcoming matches. Returns list or []."""
-    api_key = os.environ.get("GEMINI_API_KEY")
-    if not api_key:
+    """Recherche web fallback — finds REAL upcoming matches. Returns list or []."""
+    if not ai_available():
         return []
 
     sport_name = SPORT_IDS.get(sport_id, "sport")
@@ -241,7 +221,7 @@ def _fetch_from_gemini(sport_id):
 
     draw_field = ',"X":3.40' if is_soccer else ',"X":0'
     prompt = (
-        f"Today is {today}. Use Google Search to find 6 REAL {sport_desc} matches "
+        f"Today is {today}. Search the web to find 6 REAL {sport_desc} matches "
         f"actually scheduled today or in the next 48 hours. "
         f"DO NOT invent or hallucinate matches — only include confirmed scheduled games. "
         f"For each real match found, estimate realistic 1XBet decimal odds. "
@@ -252,20 +232,16 @@ def _fetch_from_gemini(sport_id):
         f'"odds_1xbet":{{"1":2.10{draw_field},"2":3.20}}}}]'
     )
 
-    payload = {
-        "contents": [{"role": "user", "parts": [{"text": prompt}]}],
-        "tools": [{"google_search": {}}],
-        "generationConfig": {"temperature": 0.1, "maxOutputTokens": 1024},
-    }
-
-    r = post_with_retry(f"{GEMINI_FLASH_URL}?key={api_key}", payload, timeout=45,
-                         rate_limit_wait=(40, 20), label=f"Gemini/{sport_name}")
-    if r is None or r.status_code != 200:
+    text = ai_search_complete(
+        prompt,
+        queries=[f"{sport_desc} matches today schedule"],
+        label=f"Harvest/{sport_name}",
+        max_tokens=1024, temperature=0.1, timeout=60,
+    )
+    if not text:
         return []
 
     try:
-        parts = r.json().get("candidates", [{}])[0].get("content", {}).get("parts", [])
-        text = next((p["text"] for p in reversed(parts) if p.get("text", "").strip()), "")
         text = re.sub(r'```(?:json)?|```', '', text)
         m = re.search(r'\[[\s\S]*\]', text)
         if not m:
@@ -301,15 +277,15 @@ def _fetch_from_gemini(sport_id):
             except Exception:
                 continue
 
-        log.info("Gemini %s: %d valid matches", sport_name, len(matches))
+        log.info("Harvest/%s: %d valid matches", sport_name, len(matches))
         return matches
 
     except Exception as e:
-        log.error("Gemini %s exception: %s", sport_name, e)
+        log.error("Harvest/%s exception: %s", sport_name, e)
         return []
 
 
-_GEMINI_INTER_SPORT_SLEEP = 20  # seconds — avoids 429 burst when all sports fallback to Gemini
+_GEMINI_INTER_SPORT_SLEEP = 5  # seconds — évite un burst rate-limit Groq quand tous les sports tombent en fallback
 
 def fetch_matches():
     """Fetch matches for all configured sports, line-shopping the best
@@ -344,13 +320,12 @@ def _fuzzy_match_name(ret_name: str, orig_names: list) -> str | None:
 
 def fetch_pinnacle_prices(matches: list) -> dict:
     """
-    Sharp source — Gemini 2.0 Flash + Google Search → Pinnacle decimal odds.
+    Sharp source — recherche web (Groq/Tavily) → Pinnacle decimal odds.
     Falls back to Betfair Exchange per match when Pinnacle line is unavailable.
     Uses fuzzy team matching to handle 1XBet abbreviation vs Pinnacle full name divergence.
     Returns {match_name: {"1": float, "X": float, "2": float}}.
     """
-    api_key = os.environ.get("GEMINI_API_KEY")
-    if not api_key or not matches:
+    if not ai_available() or not matches:
         return {}
 
     from datetime import date
@@ -363,7 +338,7 @@ def fetch_pinnacle_prices(matches: list) -> dict:
     )
 
     prompt = (
-        f"Today is {today}. Use Google Search to find current decimal odds for each match below.\n"
+        f"Today is {today}. Search the web to find current decimal odds for each match below.\n"
         f"Search PINNACLE SPORTS first. If Pinnacle has no line for a match, search BETFAIR EXCHANGE.\n"
         f"Add a 'source' field: 'Pinnacle' or 'Betfair'.\n\n"
         f"Matches (name [league, sport]):\n{match_list}\n\n"
@@ -372,32 +347,27 @@ def fetch_pinnacle_prices(matches: list) -> dict:
         f"X=0 for non-soccer. Omit matches with no odds found on either book."
     )
 
-    payload = {
-        "contents": [{"role": "user", "parts": [{"text": prompt}]}],
-        "tools": [{"google_search": {}}],
-        "generationConfig": {"temperature": 0.1, "maxOutputTokens": 2048},
-    }
-
-    r = post_with_retry(f"{GEMINI_FLASH_URL}?key={api_key}", payload, timeout=60,
-                         rate_limit_wait=(40, 20), label="Pinnacle/Gemini")
-
-    if r is None or r.status_code != 200:
-        if r is not None:
-            log.error("Pinnacle/Gemini HTTP %d: %s", r.status_code, r.text[:200])
+    # Budget Tavily : 4 requêtes max sur les premiers matchs — compound-mini
+    # (étage 1) fait sa propre recherche et n'en consomme aucune.
+    text = ai_search_complete(
+        prompt,
+        queries=[f"Pinnacle odds {n}" for n in names[:4]],
+        label="Pinnacle/Search",
+        max_tokens=2048, temperature=0.1, timeout=90,
+    )
+    if not text:
         return {}
 
     try:
-        parts = r.json().get("candidates", [{}])[0].get("content", {}).get("parts", [])
-        text = next((p["text"] for p in reversed(parts) if p.get("text", "").strip()), "")
         text = re.sub(r'```(?:json)?|```', '', text).strip()
         m_arr = re.search(r'\[[\s\S]*\]', text)
         if not m_arr:
-            log.warning("Pinnacle/Gemini: no JSON array in response")
+            log.warning("Pinnacle/Search: no JSON array in response")
             return {}
 
         raw = json.loads(m_arr.group())
     except Exception as e:
-        log.error("Pinnacle/Gemini parse exception: %s", e)
+        log.error("Pinnacle/Search parse exception: %s", e)
         return {}
 
     names_set = set(names)
@@ -411,7 +381,7 @@ def fetch_pinnacle_prices(matches: list) -> dict:
         # Exact match first, then fuzzy fallback
         matched = ret_name if ret_name in names_set else _fuzzy_match_name(ret_name, names)
         if not matched:
-            log.debug("Pinnacle/Gemini: no local match for '%s'", ret_name)
+            log.debug("Pinnacle/Search: no local match for '%s'", ret_name)
             continue
 
         odds = {
@@ -426,21 +396,20 @@ def fetch_pinnacle_prices(matches: list) -> dict:
 
         result[matched] = odds
 
-    log.info("Pinnacle/Gemini: %d/%d prices received", len(result), len(names))
+    log.info("Pinnacle/Search: %d/%d prices received", len(result), len(names))
     return result
 
 
 def fetch_estimated_prices(matches: list) -> dict:
     """
-    Tier 3 fallback — Gemini internal knowledge (NO web search).
-    Asks Gemini to estimate fair decimal odds from training data.
-    Applies a 2% conservative margin on all estimated prices.
+    Tier 3 fallback — connaissance interne du LLM (NO web search).
+    Asks the model to estimate fair decimal odds from training data.
+    Applies a conservative margin on all estimated prices.
     Always returns prices (no 'introuvable') — useful when Odds API quota is exhausted
-    and Gemini Search fails to find real Pinnacle lines.
+    and web search fails to find real Pinnacle lines.
     Returns {match_name: {"1": float, "X": float, "2": float}}.
     """
-    api_key = os.environ.get("GEMINI_API_KEY")
-    if not api_key or not matches:
+    if not ai_available() or not matches:
         return {}
 
     from datetime import date
@@ -466,30 +435,20 @@ def fetch_estimated_prices(matches: list) -> dict:
         f"X=0 for tennis/basketball. Include ALL matches from the list."
     )
 
-    payload = {
-        "contents": [{"role": "user", "parts": [{"text": prompt}]}],
-        "generationConfig": {"temperature": 0.2, "maxOutputTokens": 2048},
-    }
-
-    r = post_with_retry(f"{GEMINI_URL}?key={api_key}", payload, timeout=45,
-                         rate_limit_wait=(40, 20), label="Estimator/Gemini")
-
-    if r is None or r.status_code != 200:
-        if r is not None:
-            log.error("Estimator/Gemini HTTP %d", r.status_code)
+    text = ai_complete(prompt, label="Estimator/AI",
+                       max_tokens=2048, temperature=0.2, timeout=60)
+    if not text:
         return {}
 
     try:
-        parts = r.json().get("candidates", [{}])[0].get("content", {}).get("parts", [])
-        text = next((p["text"] for p in reversed(parts) if p.get("text", "").strip()), "")
         text = re.sub(r'```(?:json)?|```', '', text).strip()
         m_arr = re.search(r'\[[\s\S]*\]', text)
         if not m_arr:
-            log.warning("Estimator/Gemini: no JSON array in response")
+            log.warning("Estimator/AI: no JSON array in response")
             return {}
         raw = json.loads(m_arr.group())
     except Exception as e:
-        log.error("Estimator/Gemini parse error: %s", e)
+        log.error("Estimator/AI parse error: %s", e)
         return {}
 
     names_set = set(names)
@@ -511,29 +470,25 @@ def fetch_estimated_prices(matches: list) -> dict:
         }
         result[matched] = odds
 
-    log.info("Estimator/Gemini: %d/%d estimated prices", len(result), len(names))
+    log.info("Estimator/AI: %d/%d estimated prices", len(result), len(names))
     return result
 
 
 def fetch_mma_events() -> list[dict]:
     """
-    Gemini 2.0 Flash + Google Search → upcoming UFC/MMA fights with BOTH
+    Recherche web (Groq/Tavily) → upcoming UFC/MMA fights with BOTH
     Melbet (soft) and Pinnacle (sharp) decimal ML odds.
     Returns events in the standard engine format with _soft_source="Melbet".
-    No OddsAPI calls — fully Gemini-based to avoid quota usage.
+    No OddsAPI calls — fully search-based to avoid quota usage.
     """
-    # GEMINI_API_KEY_ALT isolates this from the main pipeline's per-match
-    # fetch_pinnacle_prices() calls, which burn GEMINI_API_KEY's quota first
-    # in every engine/deep_scan/golden_hour run and starve this fetch.
-    api_key = os.environ.get("GEMINI_API_KEY_ALT") or os.environ.get("GEMINI_API_KEY")
-    if not api_key:
+    if not ai_available():
         return []
 
     from datetime import date
     today = date.today().isoformat()
 
     prompt = (
-        f"Today is {today}. Use Google Search to find all upcoming UFC or major MMA fights "
+        f"Today is {today}. Search the web to find all upcoming UFC or major MMA fights "
         f"scheduled in the next 7 days.\n\n"
         f"For each fight, search for:\n"
         f"1. Current Melbet decimal moneyline odds (no draw — only winner odds)\n"
@@ -547,31 +502,25 @@ def fetch_mma_events() -> list[dict]:
         f"Only include fights with confirmed lines on BOTH Melbet AND Pinnacle."
     )
 
-    payload = {
-        "contents": [{"role": "user", "parts": [{"text": prompt}]}],
-        "tools": [{"google_search": {}}],
-        "generationConfig": {"temperature": 0.1, "maxOutputTokens": 2048},
-    }
-
-    r = post_gemini(GEMINI_ALT_MODELS, api_key, payload, timeout=60,
-                     rate_limit_wait=(40, 20), label="MMA/Gemini")
-
-    if r is None or r.status_code != 200:
-        if r is not None:
-            log.error("MMA/Gemini HTTP %d: %s", r.status_code, r.text[:500])
+    text = ai_search_complete(
+        prompt,
+        queries=["UFC upcoming fights this week odds moneyline",
+                 "UFC next event fight card Pinnacle odds"],
+        label="MMA/Search",
+        max_tokens=2048, temperature=0.1, timeout=90,
+    )
+    if not text:
         return []
 
     try:
-        parts = r.json().get("candidates", [{}])[0].get("content", {}).get("parts", [])
-        text = next((p["text"] for p in reversed(parts) if p.get("text", "").strip()), "")
         text = re.sub(r'```(?:json)?|```', '', text).strip()
         m_arr = re.search(r'\[[\s\S]*\]', text)
         if not m_arr:
-            log.warning("MMA/Gemini: no JSON array in response")
+            log.warning("MMA/Search: no JSON array in response")
             return []
         raw = json.loads(m_arr.group())
     except Exception as e:
-        log.error("MMA/Gemini parse error: %s", e)
+        log.error("MMA/Search parse error: %s", e)
         return []
 
     events = []
@@ -603,25 +552,24 @@ def fetch_mma_events() -> list[dict]:
         except Exception:
             continue
 
-    log.info("MMA/Gemini: %d events found (Melbet vs Pinnacle)", len(events))
+    log.info("MMA/Search: %d events found (Melbet vs Pinnacle)", len(events))
     return events
 
 
 def fetch_esports_events() -> list[dict]:
     """
-    Gemini 2.0 Flash + Google Search → upcoming eSports matches with BOTH
+    Recherche web (Groq/Tavily) → upcoming eSports matches with BOTH
     1XBet (soft) and Pinnacle (sharp) decimal ML odds.
     Cibles : CS2, League of Legends, Valorant, DOTA2 — tournois top tier.
     """
-    api_key = os.environ.get("GEMINI_API_KEY_ALT") or os.environ.get("GEMINI_API_KEY")
-    if not api_key:
+    if not ai_available():
         return []
 
     from datetime import date
     today = date.today().isoformat()
 
     prompt = (
-        f"Today is {today}. Use Google Search to find upcoming eSports matches "
+        f"Today is {today}. Search the web to find upcoming eSports matches "
         f"in CS2, League of Legends, Valorant, or DOTA2 scheduled in the next 3 days. "
         f"Focus on top-tier tournaments (ESL Pro League, BLAST, LCS, LEC, VCT, The International).\n\n"
         f"For each match, search for:\n"
@@ -636,31 +584,24 @@ def fetch_esports_events() -> list[dict]:
         f"Only include matches with confirmed lines on BOTH 1XBet AND Pinnacle."
     )
 
-    payload = {
-        "contents": [{"role": "user", "parts": [{"text": prompt}]}],
-        "tools": [{"google_search": {}}],
-        "generationConfig": {"temperature": 0.1, "maxOutputTokens": 2048},
-    }
-
-    r = post_gemini(GEMINI_ALT_MODELS, api_key, payload, timeout=60,
-                     rate_limit_wait=(40, 20), label="eSports/Gemini")
-
-    if r is None or r.status_code != 200:
-        if r is not None:
-            log.error("eSports/Gemini HTTP %d: %s", r.status_code, r.text[:500])
+    text = ai_search_complete(
+        prompt,
+        queries=["CS2 LoL Valorant Dota2 upcoming matches betting odds"],
+        label="eSports/Search",
+        max_tokens=2048, temperature=0.1, timeout=90,
+    )
+    if not text:
         return []
 
     try:
-        parts = r.json().get("candidates", [{}])[0].get("content", {}).get("parts", [])
-        text = next((p["text"] for p in reversed(parts) if p.get("text", "").strip()), "")
         text = re.sub(r'```(?:json)?|```', '', text).strip()
         m_arr = re.search(r'\[[\s\S]*\]', text)
         if not m_arr:
-            log.warning("eSports/Gemini: aucun tableau JSON dans la réponse")
+            log.warning("eSports/Search: aucun tableau JSON dans la réponse")
             return []
         raw = json.loads(m_arr.group())
     except Exception as e:
-        log.error("eSports/Gemini parse error: %s", e)
+        log.error("eSports/Search parse error: %s", e)
         return []
 
     events = []
@@ -692,25 +633,24 @@ def fetch_esports_events() -> list[dict]:
         except Exception:
             continue
 
-    log.info("eSports/Gemini: %d matchs trouvés", len(events))
+    log.info("eSports/Search: %d matchs trouvés", len(events))
     return events
 
 
 def fetch_alternative_sports_batch() -> list[dict]:
     """
-    UN SEUL appel Gemini Flash + Google Search pour Table Tennis + Volleyball + Handball.
+    UN SEUL appel recherche web pour Table Tennis + Volleyball + Handball.
     Groupé en une seule requête pour éviter les cascades de rate-limit 429.
     Retourne les événements au format standard moteur.
     """
-    api_key = os.environ.get("GEMINI_API_KEY_ALT") or os.environ.get("GEMINI_API_KEY")
-    if not api_key:
+    if not ai_available():
         return []
 
     from datetime import date
     today = date.today().isoformat()
 
     prompt = (
-        f"Today is {today}. Use Google Search to find upcoming matches in the next 3 days "
+        f"Today is {today}. Search the web to find upcoming matches in the next 3 days "
         f"for these 3 sports: Table Tennis, Volleyball (men/women), Handball.\n\n"
         f"For each match find current 1XBet AND Pinnacle decimal moneyline odds.\n"
         f"Target tournaments:\n"
@@ -726,31 +666,24 @@ def fetch_alternative_sports_batch() -> list[dict]:
         f"X=0 always (no draw in these sports). Only include matches with confirmed lines on BOTH books."
     )
 
-    payload = {
-        "contents": [{"role": "user", "parts": [{"text": prompt}]}],
-        "tools": [{"google_search": {}}],
-        "generationConfig": {"temperature": 0.1, "maxOutputTokens": 3000},
-    }
-
-    r = post_gemini(GEMINI_ALT_MODELS, api_key, payload, timeout=60,
-                     rate_limit_wait=(40, 20), label="AltSports/Gemini")
-
-    if r is None or r.status_code != 200:
-        if r is not None:
-            log.error("AltSports/Gemini HTTP %d: %s", r.status_code, r.text[:500])
+    text = ai_search_complete(
+        prompt,
+        queries=["table tennis volleyball handball matches today betting odds"],
+        label="AltSports/Search",
+        max_tokens=3000, temperature=0.1, timeout=90,
+    )
+    if not text:
         return []
 
     try:
-        parts = r.json().get("candidates", [{}])[0].get("content", {}).get("parts", [])
-        text = next((p["text"] for p in reversed(parts) if p.get("text", "").strip()), "")
         text = re.sub(r'```(?:json)?|```', '', text).strip()
         m_arr = re.search(r'\[[\s\S]*\]', text)
         if not m_arr:
-            log.warning("AltSports/Gemini: aucun tableau JSON")
+            log.warning("AltSports/Search: aucun tableau JSON")
             return []
         raw = json.loads(m_arr.group())
     except Exception as e:
-        log.error("AltSports/Gemini parse error: %s", e)
+        log.error("AltSports/Search parse error: %s", e)
         return []
 
     _SPORT_IDS = {"tabletennis": 14, "volleyball": 13, "handball": 15}
@@ -787,7 +720,7 @@ def fetch_alternative_sports_batch() -> list[dict]:
         except Exception:
             continue
 
-    log.info("AltSports/Gemini: %d matchs — %s",
+    log.info("AltSports/Search: %d matchs — %s",
              len(events), " | ".join(f"{s}={n}" for s, n in counts.items()))
     return events
 

@@ -5,7 +5,6 @@ NOT imported by the engine — standalone diagnostic tool only.
 """
 import os
 import requests
-import google.generativeai as genai
 from dotenv import load_dotenv
 
 from core.db import get_db
@@ -24,19 +23,42 @@ def validate_all_systems():
         if res.status_code == 200 and res.json().get("Value"):
             print(f"OK  HARVESTER : 1XBet CONNECTE ({len(res.json()['Value'])} matchs bruts)")
         else:
-            print(f"WARN HARVESTER : 1XBet HTTP {res.status_code} (Gemini fallback actif)")
+            print(f"WARN HARVESTER : 1XBet HTTP {res.status_code} (fallback recherche web actif)")
     except Exception:
-        print("WARN HARVESTER : 1XBet inaccessible (Gemini fallback actif)")
+        print("WARN HARVESTER : 1XBet inaccessible (fallback recherche web actif)")
 
-    # 2. GEMINI
+    # 2. IA (Groq + Tavily — remplace Gemini depuis 2026-07-21)
     try:
-        genai.configure(api_key=os.environ.get("GEMINI_API_KEY"))
-        model = genai.GenerativeModel("gemini-2.0-flash")
-        response = model.generate_content("Test ping")
-        if response:
-            print("OK  GEMINI AI : OPERATIONNEL")
+        groq_key = os.environ.get("GROQ_API_KEY")
+        if not groq_key:
+            raise RuntimeError("GROQ_API_KEY not set")
+        r = requests.post(
+            "https://api.groq.com/openai/v1/chat/completions",
+            headers={"Authorization": f"Bearer {groq_key}"},
+            json={"model": "llama-3.3-70b-versatile",
+                  "messages": [{"role": "user", "content": "ping"}],
+                  "max_tokens": 5},
+            timeout=15,
+        )
+        if r.status_code == 200:
+            print("OK  GROQ AI : OPERATIONNEL")
+        else:
+            print(f"ERR GROQ AI : HTTP {r.status_code}")
     except Exception as e:
-        print(f"ERR GEMINI AI : {e}")
+        print(f"ERR GROQ AI : {e}")
+
+    try:
+        tavily_key = os.environ.get("TAVILY_API_KEY")
+        if not tavily_key:
+            print("WARN TAVILY : TAVILY_API_KEY not set (fallback recherche désactivé)")
+        else:
+            r = requests.post("https://api.tavily.com/search",
+                              json={"api_key": tavily_key, "query": "ping", "max_results": 1},
+                              timeout=15)
+            print("OK  TAVILY : OPERATIONNEL" if r.status_code == 200
+                  else f"ERR TAVILY : HTTP {r.status_code}")
+    except Exception as e:
+        print(f"ERR TAVILY : {e}")
 
     # 3. SUPABASE
     try:

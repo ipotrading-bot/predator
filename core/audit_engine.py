@@ -5,7 +5,7 @@ Runs every 6h via GitHub Actions (run_audit.py entry point).
 Pipeline for each signal whose match kicked off > SETTLEMENT_GRACE_H hours ago
 (or, for legacy rows with no match_time, scanned > AUDIT_LAG_H hours ago) with
 status='active':
-  1. Settlement pass — Gemini Search fetches real match score → status='settled'
+  1. Settlement pass — web search (Groq/Tavily) fetches real match score → status='settled'
      outcome = WIN | LOSS | PUSH | UNKNOWN
   2. CLV pass (if settlement failed) — fetch current Pinnacle closing line
      → status='closed' (real closing line) or 'expired' (proxy original price)
@@ -20,7 +20,7 @@ from datetime import datetime, timedelta, timezone
 from dotenv import load_dotenv
 
 from core.db import get_db, log_to_ledger, replace_signal_row, MissingCredentialsError
-from core.http_utils import gemini_quota_dead
+from core.ai_search import ai_dead as gemini_quota_dead
 from core.learning_layer import compute_and_save as _learn
 from core.oracle import get_pinnacle_price
 from core.paim_engine import resolve_selection_side
@@ -40,12 +40,12 @@ log.propagate = False
 
 AUDIT_LAG_H         = int(os.environ.get("AUDIT_LAG_H", 3))          # legacy fallback: scanned_at age, only used when match_time is missing
 SETTLEMENT_GRACE_H  = int(os.environ.get("SETTLEMENT_GRACE_H", 4))   # hours after match_time before we even attempt audit
-ORACLE_BUDGET = 30     # Max Gemini oracle calls per audit run
-SETTLE_BUDGET = 25     # Max Gemini settlement calls per audit run
+ORACLE_BUDGET = 30     # Max oracle (web search) calls per audit run
+SETTLE_BUDGET = 25     # Max settlement (web search) calls per audit run
 
 # Task 3 — real closing-line capture (run_closing_line.py, hourly cadence)
 CLOSING_LINE_WINDOW_MIN = 5    # minutes before kickoff a price counts as "the closing line"
-CLOSING_LINE_BUDGET     = 30   # Max Gemini oracle calls per closing-line run
+CLOSING_LINE_BUDGET     = 30   # Max oracle (web search) calls per closing-line run
 
 _AUDIT_COLS = {"closing_line", "clv_pct", "closed_at"}
 _CLOSING_LINE_COLS = {"closing_pinnacle_price", "clv_pct_real"}
@@ -126,11 +126,11 @@ def audit_one(sb, sig: dict, oracle_calls: list, settle_calls: list, now: dateti
             return "settled"
         log.info("No score yet for %s — falling back to CLV audit", match)
 
-    # Both passes below are Gemini-backed. Once the DAILY quota is dead,
-    # Pass 1 can never settle and Pass 2 can never fetch a closing line —
-    # proceeding would stamp this signal 'expired' (terminal, never
-    # retried) with a garbage proxy CLV. Leave it 'active' instead so the
-    # next 6h audit run — after the quota reset — settles it for real.
+    # Both passes below are AI-search-backed (Groq/Tavily, core/ai_search.py).
+    # Once the Groq DAILY quota is dead, Pass 1 can never settle and Pass 2
+    # can never fetch a closing line — proceeding would stamp this signal
+    # 'expired' (terminal, never retried) with a garbage proxy CLV. Leave it
+    # 'active' instead so the next 6h audit run settles it for real.
     if gemini_quota_dead():
         return "skipped"
 
@@ -140,10 +140,7 @@ def audit_one(sb, sig: dict, oracle_calls: list, settle_calls: list, now: dateti
     if oracle_calls[0] > 0:
         oracle_calls[0] -= 1
         try:
-            # Same dedicated-quota reasoning as settlement.py's fetch_match_result —
-            # this is audit's own CLV fallback, keep it off the scan-starved shared key.
-            audit_key = os.environ.get("GEMINI_API_KEY_AUDIT") or os.environ.get("GEMINI_API_KEY")
-            price, _ = get_pinnacle_price(match, sport=sport, league=league, api_key=audit_key)
+            price, _ = get_pinnacle_price(match, sport=sport, league=league)
             if price and price > 1.01:
                 closing_price = price
         except Exception as e:
@@ -236,7 +233,7 @@ def capture_closing_lines(sb, budget: int = CLOSING_LINE_BUDGET) -> int:
         if (sig.get("market_key") or "") != "h2h":
             continue
         if remaining[0] <= 0:
-            log.warning("CLOSING LINE — Gemini oracle budget exhausted, %d signal(s) left for next run",
+            log.warning("CLOSING LINE — oracle budget exhausted, %d signal(s) left for next run",
                         len(candidates) - captured)
             break
         remaining[0] -= 1
@@ -320,7 +317,7 @@ def run():
     for i, sig in enumerate(pending):
         if gemini_quota_dead():
             counts["skipped"] += len(pending) - i
-            log.warning("Gemini daily quota exhausted — %d signals left active "
+            log.warning("Quota IA (Groq) épuisé — %d signals left active "
                         "for the next audit run (post quota reset ~07:00 UTC)",
                         len(pending) - i)
             break

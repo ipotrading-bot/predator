@@ -574,7 +574,7 @@ def favicon():
 
 @app.route("/api/health")
 def health():
-    return jsonify({"status": "ok", "version": "8.8", "source": "harvester+gemini"})
+    return jsonify({"status": "ok", "version": "8.8", "source": "harvester+ai_search"})
 
 
 _SCAN_REQUEST_COOLDOWN_S = 120  # golden_hour.yml picks this up on its next run (every 30 min)

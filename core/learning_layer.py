@@ -1,7 +1,7 @@
 """
 core/learning_layer.py — PAIM v9.5 — Adaptive Thresholds (Bayesian Learning)
 Reads last 50 closed signals per sport. Adjusts MIN_EDGE thresholds based on
-the REAL win-rate (outcome column: WIN/LOSS from settle_signal()'s Gemini
+the REAL win-rate (outcome column: WIN/LOSS from settle_signal()'s web
 score lookup) — never on clv_final. clv_final, for settle_signal()-produced
 rows, is a re-derivation of the entry edge from the exact same scan-time
 prices used to compute edge_pct — it is ~always >= 0 because MIN_EDGE
@@ -59,7 +59,7 @@ SPORT_DEFAULTS: dict[str, float] = {
     "baseball":    2.0,   # MLB + KBO + NPB — lag timezone documenté
     "rugbyleague": 2.0,   # NRL
     "aussierules": 2.0,   # AFL
-    # Sports Gemini-only (core/harvester.py fetch_mma_events/fetch_esports_events/
+    # Sports recherche-web-only (core/harvester.py fetch_mma_events/fetch_esports_events/
     # fetch_alternative_sports_batch) — pas de source OddsAPI dédiée, moins de
     # données de calibration. Absents d'ici jusqu'ici, ils étaient scannés et
     # génèraient des signaux sans jamais participer à l'apprentissage adaptatif
