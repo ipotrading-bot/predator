@@ -359,6 +359,34 @@ nav:not(.bnav) {
 .sig-mise { font-size: 12px; font-weight: 700; color: var(--yellow); flex-shrink: 0; font-family: var(--font-data); }
 .sig-cta  { font-size: 11px; color: var(--t3); flex-shrink: 0; }
 .sig-srcs  { display: flex; gap: 2px; align-items: center; flex-shrink: 0; margin-left: auto; }
+
+/* ── Match card — N marchés d'un même match sous un seul en-tête ───── */
+/* Réutilise .sig pour le châssis (bordure gauche colorée, rayon, marge) ;
+   seul le comportement de clic change : c'est la ligne .leg qui ouvre la
+   modale, plus la carte entière. */
+.mcard { cursor: default; }
+.mcard:hover  { background: var(--bg1); border-color: var(--bd); }
+.mcard:active { transform: none; }
+.mcard-n {
+  font-size: 9px; font-weight: 700; font-family: var(--font-data);
+  padding: 2px 7px; border-radius: 100px; flex-shrink: 0;
+  color: var(--t3); border: 1px solid var(--bd2); background: transparent;
+}
+.leg {
+  padding: 7px 0; cursor: pointer; border-radius: 4px;
+  transition: background .1s;
+}
+.leg + .leg { border-top: 1px solid var(--bd); }
+.leg:hover  { background: var(--bg2); }
+.leg:active { background: var(--bg2); }
+/* Largeur fixe : les types de marché s'alignent en colonne d'une jambe à
+   l'autre, ce qui rend la lecture verticale d'une carte immédiate. */
+.leg-mkt {
+  font-size: 10px; font-weight: 600; font-family: var(--font-data);
+  color: var(--t3); flex-shrink: 0; width: 42px;
+  overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+  letter-spacing: .3px;
+}
 .src-dot   { font-size: 9px; font-weight: 700; font-family: var(--font-data); width: 14px; height: 14px; border-radius: 3px; display: flex; align-items: center; justify-content: center; background: var(--bg3); color: var(--t3); border: 1px solid var(--bd); letter-spacing: 0; }
 .src-on    { background: rgba(0,232,127,.12); color: var(--green); border-color: rgba(0,232,127,.3); }
 .sig-urgent { font-size: 9px; font-weight: 800; font-family: var(--font-data); padding: 2px 6px; border-radius: 4px; color: var(--red); border: 1px solid rgba(251,78,110,.5); background: rgba(251,78,110,.10); letter-spacing: .5px; flex-shrink: 0; animation: blink-urg 1s step-end infinite; }

@@ -10,6 +10,7 @@ sans facturation prépayée Gemini, vérifié sur 4 clés/projets). Remplacé
 par core/ai_search.py : groq/compound-mini (recherche web intégrée) +
 fallback Tavily/llama-3.3-70b. Les GEMINI_API_KEY* ne sont plus lus.
 """
+import hashlib
 import logging
 import os
 import re
@@ -83,6 +84,21 @@ def _odd(val):
         return f if f > 1.01 else 0.0
     except (TypeError, ValueError):
         return 0.0
+
+
+def _stable_id(prefix: str, home: str, away: str, when: str = "") -> str:
+    """ID déterministe : même match réel → même id à chaque scan.
+
+    L'ancien schéma `f"gemini_{sport}_{i}"` utilisait l'index de position dans
+    le JSON renvoyé par l'IA. L'ordre variant d'un scan à l'autre, le même
+    match changeait d'id à chaque tick — run_engine._save() dédoublonne par
+    (match_id, market_key), son delete ne trouvait donc jamais la version
+    précédente et les copies s'empilaient en base. Pire : deux matchs
+    différents pouvaient se partager un id d'un scan à l'autre, et le delete
+    frappait alors le signal d'un autre match.
+    """
+    raw = f"{prefix}|{home.lower().strip()}|{away.lower().strip()}|{(when or '')[:10]}"
+    return f"ai_{prefix}_" + hashlib.sha1(raw.encode()).hexdigest()[:12]
 
 
 def _parse_xbet_json(data, sport_id):
@@ -263,7 +279,7 @@ def _fetch_from_gemini(sport_id):
 
         raw = json.loads(m.group())
         matches = []
-        for i, ev in enumerate(raw):
+        for ev in raw:
             try:
                 home = str(ev.get("home", "")).strip()
                 away = str(ev.get("away", "")).strip()
@@ -275,7 +291,8 @@ def _fetch_from_gemini(sport_id):
                 if is_soccer and ox <= 1.01:
                     continue
                 matches.append({
-                    "id":         f"gemini_{sport_id}_{i}",
+                    "id":         _stable_id(str(sport_id), home, away,
+                                             ev.get("commence_time", "")),
                     "match":      ev.get("match", f"{home} vs {away}"),
                     "home":       home,
                     "away":       away,
@@ -538,7 +555,7 @@ def fetch_mma_events() -> list[dict]:
         return []
 
     events = []
-    for i, ev in enumerate(raw):
+    for ev in raw:
         try:
             home = str(ev.get("home", "")).strip()
             away = str(ev.get("away", "")).strip()
@@ -551,7 +568,7 @@ def fetch_mma_events() -> list[dict]:
             if xbet_h <= 1.01 or xbet_a <= 1.01 or pin_h <= 1.01 or pin_a <= 1.01:
                 continue
             events.append({
-                "id":            f"mma_gemini_{i}",
+                "id":            _stable_id("mma", home, away, ev.get("commence_time", "")),
                 "match":         ev.get("match", f"{home} vs {away}"),
                 "home":          home,
                 "away":          away,
@@ -619,7 +636,7 @@ def fetch_esports_events() -> list[dict]:
         return []
 
     events = []
-    for i, ev in enumerate(raw):
+    for ev in raw:
         try:
             home = str(ev.get("home", "")).strip()
             away = str(ev.get("away", "")).strip()
@@ -633,7 +650,7 @@ def fetch_esports_events() -> list[dict]:
                 continue
             game = ev.get("game", "eSports")
             events.append({
-                "id":            f"esports_gemini_{i}",
+                "id":            _stable_id("esports", home, away, ev.get("commence_time", "")),
                 "match":         ev.get("match", f"{home} vs {away}"),
                 "home":          home,
                 "away":          away,
@@ -703,7 +720,7 @@ def fetch_alternative_sports_batch() -> list[dict]:
     _SPORT_IDS = {"tabletennis": 14, "volleyball": 13, "handball": 15}
     events = []
     counts: dict[str, int] = {}
-    for i, ev in enumerate(raw):
+    for ev in raw:
         try:
             home = str(ev.get("home", "")).strip()
             away = str(ev.get("away", "")).strip()
@@ -719,7 +736,7 @@ def fetch_alternative_sports_batch() -> list[dict]:
             if xbet_h <= 1.01 or xbet_a <= 1.01 or pin_h <= 1.01 or pin_a <= 1.01:
                 continue
             events.append({
-                "id":            f"{sport}_gemini_{i}",
+                "id":            _stable_id(sport, home, away, ev.get("commence_time", "")),
                 "match":         ev.get("match", f"{home} vs {away}"),
                 "home":          home,
                 "away":          away,

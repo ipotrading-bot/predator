@@ -115,3 +115,43 @@ class TestFetchMultiBook:
         # 1xbet was strictly better on every outcome -> stays sole source.
         assert result[0]["odds_1xbet"] == {"1": 2.20, "X": 3.10, "2": 3.50}
         assert result[0]["_soft_source"] == "1xbet"
+
+
+class TestStableId:
+    """Les matchs issus de la recherche web recevaient un id positionnel
+    (`gemini_{sport}_{i}`). L'ordre du JSON renvoyé par l'IA variant d'un scan
+    à l'autre, le même match changeait d'id à chaque tick — le dédoublonnage
+    par (match_id, market_key) de run_engine._save() ne mordait jamais et les
+    copies s'empilaient — et deux matchs pouvaient se partager un id, auquel
+    cas le delete-then-insert frappait le signal d'un autre match."""
+
+    def test_same_match_same_id_regardless_of_position(self):
+        a = harvester._stable_id("1", "Arsenal", "Chelsea", "2026-07-22T19:00:00Z")
+        b = harvester._stable_id("1", "Arsenal", "Chelsea", "2026-07-22T19:00:00Z")
+        assert a == b
+
+    def test_id_survives_casing_and_whitespace_noise(self):
+        a = harvester._stable_id("1", "Arsenal", "Chelsea")
+        b = harvester._stable_id("1", "  arsenal ", "CHELSEA")
+        assert a == b
+
+    def test_different_matches_never_collide(self):
+        ids = {
+            harvester._stable_id("1", "Arsenal", "Chelsea"),
+            harvester._stable_id("1", "Chelsea", "Arsenal"),      # inversé
+            harvester._stable_id("1", "Bayern", "Dortmund"),
+            harvester._stable_id("4", "Arsenal", "Chelsea"),      # autre sport
+        }
+        assert len(ids) == 4
+
+    def test_same_fixture_on_another_date_is_another_id(self):
+        a = harvester._stable_id("1", "Arsenal", "Chelsea", "2026-07-22T19:00:00Z")
+        b = harvester._stable_id("1", "Arsenal", "Chelsea", "2026-07-29T19:00:00Z")
+        assert a != b
+
+    def test_time_of_day_does_not_split_the_id(self):
+        # Seule la date compte : un léger recalage d'horaire entre deux scans
+        # ne doit pas recréer un match "neuf".
+        a = harvester._stable_id("1", "Arsenal", "Chelsea", "2026-07-22T19:00:00Z")
+        b = harvester._stable_id("1", "Arsenal", "Chelsea", "2026-07-22T20:30:00Z")
+        assert a == b

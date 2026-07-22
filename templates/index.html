@@ -42,6 +42,8 @@
   {% set edges  = signals | map(attribute='edge_pct') | list %}
   <div class="nav-mid">
     <span class="nd">·</span>
+    <span class="ns"><b class="b">{{ groups|length }}</b> matchs</span>
+    <span class="nd">·</span>
     <span class="ns"><b class="b">{{ signals|length }}</b> sig</span>
     <span class="nd">·</span>
     <span class="ns"><b class="g">{{ elites|length }}</b> top</span>
@@ -93,44 +95,58 @@
 
   {% set E = {'basketball':'🏀','hockey':'🏒','americanfootball':'🏈','baseball':'⚾','esports':'🎮','rugby':'🏉','tennis':'🎾','mma':'🥋','volleyball':'🏐','tabletennis':'🏓','handball':'🤾','boxing':'🥊','darts':'🎯','cricket':'🏏','soccer':'⚽'} %}
 
-  {% for s in signals %}
-  {% set sp  = s.sport or 'soccer' %}
+  {% set FLAG_FR = {'HIGH_VALUE':'TOP VALEUR','VALUE':'VALEUR','LOW_VALUE':'FAIBLE','SUSPECT_DATA':'SUSPECT'} %}
+
+  {# Une carte par MATCH, une ligne .leg par marché. Un match produit jusqu'à
+     3 signaux (h2h + totals + spreads) : à plat, ils se lisaient comme des
+     doublons puisque seul le nom du match était visible et que le libellé du
+     marché n'existait que dans la modale. #}
+  {% for g in groups %}
+  {% set sp  = g.sport or 'soccer' %}
   {% set emoji = E.get(sp, '🎯') %}
-  {% set is_high    = s.risk_flag == 'HIGH_VALUE' %}
-  {% set is_value   = s.risk_flag == 'VALUE' %}
-  {% set is_suspect = s.risk_flag == 'SUSPECT_DATA' %}
-  {% set team = s.selection_name if s.selection_name and ' vs ' not in s.selection_name else (s.match.split(' vs ')[0].strip() if ' vs ' in s.match else s.match) %}
-  {% set kelly = s.kelly_pct if s.kelly_pct else 0 %}
-  {% if s.match_time %}
-    {% set mdate = s.match_time[8:10] + '/' + s.match_time[5:7] %}
-    {% set mhour = s.match_time[11:16] %}
+  {% if g.match_time %}
+    {% set mdate = g.match_time[8:10] + '/' + g.match_time[5:7] %}
+    {% set mhour = g.match_time[11:16] %}
   {% endif %}
-  <div class="sig {% if is_high %}high{% elif is_value %}value{% elif is_suspect %}suspect{% endif %}"
-       onclick="openModal({{ loop.index0 }})"
-       data-idx="{{ loop.index0 }}"
+  <div class="sig mcard {% if g.best_quality == 0 %}high{% elif g.best_quality == 1 %}value{% elif g.best_flag == 'SUSPECT_DATA' %}suspect{% endif %}"
        data-sport="{{ sp }}"
-       data-edge="{{ s.edge_pct or 0 }}"
-       data-quality="{{ 0 if is_high else (1 if is_value else 2) }}"
-       data-matchtime="{{ s.match_time or '' }}">
+       data-edge="{{ g.best_edge or 0 }}"
+       data-quality="{{ g.best_quality }}"
+       data-matchtime="{{ g.match_time or '' }}">
     <div class="sig-body">
-      <div class="sig-r1">
+      <div class="sig-r1 mcard-head">
         <div class="sig-r1-top">
           <span class="sig-icon">{{ emoji }}</span>
-          <span class="sig-match">{{ s.match }}<span class="sig-league"> · {{ s.league or '—' }}</span></span>
+          <span class="sig-match">{{ g.match }}<span class="sig-league"> · {{ g.league or '—' }}</span></span>
         </div>
         <div class="sig-r1-bot">
-          {% set flag_fr = {'HIGH_VALUE':'TOP VALEUR','VALUE':'VALEUR','LOW_VALUE':'FAIBLE','SUSPECT_DATA':'SUSPECT'}[s.risk_flag] if s.risk_flag in ['HIGH_VALUE','VALUE','LOW_VALUE','SUSPECT_DATA'] else s.risk_flag %}
-          <span class="sig-badge b-{{ s.risk_flag }}">{{ flag_fr }}</span>
-          {% if s.get('_recent') %}<span class="sig-badge" style="background:rgba(100,100,100,.15);color:var(--t3);border-color:var(--bd)">✓ SETTLÉ</span>{% endif %}
-          {% if s.match_time %}
+          <span class="sig-badge b-{{ g.best_flag }}">{{ FLAG_FR.get(g.best_flag, g.best_flag) }}</span>
+          {% if g.legs|length > 1 %}
+          <span class="mcard-n">{{ g.legs|length }} marchés</span>
+          {% endif %}
+          {% if g.match_time %}
             <span class="sig-date">{{ mdate }} {{ mhour }}</span>
-            <span class="sig-cd" data-ts="{{ s.match_time }}"></span>
+            <span class="sig-cd" data-ts="{{ g.match_time }}"></span>
           {% else %}
             <span class="sig-date" style="color:var(--t3)">heure?</span>
           {% endif %}
         </div>
       </div>
-      <div class="sig-r2">
+
+      {% for leg in g.legs %}
+      {% set s = leg.sig %}
+      {% set is_suspect = s.risk_flag == 'SUSPECT_DATA' %}
+      {% set team = s.selection_name if s.selection_name and ' vs ' not in s.selection_name else (s.match.split(' vs ')[0].strip() if ' vs ' in s.match else s.match) %}
+      {% set kelly = s.kelly_pct if s.kelly_pct else 0 %}
+      {# Type de marché seulement : le libellé complet ("SOC Over 2.5") fait
+         doublon avec la sélection juste à côté ("Over 2.5") et écrasait
+         celle-ci sur écran mobile. Le libellé complet reste dans la modale. #}
+      {% if s.market_key == 'h2h' %}{% set mkt = 'AH0' if sp == 'soccer' else 'ML' %}
+      {% elif s.market_key and s.market_key.startswith('totals') %}{% set mkt = 'TOTAL' %}
+      {% elif s.market_key and s.market_key.startswith('spreads') %}{% set mkt = 'HCAP' %}
+      {% else %}{% set mkt = s.market_key or '—' %}{% endif %}
+      <div class="sig-r2 leg" data-idx="{{ leg.idx }}" onclick="openModal({{ leg.idx }})">
+        <span class="leg-mkt">{{ mkt }}</span>
         <span class="sig-team">{{ team }}</span>
         <span class="sig-odd">@ {{ "%.2f"|format(s.xbet_odd) }}</span>
         <span class="sig-edge {% if is_suspect %}e-sus{% elif s.edge_pct >= 5 %}e-high{% elif s.edge_pct >= 2.5 %}e-mid{% else %}e-low{% endif %}">
@@ -143,6 +159,7 @@
         {% endif %}
         <span class="sig-cta">&#9654;</span>
       </div>
+      {% endfor %}
     </div>
   </div>
   {% endfor %}
@@ -317,9 +334,12 @@ function setSort(s){
 
 function applyFilters(){
   const list   = document.getElementById('signals-list');
-  const allSig = [...list.querySelectorAll('.sig[data-idx]')];
+  // L'unité filtrée/triée est la carte-MATCH (.mcard) ; ses marchés (.leg)
+  // la suivent dans le DOM. Les badges ci-dessous sont match-level : les
+  // injecter dans l'en-tête une seule fois au lieu d'une fois par marché.
+  const allSig = [...list.querySelectorAll('.mcard')];
 
-  // Tick countdown + manage URGENT badge on each sig
+  // Tick countdown + manage URGENT badge on each card head
   allSig.forEach(el=>{
     const ts=el.dataset.matchtime;
     el.querySelectorAll('.sig-cd[data-ts]').forEach(cd=>{
@@ -408,15 +428,22 @@ function applyFilters(){
           sep.textContent=_DAY_LABEL[_sigDay(el.dataset.matchtime)]||'';
         }
         lastGroup=gk;
-        list.insertBefore(sep,el);
+        // appendChild, PAS insertBefore(sep,el) : on reconstruit la liste dans
+        // l'ordre trié en ré-appendant chaque carte. insertBefore posait le
+        // séparateur à la position que la carte occupait AVANT d'être
+        // déplacée en fin de liste — tous les séparateurs finissaient donc
+        // empilés en haut de la page, détachés de leur groupe.
+        list.appendChild(sep);
       }
       list.appendChild(el);
     });
   }
 
-  // Count badge
+  // Count badge — matchs visibles ET nombre de marchés sous-jacents
   const n=visible.length;
-  document.getElementById('filter-count').textContent=n?`${n} signal${n>1?'s':''}`:'';
+  const nLegs=visible.reduce((t,el)=>t+el.querySelectorAll('.leg').length,0);
+  document.getElementById('filter-count').textContent =
+    n ? `${n} match${n>1?'s':''} · ${nLegs} ${nLegs>1?'signaux':'signal'}` : '';
 }
 
 const SIGNALS={{ signals|tojson }};
