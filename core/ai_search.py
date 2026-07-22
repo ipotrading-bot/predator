@@ -45,11 +45,23 @@ _EXTRACT_MODELS = ["llama-3.3-70b-versatile", "llama-3.1-8b-instant"]
 _TAVILY_RUN_BUDGET = int(os.environ.get("TAVILY_RUN_BUDGET", "25"))
 _tavily_used = 0
 
-# Même logique que l'ancien _gemini_dead_scopes de http_utils : une fois
-# qu'un quota JOURNALIER Groq est mort, tout appel suivant du process est
-# inutile — court-circuit instantané. (Groq free tier : limites par jour
-# en tokens ET par minute en requêtes ; seul le per-day est terminal.)
-_groq_daily_dead = False
+# Quota JOURNALIER mort — PAR MODÈLE, pas global (corrigé 2026-07-22).
+#
+# Groq applique le TPD (tokens par jour) séparément à chaque modèle :
+# llama-3.3-70b-versatile a 100 000 TPD, llama-3.1-8b-instant a un plafond
+# bien plus large. Un flag global faisait qu'une seule 429 "per day" sur le
+# 70b court-circuitait AUSSI le 8b, qui avait encore tout son quota — le
+# settlement de core/audit_engine.py rendait alors None toute la journée,
+# le ledger ne recevait plus rien et /performance restait figé (constaté sur
+# les runs audit 29886717393 / 29904315408 / 29926411707 du 2026-07-22 :
+# « 0 settled | 0 closed | 0 expired »).
+#
+# Note : groq/compound-mini n'a pas de quota propre — il consomme celui du
+# modèle qui l'exécute (llama-3.3-70b-versatile). Quand le corps d'erreur
+# nomme un autre modèle que celui demandé, les DEUX sont marqués morts.
+_groq_dead_models: set = set()
+
+_ALL_MODELS = ["groq/compound-mini", "llama-3.3-70b-versatile", "llama-3.1-8b-instant"]
 
 
 def ai_available() -> bool:
@@ -57,8 +69,21 @@ def ai_available() -> bool:
 
 
 def ai_dead() -> bool:
-    """True une fois le quota journalier Groq épuisé pour ce process."""
-    return _groq_daily_dead
+    """True quand PLUS AUCUN modèle Groq n'est utilisable ce process.
+
+    Les appelants qui écrivent un état terminal (core/audit_engine.py) s'en
+    servent pour décider « je n'ai pas pu chercher » : tant qu'un seul modèle
+    répond encore, il reste une chance de settler pour de vrai.
+    """
+    return all(m in _groq_dead_models for m in _ALL_MODELS)
+
+
+def _mark_dead(model: str, body: str) -> None:
+    """Marque `model` mort + tout modèle connu nommé dans le corps d'erreur."""
+    _groq_dead_models.add(model)
+    for known in _ALL_MODELS:
+        if known in body:
+            _groq_dead_models.add(known)
 
 
 def search_exhausted() -> bool:
@@ -90,8 +115,7 @@ def _groq_post(model: str, messages: list, max_tokens: int,
                temperature: float, timeout: int, label: str):
     """Un POST Groq avec retry sur erreurs réseau/429-minute/5xx.
     Retourne le texte de la réponse ou None."""
-    global _groq_daily_dead
-    if _groq_daily_dead:
+    if model in _groq_dead_models:
         return None
     api_key = os.environ.get("GROQ_API_KEY")
     if not api_key:
@@ -119,9 +143,9 @@ def _groq_post(model: str, messages: list, max_tokens: int,
             # Groq distingue per-minute (retry utile) et per-day (terminal)
             # dans le message d'erreur ("per day"/"TPD"/"RPD").
             if "per day" in body.lower() or "tpd" in body.lower() or "rpd" in body.lower():
-                _groq_daily_dead = True
-                log.critical("%s[%s]: quota JOURNALIER Groq épuisé — court-circuit "
-                             "des appels suivants ce run | %s", label, model, body)
+                _mark_dead(model, body)
+                log.critical("%s[%s]: quota JOURNALIER Groq épuisé — modèles morts=%s | %s",
+                             label, model, sorted(_groq_dead_models), body)
                 return None
             wait = 20 if attempt == 0 else 40
             log.warning("%s[%s]: rate limit minute — attente %ds", label, model, wait)
@@ -196,8 +220,6 @@ def ai_complete(prompt: str, label: str = "AI",
         text = _groq_post(model, messages, max_tokens, temperature, timeout, label)
         if text:
             return text
-        if _groq_daily_dead:
-            return None
     return None
 
 
@@ -217,7 +239,11 @@ def ai_search_complete(prompt: str, queries: list[str], label: str = "AI",
     text = _groq_post(_SEARCH_MODEL, messages, max_tokens, temperature, timeout, label)
     if text and text.strip():
         return text
-    if _groq_daily_dead:
+
+    # compound-mini mort ne veut PAS dire abandon : son quota est celui du
+    # 70b, alors que l'étage 2 peut encore tourner sur llama-3.1-8b-instant.
+    # On ne renonce que si plus aucun modèle ne répond.
+    if ai_dead():
         return None
 
     # ── Étage 2 : Tavily + extraction ─────────────────────────────────
@@ -239,6 +265,4 @@ def ai_search_complete(prompt: str, queries: list[str], label: str = "AI",
         text = _groq_post(model, messages, max_tokens, temperature, timeout, label)
         if text:
             return text
-        if _groq_daily_dead:
-            return None
     return None

@@ -338,17 +338,9 @@ function applyFilters(){
     } else if(!isUrgent && ub){
       ub.remove();
     }
-    // EN COURS badge: match already started but within 2h grace window
-    const isLive = minsLeft < 0 && minsLeft > -120;
-    let lb = el.querySelector('.sig-live');
-    if(isLive && !lb){
-      lb = document.createElement('span');
-      lb.className = 'sig-live';
-      lb.textContent = '🔴 EN COURS';
-      el.querySelector('.sig-r1-bot')?.appendChild(lb);
-    } else if(!isLive && lb){
-      lb.remove();
-    }
+    // (Supprimé 2026-07-22) Badge "🔴 EN COURS" — les matchs déjà commencés
+    // ne sont plus affichés du tout (voir le filtre ci-dessous), le badge
+    // n'avait plus rien à marquer.
     // HIGH VELOCITY badge: basketball/soccer < 60 min
     const sport = el.dataset.sport;
     const isVelocity = minsLeft > 0 && minsLeft <= 60 && (sport === 'basketball' || sport === 'soccer');
@@ -367,7 +359,10 @@ function applyFilters(){
   const now=Date.now();
   const visible=allSig.filter(el=>{
     const ts=el.dataset.matchtime;
-    if(ts && (now-new Date(ts))>7200000) return false;
+    // Coup d'envoi passé → hors dashboard (plus de fenêtre de grâce de 2h).
+    // applyFilters() tourne toutes les 30s, un match disparaît donc tout seul
+    // au coup d'envoi sans rechargement de page.
+    if(ts && new Date(ts) <= now) return false;
     if(_sport!=='all' && el.dataset.sport!==_sport) return false;
     if(_day!=='all' && _sigDay(ts)!==_day) return false;
     return true;

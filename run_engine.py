@@ -247,17 +247,27 @@ def _save(sb, signal) -> bool:
     return False
 
 
-def _get_cached(sb, key: str, ttl_hours: float):
-    """Return cached list from Supabase meta if within TTL, else None."""
+def _get_cached(sb, key: str, ttl_hours: float, empty_ttl_hours: float = 3.0):
+    """Return cached list from Supabase meta if within TTL, else None.
+
+    Un résultat VIDE est un résultat : il se met en cache lui aussi, avec un
+    TTL plus court (`empty_ttl_hours`). Sans ça, une recherche web qui ne
+    renvoie rien (quota Groq mort, pas d'événement UFC ce jour-là…) n'était
+    jamais mémorisée, donc chacun des ~62 runs quotidiens la relançait :
+    le 2026-07-22, MMA/Search partait à chaque tick Golden Hour (48/jour,
+    ~3,5k tokens l'appel) et vidait à lui seul les 100 000 TPD de
+    llama-3.3-70b-versatile avant que l'audit ait pu settler quoi que ce soit.
+    """
     try:
         row = sb.table("meta").select("value, updated_at").eq("key", key).maybe_single().execute()
         if not row.data:
             return None
         updated = datetime.fromisoformat(row.data["updated_at"])
         age_h = (datetime.now(timezone.utc) - updated).total_seconds() / 3600
-        if age_h < ttl_hours:
-            data = json.loads(row.data["value"])
-            log.info("Cache HIT [%s] — age %.1fh < %.0fh TTL (%d items)", key, age_h, ttl_hours, len(data))
+        data = json.loads(row.data["value"])
+        ttl = ttl_hours if data else min(empty_ttl_hours, ttl_hours)
+        if age_h < ttl:
+            log.info("Cache HIT [%s] — age %.1fh < %.0fh TTL (%d items)", key, age_h, ttl, len(data))
             return data
     except Exception as e:
         log.debug("Cache get [%s]: %s", key, e)
@@ -1226,8 +1236,10 @@ def run():
     mma_events = _get_cached(sb, "cache_mma", 8) if sb else None
     if mma_events is None:
         mma_events = fetch_mma_events()
-        if mma_events and sb:
-            _set_cached(sb, "cache_mma", mma_events)
+        # On mémorise AUSSI un résultat vide (TTL court côté _get_cached) —
+        # sinon le prochain tick Golden Hour repaie la recherche web.
+        if sb:
+            _set_cached(sb, "cache_mma", mma_events or [])
     if mma_events:
         matches = (matches or []) + mma_events
         log.info("🥋 MMA OK — %d combats UFC (Melbet soft)", len(mma_events))
@@ -1236,8 +1248,8 @@ def run():
     esports_events = _get_cached(sb, "cache_esports", 8) if sb else None
     if esports_events is None:
         esports_events = fetch_esports_events()
-        if esports_events and sb:
-            _set_cached(sb, "cache_esports", esports_events)
+        if sb:
+            _set_cached(sb, "cache_esports", esports_events or [])
     if esports_events:
         matches = (matches or []) + esports_events
         log.info("🎮 eSports OK — %d matchs", len(esports_events))
@@ -1246,8 +1258,8 @@ def run():
     alt_events = _get_cached(sb, "cache_altsports", 4) if sb else None
     if alt_events is None:
         alt_events = fetch_alternative_sports_batch()
-        if alt_events and sb:
-            _set_cached(sb, "cache_altsports", alt_events)
+        if sb:
+            _set_cached(sb, "cache_altsports", alt_events or [])
     if alt_events:
         matches = (matches or []) + alt_events
         log.info("🏓🏐🤾 Sports alternatifs OK — %d matchs", len(alt_events))

@@ -42,8 +42,8 @@ class TestFetchMatchResult:
         # out at the top with `if not ai_available(): return None` otherwise,
         # which would make every test below pass for the wrong reason.
         monkeypatch.setenv("GROQ_API_KEY", "gsk-fake-key-for-tests")
-        # Reset the module-level daily-dead flag between tests.
-        monkeypatch.setattr(ai_search, "_groq_daily_dead", False)
+        # Reset the module-level per-model daily-dead set between tests.
+        monkeypatch.setattr(ai_search, "_groq_dead_models", set())
 
     def _patch_ai(self, monkeypatch, text):
         monkeypatch.setattr(
@@ -182,7 +182,7 @@ class TestAiSearchFallbackChain:
     def _keys(self, monkeypatch):
         monkeypatch.setenv("GROQ_API_KEY", "gsk-fake")
         monkeypatch.setenv("TAVILY_API_KEY", "tvly-fake")
-        monkeypatch.setattr(ai_search, "_groq_daily_dead", False)
+        monkeypatch.setattr(ai_search, "_groq_dead_models", set())
         monkeypatch.setattr(ai_search, "_tavily_used", 0)
 
     def test_compound_mini_success_never_hits_tavily(self, monkeypatch):
@@ -216,10 +216,14 @@ class TestAiSearchFallbackChain:
         assert any("tavily.com" in c for c in calls)
 
     def test_daily_quota_dead_short_circuits_everything(self, monkeypatch):
+        """Quand TOUS les modèles ont pris un 429 per-day, plus aucun appel."""
         calls = []
 
         def fake_post(url, json=None, headers=None, timeout=None):
             calls.append(url)
+            if "tavily.com" in url:
+                return _FakeResponse(200, {"results": [
+                    {"title": "T", "url": "u", "content": "s"}]})
             return _FakeResponse(
                 429, text='{"error":{"message":"Rate limit reached ... per day (TPD)"}}')
 
@@ -231,6 +235,40 @@ class TestAiSearchFallbackChain:
         second = ai_search.ai_search_complete("prompt2", ["query2"], label="test")
         assert second is None
         assert len(calls) == n   # zero new HTTP calls once dead
+
+    def test_70b_daily_quota_does_not_kill_8b_instant(self, monkeypatch):
+        """Régression 2026-07-22 — le TPD est PAR MODÈLE.
+
+        groq/compound-mini consomme le quota de llama-3.3-70b-versatile.
+        Quand ce pool est vide, llama-3.1-8b-instant a encore le sien : le
+        settlement doit continuer à tourner, sinon ai_learning_ledger ne
+        reçoit plus rien et /performance reste figé toute la journée.
+        """
+        models_called = []
+        tpd_70b = ('{"error":{"message":"Rate limit reached for model '
+                   '`llama-3.3-70b-versatile` ... tokens per day (TPD)"}}')
+
+        def fake_post(url, json=None, headers=None, timeout=None):
+            if "tavily.com" in url:
+                return _FakeResponse(200, {"results": [
+                    {"title": "T", "url": "u", "content": "Final score 3-1"}]})
+            model = json["model"]
+            models_called.append(model)
+            if model in ("groq/compound-mini", "llama-3.3-70b-versatile"):
+                return _FakeResponse(429, text=tpd_70b)
+            return _FakeResponse(200, _groq_body('{"completed":true,"home_score":3,"away_score":1}'))
+
+        monkeypatch.setattr(ai_search.requests, "post", fake_post)
+        text = ai_search.ai_search_complete("prompt", ["query"], label="test")
+
+        assert text == '{"completed":true,"home_score":3,"away_score":1}'
+        assert "llama-3.1-8b-instant" in models_called
+        assert not ai_search.ai_dead()          # un modèle répond encore
+        # compound-mini ET le 70b nommé dans le corps d'erreur sont morts :
+        # un appel suivant ne doit plus les retenter.
+        models_called.clear()
+        ai_search.ai_search_complete("prompt2", ["query2"], label="test")
+        assert models_called == ["llama-3.1-8b-instant"]
 
     def test_tavily_run_budget_respected(self, monkeypatch):
         monkeypatch.setattr(ai_search, "_TAVILY_RUN_BUDGET", 1)

@@ -12,7 +12,7 @@ this one.
 import json
 import logging
 import os
-from datetime import datetime, timedelta, timezone as _tz
+from datetime import datetime, timezone as _tz
 
 import requests
 from dotenv import load_dotenv
@@ -129,35 +129,23 @@ def dashboard():
                     seen[key] = s
 
             _now = datetime.now(_tz.utc)
-            # Grace period: keep signals up to 2h after kick-off (live betting window)
-            _grace = _now - timedelta(hours=2)
+            # Aucun match déjà commencé sur le dashboard (demande opérateur
+            # 2026-07-22) : l'ancienne fenêtre de grâce de 2h après le coup
+            # d'envoi gardait des signaux non jouables qui noyaient les
+            # signaux encore pariables. Un signal sans match_time reste
+            # affiché — on ne peut pas prouver qu'il a commencé.
             filtered = [
                 s for s in seen.values()
                 if s.get("risk_flag") in _HIGH_QUALITY
-                and (not s.get("match_time") or (_parse_match_time(s["match_time"]) or _now) > _grace)
+                and (not s.get("match_time") or (_parse_match_time(s["match_time"]) or _now) > _now)
             ]
             signals = sorted(filtered, key=lambda s: _mk_dash_sort(s, _now))
 
-            # Fallback: if fewer than 3 active signals, supplement with recently settled (last 24h)
-            if len(signals) < 3:
-                try:
-                    cutoff6h = (_now - timedelta(hours=24)).isoformat()
-                    res2 = (sb.table("signals")
-                            .select("*")
-                            .in_("status", ["settled", "closed", "expired"])
-                            .gt("scanned_at", cutoff6h)
-                            .order("scanned_at", desc=True)
-                            .limit(10)
-                            .execute())
-                    recent = res2.data or []
-                    existing_ids = {s.get("match_id", "") + s.get("market_key", "") for s in signals}
-                    for r in recent:
-                        rid = r.get("match_id", "") + r.get("market_key", "")
-                        if rid not in existing_ids and r.get("risk_flag") in _HIGH_QUALITY:
-                            r["_recent"] = True
-                            signals.append(r)
-                except Exception:
-                    pass
+            # (Supprimé 2026-07-22) Le fallback « moins de 3 signaux actifs →
+            # compléter avec les matchs récemment settlés » remplissait le
+            # dashboard de matchs déjà joués. Le filtre ci-dessus n'accepte
+            # plus rien après le coup d'envoi : ces lignes étaient de toute
+            # façon masquées côté client. L'historique reste sur /bilan.
 
             # Parse sharp_sources JSON string → dict, consensus_score → int
             for s in signals:
