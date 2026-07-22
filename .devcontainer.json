@@ -9,18 +9,11 @@
       "extensions": [
         "anthropic.claude-code",
         "charliermarsh.ruff",
-        "davidanson.vscode-markdownlint",
         "github.codespaces",
-        "github.github-vscode-theme",
-        "github.vscode-github-actions",
-        "humao.rest-client",
-        "kevinrose.vsc-python-indent",
-        "mikestead.dotenv",
         "ms-ceintl.vscode-language-pack-fr",
         "ms-python.debugpy",
         "ms-python.python",
-        "ms-python.vscode-pylance",
-        "yzhang.markdown-all-in-one"
+        "ms-python.vscode-pylance"
       ],
       "settings": {
         "python.defaultInterpreterPath": "/usr/local/bin/python",
