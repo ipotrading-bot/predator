@@ -1,0 +1,312 @@
+<!DOCTYPE html>
+<html lang="fr">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+<meta name="theme-color" content="#FF6B35">
+<meta name="mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+<meta name="apple-mobile-web-app-title" content="PREDATOR">
+<title>PREDATOR · WIZ</title>
+<link rel="manifest" href="/manifest.json">
+<link rel="icon" type="image/png" sizes="32x32" href="/static/icons/favicon-32.png">
+<link rel="shortcut icon" href="/favicon.ico">
+<link rel="apple-touch-icon" sizes="192x192" href="/static/icons/icon-192.png">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&family=JetBrains+Mono:wght@400;500;700&display=swap" rel="stylesheet">
+<link rel="stylesheet" href="/static/css/predator.css">
+<style>
+/* Wiz page — accent --orange (les 4 autres pages prennent blue/yellow/green/purple) */
+.wrap { max-width: 960px; }
+.nav-logo { color: var(--orange); }
+.nav-logo img { filter: drop-shadow(0 0 8px rgba(255,107,53,.35)); }
+.nav-pages a.on, .bnav a.on { color: var(--orange); }
+.page-hdr { margin-bottom: 12px; border-bottom: none; background: transparent; padding-left: 0; padding-right: 0; }
+.page-title { color: var(--orange); font-size: 15px; letter-spacing: 1.5px; }
+.page-sub { font-size: 10px; color: var(--t2); margin-top: 5px; }
+
+/* Bandeau mode observation */
+.wiz-mode {
+  font-size: 10px; line-height: 1.7; color: var(--t2);
+  background: rgba(255,107,53,.06); border: 1px solid rgba(255,107,53,.18);
+  border-radius: 6px; padding: 8px 12px; margin-bottom: 14px;
+}
+.wiz-mode b { color: var(--orange); font-weight: 700; }
+.wiz-mode.enforce { background: rgba(251,78,110,.07); border-color: rgba(251,78,110,.25); }
+.wiz-mode.enforce b { color: var(--red); }
+
+/* Ligne de match */
+.wz { border: 1px solid var(--bd); border-radius: var(--r); background: var(--bg1); margin-bottom: 8px; overflow: hidden; }
+.wz + .wz { margin-top: 0; }
+.wz-head {
+  display: flex; align-items: center; gap: 9px;
+  padding: 11px 13px; cursor: pointer; user-select: none;
+  border-left: 3px solid var(--bd2);
+}
+.wz-head:hover { background: var(--bg2); }
+.wz.v-CONFIRME     .wz-head { border-left-color: var(--green); }
+.wz.v-NEUTRE       .wz-head { border-left-color: var(--bd3); }
+.wz.v-ALERTE       .wz-head { border-left-color: var(--orange); }
+.wz.v-VETO         .wz-head { border-left-color: var(--red); }
+.wz.v-INDISPONIBLE .wz-head { border-left-color: var(--bd2); }
+
+.wz-rank {
+  font-family: var(--font-data); font-size: 11px; font-weight: 700;
+  color: var(--t2); min-width: 20px; text-align: right; flex-shrink: 0;
+}
+.wz-icon { font-size: 15px; line-height: 1; flex-shrink: 0; }
+.wz-main { flex: 1; min-width: 0; }
+.wz-match { font-size: 13px; font-weight: 600; color: var(--t1); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.wz-meta { font-size: 10px; color: var(--t2); margin-top: 3px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.wz-meta em { color: var(--t3); font-style: normal; }
+.wz-edge { font-family: var(--font-data); font-size: 13px; font-weight: 700; flex-shrink: 0; text-align: right; min-width: 46px; }
+.wz-edge.hi { color: var(--green); } .wz-edge.mid { color: var(--yellow); } .wz-edge.lo { color: var(--t2); }
+
+.wz-badge {
+  font-size: 9px; font-weight: 700; letter-spacing: .6px; padding: 3px 6px;
+  border-radius: 4px; flex-shrink: 0; font-family: var(--font-data);
+}
+.b-CONFIRME     { background: rgba(0,232,127,.08);  color: var(--green);  border: 1px solid rgba(0,232,127,.22); }
+.b-NEUTRE       { background: transparent;          color: var(--t2);     border: 1px solid var(--bd2); }
+.b-ALERTE       { background: rgba(255,107,53,.09); color: var(--orange); border: 1px solid rgba(255,107,53,.28); }
+.b-VETO         { background: rgba(251,78,110,.09); color: var(--red);    border: 1px solid rgba(251,78,110,.3); }
+.b-INDISPONIBLE { background: transparent;          color: var(--t3);     border: 1px solid var(--bd); }
+
+/* Jauge de confiance */
+.wz-gauge { width: 46px; flex-shrink: 0; }
+.wz-gauge .g-bar { height: 3px; background: var(--bd); border-radius: 2px; overflow: hidden; }
+.wz-gauge .g-fill { height: 100%; border-radius: 2px; background: var(--t2); }
+.wz-gauge .g-fill.hi { background: var(--green); }
+.wz-gauge .g-fill.mid { background: var(--yellow); }
+.wz-gauge .g-fill.lo { background: var(--red); }
+.wz-gauge .g-lbl { font-family: var(--font-data); font-size: 9px; color: var(--t2); text-align: right; margin-top: 3px; }
+
+.wz-chev { color: var(--t3); font-size: 10px; flex-shrink: 0; transition: transform .15s; }
+.wz.open .wz-chev { transform: rotate(90deg); }
+
+/* Panneau déplié */
+.wz-body { display: none; padding: 0 13px 12px 13px; border-top: 1px solid var(--bd); }
+.wz.open .wz-body { display: block; }
+.wz-resume { font-size: 11px; line-height: 1.65; color: var(--t1); padding: 11px 0 4px; }
+.wz-sect { margin-top: 11px; }
+.wz-sect-t {
+  font-size: 9px; font-weight: 700; letter-spacing: 1px; color: var(--t2);
+  text-transform: uppercase; margin-bottom: 6px; display: flex; align-items: center; gap: 7px;
+}
+.wz-sect-t::after { content: ''; flex: 1; height: 1px; background: var(--bd); }
+.wz-sect-t.flags { color: var(--red); }
+
+.wz-item { display: flex; gap: 8px; padding: 6px 0; font-size: 11px; line-height: 1.55; border-bottom: 1px solid var(--bd); }
+.wz-item:last-child { border-bottom: none; }
+.wz-dir { font-family: var(--font-data); font-size: 9px; font-weight: 700; flex-shrink: 0; padding-top: 2px; min-width: 40px; }
+.wz-dir.pour   { color: var(--green); }
+.wz-dir.contre { color: var(--red); }
+.wz-txt { flex: 1; min-width: 0; color: var(--t1); }
+.wz-src { display: block; font-size: 9px; color: var(--blue); margin-top: 3px; word-break: break-all; text-decoration: none; }
+.wz-src:hover { text-decoration: underline; }
+.wz-poids { font-family: var(--font-data); font-size: 9px; color: var(--t3); flex-shrink: 0; padding-top: 2px; }
+
+.wz-flag { border-left: 2px solid var(--red); padding-left: 9px; background: rgba(251,78,110,.04); }
+.wz-sev { font-family: var(--font-data); font-size: 9px; font-weight: 700; flex-shrink: 0; padding-top: 2px; min-width: 46px; }
+.wz-sev.haute { color: var(--red); } .wz-sev.moyenne { color: var(--orange); } .wz-sev.basse { color: var(--t2); }
+
+.wz-foot { font-family: var(--font-data); font-size: 9px; color: var(--t3); margin-top: 10px; padding-top: 8px; border-top: 1px solid var(--bd); }
+.wz-none { font-size: 10px; color: var(--t3); padding: 6px 0; font-style: italic; }
+</style>
+</head>
+<body>
+
+<!-- ── TOP NAV ────────────────────────────── -->
+<nav class="topnav">
+  <a href="/" class="nav-logo"><img src="/static/icons/icon-96.png" alt="PREDATOR"> PREDATOR</a>
+  <div class="nav-pages">
+    <a href="/">ACCUEIL</a>
+    <a href="/wiz" class="on">WIZ</a>
+    <a href="/ledger">BILAN</a>
+    <a href="/audit">AUDIT</a>
+    <a href="/performance">PERF</a>
+    <a href="/system">SYSTÈME</a>
+  </div>
+  <div class="nav-right">
+    <span id="clock">&#8212;</span>
+  </div>
+</nav>
+
+<!-- ── CONTENT ────────────────────────────── -->
+<main class="wrap">
+
+  <div class="page-hdr">
+    <div class="page-title">&#9632; WIZ &mdash; ANALYSE CONTEXTUELLE</div>
+    <div class="page-sub">Recherche web + IA &middot; d&eacute;tection du faux edge &middot; class&eacute; par probabilit&eacute; de r&eacute;ussite</div>
+  </div>
+
+  {% if enforce %}
+  <div class="wiz-mode enforce">
+    <b>MODE ENFORCEMENT ACTIF</b> &mdash; WIZ_ENFORCE=1. Les verdicts VETO bloquent d&eacute;sormais des signaux.
+    Wiz ne recalcule jamais l&rsquo;edge&nbsp;: il n&rsquo;agit que sur le classement et le filtrage.
+  </div>
+  {% else %}
+  <div class="wiz-mode">
+    <b>MODE OBSERVATION</b> &mdash; Wiz affiche et classe, il ne bloque rien.
+    Les verdicts VETO sont calcul&eacute;s et stock&eacute;s mais sans effet tant que <code>WIZ_ENFORCE=1</code> n&rsquo;est pas positionn&eacute;.
+    L&rsquo;edge, la cote et la mise restent enti&egrave;rement d&eacute;termin&eacute;s par le moteur quantitatif.
+  </div>
+  {% endif %}
+
+  {% if rows %}
+
+  {% for r in rows %}
+  {% set conf = r.confidence %}
+  <div class="wz v-{{ r.verdict }}" onclick="this.classList.toggle('open')">
+
+    <div class="wz-head">
+      <span class="wz-rank">{{ loop.index }}</span>
+      <span class="wz-icon">{{ r.emoji }}</span>
+
+      <div class="wz-main">
+        <div class="wz-match">{{ r.match }}</div>
+        <div class="wz-meta">
+          {{ r.market }}{% if r.selection %} &middot; {{ r.selection }}{% endif %}
+          {% if r.xbet_odd %} &middot; <em>cote {{ '%.2f'|format(r.xbet_odd) }}</em>{% endif %}
+          {% if r.n_signals > 1 %} &middot; <em>{{ r.n_signals }} signaux</em>{% endif %}
+        </div>
+      </div>
+
+      <span class="wz-edge {% if r.edge_pct >= 5 %}hi{% elif r.edge_pct >= 2 %}mid{% else %}lo{% endif %}">
+        +{{ '%.1f'|format(r.edge_pct) }}%
+      </span>
+
+      <div class="wz-gauge">
+        <div class="g-bar">
+          <div class="g-fill {% if conf is none %}{% elif conf >= 65 %}hi{% elif conf >= 40 %}mid{% else %}lo{% endif %}"
+               style="width: {{ 0 if conf is none else conf|round|int }}%"></div>
+        </div>
+        <div class="g-lbl">{% if conf is none %}&mdash;{% else %}{{ conf|round|int }}%{% endif %}</div>
+      </div>
+
+      <span class="wz-badge b-{{ r.verdict }}">{{ r.verdict }}</span>
+      <span class="wz-chev">&#9656;</span>
+    </div>
+
+    <div class="wz-body">
+      {% if r.resume %}<div class="wz-resume">{{ r.resume }}</div>{% endif %}
+
+      {% if r.red_flags %}
+      <div class="wz-sect">
+        <div class="wz-sect-t flags">&#9888; Red flags &mdash; ce qui pourrait expliquer l&rsquo;edge</div>
+        {% for f in r.red_flags %}
+        <div class="wz-item wz-flag">
+          <span class="wz-sev {{ f.severite }}">{{ (f.severite or '')|upper }}</span>
+          <span class="wz-txt">
+            {{ f.texte }}
+            {% if f.source_url %}<a class="wz-src" href="{{ f.source_url }}" target="_blank" rel="noopener" onclick="event.stopPropagation()">{{ f.source_url }}</a>{% endif %}
+          </span>
+        </div>
+        {% endfor %}
+      </div>
+      {% endif %}
+
+      {% set tiers = [
+        ('A', r.args_a, 'Tier A &mdash; d&eacute;cisif (compositions, absences, enjeu, m&eacute;t&eacute;o)'),
+        ('B', r.args_b, 'Tier B &mdash; mod&eacute;rateur (forme, H2H, stats)'),
+        ('C', r.args_c, 'Tier C &mdash; contrarian (consensus, paris publics &mdash; poids invers&eacute;)')
+      ] %}
+      {% for tier, items, label in tiers %}
+      {% if items %}
+      <div class="wz-sect">
+        <div class="wz-sect-t">{{ label|safe }}</div>
+        {% for a in items %}
+        <div class="wz-item">
+          <span class="wz-dir {{ a.direction }}">{{ (a.direction or '')|upper }}</span>
+          <span class="wz-txt">
+            {{ a.texte }}
+            {% if a.source_url %}<a class="wz-src" href="{{ a.source_url }}" target="_blank" rel="noopener" onclick="event.stopPropagation()">{{ a.source_url }}</a>{% endif %}
+          </span>
+          <span class="wz-poids">{{ '%.2f'|format(a.poids or 0) }}</span>
+        </div>
+        {% endfor %}
+      </div>
+      {% endif %}
+      {% endfor %}
+
+      {% if not r.red_flags and not r.args_a and not r.args_b and not r.args_c %}
+      <div class="wz-none">
+        Aucun &eacute;l&eacute;ment sourc&eacute; retenu. Wiz n&rsquo;a pas pu documenter ce match &mdash;
+        absence d&rsquo;information, pas information n&eacute;gative&nbsp;: le classement n&rsquo;en tient pas compte.
+      </div>
+      {% endif %}
+
+      <div class="wz-foot">
+        score {{ '%.4f'|format(r.rank_score) }}
+        &middot; {{ r.sources_count }} source(s)
+        {% if r.model_used %}&middot; {{ r.model_used }}{% endif %}
+        {% if r.analyzed_at %}&middot; analys&eacute; <span class="ago" data-ts="{{ r.analyzed_at }}">{{ r.analyzed_at[:16] }}</span>{% endif %}
+      </div>
+    </div>
+
+  </div>
+  {% endfor %}
+
+  {% else %}
+
+  <div class="empty">
+    <div class="empty-icon">&#9788;</div>
+    Aucune analyse Wiz disponible.<br>
+    Wiz tourne toutes les 2&nbsp;heures sur les signaux actifs dont le coup d&rsquo;envoi est dans les 24&nbsp;h.<br>
+    <span style="color:var(--t3)">
+      Si la page reste vide&nbsp;: v&eacute;rifier que <code>sql/migrate_v10_0_wiz.sql</code> est appliqu&eacute;e,<br>
+      et que le secret <code>MISTRAL_API_KEY</code> existe.
+    </span>
+  </div>
+
+  {% endif %}
+
+</main>
+
+<footer>PREDATOR WIZ v10.0 &nbsp;&middot;&nbsp; Mistral + recherche web &nbsp;&middot;&nbsp; n&rsquo;alt&egrave;re jamais l&rsquo;edge quantitatif</footer>
+
+<!-- ── BOTTOM NAV ─────────────────────────── -->
+<nav class="bnav">
+  <a href="/">
+    <svg viewBox="0 0 24 24"><rect x="3" y="3" width="7" height="7" rx="1.5"/><rect x="14" y="3" width="7" height="7" rx="1.5"/><rect x="3" y="14" width="7" height="7" rx="1.5"/><rect x="14" y="14" width="7" height="7" rx="1.5"/></svg>
+    Accueil
+  </a>
+  <a href="/wiz" class="on" aria-label="Wiz">
+    <svg viewBox="0 0 24 24"><circle cx="11" cy="11" r="7"/><line x1="16.5" y1="16.5" x2="21" y2="21"/></svg>
+    Wiz
+  </a>
+  <a href="/system" aria-label="Système">
+    <svg viewBox="0 0 24 24"><polygon points="13 2 3 14 12 14 11 22 21 10 12 10 13 2" fill="currentColor" stroke="none"/></svg>
+  </a>
+  <a href="/performance">
+    <svg viewBox="0 0 24 24"><polyline points="22 12 18 12 15 21 9 3 6 12 2 12"/><circle cx="12" cy="5" r="1" fill="currentColor" stroke="none"/></svg>
+    Perf
+  </a>
+</nav>
+
+<script>
+(function tick(){
+  const d = new Date();
+  const pad = n => String(n).padStart(2,'0');
+  const days = ['Sun','Mon','Tue','Wed','Thu','Fri','Sat'];
+  const months = ['Jan','Feb','Mar','Apr','May','Jun','Jul','Aug','Sep','Oct','Nov','Dec'];
+  document.getElementById('clock').textContent =
+    days[d.getUTCDay()] + ' ' + pad(d.getUTCDate()) + ' ' + months[d.getUTCMonth()] + ' ' +
+    pad(d.getUTCHours()) + ':' + pad(d.getUTCMinutes()) + ' UTC';
+  setTimeout(tick, 1000);
+})();
+
+// « analysé il y a Xh » — l'horodatage brut d'une analyse ne dit rien d'utile,
+// sa fraîcheur si (TTL 8h, fenêtre de confirmation à T-3h).
+document.querySelectorAll('.ago').forEach(function(el){
+  const ts = Date.parse((el.dataset.ts || '').replace(' ', 'T'));
+  if (isNaN(ts)) return;
+  const h = (Date.now() - ts) / 3600000;
+  el.textContent = h < 1 ? 'il y a ' + Math.max(1, Math.round(h * 60)) + ' min'
+                         : 'il y a ' + h.toFixed(1) + ' h';
+});
+</script>
+</body>
+</html>
