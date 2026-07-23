@@ -96,6 +96,208 @@ KELLY_FRACTION = {
 }
 
 
+# ══════════════════════════════════════════════════════════════════════
+# WIZ (PAIM v10.0, 2026-07-23) — couche d'analyse contextuelle par IA
+# ══════════════════════════════════════════════════════════════════════
+# Wiz ne touche JAMAIS à edge_pct / sharp_prob / pinnacle_price /
+# xbet_odd / kelly_pct / risk_flag, et n'écrit aucune colonne de `signals`
+# (voir sql/migrate_v10_0_wiz.sql pour le pourquoi). Tout ce qui suit ne
+# sert qu'à CLASSER et à SIGNALER — jamais à recalculer.
+
+# Domaine de panne séparé : Mistral, jamais Groq/Tavily. Le moteur
+# principal dépend déjà de ces derniers et leur quota journalier meurt
+# régulièrement (voir core/ai_search.py) — une panne Wiz ne doit pas
+# pouvoir dégrader le settlement, ni l'inverse.
+#
+# Brave a été ABANDONNÉ le 2026-07-23 (décision opérateur) : son plan
+# gratuit exige une carte bancaire à l'inscription. Le connecteur
+# `web_search` de Mistral le remplace intégralement — vérifié live le même
+# jour, il retourne de vrais résultats datés avec URLs sources. Il est du
+# reste propulsé par Brave en interne (le favicon des résultats pointe vers
+# imgs.search.brave.com), donc on garde les résultats visés par la spec
+# d'origine sans le compte ni la carte.
+
+# Noms de modèles Mistral : NON vérifiés live sur ce compte au moment de
+# l'écriture (2026-07-23) — contrairement aux modèles Groq de
+# core/ai_search.py qui l'ont été via GET /models. Ils sont donc
+# surchargeables par WIZ_MISTRAL_MODELS (liste séparée par virgules) sans
+# toucher au code. Le premier qui répond gagne ; les suivants servent de
+# repli quand un modèle est retiré du free tier.
+WIZ_MISTRAL_MODELS = ["mistral-small-latest", "open-mistral-nemo", "mistral-large-latest"]
+
+# Mistral free tier = 2 requêtes/minute. Wiz est un batch cron, pas de
+# l'interactif : on respecte la limite par un throttle explicite plutôt
+# que de la contourner. 31s > 30s pour absorber la dérive d'horloge.
+WIZ_MISTRAL_MIN_INTERVAL_S = 31.0
+
+# Le goulot d'étranglement n'est plus un quota de requêtes depuis l'abandon
+# de Brave — c'est la DURÉE DU RUN. Le free tier Mistral plafonne à 2
+# requêtes/minute, donc une analyse = ~31 s incompressibles, quel que soit
+# le temps de calcul réel. 20 matchs = ~10,5 min, ce qui tient sous le
+# `timeout-minutes: 20` de .github/workflows/wiz.yml avec de la marge pour
+# les retries. Monter cette valeur sans monter le timeout du workflow ferait
+# tuer le run en plein milieu.
+#
+# Côté tokens il n'y a pas de tension : une recherche consomme ~6 000 tokens
+# de connecteur (mesuré live le 2026-07-23) sur un budget mensuel de l'ordre
+# du milliard. Ces chiffres de free tier bougent chaque semaine et ne sont
+# PAS codés en dur comme une garantie — ils ne servent qu'à justifier le
+# dimensionnement ci-dessous.
+WIZ_RUN_BUDGET_DEFAULT   = 20    # matchs analysés max par run (1 recherche chacun)
+WIZ_SEARCH_RESULTS_MAX   = 10    # sources retenues par analyse (borne le JSON stocké)
+
+# Angles de recherche suggérés au connecteur, par match. Ce n'est plus un
+# budget de requêtes (le connecteur décide lui-même combien il en lance)
+# mais le nombre d'axes Tier A qu'on lui demande de couvrir.
+WIZ_QUERIES_PER_MATCH    = 2     # Tier A : compositions/absences + enjeu (ou météo sur les totals)
+
+WIZ_LOOKAHEAD_H   = 24   # n'analyser que les signaux dont le coup d'envoi est < 24h
+WIZ_TTL_H_DEFAULT = 8    # ne pas ré-analyser un match analysé il y a moins de 8h
+# Exception au TTL : les compositions officielles tombent ~1h avant le coup
+# d'envoi (cf. MLB_LINEUP_WINDOW_H plus haut, même logique). Une analyse
+# faite à T-20h ne les a pas vues — on autorise donc une seconde passe dans
+# la fenêtre T-3h, qui est la seule qui puisse encore attraper un titulaire
+# absent avant que le pari ne soit posé.
+WIZ_CONFIRM_WINDOW_H = 3
+
+# ── Hiérarchie des sources (R3 : le consensus est CONTRARIAN) ──────────
+# Tier A — décisif : absences/blessures confirmées, compositions probables,
+#          lanceur MLB confirmé, back-to-back NBA, météo (totals), enjeu
+#          sportif (équipe déjà qualifiée). C'est ce qui EXPLIQUE un edge.
+# Tier B — modérateur : forme récente, H2H, stats avancées, actu du club.
+# Tier C — contrarian : consensus pronostiqueurs, % de paris publics.
+#          Poids NÉGATIF, pas faible : un consensus public massif dans le
+#          sens du signal est un drapeau JAUNE (cote potentiellement gonflée
+#          par le flux public), jamais une confirmation. Les données de
+#          pronostiqueurs sont statistiquement perdantes en moyenne — les
+#          traiter comme prédictives serait pire que les ignorer.
+WIZ_TIER_WEIGHTS = {"A": 1.0, "B": 0.5, "C": -0.35}
+
+# Poids des red flags par sévérité. Séparés des arguments : un red flag
+# n'est pas « un argument contre », c'est une explication candidate de
+# l'edge — exactement ce que Wiz est là pour trouver (R2), donc il pèse
+# plus lourd qu'un argument Tier B ordinaire.
+WIZ_SEVERITY_WEIGHTS = {"haute": 1.0, "moyenne": 0.5, "basse": 0.2}
+
+# Nombre max d'arguments/red flags retenus par analyse. Borne la taille du
+# JSON stocké et la hauteur du panneau déplié sur /wiz ; au-delà, un modèle
+# qui produit 15 arguments dilue surtout ceux qui comptent.
+WIZ_MAX_ARGUMENTS = 6
+WIZ_MAX_RED_FLAGS = 4
+
+# ── Score composite de classement ─────────────────────────────────────
+# wiz_rank_score = W_EDGE*edge_norm + W_WIZ*(confidence/100) + W_CONS*(consensus/100)
+# Le quantitatif garde la primauté (W_EDGE le plus fort) : Wiz module le
+# classement, il ne décide pas. À confiance Wiz nulle, un signal à fort
+# edge doit rester devant un signal à faible edge — c'est testé dans
+# tests/test_wiz_engine.py.
+WIZ_W_EDGE = 0.45
+WIZ_W_WIZ  = 0.35
+WIZ_W_CONS = 0.20
+
+# edge_norm = min(edge_pct / WIZ_EDGE_NORM_CAP, 1). Le cap est MAX_EDGE :
+# au-delà, run_engine.py rejette déjà le signal comme erreur de mapping,
+# donc rien de réel ne sature cette normalisation.
+WIZ_EDGE_NORM_CAP = MAX_EDGE
+
+# Confiance attribuée quand aucune information n'a pu être collectée
+# (recherche impossible, IA morte, JSON illisible). NEUTRE, pas pénalisant :
+# l'absence d'information n'est pas une information négative — un
+# INDISPONIBLE ne doit ni promouvoir ni rétrograder un signal par rapport
+# à ce que son edge seul lui vaudrait.
+WIZ_NEUTRAL_CONFIDENCE = 50.0
+
+# Même logique pour le terme consensus du score : `signals.consensus_score`
+# est l'accord entre sources sharp (core/paim_engine.py
+# calculate_consensus_price), pas le consensus public — il est NULL sur
+# tout signal issu du harvester/oracle, qui n'a qu'une seule source. Un
+# signal sans mesure d'accord ne doit pas être rétrogradé pour autant.
+WIZ_NEUTRAL_CONSENSUS = 50.0
+
+# Seuils de verdict appliqués au score pondéré des arguments (somme des
+# poids×tier signés, direction « contre » comptant en négatif). Le verdict
+# renvoyé par le LLM est retenu, mais borné par ces seuils : un modèle qui
+# annonce CONFIRME alors que ses propres arguments pointent contre est
+# corrigé vers le bas — jamais l'inverse.
+WIZ_VETO_SCORE   = -1.0   # faisceau lourd d'indices que l'edge est un piège
+WIZ_ALERTE_SCORE = -0.35  # au moins un red flag Tier A crédible
+WIZ_CONFIRME_SCORE = 0.5  # rien n'explique l'edge → le soft book est juste lent
+
+# Un seul red flag de sévérité haute suffit à faire passer ALERTE, quel
+# que soit le reste : c'est la fonction la plus rentable de Wiz (R2), on
+# ne la laisse pas diluer par des arguments favorables.
+WIZ_HIGH_SEVERITY_FORCES_ALERTE = True
+
+# Plafond de wiz_confidence PAR VERDICT — ajouté le 2026-07-23 après le
+# premier appel live à Mistral.
+#
+# Le modèle a renvoyé verdict=VETO avec wiz_confidence=75 : il a compris
+# « ma confiance dans mon analyse » là où le prompt demande « ma confiance
+# que le signal aboutisse ». Les deux lectures sont défendables en français,
+# et aucune reformulation du prompt ne garantit qu'un modèle (ou le
+# prochain) tranchera dans le bon sens.
+#
+# Conséquence si on ne borne pas : wiz_confidence entre dans rank_score avec
+# un poids de +0.35, donc un match que Wiz vient de qualifier de PIÈGE
+# remontait EN TÊTE du classement — l'inverse exact de la fonction du
+# module. Constaté live : VETO/conf 75 = 0.6445 contre NEUTRE/conf 50 =
+# 0.557 à edge identique.
+#
+# On borne donc la confiance par le verdict, qui lui est dérivé d'arguments
+# sourcés et vérifiés. CONFIRME et NEUTRE restent libres : le risque n'est
+# pas symétrique, un excès de prudence coûte un pari manqué, un excès de
+# confiance coûte une mise.
+WIZ_CONFIDENCE_CEILING = {"VETO": 15.0, "ALERTE": 40.0, "NEUTRE": 100.0, "CONFIRME": 100.0}
+
+
+def wiz_enforce() -> bool:
+    """True quand Wiz a le droit de BLOQUER un signal (verdict VETO).
+
+    Défaut : False. Wiz démarre en mode observation — il affiche, il
+    classe, il ne bloque rien. Le verdict VETO est calculé et stocké dès
+    maintenant, mais reste sans effet tant que WIZ_ENFORCE=1 n'est pas
+    explicitement positionné. On ne l'activera qu'après avoir mesuré, sur
+    ~30 signaux réglés, que wiz_confidence apporte réellement de
+    l'information (Brier score, core/learning_layer.py).
+    """
+    import os
+    return os.environ.get("WIZ_ENFORCE", "0").strip() in ("1", "true", "True", "yes")
+
+
+def wiz_run_budget() -> int:
+    """Budget Brave (requêtes) pour ce run — surchargeable par WIZ_RUN_BUDGET."""
+    import os
+    try:
+        return max(0, int(os.environ.get("WIZ_RUN_BUDGET", WIZ_RUN_BUDGET_DEFAULT)))
+    except (TypeError, ValueError):
+        return WIZ_RUN_BUDGET_DEFAULT
+
+
+def wiz_ttl_h() -> float:
+    """Âge au-delà duquel une analyse Wiz est périmée — surchargeable par WIZ_TTL_H."""
+    import os
+    try:
+        return max(0.0, float(os.environ.get("WIZ_TTL_H", WIZ_TTL_H_DEFAULT)))
+    except (TypeError, ValueError):
+        return float(WIZ_TTL_H_DEFAULT)
+
+
+def wiz_mistral_models() -> list:
+    """Modèles Mistral à essayer dans l'ordre — surchargeable par WIZ_MISTRAL_MODELS.
+
+    Existe parce que les noms de modèles du free tier Mistral n'ont pas pu
+    être vérifiés live à l'écriture : si l'un d'eux est renommé/retiré,
+    l'opérateur corrige par variable d'environnement sans redéploiement.
+    """
+    import os
+    raw = os.environ.get("WIZ_MISTRAL_MODELS", "").strip()
+    if raw:
+        models = [m.strip() for m in raw.split(",") if m.strip()]
+        if models:
+            return models
+    return list(WIZ_MISTRAL_MODELS)
+
+
 def risk_flag(edge_pct: float, elite: float = ELITE_EDGE) -> str:
     """Consistent risk label stored in DB and used by all consumers.
     `elite` lets callers pass a sport-specific boundary (SOCCER_ELITE_EDGE,

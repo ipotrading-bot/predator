@@ -1,0 +1,99 @@
+name: Predator Wiz
+
+# WIZ v10.0 — analyse contextuelle par IA des signaux actifs (Mistral).
+# Enrichit et classe ; n'écrit que dans `wiz_analysis`, jamais dans `signals`.
+#
+# CADENCE : toutes les 2 heures. NE PAS DESCENDRE EN DESSOUS.
+# Incident du 2026-07-07 : on_demand.yml pollait `meta.scan_request` sur son
+# propre `*/5` (288 déclenchements/jour, ~81% de tous les triggers planifiés
+# du repo). GitHub Actions retarde et abandonne silencieusement les runs
+# planifiés sous cette charge — golden_hour.yml, déclaré `*/30`, atterrissait
+# en réalité toutes les 1 à 4,5 heures, et le dashboard affichait un
+# « Dernier scan » vieux de plusieurs heures. Le poller a été supprimé.
+# Wiz n'a de toute façon aucun besoin d'être plus fréquent : le TTL des
+# analyses est de 8h (WIZ_TTL_H) et les compositions ne bougent qu'à T-3h,
+# donc une cadence 2h laisse déjà passer 4 occasions de rattraper la fenêtre
+# de confirmation. Plus fréquent ne ferait qu'allonger la file pour rien.
+
+on:
+  schedule:
+    - cron: '15 */2 * * *'   # toutes les 2h à H+15 — décalé des scans (H+00) et du rapport (H+05)
+  workflow_dispatch:
+
+# PAS de `concurrency: predator-signals-write`, volontairement.
+# Ce groupe sérialise les workflows qui écrivent dans `signals` (scans,
+# purge, audit/settlement) pour qu'une purge ne coupe pas un settlement en
+# cours. Wiz n'écrit QUE dans `wiz_analysis` et ne lit `signals` qu'en
+# lecture seule — le faire entrer dans ce groupe le mettrait inutilement en
+# file d'attente derrière un audit de 45 minutes, et retarderait d'autant la
+# fenêtre de confirmation T-3h qui est toute la valeur de ce job.
+# Un groupe propre suffit à empêcher deux runs Wiz de se chevaucher
+# (planifié + manuel), ce qui doublerait la consommation de tokens.
+concurrency:
+  group: predator-wiz
+  cancel-in-progress: false
+
+env:
+  FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: true
+
+jobs:
+  wiz:
+    runs-on: ubuntu-latest
+    # Le throttle Mistral (2 RPM → 31s entre deux appels) rend ce run long
+    # PAR CONSTRUCTION : 20 matchs = ~11 min d'attente pure avant même le
+    # temps de réponse des API. run_wiz.py s'auto-borne à WIZ_GLOBAL_TIMEOUT
+    # (18 min par défaut) pour terminer proprement et écrire son log de
+    # synthèse plutôt que d'être tué net ici.
+    timeout-minutes: 20
+
+    steps:
+      - name: Check Wiz secrets
+        env:
+          MISTRAL_API_KEY: ${{ secrets.MISTRAL_API_KEY }}
+          SUPABASE_SERVICE_KEY: ${{ secrets.SUPABASE_SERVICE_KEY }}
+        run: |
+          # Wiz est une couche d'agrément : son absence ne doit PAS faire
+          # échouer un workflow (run_wiz.py sort proprement en code 0 sans
+          # clé). On avertit, on ne casse pas — contrairement à audit.yml où
+          # un secret manquant signifie un settlement perdu.
+          #
+          # UNE SEULE clé depuis l'abandon de Brave (2026-07-23) : le
+          # connecteur web_search de Mistral fait la recherche ET le
+          # raisonnement. Brave exigeait une carte bancaire même en plan
+          # gratuit, que l'opérateur n'a pas.
+          if [ -z "$MISTRAL_API_KEY" ]; then
+            echo "::warning::MISTRAL_API_KEY non définie — Wiz ne fera rien. Clé gratuite sur console.mistral.ai."
+          fi
+          # Celui-ci, en revanche, est bloquant : `signals` et `wiz_analysis`
+          # sont toutes deux sous RLS stricte (sql/migrate_v9_3_tighten_rls.sql,
+          # sql/migrate_v10_0_wiz.sql). Avec la clé anon, run_wiz.py
+          # passerait 10 minutes à analyser puis échouerait chaque INSERT en
+          # 42501 — le pire des deux mondes.
+          if [ -z "$SUPABASE_SERVICE_KEY" ]; then
+            echo "::error::SUPABASE_SERVICE_KEY manquante — l'anon key ne peut pas écrire dans wiz_analysis (RLS). Le run analyserait 10 minutes pour rien."
+            exit 1
+          fi
+
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+          cache: 'pip'
+
+      - name: Install dependencies
+        run: pip install -r requirements.txt
+
+      - name: Run Wiz
+        env:
+          MISTRAL_API_KEY:      ${{ secrets.MISTRAL_API_KEY }}
+          SUPABASE_URL:         ${{ secrets.SUPABASE_URL }}
+          SUPABASE_KEY:         ${{ secrets.SUPABASE_KEY }}
+          SUPABASE_SERVICE_KEY: ${{ secrets.SUPABASE_SERVICE_KEY }}
+          # Surcharges facultatives — voir core/constants.py. WIZ_ENFORCE est
+          # volontairement ABSENT : Wiz démarre et reste en mode observation
+          # tant que sa valeur ajoutée n'est pas mesurée au Brier score.
+          WIZ_RUN_BUDGET:       ${{ vars.WIZ_RUN_BUDGET }}
+          WIZ_TTL_H:            ${{ vars.WIZ_TTL_H }}
+          WIZ_MISTRAL_MODELS:   ${{ vars.WIZ_MISTRAL_MODELS }}
+        run: python run_wiz.py

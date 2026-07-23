@@ -132,6 +132,7 @@ http://localhost:5000
 | `TELEGRAM_BOT_TOKEN` | Telegram bot token | ✅ |
 | `TELEGRAM_CHAT_ID` | Telegram chat/channel ID | ✅ |
 | `GROQ_API_KEY` | Groq API key (Llama 3) | ❌ |
+| `MISTRAL_API_KEY` | Wiz — raisonnement **et** recherche web (console.mistral.ai) | ❌ |
 | `NEWS_API_KEY` | NewsAPI.org key | ❌ |
 | `BETTERSTACK_TOKEN` | BetterStack log token | ❌ |
 | `PREDATOR_SECRET` | API auth secret | ❌ |
@@ -154,6 +155,7 @@ http://localhost:5000
 | Endpoint | Method | Description |
 |----------|--------|-------------|
 | `/` | GET | Dashboard — signaux actifs |
+| `/wiz` | GET | **Wiz v10.0** — analyse contextuelle IA, classée par `wiz_rank_score` (lecture seule de `wiz_analysis`) |
 | `/ledger` | GET | Bilan CLV par sport |
 | `/audit` | GET | Audit CLV détaillé + seuils dynamiques |
 | `/performance` | GET | Rapport de performance AI learning (`ai_learning_ledger`) |
@@ -163,6 +165,7 @@ http://localhost:5000
 | Endpoint | Method | Description |
 |----------|--------|-------------|
 | `/api/signals` | GET | Signaux actifs (JSON) |
+| `/api/wiz` | GET | Analyses Wiz + drapeau `enforce` (JSON) |
 | `/api/scan` | POST | Demander un scan PAIM — pose le flag `meta.scan_request`, ramassé par `golden_hour.yml` (≤ 30 min) |
 | `/api/audit/run` | POST | Déclencher `audit.yml` (requiert `GITHUB_PAT`) |
 | `/api/health` | GET | Health check |
@@ -187,14 +190,17 @@ predator/
 │   ├── settlement.py        # Résultat réel du match → outcome WIN/LOSS/PUSH
 │   ├── audit_engine.py     # Pipeline settlement + CLV (run_audit.py)
 │   ├── learning_layer.py  # Seuils MIN_EDGE adaptatifs par sport
-│   ├── constants.py         # Single source of truth (seuils, Kelly, risk_flag)
+│   ├── wiz_ai.py             # Wiz — client Mistral (domaine de panne SÉPARÉ de Groq/Tavily)
+│   ├── wiz_engine.py         # Wiz — prompts, parsing, pondération des tiers, wiz_rank_score
+│   ├── constants.py         # Single source of truth (seuils, Kelly, risk_flag, seuils Wiz)
 │   └── db.py                 # Single source of truth pour les clients Supabase (lecture vs écriture)
-├── templates/               # index / ledger / audit / performance
+├── templates/               # index / wiz / ledger / audit / performance / system
 ├── sql/                      # Migrations Supabase (à exécuter manuellement)
 ├── tests/                    # pytest — core/math_engine, core/constants, core/db
 ├── run_engine.py            # Pipeline de scan complet (Portfolio Balancer inclus)
 ├── run_audit.py             # Entry point de core/audit_engine.py
 ├── run_rapport.py           # Rapport Telegram bi-quotidien
+├── run_wiz.py               # Wiz — batch d'analyse contextuelle (cron 2h, n'écrit que wiz_analysis)
 ├── backfill_ledger.py       # Script one-shot de réparation ai_learning_ledger
 ├── requirements.txt
 └── vercel.json               # Déploiement Vercel (importe api.index:app)

@@ -18,7 +18,7 @@ import requests
 from dotenv import load_dotenv
 from flask import Flask, jsonify, render_template, send_from_directory
 
-from core.constants import TAX_RATE as _TAX_RATE
+from core.constants import TAX_RATE as _TAX_RATE, wiz_enforce as _wiz_enforce
 from core.db import get_db as _get_db_client, MissingCredentialsError
 from core.odds_api import BASE_URL as _ODDS_BASE_URL
 from core.learning_layer import (
@@ -518,6 +518,131 @@ def performance():
 @app.route("/system")
 def system():
     return render_template("system.html")
+
+
+# ── Wiz (PAIM v10.0) ─────────────────────────────────────────────────
+#
+# ⚠️  CES ROUTES NE FONT QUE LIRE. Aucun appel IA, aucune recherche web ici.
+# Une analyse Wiz prend 10 à 60 secondes par match (throttle Mistral 2 RPM +
+# 2 requêtes Brave), Vercel est en serverless avec un timeout court : la
+# requête HTTP mourrait avant la fin du premier match. Toute la charge vit
+# dans .github/workflows/wiz.yml → run_wiz.py, qui écrit dans wiz_analysis ;
+# ces routes se contentent d'afficher ce qui a déjà été calculé.
+
+def _wiz_match_key_sig(s: dict) -> str:
+    """Même clé de regroupement que run_wiz.py `_match_key` — match_id quand
+    il existe, nom du match sinon (les signaux harvester/oracle ont
+    match_id='')."""
+    mid = (s.get("match_id") or "").strip()
+    return mid if mid else f"name:{(s.get('match') or '').strip().lower()}"
+
+
+def _wiz_json(value, default):
+    """arguments/red_flags/signal_ids sont en jsonb : Supabase les rend déjà
+    désérialisés, mais une colonne text ou un client plus ancien les rend en
+    chaîne. On accepte les deux plutôt que de casser la page."""
+    if value is None:
+        return default
+    if isinstance(value, str):
+        try:
+            return json.loads(value)
+        except Exception:
+            return default
+    return value
+
+
+def _wiz_rows():
+    """Dernière analyse par match, jointe aux signaux actifs, triée par
+    wiz_rank_score décroissant. Retourne (rows, enforce)."""
+    rows = []
+    sb = _db()
+    if not sb:
+        return rows, False
+
+    # Signaux actifs non commencés — même règle que le dashboard : une
+    # analyse dont le match a déjà commencé n'est plus actionnable.
+    now = datetime.now(_tz.utc)
+    sig_res = (sb.table("signals").select("*")
+               .eq("status", "active")
+               .order("created_at", desc=True).limit(300).execute())
+    by_key: dict = {}
+    for s in sig_res.data or []:
+        mt = _parse_match_time(s.get("match_time") or "")
+        if s.get("match_time") and mt and mt <= now:
+            continue
+        by_key.setdefault(_wiz_match_key_sig(s), []).append(s)
+    if not by_key:
+        return rows, False
+
+    an_res = (sb.table("wiz_analysis").select("*")
+              .order("analyzed_at", desc=True).limit(400).execute())
+
+    seen = set()
+    for a in an_res.data or []:
+        key = (a.get("match_id") or "").strip() or \
+            f"name:{(a.get('match') or '').strip().lower()}"
+        if key in seen:
+            continue          # déjà vue : la plus récente gagne (tri DESC)
+        sigs = by_key.get(key)
+        if not sigs:
+            continue          # analyse orpheline (match commencé/réglé)
+        seen.add(key)
+
+        best = max(sigs, key=lambda s: float(s.get("edge_pct") or 0.0))
+        args = _wiz_json(a.get("arguments"), [])
+        flags = _wiz_json(a.get("red_flags"), [])
+        # Groupés par tier pour l'affichage : le Tier A est ce qui explique
+        # un edge, il doit être lisible en premier.
+        by_tier = {t: [x for x in args if (x or {}).get("tier") == t] for t in ("A", "B", "C")}
+
+        rows.append({
+            "match":          a.get("match"),
+            "sport":          best.get("sport") or a.get("sport"),
+            "league":         best.get("league") or a.get("league"),
+            "emoji":          _SPORT_EMOJI.get(best.get("sport") or "", "🎯"),
+            "market":         best.get("market") or best.get("market_key") or "",
+            "selection":      best.get("selection_name") or best.get("match"),
+            "edge_pct":       float(best.get("edge_pct") or 0.0),
+            "xbet_odd":       best.get("xbet_odd"),
+            "match_time":     best.get("match_time"),
+            "n_signals":      len(sigs),
+            "verdict":        a.get("verdict") or "INDISPONIBLE",
+            "confidence":     a.get("wiz_confidence"),
+            "rank_score":     float(a.get("wiz_rank_score") or 0.0),
+            "resume":         a.get("resume") or "",
+            "args_a":         by_tier["A"],
+            "args_b":         by_tier["B"],
+            "args_c":         by_tier["C"],
+            "red_flags":      flags,
+            "sources_count":  a.get("sources_count") or 0,
+            "model_used":     a.get("model_used") or "",
+            "analyzed_at":    a.get("analyzed_at"),
+        })
+
+    rows.sort(key=lambda r: r["rank_score"], reverse=True)
+    return rows, _wiz_enforce()
+
+
+@app.route("/wiz")
+def wiz():
+    rows, enforce = [], False
+    try:
+        rows, enforce = _wiz_rows()
+    except Exception as e:
+        # Cas le plus probable au premier déploiement :
+        # sql/migrate_v10_0_wiz.sql pas encore appliquée. La page doit
+        # afficher son état vide, pas une 500.
+        log.error("Wiz: %s", e)
+    return render_template("wiz.html", rows=rows, enforce=enforce)
+
+
+@app.route("/api/wiz")
+def api_wiz():
+    try:
+        rows, enforce = _wiz_rows()
+        return jsonify({"enforce": enforce, "count": len(rows), "rows": rows})
+    except Exception as e:
+        return jsonify({"error": str(e)}), 500
 
 
 # ── JSON API ─────────────────────────────────────────────────────────
