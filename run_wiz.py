@@ -315,7 +315,17 @@ def run() -> None:
             # Le budget borne la durée du run : au-delà, GitHub Actions
             # tuerait le job avant le log de synthèse.
             if wiz_ai.search_exhausted():
-                log.warning("Budget du run épuisé après %d match(s) — arrêt propre", i - 1)
+                if wiz_ai.search_quota_dead():
+                    # Cause côté Mistral, pas côté nous : le remède n'est pas
+                    # de baisser WIZ_RUN_BUDGET mais d'attendre que le quota
+                    # du connecteur se recharge (ou de changer de plan).
+                    log.warning("Quota du connecteur web_search épuisé côté Mistral "
+                                "après %d match(s) — arrêt propre. Ce n'est PAS "
+                                "WIZ_RUN_BUDGET : attendre la recharge du quota.", i - 1)
+                else:
+                    log.warning("Budget local du run épuisé après %d match(s) "
+                                "(WIZ_RUN_BUDGET=%d) — arrêt propre",
+                                i - 1, wiz_run_budget())
                 break
             if wiz_ai.wiz_dead():
                 log.warning("Tous les modèles Mistral sont morts — arrêt propre après %d match(s)",
@@ -342,7 +352,11 @@ def run() -> None:
     log.info("Verdicts | CONFIRME %d · NEUTRE %d · ALERTE %d · VETO %d · INDISPONIBLE %d",
              counts.get("CONFIRME", 0), counts.get("NEUTRE", 0), counts.get("ALERTE", 0),
              counts.get("VETO", 0), counts.get(INDISPONIBLE, 0))
-    if counts.get(INDISPONIBLE, 0) and counts[INDISPONIBLE] >= written:
+    if wiz_ai.search_quota_dead():
+        log.warning("Le quota du connecteur web_search de Mistral était épuisé — "
+                    "les analyses de ce run sont INDISPONIBLE pour cette raison, "
+                    "pas parce que l'information n'existe pas.")
+    elif counts.get(INDISPONIBLE, 0) and counts[INDISPONIBLE] >= written:
         # Rien d'exploitable produit : quota mort, requêtes mal ciblées, ou
         # noms de modèles Mistral invalides (voir WIZ_MISTRAL_MODELS).
         # `python -m core.wiz_ai` diagnostique les trois en une minute.

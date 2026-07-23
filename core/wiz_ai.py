@@ -75,17 +75,40 @@ MISTRAL_CONV_URL = "https://api.mistral.ai/v1/conversations"
 # wiz_run_budget() plutôt que figé à l'import, pour qu'un test ou un run
 # manuel puisse le changer par env sans réimporter.
 #
-# Ce que ce compteur borne a changé le 2026-07-23 : ce n'était plus des
-# requêtes Brave (quota mensuel dur de 2 000) mais des appels de recherche
-# Mistral, facturés en tokens sur un budget mensuel bien plus large
-# (~6 000 tokens de connecteur par recherche, mesuré live). Le vrai
-# facteur limitant est désormais la DURÉE du run : 2 RPM = 31s par match.
+# ⚠️ CE COMPTEUR N'EST PAS LA VRAIE LIMITE. Corrigé le 2026-07-23 après le
+# premier run en production : j'avais écrit ici que le facteur limitant était
+# la durée du run (2 RPM = 31 s/match) et que les tokens de connecteur
+# (~6 000 par recherche) n'étaient pas contraignants face au budget mensuel.
+# C'était FAUX — le connecteur web_search a un quota PROPRE, non documenté
+# dans les chiffres de tokens, et bien plus serré (voir _search_quota_dead).
+# Ce compteur reste utile comme garde-fou local, mais c'est Mistral qui
+# tranche : quand il répond « web_search rate limit reached », le run
+# s'arrête, quel que soit ce budget.
 _searches_used = 0
 
 # Modèles Mistral morts ce process. Comme pour Groq, le quota est appliqué
 # PAR MODÈLE : marquer un flag global ferait qu'une 429 sur mistral-large
 # court-circuiterait mistral-small qui a encore tout son quota.
 _mistral_dead_models: set = set()
+
+# Quota du CONNECTEUR web_search épuisé — terminal pour ce process.
+#
+# Découvert en production le 2026-07-23 (premier run réel, job 30006390396) :
+# le connecteur a un quota PROPRE, indépendant de celui des modèles et
+# PAR COMPTE (pas par clé — régénérer la clé n'y change rien). La signature
+# est sans ambiguïté :
+#     GET  /v1/models        -> 200   la clé est parfaitement valide
+#     POST /v1/conversations -> 429   {"detail":"web_search rate limit reached."}
+#
+# Ce message ne contient ni « per day » ni « quota », donc la classification
+# générique des 429 le prenait pour une limite par MINUTE et retentait :
+# 3 modèles x 3 tentatives x ~31 s de throttle = ~7 minutes brûlées par
+# match, pour zéro résultat. Le run écrivait une ligne INDISPONIBLE toutes
+# les 6 minutes jusqu'à son timeout global.
+#
+# Un quota de connecteur ne se rattrape pas en changeant de modèle : il est
+# au niveau du compte. Dès qu'on le voit, on coupe tout le run.
+_search_quota_dead = False
 
 # Throttle 2 RPM. Initialisé à 0.0 : le premier appel d'un run part
 # immédiatement, on ne paie l'attente qu'entre deux appels.
@@ -95,9 +118,10 @@ _last_mistral_call = 0.0
 def _reset_state() -> None:
     """Remet l'état process à zéro. Réservé aux tests — jamais appelé en prod
     (un run = un process, l'état doit persister d'un match à l'autre)."""
-    global _searches_used, _last_mistral_call
+    global _searches_used, _last_mistral_call, _search_quota_dead
     _searches_used = 0
     _last_mistral_call = 0.0
+    _search_quota_dead = False
     _mistral_dead_models.clear()
 
 
@@ -134,12 +158,27 @@ def wiz_dead() -> bool:
 
 
 def search_exhausted() -> bool:
-    """True quand le budget de recherches du run est atteint."""
-    return _searches_used >= wiz_run_budget()
+    """True quand plus aucune recherche n'est possible pour ce process.
+
+    Deux causes, fusionnées parce que l'appelant en tire la même conclusion
+    (arrêter le run) : le budget local est atteint, ou Mistral a répondu que
+    le quota du connecteur web_search est épuisé côté compte.
+    """
+    return _search_quota_dead or _searches_used >= wiz_run_budget()
+
+
+def search_quota_dead() -> bool:
+    """True quand c'est le quota du CONNECTEUR (pas le budget local) qui a
+    coupé. Permet à run_wiz.py de le dire explicitement dans son log :
+    le remède n'est pas le même (attendre / changer de plan, vs baisser
+    WIZ_RUN_BUDGET)."""
+    return _search_quota_dead
 
 
 def search_credits_left() -> int:
     """Recherches encore disponibles pour ce run."""
+    if _search_quota_dead:
+        return 0
     return max(0, wiz_run_budget() - _searches_used)
 
 
@@ -170,9 +209,26 @@ def _throttle() -> None:
 
 
 def _handle_error(r, model: str, label: str) -> str:
-    """Classe une réponse HTTP non-200. Retourne 'retry', 'dead' ou 'give_up'."""
+    """Classe une réponse HTTP non-200.
+
+    Retourne 'retry', 'dead' (ce modèle est fichu, essayer le suivant),
+    'search_dead' (le connecteur est fichu, changer de modèle ne sert à
+    rien) ou 'give_up'.
+    """
+    global _search_quota_dead
+
     if r.status_code == 429:
         body = r.text[:500].lower()
+
+        # Quota du connecteur web_search — terminal, et au niveau du COMPTE :
+        # réessayer avec un autre modèle donne exactement la même 429.
+        # Voir le commentaire de _search_quota_dead plus haut pour l'incident
+        # qui a rendu cette branche nécessaire.
+        if "web_search" in body or "search rate limit" in body:
+            _search_quota_dead = True
+            log.critical("%s: quota du connecteur web_search épuisé (compte, pas clé) — "
+                         "recherche coupée pour ce process | %s", label, r.text[:200])
+            return "search_dead"
         # Comme Groq : per-minute = récupérable, per-day/month = terminal
         # pour ce modèle. Le throttle devrait rendre le premier cas rare ;
         # s'il arrive quand même, attendre une fenêtre entière est moins
@@ -344,6 +400,10 @@ def mistral_search(prompt: str, label: str = "WIZ",
 
             if r.status_code != 200:
                 verdict = _handle_error(r, model, label)
+                if verdict == "search_dead":
+                    # Inutile d'essayer les autres modèles : le quota est
+                    # au niveau du compte, pas du modèle.
+                    return None, [], None
                 if verdict == "retry":
                     wait = WIZ_MISTRAL_MIN_INTERVAL_S * (attempt + 1)
                     log.warning("%s[%s]: HTTP %d — nouvelle tentative dans %.0fs",
@@ -407,6 +467,8 @@ def mistral_complete(prompt: str, label: str = "WIZ",
 
             if r.status_code != 200:
                 verdict = _handle_error(r, model, label)
+                if verdict == "search_dead":
+                    return None, None
                 if verdict == "retry":
                     time.sleep(WIZ_MISTRAL_MIN_INTERVAL_S * (attempt + 1))
                     continue
