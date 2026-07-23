@@ -20,7 +20,7 @@ catch a break is to trace the pipeline by hand. This skill is that trace, pre-do
    are quota-balanced by `_portfolio_balance` and written to Supabase `signals`
    (`status='active'`).
 3. **Purge** — `_purge_old_signals()` runs at the TOP of every `run_engine.py`
-   invocation (Golden Hour: every 30 min). It must only ever delete rows scoped to
+   invocation (Golden Hour: hourly since 2026-07-23, was every 30 min). It must only ever delete rows scoped to
    `status='active'` for anything keyed on `match_time`/lifecycle. Never add an
    unscoped `.lt("match_time", ...)` or `.lt("created_at", ...)` rule without an
    explicit `.eq("status", "active")` — history for `settled`/`closed`/`expired`
@@ -99,6 +99,32 @@ scanned but never learned-from (or vice versa):
 darts, cricket, etc.) that are not currently harvested — that's harmless UI cruft,
 not a bug, unless one of those keys starts appearing in real `signals` rows.
 
+## The OddsAPI quota reality (2026-07-23)
+
+Two DIFFERENT `ODDS_API_KEY` values are in play, and they report wildly
+different numbers — check which one you are looking at before concluding
+anything:
+- The key on **Vercel** backs `/api/odds-quota` (and therefore the `/system`
+  page). On 2026-07-23 it read 500 remaining / 0 used — a fresh free-tier key
+  that nothing consumes.
+- The key in **GitHub Actions secrets** is the one the engine actually burns.
+  Same day it was at **47 remaining**, visible only in the scan logs
+  (`OddsAPI quota guard — 47 remaining, stopping scan early`).
+
+So the dashboard can show a reassuring 500 while the engine is starved. The
+scan logs are the only trustworthy source.
+
+Consequence of the guard (`quota_remaining < 50` in `core/odds_api.py`):
+below 50, it trips after the FIRST sport key of every scan, so the engine
+silently falls back to harvester/cache/Betfair for everything. The counter
+then looks frozen (47 across five consecutive runs) because that single
+request isn't billed. A frozen quota number is the signature of this state,
+not of a healthy one.
+
+Order of magnitude: the free tier is 500 req/MONTH. With 19 keys in
+`SPORT_KEYS`, one full scan per DAY already costs 570/month. No cron cadence
+fixes that — only shrinking `SPORT_KEYS` or paying for a higher tier does.
+
 ## Manual steps this stack does NOT automate
 
 - **Supabase schema changes** live in `sql/migrate_vX_Y.sql` but nothing runs them
@@ -120,7 +146,7 @@ not a bug, unless one of those keys starts appearing in real `signals` rows.
 
 | Workflow | Cadence | Purpose |
 |---|---|---|
-| `golden_hour.yml` | every 30 min | T-120min line-movement scan, purges on every run; also checks `meta.scan_request` (see below) |
+| `golden_hour.yml` | **hourly (H+25)** | T-120min line-movement scan, purges on every run; also checks `meta.scan_request` (see below). Was `*/30` until 2026-07-23 — halved to cut OddsAPI consumption (912 → 456 req/day). Side effect: the dashboard "Scan" button's latency doubled to ≤60 min. Do NOT add a dedicated poller to compensate — that is the 2026-07-07 mistake. |
 | `engine.yml` | ~10x/day | full 72h-window scan |
 | `deep_scan.yml` | 4x/day | 48h-window, all markets |
 | `audit.yml` | every 6h | settlement + CLV + learning layer |
