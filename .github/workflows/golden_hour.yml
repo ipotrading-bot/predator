@@ -5,19 +5,36 @@ name: Predator Golden Hour
 # ce chiffre a déjà dérivé une fois (voir docstring d'odds_api.py) et a
 # recommencé à dériver silencieusement depuis l'ajout des ligues Big-5.
 #
-#   Golden Hour : 48 exec/j × 19 keys =  912 req/j → ~27 760/mois
+#   Golden Hour : 24 exec/j × 19 keys =  456 req/j → ~13 880/mois
 #   Engine      : 10 exec/j × 19 keys =  190 req/j →  ~5 784/mois
 #   Deep Scan   :  4 exec/j × 19 keys =   76 req/j →  ~2 313/mois
 #   ──────────────────────────────────────────────────────────────
-#   TOTAL réel                         = 1178 req/j → ~35 857/mois
-#   Budget annoncé                     = 20 000/mois — DÉPASSÉ de ~79 %
+#   TOTAL réel                         =  722 req/j → ~21 977/mois
 #
-# ⚠️ Décision produit à prendre (pas un bug de code) : réduire SPORT_KEYS ou
-# confirmer/upgrader le palier OddsAPI réellement souscrit. Le quota guard
-# (`quota_remaining < 50` dans core/odds_api.py) empêche un blocage total,
-# mais à ce volume il va se déclencher souvent — voir le fix du 2026-07-07
-# qui empêche au moins la perte totale des events déjà récupérés ce
-# scan-là quand ça arrive (HTTP 422 faisait `return []` au lieu de `break`).
+# 2026-07-23 — CADENCE RAMENÉE DE 30 MIN À 1 H (décision opérateur).
+# Divise par deux la consommation de Golden Hour (912 → 456 req/j) et le
+# total du repo de ~39 % (35 857 → 21 977/mois).
+#
+# ⚠️ MAIS L'ORDRE DE GRANDEUR NE COLLE TOUJOURS PAS, et il faut le dire
+# clairement plutôt que de laisser croire que ce changement suffit. Le
+# « budget annoncé = 20 000/mois » écrit ici avant cette date correspond à
+# un palier OddsAPI payant. La clé réellement en service le 2026-07-23
+# relève du PLAN GRATUIT : 500 requêtes/MOIS au total, vérifié sur les logs
+# (`quota guard — 47 remaining`, soit ~453 déjà consommées).
+#
+# À 19 clés de sport, 500 req/mois ne suffisent pas, quelle que soit la
+# cadence : un seul scan complet par JOUR coûte déjà 19 × 30 = 570 req/mois.
+# Le vrai levier n'est donc pas ici mais dans SPORT_KEYS (core/odds_api.py),
+# ou dans le palier souscrit. Espacer le cron réduit la casse, il ne la
+# supprime pas.
+#
+# Le quota guard (`quota_remaining < 50` dans core/odds_api.py) empêche un
+# blocage total, mais à ce volume il se déclenche en permanence — constaté
+# le 2026-07-23 : figé à 47 sur cinq runs consécutifs, une seule clé de
+# sport interrogée par scan, le moteur vivant uniquement sur ses sources de
+# repli. Voir aussi le fix du 2026-07-07 qui évite au moins de perdre les
+# events déjà récupérés quand ça arrive (HTTP 422 faisait `return []` au
+# lieu de `break`).
 #
 # 2026-07-07 : run réel tué par le timeout de 8 min (job 28865964902,
 # 12:25→12:34 UTC), aucun signal écrit, scan suivant absorbé par le trou —
@@ -27,7 +44,8 @@ name: Predator Golden Hour
 #
 # Fenêtre T-120min — détecte les mouvements de ligne Pinnacle→1XBet
 # pré-match sur les sports sélectionnés (lag documenté uniquement).
-# Intervalle 30 min = couverture optimale, 48 passes/jour.
+# Intervalle 1 h, 24 passes/jour (était 30 min / 48 passes avant le
+# 2026-07-23 — voir le bloc BUDGET ci-dessus).
 #
 # Absorbe aussi la demande de scan manuel (bouton Scanner du dashboard) —
 # on_demand.yml pollait Supabase toutes les 5 min (288 déclenchements/jour,
@@ -37,10 +55,20 @@ name: Predator Golden Hour
 # a été supprimé (on_demand.yml — schedule retiré puis fichier supprimé le
 # 2026-07-07, il ne faisait plus que dupliquer ce check) ; la vérification du
 # flag se fait maintenant ici, gratuitement, à chaque exécution déjà planifiée.
+#
+# ⚠️ CONSÉQUENCE DU PASSAGE À 1 H : la latence du bouton « Scanner » du
+# dashboard double, de ≤30 min à ≤60 min. C'est le prix du quota, et c'est
+# assumé — mais ne pas re-créer un poller dédié pour compenser, c'est
+# exactement l'erreur du 2026-07-07 décrite ci-dessus.
 
 on:
   schedule:
-    - cron: '*/30 * * * *'  # Toutes les 30 minutes, 24h/24 (48/jour)
+    # H+25 et non H+00 : `predator-signals-write` sérialise ce job avec
+    # closing_line.yml (H+00), engine.yml (H+03) et deep_scan.yml (H+33).
+    # Les faire démarrer à la même minute les mettrait en file d'attente
+    # les uns derrière les autres — closing_line a une fenêtre de capture
+    # de ~5 min avant le coup d'envoi, elle ne supporte pas d'attendre.
+    - cron: '25 * * * *'  # Toutes les heures, 24h/24 (24/jour)
   workflow_dispatch:
 
 # Shared with engine.yml/deep_scan.yml/audit.yml — all read/write
