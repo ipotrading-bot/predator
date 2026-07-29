@@ -108,6 +108,58 @@ def _mk_dash_sort(s: dict, now) -> tuple:
     return (1, "0", _DASH_SPORT_ORDER.get(s.get("sport", ""), 9), -(s.get("edge_pct") or 0))
 
 
+# Même barème que le data-quality du template : 0 = meilleur.
+_QUALITY_RANK = {"HIGH_VALUE": 0, "VALUE": 1}
+
+
+def _group_key(s: dict) -> tuple:
+    """Clé de regroupement visuel d'un signal vers sa carte-match.
+
+    On ne se fie pas au seul match_id : le même match réel peut arriver par
+    The Odds API (uuid) et par la recherche web (id dérivé des noms d'équipes),
+    donc avec deux ids différents. Le nom normalisé + la date de match est ce
+    que l'opérateur perçoit comme "le même match".
+    """
+    return (s.get("sport") or "",
+            (s.get("match") or "").lower().strip(),
+            (s.get("match_time") or "")[:10])
+
+
+def _group_by_match(signals: list) -> list:
+    """Regrouper les signaux déjà triés en cartes-match.
+
+    Un match génère jusqu'à 3 signaux (h2h + totals + spreads) ; affichés à
+    plat, ils se lisent comme des doublons puisque la liste n'affiche que le
+    nom du match. Chaque groupe garde l'index plat de ses signaux : le JS
+    indexe dans SIGNALS via openModal(idx), cet index doit rester valide.
+    """
+    groups: dict = {}
+    for idx, s in enumerate(signals):
+        g = groups.get(_group_key(s))
+        if g is None:
+            g = {
+                "match":        s.get("match") or "",
+                "league":       s.get("league") or "",
+                "sport":        s.get("sport") or "soccer",
+                "match_time":   s.get("match_time") or "",
+                "legs":         [],
+                "best_edge":    0.0,
+                "best_quality": 3,
+                "best_flag":    s.get("risk_flag") or "LOW_VALUE",
+            }
+            groups[_group_key(s)] = g
+        g["legs"].append({"idx": idx, "sig": s})
+        g["best_edge"] = max(g["best_edge"], s.get("edge_pct") or 0.0)
+        rank = _QUALITY_RANK.get(s.get("risk_flag"), 2)
+        if rank < g["best_quality"]:
+            # La couleur de bordure et le badge de la carte suivent sa
+            # meilleure jambe — les signaux sont déjà triés par edge DESC dans
+            # un rang donné, donc à rang égal la première jambe vue gagne.
+            g["best_quality"] = rank
+            g["best_flag"] = s.get("risk_flag") or "LOW_VALUE"
+    return list(groups.values())
+
+
 @app.route("/")
 def dashboard():
     signals   = []
@@ -169,9 +221,11 @@ def dashboard():
     except Exception as e:
         log.error("Dashboard: %s", e)
 
+    groups = _group_by_match(signals)
+
     from core.constants import BANKROLL_REF
-    return render_template("index.html", signals=signals, last_scan=last_scan,
-                           bankroll_ref=BANKROLL_REF)
+    return render_template("index.html", signals=signals, groups=groups,
+                           last_scan=last_scan, bankroll_ref=BANKROLL_REF)
 
 
 # ── Ledger ───────────────────────────────────────────────────────────

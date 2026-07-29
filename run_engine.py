@@ -688,6 +688,26 @@ def _process_h2h(m, name, sport, league, home, away, emoji, signals, sb, now, lo
           ah0_value=ah0_value)
 
 
+def _keep_best_side(sides: list, log, emoji, name) -> list:
+    """Sur un marché à deux côtés opposés (Over/Under, handicap home/away),
+    ne garder que celui au plus gros edge.
+
+    Les deux côtés peuvent passer les filtres en même temps quand Melbet est
+    moins margé que Pinnacle sur ce marché : le devig répartit alors une prob.
+    sharp favorable des DEUX bords. C'est un artefact de marge, pas deux
+    opportunités — et sur le dashboard ça produisait deux signaux
+    contradictoires sur le même match ("Over 2.5 VALEUR" + "Under 2.5 VALEUR").
+    """
+    if not sides:
+        return []
+    best = max(sides, key=lambda s: s["edge_pct"])
+    if len(sides) > 1:
+        log.info("OPPOSITE | %s %s | %s — %d côtés positifs, on garde %s (+%.2f%%)",
+                 emoji, name, best["market_key"], len(sides),
+                 best["selection_name"], best["edge_pct"])
+    return [best]
+
+
 def _process_totals(m, name, sport, league, emoji, signals, sb, now, log, min_edge=None):
     """Over/Under market for all sports."""
     prob_min = SHARP_PROB_BY_MARKET["totals"]
@@ -714,6 +734,7 @@ def _process_totals(m, name, sport, league, emoji, signals, sb, now, log, min_ed
         log.info("ROUNDLINE | %s %s totals %.1f — P(push)=%.0f%% → sharp_prob adjusted",
                  emoji, name, point, _PUSH_PROB_ROUND_LINE * 100)
 
+    sides: list = []
     for side, other in [("over", "under"), ("under", "over")]:
         x_odd = float(xt.get(side, 0))
         p_odd = float(pt.get(side, 0))
@@ -729,10 +750,12 @@ def _process_totals(m, name, sport, league, emoji, signals, sb, now, log, min_ed
             continue
         lbl = market_label("totals", side, point, sport)
         sel = f"{'Over' if side == 'over' else 'Under'}{(' ' + str(point)) if point else ''}"
-        _emit(signals, sb, now, log, name, sport, league,
+        _emit(sides, sb, now, log, name, sport, league,
               f"totals_{side}", lbl, x_odd, p_odd, sharp_prob, emoji,
               selection_name=sel, min_edge=min_edge,
               match_time=m.get("commence_time", ""), match_id=m.get("id", ""))
+
+    signals.extend(_keep_best_side(sides, log, emoji, name))
 
 
 def _process_spreads(m, name, sport, league, home, away, emoji, signals, sb, now, log, min_edge=None):
@@ -751,6 +774,7 @@ def _process_spreads(m, name, sport, league, home, away, emoji, signals, sb, now
     home_point = float(ps.get("point", xs.get("point", 0.0)))
     away_point = -home_point
 
+    sides: list = []
     for side, team, pt in [("home", home, home_point), ("away", away, away_point)]:
         x_odd = float(xs.get(side, 0))
         p_odd = float(ps.get(side, 0))
@@ -762,10 +786,12 @@ def _process_spreads(m, name, sport, league, home, away, emoji, signals, sb, now
             continue
         lbl = market_label("spreads", side, pt, sport)
         pt_str = f"+{pt}" if pt > 0 else str(pt)
-        _emit(signals, sb, now, log, name, sport, league,
+        _emit(sides, sb, now, log, name, sport, league,
               f"spreads_{side}", lbl, x_odd, p_odd, sharp_prob, emoji,
               selection_name=f"{team} {pt_str}", min_edge=min_edge,
               match_time=m.get("commence_time", ""), match_id=m.get("id", ""))
+
+    signals.extend(_keep_best_side(sides, log, emoji, name))
 
 
 # ── Portfolio Balancer ────────────────────────────────────────────────
