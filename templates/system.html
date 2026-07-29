@@ -470,7 +470,11 @@ function SystemBetCalculator() {
     }]);
     setNextId((x) => x + 1);
   };
-  const removeSelection = (id) => setSelections((s) => (s.length > 1 ? s.filter((x) => x.id !== id) : s));
+  // Autorise la suppression jusqu'à 0 : le ticket vide est un état géré
+  // (messages "Aucune sélection" + panneau Système neutralisé). L'ancienne
+  // garde s.length > 1 laissait un élément ineffaçable — remonté par l'opérateur.
+  const removeSelection = (id) => setSelections((s) => s.filter((x) => x.id !== id));
+  const clearAll = () => { setSelections([]); setPickerOpen(false); };
   const updateSelection = (id, patch) => setSelections((s) => s.map((x) => (x.id === id ? { ...x, ...patch } : x)));
   const setSelectionCount = (target) => {
     const t = Math.max(1, Math.min(10, target));
@@ -523,11 +527,20 @@ function SystemBetCalculator() {
             <Panel
               title="Sélections"
               right={
-                <button onClick={() => setPickerOpen((v) => !v)} disabled={n >= 10}
-                  style={{ color: n >= 10 ? C.faint : C.gold, border: `1px solid ${n >= 10 ? C.border : C.goldSoft}` }}
-                  className="flex items-center gap-1 text-xs px-2 py-1 rounded-md transition">
-                  <Plus size={13} /> Ajouter
-                </button>
+                <div className="flex items-center gap-2">
+                  {n > 0 && (
+                    <button onClick={clearAll} aria-label="Tout effacer"
+                      style={{ color: C.loss, border: `1px solid ${C.border}` }}
+                      className="flex items-center gap-1 text-xs px-2 py-1 rounded-md transition">
+                      <Trash2 size={13} /> Vider
+                    </button>
+                  )}
+                  <button onClick={() => setPickerOpen((v) => !v)} disabled={n >= 10}
+                    style={{ color: n >= 10 ? C.faint : C.gold, border: `1px solid ${n >= 10 ? C.border : C.goldSoft}` }}
+                    className="flex items-center gap-1 text-xs px-2 py-1 rounded-md transition">
+                    <Plus size={13} /> Ajouter
+                  </button>
+                </div>
               }
             >
               {pickerOpen && n < 10 && (
@@ -569,8 +582,8 @@ function SystemBetCalculator() {
                           style={{ ...inputStyle, fontFamily: SANS }}
                           className="flex-1 min-w-0 text-sm rounded-md px-2 py-1.5"
                         />
-                        <button onClick={() => removeSelection(sel.id)} disabled={n <= 1}
-                          style={{ color: n <= 1 ? C.faint : C.loss }} className="shrink-0 p-1">
+                        <button onClick={() => removeSelection(sel.id)} aria-label="Supprimer la sélection"
+                          style={{ color: C.loss }} className="shrink-0 p-1">
                           <Trash2 size={14} />
                         </button>
                       </div>
@@ -600,6 +613,12 @@ function SystemBetCalculator() {
 
             {/* System config — deux dropdowns M/N, comme betbuzz */}
             <Panel title="Système">
+              {n === 0 ? (
+                <p style={{ color: C.faint }} className="text-xs">
+                  Aucune sélection — ajoute-en une (bouton « Ajouter ») pour configurer le système.
+                </p>
+              ) : (
+              <>
               <div className="grid grid-cols-2 gap-3 mb-3">
                 <Field label="Système (M)">
                   <select value={Math.min(sysM, n)} onChange={(e) => setSysM(Number(e.target.value))}
@@ -632,6 +651,8 @@ function SystemBetCalculator() {
                   </select>
                 </Field>
               </div>
+              </>
+              )}
             </Panel>
           </div>
 
