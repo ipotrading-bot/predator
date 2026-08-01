@@ -22,7 +22,8 @@ from datetime import datetime, timedelta, timezone
 
 from dotenv import load_dotenv
 
-from core.db import get_db, log_to_ledger, replace_signal_row, MissingCredentialsError
+from core.db import (get_db, log_to_ledger, replace_signal_row,
+                     update_signal_fields, MissingCredentialsError)
 from core.ai_search import (ai_available, ai_dead as gemini_quota_dead,
                             search_credits_left, search_exhausted)
 from core.learning_layer import compute_and_save as _learn
@@ -74,7 +75,8 @@ SETTLE_BUDGET = 25     # Max settlement (web search) calls per audit run
 # depends on the scheduler firing at a particular minute — only on it firing
 # at all. CLOSING_LINE_REFRESH_MIN bounds the oracle cost of that refresh.
 CLOSING_LINE_WINDOW_MIN  = 240  # capture starts this many minutes before kickoff
-CLOSING_LINE_REFRESH_MIN = 20   # don't re-price a signal more often than this
+CLOSING_LINE_TIGHTEN_MIN = 90   # only inside this do we re-price; further out one price is enough
+CLOSING_LINE_REFRESH_MIN = 20   # and even then, not more often than this
 CLOSING_LINE_BUDGET      = 30   # Max oracle (web search) calls per closing-line run
 
 _AUDIT_COLS = {"closing_line", "clv_pct", "closed_at"}
@@ -289,10 +291,17 @@ def fetch_closing_line_candidates(sb) -> list[dict]:
 
 
 def _needs_refresh(sig: dict, now: datetime) -> bool:
-    """True if this signal has no closing price yet, or its last capture is
-    older than CLOSING_LINE_REFRESH_MIN. Bounds oracle spend to roughly
-    WINDOW/REFRESH calls per signal, while still converging on a price close
-    to kickoff whenever the scheduler cooperates."""
+    """Should this signal be (re-)priced on this run?
+
+    Always yes if it has no price at all — that first capture anywhere in the
+    240-min window is what guarantees we end up with *something* even when the
+    scheduler drops several ticks in a row.
+
+    After that, only inside CLOSING_LINE_TIGHTEN_MIN of kickoff, and at most
+    every CLOSING_LINE_REFRESH_MIN. Re-pricing a match still three hours out
+    buys no accuracy — the line has not converged yet — and this job shares
+    its web-search quota with the audit and WIZ.
+    """
     if not sig.get("closing_pinnacle_price"):
         return True
     stamp = sig.get("closing_captured_at")
@@ -304,7 +313,15 @@ def _needs_refresh(sig: dict, now: datetime) -> bool:
         return True
     if taken.tzinfo is None:
         taken = taken.replace(tzinfo=timezone.utc)
-    return (now - taken) >= timedelta(minutes=CLOSING_LINE_REFRESH_MIN)
+    if (now - taken) < timedelta(minutes=CLOSING_LINE_REFRESH_MIN):
+        return False
+    try:
+        kickoff = datetime.fromisoformat(str(sig.get("match_time") or "").replace("Z", "+00:00"))
+    except (ValueError, TypeError):
+        return True   # unparseable kickoff — refresh rather than freeze a stale price
+    if kickoff.tzinfo is None:
+        kickoff = kickoff.replace(tzinfo=timezone.utc)
+    return (kickoff - now) <= timedelta(minutes=CLOSING_LINE_TIGHTEN_MIN)
 
 
 def _lead_time_label(match_time, now: datetime) -> str:
@@ -418,11 +435,15 @@ def capture_closing_lines(sb, budget: int = CLOSING_LINE_BUDGET) -> int:
         xbet_odd = sig.get("xbet_odd") or 0.0
         clv_real = round((xbet_odd / price - 1) * 100, 2) if same_side and xbet_odd > 1.01 else None
 
-        ok = replace_signal_row(sb, sig["id"], {**sig, **{
+        # A plain UPDATE, deliberately not replace_signal_row(): this write
+        # now repeats every CLOSING_LINE_REFRESH_MIN on a live signal, and
+        # delete-then-insert would put the row through a window where it does
+        # not exist — plus a new id — on every single refresh.
+        ok = update_signal_fields(sb, sig["id"], {
             "closing_pinnacle_price": float(price),
             "clv_pct_real":           clv_real,
             "closing_captured_at":    now.isoformat(),
-        }}, optional_cols=_CLOSING_LINE_COLS)
+        }, optional_cols=_CLOSING_LINE_COLS)
         if ok:
             captured += 1
             log.info("CLOSING LINE | %s | bet %.3f -> close %.3f | CLV_real %s | T-%s",

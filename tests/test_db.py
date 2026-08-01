@@ -206,3 +206,86 @@ class TestOptionalColumnDegradationIsSurgical:
         assert "closing_captured_at" not in final
         assert final["kelly_pct"] == 3.2
         assert final["sharp_prob"] == 0.58
+
+
+class _UpdateTable:
+    """Mimics PostgREST UPDATE against a stale schema: rejects a patch that
+    names a column the table doesn't have."""
+
+    def __init__(self, missing, attempts):
+        self._missing = missing
+        self._attempts = attempts
+
+    def update(self, payload):
+        self._attempts.append(dict(payload))
+        bad = sorted(c for c in self._missing if c in payload)
+        if bad:
+            raise RuntimeError(
+                f"could not find the '{bad[0]}' column of 'signals' in the schema cache")
+        return self
+
+    def eq(self, *_a, **_k):
+        return self
+
+    def execute(self):
+        return type("Res", (), {"data": [{"id": 1}]})()
+
+
+class _UpdateSupabase:
+    def __init__(self, missing=frozenset()):
+        self._missing = missing
+        self.attempts: list = []
+
+    def table(self, _name):
+        return _UpdateTable(self._missing, self.attempts)
+
+
+class TestUpdateSignalFields:
+    """The closing-line job re-prices the same live signal every refresh.
+    replace_signal_row() deletes before it inserts, so that path would expose
+    the row to permanent loss — and a fresh id — on every single refresh."""
+
+    def test_patches_only_the_given_fields(self):
+        from core.db import update_signal_fields
+        sb = _UpdateSupabase()
+        ok = update_signal_fields(sb, 7, {"closing_pinnacle_price": 1.8,
+                                          "clv_pct_real": 16.67})
+        assert ok is True
+        assert sb.attempts == [{"closing_pinnacle_price": 1.8, "clv_pct_real": 16.67}]
+
+    def test_never_writes_id(self):
+        from core.db import update_signal_fields
+        sb = _UpdateSupabase()
+        update_signal_fields(sb, 7, {"id": 99, "clv_pct_real": 1.0})
+        assert "id" not in sb.attempts[-1]
+
+    def test_missing_stamp_keeps_price_and_clv(self):
+        from core.db import update_signal_fields
+        sb = _UpdateSupabase(missing={"closing_captured_at"})
+        ok = update_signal_fields(sb, 7, {
+            "closing_pinnacle_price": 1.8,
+            "clv_pct_real": 16.67,
+            "closing_captured_at": "2026-08-01T12:00:00+00:00",
+        }, optional_cols=frozenset(
+            {"closing_pinnacle_price", "clv_pct_real", "closing_captured_at"}))
+
+        assert ok is True
+        final = sb.attempts[-1]
+        assert "closing_captured_at" not in final
+        assert final["closing_pinnacle_price"] == 1.8
+        assert final["clv_pct_real"] == 16.67
+
+    def test_failure_is_reported_not_swallowed(self):
+        from core.db import update_signal_fields
+
+        class _Dead:
+            def table(self, _n):
+                raise RuntimeError("db down")
+
+        assert update_signal_fields(_Dead(), 7, {"clv_pct_real": 1.0}) is False
+
+    def test_empty_patch_is_a_noop(self):
+        from core.db import update_signal_fields
+        sb = _UpdateSupabase()
+        assert update_signal_fields(sb, 7, {}) is True
+        assert sb.attempts == []

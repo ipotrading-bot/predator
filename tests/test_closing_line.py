@@ -42,6 +42,12 @@ class _FakeTable:
         self._inserted.append(payload)
         return self
 
+    def update(self, payload):
+        # capture_closing_lines patches the row in place rather than
+        # delete+insert — see core/db.update_signal_fields.
+        self._inserted.append(payload)
+        return self
+
     def execute(self):
         return type("Res", (), {"data": self._rows})()
 
@@ -207,12 +213,70 @@ class TestRefreshBeatsCronDrift:
 
         assert audit_engine.capture_closing_lines(sb) == 1
 
+    def test_far_from_kickoff_is_not_repriced_even_when_stale(self, monkeypatch):
+        # 3h out with a price already on file: the line has not converged, so
+        # re-pricing buys no accuracy and just burns web-search quota shared
+        # with the audit and WIZ.
+        now = datetime.now(timezone.utc)
+        sig = _sig(1, "Ajax vs Feyenoord", 2.00,
+                   (now + timedelta(minutes=180)).isoformat())
+        sig["closing_pinnacle_price"] = 1.95
+        sig["closing_captured_at"] = (now - timedelta(minutes=90)).isoformat()
+        sb = _FakeSupabase([sig])
+        calls = []
+        monkeypatch.setattr(audit_engine, "get_pinnacle_price",
+                            lambda match, sport, league: calls.append(match) or (1.80, "Ajax"))
+
+        assert audit_engine.capture_closing_lines(sb) == 0
+        assert calls == []
+
+    def test_far_from_kickoff_still_gets_its_first_price(self, monkeypatch):
+        # The guarantee that survives a run of dropped ticks: a signal with no
+        # price at all is captured anywhere in the window, however far out.
+        now = datetime.now(timezone.utc)
+        sig = _sig(1, "Ajax vs Feyenoord", 2.00,
+                   (now + timedelta(minutes=200)).isoformat())
+        sb = _FakeSupabase([sig])
+        monkeypatch.setattr(audit_engine, "get_pinnacle_price",
+                            lambda match, sport, league: (1.80, "Ajax"))
+
+        assert audit_engine.capture_closing_lines(sb) == 1
+
+    def test_unparseable_kickoff_refreshes_rather_than_freezing(self, monkeypatch):
+        now = datetime.now(timezone.utc)
+        sig = _sig(1, "Ajax vs Feyenoord", 2.00, "pas une date")
+        sig["closing_pinnacle_price"] = 1.95
+        sig["closing_captured_at"] = (now - timedelta(minutes=90)).isoformat()
+        sb = _FakeSupabase([sig])
+        monkeypatch.setattr(audit_engine, "get_pinnacle_price",
+                            lambda match, sport, league: (1.80, "Ajax"))
+
+        assert audit_engine.capture_closing_lines(sb) == 1
+
     def test_window_covers_the_real_execution_gap(self):
         # Guard rail on the constant itself: the measured median gap between
         # actual executions is 116 min and the worst observed is 254. A window
         # narrower than that reintroduces the original silent-zero bug.
         assert audit_engine.CLOSING_LINE_WINDOW_MIN >= 240
-        assert audit_engine.CLOSING_LINE_REFRESH_MIN < audit_engine.CLOSING_LINE_WINDOW_MIN
+        assert audit_engine.CLOSING_LINE_REFRESH_MIN < audit_engine.CLOSING_LINE_TIGHTEN_MIN
+        assert audit_engine.CLOSING_LINE_TIGHTEN_MIN <= audit_engine.CLOSING_LINE_WINDOW_MIN
+
+    def test_capture_never_uses_the_delete_then_insert_path(self, monkeypatch):
+        # This write repeats every refresh on a live signal. replace_signal_row
+        # deletes before inserting, so a process killed in between loses the
+        # signal outright — and hands it a new id every time it survives.
+        now = datetime.now(timezone.utc)
+        sig = _sig(1, "Ajax vs Feyenoord", 2.00,
+                   (now + timedelta(minutes=10)).isoformat())
+        sb = _FakeSupabase([sig])
+        monkeypatch.setattr(audit_engine, "get_pinnacle_price",
+                            lambda match, sport, league: (1.80, "Ajax"))
+
+        def _forbidden(*_a, **_k):
+            raise AssertionError("capture_closing_lines must not delete+insert")
+
+        monkeypatch.setattr(audit_engine, "replace_signal_row", _forbidden)
+        assert audit_engine.capture_closing_lines(sb) == 1
 
 
 class TestMissedClosingLinesIsVisible:
