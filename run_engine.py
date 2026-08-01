@@ -409,7 +409,7 @@ def _purge_old_signals(sb):
     # the outcome is known) and must not be deleted for that reason alone.
     purge_rules = [
         ("eq",  "status", "pending",   "status=pending",                        False),
-        ("lt",  "created_at", cutoff_48h, ">48h old",                           False),
+        ("lt",  "created_at", cutoff_48h, ">48h old",                           True),
         ("gt",  "edge_pct", 15.0,                                        "edge > 15% (hard cap)",           True),
         ("lte", "edge_pct", _PURGE_EDGE_FLOOR,                          f"edge <= {_PURGE_EDGE_FLOOR}% (bruit)", True),
         ("lte", "sharp_prob", 0.0,                                       "sharp_prob <= 0",                 True),
@@ -734,6 +734,9 @@ def _process_totals(m, name, sport, league, emoji, signals, sb, now, log, min_ed
         log.info("ROUNDLINE | %s %s totals %.1f — P(push)=%.0f%% → sharp_prob adjusted",
                  emoji, name, point, _PUSH_PROB_ROUND_LINE * 100)
 
+    circa_t = m.get("totals_circa") or {}
+    cris_t  = m.get("totals_cris")  or {}
+
     sides: list = []
     for side, other in [("over", "under"), ("under", "over")]:
         x_odd = float(xt.get(side, 0))
@@ -741,6 +744,27 @@ def _process_totals(m, name, sport, league, emoji, signals, sb, now, log, min_ed
         p_lay = float(pt.get(other, 0))
         if x_odd <= 1.01 or p_odd <= 1.01:
             continue
+
+        src_side  = {"pinnacle": p_odd}
+        src_other = {"pinnacle": p_lay}
+        for src, key in ((circa_t, "circa"), (cris_t, "cris")):
+            sp_s = float(src.get(side, 0) or 0)
+            sp_o = float(src.get(other, 0) or 0)
+            if sp_s > 1.01:
+                src_side[key] = sp_s
+            if sp_o > 1.01:
+                src_other[key] = sp_o
+
+        con_side, sources_found, is_volatile, consensus_score = calculate_consensus_price(src_side, sport)
+        if is_volatile:
+            log.info("VOLATILE | %s %s totals — CV>1.2%% — DISCARD", emoji, name)
+            continue
+        con_other, _, _, _ = calculate_consensus_price(src_other, sport)
+        if con_side > 1.01:
+            p_odd = con_side
+        if con_other > 1.01:
+            p_lay = con_other
+
         sharp_prob = devig_prob(p_odd, p_lay)
         # Push-adjusted probability: P(win | no push) = P(win) / (1 - P(push))
         # This mechanically lowers EV on round lines vs half-lines, as intended.
@@ -753,7 +777,9 @@ def _process_totals(m, name, sport, league, emoji, signals, sb, now, log, min_ed
         _emit(sides, sb, now, log, name, sport, league,
               f"totals_{side}", lbl, x_odd, p_odd, sharp_prob, emoji,
               selection_name=sel, min_edge=min_edge,
-              match_time=m.get("commence_time", ""), match_id=m.get("id", ""))
+              match_time=m.get("commence_time", ""), match_id=m.get("id", ""),
+              sharp_sources=sources_found if sources_found else None,
+              consensus_score=consensus_score if sources_found else None)
 
     signals.extend(_keep_best_side(sides, log, emoji, name))
 
@@ -774,6 +800,9 @@ def _process_spreads(m, name, sport, league, home, away, emoji, signals, sb, now
     home_point = float(ps.get("point", xs.get("point", 0.0)))
     away_point = -home_point
 
+    circa_s = m.get("spreads_circa") or {}
+    cris_s  = m.get("spreads_cris")  or {}
+
     sides: list = []
     for side, team, pt in [("home", home, home_point), ("away", away, away_point)]:
         x_odd = float(xs.get(side, 0))
@@ -781,6 +810,28 @@ def _process_spreads(m, name, sport, league, home, away, emoji, signals, sb, now
         p_lay = float(ps.get("away" if side == "home" else "home", 0))
         if x_odd <= 1.01 or p_odd <= 1.01:
             continue
+
+        other_side = "away" if side == "home" else "home"
+        src_side  = {"pinnacle": p_odd}
+        src_other = {"pinnacle": p_lay}
+        for src, key in ((circa_s, "circa"), (cris_s, "cris")):
+            sp_s = float(src.get(side, 0) or 0)
+            sp_o = float(src.get(other_side, 0) or 0)
+            if sp_s > 1.01:
+                src_side[key] = sp_s
+            if sp_o > 1.01:
+                src_other[key] = sp_o
+
+        con_side, sources_found, is_volatile, consensus_score = calculate_consensus_price(src_side, sport)
+        if is_volatile:
+            log.info("VOLATILE | %s %s spreads — CV>1.2%% — DISCARD", emoji, name)
+            continue
+        con_other, _, _, _ = calculate_consensus_price(src_other, sport)
+        if con_side > 1.01:
+            p_odd = con_side
+        if con_other > 1.01:
+            p_lay = con_other
+
         sharp_prob = devig_prob(p_odd, p_lay)
         if sharp_prob < prob_min:
             continue
@@ -789,7 +840,9 @@ def _process_spreads(m, name, sport, league, home, away, emoji, signals, sb, now
         _emit(sides, sb, now, log, name, sport, league,
               f"spreads_{side}", lbl, x_odd, p_odd, sharp_prob, emoji,
               selection_name=f"{team} {pt_str}", min_edge=min_edge,
-              match_time=m.get("commence_time", ""), match_id=m.get("id", ""))
+              match_time=m.get("commence_time", ""), match_id=m.get("id", ""),
+              sharp_sources=sources_found if sources_found else None,
+              consensus_score=consensus_score if sources_found else None)
 
     signals.extend(_keep_best_side(sides, log, emoji, name))
 
