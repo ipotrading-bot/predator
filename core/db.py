@@ -117,6 +117,54 @@ def get_db(write: bool = False):
 #    service_role key still can't UPDATE a row whose primary key we don't
 #    want to preserve across a status transition, so both go delete+insert) ──
 
+def update_signal_fields(sb, signal_id, fields: dict,
+                         optional_cols: frozenset = frozenset()) -> bool:
+    """
+    Patch `fields` onto signal `signal_id` with a real UPDATE.
+
+    Use this instead of replace_signal_row() for anything that runs
+    repeatedly on a still-live signal. replace_signal_row() is a DELETE
+    followed by an INSERT: the row does not exist in between, so a process
+    killed mid-way (Actions timeout, network drop) loses the signal for good
+    — and because `id` is stripped before re-insert, every call also hands
+    the signal a brand-new id. That is tolerable for a once-per-signal
+    settlement write; it is not tolerable for the closing-line job, which now
+    re-prices the same signal every 20 minutes as kickoff approaches.
+
+    Same surgical degradation as replace_signal_row: on a stale schema, only
+    the columns Postgres actually named are dropped. Unlike that function a
+    failure here is harmless — nothing was deleted, so the worst case is that
+    this round's refresh is skipped and the next run retries.
+    """
+    if not fields:
+        return True
+    payload = dict(fields)
+    payload.pop("id", None)
+    try:
+        sb.table("signals").update(payload).eq("id", signal_id).execute()
+        return True
+    except Exception as e:
+        if not optional_cols:
+            log.error("update_signal_fields [%s]: %s", signal_id, e)
+            return False
+        named = {c for c in optional_cols if c in str(e)}
+        for dropped in ([named] if named else []) + [set(optional_cols)]:
+            if not dropped:
+                continue
+            core = {k: v for k, v in payload.items() if k not in dropped}
+            if not core:
+                continue
+            try:
+                sb.table("signals").update(core).eq("id", signal_id).execute()
+                log.warning("Signal %s updated without %s — apply the pending "
+                            "migration for these columns", signal_id, sorted(dropped))
+                return True
+            except Exception as e2:
+                e = e2
+        log.error("update_signal_fields [%s] failed: %s", signal_id, e)
+        return False
+
+
 def replace_signal_row(sb, signal_id, merged: dict, optional_cols: frozenset = frozenset()) -> bool:
     """
     Delete signal `signal_id` and re-insert `merged` (which should already

@@ -55,8 +55,11 @@ def _run_capture(monkeypatch, signals, oracle_result, budget=30):
 
     monkeypatch.setattr(audit_engine, "fetch_closing_line_candidates", lambda sb: signals)
     monkeypatch.setattr(audit_engine, "get_pinnacle_price", fake_oracle)
-    monkeypatch.setattr(audit_engine, "replace_signal_row",
-                        lambda sb, sid, merged, optional_cols=frozenset(): persisted.append(merged) or True)
+    # capture_closing_lines writes with a plain UPDATE, never delete+insert:
+    # it re-prices the same live signal every refresh, and replace_signal_row
+    # would expose the row to loss (and a new id) on each one.
+    monkeypatch.setattr(audit_engine, "update_signal_fields",
+                        lambda sb, sid, fields, optional_cols=frozenset(): persisted.append(fields) or True)
 
     n = audit_engine.capture_closing_lines(sb=None, budget=budget)
     return n, persisted, calls["oracle"]
