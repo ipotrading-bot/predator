@@ -9,7 +9,16 @@ name: Predator Closing Line
 
 on:
   schedule:
-    - cron: '0 * * * *'   # Every hour, on the hour
+    # Measured 2026-08-01: a '0 * * * *' cron here delivered only 0.48 runs/h
+    # (100 runs over 206h), median gap between executions 116 min, worst 254.
+    # GitHub drops scheduled ticks under load and never backfills them, so the
+    # capture window can't be sized to the requested cadence — only to the
+    # delivered one. Asking every 10 min (offset off the :00 rush, where
+    # contention is worst) raises the number of executions that actually land;
+    # core/audit_engine.py then refreshes each signal's price on whichever runs
+    # do fire, so a dropped tick costs precision, never the whole measurement.
+    # Cost: ~6x the Actions minutes of the hourly schedule (~30s per run).
+    - cron: '4-59/10 * * * *'
   workflow_dispatch:
 
 # Shared with golden_hour.yml/engine.yml/deep_scan.yml/audit.yml — same

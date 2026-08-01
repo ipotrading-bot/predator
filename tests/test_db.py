@@ -89,3 +89,120 @@ class TestGetDb:
         monkeypatch.setenv("SUPABASE_KEY", "anon-key-stub")
         monkeypatch.delenv("SUPABASE_SERVICE_KEY", raising=False)
         assert get_db(write=False) is not None
+
+
+class _StagedTable:
+    """Rejects an insert if the payload contains any column in `missing`,
+    exactly as Postgres/PostgREST does against a stale schema."""
+
+    def __init__(self, missing, attempts):
+        self._missing = missing
+        self._attempts = attempts
+
+    def delete(self):
+        return self
+
+    def eq(self, *_a, **_k):
+        return self
+
+    def insert(self, payload):
+        self._attempts.append(dict(payload))
+        bad = sorted(c for c in self._missing if c in payload)
+        if bad:
+            raise RuntimeError(
+                f"could not find the '{bad[0]}' column of 'signals' in the schema cache")
+        return self
+
+    def execute(self):
+        return type("Res", (), {"data": []})()
+
+
+class _StagedSupabase:
+    def __init__(self, missing):
+        self._missing = missing
+        self.attempts: list = []
+
+    def table(self, _name):
+        return _StagedTable(self._missing, self.attempts)
+
+
+class TestOptionalColumnDegradationIsSurgical:
+    """One missing column used to discard every other optional column with it,
+    while still reporting success — the caller counted a write that never
+    landed. Only the columns Postgres actually names may be dropped."""
+
+    def test_missing_stamp_does_not_discard_price_and_clv(self):
+        from core.db import replace_signal_row
+        sb = _StagedSupabase(missing={"closing_captured_at"})
+        merged = {
+            "id": 7, "match": "A vs B", "xbet_odd": 2.1,
+            "closing_pinnacle_price": 1.80,
+            "clv_pct_real": 16.67,
+            "closing_captured_at": "2026-08-01T12:00:00+00:00",
+        }
+        ok = replace_signal_row(sb, 7, merged, optional_cols=frozenset(
+            {"closing_pinnacle_price", "clv_pct_real", "closing_captured_at"}))
+
+        assert ok is True
+        final = sb.attempts[-1]
+        assert "closing_captured_at" not in final
+        assert final["closing_pinnacle_price"] == 1.80
+        assert final["clv_pct_real"] == 16.67
+
+    def test_falls_back_to_stripping_all_when_error_names_nothing(self):
+        from core.db import replace_signal_row
+
+        class _Opaque(_StagedSupabase):
+            def table(self, _name):
+                outer = self
+
+                class _T(_StagedTable):
+                    def insert(self, payload):
+                        outer.attempts.append(dict(payload))
+                        if "closing_pinnacle_price" in payload:
+                            raise RuntimeError("PGRST204 schema cache miss")
+                        return self
+
+                return _T(set(), [])
+
+        sb = _Opaque(missing=set())
+        ok = replace_signal_row(sb, 7, {"id": 7, "match": "A vs B",
+                                        "closing_pinnacle_price": 1.8},
+                                optional_cols=frozenset({"closing_pinnacle_price"}))
+        assert ok is True
+        assert "closing_pinnacle_price" not in sb.attempts[-1]
+
+    def test_returns_false_when_nothing_can_be_inserted(self):
+        from core.db import replace_signal_row
+
+        class _Dead(_StagedSupabase):
+            def table(self, _name):
+                outer = self
+
+                class _T(_StagedTable):
+                    def insert(self, payload):
+                        outer.attempts.append(dict(payload))
+                        raise RuntimeError("closing_captured_at missing and table gone")
+
+                return _T(set(), [])
+
+        sb = _Dead(missing=set())
+        ok = replace_signal_row(sb, 7, {"id": 7, "match": "A vs B",
+                                        "closing_captured_at": "x"},
+                                optional_cols=frozenset({"closing_captured_at"}))
+        assert ok is False
+
+    def test_ledger_keeps_kelly_when_only_the_stamp_is_missing(self):
+        from core.db import log_to_ledger
+        sb = _StagedSupabase(missing={"closing_captured_at"})
+        sig = {
+            "id": 1, "match": "A vs B", "sport": "soccer", "market_key": "h2h",
+            "kelly_pct": 3.2, "sharp_prob": 0.58,
+            "closing_captured_at": "2026-08-01T12:00:00+00:00",
+        }
+        log_to_ledger(sb, sig, clv=1.5, outcome="WIN")
+
+        final = sb.attempts[-1]
+        assert "closing_captured_at" not in final
+        assert final["kelly_pct"] == 3.2
+        assert final["sharp_prob"] == 0.58

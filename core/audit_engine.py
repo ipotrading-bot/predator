@@ -57,12 +57,28 @@ CLV_CREDIT_RESERVE  = int(os.environ.get("CLV_CREDIT_RESERVE", 12))
 ORACLE_BUDGET = 30     # Max oracle (web search) calls per audit run
 SETTLE_BUDGET = 25     # Max settlement (web search) calls per audit run
 
-# Task 3 — real closing-line capture (run_closing_line.py, hourly cadence)
-CLOSING_LINE_WINDOW_MIN = 5    # minutes before kickoff a price counts as "the closing line"
-CLOSING_LINE_BUDGET     = 30   # Max oracle (web search) calls per closing-line run
+# Task 3 — real closing-line capture (run_closing_line.py)
+#
+# WINDOW SIZING — measured, not guessed. The workflow asks for one run per
+# hour; GitHub Actions actually delivers 0.48/h (100 runs over 206h, measured
+# 2026-08-01), with a MEDIAN gap between executions of 116 min and a worst
+# observed gap of 254 min. The original 5-minute window was anchored on the
+# execution instant, so it covered ~4% of the timeline at effectively random
+# minutes: across 203 ledger rows it captured a closing price exactly zero
+# times, while the job still exited green every run.
+#
+# So the window can never be sized to a cadence this scheduler does not
+# honour. Instead capture is REFRESHED: every run re-prices any signal still
+# ahead of kickoff, so whichever run happens to be the last one before
+# kickoff leaves behind the closest available price. Correctness no longer
+# depends on the scheduler firing at a particular minute — only on it firing
+# at all. CLOSING_LINE_REFRESH_MIN bounds the oracle cost of that refresh.
+CLOSING_LINE_WINDOW_MIN  = 240  # capture starts this many minutes before kickoff
+CLOSING_LINE_REFRESH_MIN = 20   # don't re-price a signal more often than this
+CLOSING_LINE_BUDGET      = 30   # Max oracle (web search) calls per closing-line run
 
 _AUDIT_COLS = {"closing_line", "clv_pct", "closed_at"}
-_CLOSING_LINE_COLS = {"closing_pinnacle_price", "clv_pct_real"}
+_CLOSING_LINE_COLS = {"closing_pinnacle_price", "clv_pct_real", "closing_captured_at"}
 
 # Terminal statuses — Ledger reads all of these
 TERMINAL_STATUSES = ["settled", "closed", "expired"]
@@ -241,11 +257,20 @@ def audit_one(sb, sig: dict, oracle_calls: list, settle_calls: list, now: dateti
 def fetch_closing_line_candidates(sb) -> list[dict]:
     """
     Active signals whose match kicks off within the next
-    CLOSING_LINE_WINDOW_MIN minutes and haven't had a closing price
-    captured yet — the genuine "closing line" window, as opposed to this
-    module's own Pass 2 CLV (fetched hours-to-days after kickoff during
-    the 6h audit, at best a proxy) or core/settlement.py's entry-edge
-    re-derivation (see sql/migrate_v9_5_learning_integrity.sql).
+    CLOSING_LINE_WINDOW_MIN minutes — the genuine "closing line" window, as
+    opposed to this module's own Pass 2 CLV (fetched hours-to-days after
+    kickoff during the 6h audit, at best a proxy) or core/settlement.py's
+    entry-edge re-derivation (see sql/migrate_v9_5_learning_integrity.sql).
+
+    Deliberately NOT filtered on `closing_pinnacle_price IS NULL`: a signal
+    already carrying a price is still a candidate, so a later run — one
+    closer to kickoff — can refine it. That refresh is what makes capture
+    independent of GitHub's unreliable cron (see CLOSING_LINE_WINDOW_MIN).
+    Staleness is enforced per-signal in capture_closing_lines(), which is
+    also where the oracle budget is spent.
+
+    `match_time >= now` is load-bearing: once the match has started the
+    oracle would return a live/in-play price, which is not a closing line.
     """
     now = datetime.now(timezone.utc)
     window_end = now + timedelta(minutes=CLOSING_LINE_WINDOW_MIN)
@@ -253,7 +278,6 @@ def fetch_closing_line_candidates(sb) -> list[dict]:
         res = (sb.table("signals")
                .select("*")
                .eq("status", "active")
-               .is_("closing_pinnacle_price", "null")
                .gte("match_time", now.isoformat())
                .lte("match_time", window_end.isoformat())
                .limit(100)
@@ -262,6 +286,66 @@ def fetch_closing_line_candidates(sb) -> list[dict]:
     except Exception as e:
         log.error("fetch_closing_line_candidates: %s", e)
         return []
+
+
+def _needs_refresh(sig: dict, now: datetime) -> bool:
+    """True if this signal has no closing price yet, or its last capture is
+    older than CLOSING_LINE_REFRESH_MIN. Bounds oracle spend to roughly
+    WINDOW/REFRESH calls per signal, while still converging on a price close
+    to kickoff whenever the scheduler cooperates."""
+    if not sig.get("closing_pinnacle_price"):
+        return True
+    stamp = sig.get("closing_captured_at")
+    if not stamp:
+        return True   # pre-migration row, or capture predating the stamp
+    try:
+        taken = datetime.fromisoformat(str(stamp).replace("Z", "+00:00"))
+    except (ValueError, TypeError):
+        return True
+    if taken.tzinfo is None:
+        taken = taken.replace(tzinfo=timezone.utc)
+    return (now - taken) >= timedelta(minutes=CLOSING_LINE_REFRESH_MIN)
+
+
+def _lead_time_label(match_time, now: datetime) -> str:
+    """"37min" / "2h14" — how far ahead of kickoff a price was taken. Logged
+    on every capture so a sparse run is obvious in the job output rather than
+    hidden behind a column called `closing_pinnacle_price`."""
+    if not match_time:
+        return "?"
+    try:
+        kickoff = datetime.fromisoformat(str(match_time).replace("Z", "+00:00"))
+    except (ValueError, TypeError):
+        return "?"
+    if kickoff.tzinfo is None:
+        kickoff = kickoff.replace(tzinfo=timezone.utc)
+    mins = int((kickoff - now).total_seconds() // 60)
+    if mins < 0:
+        return "?"
+    return f"{mins}min" if mins < 60 else f"{mins // 60}h{mins % 60:02d}"
+
+
+def count_missed_closing_lines(sb) -> int:
+    """Active h2h signals whose kickoff has already passed with no closing
+    price captured — i.e. signals this job will never be able to price again.
+
+    Exists because the original bug was silent: the job found zero candidates
+    and exited green for a month while capturing nothing. A non-zero count
+    here is the symptom that the schedule is too sparse for the window."""
+    now = datetime.now(timezone.utc)
+    try:
+        res = (sb.table("signals")
+               .select("id")
+               .eq("status", "active")
+               .eq("market_key", "h2h")
+               .is_("closing_pinnacle_price", "null")
+               .lt("match_time", now.isoformat())
+               .limit(500)
+               .execute())
+        return len(res.data or [])
+    except Exception as e:
+        log.debug("count_missed_closing_lines: %s", e)
+        return 0
 
 
 def capture_closing_lines(sb, budget: int = CLOSING_LINE_BUDGET) -> int:
@@ -273,9 +357,15 @@ def capture_closing_lines(sb, budget: int = CLOSING_LINE_BUDGET) -> int:
     is the bettor's true CLV — (xbet_odd / closing_price_of_the_same_side
     − 1) × 100, positive = the price we got beat the close — derived
     immediately, without waiting for the match outcome (that remains
-    core/settlement.py's real WIN/LOSS job). Runs hourly via
-    run_closing_line.py, not as part of the 6h audit — this window
-    (kickoff ± 5min) rarely aligns with that coarser cadence.
+    core/settlement.py's real WIN/LOSS job). Runs via run_closing_line.py,
+    not as part of the 6h audit.
+
+    Each run RE-prices every signal still ahead of kickoff (subject to
+    CLOSING_LINE_REFRESH_MIN), so the stored price converges on the close as
+    kickoff approaches and the last run before kickoff wins. closing_captured_at
+    records when the surviving price was taken, so a consumer can tell a
+    genuine T-10min close from a T-3h price instead of trusting the column
+    name — see sql/migrate_v9_11_closing_captured_at.sql.
 
     KNOWN LIMIT — get_pinnacle_price() only ever quotes the closing ML/DNB
     FAVORITE (with its team name), so a real CLV can only be computed for
@@ -288,17 +378,18 @@ def capture_closing_lines(sb, budget: int = CLOSING_LINE_BUDGET) -> int:
         can't be resolved (selection and oracle team are each resolved
         against the match's own two team names — exact equality first, see
         core.paim_engine.resolve_selection_side), stores the raw fetched
-        price (so the hourly job doesn't re-spend budget on it — the
-        candidate filter is closing_pinnacle_price IS NULL) with
-        clv_pct_real=None.
+        price with clv_pct_real=None.
     core/learning_layer.py's _clv_stats() excludes None rows, so unresolved
     sides simply don't participate in threshold decisions.
     """
+    now = datetime.now(timezone.utc)
     candidates = fetch_closing_line_candidates(sb)
     remaining = [budget]
     captured = 0
     for sig in candidates:
         if (sig.get("market_key") or "") != "h2h":
+            continue
+        if not _needs_refresh(sig, now):
             continue
         if remaining[0] <= 0:
             log.warning("CLOSING LINE — oracle budget exhausted, %d signal(s) left for next run",
@@ -330,12 +421,14 @@ def capture_closing_lines(sb, budget: int = CLOSING_LINE_BUDGET) -> int:
         ok = replace_signal_row(sb, sig["id"], {**sig, **{
             "closing_pinnacle_price": float(price),
             "clv_pct_real":           clv_real,
+            "closing_captured_at":    now.isoformat(),
         }}, optional_cols=_CLOSING_LINE_COLS)
         if ok:
             captured += 1
-            log.info("CLOSING LINE | %s | bet %.3f -> close %.3f | CLV_real %s",
+            log.info("CLOSING LINE | %s | bet %.3f -> close %.3f | CLV_real %s | T-%s",
                      sig["match"], xbet_odd, price,
-                     f"{clv_real:+.2f}%" if clv_real is not None else "n/a (side unresolved)")
+                     f"{clv_real:+.2f}%" if clv_real is not None else "n/a (side unresolved)",
+                     _lead_time_label(sig.get("match_time"), now))
         else:
             log.error("Failed to persist closing line for signal %s", sig["id"])
     return captured
@@ -354,6 +447,16 @@ def run_closing_lines():
     log.info("PAIM CLOSING LINE v9.5 — capturing real closing prices")
     n = capture_closing_lines(sb)
     log.info("Closing-line capture done: %d signal(s) updated", n)
+
+    # A green run that captured nothing used to be indistinguishable from a
+    # green run that had nothing to do — that is how this job stayed broken
+    # for a month. Surface the signals it can no longer ever price.
+    missed = count_missed_closing_lines(sb)
+    if missed:
+        log.warning("CLOSING LINE — %d active h2h signal(s) passed kickoff with no "
+                    "closing price: the schedule is firing too rarely for a %d-min "
+                    "window. Check .github/workflows/closing_line.yml cadence.",
+                    missed, CLOSING_LINE_WINDOW_MIN)
     log.info("━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━")
 
 
