@@ -203,6 +203,34 @@ balises markdown :
 "severite":"haute|moyenne|basse"}}]}}"""
 
 
+_PROMPT_GROUNDED_HEAD = """\
+⚠️ Tu n'as PAS d'outil de recherche. Les pages ci-dessous sont les SEULES \
+que tu as consultées : tout ce que tu affirmes doit en sortir, et chaque \
+"source_url" doit être copiée à l'identique depuis l'une d'elles.
+
+RÉSULTATS DE RECHERCHE
+{results}
+"""
+
+
+def build_prompt_from_results(ctx: dict, results_block: str) -> str:
+    """Variante du prompt pour la cascade de core/wiz_sources.py : les pages
+    sont fournies d'avance au lieu d'être cherchées par le modèle.
+
+    Le contrat de sortie est identique au chemin nominal (mêmes règles, même
+    schéma JSON) — `validate()` applique derrière exactement le même garde-fou
+    R4, quel que soit le fournisseur qui a répondu. Seule change la phrase qui
+    demandait une recherche web : promettre un outil que le modèle n'a pas
+    l'amène à inventer des URLs plausibles, ce que R4 rejetterait en bloc.
+    """
+    base = build_prompt(ctx)
+    base = base.replace(
+        "UTILISE TA RECHERCHE WEB pour couvrir ces axes :",
+        "AXES À COUVRIR dans les résultats fournis :")
+    base = re.sub(r"⚠️ Fais AU MAXIMUM.*?répondre du tout\.\s*", "", base, flags=re.S)
+    return _PROMPT_GROUNDED_HEAD.format(results=results_block) + "\n" + base
+
+
 def build_prompt(ctx: dict) -> str:
     """Prompt complet pour un match. `ctx` est le contexte agrégé du match
     (voir analyze_match).
@@ -599,8 +627,12 @@ def analyze_match(ctx: dict, search_fn=None) -> dict:
     Ne lève jamais. Tout chemin d'échec produit une ligne INDISPONIBLE.
     """
     if search_fn is None:
-        from core import wiz_ai
-        search_fn = wiz_ai.mistral_search
+        # Cascade de sources (core/wiz_sources.py) : connecteur Mistral →
+        # Google News (gratuit) → Tavily sous réserve, puis raisonnement en
+        # chat pur. Avant cette cascade, une seule source morte suffisait à
+        # rendre 85% des analyses INDISPONIBLE.
+        from core import wiz_sources
+        search_fn = wiz_sources.make_search_fn(ctx)
 
     if not (ctx.get("match") or "").strip():
         return unavailable(ctx, "Match sans nom — rien à chercher")

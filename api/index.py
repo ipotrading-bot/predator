@@ -727,24 +727,47 @@ def _wiz_rows():
     return rows, _wiz_enforce()
 
 
+def _split_unavailable(rows: list) -> tuple[list, int]:
+    """Sépare les analyses exploitables des INDISPONIBLE.
+
+    Une carte INDISPONIBLE ne dit rien du pari : c'est l'aveu que Wiz n'a pas
+    pu chercher (quota fournisseur, aucune source datée sur ce match). Elle
+    occupe pourtant autant de place à l'écran qu'un VETO — et au 2026-08-01
+    elles étaient 79 sur 93, soit une page entière de bruit sur mobile.
+
+    Elles ne sont pas supprimées, seulement sorties du flux principal : leur
+    NOMBRE reste affiché, parce qu'un taux d'INDISPONIBLE qui remonte est le
+    symptôme n°1 d'une source morte — c'est exactement comme ça que la panne
+    du connecteur Mistral est passée inaperçue pendant une semaine.
+    """
+    usable = [r for r in rows if r.get("verdict") != "INDISPONIBLE"]
+    return usable, len(rows) - len(usable)
+
+
 @app.route("/wiz")
 def wiz():
-    rows, enforce = [], False
+    rows, enforce, hidden = [], False, 0
     try:
         rows, enforce = _wiz_rows()
+        rows, hidden = _split_unavailable(rows)
     except Exception as e:
         # Cas le plus probable au premier déploiement :
         # sql/migrate_v10_0_wiz.sql pas encore appliquée. La page doit
         # afficher son état vide, pas une 500.
         log.error("Wiz: %s", e)
-    return render_template("wiz.html", rows=rows, enforce=enforce)
+    return render_template("wiz.html", rows=rows, enforce=enforce, hidden=hidden)
 
 
 @app.route("/api/wiz")
 def api_wiz():
     try:
         rows, enforce = _wiz_rows()
-        return jsonify({"enforce": enforce, "count": len(rows), "rows": rows})
+        # L'API sert tout, y compris les INDISPONIBLE : c'est la page qui
+        # filtre pour l'œil humain, pas la donnée qui disparaît.
+        usable, hidden = _split_unavailable(rows)
+        return jsonify({"enforce": enforce, "count": len(rows),
+                        "usable": len(usable), "unavailable": hidden,
+                        "rows": rows})
     except Exception as e:
         return jsonify({"error": str(e)}), 500
 

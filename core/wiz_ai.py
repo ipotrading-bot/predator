@@ -167,6 +167,19 @@ def search_exhausted() -> bool:
     return _search_quota_dead or _searches_used >= wiz_run_budget()
 
 
+def run_budget_exhausted() -> bool:
+    """True quand le budget LOCAL du run est atteint — et lui seul.
+
+    Distinct de search_exhausted(), qui fusionne ce budget avec la mort du
+    connecteur Mistral. Cette fusion était juste tant que le connecteur était
+    la seule source : les deux causes menaient au même arrêt du run. Depuis
+    core/wiz_sources.py elles divergent — un connecteur mort bascule sur
+    Google News, alors que le budget local, lui, borne toujours la DURÉE du
+    run (2 RPM côté Mistral, timeout-minutes: 20 côté Actions).
+    """
+    return _searches_used >= wiz_run_budget()
+
+
 def search_quota_dead() -> bool:
     """True quand c'est le quota du CONNECTEUR (pas le budget local) qui a
     coupé. Permet à run_wiz.py de le dire explicitement dans son log :

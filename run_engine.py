@@ -304,6 +304,36 @@ def _heartbeat(sb, scan_time: datetime, matches: int, signals: int):
         log.error("Supabase heartbeat: %s", e)
 
 
+_WC_SCHEDULE_TTL_H = 24
+
+
+def _wc_schedule_stale(sb, now) -> bool:
+    """Le calendrier WC mérite-t-il un nouvel appel payant ?
+
+    Ne renvoie True que si l'entrée `meta.wc_schedule` a plus de
+    _WC_SCHEDULE_TTL_H heures. En cas de doute (lecture impossible, horodatage
+    illisible) on rafraîchit : perdre 3 crédits est moins grave que laisser la
+    page WC figée sur un calendrier mort.
+    """
+    try:
+        res = sb.table("meta").select("updated_at").eq("key", "wc_schedule").limit(1).execute()
+        rows = res.data or []
+        if not rows:
+            return True
+        stamp = datetime.fromisoformat(str(rows[0]["updated_at"]).replace("Z", "+00:00"))
+        if stamp.tzinfo is None:
+            stamp = stamp.replace(tzinfo=timezone.utc)
+        age_h = (now - stamp).total_seconds() / 3600
+        if age_h < _WC_SCHEDULE_TTL_H:
+            log.info("WC schedule — %.1fh < %dh, pas de rafraîchissement (0 crédit)",
+                     age_h, _WC_SCHEDULE_TTL_H)
+            return False
+        return True
+    except Exception as e:
+        log.debug("wc_schedule staleness: %s", e)
+        return True
+
+
 def _archive_before_purge(sb, signals: list):
     """Archive active signals to ai_learning_ledger before purging (proxy CLV, outcome=expired)."""
     if not signals:
@@ -1263,7 +1293,13 @@ def run():
         log.info("⚡ Tier 1 — The Odds API (%dh window)...", hours_ahead)
 
     if not GUERRILLA:
-        oddsapi_events = fetch_odds(hours_ahead=hours_ahead, sport_keys=scan_keys)
+        # Tier de rationnement (core/odds_budget.py) : la fenêtre T-120min a
+        # la priorité absolue sur le quota mensuel — c'est là que les edges
+        # sont les plus frais et la seule qui capture la ligne de clôture.
+        # Le deep scan, le plus redondant avec le scan de fond, passe dernier.
+        scan_tier = "golden" if GOLDEN_HOUR else ("deep" if DEEP_SCAN else "engine")
+        oddsapi_events = fetch_odds(hours_ahead=hours_ahead, sport_keys=scan_keys,
+                                    sb=sb, tier=scan_tier)
         if oddsapi_events:
             matches      = oddsapi_events[:MAX_MATCHES]
             sharp_source = "OddsAPI/Pinnacle"
@@ -1286,11 +1322,18 @@ def run():
                     log.warning("Closing-line capture: %s", e)
 
         # ── WC Schedule — fetch 168h window + save to meta for worldcup page ──
-        if sb and not GOLDEN_HOUR:
+        # Plafonné à un rafraîchissement par jour (_WC_SCHEDULE_TTL_H) : c'est
+        # un calendrier d'affichage, il ne change pas d'heure en heure. Sans ce
+        # garde il repartait à chaque run engine/deep_scan — 14 appels/jour à 3
+        # crédits, soit ~1 260 crédits/mois pour une page statique, sur un plan
+        # qui en compte 500. Le pré-vol gratuit ne le couvre pas : hors saison
+        # la ligue renvoie 404 (gratuit), mais en saison c'est plein tarif.
+        if sb and not GOLDEN_HOUR and _wc_schedule_stale(sb, now):
             try:
                 wc_events = fetch_odds(
                     hours_ahead=168,
                     sport_keys={"soccer_fifa_world_cup": "soccer"},
+                    sb=sb, tier=scan_tier,
                 )
                 if wc_events:
                     wc_fixtures = []

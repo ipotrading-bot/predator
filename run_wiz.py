@@ -41,7 +41,7 @@ from datetime import datetime, timedelta, timezone
 
 from dotenv import load_dotenv
 
-from core import wiz_ai
+from core import wiz_ai, wiz_sources
 from core.constants import (
     GLOBAL_TIMEOUT,
     WIZ_CONFIRM_WINDOW_H,
@@ -260,8 +260,12 @@ def run() -> None:
     # get_db(write=True) lèverait sur l'absence de service key alors que le
     # run n'avait de toute façon rien à faire. Wiz est optionnel — son
     # absence ne doit jamais faire échouer un workflow.
-    if not wiz_ai.wiz_available():
-        log.warning("MISTRAL_API_KEY absente — Wiz désactivé, rien à faire")
+    # Le test porte sur la CASCADE, pas sur Mistral seul : les yeux (Google
+    # News) sont gratuits et toujours là, seul le cerveau peut manquer. Avant
+    # core/wiz_sources.py, une clé Mistral morte suffisait à annuler le run.
+    if not wiz_sources.cascade_available():
+        log.warning("Aucun fournisseur de raisonnement (MISTRAL_API_KEY / GROQ_API_KEY) "
+                    "— Wiz désactivé, rien à faire")
         return
     try:
         sb = get_db(write=True)
@@ -314,23 +318,24 @@ def run() -> None:
         for i, ctx in enumerate(todo, 1):
             # Le budget borne la durée du run : au-delà, GitHub Actions
             # tuerait le job avant le log de synthèse.
-            if wiz_ai.search_exhausted():
-                if wiz_ai.search_quota_dead():
-                    # Cause côté Mistral, pas côté nous : le remède n'est pas
-                    # de baisser WIZ_RUN_BUDGET mais d'attendre que le quota
-                    # du connecteur se recharge (ou de changer de plan).
-                    log.warning("Quota du connecteur web_search épuisé côté Mistral "
-                                "après %d match(s) — arrêt propre. Ce n'est PAS "
-                                "WIZ_RUN_BUDGET : attendre la recharge du quota.", i - 1)
-                else:
-                    log.warning("Budget local du run épuisé après %d match(s) "
-                                "(WIZ_RUN_BUDGET=%d) — arrêt propre",
-                                i - 1, wiz_run_budget())
+            # Seul le budget LOCAL arrête le run : il borne la durée (2 RPM
+            # côté Mistral, timeout-minutes: 20 côté Actions). Le quota du
+            # connecteur web_search, lui, n'arrête plus rien — c'est
+            # exactement le cas que core/wiz_sources.py rattrape en basculant
+            # sur Google News. L'ancien code fusionnait les deux et sortait de
+            # la boucle au premier 429 : d'où 79 INDISPONIBLE sur 93.
+            if wiz_ai.run_budget_exhausted():
+                log.warning("Budget local du run épuisé après %d match(s) "
+                            "(WIZ_RUN_BUDGET=%d) — arrêt propre",
+                            i - 1, wiz_run_budget())
                 break
-            if wiz_ai.wiz_dead():
-                log.warning("Tous les modèles Mistral sont morts — arrêt propre après %d match(s)",
-                            i - 1)
+            if not wiz_sources.cascade_available():
+                log.warning("Plus aucun fournisseur de raisonnement (Mistral ET Groq) "
+                            "— arrêt propre après %d match(s)", i - 1)
                 break
+            if wiz_ai.search_quota_dead() and i == 1:
+                log.info("Connecteur web_search Mistral à bout de quota — "
+                         "bascule sur la cascade Google News / Tavily")
 
             log.info("[%d/%d] %s | %s | edge %+.2f%% | %s",
                      i, len(todo), ctx["match"], ctx["sport"], ctx["edge_pct"], ctx["_why"])
@@ -353,10 +358,11 @@ def run() -> None:
              counts.get("CONFIRME", 0), counts.get("NEUTRE", 0), counts.get("ALERTE", 0),
              counts.get("VETO", 0), counts.get(INDISPONIBLE, 0))
     if wiz_ai.search_quota_dead():
-        log.warning("Le quota du connecteur web_search de Mistral était épuisé — "
-                    "les analyses de ce run sont INDISPONIBLE pour cette raison, "
-                    "pas parce que l'information n'existe pas.")
-    elif counts.get(INDISPONIBLE, 0) and counts[INDISPONIBLE] >= written:
+        log.info("Le quota du connecteur web_search de Mistral était épuisé — "
+                 "ce run est passé par la cascade Google News / Tavily "
+                 "(core/wiz_sources.py), ce n'est plus une cause d'INDISPONIBLE "
+                 "en soi.")
+    if counts.get(INDISPONIBLE, 0) and counts[INDISPONIBLE] >= written:
         # Rien d'exploitable produit : quota mort, requêtes mal ciblées, ou
         # noms de modèles Mistral invalides (voir WIZ_MISTRAL_MODELS).
         # `python -m core.wiz_ai` diagnostique les trois en une minute.

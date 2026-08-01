@@ -253,7 +253,7 @@
 
   <div class="empty">
     <div class="empty-icon">&#9788;</div>
-    Aucune analyse Wiz disponible.<br>
+    Aucune analyse Wiz exploitable.<br>
     Wiz tourne toutes les 2&nbsp;heures sur les signaux actifs dont le coup d&rsquo;envoi est dans les 24&nbsp;h.<br>
     <span style="color:var(--t3)">
       Si la page reste vide&nbsp;: v&eacute;rifier que <code>sql/migrate_v10_0_wiz.sql</code> est appliqu&eacute;e,<br>
@@ -263,9 +263,21 @@
 
   {% endif %}
 
+  {# Les INDISPONIBLE sont masqu&eacute;s (ils ne disent rien du pari) mais
+     JAMAIS silencieux : un taux qui remonte est le symptôme n°1 d&rsquo;une
+     source morte — c&rsquo;est ainsi que la panne du connecteur Mistral est
+     rest&eacute;e invisible une semaine. #}
+  {% if hidden %}
+  <div class="wiz-mode" style="color:var(--t3)">
+    {{ hidden }} analyse{{ 's' if hidden > 1 }} masqu&eacute;e{{ 's' if hidden > 1 }}
+    &mdash; verdict <b>INDISPONIBLE</b> (recherche impossible, rien &agrave; dire sur le pari).
+    {% if not rows %}Si c&rsquo;est tout ce que Wiz produit, la source web est &agrave; bout de quota.{% endif %}
+  </div>
+  {% endif %}
+
 </main>
 
-<footer>PREDATOR WIZ v10.0 &nbsp;&middot;&nbsp; Mistral + recherche web &nbsp;&middot;&nbsp; n&rsquo;alt&egrave;re jamais l&rsquo;edge quantitatif</footer>
+<footer>PREDATOR WIZ v10.0 &nbsp;&middot;&nbsp; Mistral &rarr; Google News &rarr; Tavily &nbsp;&middot;&nbsp; n&rsquo;alt&egrave;re jamais l&rsquo;edge quantitatif</footer>
 
 <!-- ── BOTTOM NAV ─────────────────────────── -->
 <nav class="bnav">
