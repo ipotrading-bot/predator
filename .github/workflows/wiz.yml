@@ -57,12 +57,17 @@ jobs:
           # clé). On avertit, on ne casse pas — contrairement à audit.yml où
           # un secret manquant signifie un settlement perdu.
           #
-          # UNE SEULE clé depuis l'abandon de Brave (2026-07-23) : le
-          # connecteur web_search de Mistral fait la recherche ET le
-          # raisonnement. Brave exigeait une carte bancaire même en plan
-          # gratuit, que l'opérateur n'a pas.
+          # Depuis l'abandon de Brave (2026-07-23), le connecteur web_search
+          # de Mistral faisait la recherche ET le raisonnement — source
+          # unique, donc panne totale quand son quota (au niveau du COMPTE)
+          # s'est épuisé : 79 des 93 analyses en INDISPONIBLE au 2026-08-01.
+          # core/wiz_sources.py ajoute une cascade : Google News RSS (gratuit,
+          # sans clé) puis Tavily au-dessus de la réserve du moteur, avec
+          # raisonnement en chat pur (quota Mistral distinct du connecteur),
+          # Groq en dernier ressort. Les clés ci-dessous sont donc toutes
+          # facultatives et complémentaires — aucune n'est bloquante.
           if [ -z "$MISTRAL_API_KEY" ]; then
-            echo "::warning::MISTRAL_API_KEY non définie — Wiz ne fera rien. Clé gratuite sur console.mistral.ai."
+            echo "::warning::MISTRAL_API_KEY non définie — Wiz raisonnera via Groq si GROQ_API_KEY existe. Clé gratuite sur console.mistral.ai."
           fi
           # Celui-ci, en revanche, est bloquant : `signals` et `wiz_analysis`
           # sont toutes deux sous RLS stricte (sql/migrate_v9_3_tighten_rls.sql,
@@ -87,6 +92,11 @@ jobs:
       - name: Run Wiz
         env:
           MISTRAL_API_KEY:      ${{ secrets.MISTRAL_API_KEY }}
+          # Cascade de secours (core/wiz_sources.py). Tavily n'est consommé
+          # qu'au-dessus de WIZ_TAVILY_RESERVE crédits : l'invariant « Wiz ne
+          # peut pas affamer un settlement » tient toujours.
+          GROQ_API_KEY:         ${{ secrets.GROQ_API_KEY }}
+          TAVILY_API_KEY:       ${{ secrets.TAVILY_API_KEY }}
           SUPABASE_URL:         ${{ secrets.SUPABASE_URL }}
           SUPABASE_KEY:         ${{ secrets.SUPABASE_KEY }}
           SUPABASE_SERVICE_KEY: ${{ secrets.SUPABASE_SERVICE_KEY }}

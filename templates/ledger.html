@@ -70,8 +70,26 @@
       <div class="stat-v" style="color:{% if stats.avg_clv >= 0 %}var(--green){% else %}var(--red){% endif %}">
         {% if stats.avg_clv > 0 %}+{% endif %}{{ "%.2f"|format(stats.avg_clv) }}%
       </div>
-      <div class="stat-l">CLV<br>Moyenne</div>
+      {# clv_pct : prix récupéré des heures APRÈS le coup d'envoi, ou simple
+         re-dérivation de l'edge d'entrée (core/settlement.py). Ce n'est pas
+         la ligne de clôture — le libellé le dit maintenant, sinon la cellule
+         d'à côté (CLV réelle) ressemble à un doublon. #}
+      <div class="stat-l">CLV proxy<br><span style="color:var(--t3)">(edge d'entrée)</span></div>
     </div>
+    {% if stats.real_n %}
+    <div class="stat-cell">
+      <div class="stat-v" style="color:{% if stats.avg_clv_real >= 0 %}var(--green){% else %}var(--red){% endif %}">
+        {% if stats.avg_clv_real > 0 %}+{% endif %}{{ "%.2f"|format(stats.avg_clv_real) }}%
+      </div>
+      <div class="stat-l">CLV réelle<br><span style="color:var(--t3)">(clôture · n={{ stats.real_n }})</span></div>
+    </div>
+    <div class="stat-cell">
+      <div class="stat-v" style="color:{% if stats.hit_rate_real >= 55 %}var(--green){% elif stats.hit_rate_real >= 50 %}var(--yellow){% else %}var(--red){% endif %}">
+        {{ "%.1f"|format(stats.hit_rate_real) }}%
+      </div>
+      <div class="stat-l">Battu la clôture<br><span style="color:var(--t3)">(n={{ stats.real_n }})</span></div>
+    </div>
+    {% endif %}
     <div class="stat-cell">
       <div class="stat-v" style="color:var(--yellow)">+{{ "%.2f"|format(stats.best_clv) }}%</div>
       <div class="stat-l">Meilleur<br>CLV</div>
@@ -122,6 +140,14 @@
             </div>
             <div class="sport-mini-l">CLV Moy</div>
           </div>
+          {% if s.real_n %}
+          <div class="sport-mini">
+            <div class="sport-mini-v" style="color:{% if s.avg_clv_real >= 0 %}var(--green){% else %}var(--red){% endif %}">
+              {% if s.avg_clv_real > 0 %}+{% endif %}{{ "%.1f"|format(s.avg_clv_real) }}%
+            </div>
+            <div class="sport-mini-l">CLV réelle ({{ s.real_n }})</div>
+          </div>
+          {% endif %}
         </div>
         <div class="verdict-strip">
           <span class="verdict-badge {{ vb_cls }}">{{ s.verdict }}</span>

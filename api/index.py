@@ -283,6 +283,24 @@ def ledger():
                     "worst_clv": round(min(clv_vals), 2),
                 }
 
+                # Real closing-line CLV — reported SEPARATELY, never merged
+                # into the block above. `clv_pct` is the audit's proxy
+                # (a price fetched hours after kickoff, or a re-derivation of
+                # the entry edge — see core/settlement.py); `clv_pct_real` is
+                # the bet's price against the actual sharp close, captured
+                # before kickoff by core/closing_line.py. Averaging the two
+                # together would let the proxy dilute the only number that
+                # can confirm or kill a market. `real_n` is what makes the
+                # figure readable: until capture has had time to accumulate,
+                # a +8% on n=3 must not look like a verdict.
+                real_vals = [s["clv_pct_real"] for s in signals
+                             if s.get("clv_pct_real") is not None]
+                stats["real_n"] = len(real_vals)
+                if real_vals:
+                    stats["avg_clv_real"]  = round(sum(real_vals) / len(real_vals), 2)
+                    stats["hit_rate_real"] = round(
+                        sum(1 for c in real_vals if c >= 0) / len(real_vals) * 100, 1)
+
                 # Load current dynamic thresholds
                 t_res = sb.table("meta").select("key,value").like("key", "threshold_%").execute()
                 thresholds = {}
@@ -318,10 +336,16 @@ def ledger():
                     cur_t   = thresholds.get(sport, _DEFAULT_T.get(sport, 2.0))
                     def_t   = _DEFAULT_T.get(sport, 2.0)
 
+                    # Per-sport real CLV, same separation as the global block.
+                    rv = [s["clv_pct_real"] for s in signals
+                          if s.get("sport") == sport and s.get("clv_pct_real") is not None]
+
                     sports_stats[sport] = {
                         "count":     len(sv),
                         "hit_rate":  hit,
                         "avg_clv":   avg,
+                        "real_n":    len(rv),
+                        "avg_clv_real": round(sum(rv) / len(rv), 2) if rv else None,
                         "threshold": cur_t,
                         "default_t": def_t,
                         "verdict":   verdict,
@@ -481,8 +505,20 @@ def performance():
                 wins    = sum(1 for r in settled if r.get("outcome") == "WIN")
                 losses  = sum(1 for r in settled if r.get("outcome") == "LOSS")
                 pushes  = sum(1 for r in settled if r.get("outcome") == "PUSH")
-                clv_all = [r["clv_final"] for r in rows if r.get("clv_final") is not None]
-                edges   = [r["initial_edge"] for r in rows if r.get("initial_edge") is not None]
+                # CLV — real closing line first, entry edge only as a fallback.
+                # `clv_final` is NOT closing-line value: for most rows it is a
+                # re-derivation of the entry edge (see core/settlement.py), so
+                # a "CLV" built on it can only ever restate what we already
+                # knew when we bet. `clv_pct_real` is the genuine measurement
+                # (xbet_odd vs the sharp close) written by core/closing_line.py
+                # off the scan feed and, for non-OddsAPI sports, by
+                # core/audit_engine.py's oracle. The two are never averaged
+                # together — clv_is_real tells the template which one it is
+                # looking at, so the page can't quietly label the entry edge
+                # as CLV.
+                clv_real = [r["clv_pct_real"] for r in rows if r.get("clv_pct_real") is not None]
+                clv_all  = clv_real or [r["clv_final"] for r in rows if r.get("clv_final") is not None]
+                edges    = [r["initial_edge"] for r in rows if r.get("initial_edge") is not None]
 
                 # Task 4: never show a win rate without its Wilson 95% CI
                 # and the tax-adjusted breakeven probability for the
@@ -508,6 +544,8 @@ def performance():
                     "avg_clv":      round(sum(clv_all) / len(clv_all), 2) if clv_all else None,
                     "avg_edge":     round(sum(edges) / len(edges), 2) if edges else None,
                     "clv_hit":      round(sum(1 for c in clv_all if c >= 0) / max(len(clv_all), 1) * 100, 1) if clv_all else None,
+                    "clv_is_real":  bool(clv_real),
+                    "clv_n":        len(clv_all),
                 }
 
                 # Per-sport win rate + Wilson CI + breakeven
@@ -543,13 +581,20 @@ def performance():
                     mo = ca[:7]  # "2026-07"
                     if not mo:
                         continue
-                    m = months_map.setdefault(mo, {"month": mo, "total": 0, "wins": 0, "losses": 0, "pushes": 0, "expired": 0, "clv_sum": 0.0, "clv_n": 0, "edge_sum": 0.0, "edge_n": 0})
+                    m = months_map.setdefault(mo, {"month": mo, "total": 0, "wins": 0, "losses": 0, "pushes": 0, "expired": 0, "clv_sum": 0.0, "clv_n": 0, "clv_real_sum": 0.0, "clv_real_n": 0, "edge_sum": 0.0, "edge_n": 0})
                     m["total"] += 1
                     oc = r.get("outcome")
                     if oc == "WIN":     m["wins"]    += 1
                     elif oc == "LOSS":  m["losses"]  += 1
                     elif oc == "PUSH":  m["pushes"]  += 1
                     else:               m["expired"]  += 1
+                    # Same precedence as the global block above, and the same
+                    # rule: the two are accumulated separately and never
+                    # averaged together. A month with any real closing-line
+                    # measurement reports those; months predating capture
+                    # keep the entry-edge proxy.
+                    if r.get("clv_pct_real") is not None:
+                        m["clv_real_sum"] += r["clv_pct_real"]; m["clv_real_n"] += 1
                     if r.get("clv_final") is not None:
                         m["clv_sum"] += r["clv_final"]; m["clv_n"] += 1
                     if r.get("initial_edge") is not None:
@@ -558,7 +603,12 @@ def performance():
                 for m in months_map.values():
                     denom = m["wins"] + m["losses"]
                     m["win_rate"] = round(m["wins"] / denom * 100, 1) if denom else None
-                    m["avg_clv"]  = round(m["clv_sum"]  / m["clv_n"],  2) if m["clv_n"]  else None
+                    if m["clv_real_n"]:
+                        m["avg_clv"] = round(m["clv_real_sum"] / m["clv_real_n"], 2)
+                        m["clv_is_real"] = True
+                    else:
+                        m["avg_clv"] = round(m["clv_sum"] / m["clv_n"], 2) if m["clv_n"] else None
+                        m["clv_is_real"] = False
                     m["avg_edge"] = round(m["edge_sum"] / m["edge_n"], 2) if m["edge_n"] else None
 
                 monthly = sorted(months_map.values(), key=lambda x: x["month"], reverse=True)
@@ -677,24 +727,47 @@ def _wiz_rows():
     return rows, _wiz_enforce()
 
 
+def _split_unavailable(rows: list) -> tuple[list, int]:
+    """Sépare les analyses exploitables des INDISPONIBLE.
+
+    Une carte INDISPONIBLE ne dit rien du pari : c'est l'aveu que Wiz n'a pas
+    pu chercher (quota fournisseur, aucune source datée sur ce match). Elle
+    occupe pourtant autant de place à l'écran qu'un VETO — et au 2026-08-01
+    elles étaient 79 sur 93, soit une page entière de bruit sur mobile.
+
+    Elles ne sont pas supprimées, seulement sorties du flux principal : leur
+    NOMBRE reste affiché, parce qu'un taux d'INDISPONIBLE qui remonte est le
+    symptôme n°1 d'une source morte — c'est exactement comme ça que la panne
+    du connecteur Mistral est passée inaperçue pendant une semaine.
+    """
+    usable = [r for r in rows if r.get("verdict") != "INDISPONIBLE"]
+    return usable, len(rows) - len(usable)
+
+
 @app.route("/wiz")
 def wiz():
-    rows, enforce = [], False
+    rows, enforce, hidden = [], False, 0
     try:
         rows, enforce = _wiz_rows()
+        rows, hidden = _split_unavailable(rows)
     except Exception as e:
         # Cas le plus probable au premier déploiement :
         # sql/migrate_v10_0_wiz.sql pas encore appliquée. La page doit
         # afficher son état vide, pas une 500.
         log.error("Wiz: %s", e)
-    return render_template("wiz.html", rows=rows, enforce=enforce)
+    return render_template("wiz.html", rows=rows, enforce=enforce, hidden=hidden)
 
 
 @app.route("/api/wiz")
 def api_wiz():
     try:
         rows, enforce = _wiz_rows()
-        return jsonify({"enforce": enforce, "count": len(rows), "rows": rows})
+        # L'API sert tout, y compris les INDISPONIBLE : c'est la page qui
+        # filtre pour l'œil humain, pas la donnée qui disparaît.
+        usable, hidden = _split_unavailable(rows)
+        return jsonify({"enforce": enforce, "count": len(rows),
+                        "usable": len(usable), "unavailable": hidden,
+                        "rows": rows})
     except Exception as e:
         return jsonify({"error": str(e)}), 500
 

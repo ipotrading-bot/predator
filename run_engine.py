@@ -19,6 +19,7 @@ from dotenv import load_dotenv
 from core.db import get_db, MissingCredentialsError
 from core.harvester import fetch_matches, fetch_pinnacle_prices, fetch_estimated_prices, fetch_mma_events, fetch_esports_events, fetch_alternative_sports_batch, fetch_betfair_prices
 from core.ai_search import ai_dead as gemini_quota_dead
+from core.closing_line import capture_from_scan
 from core.math_engine import to_binary, devig_prob, is_round_number_line
 from core.odds_api import fetch_odds
 from core.oracle import get_pinnacle_price
@@ -301,6 +302,36 @@ def _heartbeat(sb, scan_time: datetime, matches: int, signals: int):
         log.info("Heartbeat: last_scan updated (%d matchs, %d signaux)", matches, signals)
     except Exception as e:
         log.error("Supabase heartbeat: %s", e)
+
+
+_WC_SCHEDULE_TTL_H = 24
+
+
+def _wc_schedule_stale(sb, now) -> bool:
+    """Le calendrier WC mérite-t-il un nouvel appel payant ?
+
+    Ne renvoie True que si l'entrée `meta.wc_schedule` a plus de
+    _WC_SCHEDULE_TTL_H heures. En cas de doute (lecture impossible, horodatage
+    illisible) on rafraîchit : perdre 3 crédits est moins grave que laisser la
+    page WC figée sur un calendrier mort.
+    """
+    try:
+        res = sb.table("meta").select("updated_at").eq("key", "wc_schedule").limit(1).execute()
+        rows = res.data or []
+        if not rows:
+            return True
+        stamp = datetime.fromisoformat(str(rows[0]["updated_at"]).replace("Z", "+00:00"))
+        if stamp.tzinfo is None:
+            stamp = stamp.replace(tzinfo=timezone.utc)
+        age_h = (now - stamp).total_seconds() / 3600
+        if age_h < _WC_SCHEDULE_TTL_H:
+            log.info("WC schedule — %.1fh < %dh, pas de rafraîchissement (0 crédit)",
+                     age_h, _WC_SCHEDULE_TTL_H)
+            return False
+        return True
+    except Exception as e:
+        log.debug("wc_schedule staleness: %s", e)
+        return True
 
 
 def _archive_before_purge(sb, signals: list):
@@ -1270,8 +1301,28 @@ def run():
             log.info("✅ Tier 1 OK — %d/%d events | sports: %s",
                      len(matches), len(oddsapi_events), " ".join(sorted(sports_found)))
 
+            # ── Closing line — free ride on the payload we just paid for ──
+            # Runs on the FULL event list, before MAX_MATCHES truncation and
+            # before the portfolio balancer: pricing bets already placed is
+            # unrelated to how many new ones this scan may emit. Golden Hour's
+            # T-120min window means these scans sit squarely inside the
+            # closing-line neighbourhood, and unlike run_closing_line.py's
+            # oracle this prices totals/spreads too — the markets that were
+            # structurally unmeasurable until now (see core/closing_line.py).
+            if sb:
+                try:
+                    capture_from_scan(sb, oddsapi_events, now)
+                except Exception as e:
+                    log.warning("Closing-line capture: %s", e)
+
         # ── WC Schedule — fetch 168h window + save to meta for worldcup page ──
-        if sb and not GOLDEN_HOUR:
+        # Plafonné à un rafraîchissement par jour (_WC_SCHEDULE_TTL_H) : c'est
+        # un calendrier d'affichage, il ne change pas d'heure en heure. Sans ce
+        # garde il repartait à chaque run engine/deep_scan — 14 appels/jour à 3
+        # crédits, soit ~1 260 crédits/mois pour une page statique, sur un plan
+        # qui en compte 500. Le pré-vol gratuit ne le couvre pas : hors saison
+        # la ligue renvoie 404 (gratuit), mais en saison c'est plein tarif.
+        if sb and not GOLDEN_HOUR and _wc_schedule_stale(sb, now):
             try:
                 wc_events = fetch_odds(
                     hours_ahead=168,

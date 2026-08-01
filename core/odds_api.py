@@ -2,15 +2,23 @@
 core/odds_api.py — PAIM v8.3 — The Odds API (Hunter Multi-Sport Mode)
 Markets: h2h | spreads | totals selon le sport
 
-Budget 20 000 req/mois — SPORT_KEYS ci-dessous fait foi pour le nombre de
-clés actives (19 au 2026-07-07 — vérifier `len(SPORT_KEYS)` plutôt que de
-recopier un chiffre ici ; ce chiffre a déjà divergé deux fois, la 2e après
-l'ajout des ligues Big-5 sans mise à jour des commentaires de budget).
-Cadence réelle (Golden Hour / Engine / Deep Scan) : voir les commentaires
-de budget dans .github/workflows/golden_hour.yml, engine.yml et
-deep_scan.yml — ce sont eux la source de vérité pour le calcul de quota,
-pas ce docstring. Au 2026-07-07 l'usage réel dépasse le budget annoncé de
-~79% (19 clés, pas 11) — décision produit en attente, voir golden_hour.yml.
+QUOTA — ne rien recopier ici, ce chiffre a déjà divergé trois fois. La seule
+source de vérité est l'en-tête `x-requests-remaining` des réponses, loggé à
+chaque appel servi. Constat du 2026-08-01 : le plan réel était à **500
+requêtes/mois** (et non 20 000 comme l'annonçait ce docstring), pour une
+consommation mesurée de ~16 crédits/heure — un mois de quota brûlé en 30
+heures, deux mois de suite.
+
+DÉCISION OPÉRATEUR (2026-08-01) : on laisse couler. Pas de rationnement, pas
+de garde local — la clé se vide, on en change. Un gouverneur mensuel a été
+écrit puis retiré : rendre des scans stériles pour étaler un budget que
+l'opérateur préfère dépenser à fond n'avait pas de sens de son point de vue.
+
+Reste le PRÉ-VOL GRATUIT (`_events_in_window`), qui n'est PAS du
+rationnement : il ne refuse jamais un scan utile, il évite seulement de
+payer une ligue qui n'a aucun match dans la fenêtre — la réponse aurait été
+vide de toute façon. Il fait donc durer la même couverture plus longtemps,
+sans jamais la réduire.
 """
 import logging
 import os
@@ -233,6 +241,46 @@ def _parse_event(ev: dict, sport_type: str) -> dict | None:
     return event
 
 
+# ── Pré-vol GRATUIT ───────────────────────────────────────────────────
+# Deux endpoints de l'API v4 ne comptent PAS dans le quota (doc éditeur,
+# vérifiée 2026-08-01) : `/v4/sports` et `/v4/sports/{key}/events`. Seul
+# `/odds` est facturé, au tarif [marchés] × [régions] — soit 3 crédits par
+# ligue pour un `h2h,spreads,totals` sur `eu`.
+#
+# Jusqu'ici on payait ces 3 crédits pour CHAQUE ligue de SPORT_KEYS à chaque
+# scan, y compris celles qui n'avaient aucun match dans la fenêtre : en Golden
+# Hour (fenêtre 2h) c'est le cas de presque toutes. Demander d'abord la liste
+# des matchs — gratuitement — et ne payer que les ligues qui en ont au moins
+# un est une économie sans aucune contrepartie : la réponse `/odds` aurait été
+# vide de toute façon. Ce n'est pas du rationnement — aucun scan utile n'est
+# refusé, jamais.
+
+def _events_in_window(api_key: str, sport_key: str,
+                      time_from: str, time_to: str) -> int | None:
+    """Nombre de matchs de cette ligue dans la fenêtre — 0 crédit.
+
+    Renvoie None si l'appel échoue : on ne sait pas, donc on laisse le scan
+    payant décider. Ne jamais transformer une panne du pré-vol en « pas de
+    match » — ce serait une panne silencieuse du pipeline entier.
+    """
+    try:
+        r = requests.get(
+            f"{BASE_URL}/sports/{sport_key}/events/",
+            params={"apiKey": api_key,
+                    "commenceTimeFrom": time_from,
+                    "commenceTimeTo": time_to},
+            timeout=10,
+        )
+        if r.status_code == 404:
+            return 0          # hors saison
+        if r.status_code != 200:
+            return None
+        return len(r.json() or [])
+    except Exception as e:
+        log.debug("preflight %s: %s", sport_key, e)
+        return None
+
+
 # ── Public API ────────────────────────────────────────────────────────
 
 def fetch_odds(api_key: str | None = None, hours_ahead: int = 24,
@@ -242,6 +290,14 @@ def fetch_odds(api_key: str | None = None, hours_ahead: int = 24,
     Priority: NBA → Tennis Masters → Soccer.
     sport_keys: override the default SPORT_KEYS dict (used by Golden Hour mode).
     Returns [] if API key missing or quota exhausted (engine falls back to Gemini).
+
+    AUCUN RATIONNEMENT, décision opérateur du 2026-08-01 : « laisse OddsAPI
+    couler, si c'est fini on aura d'autres [clés] ». Un gouverneur de quota
+    mensuel a été écrit puis retiré — il rendait des scans stériles pour
+    étaler un budget que l'opérateur préfère dépenser à fond, quitte à
+    changer de clé. L'ancien garde `remaining < 50` est parti avec : il
+    immobilisait 10% du plan sans jamais le dépenser. Le scan s'arrête
+    désormais sur un vrai 422 (quota épuisé côté API), pas avant.
     """
     if not api_key:
         api_key = os.environ.get("ODDS_API_KEY")
@@ -257,12 +313,26 @@ def fetch_odds(api_key: str | None = None, hours_ahead: int = 24,
     time_from = now.strftime("%Y-%m-%dT%H:%M:%SZ")
     time_to   = until.strftime("%Y-%m-%dT%H:%M:%SZ")
 
+    # Pré-vol gratuit : on ne garde que les ligues qui ont réellement des
+    # matchs dans la fenêtre, triées par volume décroissant — si un 422
+    # interrompt le scan, il l'aura interrompu sur les ligues les moins
+    # fournies, pas au hasard de l'ordre du dictionnaire.
+    scan_plan: list = []
+    skipped_empty = 0
+    for sport_key, sport_type in keys_to_scan.items():
+        n_events = _events_in_window(api_key, sport_key, time_from, time_to)
+        if n_events == 0:
+            skipped_empty += 1
+            continue
+        scan_plan.append((sport_key, sport_type, n_events if n_events is not None else 0))
+    scan_plan.sort(key=lambda x: x[2], reverse=True)
+    if skipped_empty:
+        log.info("Pré-vol gratuit : %d/%d ligues sans match dans la fenêtre — "
+                 "%d crédits économisés", skipped_empty, len(keys_to_scan), skipped_empty * 3)
+
     all_events = []
     quota_remaining = 9999  # updated after first successful response
-    for sport_key, sport_type in keys_to_scan.items():
-        if quota_remaining < 50:
-            log.warning("OddsAPI quota guard — %d remaining, stopping scan early", quota_remaining)
-            break
+    for sport_key, sport_type, _n in scan_plan:
         markets = _MARKETS_BY_SPORT.get(sport_type, "h2h")
         url = f"{BASE_URL}/sports/{sport_key}/odds/"
         params = {
@@ -289,6 +359,9 @@ def fetch_odds(api_key: str | None = None, hours_ahead: int = 24,
                 log.error("Auth error — check ODDS_API_KEY")
                 return []
             if r.status_code == 422:
+                # Vrai épuisement côté API : la clé est à sec, il faut en
+                # changer. C'est le SEUL arrêt possible — plus aucun garde
+                # local ne coupe le scan avant (décision opérateur).
                 log.warning("Quota exhausted after %d sport keys — keeping %d events fetched so far",
                             list(keys_to_scan).index(sport_key), len(all_events))
                 break
