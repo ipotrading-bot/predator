@@ -29,6 +29,9 @@ class _FakeTable:
     def lte(self, *_a, **_k):
         return self
 
+    def lt(self, *_a, **_k):
+        return self
+
     def limit(self, *_a, **_k):
         return self
 
@@ -125,3 +128,123 @@ class TestCaptureClosingLines:
     def test_no_candidates_returns_zero(self):
         sb = _FakeSupabase([])
         assert audit_engine.capture_closing_lines(sb) == 0
+
+    def test_capture_stamps_closing_captured_at(self, monkeypatch):
+        # Without this stamp a T-3h price is indistinguishable from a T-5min
+        # one, and the CLV derived from it is uninterpretable.
+        now = datetime.now(timezone.utc)
+        sig = _sig(1, "Ajax vs Feyenoord", 2.00,
+                   (now + timedelta(minutes=8)).isoformat())
+        sb = _FakeSupabase([sig])
+        monkeypatch.setattr(audit_engine, "get_pinnacle_price",
+                            lambda match, sport, league: (1.80, "Ajax"))
+
+        assert audit_engine.capture_closing_lines(sb) == 1
+        stamped = sb.inserted[0]["closing_captured_at"]
+        assert stamped
+        taken = datetime.fromisoformat(stamped.replace("Z", "+00:00"))
+        assert abs((taken - now).total_seconds()) < 60
+
+
+class TestRefreshBeatsCronDrift:
+    """The original bug: capture was one-shot and gated on
+    closing_pinnacle_price IS NULL, inside a 5-min window, on a cron that
+    actually fires every ~116 min. It captured 0 prices in 203 signals.
+    Refreshing is what makes the result independent of when the cron lands."""
+
+    def test_signal_with_existing_price_is_repriced_when_stale(self, monkeypatch):
+        now = datetime.now(timezone.utc)
+        sig = _sig(1, "Ajax vs Feyenoord", 2.00,
+                   (now + timedelta(minutes=15)).isoformat())
+        # Priced 90 min ago, far from kickoff — must be refined, not skipped.
+        sig["closing_pinnacle_price"] = 1.95
+        sig["closing_captured_at"] = (now - timedelta(minutes=90)).isoformat()
+        sb = _FakeSupabase([sig])
+        monkeypatch.setattr(audit_engine, "get_pinnacle_price",
+                            lambda match, sport, league: (1.80, "Ajax"))
+
+        assert audit_engine.capture_closing_lines(sb) == 1
+        assert sb.inserted[0]["closing_pinnacle_price"] == 1.80
+
+    def test_recent_capture_is_not_repriced(self, monkeypatch):
+        # Bounds oracle spend: refreshing every run over a 4h window would
+        # burn the budget on matches nowhere near kickoff.
+        now = datetime.now(timezone.utc)
+        sig = _sig(1, "Ajax vs Feyenoord", 2.00,
+                   (now + timedelta(minutes=15)).isoformat())
+        sig["closing_pinnacle_price"] = 1.95
+        sig["closing_captured_at"] = (now - timedelta(minutes=2)).isoformat()
+        sb = _FakeSupabase([sig])
+        calls = []
+        monkeypatch.setattr(audit_engine, "get_pinnacle_price",
+                            lambda match, sport, league: calls.append(match) or (1.80, "Ajax"))
+
+        assert audit_engine.capture_closing_lines(sb) == 0
+        assert calls == []
+
+    def test_row_without_stamp_is_repriced(self, monkeypatch):
+        # Pre-migration rows carry a price but no stamp — refresh them so the
+        # backlog converges instead of staying permanently uninterpretable.
+        now = datetime.now(timezone.utc)
+        sig = _sig(1, "Ajax vs Feyenoord", 2.00,
+                   (now + timedelta(minutes=15)).isoformat())
+        sig["closing_pinnacle_price"] = 1.95
+        sb = _FakeSupabase([sig])
+        monkeypatch.setattr(audit_engine, "get_pinnacle_price",
+                            lambda match, sport, league: (1.80, "Ajax"))
+
+        assert audit_engine.capture_closing_lines(sb) == 1
+
+    def test_malformed_stamp_does_not_crash(self, monkeypatch):
+        now = datetime.now(timezone.utc)
+        sig = _sig(1, "Ajax vs Feyenoord", 2.00,
+                   (now + timedelta(minutes=15)).isoformat())
+        sig["closing_pinnacle_price"] = 1.95
+        sig["closing_captured_at"] = "pas une date"
+        sb = _FakeSupabase([sig])
+        monkeypatch.setattr(audit_engine, "get_pinnacle_price",
+                            lambda match, sport, league: (1.80, "Ajax"))
+
+        assert audit_engine.capture_closing_lines(sb) == 1
+
+    def test_window_covers_the_real_execution_gap(self):
+        # Guard rail on the constant itself: the measured median gap between
+        # actual executions is 116 min and the worst observed is 254. A window
+        # narrower than that reintroduces the original silent-zero bug.
+        assert audit_engine.CLOSING_LINE_WINDOW_MIN >= 240
+        assert audit_engine.CLOSING_LINE_REFRESH_MIN < audit_engine.CLOSING_LINE_WINDOW_MIN
+
+
+class TestMissedClosingLinesIsVisible:
+    """A green run that captured nothing looked exactly like a green run with
+    nothing to do — that is how this stayed broken for a month."""
+
+    def test_counts_signals_that_passed_kickoff_unpriced(self):
+        now = datetime.now(timezone.utc)
+        missed = [_sig(i, f"H{i} vs A{i}", 2.0,
+                       (now - timedelta(minutes=30)).isoformat()) for i in range(3)]
+        assert audit_engine.count_missed_closing_lines(_FakeSupabase(missed)) == 3
+
+    def test_zero_when_nothing_missed(self):
+        assert audit_engine.count_missed_closing_lines(_FakeSupabase([])) == 0
+
+    def test_db_error_degrades_to_zero(self):
+        class _Boom:
+            def table(self, _n):
+                raise RuntimeError("db down")
+        assert audit_engine.count_missed_closing_lines(_Boom()) == 0
+
+
+class TestLeadTimeLabel:
+    def test_minutes_then_hours(self):
+        now = datetime.now(timezone.utc)
+        lbl = audit_engine._lead_time_label
+        assert lbl((now + timedelta(minutes=37)).isoformat(), now) == "37min"
+        assert lbl((now + timedelta(minutes=134)).isoformat(), now) == "2h14"
+
+    def test_missing_or_past_is_unknown(self):
+        now = datetime.now(timezone.utc)
+        lbl = audit_engine._lead_time_label
+        assert lbl(None, now) == "?"
+        assert lbl("pas une date", now) == "?"
+        assert lbl((now - timedelta(minutes=5)).isoformat(), now) == "?"

@@ -126,9 +126,17 @@ def replace_signal_row(sb, signal_id, merged: dict, optional_cols: frozenset = f
 
     If the insert fails because of an unrecognized column (stale schema —
     a migration adding `optional_cols` hasn't been applied to this DB yet),
-    retries once with those columns stripped. Returns True on success,
+    retries with those columns stripped. Returns True on success,
     False if the signal is lost (deleted but never successfully re-inserted
     — logged at CRITICAL since this is a silent data-loss path).
+
+    The retry strips only the columns Postgres actually named in the error,
+    not the whole optional set. Stripping the set wholesale meant one missing
+    column silently discarded its healthy neighbours: a DB without
+    `closing_captured_at` would drop `closing_pinnacle_price`/`clv_pct_real`
+    too, and still return True — the caller counting a capture that never
+    landed. Only if the error names nothing recognizable do we fall back to
+    stripping everything optional.
     """
     payload = dict(merged)
     payload.pop("id", None)
@@ -141,15 +149,22 @@ def replace_signal_row(sb, signal_id, merged: dict, optional_cols: frozenset = f
         sb.table("signals").insert(payload).execute()
         return True
     except Exception as e:
-        if optional_cols and any(c in str(e) for c in optional_cols):
-            core = {k: v for k, v in payload.items() if k not in optional_cols}
+        if not optional_cols:
+            log.critical("SIGNAL %s LOST after delete — insert failed: %s", signal_id, e)
+            return False
+        named = {c for c in optional_cols if c in str(e)}
+        for dropped in ([named] if named else []) + [set(optional_cols)]:
+            if not dropped:
+                continue
+            core = {k: v for k, v in payload.items() if k not in dropped}
             try:
                 sb.table("signals").insert(core).execute()
+                log.warning("Signal %s re-inserted without %s — apply the pending "
+                            "migration for these columns", signal_id, sorted(dropped))
                 return True
             except Exception as e2:
-                log.critical("SIGNAL %s LOST after delete — fallback insert failed: %s", signal_id, e2)
-                return False
-        log.critical("SIGNAL %s LOST after delete — insert failed: %s", signal_id, e)
+                e = e2
+        log.critical("SIGNAL %s LOST after delete — fallback insert failed: %s", signal_id, e)
         return False
 
 
@@ -215,6 +230,7 @@ def log_to_ledger(sb, sig: dict, clv: float, outcome: str) -> None:
         "kelly_pct":              sig.get("kelly_pct"),
         "closing_pinnacle_price": sig.get("closing_pinnacle_price"),
         "clv_pct_real":           sig.get("clv_pct_real"),
+        "closing_captured_at":    sig.get("closing_captured_at"),
         "sharp_prob":             sig.get("sharp_prob"),
         "sharp_sources":          sharp_sources,
         "consensus_score":        sig.get("consensus_score"),
@@ -239,16 +255,26 @@ def log_to_ledger(sb, sig: dict, clv: float, outcome: str) -> None:
     try:
         sb.table("ai_learning_ledger").insert(payload).execute()
     except Exception as e:
-        if any(c in str(e) for c in _optional):
+        # Strip only the columns the error actually names — dropping the whole
+        # optional set for one missing column threw away kelly_pct/sharp_prob
+        # from rows that could have kept them (same reasoning as
+        # replace_signal_row). Wholesale strip stays as the last resort.
+        named = {c for c in _optional if c in str(e)}
+        for dropped in ([named] if named else []) + [set(_optional)]:
             try:
-                core = {k: v for k, v in payload.items() if k not in _optional}
+                core = {k: v for k, v in payload.items() if k not in dropped}
                 sb.table("ai_learning_ledger").insert(core).execute()
+                log.warning("Ledger row for %s written without %s — apply the "
+                            "pending migration for these columns",
+                            sig.get("match"), sorted(dropped))
                 return
             except Exception as e2:
                 e = e2
         log.critical("ai_learning_ledger INSERT FAILED [%s] — check migrations "
                       "sql/migrate_v9_4_ledger_display_fields.sql, "
                       "sql/migrate_v9_5_learning_integrity.sql, "
-                      "sql/migrate_v9_6_closing_line.sql, and "
-                      "sql/migrate_v9_7_ledger_brier.sql are applied: %s",
+                      "sql/migrate_v9_6_closing_line.sql, "
+                      "sql/migrate_v9_7_ledger_brier.sql, "
+                      "sql/migrate_v9_10_ledger_consensus.sql, and "
+                      "sql/migrate_v9_11_closing_captured_at.sql are applied: %s",
                       sig.get("match"), e)
