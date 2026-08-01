@@ -61,10 +61,8 @@ def test_preflight_failure_falls_through_to_the_paid_call(monkeypatch):
 
 
 def test_busiest_leagues_are_scanned_first(monkeypatch):
-    # Si le rationnement coupe le scan, il doit couper sur les ligues les
-    # moins fournies — pas au hasard de l'ordre du dictionnaire. Budget
-    # neutralisé ici : c'est l'ORDRE qu'on teste, pas le plafond.
-    monkeypatch.setattr(odds_api.Budget, "can_spend", lambda self, cost: True)
+    # Si un 422 interrompt le scan, il doit l'interrompre sur les ligues les
+    # moins fournies — pas au hasard de l'ordre du dictionnaire.
     calls = _wire(monkeypatch, {
         "soccer_epl":     [{"id": "a"}],
         "baseball_mlb":   [{"id": "b"}, {"id": "c"}, {"id": "d"}],
@@ -80,18 +78,20 @@ def test_missing_key_returns_empty(monkeypatch):
     assert odds_api.fetch_odds(api_key=None) == []
 
 
-def test_budget_blocks_the_paid_call_but_not_the_preflight(monkeypatch):
-    calls = _wire(monkeypatch, {"soccer_epl": [{"id": "a"}]})
+def test_no_local_guard_ever_stops_a_useful_scan(monkeypatch):
+    """Décision opérateur du 2026-08-01 : « laisse OddsAPI couler ». Aucun
+    garde local (ni l'ancien `remaining < 50`, ni un rationnement mensuel) ne
+    doit interrompre un scan — seul un vrai 422 de l'API le peut."""
+    calls = _wire(monkeypatch, {"a": [{"id": "1"}], "b": [{"id": "2"}]})
 
-    class _Blocked:
-        tier = "engine"
-        remaining = 5
-        def can_spend(self, _c): return False
-        def spend(self, *_a, **_k): pass
-        def note_headers(self, *_a, **_k): pass
-        def close(self): pass
+    def fake_get(url, params=None, timeout=None):
+        if "/events" in url:
+            calls["events"].append(url)
+            return _Resp([{"id": "1"}])
+        calls["odds"].append(url)
+        return _Resp([], remaining="2", used="498")   # quota au ras du sol
 
-    monkeypatch.setattr(odds_api.Budget, "open", classmethod(lambda cls, sb, tier, now: _Blocked()))
-    odds_api.fetch_odds(api_key="k", hours_ahead=2, sport_keys={"soccer_epl": "soccer"})
-    assert calls["odds"] == []
-    assert calls["events"] == ["soccer_epl"]        # gratuit, donc toujours fait
+    monkeypatch.setattr(odds_api.requests, "get", fake_get)
+    odds_api.fetch_odds(api_key="k", hours_ahead=2,
+                        sport_keys={"a": "soccer", "b": "basketball"})
+    assert len(calls["odds"]) == 2      # les deux ligues scannées malgré remaining=2

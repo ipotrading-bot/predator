@@ -1293,13 +1293,7 @@ def run():
         log.info("⚡ Tier 1 — The Odds API (%dh window)...", hours_ahead)
 
     if not GUERRILLA:
-        # Tier de rationnement (core/odds_budget.py) : la fenêtre T-120min a
-        # la priorité absolue sur le quota mensuel — c'est là que les edges
-        # sont les plus frais et la seule qui capture la ligne de clôture.
-        # Le deep scan, le plus redondant avec le scan de fond, passe dernier.
-        scan_tier = "golden" if GOLDEN_HOUR else ("deep" if DEEP_SCAN else "engine")
-        oddsapi_events = fetch_odds(hours_ahead=hours_ahead, sport_keys=scan_keys,
-                                    sb=sb, tier=scan_tier)
+        oddsapi_events = fetch_odds(hours_ahead=hours_ahead, sport_keys=scan_keys)
         if oddsapi_events:
             matches      = oddsapi_events[:MAX_MATCHES]
             sharp_source = "OddsAPI/Pinnacle"
@@ -1333,7 +1327,6 @@ def run():
                 wc_events = fetch_odds(
                     hours_ahead=168,
                     sport_keys={"soccer_fifa_world_cup": "soccer"},
-                    sb=sb, tier=scan_tier,
                 )
                 if wc_events:
                     wc_fixtures = []
