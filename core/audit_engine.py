@@ -26,6 +26,14 @@ from core.db import (get_db, log_to_ledger, replace_signal_row,
                      update_signal_fields, MissingCredentialsError)
 from core.ai_search import (ai_available, ai_dead as gemini_quota_dead,
                             search_credits_left, search_exhausted)
+# Task 3 — real closing-line capture (run_closing_line.py). The window
+# constants and the optional-column set are shared with core/closing_line.py,
+# which captures the same fields for free off the OddsAPI scan feed; they
+# live in core/constants.py so the two paths can never drift apart.
+from core.constants import (CLOSING_LINE_BUDGET, CLOSING_LINE_COLS,
+                            CLOSING_LINE_REFRESH_MIN, CLOSING_LINE_TIGHTEN_MIN,
+                            CLOSING_LINE_WINDOW_MIN, CLOSING_SRC_ODDSAPI,
+                            CLOSING_SRC_ORACLE)
 from core.learning_layer import compute_and_save as _learn
 from core.oracle import get_pinnacle_price
 from core.paim_engine import resolve_selection_side
@@ -58,29 +66,8 @@ CLV_CREDIT_RESERVE  = int(os.environ.get("CLV_CREDIT_RESERVE", 12))
 ORACLE_BUDGET = 30     # Max oracle (web search) calls per audit run
 SETTLE_BUDGET = 25     # Max settlement (web search) calls per audit run
 
-# Task 3 — real closing-line capture (run_closing_line.py)
-#
-# WINDOW SIZING — measured, not guessed. The workflow asks for one run per
-# hour; GitHub Actions actually delivers 0.48/h (100 runs over 206h, measured
-# 2026-08-01), with a MEDIAN gap between executions of 116 min and a worst
-# observed gap of 254 min. The original 5-minute window was anchored on the
-# execution instant, so it covered ~4% of the timeline at effectively random
-# minutes: across 203 ledger rows it captured a closing price exactly zero
-# times, while the job still exited green every run.
-#
-# So the window can never be sized to a cadence this scheduler does not
-# honour. Instead capture is REFRESHED: every run re-prices any signal still
-# ahead of kickoff, so whichever run happens to be the last one before
-# kickoff leaves behind the closest available price. Correctness no longer
-# depends on the scheduler firing at a particular minute — only on it firing
-# at all. CLOSING_LINE_REFRESH_MIN bounds the oracle cost of that refresh.
-CLOSING_LINE_WINDOW_MIN  = 240  # capture starts this many minutes before kickoff
-CLOSING_LINE_TIGHTEN_MIN = 90   # only inside this do we re-price; further out one price is enough
-CLOSING_LINE_REFRESH_MIN = 20   # and even then, not more often than this
-CLOSING_LINE_BUDGET      = 30   # Max oracle (web search) calls per closing-line run
-
 _AUDIT_COLS = {"closing_line", "clv_pct", "closed_at"}
-_CLOSING_LINE_COLS = {"closing_pinnacle_price", "clv_pct_real", "closing_captured_at"}
+_CLOSING_LINE_COLS = CLOSING_LINE_COLS
 
 # Terminal statuses — Ledger reads all of these
 TERMINAL_STATUSES = ["settled", "closed", "expired"]
@@ -301,6 +288,14 @@ def _needs_refresh(sig: dict, now: datetime) -> bool:
     every CLOSING_LINE_REFRESH_MIN. Re-pricing a match still three hours out
     buys no accuracy — the line has not converged yet — and this job shares
     its web-search quota with the audit and WIZ.
+
+    A price already captured by core/closing_line.py off the OddsAPI scan
+    feed outranks anything this oracle can produce — it is the real Pinnacle
+    number for the exact side, not a web-search estimate of the favourite —
+    so it is only overwritten once it has gone properly stale
+    (CLOSING_LINE_TIGHTEN_MIN rather than CLOSING_LINE_REFRESH_MIN). That
+    also stops this job spending search budget on signals the free path has
+    already measured.
     """
     if not sig.get("closing_pinnacle_price"):
         return True
@@ -313,7 +308,9 @@ def _needs_refresh(sig: dict, now: datetime) -> bool:
         return True
     if taken.tzinfo is None:
         taken = taken.replace(tzinfo=timezone.utc)
-    if (now - taken) < timedelta(minutes=CLOSING_LINE_REFRESH_MIN):
+    from_scan = sig.get("closing_source") == CLOSING_SRC_ODDSAPI
+    hold_min = CLOSING_LINE_TIGHTEN_MIN if from_scan else CLOSING_LINE_REFRESH_MIN
+    if (now - taken) < timedelta(minutes=hold_min):
         return False
     try:
         kickoff = datetime.fromisoformat(str(sig.get("match_time") or "").replace("Z", "+00:00"))
@@ -343,18 +340,21 @@ def _lead_time_label(match_time, now: datetime) -> str:
 
 
 def count_missed_closing_lines(sb) -> int:
-    """Active h2h signals whose kickoff has already passed with no closing
-    price captured — i.e. signals this job will never be able to price again.
+    """Active signals whose kickoff has already passed with no closing price
+    captured — i.e. signals nothing will ever be able to price again.
 
     Exists because the original bug was silent: the job found zero candidates
     and exited green for a month while capturing nothing. A non-zero count
-    here is the symptom that the schedule is too sparse for the window."""
+    here is the symptom that the schedule is too sparse for the window.
+
+    Counts every market, not just h2h: since core/closing_line.py prices
+    totals/spreads off the scan feed, an unpriced totals signal is now a real
+    miss rather than a structural impossibility."""
     now = datetime.now(timezone.utc)
     try:
         res = (sb.table("signals")
                .select("id")
                .eq("status", "active")
-               .eq("market_key", "h2h")
                .is_("closing_pinnacle_price", "null")
                .lt("match_time", now.isoformat())
                .limit(500)
@@ -384,13 +384,23 @@ def capture_closing_lines(sb, budget: int = CLOSING_LINE_BUDGET) -> int:
     genuine T-10min close from a T-3h price instead of trusting the column
     name — see sql/migrate_v9_11_closing_captured_at.sql.
 
+    THIS IS NOW THE FALLBACK PATH. core/closing_line.py captures the same
+    columns for free off the OddsAPI scan feed — exact Pinnacle prices, every
+    market, no web search — and marks them closing_source='oddsapi'. This
+    oracle exists for what that path cannot reach: signals harvested outside
+    OddsAPI (MMA, eSports, alt sports — see core/harvester.py), and OddsAPI
+    signals whose event stopped being scanned before kickoff (quota
+    exhausted, sport key dropped). _needs_refresh() will not overwrite a
+    fresh scan-feed price with a web-search estimate.
+
     KNOWN LIMIT — get_pinnacle_price() only ever quotes the closing ML/DNB
-    FAVORITE (with its team name), so a real CLV can only be computed for
-    h2h signals whose selection still IS that closing favorite (our h2h
+    FAVORITE (with its team name), so a real CLV can only be computed here
+    for h2h signals whose selection still IS that closing favorite (our h2h
     signals are always emitted on the scan-time favorite — see
     run_engine._process_h2h). Everything else is never guessed:
       - totals/spreads candidates are skipped before any oracle budget is
-        spent (the oracle has no price for those markets at all);
+        spent (the oracle has no price for those markets at all — they are
+        core/closing_line.py's job now);
       - an h2h signal whose favorite flipped by kickoff, or whose side
         can't be resolved (selection and oracle team are each resolved
         against the match's own two team names — exact equality first, see
@@ -443,6 +453,7 @@ def capture_closing_lines(sb, budget: int = CLOSING_LINE_BUDGET) -> int:
             "closing_pinnacle_price": float(price),
             "clv_pct_real":           clv_real,
             "closing_captured_at":    now.isoformat(),
+            "closing_source":         CLOSING_SRC_ORACLE,
         }, optional_cols=_CLOSING_LINE_COLS)
         if ok:
             captured += 1

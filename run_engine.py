@@ -19,6 +19,7 @@ from dotenv import load_dotenv
 from core.db import get_db, MissingCredentialsError
 from core.harvester import fetch_matches, fetch_pinnacle_prices, fetch_estimated_prices, fetch_mma_events, fetch_esports_events, fetch_alternative_sports_batch, fetch_betfair_prices
 from core.ai_search import ai_dead as gemini_quota_dead
+from core.closing_line import capture_from_scan
 from core.math_engine import to_binary, devig_prob, is_round_number_line
 from core.odds_api import fetch_odds
 from core.oracle import get_pinnacle_price
@@ -1269,6 +1270,20 @@ def run():
             sports_found = set(e.get("sport","?") for e in matches)
             log.info("✅ Tier 1 OK — %d/%d events | sports: %s",
                      len(matches), len(oddsapi_events), " ".join(sorted(sports_found)))
+
+            # ── Closing line — free ride on the payload we just paid for ──
+            # Runs on the FULL event list, before MAX_MATCHES truncation and
+            # before the portfolio balancer: pricing bets already placed is
+            # unrelated to how many new ones this scan may emit. Golden Hour's
+            # T-120min window means these scans sit squarely inside the
+            # closing-line neighbourhood, and unlike run_closing_line.py's
+            # oracle this prices totals/spreads too — the markets that were
+            # structurally unmeasurable until now (see core/closing_line.py).
+            if sb:
+                try:
+                    capture_from_scan(sb, oddsapi_events, now)
+                except Exception as e:
+                    log.warning("Closing-line capture: %s", e)
 
         # ── WC Schedule — fetch 168h window + save to meta for worldcup page ──
         if sb and not GOLDEN_HOUR:

@@ -279,6 +279,11 @@ def log_to_ledger(sb, sig: dict, clv: float, outcome: str) -> None:
         "closing_pinnacle_price": sig.get("closing_pinnacle_price"),
         "clv_pct_real":           sig.get("clv_pct_real"),
         "closing_captured_at":    sig.get("closing_captured_at"),
+        # 'oddsapi' (exact, per-market, from the scan feed — core/closing_line.py)
+        # or 'oracle' (web-search estimate of the ML/DNB favourite). Carried
+        # into the ledger so an analysis can weight or filter on provenance
+        # instead of treating both as the same measurement.
+        "closing_source":         sig.get("closing_source"),
         "sharp_prob":             sig.get("sharp_prob"),
         "sharp_sources":          sharp_sources,
         "consensus_score":        sig.get("consensus_score"),

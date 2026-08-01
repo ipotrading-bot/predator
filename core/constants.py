@@ -70,6 +70,41 @@ PUSH_PROB_ROUND_LINE = 0.10    # 10% — conservative MLB/baseball estimate
 # ERA, recent form, and matchup are not priced in until lineup is locked.
 MLB_LINEUP_WINDOW_H  = 6       # Hours — discard MLB totals signals beyond this
 
+# ── Closing-line capture ──────────────────────────────────────────────
+# Shared by core/closing_line.py (free capture from the OddsAPI scan feed,
+# every market) and core/audit_engine.py (web-search oracle fallback, h2h
+# only). Lived in audit_engine until 2026-08-01; moved here when a second
+# module started depending on the same window.
+#
+# WINDOW SIZING — measured, not guessed. The closing-line workflow asks for
+# one run per hour; GitHub Actions actually delivers 0.48/h (100 runs over
+# 206h, measured 2026-08-01), with a MEDIAN gap between executions of
+# 116 min and a worst observed gap of 254. The original 5-minute window was
+# anchored on the execution instant, so it covered ~4% of the timeline at
+# effectively random minutes: across 203 ledger rows it captured a closing
+# price exactly zero times, while the job still exited green every run.
+#
+# So the window can never be sized to a cadence this scheduler does not
+# honour. Instead capture is REFRESHED: every run re-prices any signal still
+# ahead of kickoff, so whichever run happens to be the last one before
+# kickoff leaves behind the closest available price. Correctness no longer
+# depends on the scheduler firing at a particular minute — only on it firing
+# at all. CLOSING_LINE_REFRESH_MIN bounds the oracle cost of that refresh.
+CLOSING_LINE_WINDOW_MIN  = 240  # capture starts this many minutes before kickoff
+CLOSING_LINE_TIGHTEN_MIN = 90   # only inside this do we re-price; further out one price is enough
+CLOSING_LINE_REFRESH_MIN = 20   # and even then, not more often than this
+CLOSING_LINE_BUDGET      = 30   # Max oracle (web search) calls per closing-line run
+
+# Columns both capture paths write. Passed as `optional_cols` on every write
+# so a project that has not yet applied sql/migrate_v9_6_closing_line.sql,
+# v9_11 (closing_captured_at) or v9_12 (closing_source) degrades to writing
+# the columns it does have instead of losing the whole update.
+CLOSING_LINE_COLS = frozenset({"closing_pinnacle_price", "clv_pct_real",
+                               "closing_captured_at", "closing_source"})
+# Values of signals.closing_source — which feed produced the stored price.
+CLOSING_SRC_ODDSAPI = "oddsapi"   # exact, per-market, from the scan feed
+CLOSING_SRC_ORACLE  = "oracle"    # web-search estimate, h2h/DNB favourite only
+
 # Fractional Kelly par sport — uniquement les 6 sport-types actifs sélectionnés
 # (à ne pas confondre avec les 19 SPORT_KEYS d'odds_api.py, plus fins : plusieurs
 # ligues/compétitions collapsent vers le même sport-type ici)
