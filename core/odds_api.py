@@ -210,6 +210,12 @@ def _parse_event(ev: dict, sport_type: str) -> dict | None:
         if xs and ps:
             event["spreads_1xbet"]    = xs
             event["spreads_pinnacle"] = ps
+            cs = _extract_spreads(bookmakers, CIRCA_KEY, home, away)
+            rs = _extract_spreads(bookmakers, CRIS_KEY,  home, away)
+            if cs:
+                event["spreads_circa"] = cs
+            if rs:
+                event["spreads_cris"] = rs
 
     # ── Totals (all sports) ───────────────────────────────────────────
     xt = _extract_totals(bookmakers, XBET_KEY)
@@ -217,6 +223,12 @@ def _parse_event(ev: dict, sport_type: str) -> dict | None:
     if xt and pt:
         event["totals_1xbet"]    = xt
         event["totals_pinnacle"] = pt
+        ct = _extract_totals(bookmakers, CIRCA_KEY)
+        rt = _extract_totals(bookmakers, CRIS_KEY)
+        if ct:
+            event["totals_circa"] = ct
+        if rt:
+            event["totals_cris"] = rt
 
     return event
 

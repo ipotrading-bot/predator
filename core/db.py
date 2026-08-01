@@ -204,6 +204,8 @@ def log_to_ledger(sb, sig: dict, clv: float, outcome: str) -> None:
         "closing_pinnacle_price": sig.get("closing_pinnacle_price"),
         "clv_pct_real":           sig.get("clv_pct_real"),
         "sharp_prob":             sig.get("sharp_prob"),
+        "sharp_sources":          sig.get("sharp_sources"),
+        "consensus_score":        sig.get("consensus_score"),
     }
     payload = {
         "signal_id":             sig.get("id"),
