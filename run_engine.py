@@ -778,7 +778,8 @@ def _process_totals(m, name, sport, league, emoji, signals, sb, now, log, min_ed
               f"totals_{side}", lbl, x_odd, p_odd, sharp_prob, emoji,
               selection_name=sel, min_edge=min_edge,
               match_time=m.get("commence_time", ""), match_id=m.get("id", ""),
-              sharp_sources=sources_found, consensus_score=consensus_score)
+              sharp_sources=sources_found if sources_found else None,
+              consensus_score=consensus_score if sources_found else None)
 
     signals.extend(_keep_best_side(sides, log, emoji, name))
 
@@ -840,7 +841,8 @@ def _process_spreads(m, name, sport, league, home, away, emoji, signals, sb, now
               f"spreads_{side}", lbl, x_odd, p_odd, sharp_prob, emoji,
               selection_name=f"{team} {pt_str}", min_edge=min_edge,
               match_time=m.get("commence_time", ""), match_id=m.get("id", ""),
-              sharp_sources=sources_found, consensus_score=consensus_score)
+              sharp_sources=sources_found if sources_found else None,
+              consensus_score=consensus_score if sources_found else None)
 
     signals.extend(_keep_best_side(sides, log, emoji, name))
 

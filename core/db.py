@@ -199,12 +199,24 @@ def log_to_ledger(sb, sig: dict, clv: float, outcome: str) -> None:
             ttm = int((mt - sc).total_seconds() / 60)
         except Exception:
             log.debug("_ttm parse failed for match_time=%s scanned_at=%s", match_time, scanned_at)
+    # signals.sharp_sources is TEXT holding a JSON string (see _emit in
+    # run_engine.py), but ai_learning_ledger.sharp_sources is jsonb
+    # (sql/migrate_v9_10_ledger_consensus.sql). Inserting the raw string would
+    # store a JSON *scalar*, so `sharp_sources->>'circa'` would return NULL —
+    # exactly the query this column exists to serve. Decode it to a real object.
+    sharp_sources = sig.get("sharp_sources")
+    if isinstance(sharp_sources, str):
+        try:
+            sharp_sources = json.loads(sharp_sources)
+        except (ValueError, TypeError):
+            log.debug("sharp_sources not decodable, dropping: %.60s", sharp_sources)
+            sharp_sources = None
     _optional = {
         "kelly_pct":              sig.get("kelly_pct"),
         "closing_pinnacle_price": sig.get("closing_pinnacle_price"),
         "clv_pct_real":           sig.get("clv_pct_real"),
         "sharp_prob":             sig.get("sharp_prob"),
-        "sharp_sources":          sig.get("sharp_sources"),
+        "sharp_sources":          sharp_sources,
         "consensus_score":        sig.get("consensus_score"),
     }
     payload = {
