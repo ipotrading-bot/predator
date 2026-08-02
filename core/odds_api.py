@@ -21,9 +21,10 @@ vide de toute façon. Il fait donc durer la même couverture plus longtemps,
 sans jamais la réduire.
 """
 import logging
-import os
 import requests
 from datetime import datetime, timedelta, timezone
+
+from core.secret_store import get_secret
 
 log = logging.getLogger("PREDATOR.odds_api")
 
@@ -300,9 +301,13 @@ def fetch_odds(api_key: str | None = None, hours_ahead: int = 24,
     désormais sur un vrai 422 (quota épuisé côté API), pas avant.
     """
     if not api_key:
-        api_key = os.environ.get("ODDS_API_KEY")
+        # Supabase (app_secrets) d'abord, os.environ en filet — la clé tourne
+        # tous les 1-2 jours et le secret GitHub se périme entre deux
+        # rotations. Voir core/secret_store.py.
+        api_key = get_secret("ODDS_API_KEY")
     if not api_key:
-        log.error("No ODDS_API_KEY — add to .env and GitHub Secrets")
+        log.error("No ODDS_API_KEY — ni dans app_secrets (Supabase) ni dans "
+                  "l'environnement (.env / GitHub Secrets / Vercel)")
         return []
     assert api_key is not None  # narrow type after early return
 
