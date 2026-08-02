@@ -378,6 +378,7 @@ def compute_and_save(sb) -> dict[str, float]:
     segment_current = load_segment_thresholds(sb)
     now     = datetime.now(timezone.utc).isoformat()
     summary_lines: list[str] = []
+    ranking_stats: dict[str, dict] = {}   # sport -> stats, pour _save_sport_ranking
 
     for sport in SPORT_DEFAULTS:
         try:
@@ -390,6 +391,7 @@ def compute_and_save(sb) -> dict[str, float]:
             rows = res.data or []
 
             stats = _sport_stats(rows)
+            ranking_stats[sport] = stats
             if stats["n"] < _MIN_SAMPLES:
                 log.info("[%s] %d decisive samples < %d — threshold unchanged (%.1f%%)",
                          sport, stats["n"], _MIN_SAMPLES, current[sport])
@@ -457,4 +459,66 @@ def compute_and_save(sb) -> dict[str, float]:
     except Exception as e:
         log.warning("compute_and_save: failed to persist learning_summary: %s", e)
 
+    _save_sport_ranking(sb, ranking_stats, now)
     return updated
+
+
+_RANKING_KEY = "sport_ranking"
+
+
+def _save_sport_ranking(sb, stats_by_sport: dict[str, dict], now: str) -> None:
+    """Persiste l'ordre des sports par réussite réelle, pour arbitrer les
+    ressources rares côté scan (budget oracle, ordre du rapport).
+
+    Trié sur `wilson_lower` et non sur `hit_rate` : le taux brut est du bruit
+    aux volumes observés — un sport à 5 gagnés sur 5 affiche 100% et ne prouve
+    rien face à 40 sur 83. La borne basse de Wilson répond à « quel est le pire
+    taux compatible avec ce que j'ai vu ? », donc elle pénalise d'elle-même les
+    petits échantillons, ce qui est exactement le critère pour trancher entre
+    deux sports quand il n'y a de budget que pour un.
+
+    Seuls les sports atteignant _MIN_SAMPLES entrent : classer un sport sur 5
+    résultats produirait un ordre qui change à chaque audit. Les autres restent
+    absents, et run_engine les traite en position neutre — un sport sans
+    historique est INCONNU, pas mauvais, et le reléguer l'empêcherait
+    justement d'acquérir l'historique qui le départagerait.
+    """
+    ranked = sorted(
+        ((s, st) for s, st in stats_by_sport.items()
+         if st.get("n", 0) >= _MIN_SAMPLES and st.get("wilson_lower") is not None),
+        key=lambda kv: kv[1]["wilson_lower"], reverse=True,
+    )
+    order = [s for s, _ in ranked]
+    try:
+        sb.table("meta").upsert({
+            "key":        _RANKING_KEY,
+            "value":      json.dumps(order),
+            "updated_at": now,
+        }).execute()
+        if order:
+            log.info("Classement sports (Wilson bas, n>=%d) : %s",
+                     _MIN_SAMPLES, " > ".join(order))
+        else:
+            log.info("Classement sports : aucun sport n'atteint %d résultats "
+                     "décisifs — ordre laissé vide, run_engine garde son défaut.",
+                     _MIN_SAMPLES)
+    except Exception as e:
+        log.warning("_save_sport_ranking: %s", e)
+
+
+def load_sport_ranking(sb) -> list[str]:
+    """Ordre des sports par réussite, écrit par _save_sport_ranking.
+
+    Renvoie [] si absent/illisible : l'appelant doit alors garder son ordre
+    par défaut plutôt que de deviner.
+    """
+    try:
+        res = (sb.table("meta").select("value")
+               .eq("key", _RANKING_KEY).maybe_single().execute())
+        if res and res.data:
+            order = json.loads(res.data["value"])
+            if isinstance(order, list):
+                return [str(s) for s in order]
+    except Exception as e:
+        log.debug("load_sport_ranking: %s", e)
+    return []

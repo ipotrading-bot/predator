@@ -25,6 +25,7 @@ from core.odds_api import fetch_odds
 from core.oracle import get_pinnacle_price
 from core.learning_layer import load_thresholds as _load_thresholds
 from core.learning_layer import load_segment_thresholds as _load_segment_thresholds
+from core.learning_layer import load_sport_ranking as _load_sport_ranking
 from core.paim_engine import (
     compute_alpha, MIN_EDGE, strict_team_match,
     market_label, SHARP_PROB_BY_MARKET, calculate_consensus_price,
@@ -1278,6 +1279,7 @@ def run():
     # Load sport-specific MIN_EDGE thresholds from learning layer
     dyn_thresholds: dict[str, float] = {}
     dyn_segment_thresholds: dict[str, float] = {}
+    sport_ranking: list[str] = []   # meilleur d'abord ; [] = pas d'historique
     if sb:
         try:
             dyn_thresholds = _load_thresholds(sb)
@@ -1293,6 +1295,13 @@ def run():
                          " | ".join(f"{k}={v:.2f}%" for k, v in dyn_segment_thresholds.items()))
         except Exception as e:
             log.warning("load_segment_thresholds: %s — sport-level thresholds only", e)
+        try:
+            sport_ranking = _load_sport_ranking(sb)
+            if sport_ranking:
+                log.info("Classement sports (réussite ledger) : %s",
+                         " > ".join(sport_ranking))
+        except Exception as e:
+            log.warning("load_sport_ranking: %s — ordre par défaut", e)
 
     # ══ SOURCE PIPELINE — 3 NIVEAUX ══════════════════════════════════
     # Tier 1: The Odds API  → real 1XBet + Pinnacle, même event (idéal)
@@ -1513,10 +1522,24 @@ def run():
         # même événement. Le doublon compterait deux fois dans le quota par
         # sport de _portfolio_balance().
         seen = {m.get("match", "").strip().lower() for m in matches}
+        # Ordre de dépense du budget : (1) les sports hors OddsAPI, seule
+        # occasion qu'ils auront jamais d'être prixés ; (2) à égalité, le sport
+        # dont le ledger montre la meilleure réussite. Un sport absent du
+        # classement (historique insuffisant) se place entre les deux plutôt
+        # qu'en dernier — il est INCONNU, pas mauvais, et le reléguer
+        # l'empêcherait d'acquérir l'historique qui le départagerait.
+        def _oracle_rank(m: dict) -> tuple[int, int]:
+            sport = m.get("sport") or ""
+            tier = 0 if sport in _NO_ODDSAPI_SPORTS else 1
+            try:
+                return tier, sport_ranking.index(sport)
+            except ValueError:
+                return tier, len(sport_ranking)
+
         oracle_order = sorted(
             (m for m in xbet_matches[:MAX_MATCHES]
              if m.get("match", "").strip().lower() not in seen),
-            key=lambda m: m.get("sport") not in _NO_ODDSAPI_SPORTS,
+            key=_oracle_rank,
         )
         for m in oracle_order:
             pin_odds = pinnacle_map.get(m["match"])

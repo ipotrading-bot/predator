@@ -41,9 +41,9 @@ WANTED = ("table tennis", "tabletennis", "volleyball", "handball",
 
 
 # ── Piste 1 : le feed déjà câblé, via le vrai chemin de code ─────────
-def probe_sport(sport_id: int):
-    """Renvoie (nom_du_sport, nb_events, exemple) ou None."""
-    for book, (tpls, referer) in SOFT_BOOKS.items():
+def probe_sport(sport_id: int, books):
+    """Renvoie (nom_du_sport, nb_events, exemple, book) ou None."""
+    for book, (tpls, referer) in books:
         try:
             raw = _fetch_from_book(book, tpls, referer, sport_id)
         except Exception:
@@ -58,12 +58,33 @@ def probe_sport(sport_id: int):
     return None
 
 
+def _pick_book():
+    """Trouve le book qui répond, sur un sport connu pour être toujours actif.
+
+    Le run 30768919237 a été tué par le timeout : balayer 130 IDs en essayant
+    les 3 books × 6 URLs chacun fait jusqu'à 2340 requêtes, dont l'immense
+    majorité sur des hôtes qui ne répondent pas depuis le runner. Identifier
+    d'abord le seul book joignable divise le balayage par trois.
+    """
+    for book, (tpls, referer) in SOFT_BOOKS.items():
+        try:
+            if _fetch_from_book(book, tpls, referer, 1):   # 1 = football
+                print(f"  book joignable : {book}", flush=True)
+                return [(book, SOFT_BOOKS[book])]
+        except Exception:
+            continue
+    print("  aucun book joignable sur le football — on tente quand même les 3",
+          flush=True)
+    return list(SOFT_BOOKS.items())
+
+
 def run_feed(lo: int, hi: int) -> None:
     print(f"\n{'=' * 74}\nFeed LineFeed (1xbet/melbet/22bet) — IDs {lo}..{hi}\n{'=' * 74}",
           flush=True)
+    books = _pick_book()
     found = []
     for sid in range(lo, hi + 1):
-        res = probe_sport(sid)
+        res = probe_sport(sid, books)
         if res:
             name, n, sample, book = res
             found.append((sid, name))

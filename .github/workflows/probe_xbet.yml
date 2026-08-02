@@ -18,7 +18,7 @@ on:
 jobs:
   probe:
     runs-on: ubuntu-latest
-    timeout-minutes: 10
+    timeout-minutes: 25
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-python@v5
@@ -33,4 +33,4 @@ jobs:
         # path, pas la racine du dépôt.
         env:
           PYTHONPATH: .
-        run: python scripts/probe_xbet_sports.py 1 130
+        run: python scripts/probe_xbet_sports.py 1 70
