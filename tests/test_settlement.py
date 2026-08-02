@@ -42,8 +42,10 @@ class TestFetchMatchResult:
         # out at the top with `if not ai_available(): return None` otherwise,
         # which would make every test below pass for the wrong reason.
         monkeypatch.setenv("GROQ_API_KEY", "gsk-fake-key-for-tests")
-        # Reset the module-level per-model daily-dead set between tests.
-        monkeypatch.setattr(ai_search, "_groq_dead_models", set())
+        monkeypatch.delenv("GROQ_API_KEY_2", raising=False)
+        monkeypatch.delenv("GROQ_API_KEY_3", raising=False)
+        # Reset the per-key/per-model daily-dead map between tests.
+        monkeypatch.setattr(ai_search, "_groq_dead_models", {})
 
     def _patch_ai(self, monkeypatch, text):
         monkeypatch.setattr(
@@ -181,8 +183,10 @@ class TestAiSearchFallbackChain:
     @pytest.fixture(autouse=True)
     def _keys(self, monkeypatch):
         monkeypatch.setenv("GROQ_API_KEY", "gsk-fake")
+        monkeypatch.delenv("GROQ_API_KEY_2", raising=False)
+        monkeypatch.delenv("GROQ_API_KEY_3", raising=False)
         monkeypatch.setenv("TAVILY_API_KEY", "tvly-fake")
-        monkeypatch.setattr(ai_search, "_groq_dead_models", set())
+        monkeypatch.setattr(ai_search, "_groq_dead_models", {})
         monkeypatch.setattr(ai_search, "_tavily_used", 0)
 
     def test_compound_mini_success_never_hits_tavily(self, monkeypatch):
@@ -283,3 +287,111 @@ class TestAiSearchFallbackChain:
         assert ai_search.tavily_search("q1") != []
         assert ai_search.tavily_search("q2") == []   # budget épuisé
         assert len([c for c in calls if "tavily" in c]) == 1
+
+
+class TestGroqKeyRotation:
+    """core/ai_search.py : bascule sur GROQ_API_KEY_2 quand le quota
+    JOURNALIER de la première clé est épuisé (2026-08-02).
+
+    Le TPD Groq est compté par ORGANISATION : ces tests garantissent qu'une
+    2e clé est réellement essayée, sans quoi MMA/tennis de table/volley —
+    qui n'existent que via la recherche web — disparaissent dès ~10h UTC.
+    """
+
+    _TPD = ('{"error":{"message":"Rate limit reached for model '
+            '`llama-3.3-70b-versatile` ... tokens per day (TPD)"}}')
+
+    @pytest.fixture(autouse=True)
+    def _keys(self, monkeypatch):
+        monkeypatch.setenv("GROQ_API_KEY", "gsk-key-one")
+        monkeypatch.setenv("GROQ_API_KEY_2", "gsk-key-two")
+        monkeypatch.delenv("GROQ_API_KEY_3", raising=False)
+        monkeypatch.delenv("TAVILY_API_KEY", raising=False)
+        monkeypatch.setattr(ai_search, "_groq_dead_models", {})
+        monkeypatch.setattr(ai_search, "_tavily_used", 0)
+
+    @staticmethod
+    def _key_of(headers):
+        return headers["Authorization"].removeprefix("Bearer ")
+
+    def test_daily_quota_on_key_one_falls_through_to_key_two(self, monkeypatch):
+        used = []
+
+        def fake_post(url, json=None, headers=None, timeout=None):
+            key = self._key_of(headers)
+            used.append(key)
+            if key == "gsk-key-one":
+                return _FakeResponse(429, text=self._TPD)
+            return _FakeResponse(200, _groq_body('{"ok":true}'))
+
+        monkeypatch.setattr(ai_search.requests, "post", fake_post)
+        assert ai_search.ai_search_complete("p", ["q"], label="t") == '{"ok":true}'
+        assert used == ["gsk-key-one", "gsk-key-two"]
+        assert not ai_search.ai_dead()   # la clé 2 sert encore
+
+    def test_dead_key_is_not_retried_on_later_calls(self, monkeypatch):
+        used = []
+
+        def fake_post(url, json=None, headers=None, timeout=None):
+            key = self._key_of(headers)
+            used.append(key)
+            if key == "gsk-key-one":
+                return _FakeResponse(429, text=self._TPD)
+            return _FakeResponse(200, _groq_body('{"ok":true}'))
+
+        monkeypatch.setattr(ai_search.requests, "post", fake_post)
+        ai_search.ai_search_complete("p", ["q"], label="t")
+        used.clear()
+        ai_search.ai_search_complete("p2", ["q2"], label="t")
+        assert used == ["gsk-key-two"]   # plus aucun appel gaspillé sur la clé 1
+
+    def test_ai_dead_only_when_every_key_is_exhausted(self, monkeypatch):
+        """Tavily doit répondre, sinon l'étage d'extraction n'est jamais
+        atteint et llama-3.1-8b-instant garde son quota intact — ai_dead()
+        resterait False à raison."""
+        monkeypatch.setenv("TAVILY_API_KEY", "tvly-fake")
+        used = []
+
+        def fake_post(url, json=None, headers=None, timeout=None):
+            if "tavily.com" in url:
+                return _FakeResponse(200, {"results": [
+                    {"title": "T", "url": "u", "content": "s"}]})
+            used.append(self._key_of(headers))
+            return _FakeResponse(429, text=self._TPD)
+
+        monkeypatch.setattr(ai_search.requests, "post", fake_post)
+        assert ai_search.ai_search_complete("p", ["q"], label="t") is None
+        assert set(used) == {"gsk-key-one", "gsk-key-two"}
+        assert ai_search.ai_dead()
+
+    def test_same_value_in_both_secrets_is_deduplicated(self, monkeypatch):
+        """Coller la même clé dans les deux secrets ne rachète aucun quota —
+        la retenter donnerait juste un 429 de plus et un log mensonger."""
+        monkeypatch.setenv("GROQ_API_KEY_2", "gsk-key-one")
+        monkeypatch.setenv("TAVILY_API_KEY", "tvly-fake")
+        used = []
+
+        def fake_post(url, json=None, headers=None, timeout=None):
+            if "tavily.com" in url:
+                return _FakeResponse(200, {"results": [
+                    {"title": "T", "url": "u", "content": "s"}]})
+            used.append(self._key_of(headers))
+            return _FakeResponse(429, text=self._TPD)
+
+        monkeypatch.setattr(ai_search.requests, "post", fake_post)
+        ai_search.ai_search_complete("p", ["q"], label="t")
+        assert set(used) == {"gsk-key-one"}
+        assert ai_search.ai_dead()
+
+    def test_413_does_not_burn_the_second_key(self, monkeypatch):
+        """Le TPM est le même partout : rejouer une requête trop grosse sur la
+        clé 2 la ferait échouer à l'identique. L'étage Tavily est le vrai plan B."""
+        used = []
+
+        def fake_post(url, json=None, headers=None, timeout=None):
+            used.append(self._key_of(headers))
+            return _FakeResponse(413, text="Request too large")
+
+        monkeypatch.setattr(ai_search.requests, "post", fake_post)
+        ai_search.ai_search_complete("p", ["q"], label="t")
+        assert used == ["gsk-key-one"]

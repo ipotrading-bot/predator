@@ -21,8 +21,10 @@ Les appels SANS recherche (estimateur Tier 3) vont directement sur
 llama-3.3-70b-versatile → llama-3.1-8b-instant.
 
 Env requis : GROQ_API_KEY (gsk_...) ; optionnel : TAVILY_API_KEY (tvly-...)
-pour le fallback. Sans GROQ_API_KEY, tout retourne None/[] silencieusement
-(même dégradation que l'ancien `if not api_key: return []`).
+pour le fallback, et GROQ_API_KEY_2 / GROQ_API_KEY_3 pour la rotation quand
+le quota journalier d'un compte est épuisé (voir _groq_keys). Sans aucune
+clé Groq, tout retourne None/[] silencieusement (même dégradation que
+l'ancien `if not api_key: return []`).
 """
 import json
 import logging
@@ -45,7 +47,8 @@ _EXTRACT_MODELS = ["llama-3.3-70b-versatile", "llama-3.1-8b-instant"]
 _TAVILY_RUN_BUDGET = int(os.environ.get("TAVILY_RUN_BUDGET", "25"))
 _tavily_used = 0
 
-# Quota JOURNALIER mort — PAR MODÈLE, pas global (corrigé 2026-07-22).
+# Quota JOURNALIER mort — PAR MODÈLE **ET PAR CLÉ** (par-modèle 2026-07-22,
+# par-clé 2026-08-02).
 #
 # Groq applique le TPD (tokens par jour) séparément à chaque modèle :
 # llama-3.3-70b-versatile a 100 000 TPD, llama-3.1-8b-instant a un plafond
@@ -56,16 +59,44 @@ _tavily_used = 0
 # les runs audit 29886717393 / 29904315408 / 29926411707 du 2026-07-22 :
 # « 0 settled | 0 closed | 0 expired »).
 #
+# Le TPD est compté PAR ORGANISATION, pas par clé : une 2e clé créée sur le
+# MÊME compte Groq ne rachète aucun quota (même piège que le connecteur
+# web_search Mistral). GROQ_API_KEY_2 n'a d'intérêt que si elle vient d'un
+# autre compte — vérifiable dans le corps de n'importe quelle 429/413, qui
+# nomme l'org (`in organization org_...`). Vérifié le 2026-08-02 :
+# clé 1 = org_01kqe4e69de36sapwgbr3sg3d7, clé 2 = org_01kz1yaaskehrtw18nr3knbvty.
+#
 # Note : groq/compound-mini n'a pas de quota propre — il consomme celui du
 # modèle qui l'exécute (llama-3.3-70b-versatile). Quand le corps d'erreur
 # nomme un autre modèle que celui demandé, les DEUX sont marqués morts.
-_groq_dead_models: set = set()
+_groq_dead_models: dict[int, set] = {}
 
 _ALL_MODELS = ["groq/compound-mini", "llama-3.3-70b-versatile", "llama-3.1-8b-instant"]
 
+_KEY_ENVS = ("GROQ_API_KEY", "GROQ_API_KEY_2", "GROQ_API_KEY_3")
+
+
+def _groq_keys() -> list[str]:
+    """Clés Groq configurées, dans l'ordre d'essai, dédupliquées.
+
+    La même valeur collée dans deux secrets ne compte qu'une fois : elle
+    partagerait de toute façon le quota, et la déduplication évite d'annoncer
+    dans les logs une bascule qui ne rachète rien.
+    """
+    keys: list[str] = []
+    for env in _KEY_ENVS:
+        v = (os.environ.get(env) or "").strip()
+        if v and v not in keys:
+            keys.append(v)
+    return keys
+
+
+def _dead(key_idx: int) -> set:
+    return _groq_dead_models.setdefault(key_idx, set())
+
 
 def ai_available() -> bool:
-    return bool(os.environ.get("GROQ_API_KEY"))
+    return bool(_groq_keys())
 
 
 def ai_dead() -> bool:
@@ -73,17 +104,29 @@ def ai_dead() -> bool:
 
     Les appelants qui écrivent un état terminal (core/audit_engine.py) s'en
     servent pour décider « je n'ai pas pu chercher » : tant qu'un seul modèle
-    répond encore, il reste une chance de settler pour de vrai.
+    répond encore, sur n'importe laquelle des clés, il reste une chance de
+    settler pour de vrai.
     """
-    return all(m in _groq_dead_models for m in _ALL_MODELS)
+    keys = _groq_keys()
+    if not keys:
+        # Aucune clé configurée : rien n'a jamais été marqué mort. On garde le
+        # False historique — ai_available() est le test que font les appelants
+        # pour ce cas-là, et rendre True ici ferait écrire des états terminaux
+        # à core/audit_engine.py sur une simple absence de secret.
+        return False
+    return all(
+        all(m in _dead(i) for m in _ALL_MODELS)
+        for i in range(len(keys))
+    )
 
 
-def _mark_dead(model: str, body: str) -> None:
-    """Marque `model` mort + tout modèle connu nommé dans le corps d'erreur."""
-    _groq_dead_models.add(model)
+def _mark_dead(key_idx: int, model: str, body: str) -> None:
+    """Marque `model` mort sur CETTE clé + tout modèle connu nommé dans l'erreur."""
+    dead = _dead(key_idx)
+    dead.add(model)
     for known in _ALL_MODELS:
         if known in body:
-            _groq_dead_models.add(known)
+            dead.add(known)
 
 
 def search_exhausted() -> bool:
@@ -113,14 +156,41 @@ def search_credits_left() -> int:
 
 def _groq_post(model: str, messages: list, max_tokens: int,
                temperature: float, timeout: int, label: str):
-    """Un POST Groq avec retry sur erreurs réseau/429-minute/5xx.
-    Retourne le texte de la réponse ou None."""
-    if model in _groq_dead_models:
-        return None
-    api_key = os.environ.get("GROQ_API_KEY")
-    if not api_key:
+    """Un POST Groq, en basculant de clé quand la courante ne peut plus servir.
+
+    Retourne le texte de la réponse ou None. Les clés sont essayées dans
+    l'ordre de `_KEY_ENVS` ; on ne passe à la suivante que si la courante est
+    épuisée (quota jour, ou rate-limit minute qui résiste aux 3 tentatives),
+    jamais sur une erreur qui se reproduirait à l'identique ailleurs (413,
+    payload invalide) — sinon une requête trop grosse brûlerait les deux clés.
+    """
+    keys = _groq_keys()
+    if not keys:
         return None
 
+    for idx, api_key in enumerate(keys):
+        if model in _dead(idx):
+            continue
+        text, rotate = _groq_post_one(idx, api_key, model, messages,
+                                      max_tokens, temperature, timeout, label)
+        if text is not None:
+            return text
+        if not rotate:
+            return None
+        if idx + 1 < len(keys):
+            log.warning("%s[%s]: clé #%d inutilisable — bascule sur la clé #%d",
+                        label, model, idx + 1, idx + 2)
+    return None
+
+
+def _groq_post_one(key_idx: int, api_key: str, model: str, messages: list,
+                   max_tokens: int, temperature: float, timeout: int,
+                   label: str) -> tuple[str | None, bool]:
+    """Un POST Groq sur UNE clé, avec retry réseau/429-minute/5xx.
+
+    Retourne (texte, rotate). `rotate` dit si une AUTRE clé aurait une chance
+    de réussir là où celle-ci a échoué.
+    """
     payload = {
         "model":       model,
         "messages":    messages,
@@ -143,12 +213,14 @@ def _groq_post(model: str, messages: list, max_tokens: int,
             # Groq distingue per-minute (retry utile) et per-day (terminal)
             # dans le message d'erreur ("per day"/"TPD"/"RPD").
             if "per day" in body.lower() or "tpd" in body.lower() or "rpd" in body.lower():
-                _mark_dead(model, body)
-                log.critical("%s[%s]: quota JOURNALIER Groq épuisé — modèles morts=%s | %s",
-                             label, model, sorted(_groq_dead_models), body)
-                return None
+                _mark_dead(key_idx, model, body)
+                log.critical("%s[%s]: quota JOURNALIER Groq épuisé sur la clé #%d — "
+                             "modèles morts=%s | %s",
+                             label, model, key_idx + 1, sorted(_dead(key_idx)), body)
+                return None, True
             wait = 20 if attempt == 0 else 40
-            log.warning("%s[%s]: rate limit minute — attente %ds", label, model, wait)
+            log.warning("%s[%s]: rate limit minute (clé #%d) — attente %ds",
+                        label, model, key_idx + 1, wait)
             time.sleep(wait)
             continue
 
@@ -159,8 +231,10 @@ def _groq_post(model: str, messages: list, max_tokens: int,
             # une erreur dure : on abandonne ce modèle immédiatement pour
             # retomber sur l'étage Tavily (snippets compacts, bien moins de
             # tokens) via le retour None ci-dessous.
+            # Le TPM est identique sur l'autre clé : la même requête y échouerait
+            # pareil, donc on ne rotationne pas — l'étage Tavily est le vrai plan B.
             log.info("%s[%s]: 413 (contexte > budget TPM) — bascule sur le fallback", label, model)
-            return None
+            return None, False
 
         if r.status_code >= 500:
             log.warning("%s[%s]: HTTP %d (tentative %d/3)", label, model, r.status_code, attempt + 1)
@@ -168,16 +242,21 @@ def _groq_post(model: str, messages: list, max_tokens: int,
             continue
 
         if r.status_code != 200:
-            log.error("%s[%s]: HTTP %d: %s", label, model, r.status_code, r.text[:300])
-            return None
+            log.error("%s[%s]: HTTP %d (clé #%d): %s",
+                      label, model, r.status_code, key_idx + 1, r.text[:300])
+            # Clé révoquée/invalide : la suivante, elle, peut être bonne. C'est
+            # exactement le scénario de rotation de clé morte du 2026-07-12.
+            return None, r.status_code in (401, 403)
 
         try:
-            return r.json()["choices"][0]["message"]["content"] or ""
+            return r.json()["choices"][0]["message"]["content"] or "", False
         except Exception as e:
             log.error("%s[%s]: parse réponse: %s", label, model, e)
-            return None
+            return None, False
 
-    return None
+    # 3 tentatives épuisées (réseau, 5xx, ou rate-limit MINUTE tenace) : l'autre
+    # clé a ses propres compteurs par minute, ça vaut le coup de la tenter.
+    return None, True
 
 
 def tavily_search(query: str, max_results: int = 5) -> list[dict]:

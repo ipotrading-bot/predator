@@ -96,6 +96,7 @@ jobs:
           # qu'au-dessus de WIZ_TAVILY_RESERVE crédits : l'invariant « Wiz ne
           # peut pas affamer un settlement » tient toujours.
           GROQ_API_KEY:         ${{ secrets.GROQ_API_KEY }}
+          GROQ_API_KEY_2:       ${{ secrets.GROQ_API_KEY_2 }}
           TAVILY_API_KEY:       ${{ secrets.TAVILY_API_KEY }}
           SUPABASE_URL:         ${{ secrets.SUPABASE_URL }}
           SUPABASE_KEY:         ${{ secrets.SUPABASE_KEY }}

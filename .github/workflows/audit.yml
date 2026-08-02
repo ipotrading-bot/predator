@@ -74,6 +74,7 @@ jobs:
       - name: Warn if GROQ_API_KEY is not set
         env:
           GROQ_API_KEY: ${{ secrets.GROQ_API_KEY }}
+          GROQ_API_KEY_2: ${{ secrets.GROQ_API_KEY_2 }}
           TAVILY_API_KEY: ${{ secrets.TAVILY_API_KEY }}
         run: |
           if [ -z "$GROQ_API_KEY" ]; then
@@ -81,6 +82,14 @@ jobs:
           fi
           if [ -z "$TAVILY_API_KEY" ]; then
             echo "::warning::TAVILY_API_KEY not set — web-search fallback tier disabled; only groq/compound-mini's built-in search is available. Free key at app.tavily.com."
+          fi
+          # Le TPD Groq (100k tokens/jour) est compté PAR ORGANISATION et se
+          # vide vers 10h UTC : sans 2e clé, settlement et sports alternatifs
+          # meurent pour le reste de la journée (diagnostic 2026-08-02).
+          if [ -z "$GROQ_API_KEY_2" ]; then
+            echo "::warning::GROQ_API_KEY_2 not set — une seule organisation Groq, donc 100k tokens/jour partagés entre settlement et recherche web. Créer une clé sur un AUTRE compte console.groq.com (même compte = même quota, aucun gain)."
+          elif [ "$GROQ_API_KEY_2" = "$GROQ_API_KEY" ]; then
+            echo "::warning::GROQ_API_KEY_2 est identique à GROQ_API_KEY — même organisation, donc même quota journalier. La rotation est inopérante (core/ai_search.py la déduplique)."
           fi
 
       - uses: actions/checkout@v4
@@ -96,6 +105,7 @@ jobs:
       - name: Run audit engine
         env:
           GROQ_API_KEY:       ${{ secrets.GROQ_API_KEY }}
+          GROQ_API_KEY_2:     ${{ secrets.GROQ_API_KEY_2 }}
           TAVILY_API_KEY:     ${{ secrets.TAVILY_API_KEY }}
           SUPABASE_URL:       ${{ secrets.SUPABASE_URL }}
           SUPABASE_KEY:       ${{ secrets.SUPABASE_KEY }}
