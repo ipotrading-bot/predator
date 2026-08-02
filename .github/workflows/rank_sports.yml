@@ -1,0 +1,35 @@
+name: Classement des sports (lecture seule)
+
+# Imprime le classement des sports par réussite réelle depuis
+# ai_learning_ledger. LECTURE SEULE : aucune écriture Supabase, aucun signal,
+# aucun Telegram — donc volontairement hors du groupe de concurrence
+# `predator-signals-write`, il ne peut rien courser.
+#
+# Reçoit SUPABASE_KEY (anon) et non SUPABASE_SERVICE_KEY : ce job n'a aucune
+# raison de détenir un jeton d'écriture.
+
+on:
+  workflow_dispatch:
+  push:
+    paths:
+      - 'scripts/rank_sports.py'
+      - '.github/workflows/rank_sports.yml'
+
+jobs:
+  rank:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+          cache: 'pip'
+      - name: Install dependencies
+        run: pip install -r requirements.txt
+      - name: Classer les sports par réussite
+        env:
+          PYTHONPATH: .
+          SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
+          SUPABASE_KEY: ${{ secrets.SUPABASE_KEY }}
+        run: python scripts/rank_sports.py
