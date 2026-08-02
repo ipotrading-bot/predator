@@ -13,6 +13,7 @@ on:
   push:
     paths:
       - 'scripts/rank_sports.py'
+      - 'scripts/calibration_report.py'
       - '.github/workflows/rank_sports.yml'
 
 jobs:
@@ -33,3 +34,10 @@ jobs:
           SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
           SUPABASE_KEY: ${{ secrets.SUPABASE_KEY }}
         run: python scripts/rank_sports.py
+
+      - name: Rapport de calibration par bande
+        env:
+          PYTHONPATH: .
+          SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
+          SUPABASE_KEY: ${{ secrets.SUPABASE_KEY }}
+        run: python scripts/calibration_report.py
