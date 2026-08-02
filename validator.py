@@ -8,6 +8,7 @@ import requests
 from dotenv import load_dotenv
 
 from core.db import get_db
+from core.secret_store import get_secret
 
 load_dotenv()
 
@@ -72,7 +73,7 @@ def validate_all_systems():
 
     # 4. ODDS API
     try:
-        key = os.environ.get("ODDS_API_KEY")
+        key = get_secret("ODDS_API_KEY")
         if key:
             r = requests.get(
                 "https://api.the-odds-api.com/v4/sports/",
@@ -82,7 +83,7 @@ def validate_all_systems():
             remaining = r.headers.get("x-requests-remaining", "?")
             print(f"OK  ODDS API : HTTP {r.status_code} | quota restant={remaining}")
         else:
-            print("WARN ODDS API : ODDS_API_KEY manquant")
+            print("WARN ODDS API : ODDS_API_KEY absente de app_secrets ET de l'env")
     except Exception as e:
         print(f"ERR ODDS API : {e}")
 

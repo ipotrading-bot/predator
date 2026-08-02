@@ -21,6 +21,7 @@ from flask import Flask, jsonify, render_template, send_from_directory
 from core.constants import TAX_RATE as _TAX_RATE, wiz_enforce as _wiz_enforce
 from core.db import get_db as _get_db_client, MissingCredentialsError
 from core.odds_api import BASE_URL as _ODDS_BASE_URL
+from core.secret_store import get_secret as _get_secret
 from core.learning_layer import (
     SPORT_DEFAULTS as _SPORT_DEFAULTS,
     load_thresholds as _load_thresholds,
@@ -829,7 +830,12 @@ def api_odds_quota():
     # GET /v4/sports is the one Odds API endpoint that does NOT consume
     # quota — it's the documented way to read x-requests-remaining without
     # burning a request, so this can be polled from the dashboard freely.
-    api_key = os.environ.get("ODDS_API_KEY")
+    #
+    # La clé vient de Supabase (app_secrets) en priorité, de l'env ensuite.
+    # C'est ce qui règle l'incohérence historique du widget : la variable
+    # d'env Vercel ne bougeait qu'au prix d'un Redeploy manuel, et affichait
+    # donc le quota d'une clé déjà remplacée côté moteur.
+    api_key = _get_secret("ODDS_API_KEY")
     if not api_key:
         return jsonify({"error": "ODDS_API_KEY non configurée"}), 503
     try:
