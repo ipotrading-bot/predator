@@ -27,6 +27,7 @@ from core.learning_layer import load_thresholds as _load_thresholds
 from core.learning_layer import load_segment_thresholds as _load_segment_thresholds
 from core.learning_layer import load_sport_ranking as _load_sport_ranking
 from core.learning_layer import load_edge_ceilings as _load_edge_ceilings
+from core.learning_layer import load_odds_ceilings as _load_odds_ceilings
 from core.paim_engine import (
     compute_alpha, MIN_EDGE, strict_team_match,
     market_label, SHARP_PROB_BY_MARKET, calculate_consensus_price,
@@ -98,6 +99,11 @@ _MAJOR_SPORTS = {"soccer", "basketball", "hockey", "baseball", "rugbyleague", "a
 # _emit(). Vide = aucun plafond appris, les bornes globales de constants.py
 # s'appliquent seules.
 _EDGE_CEILINGS: dict[str, float] = {}
+
+# Plafonds de COTE appris. Ne s'activent que sur une bande PROUVÉE perdante
+# (borne haute de Wilson sous le seuil de rentabilité) — au 2026-08-02 aucune
+# ne l'était, donc ce dict reste vide et rien ne change.
+_ODDS_CEILINGS: dict[str, float] = {}
 
 # Fast mode (default): 20 events, tight quota — speed over coverage
 # Deep mode (DEEP_SCAN=1): 100 events, wide quota — 48h full slate
@@ -574,6 +580,14 @@ def _emit(signals, sb, now, log, name, sport, league, mkt_key, mkt_label,
     if ceiling is not None and edge > ceiling:
         log.warning("PLAFOND | %s %s | %s — Edge=+%.2f%% > %.1f%% appris — DISCARD",
                     emoji, name, mkt_label, edge, ceiling)
+        return
+
+    # Plafond de COTE appris — au-dessus, la sélection n'est pas un favori mais
+    # un quasi pile-ou-face que le ledger a prouvé perdant pour ce sport.
+    odds_cap = _ODDS_CEILINGS.get(sport)
+    if odds_cap is not None and xbet_odd > odds_cap:
+        log.warning("PLAFOND COTE | %s %s | %s — cote %.2f > %.2f appris — DISCARD",
+                    emoji, name, mkt_label, xbet_odd, odds_cap)
         return
 
     # J+72h filter: signaux très éloignés doivent être HIGH_VALUE (≥ 6%) pour justifier immobilisation capital
@@ -1319,6 +1333,10 @@ def run():
             if _EDGE_CEILINGS:
                 log.info("Plafonds d'edge appris : %s",
                          " | ".join(f"{k}<={v:.1f}%" for k, v in _EDGE_CEILINGS.items()))
+            _ODDS_CEILINGS.update(_load_odds_ceilings(sb))
+            if _ODDS_CEILINGS:
+                log.info("Plafonds de cote appris : %s",
+                         " | ".join(f"{k}<={v:.2f}" for k, v in _ODDS_CEILINGS.items()))
         except Exception as e:
             log.warning("load_edge_ceilings: %s — bornes globales seules", e)
         try:

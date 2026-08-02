@@ -30,6 +30,8 @@ from core.learning_layer import (
     load_sport_ranking,
     load_edge_ceilings,
     _top_band_verdict,
+    _odds_band_verdict,
+    load_odds_ceilings,
 )
 
 
@@ -647,3 +649,70 @@ class TestEdgeCeiling:
                 return _T()
 
         assert load_edge_ceilings(_SB()) == {"soccer": 8.0}
+
+
+class TestOddsCeiling:
+    """Le plafond de COTE ne s'active que sur une bande PROUVÉE perdante.
+
+    Asymétrie voulue avec le plafond d'edge : « un edge trop gros est un prix
+    mal apparié » préexistait dans le code (SUSPECT_EDGE, MAX_EDGE) et le test
+    relatif haut-contre-bas la valide (p=0,005 sur soccer au 2026-08-02). « On
+    gagne sur les favoris courts » est une affirmation NOUVELLE, sans mécanisme
+    préalable — exactement le motif qui ressort d'une fouille de données puis
+    disparaît hors échantillon. Au 2026-08-02 aucune bande n'était concluante,
+    pas même celle à n=109 dont la borne haute (52,5%) dépassait son seuil de
+    50,0%. Poser la règle dessus aurait coupé 58% du volume sur du bruit.
+    """
+
+    def _rows(self, odds: float, n: int, wr: float):
+        wins = int(round(n * wr))
+        return ([_row("WIN", odds=odds) for _ in range(wins)]
+                + [_row("LOSS", odds=odds) for _ in range(n - wins)])
+
+    def test_real_2026_08_02_data_activates_nothing(self):
+        # Les bandes telles que mesurées : aucune n'est concluante.
+        rows = (self._rows(1.35, 17, 0.824)
+                + self._rows(1.66, 60, 0.517)
+                + self._rows(2.00, 109, 0.431))
+        cap, _n, _diag = _odds_band_verdict(rows)
+        assert cap is None, "aucune bande n'était prouvée perdante ce jour-là"
+
+    def test_activates_on_a_clearly_losing_band(self):
+        # Même bande de cote, mais un taux assez bas pour que la borne HAUTE
+        # de Wilson passe sous le seuil de rentabilité.
+        rows = self._rows(1.60, 40, 0.80) + self._rows(2.00, 80, 0.25)
+        cap, n, diag = _odds_band_verdict(rows)
+        assert cap == 1.80
+        assert n >= 80
+        assert "prouvée" in diag
+
+    def test_never_caps_below_short_favourites(self):
+        # Une bande 1,0-1,5 catastrophique ne doit pas produire un plafond qui
+        # supprimerait toute émission : _ODDS_CEILING_MIN la met hors jeu.
+        rows = self._rows(1.20, 60, 0.10) + self._rows(1.60, 40, 0.80)
+        cap, _n, _diag = _odds_band_verdict(rows)
+        assert cap is None or cap >= 1.50
+
+    def test_too_few_samples_activates_nothing(self):
+        cap, _n, _diag = _odds_band_verdict(self._rows(2.00, 5, 0.0))
+        assert cap is None
+
+    def test_load_odds_ceilings_parses_and_skips_garbage(self):
+        class _Sel:
+            def like(self, *_a, **_k):
+                return self
+
+            def execute(self):
+                return _Result([
+                    {"key": "odds_ceiling_soccer", "value": "1.8"},
+                    {"key": "odds_ceiling_broken", "value": "nope"},
+                ])
+
+        class _SB:
+            def table(self, name):
+                class _T:
+                    def select(self, *_a, **_k):
+                        return _Sel()
+                return _T()
+
+        assert load_odds_ceilings(_SB()) == {"soccer": 1.8}

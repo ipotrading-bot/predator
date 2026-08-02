@@ -174,6 +174,27 @@ def load_edge_ceilings(sb) -> dict[str, float]:
     return result
 
 
+def load_odds_ceilings(sb) -> dict[str, float]:
+    """Plafonds de COTE appris par sport (`odds_ceiling_<sport>` dans `meta`).
+
+    Une sélection cotée au-dessus n'est pas un favori : c'est un quasi
+    pile-ou-face que le ledger a prouvé perdant pour ce sport. Sport absent =
+    aucun plafond, comportement inchangé.
+    """
+    result: dict[str, float] = {}
+    try:
+        res = sb.table("meta").select("key,value").like("key", "odds_ceiling_%").execute()
+        for row in (res.data or []):
+            sport = row["key"].replace("odds_ceiling_", "", 1)
+            try:
+                result[sport] = float(row["value"])
+            except (TypeError, ValueError):
+                pass
+    except Exception as e:
+        log.warning("load_odds_ceilings: %s — aucun plafond de cote", e)
+    return result
+
+
 _DECISIVE_OUTCOMES = ("WIN", "LOSS")   # PUSH/UNKNOWN/closed/expired carry no real result
 
 
@@ -333,6 +354,66 @@ def _top_band_verdict(rows: list[dict]) -> tuple[bool, float | None, int, float 
     if ceiling_lo is None:
         return False, None, 0, best_lo
     return True, ceiling_lo, covered_n, best_lo
+
+
+_ODDS_BUCKETS = [(1.0, 1.50), (1.50, 1.80), (1.80, 2.20), (2.20, 3.00), (3.00, 99.0)]
+_ODDS_CEILING_MIN = 1.50   # jamais de plafond sous 1,50 : couper les favoris
+                           # courts reviendrait à ne plus rien émettre du tout.
+
+
+def _odds_band_verdict(rows: list[dict]) -> tuple[float | None, int, str | None]:
+    """Existe-t-il une cote au-dessus de laquelle le sport perd, PROUVÉ ?
+
+    Renvoie (plafond_de_cote, n_couvert, diagnostic).
+
+    Le test est ABSOLU et strict — borne HAUTE de Wilson sous le seuil de
+    rentabilité de la bande — là où _top_band_verdict se contente d'une
+    comparaison relative entre bandes. Cette asymétrie est voulue :
+
+      Pour l'edge, l'affirmation « un edge trop gros est un prix mal apparié »
+      préexiste dans le code (SUSPECT_EDGE, MAX_EDGE, le docstring de
+      _edge_band_diagnostic). Les données ne font que confirmer une hypothèse
+      déjà posée, et le test relatif haut-contre-bas la valide (p=0,005 sur
+      soccer au 2026-08-02). Une comparaison relative suffit.
+
+      Pour la cote, « on gagne sur les favoris courts » est une affirmation
+      NOUVELLE, sans mécanisme préalable, et c'est exactement le genre de motif
+      qui ressort d'une fouille de données puis disparaît hors échantillon. Au
+      2026-08-02 aucune bande n'était concluante — même celle à n=109, dont la
+      borne haute (52,5%) dépassait encore son seuil de 50,0%. Poser une règle
+      dessus aurait coupé 58% du volume sur du bruit.
+
+    Le plafond ne s'active donc que le jour où une bande est prouvée perdante.
+    D'ici là la fonction renvoie None et rien ne change.
+    """
+    decisive = [r for r in rows
+                if r.get("outcome") in _DECISIVE_OUTCOMES and r.get("odds")]
+    if len(decisive) < _SEGMENT_MIN_SAMPLES:
+        return None, 0, None
+
+    proven_losing = []
+    for lo, hi in _ODDS_BUCKETS:
+        if lo < _ODDS_CEILING_MIN:
+            continue
+        in_b = [r for r in decisive if lo <= float(r["odds"]) < hi]
+        if len(in_b) < _SEGMENT_MIN_SAMPLES:
+            continue
+        wins = sum(1 for r in in_b if r["outcome"] == "WIN")
+        _, w_hi = wilson_ci(wins, len(in_b))
+        avg_odds = sum(float(r["odds"]) for r in in_b) / len(in_b)
+        be = p_breakeven(avg_odds, _TAX_RATE)
+        if be is not None and w_hi < be:
+            proven_losing.append((lo, len(in_b), wins / len(in_b), be))
+
+    if not proven_losing:
+        return None, 0, None
+
+    # La bande prouvée perdante la PLUS BASSE fixe le plafond : tout ce qui est
+    # au-dessus est au moins aussi douteux.
+    lo, n, wr, be = min(proven_losing, key=lambda t: t[0])
+    diag = (f"plafond de cote {lo:.2f} — la bande {lo:.2f}+ perd de façon prouvée "
+            f"({wr*100:.0f}% pour {be*100:.0f}% requis, n={n})")
+    return lo, sum(t[1] for t in proven_losing), diag
 
 
 def _edge_band_diagnostic(sport: str, rows: list[dict]) -> str | None:
@@ -528,6 +609,16 @@ def compute_and_save(sb) -> dict[str, float]:
                 }).execute()
                 summary_lines.append(
                     f"{sport}: plafond edge {ceiling:.1f}% (bande haute perdante, n={band_n})")
+
+            odds_cap, odds_n, odds_diag = _odds_band_verdict(rows)
+            if odds_cap is not None:
+                log.warning("[%s] %s", sport, odds_diag)
+                sb.table("meta").upsert({
+                    "key":        f"odds_ceiling_{sport}",
+                    "value":      str(odds_cap),
+                    "updated_at": now,
+                }).execute()
+                summary_lines.append(f"{sport}: {odds_diag}")
 
             if stats["n"] < _MIN_SAMPLES:
                 log.info("[%s] %d decisive samples < %d — threshold unchanged (%.1f%%)",
