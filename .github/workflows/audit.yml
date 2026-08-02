@@ -75,6 +75,7 @@ jobs:
         env:
           GROQ_API_KEY: ${{ secrets.GROQ_API_KEY }}
           GROQ_API_KEY_2: ${{ secrets.GROQ_API_KEY_2 }}
+          GROQ_API_KEY_3: ${{ secrets.GROQ_API_KEY_3 }}
           TAVILY_API_KEY: ${{ secrets.TAVILY_API_KEY }}
         run: |
           if [ -z "$GROQ_API_KEY" ]; then
@@ -88,8 +89,14 @@ jobs:
           # meurent pour le reste de la journée (diagnostic 2026-08-02).
           if [ -z "$GROQ_API_KEY_2" ]; then
             echo "::warning::GROQ_API_KEY_2 not set — une seule organisation Groq, donc 100k tokens/jour partagés entre settlement et recherche web. Créer une clé sur un AUTRE compte console.groq.com (même compte = même quota, aucun gain)."
-          elif [ "$GROQ_API_KEY_2" = "$GROQ_API_KEY" ]; then
-            echo "::warning::GROQ_API_KEY_2 est identique à GROQ_API_KEY — même organisation, donc même quota journalier. La rotation est inopérante (core/ai_search.py la déduplique)."
+          fi
+          # Deux secrets pointant le même compte partagent le quota : la
+          # rotation serait inopérante et core/ai_search.py les déduplique.
+          if [ -n "$GROQ_API_KEY_2" ] && [ "$GROQ_API_KEY_2" = "$GROQ_API_KEY" ]; then
+            echo "::warning::GROQ_API_KEY_2 est identique à GROQ_API_KEY — même organisation, donc même quota journalier. Aucun gain."
+          fi
+          if [ -n "$GROQ_API_KEY_3" ] && { [ "$GROQ_API_KEY_3" = "$GROQ_API_KEY" ] || [ "$GROQ_API_KEY_3" = "$GROQ_API_KEY_2" ]; }; then
+            echo "::warning::GROQ_API_KEY_3 duplique une clé déjà configurée — même organisation, donc même quota journalier. Aucun gain."
           fi
 
       - uses: actions/checkout@v4
@@ -106,6 +113,7 @@ jobs:
         env:
           GROQ_API_KEY:       ${{ secrets.GROQ_API_KEY }}
           GROQ_API_KEY_2:     ${{ secrets.GROQ_API_KEY_2 }}
+          GROQ_API_KEY_3:     ${{ secrets.GROQ_API_KEY_3 }}
           TAVILY_API_KEY:     ${{ secrets.TAVILY_API_KEY }}
           SUPABASE_URL:       ${{ secrets.SUPABASE_URL }}
           SUPABASE_KEY:       ${{ secrets.SUPABASE_KEY }}
