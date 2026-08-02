@@ -116,7 +116,10 @@ jobs:
           API_FOOTBALL_KEY:   ${{ secrets.API_FOOTBALL_KEY }}
           GROQ_API_KEY:       ${{ secrets.GROQ_API_KEY }}
           GROQ_API_KEY_2:     ${{ secrets.GROQ_API_KEY_2 }}
-          GROQ_API_KEY_3:     ${{ secrets.GROQ_API_KEY_3 }}
+          # GROQ_API_KEY_3 volontairement absent : c'est la clé réservée au
+          # settlement (audit.yml). Voir le cloisonnement des quotas du
+          # 2026-08-02 — les scans, 10x plus nombreux que l'audit, vidaient le
+          # TPD avant qu'un seul WIN/LOSS soit écrit.
           TAVILY_API_KEY:     ${{ secrets.TAVILY_API_KEY }}
           SUPABASE_URL:       ${{ secrets.SUPABASE_URL }}
           SUPABASE_KEY:       ${{ secrets.SUPABASE_KEY }}

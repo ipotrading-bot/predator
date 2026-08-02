@@ -1,0 +1,28 @@
+name: Probe odds sources (jetable)
+
+# Sonde de reconnaissance, PAS un job de production.
+# Le feed 1XBet et Oddspedia sont géo/bot-filtrés : ils répondent 302/403
+# depuis un sandbox, seuls les runners GitHub peuvent trancher. Ce workflow
+# n'écrit rien : ni Supabase, ni Telegram, ni signals. Il n'a donc pas besoin
+# du groupe de concurrence `predator-signals-write` ni du moindre secret.
+#
+# À SUPPRIMER, avec scripts/probe_xbet_sports.py, une fois les IDs relevés.
+
+on:
+  workflow_dispatch:
+  push:
+    paths:
+      - 'scripts/probe_xbet_sports.py'
+      - '.github/workflows/probe_xbet.yml'
+
+jobs:
+  probe:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+      - name: Sonder les sources d'odds gratuites
+        run: python scripts/probe_xbet_sports.py 1 130

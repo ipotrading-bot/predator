@@ -71,32 +71,40 @@ jobs:
             exit 1
           fi
 
-      - name: Warn if GROQ_API_KEY is not set
+      - name: Vérifier le cloisonnement du quota Groq
         env:
           GROQ_API_KEY: ${{ secrets.GROQ_API_KEY }}
           GROQ_API_KEY_2: ${{ secrets.GROQ_API_KEY_2 }}
           GROQ_API_KEY_3: ${{ secrets.GROQ_API_KEY_3 }}
           TAVILY_API_KEY: ${{ secrets.TAVILY_API_KEY }}
         run: |
-          if [ -z "$GROQ_API_KEY" ]; then
-            echo "::error::GROQ_API_KEY not set — settlement/CLV cannot run at all (Gemini was removed 2026-07-21, core/ai_search.py needs this secret). Create a free key at console.groq.com and add it as this repo secret."
+          # Depuis le 2026-08-02, GROQ_API_KEY_3 est la clé DÉDIÉE au
+          # settlement : c'est la seule que l'étape suivante expose au moteur,
+          # et les workflows de scan ne la reçoivent plus. Ce garde vérifie que
+          # la cloison tient vraiment — un secret dupliqué la rendrait fictive
+          # sans qu'aucun log ne le dise.
+          if [ -z "$GROQ_API_KEY_3" ]; then
+            echo "::error::GROQ_API_KEY_3 not set — c'est la clé réservée au settlement depuis le cloisonnement des quotas. Sans elle, l'audit n'a AUCUNE clé Groq (les scans gardent _1/_2) et ne peut ni settler ni calculer le CLV. Créer une clé gratuite sur console.groq.com."
+            exit 1
           fi
           if [ -z "$TAVILY_API_KEY" ]; then
             echo "::warning::TAVILY_API_KEY not set — web-search fallback tier disabled; only groq/compound-mini's built-in search is available. Free key at app.tavily.com."
           fi
-          # Le TPD Groq (100k tokens/jour) est compté PAR ORGANISATION et se
-          # vide vers 10h UTC : sans 2e clé, settlement et sports alternatifs
-          # meurent pour le reste de la journée (diagnostic 2026-08-02).
-          if [ -z "$GROQ_API_KEY_2" ]; then
-            echo "::warning::GROQ_API_KEY_2 not set — une seule organisation Groq, donc 100k tokens/jour partagés entre settlement et recherche web. Créer une clé sur un AUTRE compte console.groq.com (même compte = même quota, aucun gain)."
+          # Le TPD Groq (100k tokens/jour) est compté PAR ORGANISATION : deux
+          # secrets pointant le même compte partagent le quota, donc la cloison
+          # ne cloisonne rien.
+          if [ "$GROQ_API_KEY_3" = "$GROQ_API_KEY" ] || [ "$GROQ_API_KEY_3" = "$GROQ_API_KEY_2" ]; then
+            echo "::error::GROQ_API_KEY_3 est identique à une clé de scan — même organisation Groq, donc même quota journalier. Le cloisonnement est fictif : les scans continueront de vider le TPD du settlement. Créer la clé sur un AUTRE compte console.groq.com."
+            exit 1
           fi
-          # Deux secrets pointant le même compte partagent le quota : la
-          # rotation serait inopérante et core/ai_search.py les déduplique.
+          if [ -z "$GROQ_API_KEY" ]; then
+            echo "::warning::GROQ_API_KEY not set — les workflows de scan n'ont plus de clé Groq du tout (ils ne reçoivent que _1 et _2 depuis le cloisonnement)."
+          fi
+          if [ -z "$GROQ_API_KEY_2" ]; then
+            echo "::warning::GROQ_API_KEY_2 not set — les scans tournent sur une seule organisation Groq (100k TPD pour golden_hour + engine + deep_scan + closing_line + guerrilla)."
+          fi
           if [ -n "$GROQ_API_KEY_2" ] && [ "$GROQ_API_KEY_2" = "$GROQ_API_KEY" ]; then
             echo "::warning::GROQ_API_KEY_2 est identique à GROQ_API_KEY — même organisation, donc même quota journalier. Aucun gain."
-          fi
-          if [ -n "$GROQ_API_KEY_3" ] && { [ "$GROQ_API_KEY_3" = "$GROQ_API_KEY" ] || [ "$GROQ_API_KEY_3" = "$GROQ_API_KEY_2" ]; }; then
-            echo "::warning::GROQ_API_KEY_3 duplique une clé déjà configurée — même organisation, donc même quota journalier. Aucun gain."
           fi
 
       - uses: actions/checkout@v4
@@ -111,9 +119,18 @@ jobs:
 
       - name: Run audit engine
         env:
-          GROQ_API_KEY:       ${{ secrets.GROQ_API_KEY }}
-          GROQ_API_KEY_2:     ${{ secrets.GROQ_API_KEY_2 }}
-          GROQ_API_KEY_3:     ${{ secrets.GROQ_API_KEY_3 }}
+          # ── Quota Groq réservé au settlement ───────────────────────────
+          # core/ai_search.py lit GROQ_API_KEY, _2, _3 dans cet ordre : ne lui
+          # exposer QUE la 3e clé revient à lui donner une organisation Groq
+          # entière (100k TPD) que les scans ne peuvent pas toucher.
+          # Pourquoi : le 2026-08-02, 39 runs de scan (golden_hour, engine,
+          # deep_scan, closing_line, guerrilla) et 4 runs d'audit se
+          # partageaient les 3 clés. Les scans, 10x plus nombreux, vidaient le
+          # TPD avant que l'audit ait pu settler — sans WIN/LOSS,
+          # core/learning_layer.py n'a pas ses 10 échantillons et les seuils
+          # restent collés au plafond. Un settlement est permanent, un signal
+          # manqué revient au scan suivant : c'est l'audit qui doit être servi.
+          GROQ_API_KEY:       ${{ secrets.GROQ_API_KEY_3 }}
           TAVILY_API_KEY:     ${{ secrets.TAVILY_API_KEY }}
           SUPABASE_URL:       ${{ secrets.SUPABASE_URL }}
           SUPABASE_KEY:       ${{ secrets.SUPABASE_KEY }}
