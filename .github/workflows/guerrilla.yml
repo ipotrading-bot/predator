@@ -1,9 +1,19 @@
 name: Predator Guerrilla Scan
 
-# Scan sans OddsAPI — 1XBet direct feed + Pinnacle via Gemini Search
-# Déclencher manuellement quand le quota OddsAPI est épuisé
+# Scan sans OddsAPI — Melbet direct feed + Pinnacle via recherche web (Groq/Tavily).
+# Couvre MMA, eSports, Table Tennis, Volley, Handball : les sports que le plan
+# OddsAPI 500 req/mois ne paie pas. Tourne en continu, plus seulement en secours
+# de quota.
 
 on:
+  schedule:
+    # Toutes les 2h, heures impaires à H+47. Le créneau est choisi pour ne pas
+    # entrer en file d'attente derrière un job long du groupe
+    # `predator-signals-write` : engine.yml part à H+03, golden_hour.yml à H+25,
+    # deep_scan.yml à H+33, et closing_line.yml occupe H+04→H+54 par pas de 10.
+    # Heures impaires = pas de collision avec le gros des ticks engine.yml
+    # (0/2/4/16/18/22 UTC).
+    - cron: '47 1-23/2 * * *'
   workflow_dispatch:
 
 # Shared with golden_hour.yml/engine.yml/deep_scan.yml/audit.yml — this writes
