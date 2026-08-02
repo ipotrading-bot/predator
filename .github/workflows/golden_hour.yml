@@ -179,7 +179,9 @@ jobs:
           # GROQ_API_KEY_3 volontairement absent : c'est la clé réservée au
           # settlement (audit.yml). Voir le cloisonnement des quotas du
           # 2026-08-02 — les scans, 10x plus nombreux que l'audit, vidaient le
-          # TPD avant qu'un seul WIN/LOSS soit écrit.
+          # TPD avant qu'un seul WIN/LOSS soit écrit. _4 est la clé d'appoint
+          # des scans : elle élargit LEUR réserve sans toucher à celle de l'audit.
+          GROQ_API_KEY_4:     ${{ secrets.GROQ_API_KEY_4 }}
           TAVILY_API_KEY:     ${{ secrets.TAVILY_API_KEY }}
           SUPABASE_URL:       ${{ secrets.SUPABASE_URL }}
           SUPABASE_KEY:       ${{ secrets.SUPABASE_KEY }}

@@ -73,7 +73,13 @@ _groq_dead_models: dict[int, set] = {}
 
 _ALL_MODELS = ["groq/compound-mini", "llama-3.3-70b-versatile", "llama-3.1-8b-instant"]
 
-_KEY_ENVS = ("GROQ_API_KEY", "GROQ_API_KEY_2", "GROQ_API_KEY_3")
+# Le TPD Groq (100k tokens/jour) est compté PAR ORGANISATION : la seule façon
+# d'élargir la réserve en gratuit est d'ajouter une clé d'un AUTRE compte.
+# Depuis le cloisonnement du 2026-08-02, ces variables ne sont plus servies
+# uniformément : audit.yml ne reçoit que la clé du settlement (sous le nom
+# GROQ_API_KEY), les workflows de scan reçoivent les autres. C'est le workflow
+# qui décide de la réserve, pas ce module — d'où l'ordre simple ci-dessous.
+_KEY_ENVS = ("GROQ_API_KEY", "GROQ_API_KEY_2", "GROQ_API_KEY_3", "GROQ_API_KEY_4")
 
 
 def _groq_keys() -> list[str]:

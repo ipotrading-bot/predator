@@ -101,6 +101,7 @@ jobs:
           # (audit.yml). Wiz est optionnel et retombe sur Groq quand
           # MISTRAL_API_KEY manque — il ne doit jamais puiser dans la réserve
           # qui produit les WIN/LOSS.
+          GROQ_API_KEY_4:       ${{ secrets.GROQ_API_KEY_4 }}
           TAVILY_API_KEY:       ${{ secrets.TAVILY_API_KEY }}
           SUPABASE_URL:         ${{ secrets.SUPABASE_URL }}
           SUPABASE_KEY:         ${{ secrets.SUPABASE_KEY }}

@@ -76,6 +76,7 @@ jobs:
           GROQ_API_KEY: ${{ secrets.GROQ_API_KEY }}
           GROQ_API_KEY_2: ${{ secrets.GROQ_API_KEY_2 }}
           GROQ_API_KEY_3: ${{ secrets.GROQ_API_KEY_3 }}
+          GROQ_API_KEY_4: ${{ secrets.GROQ_API_KEY_4 }}
           TAVILY_API_KEY: ${{ secrets.TAVILY_API_KEY }}
         run: |
           # Depuis le 2026-08-02, GROQ_API_KEY_3 est la clé DÉDIÉE au
@@ -93,9 +94,17 @@ jobs:
           # Le TPD Groq (100k tokens/jour) est compté PAR ORGANISATION : deux
           # secrets pointant le même compte partagent le quota, donc la cloison
           # ne cloisonne rien.
-          if [ "$GROQ_API_KEY_3" = "$GROQ_API_KEY" ] || [ "$GROQ_API_KEY_3" = "$GROQ_API_KEY_2" ]; then
+          if [ "$GROQ_API_KEY_3" = "$GROQ_API_KEY" ] || [ "$GROQ_API_KEY_3" = "$GROQ_API_KEY_2" ] \
+             || { [ -n "$GROQ_API_KEY_4" ] && [ "$GROQ_API_KEY_3" = "$GROQ_API_KEY_4" ]; }; then
             echo "::error::GROQ_API_KEY_3 est identique à une clé de scan — même organisation Groq, donc même quota journalier. Le cloisonnement est fictif : les scans continueront de vider le TPD du settlement. Créer la clé sur un AUTRE compte console.groq.com."
             exit 1
+          fi
+          # _4 est la clé d'appoint des SCANS (voir engine/golden_hour/...). Elle
+          # n'ajoute une réserve que si elle vient encore d'un autre compte.
+          if [ -z "$GROQ_API_KEY_4" ]; then
+            echo "::notice::GROQ_API_KEY_4 non définie — les scans tournent sur 2 organisations (200k TPD). Une 4e clé sur un nouveau compte console.groq.com leur en donnerait 300k, sans toucher à la réserve du settlement."
+          elif [ "$GROQ_API_KEY_4" = "$GROQ_API_KEY" ] || [ "$GROQ_API_KEY_4" = "$GROQ_API_KEY_2" ]; then
+            echo "::warning::GROQ_API_KEY_4 duplique une clé de scan — même organisation, donc aucun quota supplémentaire. core/ai_search.py la déduplique."
           fi
           if [ -z "$GROQ_API_KEY" ]; then
             echo "::warning::GROQ_API_KEY not set — les workflows de scan n'ont plus de clé Groq du tout (ils ne reçoivent que _1 et _2 depuis le cloisonnement)."
