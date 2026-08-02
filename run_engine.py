@@ -104,11 +104,23 @@ MAX_MATCHES = 100 if DEEP_SCAN else 50
 _TTL_MMA     = float(os.environ.get("CACHE_MMA_TTL_H",     "8"))
 _TTL_ESPORTS = float(os.environ.get("CACHE_ESPORTS_TTL_H", "8"))
 _TTL_ALT     = float(os.environ.get("CACHE_ALT_TTL_H",     "4"))
+# TTL d'un résultat VIDE. eSports et sports alternatifs n'ont pas de feed
+# Melbet dans ce flux : si la recherche rend zéro (clé Groq morte, par ex.),
+# le vide reste en cache et le sport est muet jusqu'à expiration.
+_TTL_EMPTY   = float(os.environ.get("CACHE_EMPTY_TTL_H",   "3"))
 
 # Nombre de repêchages oracle (1 appel IA chacun) quand la recherche groupée
 # n'a pas trouvé de ligne Pinnacle pour un match. C'est précisément le cas des
 # sports alternatifs, rarement cotés par Pinnacle en marché groupé.
 _MAX_ORACLE = int(os.environ.get("MAX_ORACLE", "3"))
+
+# Sports absents du plan OddsAPI : la recherche web est leur SEULE source de
+# prix sharp. Le budget oracle doit leur revenir en premier — il se dépensait
+# dans l'ordre de la liste, or SPORT_IDS énumère le foot en premier et le MMA
+# en dernier, donc les 3 slots partaient toujours au foot. Run 30766186188 :
+# les 6 combats UFC récupérés chez Melbet (Blachowicz, Rakic, de Ridder…) sont
+# tous tombés en « Échec prix Sharp » sans qu'un seul appel oracle soit tenté.
+_NO_ODDSAPI_SPORTS = {"mma", "esports", "tabletennis", "volleyball", "handball"}
 
 SPORT_EMOJI  = {
     "soccer": "⚽", "tennis": "🎾", "basketball": "🏀", "boxing": "🥊",
@@ -1377,7 +1389,7 @@ def run():
     # — no longer competes with the main
     # pipeline's fetch_pinnacle_prices() quota within the same run.
     log.info("🥋 MMA — Recherche web (Melbet vs Pinnacle)...")
-    mma_events = _get_cached(sb, "cache_mma", _TTL_MMA) if sb else None
+    mma_events = _get_cached(sb, "cache_mma", _TTL_MMA, _TTL_EMPTY) if sb else None
     if mma_events is None:
         mma_events = fetch_mma_events()
         # On mémorise AUSSI un résultat vide (TTL court côté _get_cached) —
@@ -1389,7 +1401,7 @@ def run():
         log.info("🥋 MMA OK — %d combats UFC (Melbet soft)", len(mma_events))
 
     log.info("🎮 eSports — Recherche web (CS2/LoL/Valorant/DOTA2)...")
-    esports_events = _get_cached(sb, "cache_esports", _TTL_ESPORTS) if sb else None
+    esports_events = _get_cached(sb, "cache_esports", _TTL_ESPORTS, _TTL_EMPTY) if sb else None
     if esports_events is None:
         esports_events = fetch_esports_events()
         if sb:
@@ -1399,7 +1411,7 @@ def run():
         log.info("🎮 eSports OK — %d matchs", len(esports_events))
 
     log.info("🏓🏐🤾 Sports alternatifs — Recherche web (Table Tennis / Volleyball / Handball)...")
-    alt_events = _get_cached(sb, "cache_altsports", _TTL_ALT) if sb else None
+    alt_events = _get_cached(sb, "cache_altsports", _TTL_ALT, _TTL_EMPTY) if sb else None
     if alt_events is None:
         alt_events = fetch_alternative_sports_batch()
         if sb:
@@ -1479,7 +1491,15 @@ def run():
 
         MAX_ORACLE = _MAX_ORACLE
         oracle_used = 0
-        for m in xbet_matches[:MAX_MATCHES]:
+        # Les sports hors OddsAPI passent devant : un match de foot écarté ici
+        # sera repris par le prochain scan Tier 1, un combat UFC ne le sera
+        # jamais. L'ordre de `matches` n'a pas d'incidence en aval,
+        # _portfolio_balance() re-trie par edge décroissant.
+        oracle_order = sorted(
+            xbet_matches[:MAX_MATCHES],
+            key=lambda m: m.get("sport") not in _NO_ODDSAPI_SPORTS,
+        )
+        for m in oracle_order:
             pin_odds = pinnacle_map.get(m["match"])
             if pin_odds:
                 m["odds_pinnacle"] = pin_odds

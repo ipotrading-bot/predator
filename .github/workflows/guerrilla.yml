@@ -110,6 +110,8 @@ jobs:
           CACHE_MMA_TTL_H:     "4"     # défaut 8
           CACHE_ESPORTS_TTL_H: "4"     # défaut 8
           CACHE_ALT_TTL_H:     "1.5"   # défaut 4 — slate ITTF tourne en ~1h
+          CACHE_EMPTY_TTL_H:   "1.5"   # défaut 3 — un vide dû à une clé morte
+                                       # ne doit pas museler le sport 3h durant
 
           API_FOOTBALL_KEY:   ${{ secrets.API_FOOTBALL_KEY }}
           GROQ_API_KEY:       ${{ secrets.GROQ_API_KEY }}
