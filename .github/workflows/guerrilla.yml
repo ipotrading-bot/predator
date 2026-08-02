@@ -15,6 +15,13 @@ on:
     # (0/2/4/16/18/22 UTC).
     - cron: '47 1-23/2 * * *'
   workflow_dispatch:
+  # Toucher ce fichier relance un scan. Régler les budgets ci-dessous sans
+  # pouvoir observer le résultat avant 2h rend l'ajustement aveugle : ce
+  # déclencheur ferme la boucle. `paths` le limite à ce seul fichier — un
+  # commit sur le moteur ne déclenche rien.
+  push:
+    paths:
+      - '.github/workflows/guerrilla.yml'
 
 # Shared with golden_hour.yml/engine.yml/deep_scan.yml/audit.yml — this writes
 # to the same signals/ai_learning_ledger rows via run_engine.py's non-atomic
@@ -73,6 +80,26 @@ jobs:
       - name: Run Guerrilla scan (sans OddsAPI)
         env:
           GUERRILLA:          "1"
+
+          # ── Budget dédié : 3 clés Groq (~300k TPD) + Tavily ─────────────
+          # Ce job ne partage pas le TPD serré de golden_hour.yml/du settlement,
+          # donc il relève les plafonds que le moteur garde bas par défaut.
+          # Les max_tokens sont des PLAFONDS, pas une consommation : les monter
+          # ne coûte rien tant que la carte est courte, ça évite juste que le
+          # tableau JSON soit tronqué au milieu du slate.
+          SEARCH_MAX_TOKENS:       "6000"   # défaut 2048 — MMA / eSports / Pinnacle
+          ALT_SEARCH_MAX_TOKENS:   "8000"   # défaut 3000 — 3 sports dans un seul appel
+          PINNACLE_BATCH:          "40"     # défaut 25   — matchs prixés par appel groupé
+          PINNACLE_TAVILY_QUERIES: "8"      # défaut 4
+          TAVILY_RUN_BUDGET:       "40"     # défaut 25   — plafond Tavily du run
+          MAX_ORACLE:              "8"      # défaut 3    — repêchages prix sharp
+
+          # Caches raccourcis : à 2h de cron, un TTL de 4h sur les sports
+          # alternatifs faisait tourner un run sur deux sur une carte déjà jouée.
+          CACHE_MMA_TTL_H:     "4"   # défaut 8
+          CACHE_ESPORTS_TTL_H: "4"   # défaut 8
+          CACHE_ALT_TTL_H:     "2"   # défaut 4 — slate ITTF tourne en ~1h
+
           API_FOOTBALL_KEY:   ${{ secrets.API_FOOTBALL_KEY }}
           GROQ_API_KEY:       ${{ secrets.GROQ_API_KEY }}
           GROQ_API_KEY_2:     ${{ secrets.GROQ_API_KEY_2 }}

@@ -28,6 +28,20 @@ log = logging.getLogger("PREDATOR.harvester")
 
 SPORT_IDS = {1: "soccer", 3: "tennis", 4: "basketball", 5: "mma"}
 
+# ── Budget recherche web (Groq/Tavily) ───────────────────────────────
+# Ces plafonds bornent la TAILLE de la réponse IA, donc le nombre de matchs
+# qu'un scan peut ramener sur les sports que le plan OddsAPI ne couvre pas
+# (MMA, eSports, table tennis, volley, handball) : à 2048 tokens le tableau
+# JSON est tronqué bien avant la fin de la carte, et la moitié du slate ne
+# franchit jamais le parseur. Les défauts restent bas parce que les ~24 runs
+# quotidiens de golden_hour.yml partagent leur TPD Groq avec le settlement —
+# c'est ce partage qui a verrouillé le quota le 2026-08-02. guerrilla.yml
+# tourne sur un budget dédié et les relève par l'env.
+SEARCH_MAX_TOKENS       = int(os.environ.get("SEARCH_MAX_TOKENS", "2048"))
+ALT_SEARCH_MAX_TOKENS   = int(os.environ.get("ALT_SEARCH_MAX_TOKENS", "3000"))
+PINNACLE_BATCH          = int(os.environ.get("PINNACLE_BATCH", "25"))
+PINNACLE_TAVILY_QUERIES = int(os.environ.get("PINNACLE_TAVILY_QUERIES", "4"))
+
 XBET_FEED_TPLS = [
     "https://1xbet.com/LineFeed/Get1x2?sport={sport_id}&count=50&lng=en&mode=4&partner=157",
     "https://1xbet.com/LineFeed/Get1x2?sport={sport_id}&count=50&lng=en&mode=4",
@@ -362,10 +376,10 @@ def fetch_pinnacle_prices(matches: list) -> dict:
     from datetime import date
     today = date.today().isoformat()
 
-    names = [m["match"] for m in matches[:25]]
+    names = [m["match"] for m in matches[:PINNACLE_BATCH]]
     match_list = "\n".join(
         f"- {m['match']} [{m.get('league', '?')}, {m.get('sport', 'soccer')}]"
-        for m in matches[:25]
+        for m in matches[:PINNACLE_BATCH]
     )
 
     prompt = (
@@ -378,13 +392,14 @@ def fetch_pinnacle_prices(matches: list) -> dict:
         f"X=0 for non-soccer. Omit matches with no odds found on either book."
     )
 
-    # Budget Tavily : 4 requêtes max sur les premiers matchs — compound-mini
-    # (étage 1) fait sa propre recherche et n'en consomme aucune.
+    # Budget Tavily : PINNACLE_TAVILY_QUERIES requêtes max sur les premiers
+    # matchs — compound-mini (étage 1) fait sa propre recherche et n'en
+    # consomme aucune.
     text = ai_search_complete(
         prompt,
-        queries=[f"Pinnacle odds {n}" for n in names[:4]],
+        queries=[f"Pinnacle odds {n}" for n in names[:PINNACLE_TAVILY_QUERIES]],
         label="Pinnacle/Search",
-        max_tokens=2048, temperature=0.1, timeout=90,
+        max_tokens=SEARCH_MAX_TOKENS, temperature=0.1, timeout=90,
     )
     if not text:
         return {}
@@ -538,7 +553,7 @@ def fetch_mma_events() -> list[dict]:
         queries=["UFC upcoming fights this week odds moneyline",
                  "UFC next event fight card Pinnacle odds"],
         label="MMA/Search",
-        max_tokens=2048, temperature=0.1, timeout=90,
+        max_tokens=SEARCH_MAX_TOKENS, temperature=0.1, timeout=90,
     )
     if not text:
         return []
@@ -619,7 +634,7 @@ def fetch_esports_events() -> list[dict]:
         prompt,
         queries=["CS2 LoL Valorant Dota2 upcoming matches betting odds"],
         label="eSports/Search",
-        max_tokens=2048, temperature=0.1, timeout=90,
+        max_tokens=SEARCH_MAX_TOKENS, temperature=0.1, timeout=90,
     )
     if not text:
         return []
@@ -701,7 +716,7 @@ def fetch_alternative_sports_batch() -> list[dict]:
         prompt,
         queries=["table tennis volleyball handball matches today betting odds"],
         label="AltSports/Search",
-        max_tokens=3000, temperature=0.1, timeout=90,
+        max_tokens=ALT_SEARCH_MAX_TOKENS, temperature=0.1, timeout=90,
     )
     if not text:
         return []

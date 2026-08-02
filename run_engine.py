@@ -96,6 +96,20 @@ _MAJOR_SPORTS = {"soccer", "basketball", "hockey", "baseball", "rugbyleague", "a
 # Deep mode (DEEP_SCAN=1): 100 events, wide quota — 48h full slate
 MAX_MATCHES = 100 if DEEP_SCAN else 50
 
+# ── TTL des caches sports-hors-OddsAPI (heures) ──────────────────────
+# Défauts calés sur le partage de TPD Groq avec golden_hour.yml/le settlement.
+# Ils sont surdimensionnés pour le table tennis : le slate ITTF tourne toutes
+# les 30-60 min, donc à 4h de TTL un scan sur deux ne voyait qu'une carte déjà
+# jouée. guerrilla.yml, qui a son propre budget, les raccourcit par l'env.
+_TTL_MMA     = float(os.environ.get("CACHE_MMA_TTL_H",     "8"))
+_TTL_ESPORTS = float(os.environ.get("CACHE_ESPORTS_TTL_H", "8"))
+_TTL_ALT     = float(os.environ.get("CACHE_ALT_TTL_H",     "4"))
+
+# Nombre de repêchages oracle (1 appel IA chacun) quand la recherche groupée
+# n'a pas trouvé de ligne Pinnacle pour un match. C'est précisément le cas des
+# sports alternatifs, rarement cotés par Pinnacle en marché groupé.
+_MAX_ORACLE = int(os.environ.get("MAX_ORACLE", "3"))
+
 SPORT_EMOJI  = {
     "soccer": "⚽", "tennis": "🎾", "basketball": "🏀", "boxing": "🥊",
     "mma": "🥋", "darts": "🎯", "cricket": "🏏", "hockey": "🏒",
@@ -1363,7 +1377,7 @@ def run():
     # — no longer competes with the main
     # pipeline's fetch_pinnacle_prices() quota within the same run.
     log.info("🥋 MMA — Recherche web (Melbet vs Pinnacle)...")
-    mma_events = _get_cached(sb, "cache_mma", 8) if sb else None
+    mma_events = _get_cached(sb, "cache_mma", _TTL_MMA) if sb else None
     if mma_events is None:
         mma_events = fetch_mma_events()
         # On mémorise AUSSI un résultat vide (TTL court côté _get_cached) —
@@ -1375,7 +1389,7 @@ def run():
         log.info("🥋 MMA OK — %d combats UFC (Melbet soft)", len(mma_events))
 
     log.info("🎮 eSports — Recherche web (CS2/LoL/Valorant/DOTA2)...")
-    esports_events = _get_cached(sb, "cache_esports", 8) if sb else None
+    esports_events = _get_cached(sb, "cache_esports", _TTL_ESPORTS) if sb else None
     if esports_events is None:
         esports_events = fetch_esports_events()
         if sb:
@@ -1385,7 +1399,7 @@ def run():
         log.info("🎮 eSports OK — %d matchs", len(esports_events))
 
     log.info("🏓🏐🤾 Sports alternatifs — Recherche web (Table Tennis / Volleyball / Handball)...")
-    alt_events = _get_cached(sb, "cache_altsports", 4) if sb else None
+    alt_events = _get_cached(sb, "cache_altsports", _TTL_ALT) if sb else None
     if alt_events is None:
         alt_events = fetch_alternative_sports_batch()
         if sb:
@@ -1463,7 +1477,7 @@ def run():
         log.info("%d matchs Melbet | Requête Pinnacle → recherche web...", len(xbet_matches))
         pinnacle_map = fetch_pinnacle_prices(xbet_matches)
 
-        MAX_ORACLE = 3
+        MAX_ORACLE = _MAX_ORACLE
         oracle_used = 0
         for m in xbet_matches[:MAX_MATCHES]:
             pin_odds = pinnacle_map.get(m["match"])
