@@ -53,7 +53,7 @@ def _band_stats(rows: list[dict]) -> dict | None:
     n = len(dec)
     wins = sum(1 for r in dec if r["outcome"] == "WIN")
     hit = wins / n
-    wl, _ = wilson_ci(wins, n)
+    wl, wh = wilson_ci(wins, n)
 
     odds_vals = [r["odds"] for r in dec if r.get("odds")]
     avg_odds = sum(odds_vals) / len(odds_vals) if odds_vals else None
@@ -70,7 +70,7 @@ def _band_stats(rows: list[dict]) -> dict | None:
         roi = numer / denom if denom else None
 
     return {"n": n, "hit": hit, "be": be, "roi": roi,
-            "avg_odds": avg_odds, "wilson": wl}
+            "avg_odds": avg_odds, "wl": wl, "wh": wh}
 
 
 def _fmt(st: dict) -> str:
@@ -80,13 +80,23 @@ def _fmt(st: dict) -> str:
     odd = f"{st['avg_odds']:.2f}" if st["avg_odds"] else " — "
     # Le verdict compare la réussite au seuil requis PAR LA COTE de la bande.
     # C'est le seul test qui a un sens : 55% est excellent à 2,20, ruineux à 1,45.
+    # ✅/❌ = le point estimé. Le VERDICT est l'intervalle de Wilson : tant
+    # qu'il chevauche le seuil, la bande n'a rien prouvé, ni dans un sens ni
+    # dans l'autre — et une règle posée dessus serait du bruit. C'est la leçon
+    # du 2026-08-02 : la bande de cote 1,80-2,20 avait n=109 et paraissait
+    # clairement perdante, mais sa borne haute (52,5%) dépassait encore son
+    # seuil (50,0%).
     if st["be"] is None:
-        mark = " "
-    elif st["hit"] > st["be"]:
-        mark = "✅"
+        mark, verdict = " ", ""
+    elif st["wl"] > st["be"]:
+        mark, verdict = "✅", "GAGNE prouvé"
+    elif st["wh"] < st["be"]:
+        mark, verdict = "❌", "PERD prouvé"
     else:
-        mark = "❌"
-    return f"{st['n']:>4} {hit:>7} {be:>7} {roi:>8} {odd:>6}  {mark}"
+        mark = "✅" if st["hit"] > st["be"] else "❌"
+        verdict = "indéterminé"
+    return (f"{st['n']:>4} {hit:>7} {be:>7} {roi:>8} {odd:>6}  {mark} "
+            f"[{st['wl']*100:.0f}-{st['wh']*100:.0f}%] {verdict}")
 
 
 def _table(title: str, bands, key, rows: list[dict], unit: str) -> None:
@@ -113,8 +123,10 @@ def main() -> int:
 
     print(f"\n{'=' * 78}")
     print(f"CALIBRATION — {LIMIT} dernières lignes de ledger par sport")
-    print("réuss. = taux de réussite réel | requis = seuil de rentabilité (1/cote,")
-    print(f"taxe={TAX_RATE:.0%}) | ✅ = la bande gagne de l'argent")
+    print("réuss. = taux réel | requis = seuil de rentabilité (1/cote, "
+          f"taxe={TAX_RATE:.0%})")
+    print("[x-y%] = intervalle de Wilson. Tant qu'il CHEVAUCHE le seuil requis,")
+    print("la bande n'a rien prouvé — une règle posée dessus serait du bruit.")
     print(f"{'=' * 78}")
 
     for sport in SPORT_DEFAULTS:
@@ -149,10 +161,11 @@ def main() -> int:
         _table("Par bande de COTE", ODDS_BANDS, "odds", all_rows, "")
 
     print(f"\n{'=' * 78}")
-    print("Lecture : une bande ✅ est un endroit où le système gagne déjà.")
-    print("Un seuil doit être posé au BAS de la première bande ✅ durable,")
-    print("pas au plafond — le plafond supprime les bandes rentables avec")
-    print("les autres.")
+    print("Lecture : n'agir que sur les bandes marquées PERD prouvé ou GAGNE")
+    print("prouvé. Une bande 'indéterminé' peut avoir l'air franche et rester")
+    print("du hasard — au 2026-08-02, 1,80-2,20 avait n=109 et n'avait rien")
+    print("prouvé. Un seuil se pose au BAS de la meilleure bande, jamais au")
+    print("plafond : le plafond supprime les bandes rentables avec les autres.")
     print(f"{'=' * 78}\n")
     return 0
 
