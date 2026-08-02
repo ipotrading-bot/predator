@@ -33,4 +33,4 @@ jobs:
         # path, pas la racine du dépôt.
         env:
           PYTHONPATH: .
-        run: python scripts/probe_xbet_sports.py 1 70
+        run: python scripts/probe_xbet_sports.py 1 40

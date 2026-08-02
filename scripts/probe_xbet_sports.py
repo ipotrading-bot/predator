@@ -24,6 +24,7 @@ fois le relevé fait.
 import json
 import logging
 import sys
+import time
 import urllib.error
 import urllib.request
 
@@ -61,27 +62,45 @@ def probe_sport(sport_id: int, books):
 def _pick_book():
     """Trouve le book qui répond, sur un sport connu pour être toujours actif.
 
-    Le run 30768919237 a été tué par le timeout : balayer 130 IDs en essayant
-    les 3 books × 6 URLs chacun fait jusqu'à 2340 requêtes, dont l'immense
-    majorité sur des hôtes qui ne répondent pas depuis le runner. Identifier
-    d'abord le seul book joignable divise le balayage par trois.
+    Renvoie None si AUCUN ne répond — et l'appelant doit alors abandonner tout
+    de suite. Le run 30769689944 a passé 25 minutes à balayer 70 IDs alors que
+    le football lui-même ne répondait déjà pas : chaque ID retentait 3 books ×
+    6 URLs pour rien, et le job est mort sur le timeout sans imprimer une seule
+    ligne exploitable. Un sport de contrôle muet ne dit rien sur les IDs, il
+    dit que le feed est injoignable — presque sûrement parce que le balayage
+    précédent (130 IDs × 3 books, 21:55 UTC) a fait limiter l'IP du runner.
+
+    D'où les tentatives espacées : c'est un back-off, pas de l'insistance.
     """
-    for book, (tpls, referer) in SOFT_BOOKS.items():
-        try:
-            if _fetch_from_book(book, tpls, referer, 1):   # 1 = football
-                print(f"  book joignable : {book}", flush=True)
-                return [(book, SOFT_BOOKS[book])]
-        except Exception:
-            continue
-    print("  aucun book joignable sur le football — on tente quand même les 3",
-          flush=True)
-    return list(SOFT_BOOKS.items())
+    for attempt in range(3):
+        for book, (tpls, referer) in SOFT_BOOKS.items():
+            try:
+                if _fetch_from_book(book, tpls, referer, 1):   # 1 = football
+                    print(f"  book joignable : {book} "
+                          f"(tentative {attempt + 1})", flush=True)
+                    return [(book, SOFT_BOOKS[book])]
+            except Exception:
+                continue
+        if attempt < 2:
+            wait = 30 * (attempt + 1)
+            print(f"  football muet sur les 3 books — nouvel essai dans {wait}s",
+                  flush=True)
+            time.sleep(wait)
+    return None
 
 
 def run_feed(lo: int, hi: int) -> None:
     print(f"\n{'=' * 74}\nFeed LineFeed (1xbet/melbet/22bet) — IDs {lo}..{hi}\n{'=' * 74}",
           flush=True)
     books = _pick_book()
+    if books is None:
+        print("\n  ABANDON — le feed est injoignable depuis ce runner. Ce n'est pas\n"
+              "  une conclusion sur les IDs : le sport de contrôle (football, ID 1)\n"
+              "  ne répond pas non plus, alors qu'il ramène des matchs dans les runs\n"
+              "  guerrilla. Réessayer plus tard, sans balayage large entre-temps.",
+              flush=True)
+        return
+
     found = []
     for sid in range(lo, hi + 1):
         res = probe_sport(sid, books)
@@ -90,6 +109,10 @@ def run_feed(lo: int, hi: int) -> None:
             found.append((sid, name))
             print(f"  sport={sid:<4} {name:<26} {n:>3} events  [{book}]  {sample}",
                   flush=True)
+        # Politesse : le balayage précédent a très probablement fait limiter
+        # l'IP. Une seconde par ID coûte 40s sur la plage et protège le feed
+        # dont dépendent les vrais scans.
+        time.sleep(1)
 
     print(f"\n  -> {len(found)} IDs actifs", flush=True)
     if not found:
