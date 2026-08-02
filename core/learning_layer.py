@@ -263,11 +263,17 @@ _EDGE_BUCKETS = [(0.0, 2.0), (2.0, 4.0), (4.0, 8.0), (8.0, 100.0)]
 _CEILING_MIN = 4.0   # % — jamais de plafond en dessous : sous 4% la bande
                      # haute n'est plus « suspecte », c'est le cœur du signal.
 
+# Découpage plus fin que _EDGE_BUCKETS pour cette décision précise. Les quatre
+# tranches larges de _EDGE_BUCKETS noient l'information : mesuré le 2026-08-02,
+# soccer perdait au-dessus de 6% mais son bucket (4, 8) mélangeait la zone
+# gagnante 4-6% avec la zone perdante 6-8%, et le verdict ne voyait rien.
+_CALIB_BUCKETS = [(0.0, 1.5), (1.5, 2.5), (2.5, 4.0), (4.0, 6.0), (6.0, 100.0)]
 
-def _top_band_verdict(rows: list[dict]) -> tuple[bool, float | None, int]:
+
+def _top_band_verdict(rows: list[dict]) -> tuple[bool, float | None, int, float | None]:
     """La bande d'edge la plus haute perd-elle plus que les bandes basses ?
 
-    Renvoie (sous_performe, plancher_de_la_bande, n).
+    Renvoie (sous_performe, plafond, n, plancher_de_la_meilleure_bande).
 
     C'est la mesure qui manquait à _decide_threshold. Celui-ci n'a qu'un
     levier — le PLANCHER d'edge — et le monte quand un sport perd. Or si ce
@@ -285,23 +291,48 @@ def _top_band_verdict(rows: list[dict]) -> tuple[bool, float | None, int]:
     decisive = [r for r in rows
                 if r.get("outcome") in _DECISIVE_OUTCOMES and r.get("initial_edge") is not None]
     if len(decisive) < _SEGMENT_MIN_SAMPLES:
-        return False, None, 0
+        return False, None, 0, None
 
+    # Les bandes se comparent sur la MARGE au-dessus du seuil de rentabilité
+    # (réussite − 1/cote), jamais sur le taux brut : chaque bande a sa propre
+    # cote moyenne, donc son propre seuil. Mesuré le 2026-08-02 sur soccer, la
+    # bande 0-1,5% tournait à 65,0% pour 61,6% requis (marge +3,4) et la bande
+    # 2,5-4% à 80,0% pour 55,9% requis (marge +24,1) — un tri sur le brut
+    # sous-estime la seconde et surestime la première.
     bucket_wr = []
-    for lo, hi in _EDGE_BUCKETS:
+    for lo, hi in _CALIB_BUCKETS:
         in_b = [r for r in decisive if lo <= r["initial_edge"] < hi]
         if len(in_b) < 5:
             continue
         wins = sum(1 for r in in_b if r["outcome"] == "WIN")
-        bucket_wr.append((lo, hi, len(in_b), wins / len(in_b)))
+        wr = wins / len(in_b)
+        odds_vals = [r["odds"] for r in in_b if r.get("odds")]
+        avg_odds = sum(odds_vals) / len(odds_vals) if odds_vals else None
+        be = p_breakeven(avg_odds, _TAX_RATE) if avg_odds else None
+        margin = wr - be if be is not None else wr
+        bucket_wr.append((lo, hi, len(in_b), margin))
     if len(bucket_wr) < 2:
-        return False, None, 0
+        return False, None, 0, None
 
-    top = bucket_wr[-1]
-    best_other = max(wr for *_, wr in bucket_wr[:-1])
-    if top[3] < best_other and top[0] >= _CEILING_MIN:
-        return True, top[0], top[2]
-    return False, None, top[2]
+    best_lo, best_wr = max(((lo, m) for lo, _, _, m in bucket_wr),
+                           key=lambda t: t[1])
+
+    # On remonte depuis le haut tant que les bandes sous-performent la
+    # meilleure : le plafond se pose au BAS de cette série, pas seulement sous
+    # la dernière bande. Sinon une bande perdante intermédiaire reste ouverte —
+    # soccer perdait dès 6% alors que seule la bande 8%+ aurait été coupée.
+    ceiling_lo = None
+    covered_n = 0
+    for lo, _hi, n, wr in reversed(bucket_wr):
+        if wr < best_wr and lo >= _CEILING_MIN:
+            ceiling_lo = lo
+            covered_n += n
+        else:
+            break
+
+    if ceiling_lo is None:
+        return False, None, 0, best_lo
+    return True, ceiling_lo, covered_n, best_lo
 
 
 def _edge_band_diagnostic(sport: str, rows: list[dict]) -> str | None:
@@ -374,7 +405,8 @@ def _calibration_flag(rows: list[dict]) -> bool:
 
 
 def _decide_threshold(old_t: float, stats: dict, clv: dict, overconfident: bool,
-                      top_band_fake: bool = False) -> tuple[float | None, str]:
+                      top_band_fake: bool = False,
+                      best_band_lo: float | None = None) -> tuple[float | None, str]:
     """
     Shared raise/lower/hold decision, used for both the per-sport threshold
     and each (sport, market-family) segment. Same core rule as before
@@ -399,9 +431,22 @@ def _decide_threshold(old_t: float, stats: dict, clv: dict, overconfident: bool,
 
     # Monter le plancher n'a de sens que si les gros edges valent mieux que les
     # petits. Quand la bande haute sous-performe, c'est l'inverse : le relèvement
-    # concentre l'émission là où le sport perd le plus. On tient le plancher et
-    # on laisse le plafond d'edge (edge_ceiling_<sport>) faire le travail.
+    # concentre l'émission là où le sport perd le plus, ce qui dégrade le
+    # résultat et fait remonter le plancher au tour suivant — boucle jusqu'au
+    # plafond dur, puis silence total.
+    #
+    # Le plancher est donc ramené AU BAS DE LA MEILLEURE BANDE MESURÉE, d'un
+    # coup et non par pas de _STEP_DOWN : un plancher prouvé à l'intérieur de la
+    # bande perdante n'a aucune raison d'y être maintenu 22 audits de plus (à
+    # 0,2 par cycle, soccer aurait mis 5 jours à sortir de 6,0%). Le plafond
+    # d'edge coupe l'autre extrémité dans le même mouvement.
     if top_band_fake and (hit_rate < _TARGET_LO or overconfident):
+        if best_band_lo is not None:
+            new_t = max(_THRESHOLD_MIN, min(_THRESHOLD_MAX, round(best_band_lo, 2)))
+            if new_t != old_t:
+                return new_t, (f"win rate {hit_rate*100:.0f}% faible mais la bande HAUTE "
+                               f"sous-performe — plancher ramené sur la meilleure bande "
+                               f"mesurée ({new_t:.1f}%), plafond d'edge appliqué")
         return None, (f"win rate {hit_rate*100:.0f}% faible mais la bande d'edge HAUTE "
                       f"sous-performe — relever le plancher pousserait l'émission "
                       f"dans la bande perdante ; plancher tenu, plafond d'edge appliqué")
@@ -472,7 +517,7 @@ def compute_and_save(sb) -> dict[str, float]:
             # Plafond d'edge : au-delà, l'edge mesuré n'est pas une inefficience
             # mais un prix mal apparié. Persisté avant la décision de seuil, qui
             # en dépend.
-            top_fake, ceiling, band_n = _top_band_verdict(rows)
+            top_fake, ceiling, band_n, best_band_lo = _top_band_verdict(rows)
             if top_fake and ceiling is not None:
                 log.warning("[%s] Plafond d'edge %.1f%% — la bande haute perd plus "
                             "que les basses sur %d résultats", sport, ceiling, band_n)
@@ -492,7 +537,8 @@ def compute_and_save(sb) -> dict[str, float]:
                 clv = _clv_stats(rows)
                 overconfident = _calibration_flag(rows)
                 new_t, reason = _decide_threshold(old_t, stats, clv, overconfident,
-                                                  top_band_fake=top_fake)
+                                                  top_band_fake=top_fake,
+                                                  best_band_lo=best_band_lo)
                 if new_t is not None:
                     updated[sport] = new_t
                     roi_str = f"{stats['roi']*100:+.1f}%" if stats["roi"] is not None else "n/a"

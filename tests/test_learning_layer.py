@@ -572,15 +572,18 @@ class TestEdgeCeiling:
         return rows
 
     def test_detects_a_losing_top_band(self):
-        fake, ceiling, n = _top_band_verdict(self._rows(low_band_wr=0.75, top_band_wr=0.25))
+        fake, ceiling, n, best_lo = _top_band_verdict(
+            self._rows(low_band_wr=0.75, top_band_wr=0.25))
         assert fake is True
-        assert ceiling == 8.0        # plancher du bucket (8, 100)
+        assert ceiling == 6.0        # plancher du bucket (6, 100)
         assert n > 0
+        assert best_lo == 1.0 or best_lo == 0.0   # la bande basse gagnante
 
     def test_healthy_top_band_sets_no_ceiling(self):
         # La bande haute gagne PLUS que la basse : c'est l'hypothèse fondatrice
         # du système qui tient. Aucun plafond ne doit être posé.
-        fake, ceiling, _ = _top_band_verdict(self._rows(low_band_wr=0.30, top_band_wr=0.80))
+        fake, ceiling, _n, _best = _top_band_verdict(
+            self._rows(low_band_wr=0.30, top_band_wr=0.80))
         assert fake is False
         assert ceiling is None
 
@@ -596,6 +599,17 @@ class TestEdgeCeiling:
         assert held is None
         assert "plancher tenu" in reason
 
+    def test_floor_drops_to_the_best_measured_band_in_one_move(self):
+        # Le cas soccer : plancher coincé à 6,0% (le plafond dur) alors que la
+        # bande gagnante est à 1,5%. Descendre par pas de _STEP_DOWN aurait pris
+        # 22 audits, soit plus de 5 jours de silence.
+        stats = _sport_stats([_row("LOSS") for _ in range(_MIN_SAMPLES)])
+        clv = _clv_stats([])
+        new_t, reason = _decide_threshold(6.0, stats, clv, False,
+                                          top_band_fake=True, best_band_lo=1.5)
+        assert new_t == 1.5
+        assert "meilleure bande" in reason
+
     def test_overconfidence_alone_still_raises(self):
         # Le garde ne doit neutraliser le relèvement QUE si la bande haute est
         # en cause — sinon il désarmerait la correction de surconfiance.
@@ -610,7 +624,7 @@ class TestEdgeCeiling:
         compute_and_save(sb)
         writes = [w for w in sb.meta_writes if w["key"] == "edge_ceiling_soccer"]
         assert len(writes) == 1
-        assert float(writes[0]["value"]) == 8.0
+        assert float(writes[0]["value"]) == 6.0
 
     def test_load_edge_ceilings_parses_and_skips_garbage(self):
         class _Sel:
