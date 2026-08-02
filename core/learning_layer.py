@@ -152,6 +152,28 @@ def load_segment_thresholds(sb) -> dict[str, float]:
     return result
 
 
+def load_edge_ceilings(sb) -> dict[str, float]:
+    """Plafonds d'edge appris par sport (`edge_ceiling_<sport>` dans `meta`).
+
+    Au-dessus de ce plafond, l'edge mesuré n'est pas une inefficience de marché
+    mais un prix mal apparié ou périmé : la bande haute perd davantage que les
+    bandes basses (voir _top_band_verdict). Un sport absent n'a pas de plafond —
+    l'appelant garde alors les bornes globales de core/constants.py.
+    """
+    result: dict[str, float] = {}
+    try:
+        res = sb.table("meta").select("key,value").like("key", "edge_ceiling_%").execute()
+        for row in (res.data or []):
+            sport = row["key"].replace("edge_ceiling_", "", 1)
+            try:
+                result[sport] = float(row["value"])
+            except (TypeError, ValueError):
+                pass
+    except Exception as e:
+        log.warning("load_edge_ceilings: %s — aucun plafond appris", e)
+    return result
+
+
 _DECISIVE_OUTCOMES = ("WIN", "LOSS")   # PUSH/UNKNOWN/closed/expired carry no real result
 
 
@@ -238,6 +260,50 @@ def _clv_stats(rows: list[dict]) -> dict:
 _EDGE_BUCKETS = [(0.0, 2.0), (2.0, 4.0), (4.0, 8.0), (8.0, 100.0)]
 
 
+_CEILING_MIN = 4.0   # % — jamais de plafond en dessous : sous 4% la bande
+                     # haute n'est plus « suspecte », c'est le cœur du signal.
+
+
+def _top_band_verdict(rows: list[dict]) -> tuple[bool, float | None, int]:
+    """La bande d'edge la plus haute perd-elle plus que les bandes basses ?
+
+    Renvoie (sous_performe, plancher_de_la_bande, n).
+
+    C'est la mesure qui manquait à _decide_threshold. Celui-ci n'a qu'un
+    levier — le PLANCHER d'edge — et le monte quand un sport perd. Or si ce
+    sont justement les gros edges qui perdent, monter le plancher pousse
+    toute l'émission dans la bande perdante et aggrave le résultat, qui fait
+    remonter le plancher au tour suivant : une boucle qui finit au plafond.
+    Mesuré le 2026-08-02 sur le vrai ledger : soccer à 6%+ affichait 36,7% de
+    réussite sur 49 résultats pour 47,8% requis, pendant que 1,5-4% gagnait —
+    et le seuil du sport avait justement été poussé à 6,00%.
+
+    Un gros edge qui perd plus qu'un petit n'est pas une inefficience de
+    marché : c'est presque toujours un prix mal apparié ou périmé qui gonfle
+    l'edge apparent (voir _edge_band_diagnostic).
+    """
+    decisive = [r for r in rows
+                if r.get("outcome") in _DECISIVE_OUTCOMES and r.get("initial_edge") is not None]
+    if len(decisive) < _SEGMENT_MIN_SAMPLES:
+        return False, None, 0
+
+    bucket_wr = []
+    for lo, hi in _EDGE_BUCKETS:
+        in_b = [r for r in decisive if lo <= r["initial_edge"] < hi]
+        if len(in_b) < 5:
+            continue
+        wins = sum(1 for r in in_b if r["outcome"] == "WIN")
+        bucket_wr.append((lo, hi, len(in_b), wins / len(in_b)))
+    if len(bucket_wr) < 2:
+        return False, None, 0
+
+    top = bucket_wr[-1]
+    best_other = max(wr for *_, wr in bucket_wr[:-1])
+    if top[3] < best_other and top[0] >= _CEILING_MIN:
+        return True, top[0], top[2]
+    return False, None, top[2]
+
+
 def _edge_band_diagnostic(sport: str, rows: list[dict]) -> str | None:
     """
     Bucket decisive rows by initial_edge and log each bucket's real win
@@ -307,7 +373,8 @@ def _calibration_flag(rows: list[dict]) -> bool:
     return overall is not None and overall > 0.23
 
 
-def _decide_threshold(old_t: float, stats: dict, clv: dict, overconfident: bool) -> tuple[float | None, str]:
+def _decide_threshold(old_t: float, stats: dict, clv: dict, overconfident: bool,
+                      top_band_fake: bool = False) -> tuple[float | None, str]:
     """
     Shared raise/lower/hold decision, used for both the per-sport threshold
     and each (sport, market-family) segment. Same core rule as before
@@ -329,6 +396,15 @@ def _decide_threshold(old_t: float, stats: dict, clv: dict, overconfident: bool)
     Returns (new_threshold_or_None, reason). None means "no change".
     """
     hit_rate = stats["hit_rate"]
+
+    # Monter le plancher n'a de sens que si les gros edges valent mieux que les
+    # petits. Quand la bande haute sous-performe, c'est l'inverse : le relèvement
+    # concentre l'émission là où le sport perd le plus. On tient le plancher et
+    # on laisse le plafond d'edge (edge_ceiling_<sport>) faire le travail.
+    if top_band_fake and (hit_rate < _TARGET_LO or overconfident):
+        return None, (f"win rate {hit_rate*100:.0f}% faible mais la bande d'edge HAUTE "
+                      f"sous-performe — relever le plancher pousserait l'émission "
+                      f"dans la bande perdante ; plancher tenu, plafond d'edge appliqué")
 
     if overconfident and not (hit_rate < _TARGET_LO):
         new_t = min(_THRESHOLD_MAX, round(old_t + _STEP_UP, 2))
@@ -392,6 +468,22 @@ def compute_and_save(sb) -> dict[str, float]:
 
             stats = _sport_stats(rows)
             ranking_stats[sport] = stats
+
+            # Plafond d'edge : au-delà, l'edge mesuré n'est pas une inefficience
+            # mais un prix mal apparié. Persisté avant la décision de seuil, qui
+            # en dépend.
+            top_fake, ceiling, band_n = _top_band_verdict(rows)
+            if top_fake and ceiling is not None:
+                log.warning("[%s] Plafond d'edge %.1f%% — la bande haute perd plus "
+                            "que les basses sur %d résultats", sport, ceiling, band_n)
+                sb.table("meta").upsert({
+                    "key":        f"edge_ceiling_{sport}",
+                    "value":      str(ceiling),
+                    "updated_at": now,
+                }).execute()
+                summary_lines.append(
+                    f"{sport}: plafond edge {ceiling:.1f}% (bande haute perdante, n={band_n})")
+
             if stats["n"] < _MIN_SAMPLES:
                 log.info("[%s] %d decisive samples < %d — threshold unchanged (%.1f%%)",
                          sport, stats["n"], _MIN_SAMPLES, current[sport])
@@ -399,7 +491,8 @@ def compute_and_save(sb) -> dict[str, float]:
                 old_t = current[sport]
                 clv = _clv_stats(rows)
                 overconfident = _calibration_flag(rows)
-                new_t, reason = _decide_threshold(old_t, stats, clv, overconfident)
+                new_t, reason = _decide_threshold(old_t, stats, clv, overconfident,
+                                                  top_band_fake=top_fake)
                 if new_t is not None:
                     updated[sport] = new_t
                     roi_str = f"{stats['roi']*100:+.1f}%" if stats["roi"] is not None else "n/a"

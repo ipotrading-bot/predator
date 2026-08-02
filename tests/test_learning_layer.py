@@ -28,6 +28,8 @@ from core.learning_layer import (
     load_learning_summary,
     load_segment_thresholds,
     load_sport_ranking,
+    load_edge_ceilings,
+    _top_band_verdict,
 )
 
 
@@ -546,3 +548,88 @@ class TestSportRanking:
                 return _T()
 
         assert load_sport_ranking(_SB()) == []
+
+
+class TestEdgeCeiling:
+    """La boucle de rétroaction que _decide_threshold créait tout seul.
+
+    Il n'a qu'un levier — le PLANCHER d'edge — et le monte quand un sport perd.
+    Si ce sont les GROS edges qui perdent, le relèvement pousse toute l'émission
+    dans la bande perdante, le résultat empire, le plancher remonte : la boucle
+    finit au plafond dur et le sport devient muet. Constaté le 2026-08-02 sur le
+    vrai ledger — soccer était à 6,00% (le plafond) alors que sa bande 6%+
+    affichait 36,7% de réussite sur 49 paris pour 47,8% requis, pendant que la
+    bande 1,5-4% gagnait.
+    """
+
+    def _rows(self, low_band_wr: float, top_band_wr: float, n_each: int = 12):
+        """n_each résultats dans une bande basse et dans la bande haute."""
+        rows = []
+        for edge, wr in ((1.0, low_band_wr), (9.0, top_band_wr)):
+            wins = int(round(n_each * wr))
+            rows += [_row("WIN", initial_edge=edge) for _ in range(wins)]
+            rows += [_row("LOSS", initial_edge=edge) for _ in range(n_each - wins)]
+        return rows
+
+    def test_detects_a_losing_top_band(self):
+        fake, ceiling, n = _top_band_verdict(self._rows(low_band_wr=0.75, top_band_wr=0.25))
+        assert fake is True
+        assert ceiling == 8.0        # plancher du bucket (8, 100)
+        assert n > 0
+
+    def test_healthy_top_band_sets_no_ceiling(self):
+        # La bande haute gagne PLUS que la basse : c'est l'hypothèse fondatrice
+        # du système qui tient. Aucun plafond ne doit être posé.
+        fake, ceiling, _ = _top_band_verdict(self._rows(low_band_wr=0.30, top_band_wr=0.80))
+        assert fake is False
+        assert ceiling is None
+
+    def test_threshold_is_not_raised_when_the_top_band_is_the_problem(self):
+        # Mauvais taux de réussite : la règle normale relèverait le plancher.
+        stats = _sport_stats([_row("LOSS") for _ in range(_MIN_SAMPLES)])
+        clv = _clv_stats([])
+
+        raised, _ = _decide_threshold(2.0, stats, clv, False, top_band_fake=False)
+        assert raised is not None and raised > 2.0, "prémisse : sans le garde, ça monte"
+
+        held, reason = _decide_threshold(2.0, stats, clv, False, top_band_fake=True)
+        assert held is None
+        assert "plancher tenu" in reason
+
+    def test_overconfidence_alone_still_raises(self):
+        # Le garde ne doit neutraliser le relèvement QUE si la bande haute est
+        # en cause — sinon il désarmerait la correction de surconfiance.
+        stats = _sport_stats([_row("WIN") for _ in range(_MIN_SAMPLES)])
+        clv = _clv_stats([])
+        new_t, _ = _decide_threshold(2.0, stats, clv, True, top_band_fake=False)
+        assert new_t is not None and new_t > 2.0
+
+    def test_ceiling_is_persisted_to_meta(self):
+        rows = self._rows(low_band_wr=0.75, top_band_wr=0.20, n_each=15)
+        sb = _FakeSupabase({"soccer": rows})
+        compute_and_save(sb)
+        writes = [w for w in sb.meta_writes if w["key"] == "edge_ceiling_soccer"]
+        assert len(writes) == 1
+        assert float(writes[0]["value"]) == 8.0
+
+    def test_load_edge_ceilings_parses_and_skips_garbage(self):
+        class _Sel:
+            def like(self, *_a, **_k):
+                return self
+
+            def execute(self):
+                return _Result([
+                    {"key": "edge_ceiling_soccer", "value": "8.0"},
+                    {"key": "edge_ceiling_broken", "value": "not-a-number"},
+                ])
+
+        class _SB:
+            def table(self, name):
+                assert name == "meta"
+
+                class _T:
+                    def select(self, *_a, **_k):
+                        return _Sel()
+                return _T()
+
+        assert load_edge_ceilings(_SB()) == {"soccer": 8.0}
