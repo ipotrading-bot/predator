@@ -81,24 +81,35 @@ jobs:
         env:
           GUERRILLA:          "1"
 
-          # ── Budget dédié : 3 clés Groq (~300k TPD) + Tavily ─────────────
-          # Ce job ne partage pas le TPD serré de golden_hour.yml/du settlement,
-          # donc il relève les plafonds que le moteur garde bas par défaut.
-          # Les max_tokens sont des PLAFONDS, pas une consommation : les monter
-          # ne coûte rien tant que la carte est courte, ça évite juste que le
-          # tableau JSON soit tronqué au milieu du slate.
-          SEARCH_MAX_TOKENS:       "6000"   # défaut 2048 — MMA / eSports / Pinnacle
-          ALT_SEARCH_MAX_TOKENS:   "8000"   # défaut 3000 — 3 sports dans un seul appel
-          PINNACLE_BATCH:          "40"     # défaut 25   — matchs prixés par appel groupé
-          PINNACLE_TAVILY_QUERIES: "8"      # défaut 4
-          TAVILY_RUN_BUDGET:       "40"     # défaut 25   — plafond Tavily du run
-          MAX_ORACLE:              "8"      # défaut 3    — repêchages prix sharp
+          # ── Budget : le mur est le TPM, pas le TPD ─────────────────────
+          # Le compte Groq a ~300k tokens/JOUR sur 3 clés, mais chaque clé est
+          # plafonnée à 8000 tokens/MINUTE en free tier, et `max_tokens` est
+          # RÉSERVÉ sur ce budget-minute, pas facturé à l'usage. Monter
+          # SEARCH_MAX_TOKENS à 6000 (run 30765759639) a fait réclamer 75% du
+          # quota-minute à chaque appel : 413 sur tennis, basket, MMA et
+          # l'oracle, donc bascule Tavily systématique. 2500 laisse la marge
+          # que compound-mini consomme en injectant ses résultats de recherche.
+          SEARCH_MAX_TOKENS:       "2500"   # défaut 2048 — MMA / eSports / Pinnacle
+          ALT_SEARCH_MAX_TOKENS:   "3000"   # défaut 3000 — 3 sports en un appel
+          PINNACLE_BATCH:          "25"     # défaut 25   — au-delà, le prompt pousse au 413
 
-          # Caches raccourcis : à 2h de cron, un TTL de 4h sur les sports
-          # alternatifs faisait tourner un run sur deux sur une carte déjà jouée.
-          CACHE_MMA_TTL_H:     "4"   # défaut 8
-          CACHE_ESPORTS_TTL_H: "4"   # défaut 8
-          CACHE_ALT_TTL_H:     "2"   # défaut 4 — slate ITTF tourne en ~1h
+          # Tavily est un service séparé : il ne consomme pas le TPM Groq.
+          # C'est le seul poste qu'on peut ouvrir sans risque.
+          PINNACLE_TAVILY_QUERIES: "6"      # défaut 4
+          TAVILY_RUN_BUDGET:       "40"     # défaut 25
+
+          # MAX_ORACLE reste à 3 : chaque repêchage interroge 3 books, et sur
+          # 429-minute le client dort 20-40s par book. À 8, le run a dépassé le
+          # timeout global de 540s après 3 matchs — 0 signal écrit.
+          MAX_ORACLE:              "3"      # défaut 3
+
+          # Caches : le cron est à 2h, un TTL de 4h faisait tourner un run sur
+          # deux sur une carte déjà jouée. 1,5h sur les sports alternatifs
+          # raccourcit aussi le TTL d'un résultat VIDE (min(3h, TTL) côté
+          # _get_cached) — un slate vide mérite d'être retenté vite.
+          CACHE_MMA_TTL_H:     "4"     # défaut 8
+          CACHE_ESPORTS_TTL_H: "4"     # défaut 8
+          CACHE_ALT_TTL_H:     "1.5"   # défaut 4 — slate ITTF tourne en ~1h
 
           API_FOOTBALL_KEY:   ${{ secrets.API_FOOTBALL_KEY }}
           GROQ_API_KEY:       ${{ secrets.GROQ_API_KEY }}
