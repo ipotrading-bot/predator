@@ -1303,6 +1303,7 @@ def run():
     xbet_matches   = []   # declared here so Tier 3 can reuse Tier 2's result safely
     no_pin_count   = 0
     sharp_source   = "?"
+    tier1_ok       = False  # OddsAPI a-t-il rendu quelque chose ? Voir le Tier 2.
 
     # ── Tier 1: The Odds API ──────────────────────────────────────────
     if GUERRILLA:
@@ -1322,6 +1323,7 @@ def run():
         oddsapi_events = fetch_odds(hours_ahead=hours_ahead, sport_keys=scan_keys)
         if oddsapi_events:
             matches      = oddsapi_events[:MAX_MATCHES]
+            tier1_ok     = True
             sharp_source = "OddsAPI/Pinnacle"
             sports_found = set(e.get("sport","?") for e in matches)
             log.info("✅ Tier 1 OK — %d/%d events | sports: %s",
@@ -1471,10 +1473,19 @@ def run():
         return
 
     # ── Tier 2: recherche web (Groq/Tavily) — activé si OddsAPI vide/GUERRILLA ──
-    if not matches:
+    # Gardé sur `tier1_ok` et non sur `matches` : les blocs MMA/eSports/sports
+    # alternatifs ci-dessus alimentent `matches` AVANT ce test, donc un seul
+    # combat trouvé suffisait à sauter tout le harvest Melbet. Run 30768093911 :
+    # 1 combat UFC remonté → 0 match foot/tennis/basket scanné, 0 signal, là où
+    # le run précédent (0 combat) en avait sorti 12 matchs et 1 signal.
+    if not tier1_ok:
         log.info("📡 Tier 2 — Harvest Melbet + recherche web Pinnacle...")
         xbet_matches = fetch_matches()
-        if not xbet_matches:
+        # Abandon seulement si RIEN n'a été trouvé nulle part : depuis que ce
+        # tier n'est plus gardé par `matches`, il peut s'exécuter alors que la
+        # recherche MMA/eSports/alternatifs a déjà rempli `matches`. Sortir ici
+        # jetterait ces événements-là.
+        if not xbet_matches and not matches:
             msg = "📡 PREDATOR v8.8: 0 matchs trouvés — Melbet inaccessible."
             if gemini_quota_dead():
                 msg += "\n⚠️ Quota IA journalier épuisé (Groq) — fallback recherche web indisponible."
@@ -1486,7 +1497,8 @@ def run():
                 raise SystemExit(1)
             return
 
-        log.info("%d matchs Melbet | Requête Pinnacle → recherche web...", len(xbet_matches))
+        if xbet_matches:
+            log.info("%d matchs Melbet | Requête Pinnacle → recherche web...", len(xbet_matches))
         pinnacle_map = fetch_pinnacle_prices(xbet_matches)
 
         MAX_ORACLE = _MAX_ORACLE
@@ -1495,8 +1507,15 @@ def run():
         # sera repris par le prochain scan Tier 1, un combat UFC ne le sera
         # jamais. L'ordre de `matches` n'a pas d'incidence en aval,
         # _portfolio_balance() re-trie par edge décroissant.
+        # Melbet expose le MMA (sport_id=5) et fetch_mma_events() cherche la
+        # même carte sur le web : depuis que ce tier tourne même quand la
+        # recherche a rendu des combats, les deux sources peuvent livrer le
+        # même événement. Le doublon compterait deux fois dans le quota par
+        # sport de _portfolio_balance().
+        seen = {m.get("match", "").strip().lower() for m in matches}
         oracle_order = sorted(
-            xbet_matches[:MAX_MATCHES],
+            (m for m in xbet_matches[:MAX_MATCHES]
+             if m.get("match", "").strip().lower() not in seen),
             key=lambda m: m.get("sport") not in _NO_ODDSAPI_SPORTS,
         )
         for m in oracle_order:
