@@ -27,6 +27,7 @@ from core.learning_layer import (
     compute_and_save,
     load_learning_summary,
     load_segment_thresholds,
+    load_sport_ranking,
 )
 
 
@@ -446,3 +447,102 @@ class TestLearningSummary:
         summary_writes = [w for w in sb.meta_writes if w["key"] == "learning_summary"]
         assert len(summary_writes) == 1
         assert any("soccer" in line for line in json.loads(summary_writes[0]["value"]))
+
+
+class TestSportRanking:
+    """meta.sport_ranking — l'ordre qui arbitre le budget oracle du scan.
+
+    Le tri se fait sur la borne basse de Wilson, jamais sur le taux brut.
+    Mesuré le 2026-08-02 sur le vrai ledger : mma affichait 100% sur 5
+    résultats et tabletennis 62,5% sur 8, quand soccer faisait 48,2% sur 83.
+    Un tri sur le brut aurait placé deux échantillons de bruit devant la seule
+    série mesurable, et le budget oracle serait parti sur des sports dont on
+    ne sait rien. Ces tests échouent si quelqu'un rebascule sur `hit_rate`.
+    """
+
+    def _ranking(self, sb) -> list:
+        writes = [w for w in sb.meta_writes if w["key"] == "sport_ranking"]
+        assert len(writes) == 1, "sport_ranking doit être écrit exactement une fois"
+        return json.loads(writes[0]["value"])
+
+    def test_small_perfect_sample_is_excluded(self):
+        # 5 WIN sur 5 = 100% brut, mais très en dessous de _MIN_SAMPLES.
+        sb = _FakeSupabase({"mma": [_row("WIN") for _ in range(5)]})
+        compute_and_save(sb)
+        assert "mma" not in self._ranking(sb)
+
+    def test_ranks_by_wilson_lower_bound_not_raw_hit_rate(self):
+        # Le point de bascule est étroit et vaut d'être fixé : Wilson ne
+        # renverse PAS n'importe quel écart. À 80% sur 30 contre 60% sur 150,
+        # il garde 80% devant, et il a raison — l'écart est trop large pour
+        # être du bruit. Il renverse quand l'écart brut est mince et l'écart
+        # de taille grand : 60% sur 30 (borne 0.423) passe DERRIÈRE 55% sur
+        # 300 (borne 0.493), parce que 30 tirages ne distinguent pas encore
+        # 60% de 45%.
+        sb = _FakeSupabase({
+            "basketball": [_row("WIN")] * 18 + [_row("LOSS")] * 12,     # 60% / n=30
+            "soccer": [_row("WIN")] * 165 + [_row("LOSS")] * 135,       # 55% / n=300
+        })
+        compute_and_save(sb)
+        ranking = self._ranking(sb)
+
+        basket_stats = _sport_stats(sb._rows_by_sport["basketball"])
+        soccer_stats = _sport_stats(sb._rows_by_sport["soccer"])
+        assert basket_stats["hit_rate"] > soccer_stats["hit_rate"], "prémisse du test"
+        assert basket_stats["wilson_lower"] < soccer_stats["wilson_lower"], "prémisse"
+
+        # Un tri sur hit_rate donnerait basketball en tête.
+        assert ranking.index("soccer") < ranking.index("basketball")
+
+    def test_no_decisive_results_writes_an_empty_order(self):
+        # Aucun WIN/LOSS nulle part : le classement doit être vide, pas deviné.
+        # run_engine garde alors son ordre par défaut.
+        sb = _FakeSupabase({"soccer": [_row("PUSH") for _ in range(_MIN_SAMPLES)]})
+        compute_and_save(sb)
+        assert self._ranking(sb) == []
+
+    def test_load_sport_ranking_round_trip(self):
+        sb = _FakeSupabase({"soccer": [_row("WIN") for _ in range(_MIN_SAMPLES)]})
+        compute_and_save(sb)
+        stored = self._ranking(sb)
+
+        class _Sel:
+            def eq(self, *_a, **_k):
+                return self
+
+            def maybe_single(self):
+                return self
+
+            def execute(self):
+                return _Result({"value": json.dumps(stored)})
+
+        class _SB:
+            def table(self, name):
+                assert name == "meta"
+
+                class _T:
+                    def select(self, *_a, **_k):
+                        return _Sel()
+                return _T()
+
+        assert load_sport_ranking(_SB()) == stored
+
+    def test_load_sport_ranking_returns_empty_when_key_absent(self):
+        class _Sel:
+            def eq(self, *_a, **_k):
+                return self
+
+            def maybe_single(self):
+                return self
+
+            def execute(self):
+                return _Result(None)
+
+        class _SB:
+            def table(self, name):
+                class _T:
+                    def select(self, *_a, **_k):
+                        return _Sel()
+                return _T()
+
+        assert load_sport_ranking(_SB()) == []
