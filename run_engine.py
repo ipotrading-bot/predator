@@ -47,6 +47,39 @@ GOLDEN_HOUR  = os.environ.get("GOLDEN_HOUR", "0") == "1"
 GUERRILLA    = os.environ.get("GUERRILLA",   "0") == "1"  # skip OddsAPI → Tier 2 direct
 DEBUG_MODE   = os.environ.get("PREDATOR_DEBUG", "0") == "1"
 
+# ── Mode FANTÔME — segments mesurés mais plus recommandés ────────────
+#
+# Un segment fantôme continue d'être scanné, persisté en base, réglé et
+# appris ; il ne part simplement plus sur Telegram. C'est exactement ce que
+# fait déjà le disjoncteur par sport plus bas (voir le bloc « Per-sport
+# circuit breaker ») — même mécanisme, mais décidé par la mesure et non par
+# une série noire passagère.
+#
+# POURQUOI ces deux-là — mesuré le 2026-08-04 sur ai_learning_ledger, 182
+# paris réglés, après exclusion des lignes à match_time passé (voir le garde
+# « MATCH PASSÉ » dans _emit) :
+#
+#   golden_hour (T-2h) : 67 paris, 39% de réussite pour 54,5% requis,
+#                        ROI -29,2%, p=0,007. Écart avec la tranche 2-24h
+#                        significatif (Fisher p=0,0098).
+#   baseball           : 48 paris, 42% pour 56,5% requis, ROI -26,8%,
+#                        p=0,027 — non établi après correction pour les 4
+#                        sports testés (0,11), d'où le fantôme plutôt que le
+#                        retrait sec : on cesse de miser sans cesser d'apprendre.
+#
+# Le fantôme est préféré à la coupure PARCE QU'il préserve l'information :
+# couper le cron arrêterait aussi la collecte, et on ne saurait jamais si le
+# segment se redresse. Pour lever un fantôme, retirer l'entrée ici et
+# refaire l'analyse par tranche — la comparaison reste valide, les lignes
+# ayant continué d'être réglées normalement.
+#
+# ATTENTION pour toute analyse ultérieure du ledger : ces paris sont en base
+# comme les autres et RIEN ne les distingue au niveau de la ligne (pas de
+# colonne dédiée, cohérent avec le disjoncteur existant). Les isoler = filtrer
+# sur le segment ET sur created_at >= 2026-08-04.
+SHADOW_SPORTS      = {"baseball"}
+SHADOW_GOLDEN_HOUR = True
+
 # ── Global Timeout Handler (Safety Net) ──────────────────────────────
 # Prevents Engine from hanging GitHub Actions (5+ min on Tier 2/3 fallback)
 # Installed inside run() (not here at module level) — signal.signal() only
@@ -967,6 +1000,23 @@ def _process_spreads(m, name, sport, league, home, away, emoji, signals, sb, now
 
 # ── Portfolio Balancer ────────────────────────────────────────────────
 
+def _shadow_partition(signals: list, golden_hour: bool) -> tuple[list, list]:
+    """Sépare (à_recommander, fantômes) — voir SHADOW_SPORTS en tête de fichier.
+
+    Les fantômes ne sont PAS jetés : l'appelant les a déjà persistés, ils
+    seront réglés et appris comme les autres. Seule la recommandation
+    Telegram s'arrête. `golden_hour` est passé en paramètre plutôt que lu
+    depuis le flag global pour que la règle soit testable sans manipuler
+    l'environnement du processus.
+    """
+    golden_shadowed = SHADOW_GOLDEN_HOUR and golden_hour
+    kept, shadowed = [], []
+    for s in signals:
+        (shadowed if golden_shadowed or s.get("sport") in SHADOW_SPORTS
+         else kept).append(s)
+    return kept, shadowed
+
+
 def _portfolio_balance(candidates: list) -> list:
     """
     Enforce per-sport quota and sort by edge descending.
@@ -1801,9 +1851,34 @@ def run():
                     f"(drawdown roulant > {_risk_manager.DRAWDOWN_LIMIT_PCT*100:.0f}%).\n"
                     f"Autres sports non affectés — reprise manuelle uniquement pour ces sports."
                 )
-        systems = _suggest_systems_by_window(emit_signals, log, sb)
-        systems = _last_look_reprice(systems, log)
-        _telegram_systems(systems, now, session, len(matches), sharp_source, no_pin_count)
+        # Mode FANTÔME — segments mesurés déficitaires (voir SHADOW_SPORTS /
+        # SHADOW_GOLDEN_HOUR en tête de fichier pour les chiffres). Filtré
+        # ici, au même endroit et pour la même raison que le disjoncteur
+        # ci-dessus : tout reste persisté, réglé et appris, seule la
+        # recommandation sortante s'arrête. Pas de message Telegram — un
+        # fantôme est un réglage permanent, pas un incident à annoncer à
+        # chaque scan.
+        emit_signals, shadowed = _shadow_partition(emit_signals, GOLDEN_HOUR)
+        if shadowed:
+            by_sport: dict[str, int] = {}
+            for s in shadowed:
+                by_sport[s.get("sport", "?")] = by_sport.get(s.get("sport", "?"), 0) + 1
+            log.info("FANTÔME | %d signaux mesurés mais non recommandés (%s)%s",
+                     len(shadowed),
+                     " ".join(f"{sp}={n}" for sp, n in sorted(by_sport.items())),
+                     " — golden_hour intégral" if (SHADOW_GOLDEN_HOUR and GOLDEN_HOUR) else "")
+
+        if shadowed and not emit_signals:
+            # Run intégralement fantôme (cas normal de golden_hour, 24×/jour).
+            # Surtout NE PAS appeler _telegram_systems ici : sur une liste vide
+            # il annonce « Aucun pari de valeur », ce qui serait un mensonge —
+            # il y en avait, on a décidé de ne pas les recommander — et ce
+            # serait 24 notifications/jour de bruit.
+            log.info("FANTÔME | run intégralement fantôme — aucun message Telegram")
+        else:
+            systems = _suggest_systems_by_window(emit_signals, log, sb)
+            systems = _last_look_reprice(systems, log)
+            _telegram_systems(systems, now, session, len(matches), sharp_source, no_pin_count)
 
     elite = [s for s in signals if s["edge_pct"] >= ELITE_EDGE]
     log.info("Done. %d candidates | %d balanced | %d elite.",
