@@ -77,6 +77,16 @@ DEBUG_MODE   = os.environ.get("PREDATOR_DEBUG", "0") == "1"
 # comme les autres et RIEN ne les distingue au niveau de la ligne (pas de
 # colonne dédiée, cohérent avec le disjoncteur existant). Les isoler = filtrer
 # sur le segment ET sur created_at >= 2026-08-04.
+#
+# PRÉCISION AJOUTÉE LE 2026-08-06 — « sans cesser d'apprendre » ne vaut plus
+# pour les SEUILS. core/learning_layer.py ne calcule désormais les planchers
+# que sur la zone jouable (2-24h avant le coup d'envoi, voir playable_rows) :
+# les paris golden_hour continuent d'être persistés, réglés et archivés au
+# ledger, mais ils ne pèsent plus sur threshold_<sport>. C'était le point : ils
+# faisaient monter les planchers de sports rentables à cause de pertes que le
+# système ne prend plus. La collecte reste donc intacte pour une décision
+# manuelle de réouverture — c'est exactement ce qui a permis de mesurer ce
+# segment — mais l'ajustement automatique, lui, ne les voit plus.
 SHADOW_SPORTS      = {"baseball"}
 SHADOW_GOLDEN_HOUR = True
 

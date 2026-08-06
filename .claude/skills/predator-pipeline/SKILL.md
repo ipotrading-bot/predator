@@ -11,8 +11,11 @@ catch a break is to trace the pipeline by hand. This skill is that trace, pre-do
 ## Data flow (in order)
 
 1. **Odds ingestion** — `core/odds_api.py` (Tier 1, real Pinnacle+1XBet via The Odds
-   API) → `core/harvester.py` (Tier 2/3, Gemini Search fallback + MMA/eSports/alt
-   sports) → `core/oracle.py` (single-match Gemini fallback, max 3 calls/scan).
+   API) → `core/harvester.py` (Tier 2/3, recherche web + MMA/eSports/alt sports) →
+   `core/oracle.py` (repli match par match, max 3 appels/scan). **Gemini a été
+   SUPPRIMÉ du repo le 2026-07-21 (commit 0a7332e)** : toute la recherche passe
+   par `core/ai_search.py` (Groq + Tavily). Si un diagnostic vous ramène à
+   Gemini, c'est cette skill qui était périmée, pas le code.
 2. **Signal generation** — `run_engine.py` `run()` calls `_process_h2h` /
    `_process_totals` / `_process_spreads`, which call into `core/math_engine.py`
    (devigging: `calc_dnb`, `devig_prob`, `to_binary`) and `core/paim_engine.py`
@@ -30,7 +33,7 @@ catch a break is to trace the pipeline by hand. This skill is that trace, pre-do
    `ai_learning_ledger` and the `/performance` page for months — check this file
    first if either looks empty again.
 4. **Audit** — `run_audit.py` → `core/audit_engine.py` (`run()`, cron: every 6h).
-   Pass 1: `core/settlement.py` (`settle_signal`, real score via Gemini) →
+   Pass 1: `core/settlement.py` (`settle_signal`, score réel via `core/ai_search.py` — Groq/Tavily) →
    `status='settled'`. Pass 2 fallback: CLV vs current Pinnacle line via
    `core/oracle.py` → `status='closed'` (real closing line) or `'expired'` (proxy).
    Every successful path inserts one row into `ai_learning_ledger`.
@@ -101,29 +104,44 @@ not a bug, unless one of those keys starts appearing in real `signals` rows.
 
 ## The OddsAPI quota reality (2026-07-23)
 
-Two DIFFERENT `ODDS_API_KEY` values are in play, and they report wildly
-different numbers — check which one you are looking at before concluding
-anything:
-- The key on **Vercel** backs `/api/odds-quota` (and therefore the `/system`
-  page). On 2026-07-23 it read 500 remaining / 0 used — a fresh free-tier key
-  that nothing consumes.
-- The key in **GitHub Actions secrets** is the one the engine actually burns.
-  Same day it was at **47 remaining**, visible only in the scan logs
-  (`OddsAPI quota guard — 47 remaining, stopping scan early`).
+**RÉSOLU depuis le 2026-08-04 — ne plus diagnostiquer ainsi.** Il y avait
+autrefois DEUX clés `ODDS_API_KEY` distinctes (une sur Vercel pour
+`/api/odds-quota`, une dans les secrets GitHub pour le moteur), et le dashboard
+pouvait afficher un rassurant 500 pendant que le moteur était à sec. La table
+`app_secrets` (Supabase) est désormais la source unique : `core/secret_store.py`
+la lit AVANT `os.environ`, et le 2026-08-06 il a été vérifié en direct que
+Vercel la lit bien (rotation de clé → `/api/odds-quota` passé à 500/0 sans
+redeploy). Le widget et le moteur voient donc la même clé.
 
-So the dashboard can show a reassuring 500 while the engine is starved. The
-scan logs are the only trustworthy source.
+Deux corollaires qui restent vrais :
+- une valeur PÉRIMÉE dans `app_secrets` bat un `os.environ` correct ;
+- le secret GitHub `ODDS_API_KEY` doit rester NON VIDE même s'il est périmé —
+  `engine.yml`/`golden_hour.yml` ont un préflight `[ -z "$ODDS_API_KEY" ] && exit 1`
+  qui ferait échouer le job avant tout scan. Ne pas « faire le ménage » en le
+  supprimant.
 
-Consequence of the guard (`quota_remaining < 50` in `core/odds_api.py`):
+Les logs de scan (`x-requests-used` / `x-requests-remaining`) restent la mesure
+la plus fiable de la consommation réelle.
+
+**PÉRIMÉ — ce garde n'existe plus.** Supprimé le 2026-08-01 sur décision
+opérateur « ne pas rationner » ; le scan ne s'arrête plus que sur un vrai 422.
+Conservé ici parce que la SIGNATURE décrite reste utile à reconnaître dans
+d'anciens logs. Ce qui subsiste est le pré-vol GRATUIT `_events_in_window()`
+(endpoints `/v4/sports` et `/events`, 0 crédit) qui évite de payer une ligue
+vide. Conséquence historique du garde disparu :
 below 50, it trips after the FIRST sport key of every scan, so the engine
 silently falls back to harvester/cache/Betfair for everything. The counter
 then looks frozen (47 across five consecutive runs) because that single
 request isn't billed. A frozen quota number is the signature of this state,
 not of a healthy one.
 
-Order of magnitude: the free tier is 500 req/MONTH. With 19 keys in
-`SPORT_KEYS`, one full scan per DAY already costs 570/month. No cron cadence
-fixes that — only shrinking `SPORT_KEYS` or paying for a higher tier does.
+Ordre de grandeur (à jour 2026-08-06) : le plan fait 500 req/MOIS. `SPORT_KEYS`
+compte **18** clés depuis le retrait de la Coupe du Monde. Le coût se paie par
+LIGUE PEUPLÉE et non par match : mesuré via `/events` en fenêtre 24h, un scan
+coûte **14 crédits** (5 ligues peuplées ce jour-là), et 0 en fenêtre 2h. À 12
+scans engine + 4 deep par jour, cela fait ~224 crédits/jour, soit **une clé
+tous les ~2 jours**. La rotation passe par `app_secrets` (Supabase), pas par le
+secret GitHub ni par Vercel — voir `core/secret_store.py`.
 
 ## Manual steps this stack does NOT automate
 
@@ -146,14 +164,15 @@ fixes that — only shrinking `SPORT_KEYS` or paying for a higher tier does.
 
 | Workflow | Cadence | Purpose |
 |---|---|---|
-| `golden_hour.yml` | **hourly (H+25)** | T-120min line-movement scan, purges on every run; also checks `meta.scan_request` (see below). Was `*/30` until 2026-07-23 — halved to cut OddsAPI consumption (912 → 456 req/day). Side effect: the dashboard "Scan" button's latency doubled to ≤60 min. Do NOT add a dedicated poller to compensate — that is the 2026-07-07 mistake. |
-| `engine.yml` | ~10x/day | full 72h-window scan |
-| `deep_scan.yml` | 4x/day | 48h-window, all markets |
-| `audit.yml` | every 6h | settlement + CLV + learning layer |
-| `rapport.yml` | 07:05 & 18:05 UTC | Telegram performance report |
-| `wiz.yml` | every 2h (H+15) | Wiz contextual analysis — writes `wiz_analysis` only, never `signals`. Deliberately NOT in the `predator-signals-write` concurrency group (it only reads `signals`; queueing it behind a 45-min audit would make it miss the T-3h lineup window). Do not shorten this cadence — see the 2026-07-07 incident below. |
-| `guerrilla.yml` | manual only | scan without OddsAPI (1XBet direct + Gemini) when OddsAPI quota is exhausted |
-| `backfill.yml` | manual only | one-shot `ai_learning_ledger` repair |
+| `golden_hour.yml` | horaire (H+25) | scan de mouvement de ligne à T-120min, purge à chaque run ; vérifie aussi `meta.scan_request`. **Ses signaux partent en FANTÔME depuis le 2026-08-06** (`SHADOW_GOLDEN_HOUR`) : persistés et réglés, jamais recommandés — mesuré à 39% de réussite pour 54,5% requis, p=0,007. Ne PAS ajouter de poller dédié pour compenser la latence du bouton Scan — c'est l'erreur du 2026-07-07. |
+| `engine.yml` | **12x/jour, toutes les 2h (H+03)** | scan complet, fenêtre **24h** (était 72h jusqu'au 2026-08-06) |
+| `deep_scan.yml` | 4x/jour (H+33) | **fenêtre 24h elle aussi** — `HOURS_AHEAD: "24"` explicite. Le workflow s'appelait « Deep Scan 48h » alors qu'il faisait déjà 24h : renommé « Deep Scan 24h » le 2026-08-06. Ce qui reste « deep » = `MAX_MATCHES=100` et `_QUOTA_DEEP`, pas l'horizon. |
+| `audit.yml` | toutes les 6h | settlement + CLV + couche d'apprentissage |
+| `rapport.yml` | **toutes les 2h (H+35)** | rapport Telegram — était 07:05 & 18:05 jusqu'au 2026-08-06. `run_rapport.py:REPORT_WINDOW_H` (2h) doit rester égal à l'intervalle du cron, sinon un même signal repart dans plusieurs rapports. |
+| `wiz.yml` | toutes les 2h (H+15) | analyse contextuelle Wiz — écrit `wiz_analysis` uniquement, jamais `signals`. Délibérément HORS du groupe `predator-signals-write` (il ne lit que `signals` ; le mettre en file derrière un audit de 45 min lui ferait manquer la fenêtre de compositions T-3h). Ne pas raccourcir cette cadence — voir l'incident du 2026-07-07. |
+| `closing_line.yml` | horaire (H+00) | capture de la ligne de clôture |
+| `guerrilla.yml` | manuel | scan sans OddsAPI (1XBet direct + recherche web) quand le quota est épuisé |
+| `backfill.yml` | manuel | réparation one-shot de `ai_learning_ledger` |
 
 When a fix touches purge, audit, or learning-layer logic, sanity-check it against
 this cadence table — anything that runs more often than `audit.yml` (6h) can race
@@ -180,3 +199,32 @@ guaranteed to fail every write via RLS regardless of secret correctness. When
 latency or scan cadence looks off again, check this step first before
 re-adding a dedicated poller — a new dedicated schedule is exactly the
 mistake that caused the original throttling.
+
+## La couche d'apprentissage — deux pièges corrigés le 2026-08-06
+
+`core/learning_layer.py` fixe les planchers d'edge (`meta.threshold_<sport>`)
+que le prochain scan lira. Deux défauts s'y combinaient et ont fini par étouffer
+l'émission (1 signal/jour début août contre 22 le 2 août) :
+
+1. **Le critère était absolu** — monter à <60% de réussite, ne descendre qu'à
+   >82%. Un pari à cote 1,85 est rentable dès 54,1% et aucun segment du ledger
+   n'a jamais atteint 82% : la montée se déclenchait toujours, la descente
+   jamais. Cliquet jusqu'au plafond dur de 6,0%, puis silence. La règle est
+   désormais ancrée sur `p_breakeven` (cote moyenne + `TAX_RATE`), et reste
+   asymétrique : monter ne demande pas de preuve, descendre exige que la borne
+   basse de Wilson passe la rentabilité.
+2. **Il apprenait sur des paris qu'on ne joue plus** — `playable_rows()` filtre
+   maintenant sur la zone 2-24h avant le coup d'envoi. Hors zone : 113 paris,
+   ROI -28,5%, p=0,002, le seul segment significatif du ledger — et il n'est
+   plus jouable (>24h hors fenêtre de scan, <2h en fantôme). Le football était
+   jugé sur 50,0% quand sa zone jouable fait 65,1%.
+
+**Le piège d'analyse à ne pas refaire.** Pris marginalement, les totals
+(-19,2%), les edges ≥10% (-25,3%) et les cotes ≥2,00 (-24,7%) semblent être les
+coupables. C'est faux : ces trois ensembles se recoupent (33 paris communs) et
+sont concentrés HORS zone jouable. À l'intérieur, ce sont les MEILLEURS
+segments — totals +27,2%, edge ≥10% +10,5%, cote >1,95 +17,8% — et une
+régression logistique contrôlant la cote ne laisse aucun d'eux significatif.
+Les couper ferait tomber le ROI de la zone de +9,4% à +3,4%. **Toujours
+conditionner sur la zone jouable avant de conclure quoi que ce soit sur un
+sport, un marché ou une bande d'edge.**
