@@ -48,13 +48,16 @@ SPORT_EMOJI    = {
 SPORT_ORDER    = ["soccer", "basketball", "hockey", "baseball", "rugbyleague", "aussierules"]
 ELITE_EDGE     = _ELITE_EDGE
 SCAN_STALE_H   = 2      # Alerte si aucun scan depuis X heures
-WC_ALPHA_MIN   = 2.0    # Seuil Edge spécifique WC (vs 2.5% général)
-_WC_KEYWORDS   = ["world cup", "fifa", "wc 2026", "mondial", "coupe du monde"]
 
+# Fenêtre de signaux couverte par un rapport. Doit rester ALIGNÉE sur le cron
+# de rapport.yml (toutes les 2h depuis le 2026-08-06) : à 6h, chaque signal
+# était réenvoyé par trois rapports consécutifs et l'opérateur ne pouvait plus
+# distinguer une nouvelle occasion d'un rappel. Si le cron change, changer ici.
+REPORT_WINDOW_H = 2
 
-def _is_wc(s: dict) -> bool:
-    league = (s.get("league") or "").lower()
-    return any(kw in league for kw in _WC_KEYWORDS)
+# (Retiré 2026-08-06 — Coupe du Monde terminée, instruction opérateur : le bloc
+# « 🏆 COUPE DU MONDE 2026 » du rapport, son seuil d'edge dédié à 2,0% et la
+# détection par mots-clés de ligue sont partis avec.)
 
 
 def _send(text: str):
@@ -241,7 +244,7 @@ def run():
     # ── Récupération signaux actifs ───────────────────────────────────
     signals = []
     try:
-        cutoff = (now - timedelta(hours=6)).isoformat()
+        cutoff = (now - timedelta(hours=REPORT_WINDOW_H)).isoformat()
         res = (sb.table("signals")
                .select("*")
                .eq("status", "active")
@@ -259,10 +262,15 @@ def run():
         )
         return
 
-    log.info("%d signaux actifs (6 dernières heures)", len(signals))
+    log.info("%d signaux actifs (%d dernières heures)", len(signals), REPORT_WINDOW_H)
 
     # ── Construction du message ───────────────────────────────────────
-    slot  = "☀️ MATIN" if now.hour < 12 else "🌆 SOIR"
+    # 12 rapports/jour depuis le passage au cron 2h : « MATIN / SOIR » ne
+    # distinguait plus rien, six rapports partageaient le même libellé.
+    slot  = ("🌙 NUIT"       if now.hour < 6  else
+             "☀️ MATIN"      if now.hour < 12 else
+             "🌤 APRÈS-MIDI" if now.hour < 18 else
+             "🌆 SOIR")
     date  = now.strftime("%d/%m/%Y")
     heure = now.strftime("%H:%M")
 
@@ -279,23 +287,13 @@ def run():
     if not signals:
         msg = (
             header +
-            "📭 *Aucun signal actif* dans les 6 dernières heures.\n\n"
-            "_Le moteur tourne toutes les 30 min. "
+            f"📭 *Aucun signal actif* dans les {REPORT_WINDOW_H} dernières heures.\n\n"
+            "_Le moteur scanne toutes les 2h. "
             "Si ce message répète, vérifiez GitHub Actions → Predator Engine._"
         )
         _send(msg)
         log.info("Rapport envoyé — 0 signaux")
         return
-
-    # ── WC block (top 3 WC signals) — inséré avant les stats générales ─
-    wc_signals = [s for s in signals if _is_wc(s)]
-    wc_block   = ""
-    if wc_signals:
-        wc_top = sorted(wc_signals, key=lambda x: x.get("edge_pct", 0), reverse=True)[:3]
-        wc_block = "🏆 *COUPE DU MONDE 2026*\n"
-        for s in wc_top:
-            wc_block += _signal_line(s, now)
-        wc_block += "\n"
 
     # Stats globales
     best_edge = max((s.get("edge_pct") or 0) for s in signals)
@@ -320,7 +318,7 @@ def run():
     # entité en deux et faire apparaître des astérisques/underscores littéraux
     # au lieu du gras/italique attendu (bug corrigé : l'ancienne version
     # faisait `msg[:3970]` en aveugle, sans savoir où tombait la coupe).
-    budget = 4000 - len(header) - len(wc_block) - len(summary) - len(footer) - 80
+    budget = 4000 - len(header) - len(summary) - len(footer) - 80
     body = ""
     truncated = False
     ordered_sports = list(SPORT_ORDER) + sorted(s for s in by_sport if s not in SPORT_ORDER)
@@ -342,7 +340,7 @@ def run():
     if truncated:
         body += "…_(liste tronquée — voir le dashboard pour tous les signaux)_\n\n"
 
-    msg = header + wc_block + summary + body + footer
+    msg = header + summary + body + footer
 
     _send(msg)
     log.info("Rapport envoyé — %d signaux, %d élite", len(signals), len(elite))

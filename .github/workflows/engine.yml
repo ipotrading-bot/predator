@@ -8,35 +8,40 @@ name: Predator Engine
 # bug de code — voir le commentaire détaillé dans golden_hour.yml.
 # ══════════════════════════════════════════════════════════════════
 #
-# Sessions alignées sur les fenêtres d'inefficience marché :
-#   00:00 — Minuit UTC : NBA/NHL tip-off + MLB late
-#   02:00 — Nuit US late / Copa late / KBO pré-ouverture
-#   04:00 — Pré-KBO/NPB matin Asie (06:00–13:00 UTC = fenêtre lag max)
-#   07:00 — EU morning : Asia closing + lignes EU fraîches + AFL morning
-#   09:00 — EU mid-morning : KBO/NPB live + NRL/AFL pré-match
-#   11:00 — EU midday : SA opening + MLB preview + Brasileirão
-#   13:00 — EU afternoon : Copa Lib pré-match + MLS opening
-#   16:00 — EU prime-time : WC/Copa soirée pré-match (mouvement max)
-#   18:00 — EU close : NBA/NHL pre-game T-4h + Copa in-play
-#   22:00 — US evening : NBA/NHL tip-off live + MLB final + Copa nuit
-# ══════════════════════════════════════════════════════════════════
-
+# Cadence : toutes les 2 heures, 12 runs/jour (instruction opérateur du
+# 2026-08-06 — l'ancienne grille de 10 sessions « alignées sur les fenêtres
+# d'inefficience » laissait trois trous de 3h : 04→07, 13→16 et 18→22, le plus
+# long tombant en pleine soirée US).
+#
+# Coût mesuré le 2026-08-06 via /events (gratuit) sur les 18 sport-keys, en
+# fenêtre 24h : 14 crédits par scan. 12 runs/jour = ~168 crédits/jour, plus
+# le deep_scan (4/jour) = ~224/jour. Sur un plan 500 req/mois, une clé tient
+# donc ~2 jours — cadence de rotation à assumer, conforme à la décision
+# opérateur « ne pas rationner » du 2026-08-01.
+#
+# ATTENTION : GitHub ne garantit pas la ponctualité des crons. Mesuré sur ce
+# repo : 0,48 exécution/h pour un cron horaire, médiane 116 min entre deux
+# runs. Demander 2h donne donc ~2h en pratique, avec des trous plus longs aux
+# heures de charge — ne jamais dimensionner une fenêtre applicative sur la
+# cadence DEMANDÉE ici (cf. la fenêtre de capture de closing_line.yml).
 on:
   schedule:
     # Minute offset to :03 (not :00) — golden_hour.yml fires every :00 and
     # :30. Both workflows run run_engine.py's _purge_old_signals()/_save()
     # (non-atomic delete+insert) against the same signals rows; landing on
     # the exact same minute maximized the chance of a concurrent overlap.
-    - cron: '3 0  * * *'   # Minuit UTC : NBA/NHL tip-off + MLB late    — 00:00 UTC
-    - cron: '3 2  * * *'   # Nuit US late / KBO pré-ouverture           — 02:00 UTC
-    - cron: '3 4  * * *'   # Pré-KBO/NPB matin Asie (lag max)          — 04:00 UTC
-    - cron: '3 7  * * *'   # EU morning : Asia closing + AFL            — 07:00 UTC
-    - cron: '3 9  * * *'   # EU mid-morning : KBO/NPB live + NRL        — 09:00 UTC
-    - cron: '3 11 * * *'   # EU midday : SA + MLB preview               — 11:00 UTC
-    - cron: '3 13 * * *'   # EU afternoon : Copa Lib + MLS              — 13:00 UTC
-    - cron: '3 16 * * *'   # EU prime-time : WC/Copa pré-match          — 16:00 UTC
-    - cron: '3 18 * * *'   # EU close : NBA/NHL pre-game T-4h           — 18:00 UTC
-    - cron: '3 22 * * *'   # US evening : NBA/NHL tip-off + Copa nuit   — 22:00 UTC
+    - cron: '3 0  * * *'   # 00:00 UTC
+    - cron: '3 2  * * *'   # 02:00 UTC
+    - cron: '3 4  * * *'   # 04:00 UTC
+    - cron: '3 6  * * *'   # 06:00 UTC
+    - cron: '3 8  * * *'   # 08:00 UTC
+    - cron: '3 10 * * *'   # 10:00 UTC
+    - cron: '3 12 * * *'   # 12:00 UTC
+    - cron: '3 14 * * *'   # 14:00 UTC
+    - cron: '3 16 * * *'   # 16:00 UTC
+    - cron: '3 18 * * *'   # 18:00 UTC
+    - cron: '3 20 * * *'   # 20:00 UTC
+    - cron: '3 22 * * *'   # 22:00 UTC
   workflow_dispatch:
 
 # Shared with golden_hour.yml/deep_scan.yml/audit.yml — the

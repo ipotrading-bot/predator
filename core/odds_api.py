@@ -49,8 +49,10 @@ CRIS_KEY     = "bookmaker"    # Bookmaker.eu — CRIS network
 #
 # Budget : Engine 6×/j × 11 = 66/j | Deep 2×/j × 11 = 22/j | Total : ~2 640/mois.
 SPORT_KEYS = {
-    # ── PRIORITÉ 1 — FIFA World Cup 2026 (lag maximal garanti) ────────
-    "soccer_fifa_world_cup":                 "soccer",      # 48 matchs phase groupes — lag +2h documenté
+    # (Retiré 2026-08-06 — la Coupe du Monde 2026 est terminée, instruction
+    # opérateur. Elle occupait la priorité 1 ; la ligue ne rend plus que des
+    # 404 hors saison, mais la garder gardait aussi vivant le calendrier 168h
+    # de run_engine.py, supprimé dans le même commit.)
 
     # ── PRIORITÉ 2 — Playoffs Amérique du Nord (sharps = Kelly 0.25–0.30) ──
     "basketball_nba":                        "basketball",  # NBA Finals — marché le + sharp au monde

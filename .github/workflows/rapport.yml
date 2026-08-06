@@ -1,12 +1,23 @@
 name: Predator Rapport
 
-# Rapport Telegram à 07:05 UTC et 18:05 UTC (après le scan de 07:00 / 18:00)
+# Rapport Telegram toutes les 2h, APRÈS le scan (instruction opérateur du
+# 2026-08-06 — auparavant 2 rapports/jour, 07:05 et 18:05).
 # Envoie : équipe, marché, cote, mise Kelly, alerte erreur si moteur KO
+#
+# Minute :35 — le créneau est contraint des deux côtés. En amont, laisser au
+# scan de H:03 le temps d'écrire ses signaux (un rapport parti trop tôt décrit
+# le scan PRÉCÉDENT). En aval, ne pas retomber sur les autres jobs qui se
+# sérialisent sur le verrou `predator-signals-write` : golden_hour à H:25,
+# deep_scan à H:33 (heures impaires), engine à H:03.
+#
+# run_rapport.py:REPORT_WINDOW_H doit rester égal à l'intervalle de ce cron.
+# À 6h de fenêtre pour un rapport toutes les 2h, chaque signal repartait dans
+# trois rapports d'affilée et un rappel devenait indiscernable d'une occasion
+# neuve.
 
 on:
   schedule:
-    - cron: '5 7 * * *'    # 07:05 UTC — rapport matin (après scan 07:00)
-    - cron: '5 18 * * *'   # 18:05 UTC — rapport soir  (après scan 18:00)
+    - cron: '35 */2 * * *'   # toutes les 2h à H+35, après le scan de H+03
   workflow_dispatch:         # Déclenchement manuel depuis GitHub Actions
 
 env:

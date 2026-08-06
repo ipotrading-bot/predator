@@ -1,4 +1,4 @@
-name: Predator Deep Scan 48h
+name: Predator Deep Scan 24h
 
 # ══════════════════════════════════════════════════════════════════
 # BUDGET — voir golden_hour.yml pour le détail : SPORT_KEYS a 19 clés
@@ -6,10 +6,18 @@ name: Predator Deep Scan 48h
 # pas 44/1 320. Le total réel du repo dépasse de ~79% le budget de
 # 20 000/mois annoncé ici à l'origine.
 #
-# Deep scan — horizon 48h, MAX_MATCHES=100, tous marchés (h2h+spreads+totals)
+# Deep scan — horizon 24h, MAX_MATCHES=100, tous marchés (h2h+spreads+totals)
 # Décalé de 30 min par rapport à Engine pour éviter les doublons en DB.
 #
-#   05:30 UTC — avant EU-OPEN  : KBO/NPB nuit + WC/Copa pré-journée
+# HORIZON 24h, ET NON 48h (instruction opérateur 2026-08-06). Le nom de ce
+# workflow annonçait 48h alors qu'il en faisait déjà 24 sans le dire : le bloc
+# `hours_ahead` de run_engine.py n'a pas de branche `elif DEEP_SCAN`, donc
+# DEEP_SCAN=1 tombait dans le cas général, passé à 24h par le commit 1552f1d.
+# HOURS_AHEAD est désormais posé explicitement plus bas — ce qui reste « deep »
+# ici, c'est MAX_MATCHES=100 (vs 50) et les quotas par sport élargis, pas
+# l'horizon. Le ledger justifie ce 24h : au-delà, ROI -62,8% (p=0,0023).
+#
+#   05:30 UTC — avant EU-OPEN  : KBO/NPB nuit + Copa pré-journée
 #   11:30 UTC — EU-MID early   : SA opening + MLB preview
 #   17:30 UTC — EU-CLOSE       : Copa soirée + NBA/NHL T-5h
 #   23:30 UTC — Overnight      : NBA/NHL tip-off + MLB final + Copa nuit
@@ -114,4 +122,8 @@ jobs:
           BETFAIR_CERT:       ${{ secrets.BETFAIR_CERT }}
           BETFAIR_CERT_KEY:   ${{ secrets.BETFAIR_CERT_KEY }}
           DEEP_SCAN:          "1"
+          # Explicite : run_engine.py lit HOURS_AHEAD avec un défaut de 24, mais
+          # ce workflow s'appelait « 48h » — le rendre visible ici évite que le
+          # prochain lecteur croie encore à un horizon différent d'engine.yml.
+          HOURS_AHEAD:        "24"
         run: python run_engine.py

@@ -188,7 +188,7 @@ SPORT_EMOJI  = {
 # Copa Lib : 21:00–23:00 UTC → SA evening, lag 1XBet bien documenté
 # NBA/NHL Finals : 22:00–02:00 UTC → tip-off windows, mouvement max
 GOLDEN_SPORT_KEYS = {
-    "soccer_fifa_world_cup":                "soccer",      # ← PRIORITÉ 1 — WC 2026
+    # (Retiré 2026-08-06 — Coupe du Monde terminée, instruction opérateur.)
     "soccer_conmebol_copa_libertadores":    "soccer",      # Copa Lib — lag SA maximal
     "soccer_brazil_campeonato":             "soccer",      # Brasileirão — quotidien
     "soccer_usa_mls":                       "soccer",      # MLS — actif juin–août
@@ -379,34 +379,6 @@ def _heartbeat(sb, scan_time: datetime, matches: int, signals: int):
         log.error("Supabase heartbeat: %s", e)
 
 
-_WC_SCHEDULE_TTL_H = 24
-
-
-def _wc_schedule_stale(sb, now) -> bool:
-    """Le calendrier WC mérite-t-il un nouvel appel payant ?
-
-    Ne renvoie True que si l'entrée `meta.wc_schedule` a plus de
-    _WC_SCHEDULE_TTL_H heures. En cas de doute (lecture impossible, horodatage
-    illisible) on rafraîchit : perdre 3 crédits est moins grave que laisser la
-    page WC figée sur un calendrier mort.
-    """
-    try:
-        res = sb.table("meta").select("updated_at").eq("key", "wc_schedule").limit(1).execute()
-        rows = res.data or []
-        if not rows:
-            return True
-        stamp = datetime.fromisoformat(str(rows[0]["updated_at"]).replace("Z", "+00:00"))
-        if stamp.tzinfo is None:
-            stamp = stamp.replace(tzinfo=timezone.utc)
-        age_h = (now - stamp).total_seconds() / 3600
-        if age_h < _WC_SCHEDULE_TTL_H:
-            log.info("WC schedule — %.1fh < %dh, pas de rafraîchissement (0 crédit)",
-                     age_h, _WC_SCHEDULE_TTL_H)
-            return False
-        return True
-    except Exception as e:
-        log.debug("wc_schedule staleness: %s", e)
-        return True
 
 
 def _archive_before_purge(sb, signals: list):
@@ -1496,45 +1468,6 @@ def run():
                 except Exception as e:
                     log.warning("Closing-line capture: %s", e)
 
-        # ── WC Schedule — fetch 168h window + save to meta for worldcup page ──
-        # Plafonné à un rafraîchissement par jour (_WC_SCHEDULE_TTL_H) : c'est
-        # un calendrier d'affichage, il ne change pas d'heure en heure. Sans ce
-        # garde il repartait à chaque run engine/deep_scan — 14 appels/jour à 3
-        # crédits, soit ~1 260 crédits/mois pour une page statique, sur un plan
-        # qui en compte 500. Le pré-vol gratuit ne le couvre pas : hors saison
-        # la ligue renvoie 404 (gratuit), mais en saison c'est plein tarif.
-        if sb and not GOLDEN_HOUR and _wc_schedule_stale(sb, now):
-            try:
-                wc_events = fetch_odds(
-                    hours_ahead=168,
-                    sport_keys={"soccer_fifa_world_cup": "soccer"},
-                )
-                if wc_events:
-                    wc_fixtures = []
-                    for ev in wc_events:
-                        pin = ev.get("odds_pinnacle") or {}
-                        xbt = ev.get("odds_1xbet") or {}
-                        wc_fixtures.append({
-                            "match":   ev["match"],
-                            "home":    ev["home"],
-                            "away":    ev["away"],
-                            "time":    ev.get("commence_time", ""),
-                            "league":  ev.get("league", "FIFA World Cup 2026"),
-                            "pin_1":   pin.get("1", 0),
-                            "pin_x":   pin.get("X", 0),
-                            "pin_2":   pin.get("2", 0),
-                            "xbt_1":   xbt.get("1", 0),
-                            "xbt_x":   xbt.get("X", 0),
-                            "xbt_2":   xbt.get("2", 0),
-                        })
-                    sb.table("meta").upsert({
-                        "key": "wc_schedule",
-                        "value": __import__("json").dumps(wc_fixtures),
-                        "updated_at": datetime.now(timezone.utc).isoformat(),
-                    }).execute()
-                    log.info("⚽ WC schedule saved — %d matchs (168h window)", len(wc_fixtures))
-            except Exception as e:
-                log.warning("WC schedule save: %s", e)
 
     # ── MMA/eSports/Alternatifs — now included in Golden Hour too ──────
     # Cached in Supabase meta: MMA/eSports 8h TTL, alt sports 4h TTL —
