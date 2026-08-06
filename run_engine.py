@@ -599,6 +599,30 @@ def _emit(signals, sb, now, log, name, sport, league, mkt_key, mkt_label,
         try:
             mt_dt = datetime.fromisoformat(match_time.replace("Z", "+00:00"))
             hours_ahead_mt = (mt_dt - now).total_seconds() / 3600
+            # Match DÉJÀ COMMENCÉ — refus sec, aucune exception d'edge.
+            #
+            # Ce garde manquait : tout le bloc ne filtrait que le « trop loin »
+            # (J+72h, lineup MLB), jamais le « déjà joué ». Constaté le
+            # 2026-08-04 dans ai_learning_ledger : 20 paris réglés avec un
+            # time_to_match_minutes NÉGATIF, jusqu'à -30 181 min (21 jours dans
+            # le passé), exclusivement en mma/esports/tabletennis — les sports
+            # dont le match_time vient de la recherche web (Groq/Tavily) et
+            # n'est donc pas une donnée de flux vérifiée.
+            #
+            # Ces lignes « gagnaient » 15 fois sur 20 : on pariait sur des
+            # événements déjà disputés, et le settlement retrouvait forcément le
+            # bon résultat. C'est ce qui donnait au MMA un 8/8 flatteur et qui
+            # gonflait la tranche golden_hour de faux gagnants — un filtre
+            # `time_to_match_minutes < 120` embarque tous les négatifs.
+            #
+            # Corollaire pour toute analyse du ledger : borner par le bas
+            # (`between 0 and 120`), les lignes négatives d'avant ce correctif
+            # sont toujours en base.
+            if hours_ahead_mt < 0:
+                log.warning("MATCH PASSÉ | %s %s | %s — coup d'envoi il y a %.0f h "
+                            "(match_time=%s) — signal refusé",
+                            emoji, name, mkt_label, -hours_ahead_mt, match_time)
+                return
             if hours_ahead_mt > 72 and edge < _ELITE_EDGE * 2:
                 log.info("J+3 FILTER | %s %s | %s — edge %.2f%% < 6%% (T+%.0fh)",
                          emoji, name, mkt_label, edge, hours_ahead_mt)
