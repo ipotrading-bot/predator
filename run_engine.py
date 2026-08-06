@@ -106,7 +106,10 @@ _EDGE_CEILINGS: dict[str, float] = {}
 _ODDS_CEILINGS: dict[str, float] = {}
 
 # Fast mode (default): 20 events, tight quota — speed over coverage
-# Deep mode (DEEP_SCAN=1): 100 events, wide quota — 48h full slate
+# Deep mode (DEEP_SCAN=1): 100 events, wide quota — plus de matchs dans la
+# MÊME fenêtre de 24h que le mode normal (les deux fenêtres ont été alignées
+# le 2026-08-04, voir le bloc hours_ahead plus bas) : deep ne va plus chercher
+# plus LOIN, il creuse plus PROFOND sur la même journée.
 MAX_MATCHES = 100 if DEEP_SCAN else 50
 
 # ── TTL des caches sports-hors-OddsAPI (heures) ──────────────────────
@@ -1368,8 +1371,31 @@ def run():
         log.info("⚡ GOLDEN HOUR — OddsAPI (%dh window) | %d sports ciblés: %s",
                  hours_ahead, len(scan_keys), " ".join(scan_keys.keys()))
     else:
-        hours_ahead = int(os.environ.get("HOURS_AHEAD", 48 if DEEP_SCAN else 72))
-        scan_keys   = None  # Use default SPORT_KEYS (all 38 leagues)
+        # Fenêtre ramenée 72h/48h → 24h le 2026-08-04. Deux mesures, pas une
+        # intuition :
+        #
+        # 1) COÛT — le tarif OddsAPI se paie par LIGUE peuplée, pas par match.
+        #    Relevé sur les 19 sport-keys via /events (endpoint gratuit) :
+        #    24h → 4 ligues = 9 crédits | 48h → 7 ligues = 18 | 72h → 7 = 18.
+        #    72h et 48h coûtaient donc STRICTEMENT la même chose : seul le
+        #    passage à 24h coupe la facture (moitié). Avec un plan 500/mois
+        #    (voir core/odds_api.py), ça double la durée de vie d'une clé.
+        #
+        # 2) RENDEMENT — ai_learning_ledger, 201 signaux réglés depuis le
+        #    2026-07-06, découpés par avance à l'émission :
+        #      2-24h  : 90 réglés, 60,0% de réussite, ROI +8,6%  ← la zone utile
+        #      24-48h : 24 réglés, 20,8% pour 51,2% requis, ROI -62,8% (p=0,0023)
+        #      >48h   : 17 signaux, 17 'expired', ZÉRO jamais réglé
+        #    Au-delà de 24h on payait donc soit des paris perdants, soit des
+        #    signaux qui expiraient avant le coup d'envoi.
+        #
+        # Ce n'est PAS le gouverneur de quota supprimé le 2026-08-01 (décision
+        # opérateur « ne pas rationner ») : aucun signal rentable n'est sacrifié
+        # ici, on cesse d'acheter une tranche mesurée déficitaire. Élargir reste
+        # possible sans toucher au code via HOURS_AHEAD — le filtre J+72h de
+        # _emit() plus haut reste en place précisément pour ce cas.
+        hours_ahead = int(os.environ.get("HOURS_AHEAD", 24))
+        scan_keys   = None  # Use default SPORT_KEYS (19 ligues)
         log.info("⚡ Tier 1 — The Odds API (%dh window)...", hours_ahead)
 
     if not GUERRILLA:
