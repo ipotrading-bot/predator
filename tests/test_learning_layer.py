@@ -24,6 +24,7 @@ from core.learning_layer import (
     _edge_band_diagnostic,
     _market_family,
     _sport_stats,
+    playable_rows,
     compute_and_save,
     load_learning_summary,
     load_segment_thresholds,
@@ -716,3 +717,87 @@ class TestOddsCeiling:
                 return _T()
 
         assert load_odds_ceilings(_SB()) == {"soccer": 1.8}
+
+
+class TestPlayableZone:
+    """Le moteur n'apprend que sur les paris qu'il recommande encore.
+
+    Mesuré le 2026-08-06 sur 204 paris réglés : la zone 2-24h fait +9,4% de
+    ROI, le reste -28,5% (p=0,002) — et ce reste n'est plus jouable (fenêtre
+    de scan à 24h, golden hour en fantôme). L'y laisser faisait monter les
+    seuils à cause de pertes que le système ne subit plus.
+    """
+
+    @staticmethod
+    def _row(minutes):
+        return {"outcome": "WIN", "odds": 1.9, "time_to_match_minutes": minutes}
+
+    def test_golden_hour_is_excluded(self):
+        assert playable_rows([self._row(30), self._row(119)]) == []
+
+    def test_beyond_scan_window_is_excluded(self):
+        assert playable_rows([self._row(1441), self._row(4000)]) == []
+
+    def test_playable_zone_is_kept(self):
+        rows = [self._row(120), self._row(600), self._row(1440)]
+        assert playable_rows(rows) == rows
+
+    def test_row_without_lead_time_is_kept(self):
+        # On ne peut pas prouver qu'elle est hors zone : la jeter viderait
+        # l'apprentissage de tout l'historique antérieur à la colonne.
+        rows = [{"outcome": "WIN", "odds": 1.9, "time_to_match_minutes": None},
+                {"outcome": "LOSS", "odds": 2.0}]
+        assert playable_rows(rows) == rows
+
+    def test_unparseable_lead_time_is_kept(self):
+        rows = [{"outcome": "WIN", "odds": 1.9, "time_to_match_minutes": "n/a"}]
+        assert playable_rows(rows) == rows
+
+
+class TestBreakevenAnchoredThreshold:
+    """Le critère est la rentabilité mesurée, plus un taux absolu.
+
+    Régression du cliquet constaté en base le 2026-08-06 : monter à <60% et
+    ne descendre qu'à >82% envoyait tout sport au plafond de 6,0% puis au
+    silence, alors qu'un pari à cote 1,85 est rentable dès 54,1%.
+    """
+
+    _no_clv = {"n": 0, "avg_clv": None, "positive_rate": None}
+
+    @staticmethod
+    def _stats(hit_rate, n=40, wilson_lower=0.0, p_breakeven=0.54):
+        return {"hit_rate": hit_rate, "n": n, "wilson_lower": wilson_lower,
+                "wilson_upper": 1.0, "p_breakeven": p_breakeven, "roi": None}
+
+    def test_profitable_sport_below_60pct_no_longer_raises(self):
+        # 57% de réussite à 1,85 = rentable. L'ancienne règle montait quand
+        # même (57 < 60) — c'est ce qui a collé basketball au plafond.
+        stats = self._stats(hit_rate=0.57, p_breakeven=0.54)
+        new_t, reason = _decide_threshold(3.0, stats, self._no_clv, overconfident=False)
+        assert new_t is None
+        assert "ne tranche pas" in reason
+
+    def test_below_breakeven_still_raises(self):
+        stats = self._stats(hit_rate=0.50, p_breakeven=0.58)
+        new_t, _ = _decide_threshold(3.0, stats, self._no_clv, overconfident=False)
+        assert new_t is not None and new_t > 3.0
+
+    def test_lowering_no_longer_needs_82pct(self):
+        # 65% prouvés au-dessus d'une rentabilité de 54% suffisent désormais :
+        # aucun segment du ledger n'a jamais atteint les 82% exigés avant.
+        stats = self._stats(hit_rate=0.65, wilson_lower=0.58, p_breakeven=0.54)
+        new_t, _ = _decide_threshold(3.0, stats, self._no_clv, overconfident=False)
+        assert new_t is not None and new_t < 3.0
+
+    def test_high_odds_sport_is_judged_on_its_own_breakeven(self):
+        # Cote ~3,0 → rentable dès 34%. 45% de réussite ne doit pas être
+        # traité comme un échec sous prétexte que c'est loin de 60%.
+        stats = self._stats(hit_rate=0.45, p_breakeven=0.34)
+        new_t, _ = _decide_threshold(3.0, stats, self._no_clv, overconfident=False)
+        assert new_t is None
+
+    def test_falls_back_to_absolute_rule_without_odds(self):
+        stats = self._stats(hit_rate=0.40, p_breakeven=None)
+        new_t, reason = _decide_threshold(3.0, stats, self._no_clv, overconfident=False)
+        assert new_t is not None and new_t > 3.0
+        assert "repli" in reason

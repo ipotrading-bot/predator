@@ -75,10 +75,36 @@ _THRESHOLD_MIN = 1.0   # Floor soccer — permet de capter amicaux et WC avec pe
 _THRESHOLD_MAX = 6.0   # Hard cap — relevé de 5.0 pour permettre ajustement sur sports bruyants
 _STEP_UP       = 0.4   # Pénalisation plus forte si CLV hit-rate < 60% (relevé 0.3→0.4)
 _STEP_DOWN     = 0.2   # Récompense inchangée — prudence sur la baisse de seuil
-_MIN_SAMPLES   = 30    # Minimum closed signals before any adjustment (relevé 10→30, Task 4:
-                       # 10 decisive samples is not enough to distinguish a real edge from noise)
-_TARGET_LO     = 0.60  # Below this  → raise threshold (too many weak signals)
-_TARGET_HI     = 0.82  # Above this  → lower threshold (relevé 0.80→0.82 : plus exigeant)
+_MIN_SAMPLES   = 20    # Minimum closed signals before any adjustment. Ramené de 30 à 20 le
+                       # 2026-08-06 en même temps que le filtre de zone jouable ci-dessous :
+                       # celui-ci retire ~55% des lignes, et à 30 il ne restait plus AUCUN
+                       # sport ajustable hors soccer (basketball 26, baseball 22) — le
+                       # mécanisme se serait tu au lieu de se corriger. L'échantillon
+                       # filtré est en outre homogène (même régime de jeu), donc 20 lignes
+                       # y valent mieux que 30 lignes mélangeant trois régimes.
+_TARGET_LO     = 0.60  # Conservé pour la seule garde de surconfiance (_calibration_flag).
+                       # N'est PLUS le critère de montée du seuil — voir _decide_threshold.
+_TARGET_HI     = 0.82  # Idem : conservé pour compatibilité, plus utilisé comme critère.
+
+# ── Zone jouable — ce sur quoi le moteur apprend ─────────────────────
+#
+# L'apprentissage ne doit porter que sur les paris que le système RECOMMANDE
+# encore. Mesuré le 2026-08-06 sur les 204 paris réglés du ledger :
+#
+#   avance 2-24h  : 91 paris,  60,4% de réussite pour 56,0% requis, ROI  +9,4%
+#   hors 2-24h    : 113 paris, 41,6% pour 56,0% requis, ROI -28,5%, p=0,002
+#
+# Le hors-zone est le SEUL segment significatif du ledger, et il n'est plus
+# jouable : >24h ne sort plus du scan (fenêtre ramenée à 24h, commit 1552f1d)
+# et <2h part en fantôme (SHADOW_GOLDEN_HOUR dans run_engine.py). Le laisser
+# dans l'apprentissage faisait donc monter les seuils à cause de pertes que le
+# système ne subit plus — soccer était jugé sur 50,0% de réussite alors que sa
+# zone jouable en fait 65,1%.
+#
+# Bornes alignées sur run_engine.py (SHADOW_GOLDEN_HOUR à T-2h, fenêtre de scan
+# à 24h) : si l'une des deux bouge, bouger l'autre.
+_PLAYABLE_MIN_MINUTES = 120     # T-2h — en deçà, c'est la golden hour, en fantôme
+_PLAYABLE_MAX_MINUTES = 1440    # T-24h — au-delà, le scan ne va plus chercher
 
 # ── Market-family segmentation (win/loss error analysis) ─────────────
 # ai_learning_ledger.market_type stores the raw market_key emitted by
@@ -215,11 +241,15 @@ def _sport_stats(rows: list[dict]) -> dict:
     decisive = [r for r in rows if r.get("outcome") in _DECISIVE_OUTCOMES]
     n = len(decisive)
     if n == 0:
-        return {"n": 0, "hit_rate": None, "roi": None, "wilson_lower": None, "p_breakeven": None}
+        return {"n": 0, "hit_rate": None, "roi": None, "wilson_lower": None,
+                "wilson_upper": None, "p_breakeven": None}
 
     wins = sum(1 for r in decisive if r["outcome"] == "WIN")
     hit_rate = wins / n
-    wilson_lower, _ = wilson_ci(wins, n)
+    # La borne HAUTE sert autant que la basse depuis le 2026-08-06 : elle est ce
+    # qui prouve une perte (borne haute sous la rentabilité), là où la basse
+    # prouve un gain. Voir _decide_threshold.
+    wilson_lower, wilson_upper = wilson_ci(wins, n)
 
     odds_vals = [r["odds"] for r in decisive if r.get("odds")]
     avg_odds = sum(odds_vals) / len(odds_vals) if odds_vals else None
@@ -247,6 +277,7 @@ def _sport_stats(rows: list[dict]) -> dict:
         "hit_rate": hit_rate,
         "roi": roi,
         "wilson_lower": wilson_lower,
+        "wilson_upper": wilson_upper,
         "p_breakeven": breakeven,
     }
 
@@ -536,31 +567,94 @@ def _decide_threshold(old_t: float, stats: dict, clv: dict, overconfident: bool,
         new_t = min(_THRESHOLD_MAX, round(old_t + _STEP_UP, 2))
         return new_t, f"win rate {hit_rate*100:.0f}% ok but overconfident on 80%+ picks → ↑"
 
-    if hit_rate < _TARGET_LO:
+    # ── Le critère est la RENTABILITÉ mesurée, plus un taux absolu ───────
+    #
+    # Jusqu'au 2026-08-06 : monter si hit_rate < 60%, descendre si > 82%.
+    # Ces deux bornes fixes formaient un cliquet à sens unique. Un pari à cote
+    # 1,85 est rentable dès 54,1% de réussite ; exiger 60% condamnait donc des
+    # sports profitables à voir leur plancher monter de 0,4 par audit, tandis
+    # que la descente attendait 82% — un taux qu'aucun paris sportif tenable ne
+    # produit (le meilleur segment mesuré du ledger plafonne à 65%). Résultat
+    # constaté en base le 2026-08-06 : threshold_basketball = 6,0% = le plafond
+    # dur, pour un sport qui gagne 61,5% dans sa zone jouable là où 54,7%
+    # suffisent — et 0 signal basketball émis depuis le 29 juillet. Idem pour
+    # threshold_seg_soccer_totals et les deux segments baseball, tous à 6,0.
+    #
+    # La règle compare désormais le résultat au seuil de rentabilité réel du
+    # sport (p_breakeven, qui tient déjà compte de la cote moyenne ET de
+    # TAX_RATE), et reste délibérément ASYMÉTRIQUE :
+    #   - taux observé SOUS la rentabilité       → ↑   (pas de preuve exigée)
+    #   - borne basse de Wilson AU-DESSUS        → ↓   (preuve exigée)
+    #   - sinon                                  → hold
+    # L'asymétrie est le point : monter le plancher est réversible et ne fait
+    # que filtrer davantage, tandis que le baisser expose du capital sur un
+    # edge non prouvé. Exiger une preuve des deux côtés laisserait tourner un
+    # sport perdant pendant des dizaines d'audits, le temps que l'intervalle se
+    # resserre. Ce qui change vraiment par rapport aux 60%/82% fixes, c'est la
+    # RÉFÉRENCE : elle suit maintenant la cote du sport au lieu d'un taux
+    # absolu qu'un livre à cote basse ne peut pas atteindre.
+    be = stats["p_breakeven"]
+    lo = stats["wilson_lower"]
+
+    if be is None or lo is None:
+        # Pas de cote exploitable (ledger d'avant la migration v9.4) : on
+        # retombe sur l'ancien critère absolu plutôt que de ne rien faire.
+        if hit_rate < _TARGET_LO:
+            return (min(_THRESHOLD_MAX, round(old_t + _STEP_UP, 2)),
+                    f"win rate {hit_rate*100:.0f}% < {_TARGET_LO*100:.0f}% → ↑ "
+                    f"(pas de cote au ledger, critère absolu de repli)")
+        return None, f"win rate {hit_rate*100:.0f}% — pas de cote au ledger, hold"
+
+    if hit_rate < be:
         new_t = min(_THRESHOLD_MAX, round(old_t + _STEP_UP, 2))
         tag = ""
         if clv["positive_rate"] is not None and clv["positive_rate"] > 0.5:
             tag = " (CLV réel toujours positif — probable variance, à surveiller)"
-        return new_t, f"win rate {hit_rate*100:.0f}% < {_TARGET_LO*100:.0f}% → ↑{tag}"
+        return new_t, (f"win rate {hit_rate*100:.0f}% < rentabilité {be*100:.0f}% "
+                       f"(n={stats['n']}) → ↑{tag}")
 
-    if hit_rate > _TARGET_HI:
-        if (stats["wilson_lower"] is not None and stats["p_breakeven"] is not None
-                and stats["wilson_lower"] < stats["p_breakeven"]):
-            return None, (f"win rate {hit_rate*100:.0f}% > target but Wilson lower bound "
-                          f"{stats['wilson_lower']*100:.1f}% < breakeven "
-                          f"{stats['p_breakeven']*100:.1f}% (n={stats['n']}) — not significant")
+    if lo > be:
         if (clv["positive_rate"] is not None and clv["n"] >= _SEGMENT_MIN_SAMPLES
                 and clv["positive_rate"] < 0.5):
-            return None, (f"win rate {hit_rate*100:.0f}% > target but real CLV negative "
-                          f"({clv['positive_rate']*100:.0f}% positive over {clv['n']} lines) — "
-                          f"market isn't confirming this edge, holding")
+            return None, (f"gain établi ({lo*100:.0f}% > {be*100:.0f}%) mais CLV réel "
+                          f"négatif ({clv['positive_rate']*100:.0f}% positif sur "
+                          f"{clv['n']} lignes) — le marché ne confirme pas, hold")
         new_t = max(_THRESHOLD_MIN, round(old_t - _STEP_DOWN, 2))
-        return new_t, f"win rate {hit_rate*100:.0f}% > {_TARGET_HI*100:.0f}% → ↓"
+        return new_t, (f"gain établi : borne basse {lo*100:.0f}% > rentabilité "
+                       f"{be*100:.0f}% (n={stats['n']}) → ↓")
 
-    return None, f"win rate {hit_rate*100:.0f}% in target — no change"
+    return None, (f"win rate {hit_rate*100:.0f}% au-dessus de la rentabilité "
+                  f"{be*100:.0f}% mais borne basse {lo*100:.0f}% en dessous "
+                  f"(n={stats['n']}) — ne tranche pas, hold")
 
 
-_LEDGER_SELECT = "outcome, kelly_pct, odds, market_type, initial_edge, sharp_prob, clv_pct_real"
+_LEDGER_SELECT = ("outcome, kelly_pct, odds, market_type, initial_edge, sharp_prob, "
+                  "clv_pct_real, time_to_match_minutes")
+
+
+def playable_rows(rows: list[dict]) -> list[dict]:
+    """Ne garder que les paris que le système recommande encore.
+
+    Voir _PLAYABLE_MIN_MINUTES/_PLAYABLE_MAX_MINUTES pour la mesure qui
+    justifie ces bornes. Une ligne sans `time_to_match_minutes` est CONSERVÉE :
+    on ne peut pas prouver qu'elle est hors zone, et la jeter viderait
+    l'apprentissage de tout l'historique antérieur à la colonne. Même principe
+    que le dashboard avec un signal sans match_time.
+    """
+    kept = []
+    for r in rows:
+        t = r.get("time_to_match_minutes")
+        if t is None:
+            kept.append(r)
+            continue
+        try:
+            t = float(t)
+        except (TypeError, ValueError):
+            kept.append(r)
+            continue
+        if _PLAYABLE_MIN_MINUTES <= t <= _PLAYABLE_MAX_MINUTES:
+            kept.append(r)
+    return kept
 
 
 def compute_and_save(sb) -> dict[str, float]:
@@ -588,9 +682,17 @@ def compute_and_save(sb) -> dict[str, float]:
                    .select(_LEDGER_SELECT)
                    .eq("sport", sport)
                    .order("created_at", desc=True)
-                   .limit(50)
+                   .limit(120)
                    .execute())
-            rows = res.data or []
+            raw_rows = res.data or []
+            # 120 et non 50 : le filtre de zone jouable retire ~55% des lignes,
+            # une fenêtre de 50 n'en laissait plus assez pour atteindre
+            # _MIN_SAMPLES sur autre chose que le football.
+            rows = playable_rows(raw_rows)
+            if len(raw_rows) != len(rows):
+                log.info("[%s] apprentissage sur %d/%d lignes (zone jouable %d-%dmin)",
+                         sport, len(rows), len(raw_rows),
+                         _PLAYABLE_MIN_MINUTES, _PLAYABLE_MAX_MINUTES)
 
             stats = _sport_stats(rows)
             ranking_stats[sport] = stats
