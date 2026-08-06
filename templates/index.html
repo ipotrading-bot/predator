@@ -83,7 +83,8 @@
       </div>
     </div>
     <div class="fb-row">
-      <button class="fchip day-on" data-day="all"      onclick="setDay('all')">TOUS JOURS</button>
+      <button class="fchip day-on" data-day="24h"      onclick="setDay('24h')">24H</button>
+      <button class="fchip"        data-day="all"      onclick="setDay('all')">TOUS JOURS</button>
       <button class="fchip"        data-day="today"    onclick="setDay('today')">Aujourd'hui</button>
       <button class="fchip"        data-day="tomorrow" onclick="setDay('tomorrow')">Demain</button>
       <button class="fchip"        data-day="later"    onclick="setDay('later')">+Tard</button>
@@ -295,7 +296,16 @@ const _DAY_LABEL   = {today:"Aujourd'hui",tomorrow:'Demain',later:'Plus tard',un
 
 let _sort  = 'sport';
 let _sport = 'all';
-let _day   = 'all';
+// Fenêtre glissante de 24h par défaut (demande opérateur 2026-08-06). Le
+// ledger tranche : 2-24h d'avance à l'émission = 60% de réussite / ROI +8,6%
+// sur 90 signaux réglés, 24-48h = ROI -62,8% (p=0,0023), >48h = 17 signaux
+// dont 17 expirés sans jamais être réglés. Le dashboard ouvre donc sur la
+// seule tranche rentable. Ce n'est PAS une coupe de production : rien n'est
+// filtré côté serveur, les cartes au-delà sont dans le DOM et le chip
+// « TOUS JOURS » les rend en un tap — le compteur annonce toujours combien
+// sont masquées, pour qu'un stock caché ne passe jamais pour un stock absent.
+const _WINDOW_H = 24;
+let _day   = '24h';
 
 function _sigDay(iso){
   if(!iso) return 'unknown';
@@ -390,9 +400,22 @@ function applyFilters(){
     // au coup d'envoi sans rechargement de page.
     if(ts && new Date(ts) <= now) return false;
     if(_sport!=='all' && el.dataset.sport!==_sport) return false;
+    // '24h' est une fenêtre GLISSANTE, pas une date calendaire : à 23h UTC,
+    // « Aujourd'hui » ne garderait qu'une heure de matchs alors que la vraie
+    // question de l'opérateur est « sur quoi puis-je parier d'ici demain ».
+    // Un signal sans match_time reste visible — même règle qu'au serveur : on
+    // ne peut pas prouver qu'il est hors fenêtre, on ne le cache donc pas.
+    if(_day==='24h') return !ts || new Date(ts) <= now + _WINDOW_H*3600*1000;
     if(_day!=='all' && _sigDay(ts)!==_day) return false;
     return true;
   });
+
+  // Ce que la fenêtre 24h met de côté — compté AVANT le filtre sport pour que
+  // le chiffre reste celui du stock réel, pas celui du sport sélectionné.
+  const hidden24 = _day==='24h' ? allSig.filter(el=>{
+    const ts=el.dataset.matchtime;
+    return ts && new Date(ts) > now && new Date(ts) > now + _WINDOW_H*3600*1000;
+  }).length : 0;
 
   // Sort
   if(_sort==='edge'){
@@ -413,7 +436,15 @@ function applyFilters(){
   allSig.forEach(el=>el.style.display='none');
 
   const empty=document.getElementById('filter-empty');
-  if(visible.length===0){ empty.style.display='block'; }
+  if(visible.length===0){
+    // Un dashboard vide et un dashboard filtré ne se disent pas pareil : si la
+    // fenêtre 24h est la seule raison du vide, l'annoncer avec le stock
+    // disponible, sinon l'opérateur croit le pipeline en panne.
+    empty.textContent = hidden24
+      ? `Rien à parier dans les ${_WINDOW_H}h — ${hidden24} match${hidden24>1?'s':''} plus loin, chip TOUS JOURS pour les voir.`
+      : 'Aucun signal pour ce filtre.';
+    empty.style.display='block';
+  }
   else {
     empty.style.display='none';
     let lastGroup=null;
@@ -448,8 +479,10 @@ function applyFilters(){
   // Count badge — matchs visibles ET nombre de marchés sous-jacents
   const n=visible.length;
   const nLegs=visible.reduce((t,el)=>t+el.querySelectorAll('.leg').length,0);
+  const suffix = hidden24 ? ` · +${hidden24} au-delà de 24h` : '';
   document.getElementById('filter-count').textContent =
-    n ? `${n} match${n>1?'s':''} · ${nLegs} ${nLegs>1?'signaux':'signal'}` : '';
+    n ? `${n} match${n>1?'s':''} · ${nLegs} ${nLegs>1?'signaux':'signal'}${suffix}`
+      : (hidden24 ? `0 dans 24h · ${hidden24} au-delà — voir TOUS JOURS` : '');
 }
 
 const SIGNALS={{ signals|tojson }};
