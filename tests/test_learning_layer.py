@@ -14,6 +14,7 @@ hit_rate is computed from the real `outcome` column instead.
 """
 import json
 
+from core.stats_utils import brier_score
 from core.learning_layer import (
     SPORT_DEFAULTS,
     _MIN_SAMPLES,
@@ -717,6 +718,38 @@ class TestOddsCeiling:
                 return _T()
 
         assert load_odds_ceilings(_SB()) == {"soccer": 1.8}
+
+
+class TestCalibrationGapNotBrierConstant:
+    """Second cliquet, corrigé le 2026-08-06.
+
+    _calibration_flag levait un drapeau `overconfident` dès que le Brier
+    dépassait 0,23 — un seuil inatteignable, puisque le Brier a un plancher de
+    p(1-p) (0,2500 à p=0,50). Il se levait donc sur tous les sports, y compris
+    ceux qui battaient leur propre référence, et forçait via _decide_threshold
+    une hausse de plancher de 0,4 à chaque audit.
+    """
+
+    @staticmethod
+    def _rows(p, n_win, n_loss):
+        return ([_row("WIN", sharp_prob=p) for _ in range(n_win)]
+                + [_row("LOSS", sharp_prob=p) for _ in range(n_loss)])
+
+    def test_coin_flip_book_is_not_flagged_despite_brier_above_023(self):
+        # 25 paris annoncés à 52%, réalisés à 60% : le Brier vaut ~0,24 —
+        # au-dessus de l'ancien 0,23 — mais le modèle est SOUS-confiant.
+        rows = self._rows(0.52, 15, 10)
+        assert brier_score([(r["sharp_prob"], 1 if r["outcome"] == "WIN" else 0)
+                            for r in rows]) > 0.23
+        assert _calibration_flag(rows) is False
+
+    def test_genuine_overconfidence_is_still_flagged(self):
+        # Annoncé 62%, réalisé 40% — 22 points d'écart, bien au-delà du bruit.
+        assert _calibration_flag(self._rows(0.62, 10, 15)) is True
+
+    def test_small_gap_is_tolerated(self):
+        # 5 points d'écart sur 20 paris : indistinguable du bruit.
+        assert _calibration_flag(self._rows(0.85, 16, 4)) is False
 
 
 class TestPlayableZone:

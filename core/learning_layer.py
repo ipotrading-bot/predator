@@ -1,14 +1,19 @@
 """
 core/learning_layer.py — PAIM v9.5 — Adaptive Thresholds (Bayesian Learning)
-Reads last 50 closed signals per sport. Adjusts MIN_EDGE thresholds based on
-the REAL win-rate (outcome column: WIN/LOSS from settle_signal()'s web
-score lookup) — never on clv_final. clv_final, for settle_signal()-produced
-rows, is a re-derivation of the entry edge from the exact same scan-time
-prices used to compute edge_pct — it is ~always >= 0 because MIN_EDGE
-already rejected negative-edge signals before they were ever sent, so it is
-positive independent of whether the bet won or lost. If fewer than 60% of
-decisive (WIN/LOSS) bets win, the sport is too noisy and the threshold
-rises; above 82% win-rate it can come back down.
+Lit les 120 dernières lignes de ledger par sport, n'en garde que la ZONE
+JOUABLE (playable_rows : 2-24h avant le coup d'envoi, la seule que le système
+recommande encore), et ajuste les planchers MIN_EDGE sur le win-rate RÉEL
+(colonne `outcome`, WIN/LOSS issus de settle_signal()) — jamais sur clv_final.
+clv_final, pour les lignes produites par settle_signal(), est une
+re-dérivation de l'edge d'entrée à partir des mêmes prix de scan que
+edge_pct : il est ~toujours >= 0 puisque MIN_EDGE a déjà rejeté les edges
+négatifs avant émission, donc positif que le pari ait gagné ou perdu.
+
+Le critère d'ajustement est la RENTABILITÉ mesurée du sport (p_breakeven :
+cote moyenne + TAX_RATE), pas un taux absolu. Les bornes fixes 60%/82% qui
+servaient jusqu'au 2026-08-06 formaient un cliquet à sens unique — la montée
+se déclenchait toujours, la descente jamais — qui a envoyé les planchers au
+plafond dur puis réduit l'émission à ~1 signal/jour. Voir _decide_threshold.
 
 Beyond the per-sport win-rate, this module also cross-checks every
 raise/lower decision against two independent signals already sitting
@@ -26,7 +31,8 @@ import logging
 from datetime import datetime, timezone
 
 from core.constants import TAX_RATE as _TAX_RATE
-from core.stats_utils import bucket_predictions, brier_score, p_breakeven, wilson_ci
+from core.stats_utils import (bucket_predictions, brier_reference, brier_score,
+                              p_breakeven, wilson_ci)
 
 log = logging.getLogger("LEARN")
 
@@ -105,6 +111,10 @@ _TARGET_HI     = 0.82  # Idem : conservé pour compatibilité, plus utilisé com
 # à 24h) : si l'une des deux bouge, bouger l'autre.
 _PLAYABLE_MIN_MINUTES = 120     # T-2h — en deçà, c'est la golden hour, en fantôme
 _PLAYABLE_MAX_MINUTES = 1440    # T-24h — au-delà, le scan ne va plus chercher
+
+# Écart de calibration toléré (probabilité annoncée − taux réalisé), en points.
+# Voir _calibration_flag pour la mesure qui a fixé cette valeur.
+_CALIBRATION_MAX_GAP = 0.10
 
 # ── Market-family segmentation (win/loss error analysis) ─────────────
 # ai_learning_ledger.market_type stores the raw market_key emitted by
@@ -512,8 +522,30 @@ def _calibration_flag(rows: list[dict]) -> bool:
     top = buckets.get("80-100%")
     if top and top["n"] >= 10 and top["win_rate"] is not None and top["win_rate"] < 0.65:
         return True
-    overall = brier_score(preds)
-    return overall is not None and overall > 0.23
+    # La surconfiance se mesure par l'ÉCART DE CALIBRATION — probabilité
+    # moyenne annoncée moins taux de réussite réel — et non par un Brier
+    # comparé à une constante.
+    #
+    # Le seuil dur `brier > 0.23` utilisé jusqu'au 2026-08-06 était
+    # inatteignable : le Brier a un plancher irréductible de p(1-p) (0,2500 à
+    # p=0,50 ; 0,2475 à 0,55 ; voir stats_utils.brier_reference), donc un
+    # portefeuille de quasi pile-ou-face le dépasse toujours, même parfaitement
+    # calibré. Mesuré ce jour-là : le drapeau se levait sur TOUS les sports, y
+    # compris football (0,2319 pour une référence de 0,2365) et basket (0,2304
+    # pour 0,2463) qui battaient pourtant leur propre référence. Comme il force
+    # une hausse de plancher dans _decide_threshold, il formait un second
+    # cliquet, indépendant de celui des 60%/82%, montant les seuils de 0,4 à
+    # chaque audit.
+    #
+    # L'écart de calibration n'a pas ce défaut : il est directement lisible en
+    # points de pourcentage et ne dépend pas de la difficulté des paris. Marge
+    # à 10 points — au-delà du bruit d'échantillonnage sur quelques dizaines de
+    # paris, et cohérent avec les mesures du 2026-08-06 : zone jouable -7,3
+    # (sous-confiant, sain), football -7,4, basket -20,9, contre baseball +15,2
+    # sur son historique complet, le seul réellement surconfiant.
+    stated   = sum(p for p, _ in preds) / len(preds)
+    realised = sum(o for _, o in preds) / len(preds)
+    return (stated - realised) > _CALIBRATION_MAX_GAP
 
 
 def _decide_threshold(old_t: float, stats: dict, clv: dict, overconfident: bool,
@@ -675,6 +707,7 @@ def compute_and_save(sb) -> dict[str, float]:
     now     = datetime.now(timezone.utc).isoformat()
     summary_lines: list[str] = []
     ranking_stats: dict[str, dict] = {}   # sport -> stats, pour _save_sport_ranking
+    all_preds: list[tuple[float, int]] = []   # calibration, tous sports confondus
 
     for sport in SPORT_DEFAULTS:
         try:
@@ -696,6 +729,11 @@ def compute_and_save(sb) -> dict[str, float]:
 
             stats = _sport_stats(rows)
             ranking_stats[sport] = stats
+            all_preds.extend(
+                (r["sharp_prob"], 1 if r["outcome"] == "WIN" else 0)
+                for r in rows
+                if r.get("outcome") in _DECISIVE_OUTCOMES
+                and r.get("sharp_prob") is not None)
 
             # Plafond d'edge : au-delà, l'edge mesuré n'est pas une inefficience
             # mais un prix mal apparié. Persisté avant la décision de seuil, qui
@@ -792,7 +830,54 @@ def compute_and_save(sb) -> dict[str, float]:
         log.warning("compute_and_save: failed to persist learning_summary: %s", e)
 
     _save_sport_ranking(sb, ranking_stats, now)
+    _save_calibration_snapshot(sb, all_preds, now)
     return updated
+
+
+def _save_calibration_snapshot(sb, preds: list[tuple[float, int]], now: str) -> None:
+    """Une ligne d'historique de calibration par run, dans `brier_scores`.
+
+    La table existait depuis sa création sans qu'aucun code Python n'y écrive :
+    le Brier était recalculé à la volée pour /performance puis jeté, donc
+    aucune série temporelle ne permettait de voir une dérive arriver. C'est
+    précisément ce qui a laissé le drapeau de surconfiance rester levé pendant
+    des semaines sans que personne ne puisse le constater.
+
+    On persiste le score AVEC sa référence : un Brier seul n'est pas
+    interprétable, son plancher vaut p(1-p) et dépend de la difficulté des
+    paris. L'écart de calibration (annoncé − réalisé) est la mesure lisible.
+    Périmètre : la zone jouable uniquement, cohérent avec le reste du module.
+    """
+    if len(preds) < _SEGMENT_MIN_SAMPLES:
+        log.info("Calibration : %d paris < %d — pas d'instantané", len(preds),
+                 _SEGMENT_MIN_SAMPLES)
+        return
+    score = brier_score(preds)
+    ref   = brier_reference(preds)
+    gap   = (sum(p for p, _ in preds) - sum(o for _, o in preds)) / len(preds)
+    try:
+        sb.table("brier_scores").insert({
+            "brier_score":     score,
+            "brier_reference": ref,
+            "calibration_gap": round(gap, 4),
+            "sample_size":     len(preds),
+            "scope":           "playable",
+            "computed_at":     now,
+        }).execute()
+        log.info("Calibration : Brier %.4f pour une référence de %.4f, écart "
+                 "%+.1f pts sur %d paris", score, ref, 100 * gap, len(preds))
+    except Exception as e:
+        # Colonnes absentes = migration v10_2 pas encore appliquée : on
+        # réessaie avec le schéma d'origine plutôt que de perdre la mesure.
+        log.debug("brier_scores (schéma complet): %s", str(e)[:80])
+        try:
+            sb.table("brier_scores").insert({
+                "brier_score": score,
+                "sample_size": len(preds),
+                "computed_at": now,
+            }).execute()
+        except Exception as e2:
+            log.warning("_save_calibration_snapshot: %s", str(e2)[:80])
 
 
 _RANKING_KEY = "sport_ranking"

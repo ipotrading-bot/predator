@@ -69,6 +69,30 @@ def brier_score(predictions: list[tuple[float, int]]) -> float | None:
     return round(sum((p - o) ** 2 for p, o in predictions) / len(predictions), 4)
 
 
+def brier_reference(predictions: list[tuple[float, int]]) -> float | None:
+    """Brier qu'obtiendrait un modèle PARFAITEMENT calibré sur ces mêmes
+    probabilités annoncées — c'est-à-dire la moyenne de p(1-p).
+
+    Sans cette référence, le score brut n'est pas interprétable : le Brier a un
+    plancher irréductible qui dépend de la difficulté des paris. Un portefeuille
+    de quasi pile-ou-face ne peut PAS descendre sous ~0,25 même en étant
+    parfaitement calibré (p=0,50 → 0,2500 ; p=0,55 → 0,2475 ; p=0,60 → 0,2400),
+    alors qu'un portefeuille de gros favoris descend naturellement plus bas
+    (p=0,70 → 0,2100). Comparer un Brier à une constante revient donc à juger
+    la difficulté du marché, pas la qualité du modèle.
+
+    Mesuré le 2026-08-06 : le seuil dur de 0,23 qu'utilisait
+    core/learning_layer.py déclarait surconfiants TOUS les sports, y compris le
+    football (0,2319 pour une référence de 0,2365) et le basket (0,2304 pour
+    0,2463) qui font mieux que leur propre référence. Il forçait donc une
+    hausse de plancher à chaque audit — second cliquet, indépendant de celui
+    des 60%/82%.
+    """
+    if not predictions:
+        return None
+    return round(sum(p * (1 - p) for p, _ in predictions) / len(predictions), 4)
+
+
 BRIER_BUCKETS = [(0.50, 0.60), (0.60, 0.70), (0.70, 0.80), (0.80, 1.01)]
 
 
