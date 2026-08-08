@@ -5,5 +5,21 @@
       "Bash(git commit -m ' *)",
       "PowerShell($env:PYTHONIOENCODING=\"utf-8\"; cd \"c:\\\\Users\\\\hp\\\\Desktop\\\\predator\"; python debug_gemini.py)"
     ]
+  },
+  "hooks": {
+    "PostToolUse": [
+      {
+        "matcher": "Edit|Write",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "bash .claude/hooks/dashboard_smoketest.sh",
+            "async": true,
+            "timeout": 30,
+            "statusMessage": "Dashboard smoke test..."
+          }
+        ]
+      }
+    ]
   }
 }
