@@ -176,6 +176,28 @@ API propre demande 499 £ ET refuse les IP américaines ; chez odds-api.io les
 books sharp/exchanges sont réservés aux plans payants (HTTP 403 explicite).
 Matchbook tient ce rôle — ne pas repayer cette recherche.
 
+**Le piège qui a tenu le pipeline à zéro malgré deux sources saines.** Les
+fournisseurs ne nomment pas les matchs pareil : « Cde Juventud Italiana »
+contre « Club Juventud Italiana », « CSD Macara » contre « Deportivo
+Macara ». Mesuré le 2026-08-20 sur 13 matchs odds-api.io contre 53 marchés
+Matchbook, le rapprochement par clé EXACTE en appariait **0**, le flou
+**8**. `run_engine._lookup_exchange()` essaie donc, dans l'ordre : clé
+exacte, clé exacte inversée, puis `strict_team_match`. Deux règles y sont
+verrouillées par `tests/test_engine_circuit_breaker.py` :
+- en flou, un candidat UNIQUE seulement — deux prétendants, on renonce
+  (poser le mauvais prix sharp donne un edge faux et parfaitement muet) ;
+- noms de moins de 3 caractères ignorés, et lignes sans `home`/`away` aussi :
+  `strict_team_match` renvoie `True` dès qu'un nom est VIDE, donc sans ce
+  garde une ligne incomplète s'apparierait à tout le slate.
+
+**L'enrichissement par l'exchange tourne DEUX fois par scan.** Le Tier 1.5
+s'exécute avant le Tier 2 ; les matchs d'odds-api.io/api-sports n'existent
+pas encore à ce moment-là. Le second appel a lieu juste avant
+`fetch_pinnacle_prices()`, donc chaque match servi par l'exchange est un
+match de moins à chercher sur le web (quota Groq préservé pour le
+settlement). Supprimer l'un des deux appels rétablit silencieusement la
+panne du 2026-08-20.
+
 **Matchbook — ce qu'il faut savoir avant d'y toucher.** Le milieu back/lay
 donne une marge d'environ 0,1 % (meilleure que Pinnacle, ~2 %), d'où son rôle
 de référence sharp. Trois pièges encodés dans `core/matchbook.py` et gardés

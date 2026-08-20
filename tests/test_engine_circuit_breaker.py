@@ -133,3 +133,132 @@ def test_flipping_without_side_markets_is_harmless():
     flipped = eng._flip_exchange_prices({"1": 2.0, "X": 3.3, "2": 3.6})
     assert (flipped["1"], flipped["2"]) == (3.6, 2.0)
     assert "totals" not in flipped and "spreads" not in flipped
+
+
+# ── Enrichissement par l'exchange ─────────────────────────────────────
+
+class _Log:
+    def info(self, *a, **k): pass
+    def warning(self, *a, **k): pass
+
+
+_MB = {"barcelona_real madrid": {"home": "Barcelona", "away": "Real Madrid",
+                                 "1": 2.10, "X": 3.60, "2": 3.40, "_source": "matchbook",
+                                 "totals": {"over": 1.90, "under": 1.98, "point": 2.5},
+                                 "spreads": {"home": 1.86, "away": 2.17,
+                                             "point": -1.5, "away_point": 1.5}}}
+
+
+def test_exchange_fills_a_match_that_has_no_sharp_price():
+    """Le cas qui bloquait tout : odds-api.io ramène le prix SOFT, l'exchange
+    doit poser le SHARP, sinon aucun edge n'est calculable."""
+    m = {"match": "Barcelona vs Real Madrid", "home": "Barcelona", "away": "Real Madrid",
+         "odds_1xbet": {"1": 2.30, "X": 3.40, "2": 3.10}}
+    assert eng._enrich_from_exchange([m], _MB, _Log()) == 1
+    assert m["odds_pinnacle"] == {"1": 2.10, "X": 3.60, "2": 3.40}
+    assert m["totals_pinnacle"]["point"] == 2.5
+    assert m["spreads_pinnacle"]["point"] == -1.5
+    assert m["_exchange"] == "matchbook"
+
+
+def test_a_real_sharp_price_is_never_overwritten():
+    m = {"match": "Barcelona vs Real Madrid", "home": "Barcelona", "away": "Real Madrid",
+         "odds_pinnacle": {"1": 2.05, "X": 3.50, "2": 3.55}}
+    assert eng._enrich_from_exchange([m], _MB, _Log()) == 0
+    assert m["odds_pinnacle"]["1"] == 2.05
+
+
+def test_an_ai_estimated_price_is_replaced():
+    m = {"match": "Barcelona vs Real Madrid", "home": "Barcelona", "away": "Real Madrid",
+         "odds_pinnacle": {"1": 2.00, "X": 3.30, "2": 3.80}, "_estimated": True}
+    assert eng._enrich_from_exchange([m], _MB, _Log()) == 1
+    assert m["odds_pinnacle"]["1"] == 2.10
+    assert "_estimated" not in m
+
+
+def test_match_named_the_other_way_round_is_flipped():
+    m = {"match": "Real Madrid vs Barcelona", "home": "Real Madrid", "away": "Barcelona",
+         "odds_1xbet": {"1": 3.10, "X": 3.40, "2": 2.30}}
+    assert eng._enrich_from_exchange([m], _MB, _Log()) == 1
+    assert m["odds_pinnacle"] == {"1": 3.40, "X": 3.60, "2": 2.10}
+    assert m["spreads_pinnacle"]["point"] == 1.5      # signe inversé avec les côtés
+
+
+def test_unknown_match_is_left_untouched():
+    m = {"match": "Lorient vs Brest", "home": "Lorient", "away": "Brest",
+         "odds_1xbet": {"1": 2.0}}
+    assert eng._enrich_from_exchange([m], _MB, _Log()) == 0
+    assert "odds_pinnacle" not in m
+
+
+def test_tier2_matches_are_enriched_before_the_web_search():
+    """Le Tier 1.5 tourne AVANT le Tier 2 : sans ce second passage, les
+    matchs d'odds-api.io repartaient sans prix sharp (run du 19:07)."""
+    import inspect
+    src = inspect.getsource(eng.run)
+    after_t2 = src[src.index("xbet_matches = fetch_matches()"):]
+    call = after_t2.index("_enrich_from_exchange(xbet_matches")
+    search = after_t2.index("fetch_pinnacle_prices(")
+    assert call < search, "l'exchange doit servir AVANT de payer une recherche web"
+
+
+# ── Appariement des noms entre fournisseurs ───────────────────────────
+
+_PRICES = {
+    "club juventud italiana_delfin sc": {
+        "home": "Club Juventud Italiana", "away": "Delfin SC",
+        "1": 5.50, "X": 4.10, "2": 1.62, "_source": "matchbook"},
+}
+
+
+def test_exact_key_still_wins():
+    m = {"home": "Club Juventud Italiana", "away": "Delfin SC"}
+    assert eng._lookup_exchange(m, _PRICES)["1"] == 5.50
+
+
+def test_fuzzy_match_across_providers():
+    """Mesuré le 2026-08-20 : sur 13 matchs, la clé exacte en appariait 0 et
+    le flou 8. C'est ce seul écart de nommage qui tenait le pipeline à zéro
+    signal alors que les deux sources fonctionnaient."""
+    m = {"home": "Cde Juventud Italiana", "away": "Delfin SC"}
+    hit = eng._lookup_exchange(m, _PRICES)
+    assert hit is not None and hit["1"] == 5.50
+
+
+def test_fuzzy_match_reversed_flips_the_prices():
+    m = {"home": "Delfin SC", "away": "Cde Juventud Italiana"}
+    hit = eng._lookup_exchange(m, _PRICES)
+    assert hit["1"] == 1.62 and hit["2"] == 5.50
+
+
+def test_ambiguous_fuzzy_match_is_refused():
+    """Deux prétendants = on ne sait pas lequel est le bon. Poser le mauvais
+    prix sharp donnerait un edge faux, sans rien casser de visible."""
+    prices = dict(_PRICES)
+    prices["juventud italiana fc_delfin sc"] = {
+        "home": "Juventud Italiana FC", "away": "Delfin SC",
+        "1": 5.90, "X": 4.00, "2": 1.60}
+    m = {"home": "Cde Juventud Italiana", "away": "Delfin SC"}
+    assert eng._lookup_exchange(m, prices) is None
+
+
+def test_unrelated_match_finds_nothing():
+    m = {"home": "Arsenal", "away": "Chelsea"}
+    assert eng._lookup_exchange(m, _PRICES) is None
+
+
+def test_missing_team_names_are_refused():
+    assert eng._lookup_exchange({"home": "", "away": "Delfin SC"}, _PRICES) is None
+
+
+def test_price_row_without_team_names_never_matches():
+    """`strict_team_match` rend True si un nom est vide : sans garde, une
+    ligne de prix incomplète s'apparierait à tous les matchs du scan."""
+    prices = {"x_y": {"1": 2.0, "X": 3.0, "2": 4.0}}          # ni home ni away
+    m = {"home": "Club Juventud Italiana", "away": "Delfin SC"}
+    assert eng._lookup_exchange(m, prices) is None
+
+
+def test_very_short_names_are_not_fuzzy_matched():
+    prices = {"a_b": {"home": "A", "away": "B", "1": 2.0, "X": 3.0, "2": 4.0}}
+    assert eng._lookup_exchange({"home": "Barcelona", "away": "Real Madrid"}, prices) is None

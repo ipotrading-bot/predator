@@ -467,6 +467,102 @@ def _alert_oddsapi_pool_if_dead(sb) -> None:
                     f"(plusieurs clés = bascule automatique, plus de scan perdu)")
 
 
+def _lookup_exchange(m: dict, prices: dict) -> dict | None:
+    """Retrouve un match dans les prix d'exchange, malgré les noms.
+
+    Le rapprochement par clé EXACTE ne marche pratiquement jamais entre deux
+    fournisseurs : mesuré le 2026-08-20 sur 13 matchs odds-api.io contre 53
+    marchés Matchbook, la clé exacte en appariait **0**, le rapprochement
+    flou **8**. « Cde Juventud Italiana » contre « Club Juventud Italiana »,
+    « CSD Macara » contre « Deportivo Macara »… C'est ce seul détail qui
+    tenait le pipeline à zéro signal malgré deux sources en bon état.
+
+    Ordre : clé exacte, clé exacte inversée, puis `strict_team_match` (le
+    rapprochement déjà utilisé partout dans ce projet). En flou, on n'accepte
+    qu'un candidat UNIQUE : deux prétendants signifient qu'on ne sait pas
+    lequel est le bon, et poser le mauvais prix sharp donnerait un edge faux
+    sans rien casser de visible.
+    """
+    h = m.get("home", "").strip()
+    a = m.get("away", "").strip()
+    if not h or not a:
+        return None
+    hl, al = h.lower(), a.lower()
+
+    hit = prices.get(f"{hl}_{al}")
+    if hit:
+        return hit
+    hit = prices.get(f"{al}_{hl}")
+    if hit:
+        return _flip_exchange_prices(hit)
+
+    forward, reverse = [], []
+    for row in prices.values():
+        rh, ra = str(row.get("home", "")).strip(), str(row.get("away", "")).strip()
+        # `strict_team_match` renvoie True dès qu'un nom est VIDE (voir
+        # core/paim_engine.py) : sans ce garde, une ligne de prix sans
+        # home/away s'apparierait à n'importe quel match. Le seuil de
+        # longueur écarte de même les fragments trop courts, qu'un simple
+        # test d'inclusion ferait matcher avec tout ("a" est dans
+        # "barcelona").
+        if len(rh) < 3 or len(ra) < 3 or len(h) < 3 or len(a) < 3:
+            continue
+        if strict_team_match(h, rh) and strict_team_match(a, ra):
+            forward.append(row)
+        elif strict_team_match(h, ra) and strict_team_match(a, rh):
+            reverse.append(row)
+    if len(forward) == 1 and not reverse:
+        return forward[0]
+    if len(reverse) == 1 and not forward:
+        return _flip_exchange_prices(reverse[0])
+    return None
+
+
+def _enrich_from_exchange(items: list, prices: dict, log) -> int:
+    """Pose un vrai prix d'exchange sur les matchs qui n'en ont pas.
+
+    Appelée DEUX fois par scan, et c'est le point important : une seule fois
+    ne suffit pas. Le Tier 1.5 s'exécute avant le Tier 2, donc les matchs
+    ramenés par odds-api.io/api-sports n'existaient pas encore au moment du
+    premier passage — ils repartaient sans prix sharp, donc sans edge
+    calculable, donc sans signal (constaté sur le run Golden Hour du
+    2026-08-20 19:07 : 10 marchés Matchbook chargés, 0 match à enrichir).
+
+    Le second appel a lieu AVANT `fetch_pinnacle_prices()` : chaque match
+    servi par l'exchange est un match de moins à faire chercher sur le web,
+    donc du quota Groq économisé pour le settlement.
+
+    Renvoie le nombre de matchs enrichis.
+    """
+    enriched = 0
+    for m in items:
+        pin = m.get("odds_pinnacle") or {}
+        if pin.get("1", 0) > 1.01 and pin.get("2", 0) > 1.01 and not m.get("_estimated"):
+            continue
+        bf = _lookup_exchange(m, prices)
+        if not (bf and bf.get("1", 0) > 1.01 and bf.get("2", 0) > 1.01):
+            continue
+        src = bf.get("_source", "betfair")
+        m["odds_pinnacle"] = {"1": bf["1"], "X": bf.get("X", 0.0), "2": bf["2"]}
+        m["_exchange"] = src
+        m["_betfair"] = True              # conservé : lu en aval/tests
+        m.pop("_estimated", None)
+        # L'exchange cote aussi totals et handicaps — bien plus nombreux que
+        # ses 1X2. Le moteur traite ces marchés dès qu'il a les DEUX côtés :
+        # le soft vient d'odds-api.io, le sharp d'ici. Le garde LINESKIP de
+        # _process_totals/_process_spreads écarte les lignes divergentes.
+        if bf.get("totals") and not m.get("totals_pinnacle"):
+            m["totals_pinnacle"] = bf["totals"]
+        if bf.get("spreads") and not m.get("spreads_pinnacle"):
+            m["spreads_pinnacle"] = bf["spreads"]
+        enriched += 1
+        log.info("💹 %s enrichi — %s (%.2f / %.2f)%s", src, m["match"], bf["1"], bf["2"],
+                 "".join(f" +{k}" for k in ("totals", "spreads") if bf.get(k)))
+    if enriched:
+        log.info("💹 Exchange: %d matchs enrichis (prix sharp réel)", enriched)
+    return enriched
+
+
 def _flip_exchange_prices(row: dict) -> dict:
     """Retourne les prix d'exchange d'un match trouvé dans l'autre sens.
 
@@ -1670,49 +1766,9 @@ def run():
                      len(mb_prices), len(betfair_prices))
 
     if betfair_prices:
-        enriched = 0
-        for m in matches:
-            # Enrichi si le prix sharp est ESTIMÉ par l'IA, ou carrément
-            # ABSENT. Ce second cas est celui qu'ouvre api-sports : il ramène
-            # d'excellents prix soft mais pas toujours de sharp, et sans
-            # sharp il n'y a pas d'edge calculable — donc pas de signal.
-            # C'est exactement ce trou que l'exchange comble.
-            pin = m.get("odds_pinnacle") or {}
-            has_sharp = pin.get("1", 0) > 1.01 and pin.get("2", 0) > 1.01
-            if has_sharp and not m.get("_estimated"):
-                continue
-            h = m.get("home", "").lower().strip()
-            a = m.get("away", "").lower().strip()
-            bf = betfair_prices.get(f"{h}_{a}")
-            if not bf:
-                # Essai inversé (away_home)
-                bf_r = betfair_prices.get(f"{a}_{h}")
-                if bf_r:
-                    bf = _flip_exchange_prices(bf_r)
-            if bf and bf.get("1", 0) > 1.01 and bf.get("2", 0) > 1.01:
-                src = bf.get("_source", "betfair")
-                m["odds_pinnacle"] = {"1": bf["1"], "X": bf.get("X", 0.0), "2": bf["2"]}
-                m["_exchange"] = src
-                m["_betfair"] = True          # conservé : lu en aval/tests
-                m.pop("_estimated", None)
-                # L'exchange cote aussi totals et handicaps — bien plus
-                # nombreux que ses 1X2. Le moteur traite ces marchés dès
-                # qu'il a les DEUX côtés : le soft vient d'odds-api.io, le
-                # sharp d'ici. Le garde LINESKIP de _process_totals /
-                # _process_spreads écarte de lui-même les cas où les deux
-                # sources ne cotent pas la même ligne.
-                if bf.get("totals") and not m.get("totals_pinnacle"):
-                    m["totals_pinnacle"] = bf["totals"]
-                if bf.get("spreads") and not m.get("spreads_pinnacle"):
-                    m["spreads_pinnacle"] = bf["spreads"]
-                enriched += 1
-                log.info("💹 %s enrichi — %s (%.2f / %.2f)%s", src, m["match"],
-                         bf["1"], bf["2"],
-                         "".join(f" +{k}" for k in ("totals", "spreads") if bf.get(k)))
-        if enriched:
-            log.info("💹 Exchange: %d matchs enrichis (prix sharp réel)", enriched)
-            if sharp_source in ("AI/Estimateur", "Aucune"):
-                sharp_source = "Exchange+AI"
+        if _enrich_from_exchange(matches, betfair_prices, log) and \
+                sharp_source in ("AI/Estimateur", "Aucune"):
+            sharp_source = "Exchange+AI"
     else:
         log.info("💹 Exchange: 0 marché sharp (Betfair absent/refusé, Matchbook vide ou géobloqué)")
 
@@ -1780,6 +1836,12 @@ def run():
             if credentials_failed:
                 raise SystemExit(1)
             return
+
+        # Second passage de l'exchange : les matchs du Tier 2 viennent
+        # d'apparaître, ils n'existaient pas lors du premier. Fait AVANT la
+        # recherche web pour que chaque match servi ici n'y soit pas envoyé.
+        if xbet_matches and betfair_prices:
+            _enrich_from_exchange(xbet_matches, betfair_prices, log)
 
         if xbet_matches:
             log.info("%d matchs Melbet | Requête Pinnacle → recherche web...", len(xbet_matches))
