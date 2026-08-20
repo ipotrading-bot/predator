@@ -64,19 +64,32 @@ def _odds_row(gid, bookmakers, *, style="fixture"):
 
 def _wire(monkeypatch, schedule, odds_pages, *, sched_status=200, odds_status=200,
           remaining="50", sched_errors=None):
-    calls = {"schedule": 0, "odds": []}
+    """Stub calqué sur la VRAIE API (vérifiée le 2026-08-20) :
+    - calendrier : `date=` (un appel par date de la fenêtre) ;
+    - cotes foot : `date=` + `page=` ;
+    - cotes autres sports : `game=<id>`, un appel par match.
+    `odds_pages` est indexé par (date, page) pour le foot, par ("game", id)
+    pour les autres."""
+    calls = {"schedule": [], "odds": []}
 
     def fake_get(url, headers=None, params=None, timeout=None):
         if url.endswith("/odds"):
-            calls["odds"].append((params["date"], params["page"]))
+            if "game" in params:
+                key = ("game", int(params["game"]))
+                calls["odds"].append(key)
+                if odds_status != 200:
+                    return _Resp({}, status=odds_status, remaining=remaining)
+                return _Resp({"response": odds_pages.get(key, [])}, remaining=remaining)
+            day, page = params["date"], params["page"]
+            calls["odds"].append((day, page))
             if odds_status != 200:
                 return _Resp({}, status=odds_status, remaining=remaining)
-            day, page = params["date"], params["page"]
             items = odds_pages.get((day, page), [])
-            total = max((p for (d, p) in odds_pages if d == day), default=1)
+            total = max((p for (d, p) in odds_pages if d == day and isinstance(p, int)),
+                        default=1)
             return _Resp({"response": items, "paging": {"current": page, "total": total}},
                          remaining=remaining)
-        calls["schedule"] += 1
+        calls["schedule"].append(params.get("date"))
         return _Resp({"response": schedule, "errors": sched_errors or []},
                      status=sched_status, remaining=remaining)
 
@@ -112,7 +125,7 @@ def test_cost_is_one_schedule_call_plus_paged_odds(monkeypatch):
              (day, 2): [_odds_row(2, [_bk("Bet365", 2.10, 3.50, 3.30)])]}
     calls = _wire(monkeypatch, sched, pages)
     out = aps.fetch_sport("soccer", api_key="k")
-    assert calls["schedule"] == 1
+    assert 1 <= len(calls["schedule"]) <= 2      # aujourd'hui, + demain si la fenêtre déborde
     assert calls["odds"] == [(day, 1), (day, 2)]
     assert sorted(m["match"] for m in out) == ["Nice vs Lens", "PSG vs Lyon"]
     assert all(m["commence_time"].endswith("Z") for m in out)
@@ -156,11 +169,14 @@ def test_sharp_only_match_is_kept_but_yields_no_edge(monkeypatch):
     ("basketball", "game", 4), ("baseball", "game", 6), ("hockey", "game", 7),
 ])
 def test_non_soccer_uses_game_shape_and_has_no_draw(monkeypatch, sport, style, sport_id):
-    day = _when().strftime("%Y-%m-%d")
+    """Hors foot, `/odds` n'accepte que `game=<id>` : `date` n'existe pas sur
+    ces hôtes et `league`+`season` est fermé au plan gratuit (vérifié en
+    direct). L'ancien appel par date échouait sur les trois sports."""
     sched = [_game(11, "Home", "Away", style=style)]
-    pages = {(day, 1): [_odds_row(11, [_bk("Bwin", 1.60, 2.40, 12.0)], style=style)]}
-    _wire(monkeypatch, sched, pages)
+    pages = {("game", 11): [_odds_row(11, [_bk("Bwin", 1.60, 2.40, 12.0)], style=style)]}
+    calls = _wire(monkeypatch, sched, pages)
     (m,) = aps.fetch_sport(sport, api_key="k")
+    assert calls["odds"] == [("game", 11)]
     assert m["sport"] == sport and m["sport_id"] == sport_id
     assert m["odds_1xbet"]["X"] == 0.0        # jamais de nul hors foot
     assert m["odds_1xbet"]["1"] == 1.60 and m["odds_1xbet"]["2"] == 2.40
@@ -255,7 +271,8 @@ def test_requests_actually_spent_are_counted(monkeypatch):
     spent = []
     monkeypatch.setattr(aps, "_usage_add", lambda sport, n: spent.append((sport, n)))
     aps.fetch_sport("soccer", api_key="k")
-    assert spent == [("soccer", 2)]        # 1 calendrier + 1 page de cotes
+    (sport, n), = spent
+    assert sport == "soccer" and 2 <= n <= 3   # calendrier(s) + 1 page de cotes
 
 
 def test_a_429_burns_the_local_budget_for_the_day(monkeypatch):
@@ -278,3 +295,26 @@ def test_suspended_account_is_counted_and_reported(monkeypatch, caplog):
         assert aps.fetch_sport("soccer", api_key="k") == []
     assert spent == [1]
     assert any("suspended" in r.getMessage() for r in caplog.records)
+
+
+def test_game_odds_are_capped(monkeypatch):
+    """Une requête par match : sans plafond, un slate NBA chargé viderait
+    les 100 requêtes/jour en un seul cycle."""
+    sched = [_game(i, f"H{i}", f"A{i}", style="game") for i in range(30)]
+    pages = {("game", i): [_odds_row(i, [_bk("Bwin", 2.0, 2.0)], style="game")]
+             for i in range(30)}
+    calls = _wire(monkeypatch, sched, pages)
+    monkeypatch.setattr(aps, "MAX_GAME_ODDS", 4)
+    aps.fetch_sport("basketball", api_key="k")
+    assert len(calls["odds"]) == 4
+
+
+def test_next_day_is_also_fetched_when_the_window_spills_over(monkeypatch):
+    """`date=` ne rend qu'une journée ; une fenêtre de 24h en chevauche deux,
+    et sans le second appel la moitié tardive du slate manque."""
+    calls = _wire(monkeypatch, [], {})
+    aps.fetch_sport("soccer", api_key="k", hours_ahead=24)
+    from datetime import datetime, timedelta, timezone
+    now = datetime.now(timezone.utc)
+    expected = {now.strftime("%Y-%m-%d"), (now + timedelta(hours=24)).strftime("%Y-%m-%d")}
+    assert set(calls["schedule"]) == expected

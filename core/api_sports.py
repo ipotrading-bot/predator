@@ -66,27 +66,32 @@ log = logging.getLogger("PREDATOR.api_sports")
 PROVIDERS: dict[str, dict] = {
     "soccer": {
         "host": "v3.football.api-sports.io", "schedule": "fixtures",
-        "sport_id": 1, "draw": True,
+        "sport_id": 1, "draw": True, "odds_by_date": True,
         "keys": ("API_FOOTBALL_KEY", "API_SPORTS_KEY"),
     },
     "basketball": {
-        "host": "v1.basketball.api-sports.io", "schedule": "games",
+        "host": "v1.basketball.api-sports.io", "schedule": "games", "odds_by_date": False,
         "sport_id": 4, "draw": False,
         "keys": ("API_BASKETBALL_KEY", "API_SPORTS_KEY"),
     },
     "baseball": {
-        "host": "v1.baseball.api-sports.io", "schedule": "games",
+        "host": "v1.baseball.api-sports.io", "schedule": "games", "odds_by_date": False,
         "sport_id": 6, "draw": False,
         "keys": ("API_BASEBALL_KEY", "API_SPORTS_KEY"),
     },
     "hockey": {
-        "host": "v1.hockey.api-sports.io", "schedule": "games",
+        "host": "v1.hockey.api-sports.io", "schedule": "games", "odds_by_date": False,
         "sport_id": 7, "draw": False,
         "keys": ("API_HOCKEY_KEY", "API_SPORTS_KEY"),
     },
 }
 
 MAX_ODDS_PAGES = 3
+# Hors foot, les cotes ne s'obtiennent QUE match par match (`/odds?game=<id>`) :
+# `date` n'existe pas sur ces hôtes, et `league`+`season` est fermé au plan
+# gratuit au-delà de 2022 — constaté le 2026-08-20. Une requête par match, donc
+# un plafond serré. Taux de réussite mesuré : ~2 matchs sur 3 ont des cotes.
+MAX_GAME_ODDS = int(os.environ.get("API_SPORTS_MAX_GAME_ODDS", "8"))
 QUOTA_GUARD    = 8      # requêtes restantes en dessous desquelles on rend la main
 
 # BUDGET JOURNALIER — le garde-fou qui manquait.
@@ -257,10 +262,12 @@ def fetch_sport(sport: str, api_key: str | None = None, hours_ahead: int = 24) -
 
     # ── 1. Calendrier (1 requête, par plage de dates) ───────────────────
     try:
+        # `date=` est le SEUL filtre calendrier commun aux quatre hôtes :
+        # `from`/`to` exigent un `league`+`season` côté foot et n'existent pas
+        # du tout ailleurs (vérifié en direct le 2026-08-20 — l'ancien appel
+        # renvoyait un refus applicatif sur les quatre sports).
         r = requests.get(f"{base}/{prov['schedule']}", headers=headers, timeout=15,
-                         params={"from": now.strftime("%Y-%m-%d"),
-                                 "to": until.strftime("%Y-%m-%d"),
-                                 "timezone": "UTC"})
+                         params={"date": now.strftime("%Y-%m-%d"), "timezone": "UTC"})
         used += 1
         remaining = _remaining(r)
         if r.status_code in (401, 403):
@@ -294,6 +301,20 @@ def fetch_sport(sport: str, api_key: str | None = None, hours_ahead: int = 24) -
         log.error("api-sports[%s] %s: %s", sport, prov["schedule"], e)
         return []
 
+    # La fenêtre de 24h chevauche presque toujours deux dates UTC : on va
+    # chercher le lendemain aussi, sinon la moitié tardive du slate manque.
+    if until.strftime("%Y-%m-%d") != now.strftime("%Y-%m-%d"):
+        try:
+            r2 = requests.get(f"{base}/{prov['schedule']}", headers=headers, timeout=15,
+                              params={"date": until.strftime("%Y-%m-%d"), "timezone": "UTC"})
+            used += 1
+            if r2.status_code == 200:
+                body2 = r2.json() or {}
+                if not (body2.get("errors") or []):
+                    schedule = schedule + (body2.get("response") or [])
+        except Exception as e:
+            log.debug("api-sports[%s] calendrier J+1: %s", sport, e)
+
     by_id: dict[int, dict] = {}
     for item in schedule:
         try:
@@ -317,21 +338,94 @@ def fetch_sport(sport: str, api_key: str | None = None, hours_ahead: int = 24) -
                  sport, hours_ahead, len(schedule), remaining)
         return []
 
-    # ── 2. Cotes PAR DATE, paginées ─────────────────────────────────────
+    # ── 2. Cotes ────────────────────────────────────────────────────────
     matches: list[dict] = []
     seen: set[int] = set()
     n_sharp = 0
     stopped = ""
-    for day in sorted({v["when"].strftime("%Y-%m-%d") for v in by_id.values()}):
-        for page in range(1, MAX_ODDS_PAGES + 1):
-            if remaining is not None and remaining < QUOTA_GUARD:
+
+    def _absorb(items) -> None:
+        nonlocal n_sharp
+        for item in items or []:
+            gid = _first(item, "fixture.id", "game.id", "id")
+            try:
+                gid = int(gid)
+            except (TypeError, ValueError):
+                continue
+            meta = by_id.get(gid)
+            if meta is None or gid in seen:
+                continue
+            soft, sharp = extract_prices(item.get("bookmakers", []) or [], prov["draw"])
+            if not soft and not sharp:
+                continue
+            m = {
+                "id":            f"as_{sport}_{gid}",
+                "match":         f"{meta['home']} vs {meta['away']}",
+                "home":          meta["home"],
+                "away":          meta["away"],
+                "league":        meta["league"],
+                "sport":         sport,
+                "sport_id":      prov["sport_id"],
+                "commence_time": meta["when"].strftime("%Y-%m-%dT%H:%M:%SZ"),
+                # Sans book soft, le prix sharp sert aussi de soft : edge nul,
+                # donc jamais de signal, mais le match reste prixé.
+                "odds_1xbet":    soft or sharp,
+                "_soft_source":  f"api-sports/{sport}",
+            }
+            if sharp:
+                m["odds_pinnacle"] = sharp
+                n_sharp += 1
+            matches.append(m)
+            seen.add(gid)
+
+    def _budget_left() -> bool:
+        return remaining is None or remaining >= QUOTA_GUARD
+
+    if prov["odds_by_date"]:
+        # Foot : `/odds?date=&page=` — plusieurs matchs par réponse, c'est ce
+        # qui rend la source tenable dans 100 requêtes/jour.
+        for day in sorted({v["when"].strftime("%Y-%m-%d") for v in by_id.values()}):
+            for page in range(1, MAX_ODDS_PAGES + 1):
+                if not _budget_left():
+                    stopped = f"garde quota ({remaining} restantes)"
+                    break
+                try:
+                    r = requests.get(f"{base}/odds", headers=headers, timeout=15,
+                                     params={"date": day, "page": page, "timezone": "UTC"})
+                except Exception as e:
+                    log.warning("api-sports[%s] odds %s p%d: %s", sport, day, page, e)
+                    stopped = "erreur réseau"
+                    break
+                used += 1
+                rem = _remaining(r)
+                if rem is not None:
+                    remaining = rem
+                if r.status_code != 200:
+                    log.warning("api-sports[%s] odds %s p%d: HTTP %d (restant=%s)",
+                                sport, day, page, r.status_code, remaining)
+                    stopped = f"HTTP {r.status_code}"
+                    break
+                body = r.json() or {}
+                _absorb(body.get("response"))
+                paging = body.get("paging") or {}
+                try:
+                    if int(paging.get("current", page)) >= int(paging.get("total", page)):
+                        break
+                except (TypeError, ValueError):
+                    break
+            if stopped:
+                break
+    else:
+        # Basket/baseball/hockey : une requête PAR match, donc plafonnée.
+        for gid in sorted(by_id, key=lambda g: by_id[g]["when"])[:MAX_GAME_ODDS]:
+            if not _budget_left():
                 stopped = f"garde quota ({remaining} restantes)"
                 break
             try:
                 r = requests.get(f"{base}/odds", headers=headers, timeout=15,
-                                 params={"date": day, "page": page, "timezone": "UTC"})
+                                 params={"game": gid})
             except Exception as e:
-                log.warning("api-sports[%s] odds %s p%d: %s", sport, day, page, e)
+                log.warning("api-sports[%s] odds game=%s: %s", sport, gid, e)
                 stopped = "erreur réseau"
                 break
             used += 1
@@ -339,51 +433,10 @@ def fetch_sport(sport: str, api_key: str | None = None, hours_ahead: int = 24) -
             if rem is not None:
                 remaining = rem
             if r.status_code != 200:
-                log.warning("api-sports[%s] odds %s p%d: HTTP %d (restant=%s)",
-                            sport, day, page, r.status_code, remaining)
+                log.warning("api-sports[%s] odds game=%s: HTTP %d", sport, gid, r.status_code)
                 stopped = f"HTTP {r.status_code}"
                 break
-            body = r.json() or {}
-            for item in body.get("response", []) or []:
-                gid = _first(item, "fixture.id", "game.id", "id")
-                try:
-                    gid = int(gid)
-                except (TypeError, ValueError):
-                    continue
-                meta = by_id.get(gid)
-                if meta is None or gid in seen:
-                    continue
-                soft, sharp = extract_prices(item.get("bookmakers", []) or [], prov["draw"])
-                if not soft and not sharp:
-                    continue
-                m = {
-                    "id":            f"as_{sport}_{gid}",
-                    "match":         f"{meta['home']} vs {meta['away']}",
-                    "home":          meta["home"],
-                    "away":          meta["away"],
-                    "league":        meta["league"],
-                    "sport":         sport,
-                    "sport_id":      prov["sport_id"],
-                    "commence_time": meta["when"].strftime("%Y-%m-%dT%H:%M:%SZ"),
-                    # Sans book soft, le prix sharp sert de soft : edge nul,
-                    # donc aucun signal, mais le match reste prixé pour le
-                    # merge multi-sources en aval.
-                    "odds_1xbet":    soft or sharp,
-                    "_soft_source":  f"api-sports/{sport}",
-                }
-                if sharp:
-                    m["odds_pinnacle"] = sharp
-                    n_sharp += 1
-                matches.append(m)
-                seen.add(gid)
-            paging = body.get("paging") or {}
-            try:
-                if int(paging.get("current", page)) >= int(paging.get("total", page)):
-                    break
-            except (TypeError, ValueError):
-                break
-        if stopped:
-            break
+            _absorb((r.json() or {}).get("response"))
 
     _usage_add(sport, used)
     log.info("api-sports[%s]: %d matchs (%d avec prix sharp) / %d au calendrier | "

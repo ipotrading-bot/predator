@@ -151,7 +151,7 @@ laissez-passer là où l'IP est refusée) — ou Matchbook, qui ne filtre pas.
 | 1 | The Odds API (`core/odds_api.py`) | sharp + soft | pool `ODDS_API_KEYS` | 500/mois par clé |
 | 1.5 | **Matchbook** (`core/matchbook.py`) | **sharp** (1X2 + totals + handicaps) | aucune | 700 req/min |
 | 1.5 | Betfair (`core/harvester.py`) | sharp | 499 £ + géobloqué US | inopérant sur Actions |
-| 2 | **api-sports** (`core/api_sports.py`) | soft (+ sharp parfois) | `API_SPORTS_KEY` | 100/jour PAR sport |
+| 2 | **api-sports** (`core/api_sports.py`) | soft **et** sharp (Pinnacle) | `API_SPORTS_KEY` | 100/jour PAR sport |
 | 2 | **odds-api.io** (`core/odds_api_io.py`) | soft (1X2 + totals + handicaps) | `ODDS_API_IO_KEY` | 500/jour |
 | 2 | **Titan007** (`core/titan007.py`) | soft **et** sharp, foot | aucune | ~500/jour (tolérance) |
 | 2bis | LineFeed 1xbet/Melbet | soft | aucune | bloqué par IP |
@@ -176,6 +176,21 @@ lève la dépendance structurelle à OddsAPI. Deux points de vigilance :
 API propre demande 499 £ ET refuse les IP américaines ; chez odds-api.io les
 books sharp/exchanges sont réservés aux plans payants (HTTP 403 explicite).
 Matchbook tient ce rôle — ne pas repayer cette recherche.
+
+**api-sports — les paramètres réels, vérifiés le 2026-08-20.** La première
+implémentation les avait devinés d'après la doc, et les quatre sports
+répondaient « refus applicatif » :
+- le calendrier n'accepte que `date=` (un appel par journée). `from`/`to`
+  exigent `league`+`season` côté foot et **n'existent pas** sur les trois
+  autres hôtes. Une fenêtre de 24h chevauche deux dates : il faut donc DEUX
+  appels, sinon la moitié tardive du slate manque ;
+- les cotes du FOOT s'obtiennent par `date=` + `page=` (plusieurs matchs par
+  réponse) — c'est ce qui rend la source tenable dans 100 requêtes/jour ;
+- les cotes des autres sports s'obtiennent UNIQUEMENT par `game=<id>`, une
+  requête par match, d'où `MAX_GAME_ODDS`. `league`+`season` y est fermé au
+  plan gratuit au-delà de 2022.
+Rendement mesuré avec un compte neuf : foot 30 matchs pour 8 requêtes, tous
+avec un prix Pinnacle ; basket 7 pour 10 requêtes.
 
 **Titan007 — pourquoi elle est là, et ce qu'elle exige.** Matchbook est riche
 en Amérique du Sud et en ligues secondaires ; odds-api.io ne l'est pas. Le
