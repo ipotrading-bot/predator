@@ -242,3 +242,77 @@ def test_abbreviated_runner_names_are_matched_fuzzily(monkeypatch):
     assert len(out) == 1
     (row,) = out.values()
     assert row["1"] == pytest.approx(2.33) and row["2"] == pytest.approx(3.15)
+
+
+# ── Totals et handicaps (l'essentiel du volume de l'exchange) ──────────
+
+def _market(mtype, handicap, runners, status="open"):
+    return {"market-type": mtype, "status": status, "handicap": handicap,
+            "runners": [{"name": n, "prices": _prices(b, l)} for n, b, l in runners]}
+
+
+def _rich_event(name, markets, live=False):
+    from datetime import datetime, timedelta, timezone
+    start = (datetime.now(timezone.utc) + timedelta(hours=5)).strftime("%Y-%m-%dT%H:%M:%S.000Z")
+    return {"id": 1, "name": name, "start": start, "in-running-flag": live, "markets": markets}
+
+
+_ML = _market("one_x_two", None,
+              [("Tacuary", 2.30, 2.36), ("Draw", 3.40, 3.50), ("Libertad", 3.10, 3.20)])
+
+
+def test_totals_main_line_is_the_balanced_one(monkeypatch):
+    ev = _rich_event("Tacuary vs Libertad", [_ML,
+        _market("total", 5.5, [("OVER 5.5", 14.0, 16.0), ("UNDER 5.5", 1.01, 1.03)]),
+        _market("total", 2.5, [("OVER 2.5", 1.87, 1.93), ("UNDER 2.5", 1.95, 2.01)]),
+    ])
+    _wire(monkeypatch, [ev])
+    (row,) = mb.fetch_matchbook_prices(sports=["soccer"]).values()
+    assert row["totals"] == {"over": 1.90, "under": 1.98, "point": 2.5}
+
+
+def test_handicap_sign_follows_the_runner_not_the_market(monkeypatch):
+    """`handicap` du marché n'est pas signé : « Tacuary +1.5 » et
+    « Tacuary -1.5 » y sont indistinguables. Le signe vient du runner."""
+    ev = _rich_event("Tacuary vs Libertad", [_ML,
+        _market("handicap", 1.5, [("Tacuary +1.5", 2.58, 2.62),
+                                  ("Libertad -1.5", 1.45, 1.49)]),
+    ])
+    _wire(monkeypatch, [ev])
+    (row,) = mb.fetch_matchbook_prices(sports=["soccer"]).values()
+    assert row["spreads"]["point"] == 1.5          # ligne du DOMICILE, signée
+    assert row["spreads"]["away_point"] == -1.5
+    assert row["spreads"]["home"] == pytest.approx(2.60)
+    assert row["spreads"]["away"] == pytest.approx(1.47)
+
+
+def test_team_name_ending_in_a_number_is_not_read_as_a_line(monkeypatch):
+    ev = _rich_event("Schalke 04 vs Iberia 1999", [
+        _market("one_x_two", None, [("Schalke 04", 2.30, 2.36), ("Draw", 3.40, 3.50),
+                                    ("Iberia 1999", 3.10, 3.20)]),
+        _market("handicap", 1.5, [("Schalke 04 -1.5", 2.10, 2.16),
+                                  ("Iberia 1999 +1.5", 1.75, 1.81)]),
+    ])
+    _wire(monkeypatch, [ev])
+    (row,) = mb.fetch_matchbook_prices(sports=["soccer"]).values()
+    assert row["spreads"]["point"] == -1.5
+    assert row["1"] == pytest.approx(2.33)         # le 1X2 reste correct
+
+
+def test_thin_totals_are_dropped_but_the_match_survives(monkeypatch):
+    ev = _rich_event("Tacuary vs Libertad", [_ML,
+        _market("total", 2.5, [("OVER 2.5", 110.0, None), ("UNDER 2.5", None, 1.01)]),
+    ])
+    _wire(monkeypatch, [ev])
+    (row,) = mb.fetch_matchbook_prices(sports=["soccer"]).values()
+    assert "totals" not in row and row["1"] == pytest.approx(2.33)
+
+
+def test_suspended_side_market_is_ignored(monkeypatch):
+    ev = _rich_event("Tacuary vs Libertad", [_ML,
+        _market("total", 2.5, [("OVER 2.5", 1.87, 1.93), ("UNDER 2.5", 1.95, 2.01)],
+                status="suspended"),
+    ])
+    _wire(monkeypatch, [ev])
+    (row,) = mb.fetch_matchbook_prices(sports=["soccer"]).values()
+    assert "totals" not in row

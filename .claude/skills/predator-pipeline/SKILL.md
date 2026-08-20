@@ -149,14 +149,32 @@ laissez-passer là où l'IP est refusée) — ou Matchbook, qui ne filtre pas.
 | Étage | Source | Côté | Clé | Quota |
 |---|---|---|---|---|
 | 1 | The Odds API (`core/odds_api.py`) | sharp + soft | pool `ODDS_API_KEYS` | 500/mois par clé |
-| 1.5 | **Matchbook** (`core/matchbook.py`) | **sharp** | aucune | 700 req/min |
+| 1.5 | **Matchbook** (`core/matchbook.py`) | **sharp** (1X2 + totals + handicaps) | aucune | 700 req/min |
 | 1.5 | Betfair (`core/harvester.py`) | sharp | 499 £ + géobloqué US | inopérant sur Actions |
 | 2 | **api-sports** (`core/api_sports.py`) | soft (+ sharp parfois) | `API_SPORTS_KEY` | 100/jour PAR sport |
+| 2 | **odds-api.io** (`core/odds_api_io.py`) | soft (1X2 + totals + handicaps) | `ODDS_API_IO_KEY` | 500/jour |
 | 2bis | LineFeed 1xbet/Melbet | soft | aucune | bloqué par IP |
 | 3 | recherche web (`core/ai_search.py`) | sharp estimé | Groq/Tavily | quotas morts régulièrement |
 
 `python scripts/ops.py sources` sonde tout cela sans dépenser un crédit —
 c'est la commande à lancer AVANT tout diagnostic « pourquoi 0 signal ».
+
+**Le couple qui rend le pipeline autonome.** Matchbook (sharp, sans clé) +
+odds-api.io (soft, 1xbet) donnent les DEUX côtés d'un edge sans aucune clé
+payante et sans recherche web — sur 1X2, totals ET handicaps. C'est ce qui
+lève la dépendance structurelle à OddsAPI. Deux points de vigilance :
+- les deux sources choisissent leur ligne principale avec la MÊME heuristique
+  (celle dont les deux prix sont les plus proches) ; les faire diverger
+  ferait comparer deux lignes différentes. Le garde `LINESKIP` de
+  `_process_totals`/`_process_spreads` (écart > 0,5) est le filet ;
+- un match trouvé dans l'autre sens passe par `_flip_exchange_prices()` :
+  le handicap porte le signe de l'équipe, donc il s'inverse aussi. L'oublier
+  produit un edge calculé contre la mauvaise ligne, sans rien casser.
+
+**Betfair Exchange n'est branchable nulle part** (vérifié 2026-08-20) : son
+API propre demande 499 £ ET refuse les IP américaines ; chez odds-api.io les
+books sharp/exchanges sont réservés aux plans payants (HTTP 403 explicite).
+Matchbook tient ce rôle — ne pas repayer cette recherche.
 
 **Matchbook — ce qu'il faut savoir avant d'y toucher.** Le milieu back/lay
 donne une marge d'environ 0,1 % (meilleure que Pinnacle, ~2 %), d'où son rôle

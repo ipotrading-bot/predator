@@ -467,6 +467,27 @@ def _alert_oddsapi_pool_if_dead(sb) -> None:
                     f"(plusieurs clés = bascule automatique, plus de scan perdu)")
 
 
+def _flip_exchange_prices(row: dict) -> dict:
+    """Retourne les prix d'exchange d'un match trouvé dans l'autre sens.
+
+    L'exchange peut nommer le match « B vs A » là où la source soft dit
+    « A vs B ». Inverser 1 et 2 ne suffit pas : le handicap porte le SIGNE de
+    l'équipe qui le concède, donc il s'inverse aussi. Un handicap laissé tel
+    quel donnerait un edge calculé contre la mauvaise ligne — faux, et
+    silencieux. Les totals, eux, sont symétriques et se recopient.
+    """
+    out = {"1": row["2"], "X": row.get("X", 0.0), "2": row["1"],
+           "_source": row.get("_source", "betfair")}
+    if row.get("totals"):
+        out["totals"] = row["totals"]
+    sp = row.get("spreads")
+    if sp:
+        out["spreads"] = {"home": sp["away"], "away": sp["home"],
+                          "point": sp.get("away_point", -sp["point"]),
+                          "away_point": sp["point"]}
+    return out
+
+
 def _heartbeat(sb, scan_time: datetime, matches: int, signals: int):
     try:
         sb.table("meta").upsert({
@@ -1667,16 +1688,27 @@ def run():
                 # Essai inversé (away_home)
                 bf_r = betfair_prices.get(f"{a}_{h}")
                 if bf_r:
-                    bf = {"1": bf_r["2"], "X": bf_r["X"], "2": bf_r["1"],
-                          "_source": bf_r.get("_source", "betfair")}
+                    bf = _flip_exchange_prices(bf_r)
             if bf and bf.get("1", 0) > 1.01 and bf.get("2", 0) > 1.01:
                 src = bf.get("_source", "betfair")
                 m["odds_pinnacle"] = {"1": bf["1"], "X": bf.get("X", 0.0), "2": bf["2"]}
                 m["_exchange"] = src
                 m["_betfair"] = True          # conservé : lu en aval/tests
                 m.pop("_estimated", None)
+                # L'exchange cote aussi totals et handicaps — bien plus
+                # nombreux que ses 1X2. Le moteur traite ces marchés dès
+                # qu'il a les DEUX côtés : le soft vient d'odds-api.io, le
+                # sharp d'ici. Le garde LINESKIP de _process_totals /
+                # _process_spreads écarte de lui-même les cas où les deux
+                # sources ne cotent pas la même ligne.
+                if bf.get("totals") and not m.get("totals_pinnacle"):
+                    m["totals_pinnacle"] = bf["totals"]
+                if bf.get("spreads") and not m.get("spreads_pinnacle"):
+                    m["spreads_pinnacle"] = bf["spreads"]
                 enriched += 1
-                log.info("💹 %s enrichi — %s (%.2f / %.2f)", src, m["match"], bf["1"], bf["2"])
+                log.info("💹 %s enrichi — %s (%.2f / %.2f)%s", src, m["match"],
+                         bf["1"], bf["2"],
+                         "".join(f" +{k}" for k in ("totals", "spreads") if bf.get(k)))
         if enriched:
             log.info("💹 Exchange: %d matchs enrichis (prix sharp réel)", enriched)
             if sharp_source in ("AI/Estimateur", "Aucune"):

@@ -192,6 +192,98 @@ def _match_odds(event: dict, home: str, away: str) -> dict | None:
     return None
 
 
+def _line_point(market: dict, runner_name: str) -> float | None:
+    """Le nombre signé de la ligne : « Club Tacuary +1.5 » → +1.5.
+
+    On le lit sur le RUNNER et non sur le champ `handicap` du marché, qui
+    est non signé : sans le signe, un handicap +1.5 et un -1.5 deviendraient
+    indistinguables et le moteur comparerait deux lignes opposées.
+    """
+    for token in reversed(str(runner_name).replace("−", "-").split()):
+        try:
+            return float(token.replace("+", ""))
+        except ValueError:
+            continue
+    try:
+        return float(market.get("handicap"))
+    except (TypeError, ValueError):
+        return None
+
+
+def _main_line(candidates: list) -> dict | None:
+    """Parmi plusieurs lignes, celle dont les deux prix sont les plus proches.
+
+    Un exchange cote une douzaine de lignes ; les extrêmes (1.01 contre 8.60)
+    sont sans rapport avec la ligne de référence du marché. Même heuristique
+    que core/odds_api_io.py, pour que les deux sources retiennent la même.
+    """
+    best, best_gap = None, None
+    for c in candidates:
+        gap = abs(c["_a"] - c["_b"])
+        if best_gap is None or gap < best_gap:
+            best, best_gap = c, gap
+    return best
+
+
+def _totals_odds(event: dict) -> dict | None:
+    """{"over","under","point"} — forme attendue par run_engine._process_totals."""
+    cands = []
+    for market in event.get("markets") or []:
+        if str(market.get("market-type", "")).lower() != "total":
+            continue
+        if str(market.get("status", "")).lower() not in ("open", ""):
+            continue
+        over = under = None
+        point = None
+        for runner in market.get("runners") or []:
+            name = str(runner.get("name", "")).strip().upper()
+            mid = _mid(runner.get("prices"))
+            if mid is None:
+                continue
+            if name.startswith("OVER"):
+                over, point = mid, _line_point(market, name)
+            elif name.startswith("UNDER"):
+                under = mid
+        if over and under and point is not None:
+            cands.append({"over": over, "under": under, "point": abs(point),
+                          "_a": over, "_b": under})
+    best = _main_line(cands)
+    return {k: v for k, v in best.items() if not k.startswith("_")} if best else None
+
+
+def _handicap_odds(event: dict, home: str, away: str) -> dict | None:
+    """{"home","away","point","away_point"} — forme de _process_spreads."""
+    cands = []
+    for market in event.get("markets") or []:
+        if str(market.get("market-type", "")).lower() not in ("handicap", "asian_handicap"):
+            continue
+        if str(market.get("status", "")).lower() not in ("open", ""):
+            continue
+        row: dict = {}
+        for runner in market.get("runners") or []:
+            rname = str(runner.get("name", "")).strip()
+            mid = _mid(runner.get("prices"))
+            if mid is None:
+                continue
+            point = _line_point(market, rname)
+            # Le nom du runner porte l'équipe ET sa ligne ; on retire la
+            # ligne avant de rapprocher, sinon « Tacuary +1.5 » ne matche
+            # jamais « Tacuary ».
+            bare = rname.rsplit(" ", 1)[0].strip() if point is not None else rname
+            if bare.lower() == home.lower() or (
+                    strict_team_match(bare, home) and not strict_team_match(bare, away)):
+                row["home"], row["point"] = mid, point
+            elif bare.lower() == away.lower() or (
+                    strict_team_match(bare, away) and not strict_team_match(bare, home)):
+                row["away"], row["away_point"] = mid, point
+        if row.get("home") and row.get("away") and row.get("point") is not None:
+            row.setdefault("away_point", -row["point"])
+            row["_a"], row["_b"] = row["home"], row["away"]
+            cands.append(row)
+    best = _main_line(cands)
+    return {k: v for k, v in best.items() if not k.startswith("_")} if best else None
+
+
 def fetch_matchbook_prices(sports: list | None = None, hours_ahead: int = 24) -> dict:
     """
     Prix sharp d'exchange pour les matchs à venir.
@@ -254,6 +346,7 @@ def fetch_matchbook_prices(sports: list | None = None, hours_ahead: int = 24) ->
 
     out: dict = {}
     skipped_live = skipped_thin = 0
+    n_totals = n_spreads = 0
     for ev in events:
         try:
             if ev.get("in-running-flag"):
@@ -274,17 +367,32 @@ def fetch_matchbook_prices(sports: list | None = None, hours_ahead: int = 24) ->
             if not odds:
                 skipped_thin += 1
                 continue
-            out[norm_key(home, away)] = {
+            row = {
                 "match": f"{home} vs {away}", "home": home, "away": away,
                 "1": odds["1"], "X": odds["X"], "2": odds["2"],
                 "commence_time": when.strftime("%Y-%m-%dT%H:%M:%SZ"),
                 "_source": "matchbook",
             }
+            # Totals et handicaps : l'exchange en publie ~15x plus que de
+            # 1X2 (574 handicaps / 468 totals contre 34 marchés 1X2 relevés
+            # le 2026-08-20). Les ignorer laissait l'essentiel de la source
+            # inexploité, alors que le moteur sait traiter ces marchés dès
+            # qu'il a les deux côtés.
+            tot = _totals_odds(ev)
+            if tot:
+                row["totals"] = tot
+                n_totals += 1
+            hcp = _handicap_odds(ev, home, away)
+            if hcp:
+                row["spreads"] = hcp
+                n_spreads += 1
+            out[norm_key(home, away)] = row
         except Exception as e:
             log.debug("Matchbook parse: %s", e)
 
-    log.info("Matchbook: %d marchés sharp (%d bruts | %d en direct | %d trop peu liquides)",
-             len(out), len(events), skipped_live, skipped_thin)
+    log.info("Matchbook: %d marchés sharp — dont %d totals, %d handicaps "
+             "(%d bruts | %d en direct | %d trop peu liquides)",
+             len(out), n_totals, n_spreads, len(events), skipped_live, skipped_thin)
     return out
 
 

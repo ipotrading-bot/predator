@@ -109,3 +109,27 @@ def test_breaker_still_queries_api_sports(monkeypatch):
     branch = head[:head.index("else:")]
     assert "_api_sports_all(" in branch, "api-sports doit rester appelé quand le harvest est sauté"
     assert "fetch_matches()" not in branch, "le harvest web coûteux doit rester sauté"
+
+
+# ── Retournement des prix d'exchange ──────────────────────────────────
+
+def test_flipping_an_exchange_row_swaps_sides_and_the_handicap_sign():
+    """L'exchange peut nommer le match dans l'autre sens. Inverser 1 et 2
+    sans inverser le handicap comparerait l'edge à la mauvaise ligne."""
+    flipped = eng._flip_exchange_prices({
+        "1": 1.50, "X": 4.20, "2": 6.00, "_source": "matchbook",
+        "totals": {"over": 1.90, "under": 1.98, "point": 2.5},
+        "spreads": {"home": 1.86, "away": 2.17, "point": -1.5, "away_point": 1.5},
+    })
+    assert (flipped["1"], flipped["2"]) == (6.00, 1.50)
+    assert flipped["X"] == 4.20                      # le nul est symétrique
+    assert flipped["totals"] == {"over": 1.90, "under": 1.98, "point": 2.5}
+    assert flipped["spreads"] == {"home": 2.17, "away": 1.86,
+                                  "point": 1.5, "away_point": -1.5}
+    assert flipped["_source"] == "matchbook"
+
+
+def test_flipping_without_side_markets_is_harmless():
+    flipped = eng._flip_exchange_prices({"1": 2.0, "X": 3.3, "2": 3.6})
+    assert (flipped["1"], flipped["2"]) == (3.6, 2.0)
+    assert "totals" not in flipped and "spreads" not in flipped
