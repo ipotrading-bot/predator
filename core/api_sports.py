@@ -52,6 +52,7 @@ n'ont pas pu être vérifiées live faute de clé dans le sandbox — la premiè
 exécution le dira, chaque cycle loggant une ligne « api-sports[<sport>] ».
 """
 import logging
+import os
 from datetime import datetime, timedelta, timezone
 
 import requests
@@ -87,6 +88,20 @@ PROVIDERS: dict[str, dict] = {
 MAX_ODDS_PAGES = 3
 QUOTA_GUARD    = 8      # requêtes restantes en dessous desquelles on rend la main
 
+# BUDGET JOURNALIER — le garde-fou qui manquait.
+#
+# Le plan gratuit donne 100 requêtes/jour PAR SPORT. Quand le Tier 1 est mort,
+# les ~40 scans quotidiens atteignent tous le Tier 2 : à 7 requêtes le cycle,
+# cela ferait ~280 requêtes/jour, soit près du triple du plan — puis des 429 en
+# rafale. Le compte api-sports de ce projet a d'ailleurs été trouvé SUSPENDU le
+# 2026-08-20, alors que l'ancienne implémentation dépensait 1 requête PAR MATCH.
+# On tient donc un compteur par sport et par jour dans la table Supabase `meta`,
+# partagé entre tous les runs.
+#
+# Sans Supabase (tests, sandbox), le compteur est simplement inopérant : la
+# source reste utilisable, on perd juste le partage entre runs.
+DAILY_BUDGET = int(os.environ.get("API_SPORTS_DAILY_BUDGET", "80"))
+
 # Reconnaissance par NOM (insensible à la casse) et non par id numérique :
 # les ids de bookmakers de la doc n'ont pas pu être vérifiés, et un id faux
 # renverrait silencieusement zéro prix sharp.
@@ -100,6 +115,40 @@ WINNER_BETS = {"match winner", "home/away", "1x2", "full time result",
 _HOME = {"home", "1", "home team"}
 _AWAY = {"away", "2", "away team"}
 _DRAW = {"draw", "x", "tie"}
+
+
+def _usage_key(sport: str) -> str:
+    return f"api_sports_usage_{sport}_{datetime.now(timezone.utc):%Y%m%d}"
+
+
+def _usage_get(sport: str) -> int:
+    """Requêtes déjà dépensées aujourd'hui pour ce sport (0 si inconnu)."""
+    try:
+        from core.db import get_db
+        sb = get_db(write=True)
+        if sb is None:
+            return 0
+        row = sb.table("meta").select("value").eq("key", _usage_key(sport)).maybe_single().execute()
+        return int((row.data or {}).get("value") or 0) if row and row.data else 0
+    except Exception as e:
+        log.debug("api-sports[%s]: compteur illisible (%s)", sport, e)
+        return 0
+
+
+def _usage_add(sport: str, n: int) -> None:
+    if n <= 0:
+        return
+    try:
+        from core.db import get_db
+        sb = get_db(write=True)
+        if sb is None:
+            return
+        sb.table("meta").upsert(
+            {"key": _usage_key(sport), "value": str(_usage_get(sport) + n),
+             "updated_at": datetime.now(timezone.utc).isoformat()},
+            on_conflict="key").execute()
+    except Exception as e:
+        log.debug("api-sports[%s]: compteur non écrit (%s)", sport, e)
 
 
 def _key_for(sport: str) -> str | None:
@@ -219,6 +268,13 @@ def fetch_sport(sport: str, api_key: str | None = None, hours_ahead: int = 24) -
                   sport, "/".join(prov["keys"]))
         return []
 
+    spent = _usage_get(sport)
+    if spent >= DAILY_BUDGET:
+        log.warning("api-sports[%s]: budget journalier atteint (%d/%d) — cycle ignoré "
+                    "(le plan gratuit fait 100 req/jour et un dépassement soutenu "
+                    "fait suspendre le compte)", sport, spent, DAILY_BUDGET)
+        return []
+
     base    = f"https://{prov['host']}"
     headers = {"x-apisports-key": key}
     now     = datetime.now(timezone.utc)
@@ -235,10 +291,14 @@ def fetch_sport(sport: str, api_key: str | None = None, hours_ahead: int = 24) -
         used += 1
         remaining = _remaining(r)
         if r.status_code in (401, 403):
+            _usage_add(sport, used)
             log.error("api-sports[%s]: auth refusée (HTTP %d) — vérifier %s",
                       sport, r.status_code, prov["keys"][0])
             return []
         if r.status_code == 429:
+            # Quota atteint côté API : on cale le compteur local au plafond
+            # pour ne pas retenter 40 fois dans la journée.
+            _usage_add(sport, max(used, DAILY_BUDGET))
             log.warning("api-sports[%s]: HTTP 429 — quota journalier épuisé", sport)
             return []
         if r.status_code != 200:
@@ -249,10 +309,15 @@ def fetch_sport(sport: str, api_key: str | None = None, hours_ahead: int = 24) -
         # est absente/non abonnée à CE sport — un 200 n'est pas un succès ici.
         errs = body.get("errors")
         if errs and (isinstance(errs, dict) and errs or isinstance(errs, list) and errs):
+            # Un compte suspendu ou non abonné répond 200 avec ce corps.
+            # L'ancienne implémentation le lisait comme un succès vide : dix
+            # jours sans une seule ligne de log (constaté le 2026-08-20).
+            _usage_add(sport, used)
             log.warning("api-sports[%s]: refus applicatif %s", sport, str(errs)[:160])
             return []
         schedule = body.get("response", []) or []
     except Exception as e:
+        _usage_add(sport, used)
         log.error("api-sports[%s] %s: %s", sport, prov["schedule"], e)
         return []
 
@@ -274,6 +339,7 @@ def fetch_sport(sport: str, api_key: str | None = None, hours_ahead: int = 24) -
             log.debug("api-sports[%s] parse calendrier: %s", sport, e)
 
     if not by_id:
+        _usage_add(sport, used)
         log.info("api-sports[%s]: 0 match dans les %dh (%d bruts) | quota restant=%s",
                  sport, hours_ahead, len(schedule), remaining)
         return []
@@ -346,6 +412,7 @@ def fetch_sport(sport: str, api_key: str | None = None, hours_ahead: int = 24) -
         if stopped:
             break
 
+    _usage_add(sport, used)
     log.info("api-sports[%s]: %d matchs (%d avec prix sharp) / %d au calendrier | "
              "%d req%s | quota restant=%s",
              sport, len(matches), n_sharp, len(by_id), used,

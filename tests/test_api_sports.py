@@ -86,8 +86,11 @@ def _wire(monkeypatch, schedule, odds_pages, *, sched_status=200, odds_status=20
 
 @pytest.fixture(autouse=True)
 def _no_secret_lookup(monkeypatch):
-    """Aucun test ne doit toucher Supabase/l'env réels."""
+    """Aucun test ne doit toucher Supabase/l'env réels — ni pour les secrets,
+    ni pour le compteur de budget journalier (qui écrit dans `meta`)."""
     monkeypatch.setattr(aps, "get_secret", lambda name, **kw: None)
+    monkeypatch.setattr(aps, "_usage_get", lambda sport: 0)
+    monkeypatch.setattr(aps, "_usage_add", lambda sport, n: None)
 
 
 def test_no_key_means_no_network(monkeypatch):
@@ -227,3 +230,51 @@ def test_available_sports_reports_configured_keys(monkeypatch):
     monkeypatch.setattr(aps, "get_secret",
                         lambda name, **kw: "k" if name == "API_FOOTBALL_KEY" else None)
     assert aps.available_sports() == ["soccer"]
+
+
+# ── Budget journalier ─────────────────────────────────────────────────
+
+def test_daily_budget_stops_the_cycle_before_any_call(monkeypatch, caplog):
+    """100 req/jour au plan gratuit ; ~40 scans quotidiens y passeraient
+    trois fois si rien ne comptait. Le compte du projet a été trouvé
+    SUSPENDU le 2026-08-20 — ce garde-fou existe pour ne pas y revenir."""
+    touched = []
+    monkeypatch.setattr(aps.requests, "get", lambda *a, **k: touched.append(a))
+    monkeypatch.setattr(aps, "_usage_get", lambda sport: aps.DAILY_BUDGET)
+    with caplog.at_level(logging.WARNING, logger="PREDATOR.api_sports"):
+        assert aps.fetch_sport("soccer", api_key="k") == []
+    assert touched == []
+    assert any("budget journalier" in r.getMessage() for r in caplog.records)
+
+
+def test_requests_actually_spent_are_counted(monkeypatch):
+    day = _when().strftime("%Y-%m-%d")
+    sched = [_game(1, "PSG", "Lyon")]
+    pages = {(day, 1): [_odds_row(1, [_bk("Bwin", 1.80, 4.40, 3.60)])]}
+    _wire(monkeypatch, sched, pages)
+    spent = []
+    monkeypatch.setattr(aps, "_usage_add", lambda sport, n: spent.append((sport, n)))
+    aps.fetch_sport("soccer", api_key="k")
+    assert spent == [("soccer", 2)]        # 1 calendrier + 1 page de cotes
+
+
+def test_a_429_burns_the_local_budget_for_the_day(monkeypatch):
+    """Sans cela, les 39 scans suivants relanceraient un 429 chacun — le
+    martèlement qui fait suspendre un compte."""
+    _wire(monkeypatch, [], {}, sched_status=429)
+    spent = []
+    monkeypatch.setattr(aps, "_usage_add", lambda sport, n: spent.append(n))
+    assert aps.fetch_sport("soccer", api_key="k") == []
+    assert spent and spent[0] >= aps.DAILY_BUDGET
+
+
+def test_suspended_account_is_counted_and_reported(monkeypatch, caplog):
+    """Cas réel du 2026-08-20 : compte suspendu → HTTP 200 + objet errors.
+    L'ancienne implémentation le lisait comme un succès vide, sans un log."""
+    _wire(monkeypatch, [], {}, sched_errors={"access": "Your account is suspended"})
+    spent = []
+    monkeypatch.setattr(aps, "_usage_add", lambda sport, n: spent.append(n))
+    with caplog.at_level(logging.WARNING, logger="PREDATOR.api_sports"):
+        assert aps.fetch_sport("soccer", api_key="k") == []
+    assert spent == [1]
+    assert any("suspended" in r.getMessage() for r in caplog.records)
