@@ -108,6 +108,9 @@ def test_breaker_still_queries_api_sports(monkeypatch):
     head = src[src.index("skipped_age = _harvest_recently_empty(sb)"):]
     branch = head[:head.index("else:")]
     assert "_api_sports_all(" in branch, "api-sports doit rester appelé quand le harvest est sauté"
+    assert "_odds_api_io_all(" in branch, (
+        "odds-api.io aussi : c'est la source SOFT principale, et la sauter "
+        "quand api-sports est en panne laisse le scan sans aucune source")
     assert "fetch_matches()" not in branch, "le harvest web coûteux doit rester sauté"
 
 

@@ -22,6 +22,7 @@ from core.ai_search import ai_dead as gemini_quota_dead
 from core.closing_line import capture_from_scan
 from core.matchbook import fetch_matchbook_prices
 from core.api_sports import fetch_all as _api_sports_all
+from core.odds_api_io import fetch_all as _odds_api_io_all
 from core.math_engine import to_binary, devig_prob, is_round_number_line
 from core.odds_api import fetch_odds, pool_status as _odds_pool_status
 from core.oracle import get_pinnacle_price
@@ -1806,9 +1807,11 @@ def run():
             # posé le matin même court-circuitait api-sports par ricochet.
             log.warning("📡 Tier 2 — harvest web SAUTÉ : dernière tentative vide il y a "
                         "%.1fh (< %.0fh) — quota Groq/Tavily préservé ; api-sports "
-                        "reste interrogé (gratuit, quota séparé)",
+                        "et odds-api.io restent interrogés (authentifiés par clé, "
+                        "quotas séparés, gratuits)",
                         skipped_age, _HARVEST_EMPTY_TTL_H)
-            xbet_matches = _api_sports_all(hours_ahead=hours_ahead)
+            xbet_matches = (_api_sports_all(hours_ahead=hours_ahead)
+                            + _odds_api_io_all(hours_ahead=hours_ahead))
         else:
             log.info("📡 Tier 2 — Harvest Melbet + api-sports + recherche web Pinnacle...")
             xbet_matches = fetch_matches()
