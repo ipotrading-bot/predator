@@ -104,6 +104,39 @@ scanned but never learned-from (or vice versa):
 darts, cricket, etc.) that are not currently harvested — that's harmless UI cruft,
 not a bug, unless one of those keys starts appearing in real `signals` rows.
 
+## Incident 10→20 août 2026 : dix jours à « 0 matchs, 0 signaux » — et ce qui l'empêche désormais
+
+Toutes les sources sont mortes la même journée : clé OddsAPI à 0 crédit (401
+`OUT_OF_USAGE_CREDITS`, jamais tournée), LineFeed 1xbet/Melbet en timeout
+depuis les runners GitHub, Tavily au plafond mensuel (HTTP 432), les 3 clés
+Groq à 100k TPD — brûlées par les ~40 runs/jour qui retentaient le harvest
+web à vide — et API-Football muet (un /odds par fixture ≠ 200 → `continue`
+sans log). Quatre mécanismes v10.3 (commit « fix: key pool… ») :
+
+- **Pool de clés OddsAPI** — `core/odds_api.py::candidate_keys()` lit
+  `ODDS_API_KEYS` (plusieurs clés) puis `ODDS_API_KEY` (app_secrets puis env),
+  sonde chaque clé gratuitement (`/v4/sports`), et sur 401/403/422 en cours de
+  scan bascule sur la suivante EN REJOUANT LA MÊME LIGUE. Seul un pool
+  entièrement mort rend `[]`. Ajouter : `python scripts/rotate_odds_key.py
+  --add <clé>` ; état : `--show`. Tests : `tests/test_odds_api_keypool.py`.
+- **Alertes Telegram avec la cause, dédupliquées 6h** — `_alert_oddsapi_pool_if_dead()`
+  nomme « N/N clés épuisées — rotation requise » ; l'ancien « Melbet
+  inaccessible » partait 40×/jour sans jamais le dire. Horodatages dans `meta`
+  (`alert_*`).
+- **Coupe-circuit harvest** — `meta.harvest_empty_at` : un Tier 2 vide n'est
+  pas retenté avant `HARVEST_EMPTY_TTL_H` (3h). Préserve le TPD Groq pour le
+  settlement (qui en a besoin pour les scores). Tests :
+  `tests/test_engine_circuit_breaker.py`.
+- **API-Football utile** — `/odds` PAR DATE paginé (≤ 7 req/cycle au lieu de
+  50+) et **Pinnacle extrait de la réponse** (`odds_pinnacle`) → signaux foot
+  sans recherche web ; run_engine honore un `odds_pinnacle` déjà présent et
+  ne l'envoie pas à `fetch_pinnacle_prices`. Une ligne de log « API-Football: »
+  par cycle, succès ou échec. Tests : `tests/test_api_football.py`.
+
+Si « 0 signaux » revient : chercher d'abord dans les logs « OddsAPI clé #…
+écartée », « harvest SAUTÉ » et « API-Football: » — les trois disent la cause
+en clair.
+
 ## The OddsAPI quota reality (2026-07-23)
 
 **RÉSOLU depuis le 2026-08-04 — ne plus diagnostiquer ainsi.** Il y avait

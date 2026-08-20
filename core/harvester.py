@@ -163,6 +163,11 @@ def _fetch_from_book(book: str, url_templates: list, referer: str, sport_id: int
                 if matches:
                     log.info("%s %s OK: %d matches via %s", book, sport_name, len(matches), url.split("?")[0])
                     return matches
+                log.info("%s %s: HTTP 200 mais 0 match exploitable via %s", book, sport_name, url.split("?")[0])
+            else:
+                # Un 403/429/5xx silencieux a caché pendant dix jours (août
+                # 2026) que le LineFeed bloquait les runners GitHub — on le dit.
+                log.warning("%s %s: HTTP %d via %s", book, sport_name, r.status_code, url.split("?")[0])
         except Exception as e:
             log.warning("%s %s fail (%s): %s", book, sport_name, url.split("?")[0], e)
     return []

@@ -21,7 +21,7 @@ from core.harvester import fetch_matches, fetch_pinnacle_prices, fetch_estimated
 from core.ai_search import ai_dead as gemini_quota_dead
 from core.closing_line import capture_from_scan
 from core.math_engine import to_binary, devig_prob, is_round_number_line
-from core.odds_api import fetch_odds
+from core.odds_api import fetch_odds, pool_status as _odds_pool_status
 from core.oracle import get_pinnacle_price
 from core.learning_layer import load_thresholds as _load_thresholds
 from core.learning_layer import load_segment_thresholds as _load_segment_thresholds
@@ -371,6 +371,95 @@ def _set_cached(sb, key: str, value: list):
         log.debug("Cache SET [%s] — %d items", key, len(value))
     except Exception as e:
         log.warning("Cache set [%s]: %s", key, e)
+
+
+# ── Horodatages meta : coupe-circuit harvest + alertes dédupliquées ─────
+#
+# 10-20 août 2026 : clé OddsAPI à 0 crédit, LineFeed 1xbet/Melbet injoignable,
+# Tavily au plafond mensuel (432). Chacun des ~40 runs/jour relançait quand
+# même le harvest web complet, brûlait les 100k tokens/jour des 3 clés Groq
+# pour rien — et privait le SETTLEMENT (qui a besoin de Groq pour les scores)
+# de tout budget. Le signal « 0 matchs — Melbet inaccessible » partait à
+# chaque run sans jamais dire la vraie cause (clé OddsAPI morte), et
+# personne n'a tourné la clé pendant dix jours.
+#
+# D'où : (1) un harvest qui n'a rien rendu n'est pas retenté avant
+# HARVEST_EMPTY_TTL_H ; (2) les alertes portent la cause et ne se répètent
+# pas avant _ALERT_TTL_H. Les deux vivent dans `meta` (clé → ISO timestamp).
+_HARVEST_EMPTY_TTL_H = float(os.environ.get("HARVEST_EMPTY_TTL_H", "3"))
+_ALERT_TTL_H         = float(os.environ.get("ALERT_TTL_H", "6"))
+
+
+def _meta_stamp_age_h(sb, key: str) -> float | None:
+    """Âge (heures) de l'horodatage ISO stocké dans meta[key] ; None si absent."""
+    try:
+        row = sb.table("meta").select("value").eq("key", key).maybe_single().execute()
+        raw = (row.data or {}).get("value") if row and row.data else None
+        if not raw:
+            return None
+        ts = datetime.fromisoformat(str(raw).strip('"').replace("Z", "+00:00"))
+        return (datetime.now(timezone.utc) - ts).total_seconds() / 3600
+    except Exception as e:
+        log.debug("meta stamp get [%s]: %s", key, e)
+        return None
+
+
+def _meta_stamp(sb, key: str, value: str | None) -> None:
+    """Pose (ISO maintenant) ou efface (None → "") l'horodatage meta[key]."""
+    try:
+        sb.table("meta").upsert({
+            "key":        key,
+            "value":      value if value is not None else "",
+            "updated_at": datetime.now(timezone.utc).isoformat(),
+        }, on_conflict="key").execute()
+    except Exception as e:
+        log.warning("meta stamp set [%s]: %s", key, e)
+
+
+def _harvest_recently_empty(sb) -> float | None:
+    """Âge de la dernière tentative Tier 2 vide si elle date de moins de
+    HARVEST_EMPTY_TTL_H, sinon None (= on peut retenter)."""
+    if not sb:
+        return None
+    age = _meta_stamp_age_h(sb, "harvest_empty_at")
+    return age if age is not None and age < _HARVEST_EMPTY_TTL_H else None
+
+
+def _note_harvest_result(sb, found: list) -> None:
+    if not sb:
+        return
+    _meta_stamp(sb, "harvest_empty_at",
+                None if found else datetime.now(timezone.utc).isoformat())
+
+
+def _alert_once(sb, key: str, text: str, ttl_h: float = _ALERT_TTL_H) -> bool:
+    """Telegram `text` au plus une fois par `ttl_h` (horodatage dans meta).
+    Sans Supabase : envoie (mieux vaut un doublon qu'un silence)."""
+    if sb:
+        age = _meta_stamp_age_h(sb, key)
+        if age is not None and age < ttl_h:
+            log.info("Alerte [%s] déjà envoyée il y a %.1fh — silence", key, age)
+            return False
+    _telegram(text)
+    if sb:
+        _meta_stamp(sb, key, datetime.now(timezone.utc).isoformat())
+    return True
+
+
+def _alert_oddsapi_pool_if_dead(sb) -> None:
+    """Tier 1 vide : si c'est parce que TOUTES les clés du pool sont mortes,
+    le dire en clair — c'est une action humaine, pas une panne transitoire."""
+    st = _odds_pool_status()
+    if st["total"] == 0:
+        _alert_once(sb, "alert_oddsapi_nokey",
+                    "🔑 *OddsAPI : aucune clé configurée* — ni `ODDS_API_KEYS`/`ODDS_API_KEY` "
+                    "dans app_secrets ni dans l'environnement. Tier 1 à l'arrêt.")
+    elif st["live"] == 0:
+        _alert_once(sb, "alert_oddsapi_pool_dead",
+                    f"🔑 *OddsAPI : {st['dead']}/{st['total']} clé(s) épuisée(s)/invalide(s)* "
+                    f"({st['reason']}).\nTier 1 à l'arrêt jusqu'à rotation :\n"
+                    f"`python scripts/rotate_odds_key.py --add <nouvelle_clé>`\n"
+                    f"(plusieurs clés = bascule automatique, plus de scan perdu)")
 
 
 def _heartbeat(sb, scan_time: datetime, matches: int, signals: int):
@@ -1454,6 +1543,8 @@ def run():
 
     if not GUERRILLA:
         oddsapi_events = fetch_odds(hours_ahead=hours_ahead, sport_keys=scan_keys)
+        if not oddsapi_events:
+            _alert_oddsapi_pool_if_dead(sb)
         if oddsapi_events:
             matches      = oddsapi_events[:MAX_MATCHES]
             tier1_ok     = True
@@ -1573,18 +1664,38 @@ def run():
     # 1 combat UFC remonté → 0 match foot/tennis/basket scanné, 0 signal, là où
     # le run précédent (0 combat) en avait sorti 12 matchs et 1 signal.
     if not tier1_ok:
-        log.info("📡 Tier 2 — Harvest Melbet + recherche web Pinnacle...")
-        xbet_matches = fetch_matches()
+        # Coupe-circuit : une tentative vide il y a < HARVEST_EMPTY_TTL_H ne
+        # se rejoue pas — voir le bloc « Horodatages meta » plus haut. Quand
+        # LineFeed, Tavily et Groq sont morts ensemble, 40 runs/jour ne
+        # trouveront pas plus que 8, mais brûleront le quota du settlement.
+        skipped_age = _harvest_recently_empty(sb)
+        if skipped_age is not None:
+            log.warning("📡 Tier 2 — harvest SAUTÉ : dernière tentative vide il y a %.1fh "
+                        "(< %.0fh) — quota Groq/Tavily préservé pour le settlement",
+                        skipped_age, _HARVEST_EMPTY_TTL_H)
+            xbet_matches = []
+        else:
+            log.info("📡 Tier 2 — Harvest Melbet + recherche web Pinnacle...")
+            xbet_matches = fetch_matches()
+            _note_harvest_result(sb, xbet_matches)
         # Abandon seulement si RIEN n'a été trouvé nulle part : depuis que ce
         # tier n'est plus gardé par `matches`, il peut s'exécuter alors que la
         # recherche MMA/eSports/alternatifs a déjà rempli `matches`. Sortir ici
         # jetterait ces événements-là.
         if not xbet_matches and not matches:
-            msg = "📡 PREDATOR v8.8: 0 matchs trouvés — Melbet inaccessible."
+            msg = "📡 PREDATOR: 0 matchs trouvés — Tier 1 vide et harvest (1xbet/Melbet/API-Football/recherche web) sans résultat."
+            st = _odds_pool_status()
+            if st["total"] and st["live"] == 0:
+                msg += (f"\n🔑 CAUSE : {st['dead']}/{st['total']} clé(s) OddsAPI épuisée(s) "
+                        f"({st['reason']}) — rotation requise : "
+                        f"`python scripts/rotate_odds_key.py --add <clé>`")
             if gemini_quota_dead():
                 msg += "\n⚠️ Quota IA journalier épuisé (Groq) — fallback recherche web indisponible."
             log.warning(msg)
-            _telegram(msg)
+            # Dédupliqué : ce message partait à CHAQUE run (40/jour) sans
+            # jamais nommer la cause ; une fois par _ALERT_TTL_H avec la cause
+            # vaut mieux que 40 fois sans.
+            _alert_once(sb, "alert_no_matches", msg)
             if sb:
                 _heartbeat(sb, now, 0, 0)
             if credentials_failed:
@@ -1593,7 +1704,9 @@ def run():
 
         if xbet_matches:
             log.info("%d matchs Melbet | Requête Pinnacle → recherche web...", len(xbet_matches))
-        pinnacle_map = fetch_pinnacle_prices(xbet_matches)
+        # Les matchs qui arrivent DÉJÀ prixés côté sharp (API-Football livre
+        # Pinnacle dans la même réponse) ne passent pas par la recherche web.
+        pinnacle_map = fetch_pinnacle_prices([m for m in xbet_matches if not m.get("odds_pinnacle")])
 
         MAX_ORACLE = _MAX_ORACLE
         oracle_used = 0
@@ -1627,7 +1740,7 @@ def run():
             key=_oracle_rank,
         )
         for m in oracle_order:
-            pin_odds = pinnacle_map.get(m["match"])
+            pin_odds = m.get("odds_pinnacle") or pinnacle_map.get(m["match"])
             if pin_odds:
                 m["odds_pinnacle"] = pin_odds
                 matches.append(m)

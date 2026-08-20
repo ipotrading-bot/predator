@@ -39,5 +39,7 @@ Tout le calcul tourne en crons GitHub Actions ; le dashboard est en lecture seul
   `wiz_analysis`, poids Tier C négatif — gardé par `tests/test_wiz_engine.py`.
 - Secrets : `core/secret_store.py` (table Supabase `app_secrets`) bat `os.environ` ;
   une valeur périmée dans la table gagne quand même.
+- OddsAPI = POOL de clés (`ODDS_API_KEYS`, bascule auto sur 401/422) ; une seule
+  clé = dix jours sans signal quand elle meurt (août 2026). `rotate_odds_key.py --add`.
 - Sub-agent `predator-diagnostician` pour tout audit pipeline/santé (isole les
   gros logs hors de la conversation principale).

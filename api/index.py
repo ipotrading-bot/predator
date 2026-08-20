@@ -21,7 +21,6 @@ from flask import Flask, jsonify, render_template, send_from_directory
 from core.constants import TAX_RATE as _TAX_RATE, wiz_enforce as _wiz_enforce
 from core.db import get_db as _get_db_client, MissingCredentialsError
 from core.odds_api import BASE_URL as _ODDS_BASE_URL
-from core.secret_store import get_secret as _get_secret
 from core.learning_layer import (
     SPORT_DEFAULTS as _SPORT_DEFAULTS,
     load_thresholds as _load_thresholds,
@@ -835,21 +834,34 @@ def api_odds_quota():
     # C'est ce qui règle l'incohérence historique du widget : la variable
     # d'env Vercel ne bougeait qu'au prix d'un Redeploy manuel, et affichait
     # donc le quota d'une clé déjà remplacée côté moteur.
-    api_key = _get_secret("ODDS_API_KEY")
-    if not api_key:
+    # v10.3 : le moteur lit un POOL (ODDS_API_KEYS puis ODDS_API_KEY, voir
+    # core/odds_api.py). Le widget montre la première clé VIVANTE du pool —
+    # celle que le prochain scan utilisera — et la taille du pool.
+    from core.odds_api import candidate_keys as _candidate_keys
+    keys = _candidate_keys()
+    if not keys:
         return jsonify({"error": "ODDS_API_KEY non configurée"}), 503
     try:
-        r = requests.get(f"{_ODDS_BASE_URL}/sports", params={"apiKey": api_key}, timeout=10)
-        if r.status_code in (401, 403):
-            return jsonify({"error": "Clé ODDS_API_KEY invalide ou expirée"}), 502
-        if r.status_code != 200:
-            return jsonify({"error": f"HTTP {r.status_code}"}), 502
-        remaining = r.headers.get("x-requests-remaining")
-        used = r.headers.get("x-requests-used")
-        return jsonify({
-            "remaining": int(remaining) if remaining and remaining.isdigit() else None,
-            "used": int(used) if used and used.isdigit() else None,
-        })
+        dead = 0
+        last_status = None
+        for api_key in keys:
+            r = requests.get(f"{_ODDS_BASE_URL}/sports", params={"apiKey": api_key}, timeout=10)
+            last_status = r.status_code
+            if r.status_code in (401, 403, 422):
+                dead += 1
+                continue
+            if r.status_code != 200:
+                return jsonify({"error": f"HTTP {r.status_code}"}), 502
+            remaining = r.headers.get("x-requests-remaining")
+            used = r.headers.get("x-requests-used")
+            return jsonify({
+                "remaining": int(remaining) if remaining and remaining.isdigit() else None,
+                "used": int(used) if used and used.isdigit() else None,
+                "pool": len(keys), "dead": dead, "active": dead + 1,
+            })
+        return jsonify({"error": f"{dead}/{len(keys)} clé(s) OddsAPI épuisée(s)/invalide(s) "
+                                 f"(HTTP {last_status}) — rotation requise",
+                        "pool": len(keys), "dead": dead}), 502
     except Exception as e:
         return jsonify({"error": str(e)}), 500
 

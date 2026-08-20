@@ -21,6 +21,8 @@ vide de toute façon. Il fait donc durer la même couverture plus longtemps,
 sans jamais la réduire.
 """
 import logging
+import os
+import re
 import requests
 from datetime import datetime, timedelta, timezone
 
@@ -284,6 +286,116 @@ def _events_in_window(api_key: str, sport_key: str,
         return None
 
 
+# ── Pool de clés OddsAPI (v10.3) ──────────────────────────────────────
+#
+# POURQUOI. Le 10 août 2026 la clé unique ODDS_API_KEY est tombée à 0 crédit
+# et n'a pas été tournée pendant dix jours : 40 runs/jour à « 0 matchs,
+# 0 signaux », et rien dans le système ne pouvait faire mieux qu'attendre un
+# humain. Une clé épuisée est un événement NORMAL (500 req/mois, soit une clé
+# tous les ~2 jours au rythme actuel) — il doit se traiter tout seul.
+#
+# COMMENT. Le moteur lit désormais un POOL ordonné :
+#   1. l'argument explicite `api_key` (tests, scripts)
+#   2. `ODDS_API_KEYS` — plusieurs clés séparées par virgule/espace/retour
+#      à la ligne, dans app_secrets (Supabase) ou l'environnement
+#   3. `ODDS_API_KEY` — la clé « historique », toujours honorée
+#   4. `ODDS_API_KEY_2` … `ODDS_API_KEY_9` dans l'environnement
+# Chaque clé est sondée via GET /v4/sports (0 crédit) avant d'être utilisée ;
+# un 401/403/422 en cours de scan marque la clé morte et le scan REPREND sur
+# la suivante, même ligue, sans rien perdre. Le marquage est process-local :
+# chaque run re-sonde (gratuit), donc une clé rechargée le 1er du mois
+# revient d'elle-même dans la rotation.
+#
+# Ajouter une clé : `python scripts/rotate_odds_key.py --add <clé>` — elle
+# est validée avant d'être écrite dans app_secrets.ODDS_API_KEYS.
+
+POOL_SECRET = "ODDS_API_KEYS"
+_dead_keys: dict[str, str] = {}      # clé -> raison (process-local)
+_last_failure: str = ""
+
+
+def _split_keys(raw: str | None) -> list[str]:
+    return [k.strip() for k in re.split(r"[,;\s]+", raw or "") if k.strip()]
+
+
+def candidate_keys(explicit: str | None = None) -> list[str]:
+    """Pool ordonné et dédupliqué — voir le bloc de commentaire ci-dessus."""
+    out: list[str] = []
+
+    def add(raw: str | None) -> None:
+        for k in _split_keys(raw):
+            if k not in out:
+                out.append(k)
+
+    add(explicit)
+    add(get_secret(POOL_SECRET))
+    add(get_secret("ODDS_API_KEY"))
+    for i in range(2, 10):
+        add(os.environ.get(f"ODDS_API_KEY_{i}"))
+    return out
+
+
+def mark_dead(key: str, reason: str) -> None:
+    global _last_failure
+    _dead_keys[key] = reason
+    _last_failure = reason
+
+
+def reset_pool() -> None:
+    """Oublie les clés marquées mortes (tests, ou après une rotation)."""
+    global _last_failure
+    _dead_keys.clear()
+    _last_failure = ""
+
+
+def pool_status(explicit: str | None = None) -> dict:
+    """{'total': n, 'dead': m, 'live': n-m, 'reason': dernière panne} —
+    pour les logs et l'alerte Telegram de run_engine.py."""
+    keys = candidate_keys(explicit)
+    dead = [k for k in keys if k in _dead_keys]
+    return {"total": len(keys), "dead": len(dead), "live": len(keys) - len(dead),
+            "reason": _last_failure}
+
+
+def pool_exhausted() -> bool:
+    """True quand il EXISTE des clés et qu'elles sont TOUTES mortes —
+    le cas qui réclame une rotation humaine, et seulement celui-là."""
+    st = pool_status()
+    return st["total"] > 0 and st["live"] == 0
+
+
+def probe_key(key: str) -> tuple[bool, str]:
+    """(vivante?, détail) via GET /v4/sports — 0 crédit consommé."""
+    try:
+        r = requests.get(f"{BASE_URL}/sports/", params={"apiKey": key}, timeout=10)
+    except Exception as e:
+        return False, f"appel impossible : {e}"
+    if r.status_code in (401, 403):
+        return False, f"HTTP {r.status_code} — clé invalide, révoquée ou quota épuisé"
+    if r.status_code == 422:
+        return False, "HTTP 422 — quota épuisé"
+    if r.status_code != 200:
+        return False, f"HTTP {r.status_code}"
+    return True, (f"HTTP 200 — restantes={r.headers.get('x-requests-remaining', '?')} "
+                  f"utilisées={r.headers.get('x-requests-used', '?')}")
+
+
+def _next_live_key(keys: list[str], start: int) -> tuple[str | None, int]:
+    """Première clé vivante à partir de l'index `start` (sondage gratuit).
+    Les clés qui ne répondent pas sont marquées mortes au passage."""
+    for i in range(start, len(keys)):
+        k = keys[i]
+        if k in _dead_keys:
+            continue
+        ok, detail = probe_key(k)
+        if ok:
+            log.info("OddsAPI clé #%d/%d active (…%s) — %s", i + 1, len(keys), k[-4:], detail)
+            return k, i
+        mark_dead(k, detail)
+        log.warning("OddsAPI clé #%d/%d (…%s) écartée — %s", i + 1, len(keys), k[-4:], detail)
+    return None, len(keys)
+
+
 # ── Public API ────────────────────────────────────────────────────────
 
 def fetch_odds(api_key: str | None = None, hours_ahead: int = 24,
@@ -302,14 +414,18 @@ def fetch_odds(api_key: str | None = None, hours_ahead: int = 24,
     immobilisait 10% du plan sans jamais le dépenser. Le scan s'arrête
     désormais sur un vrai 422 (quota épuisé côté API), pas avant.
     """
-    if not api_key:
-        # Supabase (app_secrets) d'abord, os.environ en filet — la clé tourne
-        # tous les 1-2 jours et le secret GitHub se périme entre deux
-        # rotations. Voir core/secret_store.py.
-        api_key = get_secret("ODDS_API_KEY")
-    if not api_key:
+    # Pool de clés : app_secrets (Supabase) d'abord, os.environ en filet —
+    # voir le bloc « Pool de clés OddsAPI » plus haut et core/secret_store.py.
+    keys = candidate_keys(api_key)
+    if not keys:
         log.error("No ODDS_API_KEY — ni dans app_secrets (Supabase) ni dans "
                   "l'environnement (.env / GitHub Secrets / Vercel)")
+        return []
+    api_key, key_idx = _next_live_key(keys, 0)
+    if api_key is None:
+        log.critical("OddsAPI : les %d clés du pool sont épuisées/invalides (%s) — "
+                     "rotation requise : python scripts/rotate_odds_key.py --add <clé>",
+                     len(keys), _last_failure)
         return []
     assert api_key is not None  # narrow type after early return
 
@@ -351,22 +467,31 @@ def fetch_odds(api_key: str | None = None, hours_ahead: int = 24,
             "commenceTimeTo":   time_to,
         }
         try:
-            r = requests.get(url, params=params, timeout=15)
+            r = None
+            while True:
+                params["apiKey"] = api_key
+                r = requests.get(url, params=params, timeout=15)
+                if r.status_code not in (401, 403, 422):
+                    break
+                # Clé à sec (422) ou refusée (401/403 — OddsAPI renvoie aussi
+                # un 401 OUT_OF_USAGE_CREDITS à 0 crédit) : on la marque
+                # morte et on REPREND LA MÊME LIGUE sur la clé suivante du
+                # pool. Le scan ne s'arrête que si le pool entier est mort.
+                mark_dead(api_key, f"HTTP {r.status_code} sur {sport_key}")
+                log.warning("OddsAPI clé #%d (…%s) morte (HTTP %d) — bascule",
+                            key_idx + 1, api_key[-4:], r.status_code)
+                api_key, key_idx = _next_live_key(keys, key_idx + 1)
+                if api_key is None:
+                    log.critical("OddsAPI : pool épuisé (%d clés) après %d ligues — "
+                                 "%d events conservés. Rotation requise : "
+                                 "python scripts/rotate_odds_key.py --add <clé>",
+                                 len(keys), list(keys_to_scan).index(sport_key), len(all_events))
+                    return all_events
             remaining = r.headers.get("x-requests-remaining", "?")
             used      = r.headers.get("x-requests-used", "?")
 
             if r.status_code == 404:
                 continue  # Not in season
-            if r.status_code in (401, 403):
-                log.error("Auth error — check ODDS_API_KEY")
-                return []
-            if r.status_code == 422:
-                # Vrai épuisement côté API : la clé est à sec, il faut en
-                # changer. C'est le SEUL arrêt possible — plus aucun garde
-                # local ne coupe le scan avant (décision opérateur).
-                log.warning("Quota exhausted after %d sport keys — keeping %d events fetched so far",
-                            list(keys_to_scan).index(sport_key), len(all_events))
-                break
             if r.status_code != 200:
                 log.warning("%s: HTTP %d", sport_key, r.status_code)
                 continue

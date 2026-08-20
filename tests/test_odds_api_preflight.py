@@ -29,6 +29,8 @@ def _wire(monkeypatch, events_by_key: dict, odds_payload=None):
     calls = {"events": [], "odds": []}
 
     def fake_get(url, params=None, timeout=None):
+        if url.rstrip("/").endswith("/sports"):
+            return _Resp([])                    # sonde gratuite du pool de clés
         if "/events" in url:
             key = url.split("/sports/")[1].split("/")[0]
             payload = events_by_key.get(key)
@@ -83,6 +85,8 @@ def test_no_local_guard_ever_stops_a_useful_scan(monkeypatch):
     calls = _wire(monkeypatch, {"a": [{"id": "1"}], "b": [{"id": "2"}]})
 
     def fake_get(url, params=None, timeout=None):
+        if url.rstrip("/").endswith("/sports"):
+            return _Resp([], remaining="2", used="498")   # sonde du pool
         if "/events" in url:
             calls["events"].append(url)
             return _Resp([{"id": "1"}])
