@@ -133,6 +133,43 @@ sans log). Quatre mécanismes v10.3 (commit « fix: key pool… ») :
   ne l'envoie pas à `fetch_pinnacle_prices`. Une ligne de log « API-Football: »
   par cycle, succès ou échec. Tests : `tests/test_api_football.py`.
 
+## Les sources de cotes et la règle qui les départage (2026-08-20)
+
+Le moteur a besoin de DEUX côtés : un prix SHARP (probabilité vraie par
+dévigorisation) et un prix SOFT (le prix réellement jouable). Une source qui
+n'apporte qu'un côté ne produit aucun signal seule.
+
+**La règle empirique, mesurée depuis une IP datacenter :** tout ce qui
+s'atteint SANS clé est filtré par IP, donc mort depuis les runners GitHub.
+LineFeed 1xbet/Melbet/22bet (203/404), ESPN (403 Akamai), SofaScore (403),
+Oddspedia (challenge Cloudflare). N'y consacrez plus de temps : les sources
+qui marchent sont celles qui authentifient par CLÉ (la clé sert de
+laissez-passer là où l'IP est refusée) — ou Matchbook, qui ne filtre pas.
+
+| Étage | Source | Côté | Clé | Quota |
+|---|---|---|---|---|
+| 1 | The Odds API (`core/odds_api.py`) | sharp + soft | pool `ODDS_API_KEYS` | 500/mois par clé |
+| 1.5 | **Matchbook** (`core/matchbook.py`) | **sharp** | aucune | 700 req/min |
+| 1.5 | Betfair (`core/harvester.py`) | sharp | 499 £ + géobloqué US | inopérant sur Actions |
+| 2 | **api-sports** (`core/api_sports.py`) | soft (+ sharp parfois) | `API_SPORTS_KEY` | 100/jour PAR sport |
+| 2bis | LineFeed 1xbet/Melbet | soft | aucune | bloqué par IP |
+| 3 | recherche web (`core/ai_search.py`) | sharp estimé | Groq/Tavily | quotas morts régulièrement |
+
+`python scripts/ops.py sources` sonde tout cela sans dépenser un crédit —
+c'est la commande à lancer AVANT tout diagnostic « pourquoi 0 signal ».
+
+**Matchbook — ce qu'il faut savoir avant d'y toucher.** Le milieu back/lay
+donne une marge d'environ 0,1 % (meilleure que Pinnacle, ~2 %), d'où son rôle
+de référence sharp. Trois pièges encodés dans `core/matchbook.py` et gardés
+par `tests/test_matchbook.py` : (1) « A **at** B » signifie que B reçoit —
+l'inverse de « A vs B » ; confondre les deux intervertit les cotes 1 et 2 en
+silence ; (2) le foot expose `one_x_two`, les sports US/tennis `money_line` ;
+(3) un carnet vide affiche back 110 / lay 1.01 — sans le garde-fou de
+fourchette et de somme des probabilités, ces prix entreraient dans le devig.
+Testé OK depuis une IP **GB** ; le géoblocage US n'a PAS pu être vérifié —
+chercher « Matchbook » dans les logs Actions, et `MATCHBOOK_OFF=1` coupe la
+source si besoin.
+
 Si « 0 signaux » revient : chercher d'abord dans les logs « OddsAPI clé #…
 écartée », « harvest SAUTÉ » et « API-Football: » — les trois disent la cause
 en clair.

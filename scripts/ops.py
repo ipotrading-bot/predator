@@ -269,6 +269,15 @@ def sources():
         except Exception as e:
             print(f"  {sport:<11} ERREUR {e}")
 
+    print("── Tier 1.5 · Matchbook Exchange (sharp, sans clé) ──")
+    from core.matchbook import probe as mb_probe, fetch_matchbook_prices   # noqa: E402
+    ok, detail = mb_probe()
+    print(f"  joignabilité : {'OK' if ok else 'KO'} — {detail}")
+    if ok:
+        n = len(fetch_matchbook_prices(
+            sports=["soccer", "basketball", "baseball", "hockey"], hours_ahead=24))
+        print(f"  marchés sharp exploitables dans 24h : {n}")
+
     print("── Tier 2 bis · LineFeed 1xbet/Melbet/22bet (sans clé → filtré par IP) ──")
     from core.harvester import SOFT_BOOKS                           # noqa: E402
     for book, (tpls, referer) in SOFT_BOOKS.items():

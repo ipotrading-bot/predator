@@ -20,6 +20,7 @@ from core.db import get_db, MissingCredentialsError
 from core.harvester import fetch_matches, fetch_pinnacle_prices, fetch_estimated_prices, fetch_mma_events, fetch_esports_events, fetch_alternative_sports_batch, fetch_betfair_prices
 from core.ai_search import ai_dead as gemini_quota_dead
 from core.closing_line import capture_from_scan
+from core.matchbook import fetch_matchbook_prices
 from core.math_engine import to_binary, devig_prob, is_round_number_line
 from core.odds_api import fetch_odds, pool_status as _odds_pool_status
 from core.oracle import get_pinnacle_price
@@ -167,6 +168,9 @@ _TTL_ALT     = float(os.environ.get("CACHE_ALT_TTL_H",     "4"))
 # Melbet dans ce flux : si la recherche rend zéro (clé Groq morte, par ex.),
 # le vide reste en cache et le sport est muet jusqu'à expiration.
 _TTL_EMPTY   = float(os.environ.get("CACHE_EMPTY_TTL_H",   "3"))
+# Coupe-circuit d'urgence si Matchbook devait mal se comporter en prod
+# (géoblocage US non constaté en test, voir core/matchbook.py).
+_MATCHBOOK_OFF = os.environ.get("MATCHBOOK_OFF", "") == "1"
 
 # Nombre de repêchages oracle (1 appel IA chacun) quand la recherche groupée
 # n'a pas trouvé de ligne Pinnacle pour un match. C'est précisément le cas des
@@ -1607,10 +1611,21 @@ def run():
         matches = (matches or []) + alt_events
         log.info("🏓🏐🤾 Sports alternatifs OK — %d matchs", len(alt_events))
 
-    # ── Tier 1.5: Betfair Exchange (sharp prices peer-to-peer) ─────────
-    # Activé uniquement si BETFAIR_APP_KEY est configuré.
-    # Enrichit les matchs dont les prix Pinnacle viennent de l'estimateur IA
-    # en les remplaçant par des prix Betfair (0% marge avant commission 5%).
+    # ── Tier 1.5: exchanges (prix sharp pair-à-pair) ───────────────────
+    # Remplace un prix Pinnacle ESTIMÉ par l'IA — ou absent — par un vrai
+    # prix d'exchange. Deux fournisseurs, dans cet ordre :
+    #
+    #   Betfair   — seulement si BETFAIR_APP_KEY est posée. Rappel : la clé
+    #               « Live » coûte 499 £ et Betfair refuse les IP américaines
+    #               (BETTING_RESTRICTED_LOCATION), donc sur les runners
+    #               GitHub cette branche ne s'exécute jamais en pratique.
+    #   Matchbook — aucune clé, aucun compte, 700 req/min. Le milieu
+    #               back/lay donne une marge d'environ 0,1 %, meilleure que
+    #               Pinnacle (~2 %) : c'est une référence sharp de premier
+    #               ordre, et la seule qui survive à un pool OddsAPI mort.
+    #
+    # Betfair reste prioritaire quand il répond (intégration historique,
+    # prix ajustés de la commission) ; Matchbook comble le reste.
     betfair_prices: dict = {}
     if os.environ.get("BETFAIR_APP_KEY"):
         log.info("💹 Tier 1.5 — Betfair Exchange (commission -5%%)...")
@@ -1620,30 +1635,53 @@ def run():
         )
         if betfair_prices:
             log.info("💹 Betfair OK — %d marchés Betfair chargés", len(betfair_prices))
-            enriched = 0
-            for m in matches:
-                if not m.get("_estimated"):
-                    continue
-                h   = m.get("home", "").lower().strip()
-                a   = m.get("away", "").lower().strip()
-                bf  = betfair_prices.get(f"{h}_{a}")
-                if not bf:
-                    # Essai inversé (away_home)
-                    bf_r = betfair_prices.get(f"{a}_{h}")
-                    if bf_r:
-                        bf = {"1": bf_r["2"], "X": bf_r["X"], "2": bf_r["1"]}
-                if bf and bf.get("1", 0) > 1.01 and bf.get("2", 0) > 1.01:
-                    m["odds_pinnacle"] = {"1": bf["1"], "X": bf.get("X", 0.0), "2": bf["2"]}
-                    m["_betfair"]      = True
-                    m.pop("_estimated", None)
-                    enriched += 1
-                    log.info("💹 Betfair enrichi — %s (%.2f / %.2f)", m["match"], bf["1"], bf["2"])
-            if enriched:
-                log.info("💹 Betfair: %d matchs enrichis (remplace estimateur IA)", enriched)
-                if sharp_source == "AI/Estimateur":
-                    sharp_source = "Betfair+AI"
-        else:
-            log.info("💹 Betfair: 0 marchés (marché vide ou hors session)")
+
+    if not _MATCHBOOK_OFF:
+        mb_prices = fetch_matchbook_prices(
+            sports=["soccer", "basketball", "baseball", "hockey", "tennis", "mma"],
+            hours_ahead=hours_ahead,
+        )
+        for _k, _v in mb_prices.items():
+            betfair_prices.setdefault(_k, _v)   # Betfair d'abord s'il existe
+        if mb_prices:
+            log.info("💹 Matchbook OK — %d marchés sharp (total exchange : %d)",
+                     len(mb_prices), len(betfair_prices))
+
+    if betfair_prices:
+        enriched = 0
+        for m in matches:
+            # Enrichi si le prix sharp est ESTIMÉ par l'IA, ou carrément
+            # ABSENT. Ce second cas est celui qu'ouvre api-sports : il ramène
+            # d'excellents prix soft mais pas toujours de sharp, et sans
+            # sharp il n'y a pas d'edge calculable — donc pas de signal.
+            # C'est exactement ce trou que l'exchange comble.
+            pin = m.get("odds_pinnacle") or {}
+            has_sharp = pin.get("1", 0) > 1.01 and pin.get("2", 0) > 1.01
+            if has_sharp and not m.get("_estimated"):
+                continue
+            h = m.get("home", "").lower().strip()
+            a = m.get("away", "").lower().strip()
+            bf = betfair_prices.get(f"{h}_{a}")
+            if not bf:
+                # Essai inversé (away_home)
+                bf_r = betfair_prices.get(f"{a}_{h}")
+                if bf_r:
+                    bf = {"1": bf_r["2"], "X": bf_r["X"], "2": bf_r["1"],
+                          "_source": bf_r.get("_source", "betfair")}
+            if bf and bf.get("1", 0) > 1.01 and bf.get("2", 0) > 1.01:
+                src = bf.get("_source", "betfair")
+                m["odds_pinnacle"] = {"1": bf["1"], "X": bf.get("X", 0.0), "2": bf["2"]}
+                m["_exchange"] = src
+                m["_betfair"] = True          # conservé : lu en aval/tests
+                m.pop("_estimated", None)
+                enriched += 1
+                log.info("💹 %s enrichi — %s (%.2f / %.2f)", src, m["match"], bf["1"], bf["2"])
+        if enriched:
+            log.info("💹 Exchange: %d matchs enrichis (prix sharp réel)", enriched)
+            if sharp_source in ("AI/Estimateur", "Aucune"):
+                sharp_source = "Exchange+AI"
+    else:
+        log.info("💹 Exchange: 0 marché sharp (Betfair absent/refusé, Matchbook vide ou géobloqué)")
 
     # ── Golden Hour early-exit — aucun event OddsAPI dans T-2h ──────────
     # Si OddsAPI ne trouve rien dans la fenêtre 2h, les lignes ne bougent pas.
