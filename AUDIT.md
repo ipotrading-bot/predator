@@ -47,5 +47,5 @@ icon-512.png 432 Ko · icon-384.png 248 Ko · run_engine.py 92 Ko · logo.jpg 84
 
 - **Phase 2 (nettoyage)** : 2 fichiers à supprimer + toilettage `.env.example`. Rien à désinstaller.
 - **Phase 3 (corrections)** : les 10 pyflakes + doc drift des skills. **Aucun bug fonctionnel identifié.** La gestion d'erreurs réseau existe déjà partout (politique « retourne [] sans crash », documentée et testée).
-- **Phase 4 (perf)** : compression lossless des PNG (~600 Ko de gain estimé). Pas de bundle JS, pas de lazy loading applicable — stack Python/Jinja.
+- **Phase 4 (perf)** : **fait le 2026-08-20** — icônes PWA passées de 916 Ko à 360 Ko (−61 %, pngquant qualité 85–98 + optipng, vérifié visuellement indiscernable). icon-512 : 432→154 Ko. Pas de bundle JS ni lazy loading applicable — stack Python/Jinja.
 - **Phase 5 (setup Claude)** : **déjà en place à 80 %** — 2 skills projet, 1 subagent (`predator-diagnostician`), hooks (`dashboard_smoketest.sh`, `settings.json`). Manquant : un `CLAUDE.md` racine. Les 4 sub-agents génériques du template (code-reviewer, test-runner…) feraient doublon avec `/code-review`, le hook de smoke-test et `tests.yml` — déconseillé.
