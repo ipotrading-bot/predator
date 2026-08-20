@@ -128,3 +128,26 @@ def test_no_key_at_all_is_not_exhaustion(monkeypatch):
         monkeypatch.delenv(f"ODDS_API_KEY_{i}", raising=False)
     assert odds_api.candidate_keys() == []
     assert odds_api.pool_exhausted() is False   # pas de clé ≠ clés mortes
+
+
+def test_key_with_no_credits_left_is_treated_as_dead(monkeypatch):
+    """Mesuré en direct le 2026-08-20 : une clé à 499/500 répond 200 sur
+    /sports (gratuit) tout en étant incapable de payer un scan."""
+    class _H:
+        def __init__(self, left, used):
+            self.status_code = 200
+            self.headers = {"x-requests-remaining": left, "x-requests-used": used}
+
+        def json(self):
+            return []
+
+    monkeypatch.setattr(odds_api.requests, "get", lambda *a, **k: _H("0", "500"))
+    ok, detail = odds_api.probe_key("k")
+    assert ok is False and "épuisé" in detail
+
+    monkeypatch.setattr(odds_api.requests, "get", lambda *a, **k: _H("7", "493"))
+    assert odds_api.probe_key("k")[0] is True
+
+    # En-tête absent/illisible : on ne devine pas, la clé reste utilisable.
+    monkeypatch.setattr(odds_api.requests, "get", lambda *a, **k: _H(None, "?"))
+    assert odds_api.probe_key("k")[0] is True

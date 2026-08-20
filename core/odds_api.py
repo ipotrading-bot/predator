@@ -310,6 +310,13 @@ def _events_in_window(api_key: str, sport_key: str,
 # est validée avant d'être écrite dans app_secrets.ODDS_API_KEYS.
 
 POOL_SECRET = "ODDS_API_KEYS"
+
+# Crédits minimum pour qu'une clé soit jugée utilisable. À 0 il reste de quoi
+# faire échouer un scan au milieu ; le pré-vol gratuit (`_events_in_window`)
+# ne coûte rien mais l'appel /odds qui suit, si. Ce n'est PAS un rationnement
+# (décision opérateur 2026-08-01) : la clé est écartée quand elle ne peut
+# plus rien payer, pas avant.
+MIN_CREDITS = int(os.environ.get("ODDS_MIN_CREDITS", "1"))
 _dead_keys: dict[str, str] = {}      # clé -> raison (process-local)
 _last_failure: str = ""
 
@@ -376,8 +383,19 @@ def probe_key(key: str) -> tuple[bool, str]:
         return False, "HTTP 422 — quota épuisé"
     if r.status_code != 200:
         return False, f"HTTP {r.status_code}"
-    return True, (f"HTTP 200 — restantes={r.headers.get('x-requests-remaining', '?')} "
-                  f"utilisées={r.headers.get('x-requests-used', '?')}")
+    # Le compteur, pas seulement le code HTTP : mesuré en direct le
+    # 2026-08-20, une clé à 499/500 crédits répond encore 200 sur /sports
+    # (endpoint gratuit) alors qu'elle n'a plus de quoi payer un scan. La
+    # laisser « vivante » ferait perdre la première ligue du scan sur un 401.
+    remaining = r.headers.get("x-requests-remaining")
+    used = r.headers.get("x-requests-used", "?")
+    try:
+        left = int(remaining)
+    except (TypeError, ValueError):
+        left = None
+    if left is not None and left < MIN_CREDITS:
+        return False, f"quota épuisé — restantes={left} utilisées={used}"
+    return True, f"HTTP 200 — restantes={remaining or '?'} utilisées={used}"
 
 
 def _next_live_key(keys: list[str], start: int) -> tuple[str | None, int]:
