@@ -12,7 +12,6 @@ against a reference implementation that doesn't exist here.
 import pytest
 
 from core.tax_engine import (
-    DEFAULT_TAX_RATE,
     is_combo_tax_viable,
     min_edge_required,
     net_b,

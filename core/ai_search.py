@@ -26,7 +26,6 @@ le quota journalier d'un compte est épuisé (voir _groq_keys). Sans aucune
 clé Groq, tout retourne None/[] silencieusement (même dégradation que
 l'ancien `if not api_key: return []`).
 """
-import json
 import logging
 import os
 import time

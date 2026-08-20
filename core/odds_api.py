@@ -338,7 +338,6 @@ def fetch_odds(api_key: str | None = None, hours_ahead: int = 24,
                  "%d crédits économisés", skipped_empty, len(keys_to_scan), skipped_empty * 3)
 
     all_events = []
-    quota_remaining = 9999  # updated after first successful response
     for sport_key, sport_type, _n in scan_plan:
         markets = _MARKETS_BY_SPORT.get(sport_type, "h2h")
         url = f"{BASE_URL}/sports/{sport_key}/odds/"
@@ -355,10 +354,6 @@ def fetch_odds(api_key: str | None = None, hours_ahead: int = 24,
             r = requests.get(url, params=params, timeout=15)
             remaining = r.headers.get("x-requests-remaining", "?")
             used      = r.headers.get("x-requests-used", "?")
-            try:
-                quota_remaining = int(remaining)
-            except (ValueError, TypeError):
-                pass
 
             if r.status_code == 404:
                 continue  # Not in season

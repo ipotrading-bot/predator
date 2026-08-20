@@ -442,8 +442,6 @@ def _archive_before_purge(sb, signals: list):
 
 def _purge_old_signals(sb):
     """Delete stale signals. IMPROVED: batched operations + better logging."""
-    from core.paim_engine import MIN_EDGE
-
     cutoff_48h = (datetime.now(timezone.utc) - timedelta(hours=48)).isoformat()
 
     # ── Archive active signals >48h before purging (preserve ledger history) ──

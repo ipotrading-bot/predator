@@ -11,8 +11,6 @@ compris celles sans le moindre match dans la fenêtre — en Golden Hour
 pré-vol ne doit pas être lue comme « pas de match » (ce serait une panne
 silencieuse du pipeline entier).
 """
-import pytest
-
 import core.odds_api as odds_api
 
 

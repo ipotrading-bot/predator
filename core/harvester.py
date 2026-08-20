@@ -21,7 +21,7 @@ import requests
 from datetime import datetime, timedelta, timezone
 
 from core.ai_search import ai_available, ai_complete, ai_search_complete
-from core.paim_engine import SPORT_LABELS, strict_team_match
+from core.paim_engine import strict_team_match
 
 # ── UTC sub-logger (inherits handler from PREDATOR root) ─────────────
 log = logging.getLogger("PREDATOR.harvester")

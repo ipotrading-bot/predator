@@ -7,7 +7,6 @@ rather than report a distribution built on noise.
 """
 import logging
 import os
-import sys
 import time
 
 import requests

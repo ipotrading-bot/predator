@@ -21,7 +21,6 @@ derrière Cloudflare.
 Script et workflow (.github/workflows/probe_xbet.yml) sont à supprimer une
 fois le relevé fait.
 """
-import json
 import logging
 import sys
 import time

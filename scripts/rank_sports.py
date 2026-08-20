@@ -17,7 +17,6 @@ Lancé par .github/workflows/rank_sports.yml (secrets Supabase en lecture).
 """
 import logging
 import os
-import sys
 
 logging.basicConfig(level=logging.WARNING,
                     format="%(levelname)s | %(message)s")

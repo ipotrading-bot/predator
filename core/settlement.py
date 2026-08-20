@@ -125,7 +125,6 @@ def settle_signal(sb, sig: dict, now_iso: str) -> bool:
     """
     match   = sig["match"]
     sport   = sig.get("sport", "soccer")
-    scanned = (sig.get("scanned_at") or "")[:10]
 
     # Use match_time date for Gemini search accuracy (not scanned_at)
     match_date = (sig.get("match_time") or sig.get("scanned_at") or "")[:10]
