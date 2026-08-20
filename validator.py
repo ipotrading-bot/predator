@@ -1,5 +1,5 @@
 """
-validator.py — PREDATOR PAIM v8.5 — Manual system health-check
+validator.py — PREDATOR PAIM — Manual system health-check
 Run locally: python validator.py
 NOT imported by the engine — standalone diagnostic tool only.
 """
@@ -14,7 +14,7 @@ load_dotenv()
 
 
 def validate_all_systems():
-    print("PREDATOR PAIM v8.5 - SYSTEM CHECK")
+    print("PREDATOR PAIM - SYSTEM CHECK")
     print("━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━")
 
     # 1. HARVESTER — 1XBet direct feed

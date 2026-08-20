@@ -1,6 +1,6 @@
 ---
 name: predator-dashboard-check
-description: Spin up the PREDATOR Flask dashboard locally with zero credentials and smoke-test every route, the nav bar, and static assets. Use this after ANY change to api/index.py or templates/*.html, before telling the user a dashboard fix works — this repo has no automated tests, and a local `python api/index.py` run is the only way to catch a template render error, a 404'd route, or a broken nav link before it ships to Vercel.
+description: Spin up the PREDATOR Flask dashboard locally with zero credentials and smoke-test every route, the nav bar, and static assets. Use this after ANY change to api/index.py or templates/*.html, before telling the user a dashboard fix works — the test suite never renders templates nor hits Flask routes, so a local `python api/index.py` run is the only way to catch a template render error, a 404'd route, or a broken nav link before it ships to Vercel.
 ---
 
 # PREDATOR dashboard smoke test

@@ -5,8 +5,10 @@ description: Reference map of the PREDATOR PAIM data pipeline (odds ingestion �
 
 # PREDATOR pipeline map
 
-This project has no automated migration runner and no test suite — the only way to
-catch a break is to trace the pipeline by hand. This skill is that trace, pre-done.
+This project has no automated migration runner, and its test suite (`tests/`,
+run by `tests.yml` on every push) covers the maths and parsing logic but cannot
+see live data or cron behaviour — to catch a *pipeline* break you still have to
+trace the flow by hand. This skill is that trace, pre-done.
 
 ## Data flow (in order)
 
