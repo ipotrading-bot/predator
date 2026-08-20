@@ -21,6 +21,7 @@ import requests
 from datetime import datetime, timedelta, timezone
 
 from core.ai_search import ai_available, ai_complete, ai_search_complete
+from core.api_sports import PROVIDERS as _AS_PROVIDERS, fetch_sport as _as_fetch_sport
 from core.paim_engine import strict_team_match
 
 # ── UTC sub-logger (inherits handler from PREDATOR root) ─────────────
@@ -191,14 +192,24 @@ def _fuzzy_match_event(candidate: dict, pool: list[dict]) -> dict | None:
     return None
 
 
-def _fetch_from_api_football(sport_id: int) -> list:
-    """API-Football (api-sports.io) — foot uniquement, fournisseur
-    indépendant d'OddsAPI et du LineFeed 1xbet/Melbet/22bet (donc pas
-    soumis aux mêmes pannes/quotas — voir core/api_football.py)."""
-    if sport_id != 1:
+# sport_id harvester -> nom de sport api-sports (core/api_sports.py).
+# Le foot (1) et le basket (4) recoupent le LineFeed ; le baseball (6) et le
+# hockey (7) n'existent QUE par cette voie côté Tier 2, alors qu'ils sont
+# scannés en Tier 1 et appris par la couche d'apprentissage — c'est
+# précisément le trou que l'incident d'août 2026 a révélé.
+_API_SPORTS_BY_ID = {p["sport_id"]: name for name, p in _AS_PROVIDERS.items()}
+
+
+def _fetch_from_api_sports(sport_id: int) -> list:
+    """Famille api-sports.io — fournisseur indépendant d'OddsAPI ET du
+    LineFeed : authentifié par CLÉ, donc non filtré par IP (les runners
+    GitHub sont bloqués par 1xbet/ESPN/SofaScore, pas par api-sports —
+    vérifié le 2026-08-20). Peut ramener un prix sharp (`odds_pinnacle`)
+    dans la même réponse, auquel cas aucune recherche web n'est nécessaire."""
+    sport = _API_SPORTS_BY_ID.get(sport_id)
+    if not sport:
         return []
-    from core.api_football import fetch_football_matches
-    return fetch_football_matches()
+    return _as_fetch_sport(sport)
 
 
 def _fetch_multi_book(sport_id: int) -> list:
@@ -215,14 +226,17 @@ def _fetch_multi_book(sport_id: int) -> list:
     as-is (identical behavior to the old single-book fetch).
     """
     per_book: dict[str, list] = {}
-    for book, (tpls, referer) in SOFT_BOOKS.items():
-        found = _fetch_from_book(book, tpls, referer, sport_id)
-        if found:
-            per_book[book] = found
+    # Le LineFeed ne connaît que les ids de SPORT_IDS ; l'interroger pour un
+    # sport qu'il ne couvre pas coûte 3 books x 6 URLs de sleep pour rien.
+    if sport_id in SPORT_IDS:
+        for book, (tpls, referer) in SOFT_BOOKS.items():
+            found = _fetch_from_book(book, tpls, referer, sport_id)
+            if found:
+                per_book[book] = found
 
-    af_matches = _fetch_from_api_football(sport_id)
-    if af_matches:
-        per_book["api_football"] = af_matches
+    as_matches = _fetch_from_api_sports(sport_id)
+    if as_matches:
+        per_book["api_sports"] = as_matches
 
     if not per_book:
         return []
@@ -242,6 +256,14 @@ def _fetch_multi_book(sport_id: int) -> list:
             # Same real-world match found on another book — keep the
             # better price per outcome (line shopping), track provenance.
             sources = set(existing["_soft_source"].split("+"))
+            # Champs que le line shopping ne doit PAS perdre : un prix sharp
+            # ou une heure de coup d'envoi n'existent que chez certaines
+            # sources, et l'ancienne fusion ne recopiait que les prix soft —
+            # un match trouvé d'abord sur le LineFeed perdait donc le prix
+            # Pinnacle qu'api-sports apportait, c'est-à-dire le signal.
+            for extra in ("odds_pinnacle", "commence_time", "league"):
+                if cand.get(extra) and not existing.get(extra):
+                    existing[extra] = cand[extra]
             improved = False
             for key in ("1", "X", "2"):
                 new_odd = cand["odds_1xbet"].get(key, 0.0)
@@ -351,6 +373,14 @@ def fetch_matches():
             matches = _fetch_from_gemini(sport_id)
             gemini_calls += 1
         all_matches.extend(matches)
+
+    # Sports couverts par api-sports mais absents du LineFeed (baseball,
+    # hockey) : pas de repli recherche web pour eux — le budget Groq est
+    # partagé avec le settlement, et une cote estimée par IA vaut bien moins
+    # qu'une cote de book réelle. Rien trouvé ici veut dire rien, pas
+    # « demande à un modèle ».
+    for sport_id in sorted(set(_API_SPORTS_BY_ID) - set(SPORT_IDS)):
+        all_matches.extend(_fetch_multi_book(sport_id))
     return all_matches
 
 
