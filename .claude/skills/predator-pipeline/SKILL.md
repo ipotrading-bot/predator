@@ -206,7 +206,7 @@ secret GitHub ni par Vercel — voir `core/secret_store.py`.
 | `rapport.yml` | **toutes les 2h (H+35)** | rapport Telegram — était 07:05 & 18:05 jusqu'au 2026-08-06. `run_rapport.py:REPORT_WINDOW_H` (2h) doit rester égal à l'intervalle du cron, sinon un même signal repart dans plusieurs rapports. |
 | `wiz.yml` | toutes les 2h (H+15) | analyse contextuelle Wiz — écrit `wiz_analysis` uniquement, jamais `signals`. Délibérément HORS du groupe `predator-signals-write` (il ne lit que `signals` ; le mettre en file derrière un audit de 45 min lui ferait manquer la fenêtre de compositions T-3h). Ne pas raccourcir cette cadence — voir l'incident du 2026-07-07. |
 | `closing_line.yml` | horaire (H+00) | capture de la ligne de clôture |
-| `guerrilla.yml` | manuel | scan sans OddsAPI (1XBet direct + recherche web) quand le quota est épuisé |
+| `guerrilla.yml` | **toutes les 2h (H+47)** depuis le 2026-08-02 (était manuel) | scan sans OddsAPI (1XBet direct + recherche web) — c'est lui, pas un bouton, qui consomme le TPD Groq quand les sources sont mortes ; le coupe-circuit `harvest_empty_at` le neutralise 3h après un Tier 2 vide |
 | `backfill.yml` | manuel | réparation one-shot de `ai_learning_ledger` |
 
 When a fix touches purge, audit, or learning-layer logic, sanity-check it against

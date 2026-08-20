@@ -4,6 +4,7 @@ scripts/ops.py — pilotage Supabase + Vercel depuis le terminal, sans CLI.
 
     python scripts/ops.py doctor                      # quelles credentials sont présentes, que peut-on faire
     python scripts/ops.py status                      # santé en un écran : clés OddsAPI, dernier signal, seuils, dernier déploiement
+    python scripts/ops.py sources                     # sonde CHAQUE source de cotes : vivante ? quota ? joignable depuis cette IP ?
 
     python scripts/ops.py supabase secrets list       # app_secrets (noms + mis à jour, jamais les valeurs)
     python scripts/ops.py supabase secrets set KEY VAL
@@ -226,6 +227,65 @@ def vc_redeploy():
 
 # ── Vue d'ensemble ─────────────────────────────────────────────────────
 
+def sources():
+    """Sonde toutes les sources de cotes et dit laquelle peut réellement
+    servir. Écrit pour l'incident d'août 2026 : la panne a duré dix jours
+    parce que rien ne répondait à « qu'est-ce qui marche, là, maintenant ».
+
+    Aucune sonde ne consomme de crédit facturé : OddsAPI /v4/sports est
+    gratuit, api-sports /status aussi, et le LineFeed n'a pas de quota.
+    """
+    from core.odds_api import candidate_keys, probe_key            # noqa: E402
+    from core.api_sports import PROVIDERS, _key_for                # noqa: E402
+    from core.ai_search import ai_available                        # noqa: E402
+
+    print("── Tier 1 · The Odds API (sharp Pinnacle + soft 1xbet) ──")
+    keys = candidate_keys()
+    if not keys:
+        print("  aucune clé — `rotate_odds_key.py --add <clé>`")
+    for i, k in enumerate(keys, 1):
+        ok, detail = probe_key(k)
+        print(f"  #{i} …{k[-4:]}  {'VIVANTE' if ok else 'MORTE  '}  {detail}")
+
+    print("── Tier 2 · api-sports.io (clé = pas de filtrage IP) ──")
+    for sport, prov in PROVIDERS.items():
+        key = _key_for(sport)
+        if not key:
+            print(f"  {sport:<11} pas de clé ({'/'.join(prov['keys'])})")
+            continue
+        try:
+            r = requests.get(f"https://{prov['host']}/status",
+                             headers={"x-apisports-key": key}, timeout=15)
+            body = r.json() if r.text else {}
+            errs = body.get("errors") or {}
+            resp = body.get("response") or {}
+            sub  = (resp.get("subscription") or {})
+            req  = (resp.get("requests") or {})
+            if errs:
+                print(f"  {sport:<11} REFUS {str(errs)[:70]}")
+            else:
+                print(f"  {sport:<11} OK  plan={sub.get('plan', '?')} "
+                      f"{req.get('current', '?')}/{req.get('limit_day', '?')} req aujourd'hui")
+        except Exception as e:
+            print(f"  {sport:<11} ERREUR {e}")
+
+    print("── Tier 2 bis · LineFeed 1xbet/Melbet/22bet (sans clé → filtré par IP) ──")
+    from core.harvester import SOFT_BOOKS                           # noqa: E402
+    for book, (tpls, referer) in SOFT_BOOKS.items():
+        url = tpls[0].format(sport_id=1)
+        try:
+            r = requests.get(url, timeout=12, headers={
+                "User-Agent": "Mozilla/5.0", "Referer": referer})
+            n = len((r.json() or {}).get("Value") or []) if r.status_code == 200 else 0
+            print(f"  {book:<8} HTTP {r.status_code}  {n} matchs")
+        except Exception as e:
+            print(f"  {book:<8} injoignable ({type(e).__name__})")
+
+    print("── Tier 3 · recherche web (Groq/Tavily) ──")
+    print(f"  Groq   : {'clé présente' if ai_available() else 'indisponible'}")
+    print(f"  Tavily : {'clé présente' if os.environ.get('TAVILY_API_KEY') else 'absente'}")
+
+
 def doctor():
     print(f"Supabase projet  : {REF}  ({SB_URL})")
     print(f"  SERVICE_KEY    : {'présent' if SB_SRV else 'ABSENT  → secrets/meta/signals indisponibles'}")
@@ -283,6 +343,8 @@ def main(argv):
         doctor()
     elif cmd == "status":
         status()
+    elif cmd == "sources":
+        sources()
     elif cmd == "supabase":
         sub, a = (rest[0] if rest else ""), rest[1:]
         {"secrets": lambda: sb_secrets(a), "meta": lambda: sb_meta(a),
