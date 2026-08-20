@@ -57,6 +57,7 @@ from datetime import datetime, timedelta, timezone
 
 import requests
 
+from core import daily_quota
 from core.secret_store import get_secret
 
 log = logging.getLogger("PREDATOR.api_sports")
@@ -95,11 +96,9 @@ QUOTA_GUARD    = 8      # requêtes restantes en dessous desquelles on rend la m
 # cela ferait ~280 requêtes/jour, soit près du triple du plan — puis des 429 en
 # rafale. Le compte api-sports de ce projet a d'ailleurs été trouvé SUSPENDU le
 # 2026-08-20, alors que l'ancienne implémentation dépensait 1 requête PAR MATCH.
-# On tient donc un compteur par sport et par jour dans la table Supabase `meta`,
-# partagé entre tous les runs.
-#
-# Sans Supabase (tests, sandbox), le compteur est simplement inopérant : la
-# source reste utilisable, on perd juste le partage entre runs.
+# Le compteur partagé de core/daily_quota.py (table Supabase `meta`) fait
+# respecter ce plafond entre les runs ; sans Supabase il est inerte et la
+# source reste utilisable.
 DAILY_BUDGET = int(os.environ.get("API_SPORTS_DAILY_BUDGET", "80"))
 
 # Reconnaissance par NOM (insensible à la casse) et non par id numérique :
@@ -117,38 +116,12 @@ _AWAY = {"away", "2", "away team"}
 _DRAW = {"draw", "x", "tie"}
 
 
-def _usage_key(sport: str) -> str:
-    return f"api_sports_usage_{sport}_{datetime.now(timezone.utc):%Y%m%d}"
-
-
 def _usage_get(sport: str) -> int:
-    """Requêtes déjà dépensées aujourd'hui pour ce sport (0 si inconnu)."""
-    try:
-        from core.db import get_db
-        sb = get_db(write=True)
-        if sb is None:
-            return 0
-        row = sb.table("meta").select("value").eq("key", _usage_key(sport)).maybe_single().execute()
-        return int((row.data or {}).get("value") or 0) if row and row.data else 0
-    except Exception as e:
-        log.debug("api-sports[%s]: compteur illisible (%s)", sport, e)
-        return 0
+    return daily_quota.spent(f"api_sports_{sport}")
 
 
 def _usage_add(sport: str, n: int) -> None:
-    if n <= 0:
-        return
-    try:
-        from core.db import get_db
-        sb = get_db(write=True)
-        if sb is None:
-            return
-        sb.table("meta").upsert(
-            {"key": _usage_key(sport), "value": str(_usage_get(sport) + n),
-             "updated_at": datetime.now(timezone.utc).isoformat()},
-            on_conflict="key").execute()
-    except Exception as e:
-        log.debug("api-sports[%s]: compteur non écrit (%s)", sport, e)
+    daily_quota.add(f"api_sports_{sport}", n)
 
 
 def _key_for(sport: str) -> str | None:

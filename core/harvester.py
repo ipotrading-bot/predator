@@ -22,6 +22,7 @@ from datetime import datetime, timedelta, timezone
 
 from core.ai_search import ai_available, ai_complete, ai_search_complete
 from core.api_sports import PROVIDERS as _AS_PROVIDERS, fetch_sport as _as_fetch_sport
+from core.odds_api_io import SPORTS as _OAI_SPORTS, fetch_sport as _oai_fetch_sport
 from core.paim_engine import strict_team_match
 
 # ── UTC sub-logger (inherits handler from PREDATOR root) ─────────────
@@ -212,6 +213,21 @@ def _fetch_from_api_sports(sport_id: int) -> list:
     return _as_fetch_sport(sport)
 
 
+# sport_id harvester -> nom de sport odds-api.io (core/odds_api_io.py).
+_ODDS_API_IO_BY_ID = {cfg[1]: name for name, cfg in _OAI_SPORTS.items()}
+
+
+def _fetch_from_odds_api_io(sport_id: int) -> list:
+    """odds-api.io — accès AUTHENTIFIÉ aux books soft (1xbet & co.), donc
+    non filtré par IP, là où le LineFeed de ces mêmes books est bloqué
+    depuis les runners GitHub. Fournit h2h + spreads + totals, et un prix
+    sharp si un exchange fait partie des books sélectionnés."""
+    sport = _ODDS_API_IO_BY_ID.get(sport_id)
+    if not sport:
+        return []
+    return _oai_fetch_sport(sport)
+
+
 def _fetch_multi_book(sport_id: int) -> list:
     """
     Task 6 — line shopping: fetch every configured soft book (SOFT_BOOKS)
@@ -238,6 +254,10 @@ def _fetch_multi_book(sport_id: int) -> list:
     if as_matches:
         per_book["api_sports"] = as_matches
 
+    oai_matches = _fetch_from_odds_api_io(sport_id)
+    if oai_matches:
+        per_book["odds_api_io"] = oai_matches
+
     if not per_book:
         return []
 
@@ -261,7 +281,9 @@ def _fetch_multi_book(sport_id: int) -> list:
             # sources, et l'ancienne fusion ne recopiait que les prix soft —
             # un match trouvé d'abord sur le LineFeed perdait donc le prix
             # Pinnacle qu'api-sports apportait, c'est-à-dire le signal.
-            for extra in ("odds_pinnacle", "commence_time", "league"):
+            for extra in ("odds_pinnacle", "commence_time", "league",
+                          "spreads_1xbet", "totals_1xbet",
+                          "spreads_pinnacle", "totals_pinnacle"):
                 if cand.get(extra) and not existing.get(extra):
                     existing[extra] = cand[extra]
             improved = False
@@ -379,7 +401,8 @@ def fetch_matches():
     # partagé avec le settlement, et une cote estimée par IA vaut bien moins
     # qu'une cote de book réelle. Rien trouvé ici veut dire rien, pas
     # « demande à un modèle ».
-    for sport_id in sorted(set(_API_SPORTS_BY_ID) - set(SPORT_IDS)):
+    extra_ids = (set(_API_SPORTS_BY_ID) | set(_ODDS_API_IO_BY_ID)) - set(SPORT_IDS)
+    for sport_id in sorted(extra_ids):
         all_matches.extend(_fetch_multi_book(sport_id))
     return all_matches
 
