@@ -67,6 +67,9 @@ jobs:
           SUPABASE_KEY: ${{ secrets.SUPABASE_KEY }}
           SUPABASE_SERVICE_KEY: ${{ secrets.SUPABASE_SERVICE_KEY }}
           ODDS_API_KEY: ${{ secrets.ODDS_API_KEY }}
+          API_FOOTBALL_KEY: ${{ secrets.API_FOOTBALL_KEY }}
+          GROQ_API_KEY: ${{ secrets.GROQ_API_KEY }}
+          TAVILY_API_KEY: ${{ secrets.TAVILY_API_KEY }}
         run: |
           missing=""
           [ -z "$SUPABASE_URL" ]  && missing="$missing SUPABASE_URL"
@@ -96,6 +99,20 @@ jobs:
           if [ "$role" != "service_role" ]; then
             echo "::error::SUPABASE_SERVICE_KEY decodes to role='$role', not 'service_role' — this is the anon/publishable key, not the service_role secret. Writes will be rejected by RLS (42501). Fix: Supabase dashboard -> Project Settings -> API Keys -> copy the 'service_role' secret into this GitHub secret (not 'anon'/'public')."
             exit 1
+          fi
+          # Incident 2026-08-10 -> 08-20: ten days of '0 matchs, 0 signaux' while the
+          # operator believed the fallback sources were configured. Say, in every run
+          # summary, which fallback credentials actually reach the engine. Warning
+          # only: none of these is mandatory, but a scan with none of them has
+          # exactly one source (the OddsAPI pool) and no net underneath it.
+          fb=""
+          [ -z "$API_FOOTBALL_KEY" ] && fb="$fb API_FOOTBALL_KEY"
+          [ -z "$GROQ_API_KEY" ]     && fb="$fb GROQ_API_KEY"
+          [ -z "$TAVILY_API_KEY" ]   && fb="$fb TAVILY_API_KEY"
+          if [ -n "$fb" ]; then
+            echo "::warning::Fallback sources NOT configured (empty secrets):$fb — if the OddsAPI pool is dead this scan has no other source of matches"
+          else
+            echo "Fallback sources configured: API_FOOTBALL_KEY GROQ_API_KEY TAVILY_API_KEY"
           fi
 
       - uses: actions/checkout@v4
