@@ -9,6 +9,8 @@ Tout le calcul tourne en crons GitHub Actions ; le dashboard est en lecture seul
 - Tests : `python -m pytest tests/ -q` (~35 s, doit rester à 0 échec)
 - Lint : `python -m pyflakes $(git ls-files '*.py')` (actuellement propre)
 - Dashboard local : skill `predator-dashboard-check` (mode démo sans credentials)
+- Piloter Supabase/Vercel : `python scripts/ops.py doctor|status|supabase …|vercel …`
+  (credentials dans `.env`, gitignoré ; CLIs `supabase`/`vercel` aussi installables)
 - Pas de build. Déploiement dashboard = push sur main (Vercel auto).
 
 ## Architecture (fichiers clés)
