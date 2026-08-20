@@ -94,3 +94,18 @@ def test_pool_dead_alert_names_the_cause(monkeypatch):
                         lambda: {"total": 0, "dead": 0, "live": 0, "reason": ""})
     eng._alert_oddsapi_pool_if_dead(FakeSB())
     assert len(sent) == 1 and "aucune clé" in sent[0]
+
+
+def test_breaker_still_queries_api_sports(monkeypatch):
+    """Le coupe-circuit protège le quota Groq/Tavily, pas la source gratuite.
+
+    Constaté en production (run engine du 2026-08-20 18:30) : le harvest
+    entier était sauté, donc api-sports — gratuit, quota propre — ne
+    tournait pas, et le scan restait sans aucune source.
+    """
+    import inspect
+    src = inspect.getsource(eng.run)
+    head = src[src.index("skipped_age = _harvest_recently_empty(sb)"):]
+    branch = head[:head.index("else:")]
+    assert "_api_sports_all(" in branch, "api-sports doit rester appelé quand le harvest est sauté"
+    assert "fetch_matches()" not in branch, "le harvest web coûteux doit rester sauté"

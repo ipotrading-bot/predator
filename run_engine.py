@@ -21,6 +21,7 @@ from core.harvester import fetch_matches, fetch_pinnacle_prices, fetch_estimated
 from core.ai_search import ai_dead as gemini_quota_dead
 from core.closing_line import capture_from_scan
 from core.matchbook import fetch_matchbook_prices
+from core.api_sports import fetch_all as _api_sports_all
 from core.math_engine import to_binary, devig_prob, is_round_number_line
 from core.odds_api import fetch_odds, pool_status as _odds_pool_status
 from core.oracle import get_pinnacle_price
@@ -1708,12 +1709,20 @@ def run():
         # trouveront pas plus que 8, mais brûleront le quota du settlement.
         skipped_age = _harvest_recently_empty(sb)
         if skipped_age is not None:
-            log.warning("📡 Tier 2 — harvest SAUTÉ : dernière tentative vide il y a %.1fh "
-                        "(< %.0fh) — quota Groq/Tavily préservé pour le settlement",
+            # Le coupe-circuit ne vise QUE le harvest coûteux (LineFeed +
+            # recherche web Groq/Tavily, dont le quota est partagé avec le
+            # settlement). api-sports est authentifié par clé, gratuit, et
+            # dispose d'un quota PROPRE par sport : le sauter ne protège
+            # rien et prive le scan de sa dernière source réelle. Constaté
+            # en production le 2026-08-20 (run 18:30) — le coupe-circuit
+            # posé le matin même court-circuitait api-sports par ricochet.
+            log.warning("📡 Tier 2 — harvest web SAUTÉ : dernière tentative vide il y a "
+                        "%.1fh (< %.0fh) — quota Groq/Tavily préservé ; api-sports "
+                        "reste interrogé (gratuit, quota séparé)",
                         skipped_age, _HARVEST_EMPTY_TTL_H)
-            xbet_matches = []
+            xbet_matches = _api_sports_all(hours_ahead=hours_ahead)
         else:
-            log.info("📡 Tier 2 — Harvest Melbet + recherche web Pinnacle...")
+            log.info("📡 Tier 2 — Harvest Melbet + api-sports + recherche web Pinnacle...")
             xbet_matches = fetch_matches()
             _note_harvest_result(sb, xbet_matches)
         # Abandon seulement si RIEN n'a été trouvé nulle part : depuis que ce
