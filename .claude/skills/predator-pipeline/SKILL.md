@@ -153,6 +153,7 @@ laissez-passer là où l'IP est refusée) — ou Matchbook, qui ne filtre pas.
 | 1.5 | Betfair (`core/harvester.py`) | sharp | 499 £ + géobloqué US | inopérant sur Actions |
 | 2 | **api-sports** (`core/api_sports.py`) | soft (+ sharp parfois) | `API_SPORTS_KEY` | 100/jour PAR sport |
 | 2 | **odds-api.io** (`core/odds_api_io.py`) | soft (1X2 + totals + handicaps) | `ODDS_API_IO_KEY` | 500/jour |
+| 2 | **Titan007** (`core/titan007.py`) | soft **et** sharp, foot | aucune | ~500/jour (tolérance) |
 | 2bis | LineFeed 1xbet/Melbet | soft | aucune | bloqué par IP |
 | 3 | recherche web (`core/ai_search.py`) | sharp estimé | Groq/Tavily | quotas morts régulièrement |
 
@@ -175,6 +176,25 @@ lève la dépendance structurelle à OddsAPI. Deux points de vigilance :
 API propre demande 499 £ ET refuse les IP américaines ; chez odds-api.io les
 books sharp/exchanges sont réservés aux plans payants (HTTP 403 explicite).
 Matchbook tient ce rôle — ne pas repayer cette recherche.
+
+**Titan007 — pourquoi elle est là, et ce qu'elle exige.** Matchbook est riche
+en Amérique du Sud et en ligues secondaires ; odds-api.io ne l'est pas. Le
+2026-08-20, ce décalage ne laissait que 8 matchs des deux côtés. Titan007
+couvre exactement ce gisement (286 matchs/jour, 85 ligues, jusqu'à 157 books
+dont Pinnacle) et apporte le soft ET le sharp d'un coup : **28 matchs des
+deux côtés** après branchement. Trois choses à ne pas défaire :
+- **le fuseau est UTC+8 et n'est écrit nulle part.** Calibré contre les heures
+  UTC de Matchbook sur 14 matchs communs (12 concordances exactes). Huit
+  heures d'erreur, et chaque signal est refusé par le garde « match déjà
+  commencé » — ou réglé sur le mauvais match ;
+- **le prix soft est borné par la médiane** (`MAX_SOFT_OUTLIER`). Sur 157
+  books, prendre le maximum ramasse le book figé : un match colombien
+  ressortait à 4,59 contre 3,58 sharp, un edge de 28 % entièrement faux ;
+- **les URL ne doivent JAMAIS porter de query string.** Le robots.txt de
+  `bf.titan007.com` interdit `/*?*` ; les deux endpoints utilisés en sont
+  exempts. Le feed de handicap asiatique en porte une : il est volontairement
+  absent. C'est une source TOLÉRÉE, pas contractuelle — cadence basse,
+  budget journalier, et retour [] en cas de panne.
 
 **Le piège qui a tenu le pipeline à zéro malgré deux sources saines.** Les
 fournisseurs ne nomment pas les matchs pareil : « Cde Juventud Italiana »

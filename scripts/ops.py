@@ -283,6 +283,11 @@ def sources():
     ok, detail = oai_probe()
     print(f"  {'OK' if ok else 'KO'} — {detail}")
 
+    print("── Tier 2 · Titan007 (foot, ligues hors Europe) ──")
+    from core.titan007 import probe as t7_probe                        # noqa: E402
+    ok, detail = t7_probe()
+    print(f"  {'OK' if ok else 'KO'} — {detail}")
+
     print("── Tier 2 bis · LineFeed 1xbet/Melbet/22bet (sans clé → filtré par IP) ──")
     from core.harvester import SOFT_BOOKS                           # noqa: E402
     for book, (tpls, referer) in SOFT_BOOKS.items():

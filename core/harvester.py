@@ -23,6 +23,7 @@ from datetime import datetime, timedelta, timezone
 from core.ai_search import ai_available, ai_complete, ai_search_complete
 from core.api_sports import PROVIDERS as _AS_PROVIDERS, fetch_sport as _as_fetch_sport
 from core.odds_api_io import SPORTS as _OAI_SPORTS, fetch_sport as _oai_fetch_sport
+from core.titan007 import SPORT_ID as _T7_SPORT_ID, fetch_matches as _t7_fetch
 from core.paim_engine import strict_team_match
 
 # ── UTC sub-logger (inherits handler from PREDATOR root) ─────────────
@@ -257,6 +258,14 @@ def _fetch_multi_book(sport_id: int) -> list:
     oai_matches = _fetch_from_odds_api_io(sport_id)
     if oai_matches:
         per_book["odds_api_io"] = oai_matches
+
+    # Titan007 : foot uniquement, mais c'est la seule source gratuite qui
+    # couvre les ligues sud-américaines et secondaires où l'exchange est
+    # riche — et elle apporte le prix sharp ET le prix soft d'un coup.
+    if sport_id == _T7_SPORT_ID:
+        t7_matches = _t7_fetch()
+        if t7_matches:
+            per_book["titan007"] = t7_matches
 
     if not per_book:
         return []
