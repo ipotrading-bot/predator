@@ -425,13 +425,34 @@ def ai_complete(prompt: str, label: str = "AI",
         log.info("%s: cache IA (fenêtre %d min) — aucun appel", label, AI_CACHE_TTL_MIN)
         return hit
     messages = [{"role": "user", "content": prompt}]
-    for model in _TIER_MODELS.get(tier, _EXTRACT_MODELS):
-        text = _groq_post(model, messages, max_tokens, temperature, timeout, label)
-        if text:
-            _cache_put(ck, text)
-            return text
+
+    # ── LE ROUTEUR D'ABORD, GROQ EN RÉSERVE ──────────────────────────
+    # Ordre INVERSÉ le 2026-08-22, et c'est le changement qui fait que la
+    # capacité ajoutée sert réellement.
+    #
+    # Avant : on épuisait TOUS les modèles Groq avant de regarder ailleurs.
+    # Comme Groq répond presque toujours, les autres fournisseurs n'étaient
+    # jamais appelés : 100 % de la charge tapait dans les 100 000 tokens/jour
+    # de Groq (comptés PAR ORGANISATION), pendant que ~540 requêtes/jour de
+    # capacité restaient intactes. On avait ajouté des fournisseurs sans
+    # ajouter un seul appel.
+    #
+    # Pourquoi Groq mérite d'être gardé en réserve plutôt qu'un autre : il est
+    # le SEUL du registre à porter `groq/compound-mini`, c'est-à-dire la
+    # recherche web intégrée. Aucun autre fournisseur ne la remplace. Chaque
+    # token de Groq dépensé ici en complétion simple est un token retiré à
+    # `ai_search_complete()` — et c'est exactement le manque qui a bloqué le
+    # settlement toute la journée du 2026-08-02.
+    #
+    # `ai_search_complete()` garde donc l'ordre inverse (compound-mini
+    # d'abord) : là, Groq est irremplaçable.
     text = _fallback_post(messages, max_tokens, temperature, timeout, label,
                           lane or _TIER_LANE.get(tier, "analyze"))
+    if not text:
+        for model in _TIER_MODELS.get(tier, _EXTRACT_MODELS):
+            text = _groq_post(model, messages, max_tokens, temperature, timeout, label)
+            if text:
+                break
     if text:
         _cache_put(ck, text)
     return text

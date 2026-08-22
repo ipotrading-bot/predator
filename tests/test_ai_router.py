@@ -538,3 +538,152 @@ class TestBudgetsRealistes:
         Un budget PREDATOR supérieur ne récolterait que des 429 : on veut
         basculer AVANT de se faire couper, pas après."""
         assert R.by_name("openrouter").daily_requests <= 50
+
+
+class TestRepartitionSur24h:
+    """La capacité ajoutée ne sert que si elle est APPELÉE.
+
+    Suivre l'ordre du registre draine toujours le même fournisseur : sa
+    réserve part en quelques heures pendant que les autres restent intacts.
+    Le tri par budget restant est ce qui transforme « 11 fournisseurs
+    configurés » en « 11 fournisseurs utilisés ».
+    """
+
+    def _trois(self, monkeypatch, spent):
+        for n in ("GEMINI_API_KEY", "CLOUDFLARE_API_TOKEN",
+                  "CLOUDFLARE_ACCOUNT_ID", "OPENROUTER_API_KEY"):
+            monkeypatch.setenv(n, "x")
+        monkeypatch.setattr(R, "fetch_catalog", lambda p, timeout=None: set())
+        monkeypatch.setattr(daily_quota, "spent", lambda b: spent.get(b, 0))
+
+    def test_le_moins_servi_passe_en_premier(self, monkeypatch):
+        self._trois(monkeypatch, {"ai_gemini": 190, "ai_cloudflare": 10,
+                                  "ai_openrouter": 20})
+        ordre = [p.name for p, _ in R.lane_providers(R.ANALYZE)]
+        assert ordre[0] == "cloudflare"          # 10/200 consommé
+        assert ordre[-1] == "gemini"             # 190/200 consommé
+
+    def test_lordre_du_registre_departage_a_egalite(self, monkeypatch):
+        """Quand personne n'est en avance, la préférence de qualité reprend
+        la main — le tri équilibré ne la remplace pas, il l'arbitre."""
+        self._trois(monkeypatch, {})
+        ordre = [p.name for p, _ in R.lane_providers(R.ANALYZE)]
+        rang = {p.name: i for i, p in enumerate(R.REGISTRY)}
+        assert ordre == sorted(ordre, key=lambda n: rang[n])
+
+    def test_un_fournisseur_en_avance_sur_la_cadence_passe_en_dernier(self, monkeypatch):
+        """À 25 % de la journée, avoir consommé 90 % de son budget = en
+        avance. On ne l'exclut pas — l'exclure à 00 h 05 bloquerait tout."""
+        from datetime import datetime, timezone
+        self._trois(monkeypatch, {"ai_gemini": 180})
+        monkeypatch.setattr(R, "_now",
+                            lambda: datetime(2026, 8, 22, 6, 0, tzinfo=timezone.utc))
+        ordre = [p.name for p, _ in R.lane_providers(R.ANALYZE)]
+        assert ordre[-1] == "gemini"
+        assert "gemini" in ordre                 # relégué, jamais écarté
+
+    def test_la_journee_est_bien_un_cycle_de_24h_UTC(self):
+        from datetime import datetime, timezone
+        minuit = datetime(2026, 8, 22, 0, 0, tzinfo=timezone.utc)
+        midi = datetime(2026, 8, 22, 12, 0, tzinfo=timezone.utc)
+        presque = datetime(2026, 8, 22, 23, 59, tzinfo=timezone.utc)
+        assert R._day_fraction(minuit) < 0.05
+        assert abs(R._day_fraction(midi) - 0.5) < 0.01
+        assert R._day_fraction(presque) > 0.99
+
+    def test_desactiver_lequilibrage_restaure_lordre_du_registre(self, monkeypatch):
+        self._trois(monkeypatch, {"ai_gemini": 190})
+        rang = {p.name: i for i, p in enumerate(R.REGISTRY)}
+        ordre = [p.name for p, _ in R.lane_providers(R.ANALYZE, balanced=False)]
+        assert ordre == sorted(ordre, key=lambda n: rang[n])
+
+
+class TestGroqEnReserve:
+    def test_ai_complete_interroge_le_routeur_AVANT_groq(self, monkeypatch):
+        """Groq est le SEUL à porter compound-mini (recherche web intégrée).
+        Chaque token dépensé en complétion simple est retiré à
+        `ai_search_complete` — le manque exact qui a bloqué le settlement le
+        2026-08-02."""
+        from core import ai_search
+        appels = []
+        monkeypatch.setattr(ai_search, "_cache_get", lambda k: None)
+        monkeypatch.setattr(ai_search, "_cache_put", lambda k, t: None)
+        monkeypatch.setattr(ai_search, "_groq_post",
+                            lambda *a, **k: appels.append("groq") or "de-groq")
+        monkeypatch.setattr(ai_search, "_fallback_post",
+                            lambda *a, **k: appels.append("routeur") or "du-routeur")
+        assert ai_search.ai_complete("q") == "du-routeur"
+        assert appels == ["routeur"]             # Groq pas touché
+
+    def test_groq_reprend_la_main_si_le_routeur_est_muet(self, monkeypatch):
+        from core import ai_search
+        appels = []
+        monkeypatch.setattr(ai_search, "_cache_get", lambda k: None)
+        monkeypatch.setattr(ai_search, "_cache_put", lambda k, t: None)
+        monkeypatch.setattr(ai_search, "_fallback_post",
+                            lambda *a, **k: appels.append("routeur") or None)
+        monkeypatch.setattr(ai_search, "_groq_post",
+                            lambda *a, **k: appels.append("groq") or "de-groq")
+        assert ai_search.ai_complete("q") == "de-groq"
+        assert appels == ["routeur", "groq"]
+
+    def test_la_recherche_web_garde_groq_en_premier(self, monkeypatch):
+        """`ai_search_complete` est l'inverse : compound-mini d'abord, parce
+        qu'aucun autre fournisseur ne fait de recherche web."""
+        import inspect
+        from core import ai_search
+        src = inspect.getsource(ai_search.ai_search_complete)
+        assert src.index("_SEARCH_MODEL") < src.index("_fallback_post")
+
+
+class TestCalibration24h:
+    def test_la_charge_se_repartit_proportionnellement_aux_budgets(self, monkeypatch):
+        """Simulation d'un cycle complet : 40 scans × 6 appels sur 24 h.
+
+        Le critère n'est pas « tout le monde est servi » mais « chacun est
+        servi À LA HAUTEUR DE SON BUDGET ». Sans ce tri, les 240 appels
+        partaient intégralement sur le premier fournisseur du registre :
+        sa réserve s'épuisait pendant que les autres restaient intacts.
+        """
+        from datetime import datetime, timedelta, timezone
+        for n in ("GEMINI_API_KEY", "CLOUDFLARE_API_TOKEN", "CLOUDFLARE_ACCOUNT_ID",
+                  "OPENROUTER_API_KEY", "OLLAMA_API_KEY", "GROQ_API_KEY"):
+            monkeypatch.setenv(n, "x")
+        monkeypatch.setattr(R, "fetch_catalog", lambda p, timeout=None: set())
+        spent = {}
+        monkeypatch.setattr(daily_quota, "spent", lambda b: spent.get(b, 0))
+        base = datetime(2026, 8, 22, 0, 0, tzinfo=timezone.utc)
+        horloge = [base]
+        monkeypatch.setattr(R, "_now", lambda: horloge[0])
+
+        servis = {}
+        for i in range(40):
+            horloge[0] = base + timedelta(minutes=36 * i)
+            for _ in range(6):
+                cands = R.lane_providers(R.ANALYZE)
+                assert cands, "plus aucun fournisseur en cours de journée"
+                prov = cands[0][0]
+                spent[prov.bucket] = spent.get(prov.bucket, 0) + 1
+                servis[prov.name] = servis.get(prov.name, 0) + 1
+
+        assert sum(servis.values()) == 240
+        assert len(servis) >= 5              # tout le monde a servi
+
+        # Chacun consomme la MÊME fraction de son budget, à 10 points près.
+        parts = []
+        for nom, n in servis.items():
+            p = R.by_name(nom)
+            plafond = p.daily_requests - (R.SETTLEMENT_RESERVE
+                                          if R.SETTLEMENT in p.lanes else 0)
+            parts.append(n / plafond)
+        assert max(parts) - min(parts) < 0.10, dict(zip(servis, parts))
+
+    def test_le_budget_groq_reflete_son_TPD_et_non_un_nombre_de_requetes(self):
+        """La contrainte de Groq est 100 000 tokens/jour PAR ORGANISATION.
+        À ~600 tokens l'appel, cela fait ~165 appels — pas 400. Un budget
+        surévalué ferait continuer d'appeler après l'épuisement du TPD, et
+        surtout brûlerait sur des complétions simples le quota dont
+        compound-mini a besoin."""
+        groq = R.by_name("groq")
+        assert groq.daily_tokens == 100_000
+        assert groq.daily_requests <= groq.daily_tokens // 600

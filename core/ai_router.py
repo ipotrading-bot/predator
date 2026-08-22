@@ -185,8 +185,19 @@ REGISTRY: tuple = (
         env_key="GROQ_API_KEY",
         models=("llama-3.3-70b-versatile", "llama-3.1-8b-instant"),
         lanes=(FILTER, ANALYZE, SETTLEMENT, SEARCH_READ),
-        rpm=30, daily_requests=400,
-        note="TPD 100k compté PAR ORGANISATION, pas par clé",
+        # 160 et non 400 : la vraie contrainte de Groq n'est pas un nombre de
+        # requetes mais 100 000 TOKENS PAR JOUR, comptes PAR ORGANISATION (une
+        # 2e cle du meme compte ne rachete rien). Les appels de ce pipeline
+        # tournent autour de 600 tokens (lots Pinnacle de 25 matchs, contextes
+        # Tavily), soit ~165 appels avant epuisement. Un budget de 400 laissait
+        # croire a une reserve qui n'existe pas : on aurait continue d'appeler
+        # apres l'epuisement du TPD, et surtout on aurait epuise le TPD sur des
+        # completions simples alors que compound-mini en a besoin.
+        rpm=30, daily_requests=160, daily_tokens=100_000,
+        note="TPD 100k compte PAR ORGANISATION, pas par cle. SEUL fournisseur du "
+             "registre a porter groq/compound-mini (recherche web integree) : son "
+             "quota est donc irremplacable, d'ou un budget serre et la reserve "
+             "settlement qui ampute les autres lanes.",
     ),
     # ── Palier gratuit permanent, sans carte — priorité 1 ──
     # ⚠️ CERBRAS ET SAMBANOVA : `payment_required`, TRANCHÉ PAR L'INFÉRENCE.
@@ -765,12 +776,54 @@ def budget_left(p: Provider, lane: str) -> int:
     return max(0, ceiling - spent)
 
 
-def lane_providers(lane: str, allow_flagged: bool = False) -> list:
+# Marge de tolerance sur la cadence : a 30 % de la journee ecoulee, un
+# fournisseur peut avoir consomme jusqu'a 45 % de son budget sans etre
+# deprioritise. Assez lache pour absorber une rafale de scans legitime, assez
+# serre pour qu'un run pathologique ne vide pas la reserve avant midi.
+PACING_HEADROOM = float(os.environ.get("AI_PACING_HEADROOM", "0.15"))
+
+
+def _day_fraction(now: datetime | None = None) -> float:
+    """Part de la journee UTC ecoulee, dans ]0,1]. Les compteurs de
+    `daily_quota` sont indexes par date UTC : le cycle est donc bien 24 h,
+    minuit a minuit."""
+    n = now or _now()
+    return max(0.02, (n.hour * 3600 + n.minute * 60 + n.second) / 86400)
+
+
+def _pacing(p: Provider, lane: str, now: datetime | None = None) -> tuple:
+    """(en avance sur la cadence ?, part de budget restante 0..1).
+
+    « En avance » = ce fournisseur a deja consomme plus que sa part de la
+    journee. On ne l'EXCLUT pas — l'exclure a 00 h 05 bloquerait tout — on le
+    fait simplement passer apres les autres.
+    """
+    ceiling = p.daily_requests
+    if not ceiling:
+        return False, 1.0
+    if lane != SETTLEMENT and SETTLEMENT in p.lanes:
+        ceiling = max(1, ceiling - SETTLEMENT_RESERVE)
+    spent = daily_quota.spent(p.bucket)
+    autorise = ceiling * (_day_fraction(now) + PACING_HEADROOM)
+    return spent > autorise, max(0.0, (ceiling - spent) / ceiling)
+
+
+def lane_providers(lane: str, allow_flagged: bool = False,
+                   balanced: bool = True) -> list:
     """Fournisseurs sains de la lane, dans l'ordre de préférence du registre.
 
     Écartés : clé absente, disjoncteur ouvert, budget épuisé pour cette lane,
     aucun modèle au catalogue, et — sauf `allow_flagged` — ceux dont les
     conditions réservent le gratuit à un usage non commercial/évaluation.
+
+    ORDRE — c'est ici que se joue l'exploitation réelle de la capacité.
+    Suivre l'ordre du registre draine TOUJOURS le premier fournisseur : sa
+    réserve part en quelques heures pendant que les autres restent intacts,
+    et le soir il ne reste plus rien alors que l'essentiel du budget du jour
+    n'a jamais été touché. `balanced=True` trie donc par budget RESTANT — le
+    moins servi d'abord — en reléguant ceux qui sont en avance sur la cadence
+    du jour. L'ordre du registre ne sert plus que de départage : il reste la
+    préférence de qualité quand tout le monde est à égalité.
     """
     out = []
     for p in REGISTRY:
@@ -789,6 +842,16 @@ def lane_providers(lane: str, allow_flagged: bool = False) -> list:
         if not models:
             continue
         out.append((p, models))
+    if balanced and len(out) > 1:
+        rang = {q.name: i for i, q in enumerate(REGISTRY)}
+
+        def cle(item):
+            prov, _ = item
+            en_avance, restant = _pacing(prov, lane)
+            return (en_avance, -restant, rang[prov.name])
+
+        out.sort(key=cle)
+        log.debug("lane %s : ordre equilibre %s", lane, [q.name for q, _ in out])
     return out
 
 

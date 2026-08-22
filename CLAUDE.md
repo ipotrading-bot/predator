@@ -96,5 +96,15 @@ Tout le calcul tourne en crons GitHub Actions ; le dashboard est en lecture seul
   n'y accèdent jamais) — leçon du 2026-08-02. Un compte par fournisseur ;
   `terms_flag` (non_commercial/evaluation) = exclu de la production par défaut.
   Zéro fournisseur configuré n'alerte PAS (sinon spam Telegram en mode REPRICE).
+  RÉPARTITION 24h : `lane_providers(balanced=True)` trie par budget RESTANT, pas
+  par ordre du registre — sinon le 1er fournisseur est drainé pendant que les
+  autres restent intacts (mesuré : 240 appels tous sur Groq → 42 après). Ordre du
+  registre = départage à égalité seulement. `ai_complete` interroge le ROUTEUR
+  AVANT Groq (Groq = seul à porter compound-mini/recherche web, quota irremplaçable) ;
+  `ai_search_complete` garde l'ordre inverse. Budget Groq = 160 req/j, dérivé de
+  son TPD 100k et non d'un nombre de requêtes inventé.
+  Un catalogue lisible ne prouve RIEN : Cerebras/SambaNova/Chutes rendent 200 sur
+  /models et 402 à l'inférence ; Scaleway rend 429 quota-zéro. `ops.py ai` fait le
+  vrai appel — c'est le seul diagnostic qui tranche.
 - Sub-agent `predator-diagnostician` pour tout audit pipeline/santé (isole les
   gros logs hors de la conversation principale).
