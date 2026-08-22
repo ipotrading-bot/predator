@@ -5,6 +5,7 @@ scripts/ops.py — pilotage Supabase + Vercel depuis le terminal, sans CLI.
     python scripts/ops.py doctor                      # quelles credentials sont présentes, que peut-on faire
     python scripts/ops.py status                      # santé en un écran : clés OddsAPI, dernier signal, seuils, dernier déploiement
     python scripts/ops.py sources                     # sonde CHAQUE source de cotes : vivante ? quota ? joignable depuis cette IP ?
+    python scripts/ops.py ai                          # sonde CHAQUE fournisseur IA par une INFÉRENCE réelle (catalogue ≠ utilisable)
 
     python scripts/ops.py supabase secrets list       # app_secrets (noms + mis à jour, jamais les valeurs)
     python scripts/ops.py supabase secrets set KEY VAL
@@ -227,6 +228,30 @@ def vc_redeploy():
 
 # ── Vue d'ensemble ─────────────────────────────────────────────────────
 
+def ai():
+    """Sonde CHAQUE fournisseur IA par une inférence réelle.
+
+    Un catalogue lisible ne prouve pas qu'un fournisseur est utilisable :
+    Cerebras et SambaNova rendent 200 sur /models et 402 sur la première
+    inférence. Cette commande fait donc le vrai appel.
+    """
+    from core.ai_router import REGISTRY, verify
+    icons = {"OK": "✅", "absent": "· ", "paiement-requis": "💳",
+             "cle-refusee": "🔑", "quota": "⏳", "reponse-vide": "⚠️ ",
+             "incomplet": "🧩", "sans-modele": "🚫"}
+    rows = verify()
+    for r in rows:
+        p = next((x for x in REGISTRY if x.name == r["provider"]), None)
+        flag = f" ⚖️{p.terms_flag}" if p and p.terms_flag else ""
+        bascule = " (bascule)" if r.get("switched") else ""
+        print(f"{icons.get(r['state'], '❓')} {r['provider']:<14}{flag:<18} "
+              f"{r.get('model') or '-':<34} {r['state']:<16} {r['detail'][:70]}{bascule}")
+    ok = [r for r in rows if r["state"] == "OK"]
+    print(f"\n{len(ok)}/{len([r for r in rows if r['state'] != 'absent'])} "
+          f"fournisseur(s) configuré(s) réellement utilisable(s) : "
+          f"{', '.join(r['provider'] for r in ok) or 'aucun'}")
+
+
 def sources():
     """Sonde toutes les sources de cotes et dit laquelle peut réellement
     servir. Écrit pour l'incident d'août 2026 : la panne a duré dix jours
@@ -364,6 +389,8 @@ def main(argv):
         status()
     elif cmd == "sources":
         sources()
+    elif cmd == "ai":
+        ai()
     elif cmd == "supabase":
         sub, a = (rest[0] if rest else ""), rest[1:]
         {"secrets": lambda: sb_secrets(a), "meta": lambda: sb_meta(a),

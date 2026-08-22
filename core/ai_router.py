@@ -185,21 +185,36 @@ REGISTRY: tuple = (
         note="TPD 100k compté PAR ORGANISATION, pas par clé",
     ),
     # ── Palier gratuit permanent, sans carte — priorité 1 ──
+    # ⚠️ CERBRAS ET SAMBANOVA : `payment_required`, TRANCHÉ PAR L'INFÉRENCE.
+    # Leur catalogue répond 200 avec une vraie clé, mais le premier appel
+    # d'inférence rend 402 :
+    #   Cerebras  → {"code":"payment_required"} sur ses 2 modèles
+    #   SambaNova → {"code":"PAYMENT_METHOD_REQUIRED","balance_units":0}
+    # C'est la leçon qui complète celle du 403 : un catalogue lisible ne prouve
+    # PAS qu'un fournisseur est utilisable. Seul un appel d'inférence tranche.
+    # Marqués `payment_required` → exclus de la production, gardés au registre
+    # pour que personne ne repaie l'enquête.
     Provider(
         name="cerebras", base_url="https://api.cerebras.ai/v1",
         env_key="CEREBRAS_API_KEY",
-        models=("llama-3.3-70b", "gpt-oss-120b", "qwen-3-32b"),
+        models=("gpt-oss-120b", "gemma-4-31b"),
         lanes=(FILTER, ANALYZE, SETTLEMENT, SEARCH_READ),
-        rpm=30, daily_requests=250, daily_tokens=1_000_000,
-        note="~1M tokens/j annonces, sans carte. RETABLI le 2026-08-22 : la "
-             "conclusion de mort reposait sur un 403 sans cle, qui ne prouvait rien "
-             "(401 'wrong_api_key' avec une cle invalide = API vivante).",
+        rpm=30, daily_requests=250, terms_flag="payment_required",
+        note="cle valide, catalogue 200 (2 modeles), mais inference 402 "
+             "payment_required — verifie le 2026-08-22",
     ),
     Provider(
         name="gemini",
         base_url="https://generativelanguage.googleapis.com/v1beta/openai",
         env_key="GEMINI_API_KEY",
-        models=("gemini-2.5-flash", "gemini-2.5-flash-lite"),
+        # Ordre établi par INFÉRENCE RÉELLE le 2026-08-22. `gemini-2.5-flash`
+        # est un modèle à RÉFLEXION : interrogé avec max_tokens=10 il rend un
+        # contenu VIDE (`finish_reason=length`, `completion_tokens=0`) — tout
+        # le budget est parti en réflexion avant le premier mot. Mesuré sur
+        # « say OK » : flash = 41 tokens facturés pour 1 token utile,
+        # flash-lite = 4. Sous les plafonds de ce pipeline (80 tokens pour un
+        # alias), flash ne rendrait jamais rien. Le lite passe donc devant.
+        models=("gemini-2.5-flash-lite", "gemini-2.5-flash"),
         lanes=(ANALYZE, FILTER, TRANSLATE_CJK),
         rpm=15, daily_requests=200,
         note="⚠️ NE PAS CONFONDRE avec le grounding Google Search, lui bien MORT en "
@@ -240,10 +255,19 @@ REGISTRY: tuple = (
         env_key="OPENROUTER_API_KEY",
         # Préférences vérifiées présentes au catalogue :free du 2026-08-22.
         # Elles PÉRIMERONT — c'est le principe même du module.
-        models=("nvidia/nemotron-3-super-120b-a12b:free",
-                "z-ai/glm-5.2:free",
+        # Ordre établi par INFÉRENCE RÉELLE le 2026-08-22, pas par taille de
+        # modèle. `gemma-4-31b-it` rend « OK » en 1 token ; le nemotron-super,
+        # qui est un modèle de RAISONNEMENT, a dépensé 8 de ses 10 tokens en
+        # réflexion et répondu « We are to say "OK" as per the… ». Sous les
+        # plafonds serrés de ce pipeline (max_tokens=80 pour un alias, 300
+        # pour l'oracle), un modèle de raisonnement brûle son budget à penser
+        # et ne rend jamais le JSON attendu. Les instruct d'abord, donc.
+        models=("nvidia/nemotron-3-nano-30b-a3b:free",
                 "google/gemma-4-31b-it:free",
-                "nvidia/nemotron-3-nano-30b-a3b:free"),
+                "nvidia/nemotron-3-super-120b-a12b:free",
+                "z-ai/glm-5.2:free",
+                "nvidia/nemotron-nano-9b-v2:free",
+                "liquid/lfm-2.5-2.6b:free"),
         lanes=(ANALYZE, FILTER, TRANSLATE_CJK, SEARCH_READ),
         rpm=20, daily_requests=150,
         headers={"HTTP-Referer": "https://github.com/predator-paim",
@@ -264,8 +288,9 @@ REGISTRY: tuple = (
         env_key="SAMBANOVA_API_KEY",
         models=("Meta-Llama-3.3-70B-Instruct", "DeepSeek-V3.2", "gpt-oss-120b"),
         lanes=(FILTER, ANALYZE, SETTLEMENT, SEARCH_READ),
-        rpm=60, daily_requests=200, daily_tokens=200_000,
-        note="7 modeles (2026-08-22) ; ~200k tokens/j par modele — verifier si carte requise",
+        rpm=60, daily_requests=200, terms_flag="payment_required",
+        note="catalogue 200 (7 modeles) mais inference 402 PAYMENT_METHOD_REQUIRED, "
+             "balance_units=0 — carte OBLIGATOIRE, verifie le 2026-08-22",
     ),
     Provider(
         name="ovh", base_url="https://oai.endpoints.kepler.ai.cloud.ovh.net/v1",
@@ -329,7 +354,9 @@ REGISTRY: tuple = (
     Provider(
         name="upstage", base_url="https://api.upstage.ai/v1",
         env_key="UPSTAGE_API_KEY",
-        models=("solar-pro2", "solar-mini"),
+        # Catalogue constaté le 2026-08-22 (10 modèles) : solar-pro4 est le
+        # courant, solar-mini répond « OK » en 16 tokens.
+        models=("solar-pro4", "solar-pro2", "solar-mini"),
         lanes=(TRANSLATE_CJK,),
         rpm=0, daily_requests=50, terms_flag="evaluation",
         note="credits d'essai ; utile ponctuellement pour le coreen",
@@ -497,10 +524,22 @@ def fetch_catalog(p: Provider, timeout: int | None = None) -> set:
     for m in items:
         if isinstance(m, dict):
             mid = m.get("id") or m.get("name") or m.get("model")
-            if mid:
-                ids.add(str(mid))
         elif isinstance(m, str):
-            ids.add(m)
+            mid = m
+        else:
+            continue
+        if not mid:
+            continue
+        mid = str(mid)
+        ids.add(mid)
+        # Certains catalogues préfixent leurs identifiants alors que
+        # l'inférence accepte les deux formes : Gemini publie
+        # `models/gemini-2.5-flash` et répond aussi bien à
+        # `gemini-2.5-flash`. Sans cette normalisation, une préférence non
+        # préfixée serait jugée ABSENTE et le fournisseur écarté à tort —
+        # le routeur débrancherait un fournisseur parfaitement sain.
+        if "/" in mid:
+            ids.add(mid.rsplit("/", 1)[-1])
     _catalog_cache[p.name] = ids
     return ids
 
@@ -529,6 +568,34 @@ def resolve_model(p: Provider, catalog: set | None = None) -> tuple:
     log.error("ai_router[%s]: AUCUNE préférence au catalogue (%s) — fournisseur "
               "écarté ce run", p.name, ", ".join(p.models))
     return None, True
+
+
+def resolve_models(p: Provider, catalog: set | None = None) -> list:
+    """TOUTES les préférences présentes au catalogue, dans l'ordre.
+
+    POURQUOI PLUSIEURS — mesuré le 2026-08-22 sur OpenRouter : les modèles
+    `:free` sont bridés EN AMONT, modèle par modèle et de façon fluctuante.
+    Au même instant, `google/gemma-4-31b-it:free` rendait 429 « temporarily
+    rate-limited upstream » pendant que `nvidia/nemotron-3-nano-30b-a3b:free`
+    répondait « OK » proprement. Ne retenir qu'un seul modèle par fournisseur
+    revenait donc à jeter tout OpenRouter parce qu'UN de ses modèles était
+    saturé — alors que quatre autres étaient disponibles.
+    """
+    if not p.models:
+        return []
+    cat = fetch_catalog(p) if catalog is None else catalog
+    if not cat:
+        return list(p.models)          # catalogue muet : on garde les préférences
+    return [m for m in p.models if m in cat]
+
+
+# Codes sur lesquels il vaut la peine d'essayer un AUTRE modèle du MÊME
+# fournisseur : la limite est portée par le modèle, pas par le compte.
+_RETRY_NEXT_MODEL = (429, 500, 502, 503, 504)
+
+# Sentinelle : « ce modèle est saturé, essaie le suivant du MÊME fournisseur ».
+# Distincte de None, qui veut dire « ce fournisseur est en panne, passe au suivant ».
+_RETRY = object()
 
 
 def refresh_catalogues(alert=None) -> dict:
@@ -635,10 +702,10 @@ def lane_providers(lane: str, allow_flagged: bool = False) -> list:
             log.info("ai_router[%s]: budget épuisé pour la lane %s — écarté",
                      p.name, lane)
             continue
-        model, _ = resolve_model(p)
-        if not model:
+        models = resolve_models(p)
+        if not models:
             continue
-        out.append((p, model))
+        out.append((p, models))
     return out
 
 
@@ -675,8 +742,9 @@ def call_provider(p: Provider, model: str, messages: list, max_tokens: int,
 
     if r.status_code != 200:
         save_health(record_failure(health, f"HTTP {r.status_code}"))
-        log.warning("%s[%s]: HTTP %d: %s", label, p.name, r.status_code, r.text[:200])
-        return None
+        log.warning("%s[%s/%s]: HTTP %d: %s", label, p.name, model,
+                    r.status_code, r.text[:180])
+        return _RETRY if r.status_code in _RETRY_NEXT_MODEL else None
     try:
         text, tokens = _extract(r.json())
     except Exception as e:
@@ -713,10 +781,15 @@ def route(messages: list, lane: str, label: str = "AI",
         log.warning("%s: aucun fournisseur sain pour la lane %s", label, lane)
         return None, None
 
-    for p, model in candidates:
-        text = call_provider(p, model, messages, max_tokens, temperature,
-                             timeout, label)
-        if text is None:
+    for p, models in candidates:
+        text = None
+        for model in models:
+            text = call_provider(p, model, messages, max_tokens, temperature,
+                                 timeout, label)
+            if text is _RETRY:
+                continue          # modèle saturé — un autre du même fournisseur
+            break
+        if text is _RETRY or text is None:
             continue
         if validator is not None:
             try:
@@ -771,6 +844,87 @@ def health_summary() -> list:
             "last_success": h.get("last_success"),
             "failovers": len(h.get("failovers") or []),
         })
+    return out
+
+
+# Prompt de vérification : court, sans ambiguïté, et dont la réponse attendue
+# tient en un token. Il sert à distinguer les trois états qu'un catalogue seul
+# ne distingue pas — clé refusée, quota/paiement requis, fournisseur utilisable.
+_VERIFY_PROMPT = "Reply with exactly: OK"
+
+
+def verify(timeout: int = 40) -> list:
+    """Teste CHAQUE fournisseur configuré par une INFÉRENCE RÉELLE.
+
+    POURQUOI PAS SEULEMENT LE CATALOGUE — c'est la leçon du 2026-08-22.
+    Cerebras et SambaNova rendent tous deux un catalogue en HTTP 200 avec une
+    clé valide, et refusent la première inférence en 402 :
+
+        Cerebras  → {"code":"payment_required"}
+        SambaNova → {"code":"PAYMENT_METHOD_REQUIRED","balance_units":0}
+
+    Un catalogue lisible ne prouve donc RIEN sur l'utilisabilité. Seul un
+    appel d'inférence tranche, et c'est ce que fait cette fonction.
+
+    Rend une liste de dicts (fournisseur, modèle retenu, état, détail). Ne lève
+    jamais : c'est un diagnostic, il doit survivre à tout.
+    """
+    out = []
+    for p in REGISTRY:
+        if not p.key():
+            out.append({"provider": p.name, "state": "absent",
+                        "detail": f"{p.env_key} non configurée"})
+            continue
+        if "${" in p.resolved_base:
+            manquantes = re.findall(r"\$\{([A-Z0-9_]+)\}", p.resolved_base)
+            out.append({"provider": p.name, "state": "incomplet",
+                        "detail": f"variable(s) d'URL absente(s): {', '.join(manquantes)}"})
+            continue
+
+        catalog = fetch_catalog(p)
+        model, switched = resolve_model(p, catalog)
+        if not model:
+            out.append({"provider": p.name, "state": "sans-modele",
+                        "detail": f"aucune préférence au catalogue ({len(catalog)} modèles)"})
+            continue
+
+        try:
+            r = requests.post(
+                p.chat_url,
+                json={"model": model,
+                      "messages": [{"role": "user", "content": _VERIFY_PROMPT}],
+                      "max_tokens": 200, "temperature": 0.0},
+                headers={"Authorization": f"Bearer {p.key()}",
+                         "Content-Type": "application/json", **p.headers},
+                timeout=timeout)
+        except Exception as e:
+            out.append({"provider": p.name, "model": model, "state": "injoignable",
+                        "detail": str(e)[:120]})
+            continue
+
+        if r.status_code != 200:
+            etat = {401: "cle-refusee", 403: "cle-refusee",
+                    402: "paiement-requis", 429: "quota"}.get(r.status_code, "erreur")
+            out.append({"provider": p.name, "model": model, "state": etat,
+                        "detail": f"HTTP {r.status_code} {r.text[:110]}"})
+            continue
+
+        try:
+            text, tokens = _extract(r.json())
+        except Exception as e:
+            out.append({"provider": p.name, "model": model, "state": "illisible",
+                        "detail": str(e)[:110]})
+            continue
+        if not text or not text.strip():
+            # Cas Gemini 2.5 Flash : réponse vide parce que tout le budget est
+            # parti en réflexion. Le fournisseur répond, mais il est inutile
+            # sous les plafonds serrés de ce pipeline.
+            out.append({"provider": p.name, "model": model, "state": "reponse-vide",
+                        "detail": f"{tokens} tokens facturés, 0 utile"})
+            continue
+        out.append({"provider": p.name, "model": model, "state": "OK",
+                    "switched": switched, "tokens": tokens,
+                    "detail": text.strip()[:40]})
     return out
 
 

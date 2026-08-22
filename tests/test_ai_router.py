@@ -108,7 +108,7 @@ class TestConditionsDUtilisation:
         monkeypatch.setattr(R, "fetch_catalog", lambda p, timeout=None: set())
         assert R.lane_providers(R.ANALYZE) == []
         # …mais reste disponible pour l'expérimentation, explicitement.
-        assert [p.name for p, _ in R.lane_providers(R.ANALYZE, allow_flagged=True)] == ["cohere"]
+        assert [p.name for p, _m in R.lane_providers(R.ANALYZE, allow_flagged=True)] == ["cohere"]
 
 
 class TestBasculeDeModele:
@@ -221,7 +221,7 @@ class TestDisjoncteur:
     def test_un_fournisseur_au_repos_est_ecarte_de_la_lane(self, monkeypatch, _isole):
         monkeypatch.setenv("OPENROUTER_API_KEY", "o")
         monkeypatch.setattr(R, "fetch_catalog", lambda p, timeout=None: set())
-        assert [p.name for p, _ in R.lane_providers(R.ANALYZE)] == ["openrouter"]
+        assert [p.name for p, _m in R.lane_providers(R.ANALYZE)] == ["openrouter"]
         _isole["openrouter"] = {"provider": "openrouter", "consecutive_errors": 3,
                                 "breaker_until": "2999-01-01T00:00:00+00:00"}
         assert R.lane_providers(R.ANALYZE) == []
@@ -251,7 +251,7 @@ class TestDisjoncteur:
         def valide(t):
             _json.loads(t)
             return True
-        text, prov = R.route([], R.ANALYZE, validator=valide)
+        text, prov = R.route([], R.ANALYZE, allow_flagged=True, validator=valide)
         assert text == '{"ok":1}' and prov == "sambanova"
         assert len(vus) == 2
 
@@ -289,7 +289,7 @@ class TestReserveSettlement:
         monkeypatch.setattr(daily_quota, "spent",
                             lambda b: groq.daily_requests - R.SETTLEMENT_RESERVE)
         assert R.lane_providers(R.FILTER) == []
-        assert [p.name for p, _ in R.lane_providers(R.SETTLEMENT)] == ["groq"]
+        assert [p.name for p, _m in R.lane_providers(R.SETTLEMENT)] == ["groq"]
 
 
 class TestLanes:
@@ -395,3 +395,50 @@ class TestCouvertureDesLanes:
         """Le grounding Google Search gratuit est MORT (limit:0, vérifié sur
         4 clés le 2026-07-21). Seule la génération simple survit."""
         assert R.SEARCH_READ not in R.by_name("gemini").lanes
+
+
+class TestBasculeDeModeleIntraFournisseur:
+    """Mesuré le 2026-08-22 : les modèles `:free` d'OpenRouter sont bridés EN
+    AMONT, modèle par modèle et de façon fluctuante. Au même instant,
+    `gemma-4-31b-it:free` rendait 429 pendant que `nemotron-3-nano-30b:free`
+    répondait « OK ». N'essayer qu'un modèle par fournisseur jetait donc tout
+    OpenRouter parce qu'UN de ses modèles était saturé."""
+
+    def test_un_429_essaie_le_modele_suivant_du_meme_fournisseur(self, monkeypatch):
+        monkeypatch.setenv("OPENROUTER_API_KEY", "o")
+        orp = R.by_name("openrouter")
+        monkeypatch.setattr(R, "fetch_catalog",
+                            lambda p, timeout=None: set(orp.models))
+        vus = []
+
+        def post(url, json=None, headers=None, timeout=None):
+            vus.append(json["model"])
+            return _R(status=429) if len(vus) == 1 else _R(text="OK")
+        monkeypatch.setattr(R.requests, "post", post)
+        text, prov = R.route([], R.ANALYZE)
+        assert text == "OK" and prov == "openrouter"
+        assert vus == list(orp.models[:2])       # a bien changé de modèle
+
+    def test_une_401_ne_reessaie_PAS_les_autres_modeles(self, monkeypatch):
+        """Une clé refusée l'est pour tous les modèles : insister brûlerait le
+        budget pour rien."""
+        monkeypatch.setenv("OPENROUTER_API_KEY", "o")
+        monkeypatch.setattr(R, "fetch_catalog",
+                            lambda p, timeout=None: set(R.by_name("openrouter").models))
+        vus = []
+
+        def post(url, json=None, headers=None, timeout=None):
+            vus.append(json["model"]); return _R(status=401)
+        monkeypatch.setattr(R.requests, "post", post)
+        assert R.route([], R.ANALYZE) == (None, None)
+        assert len(vus) == 1
+
+    def test_resolve_models_garde_lordre_des_preferences(self):
+        p = R.Provider(name="x", base_url="https://x/v1", env_key="X",
+                       models=("a", "b", "c"), lanes=(R.ANALYZE,))
+        assert R.resolve_models(p, {"c", "a"}) == ["a", "c"]
+
+    def test_catalogue_muet_garde_toutes_les_preferences(self):
+        p = R.Provider(name="x", base_url="https://x/v1", env_key="X",
+                       models=("a", "b"), lanes=(R.ANALYZE,))
+        assert R.resolve_models(p, set()) == ["a", "b"]

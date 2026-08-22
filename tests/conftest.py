@@ -59,3 +59,27 @@ def _inert_daily_quota(monkeypatch):
     from core import daily_quota
     monkeypatch.setattr(daily_quota, "spent", lambda bucket: 0)
     monkeypatch.setattr(daily_quota, "add", lambda bucket, n: None)
+
+
+@pytest.fixture(autouse=True)
+def _no_ambient_ai_keys(monkeypatch):
+    """Neutralise les clés de fournisseurs IA présentes dans l'environnement.
+
+    POURQUOI — même piège que le `load_dotenv()` documenté en tête de fichier,
+    et constaté le 2026-08-22 : dès qu'une vraie clé (OPENROUTER_API_KEY,
+    GEMINI_API_KEY…) atterrit dans le `.env` de développement, elle peuple
+    `os.environ` pour toute la session pytest. Trois tests de
+    `test_settlement.py` se sont mis à échouer — non pas parce qu'un
+    comportement avait changé, mais parce qu'ils supposaient « aucun
+    fournisseur de repli configuré » et qu'il y en avait soudain un.
+
+    Une suite dont le résultat dépend des clés que le développeur a dans son
+    `.env` ne prouve rien. Les tests qui ONT besoin d'un fournisseur le
+    déclarent eux-mêmes avec `monkeypatch.setenv` — ce qui reste possible,
+    puisque ce garde tourne avant eux.
+    """
+    from core.ai_router import REGISTRY
+    for provider in REGISTRY:
+        monkeypatch.delenv(provider.env_key, raising=False)
+    for extra in ("CLOUDFLARE_ACCOUNT_ID", "TAVILY_API_KEY", "JINA_API_KEY"):
+        monkeypatch.delenv(extra, raising=False)
