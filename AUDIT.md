@@ -124,7 +124,17 @@ une copie propre.
 
 - **`/ledger` et `/audit` n'étaient atteignables sur mobile par aucun lien** —
   `.nav-pages` est masquée sous 640 px et la barre du bas ne portait que 4
-  entrées sur 6. Deux pages entières injoignables au doigt.
+  entrées sur 6. Deux pages entières injoignables au doigt. Les six entrées
+  ont d'abord été alignées sur les deux menus.
+
+  > **Suite, le même jour — décision opérateur.** `/ledger` et `/audit` ont
+  > ensuite été **volontairement masqués des DEUX menus**, qui portent
+  > désormais quatre entrées dans l'ordre **Accueil · Sys · Wiz · Perf**.
+  > Les deux pages restent servies et rendent normalement : elles ne sont
+  > simplement plus liées, et s'atteignent par URL directe. Ce n'est donc
+  > plus un défaut à « réparer » en les remettant — la skill
+  > `predator-dashboard-check` porte la même consigne, pour qu'un futur
+  > contrôle de parité ne les réintroduise pas de bonne foi.
 - Six pieds de page, six versions (`v8.5`, `v8.6`, `v8.8`, `v9.4`, `v10.0`,
   `v1.0`) + `« 8.8 »` en dur dans `/api/health`. Désormais `DASHBOARD_VERSION`,
   une seule définition, injectée par un `context_processor`.

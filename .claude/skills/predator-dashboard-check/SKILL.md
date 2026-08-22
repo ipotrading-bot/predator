@@ -39,10 +39,19 @@ broken `{% %}` blocks) throw 500s even with no data.
    ```bash
    curl -s http://127.0.0.1:5099/ | grep -n "{{\|{%\|Traceback\|Internal Server Error"
    ```
-5. Nav-bar parity check — every page's `<div class="nav-pages">` block should list
-   the same links (ACCUEIL/BILAN/AUDIT/PERF) unless a page is intentionally
-   excluded. This has drifted silently before (some pages missing BILAN/AUDIT
-   entirely):
+5. Nav-bar parity check — every page's `<div class="nav-pages">` block AND its
+   `<nav class="bnav">` (mobile) block should list the same four links, in the
+   same order: **ACCUEIL / SYSTÈME / WIZ / PERF**.
+
+   `/ledger` and `/audit` are deliberately **hidden from both menus** (operator
+   decision, 2026-08-22). The pages are still served and still render — they
+   are simply not linked, so a 200 on `/ledger` is expected even though no nav
+   entry points at it. Do not "fix" their absence by adding them back.
+
+   This block has drifted silently before: the mobile bar once carried only 4
+   of the 6 then-current entries, leaving two pages unreachable by touch since
+   `.nav-pages` is hidden under 640px. Check both blocks, not just the desktop
+   one:
    ```bash
    for f in index ledger audit performance; do
      echo "=== $f.html ==="
