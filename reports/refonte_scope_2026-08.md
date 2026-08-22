@@ -583,3 +583,218 @@ Les deux tests exigés par le cahier des charges :
    passage en mode ombre observé.
 3. **Décider du sort de wisetoto** (n° 4) : l'hôte vit, mais aucun endpoint de cotes n'a été trouvé,
    et sa condition d'activation (« si 1 et 2 sont en prod ») n'est pas remplie puisque Nowgoal est morte.
+
+---
+
+# Mission 4 — couche IA multi-fournisseurs, organisée en symbiose (2026-08-22)
+
+**Suite : 844 tests, 0 échec · pyflakes propre · 44 tests ajoutés · `core/ai_router.py` (nouveau) · `.env.example` enrichi de 11 clés optionnelles**
+
+Règle non négociable tenue : **UN compte par fournisseur**. La capacité vient de la DIVERSITÉ des
+fournisseurs, jamais de comptes multiples — qui partageraient de toute façon le quota (vérifié sur
+Groq : le TPD est compté par organisation) et violeraient les CGU. Les fournisseurs à clause
+« non commercial / évaluation » portent un `terms_flag` et sont exclus des lanes de production par
+défaut.
+
+## 1. Le principe directeur, et pourquoi il n'est pas théorique
+
+Le paysage des paliers gratuits churne chaque mois. Les deux corrections demandées ont été
+**vérifiées sur le fil**, pas admises :
+
+| Fournisseur | Requête | Réponse | Verdict |
+|---|---|---|---|
+| GitHub Models | `GET models.github.ai/catalog/models` | **HTTP 410** `{"code":"github_models_retirement_brownout"}` | **Retiré** — sorti du code |
+| Cerebras | `GET api.cerebras.ai/v1/models` | **HTTP 403** `{"detail":"Not authenticated"}` | Palier gratuit sans carte **fermé** — sorti du code |
+
+### Et une troisième mort, trouvée en chemin — celle qui prouve le besoin
+
+En lisant le registre existant de `core/ai_search.py`, un troisième cadavre est apparu, celui-là
+**non signalé et actif en production** :
+
+```python
+OPENROUTER_MODEL = "meta-llama/llama-3.3-70b-instruct:free"   # ← n'existe plus
+```
+
+Le catalogue OpenRouter du 2026-08-22 compte **421 modèles, dont 18 en `:free`** — et celui-ci n'y
+est plus. Seule la variante **payante** `meta-llama/llama-3.3-70b-instruct` subsiste. Le repli
+OpenRouter était donc mort, et mort **en silence** : l'appel partait, le fournisseur rendait une
+erreur de modèle inconnu, le code loggait un avertissement et passait au suivant. Rien ne
+distinguait « le repli n'a pas servi » de « le repli ne peut plus servir ».
+
+Constat plus large : **aucun** des modèles cités au cahier des charges (Llama 70B, Qwen3 235B,
+GLM-4.5-Air, DeepSeek) n'est encore en `:free` chez OpenRouter. La liste de la mission était déjà
+périmée le jour où elle a été écrite. C'est la démonstration la plus nette possible du principe :
+**l'architecture — registre, découverte, bascule, alerte — vaut plus que la liste.**
+
+Traduction en code : `models` est une **liste de préférences**, jamais un contrat. `resolve_model()`
+retient la première préférence effectivement présente au catalogue publié par le fournisseur au
+moment du run.
+
+## 2. Registre — quotas et catalogues CONSTATÉS EN LIVE le 2026-08-22
+
+Toutes les lignes ci-dessous sont un `GET /models` réel depuis le runner. `401` = vivant et
+authentifié par clé (donc non filtré par IP — la propriété qui manquait aux sources mortes
+d'août) ; `200` = catalogue public.
+
+| Fournisseur | Sonde | Catalogue constaté | Lanes | Budget/j | `terms_flag` |
+|---|---|---|---|---|---|
+| **groq** | (en prod) | compound-mini + llama 70b/8b | filter, analyze, settlement, search_read | 400 | — |
+| **openrouter** | **200** | **421 modèles, 18 en `:free`** | analyze, filter, translate_cjk | 150 | — |
+| **sambanova** | **200** | 7 (Llama-3.3-70B, DeepSeek-V3.2, gpt-oss-120b) | filter, analyze, settlement | 200 | — |
+| **ovh** (UE) | **200** | 24 (Llama-3.3-70B, Qwen3-32B, Mistral) | filter, analyze, translate_cjk | 150 | — |
+| **scaleway** (UE) | **401** | derrière clé | filter, analyze | 150 | — |
+| **ollama_cloud** | **200** | 19 (GLM-5.2, Kimi K3, gpt-oss, DeepSeek-V4) | settlement, analyze, translate_cjk | 100 | — |
+| **nvidia_nim** | **200** | 102 (DeepSeek-V4-Flash, Llama) | analyze, filter | 200 | ⚖️ `evaluation` |
+| **cohere** | **401** | derrière clé | analyze | 30 | ⚖️ `non_commercial` |
+| **zhipu** (Z.ai) | **401** | derrière clé (GLM-4.7-Flash) | translate_cjk, filter | 200 | ⚖️ `non_commercial` |
+| **modelscope** | **200** | **46, dont toute la gamme Qwen3 + GLM-4.7-Flash** | translate_cjk, analyze | 150 | — |
+| **siliconflow** | **401** | derrière clé | translate_cjk | 100 | — |
+| **upstage** | **401** | derrière clé | translate_cjk | 50 | ⚖️ `evaluation` |
+
+**8 fournisseurs sur 12 sont utilisables en production** (`PRODUCTION_SAFE`) ; les 4 marqués ne sont
+jamais choisis par `route()` sauf `allow_flagged=True` explicite.
+
+`daily_requests` est un budget **prudent côté PREDATOR**, pas la limite du fournisseur : on veut
+basculer *avant* de se faire couper, jamais après — leçon du compte api-sports trouvé **suspendu**
+le 2026-08-20.
+
+### Recherche / lecture web (renforts de Tavily)
+
+| Service | Sonde | Note |
+|---|---|---|
+| Jina Reader (`r.jina.ai`) | **200** | répond **même sans clé** ; palier gratuit généreux |
+| Jina Search (`s.jina.ai`) | **401** | clé requise |
+| Serper | **403** | clé requise (POST) — 2 500 requêtes offertes |
+| SerpAPI | **200** | 100 recherches/mois |
+
+### Non enrôlés, et pourquoi
+
+- **endpoints anonymes sans clé** (Pollinations, LLM7…) : exactement le défaut fatal des sources
+  sans clé de l'incident du 10→20 août — filtrés par IP depuis les runners, CGU floues. La leçon
+  est acquise, on ne la repaie pas. Verrouillé par un test (`test_les_endpoints_anonymes_ne_sont_pas_enroles`) ;
+- **multi-comptes d'un même fournisseur** : CGU. Verrouillé par `test_un_seul_compte_par_fournisseur` ;
+- **carte requise pour un essai expirant** (Cerebras, Fireworks) : sauf décision opérateur ;
+- **Mistral** : reste **hors registre**, c'est le domaine de panne isolé de Wiz. Verrouillé par
+  `test_wiz_nest_pas_servi_par_le_routeur`.
+
+## 3. Les lanes — la symbiose
+
+Chaque appel IA **déclare son besoin**, pas son fournisseur. C'est ce qui permet de remplacer un
+fournisseur mort sans toucher à un seul call site.
+
+| Lane | Ordre de préférence (registre) | Déclarée par |
+|---|---|---|
+| `FILTER` | groq → sambanova → ovh → scaleway | `harvester.fetch_estimated_prices` (tier light) |
+| `ANALYZE` | groq → openrouter → nvidia_nim → ovh → ollama_cloud | défaut du tier heavy |
+| `TRANSLATE_CJK` | zhipu → modelscope → openrouter → ovh → siliconflow | `team_aliases.resolve_with_ai` |
+| `SEARCH_READ` | groq (compound-mini) → Tavily → Jina → Serper | `oracle`, `harvester` |
+| `SETTLEMENT` 🔒 | groq → sambanova → ollama_cloud (batch de nuit) | `settlement.fetch_match_result` |
+| `WIZ` | Mistral seul — **hors routeur**, inchangé | `core/wiz_*` |
+
+### La réserve de settlement est gardée EN NÉGATIF
+
+Le 2026-08-02, le scan a épuisé le TPD Groq et le settlement n'a plus rien réglé de la journée :
+ledger vide, `/performance` figé. La parade n'est pas de « réserver » des jetons au settlement —
+c'est d'**amputer les autres lanes** :
+
+```python
+if lane != SETTLEMENT and SETTLEMENT in p.lanes:
+    ceiling = max(0, ceiling - SETTLEMENT_RESERVE)   # 80 req/j
+```
+
+Personne ne « prend » la réserve : les autres lanes s'arrêtent avant et n'y ont **jamais** accès.
+Vérifié par `test_la_lane_settlement_garde_son_budget_quand_le_scan_a_tout_pris` : à budget scan
+épuisé, `lane_providers(FILTER) == []` pendant que `lane_providers(SETTLEMENT) == ["groq"]`.
+
+### Règles transverses
+
+- **Cache d'abord, toujours.** Le cache 30 min de la mission 2 s'applique AVANT tout appel, quel que
+  soit le fournisseur — souvent plus rentable que de la capacité en plus.
+- **Jamais de double dépense.** Un prompt auquel le premier fournisseur a répondu quelque chose de
+  valide n'est jamais rejoué ailleurs (`test_un_prompt_valide_nest_jamais_rejoue_ailleurs`).
+- **Une réponse inutilisable est une panne.** JSON invalide ou réponse vide comptent comme échec de
+  disjoncteur : du point de vue du pipeline, un fournisseur qui consomme le quota sans rien produire
+  est en panne — et c'est la panne la plus coûteuse.
+- **Disjoncteur par fournisseur** : 3 échecs consécutifs → 30 min de repos, état partagé dans `meta`.
+
+## 4. Preuve de bascule
+
+### En live, contre le vrai catalogue OpenRouter
+
+```
+catalogue OpenRouter récupéré : 421 modèles
+le modèle codé en dur dans le repo est-il présent ? False
+WARNING ai_router[openrouter_demo]: modèle préféré
+  'meta-llama/llama-3.3-70b-instruct:free' absent du catalogue
+  — bascule sur 'nvidia/nemotron-3-super-120b-a12b:free'
+=> modèle retenu : nvidia/nemotron-3-super-120b-a12b:free
+=> bascule détectée : True
+
+--- cas où AUCUNE préférence ne survit ---
+ERROR ai_router[tout_mort]: AUCUNE préférence au catalogue — fournisseur écarté ce run
+=> (None, True)
+```
+
+### En test (`tests/test_ai_router.py::TestBasculeDeModele`)
+
+| Cas | Attendu |
+|---|---|
+| préférence de tête vivante | `("bon", False)` — aucune bascule |
+| préférence de tête **morte** | `("secours", True)` — bascule **loggée** |
+| **aucune** préférence au catalogue | `(None, True)` — fournisseur écarté du run |
+| catalogue **illisible** | `("prefere", False)` — on ne débranche pas un fournisseur parce que son `/models` est momentanément muet |
+
+Ce dernier cas est un choix : un ensemble vide veut dire « je ne sais pas », **pas** « aucun
+modèle ». Confondre les deux couperait un fournisseur sain sur un hoquet réseau.
+
+## 5. Alerte de lane — et le piège du bruit
+
+`refresh_catalogues()` tourne au **démarrage de chaque run** (`run_engine._refresh_ai_catalogues`)
+et alerte sur Telegram quand une lane tombe sous **2 fournisseurs sains**.
+
+**Sauf quand aucun fournisseur n'est configuré du tout.** Ce cas a été trouvé par un test existant
+(`test_reprice_mode.py::test_reprice_empty_cache_exits_quietly`, qui garde « un tick muet ne spamme
+pas Telegram ») : la première version alertait sur les 5 lanes à chaque run en mode REPRICE — mode
+qui n'utilise aucune IA. Zéro fournisseur n'est pas une dégradation, c'est un choix de déploiement,
+et il est déjà visible. **On n'alerte que sur une capacité qui EXISTAIT et se dégrade** — sinon on
+fabrique le bruit qui fait qu'on n'ouvre plus les alertes, donc qu'on rate la vraie.
+
+La lane `WIZ` n'alerte jamais non plus : elle est mono-fournisseur **par construction**.
+
+## 6. Section « santé IA » du rapport hebdo
+
+`scripts/weekly_report.py` gagne `format_ai_health()` (pure, testable) :
+
+```
+🤖 *Santé IA* — tokens/jour, échecs, bascules
+✅ *groq* — 312/400 appels · 84210 tokens · 0 échec(s) consécutif(s) · 0 bascule(s)
+⚠️ *openrouter* — 44/150 appels · 12030 tokens · 1 échec(s) consécutif(s) · 4 bascule(s)
+🔴 repos *zhipu* ⚖️non_commercial — 6/200 appels · 900 tokens · 3 échec(s) consécutif(s) · 0 bascule(s)
+   → ⚠️ bascules répétées : openrouter — palier gratuit probablement en train de se refermer
+```
+
+Le compteur qui compte est **le nombre de bascules**. Une bascule isolée, c'est le routeur qui fait
+son travail. Des bascules répétées sur le même fournisseur annoncent un palier gratuit en train de
+se refermer — et c'est ça qu'on veut voir venir, plutôt que de découvrir un matin que le repli ne
+repliait plus rien depuis des semaines.
+
+## 7. Tests ajoutés (44)
+
+| Fichier | Tests | Ce qui est verrouillé |
+|---|---|---|
+| `tests/test_ai_router.py` | 34 | Bascule de modèle (les 4 cas) · alerte de lane et **non-alerte quand rien n'est configuré** · disjoncteur · réponse vide/invalide = panne · pas de double dépense · **réserve de settlement** · fournisseurs morts absents du registre · un compte par fournisseur · endpoints anonymes non enrôlés · Wiz hors routeur · cache avant tout · chaque clé du registre documentée dans `.env.example` |
+| `tests/test_ai_providers.py` | 10 (réécrits) | Délégation d'`ai_search` au routeur · quota compté · routeur en panne ne remonte jamais d'exception · le modèle OpenRouter mort n'est plus une préférence |
+
+## 8. Ce qui reste à l'opérateur
+
+1. **Ouvrir UN compte chez au moins deux fournisseurs** de la section 4bis de `.env.example` — une
+   lane sous 2 fournisseurs sains alerte à chaque run. Les plus rentables en premier :
+   **OpenRouter** (la plus grande variété par une seule clé), **SambaNova**, **OVH** (UE).
+2. **Pour la lane CJK** (mission 3) : **ModelScope** ou **Z.ai** — un modèle chinois résout un nom
+   d'équipe CJK bien mieux qu'un Llama généraliste, et le volume est minuscule grâce au dictionnaire
+   `team_aliases`.
+3. **Décider pour les fournisseurs marqués** (`nvidia_nim`, `cohere`, `zhipu`, `upstage`) : ils sont
+   enrôlés mais exclus de la production tant que l'opérateur ne tranche pas leur compatibilité
+   d'usage. Rien ne les active par accident.
+4. **Vérifier SambaNova** : le palier ~200k tokens/j par modèle était documenté sans carte ; la
+   sonde publique ne permet pas de confirmer si une carte est désormais exigée.

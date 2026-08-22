@@ -40,35 +40,28 @@ from core import daily_quota
 
 log = logging.getLogger("PREDATOR.ai_search")
 
-# ── Mission 2, Phase 3 (2026-08-22) : capacité IA par des voies légitimes ──
-# UN SEUL COMPTE PAR FOURNISSEUR (CGU) — la capacité vient de la
-# DIVERSIFICATION des fournisseurs, jamais de comptes multiples. Chaîne de
-# repli derrière Groq, dans l'ordre coût/latence, chacun OPTIONNEL (clé d'env
-# absente = fournisseur ignoré, zéro dépendance obligatoire) et doté de son
-# propre suivi de quota journalier dans meta (core/daily_quota) : un
-# fournisseur épuisé bascule sur le suivant sans jamais toucher au
-# settlement — même principe de domaines de panne séparés que Wiz/Mistral.
-# Mistral reste HORS de cette chaîne : c'est le domaine de panne de Wiz, par
-# construction (voir core/wiz_ai.py) ; Gemini est mort en gratuit (voir plus
-# haut). Tous parlent le format OpenAI chat/completions.
-_FALLBACK_PROVIDERS: list[dict] = [
-    {"name": "openrouter", "env": "OPENROUTER_API_KEY",
-     "url": "https://openrouter.ai/api/v1/chat/completions",
-     "model": os.environ.get("OPENROUTER_MODEL", "meta-llama/llama-3.3-70b-instruct:free"),
-     "budget": int(os.environ.get("OPENROUTER_DAILY_BUDGET", "150")),   # free tier ≈ 200 req/j
-     "headers": {"HTTP-Referer": "https://github.com/predator-paim", "X-Title": "PREDATOR"}},
-    {"name": "cerebras", "env": "CEREBRAS_API_KEY",
-     "url": "https://api.cerebras.ai/v1/chat/completions",
-     "model": os.environ.get("CEREBRAS_MODEL", "llama-3.3-70b"),
-     "budget": int(os.environ.get("CEREBRAS_DAILY_BUDGET", "500")),      # free ≈ 1M tokens/j
-     "headers": {}},
-    {"name": "github", "env": "GITHUB_MODELS_TOKEN",
-     "url": "https://models.github.ai/inference/chat/completions",
-     "model": os.environ.get("GITHUB_MODELS_MODEL", "openai/gpt-4o-mini"),
-     "budget": int(os.environ.get("GITHUB_MODELS_DAILY_BUDGET", "100")), # free ≈ 150 req/j (low tier)
-     "headers": {}},
-]
-_provider_dead: set[str] = set()     # épuisé/refusé pour ce process
+# ── Mission 4 (2026-08-22) : la chaîne de repli est passée au ROUTEUR ──
+# Ce module ne tient plus sa propre liste de fournisseurs. Elle vivait ici
+# depuis la mission 2 et portait deux fournisseurs MORTS et un modèle MORT :
+#
+#   Cerebras      → palier gratuit sans carte fermé (août 2026)
+#                   GET /v1/models = HTTP 403 "Not authenticated"
+#   GitHub Models → RETIRÉ par GitHub le 2026-07-30
+#                   GET /catalog/models = HTTP 410 "github_models_retirement_brownout"
+#   OpenRouter    → le modèle codé en dur ici,
+#                   "meta-llama/llama-3.3-70b-instruct:free", a disparu du
+#                   catalogue :free — seule la variante PAYANTE subsiste.
+#
+# Les trois échouaient EN SILENCE : un warning par appel, et un repli qui ne
+# repliait plus rien. C'est précisément la panne que `core/ai_router.py`
+# existe pour empêcher — il découvre les catalogues au démarrage du run,
+# bascule de modèle, et alerte quand une lane tombe sous deux fournisseurs
+# sains. Le registre, les quotas, les disjoncteurs et les lanes sont là-bas.
+#
+# Ce qui NE change PAS (compat ascendante, voulue) : Groq reste le préféré de
+# ses lanes avec sa mécanique de quota par-modèle/par-clé ci-dessous, Tavily
+# reste l'étage 2 de la recherche, et Mistral reste HORS chaîne (domaine de
+# panne de Wiz, par construction).
 
 # Cache de réponses (même requête normalisée, fenêtre 30 min) dans meta : le
 # même slate ne doit jamais être recherché deux fois dans la même fenêtre —
@@ -381,61 +374,51 @@ def _cache_put(key: str, text: str) -> None:
 
 
 def providers_available() -> list[str]:
-    """Fournisseurs de repli configurés (clé présente), dans l'ordre d'essai."""
-    return [p["name"] for p in _FALLBACK_PROVIDERS if os.environ.get(p["env"])]
+    """Fournisseurs de repli configurés (clé présente), hors Groq.
+
+    Délègue au registre du routeur : un fournisseur ajouté là-bas est
+    disponible ici sans toucher à ce fichier — c'était tout l'objet de la
+    mission 4.
+    """
+    from core import ai_router
+    return [p.name for p in ai_router.active_providers() if p.name != "groq"]
 
 
 def _fallback_post(messages: list, max_tokens: int, temperature: float,
-                   timeout: int, label: str) -> str | None:
-    """Essaie les fournisseurs de repli dans l'ordre. Chacun : clé absente →
-    ignoré ; budget journalier atteint (meta) → ignoré ; 401/403/429-jour →
-    marqué mort pour le process et on passe au suivant. Rend None si aucun
-    ne répond — le caller dégrade comme avant."""
-    for p in _FALLBACK_PROVIDERS:
-        key = os.environ.get(p["env"])
-        if not key or p["name"] in _provider_dead:
-            continue
-        bucket = f"ai_{p['name']}"
-        spent = daily_quota.spent(bucket)
-        if spent >= p["budget"]:
-            log.info("%s[%s]: budget journalier atteint (%d/%d) — ignoré",
-                     label, p["name"], spent, p["budget"])
-            continue
-        try:
-            r = requests.post(p["url"], json={
-                "model": p["model"], "messages": messages,
-                "max_tokens": max_tokens, "temperature": temperature,
-            }, headers={"Authorization": f"Bearer {key}",
-                        "Content-Type": "application/json", **p["headers"]},
-                timeout=timeout)
-            daily_quota.add(bucket, 1)
-            if r.status_code in (401, 403):
-                _provider_dead.add(p["name"])
-                log.warning("%s[%s]: HTTP %d — clé refusée, fournisseur écarté", label, p["name"], r.status_code)
-                continue
-            if r.status_code == 429:
-                _provider_dead.add(p["name"])
-                log.warning("%s[%s]: 429 — quota atteint, fournisseur écarté ce run", label, p["name"])
-                continue
-            if r.status_code != 200:
-                log.warning("%s[%s]: HTTP %d: %s", label, p["name"], r.status_code, r.text[:200])
-                continue
-            text = r.json()["choices"][0]["message"]["content"] or ""
-            if text.strip():
-                log.info("%s[%s]: réponse servie par le fournisseur de repli", label, p["name"])
-                return text
-        except Exception as e:
-            log.warning("%s[%s]: %s", label, p["name"], e)
-    return None
+                   timeout: int, label: str, lane: str = "analyze") -> str | None:
+    """Repli derrière Groq — entièrement délégué à `core/ai_router.py`.
+
+    Le routeur applique, pour la lane demandée : clé absente → fournisseur
+    ignoré ; disjoncteur ouvert → écarté ; budget journalier atteint →
+    écarté ; modèle préféré disparu → bascule loggée. Rend None si aucun
+    fournisseur sain ne répond — le caller dégrade comme avant.
+    """
+    from core import ai_router
+    try:
+        text, _provider = ai_router.route(messages, lane, label,
+                                          max_tokens, temperature, timeout)
+        return text
+    except Exception as e:                      # jamais d'exception au caller
+        log.warning("%s: routeur indisponible (%s)", label, e)
+        return None
+
+
+# Lane par défaut déduite du palier, pour que les call sites existants
+# gardent leur comportement sans rien changer. Un appelant qui SAIT ce qu'il
+# fait déclare sa lane explicitement — c'est le cas du settlement (lane
+# sacrée) et du dictionnaire d'alias (lane CJK).
+_TIER_LANE = {"light": "filter", "heavy": "analyze"}
 
 
 def ai_complete(prompt: str, label: str = "AI",
                 max_tokens: int = 2048, temperature: float = 0.1,
-                timeout: int = 45, tier: str = "heavy") -> str | None:
+                timeout: int = 45, tier: str = "heavy",
+                lane: str | None = None) -> str | None:
     """Complétion SANS recherche web (connaissance interne du modèle).
     `tier` : "heavy" (70b d'abord — settlement, candidats filtrés) ou
-    "light" (8b d'abord — filtrage, estimateur). Chaîne : Groq (par palier)
-    → fournisseurs de repli → None. Cache 30 min sur la requête normalisée."""
+    "light" (8b d'abord — filtrage, estimateur). `lane` : lane du routeur
+    pour le repli (défaut déduit du palier). Chaîne : Groq (par palier)
+    → routeur → None. Cache 30 min sur la requête normalisée."""
     ck = _cache_key(prompt, None)
     hit = _cache_get(ck)
     if hit:
@@ -447,7 +430,8 @@ def ai_complete(prompt: str, label: str = "AI",
         if text:
             _cache_put(ck, text)
             return text
-    text = _fallback_post(messages, max_tokens, temperature, timeout, label)
+    text = _fallback_post(messages, max_tokens, temperature, timeout, label,
+                          lane or _TIER_LANE.get(tier, "analyze"))
     if text:
         _cache_put(ck, text)
     return text
@@ -455,7 +439,7 @@ def ai_complete(prompt: str, label: str = "AI",
 
 def ai_search_complete(prompt: str, queries: list[str], label: str = "AI",
                        max_tokens: int = 2048, temperature: float = 0.1,
-                       timeout: int = 60) -> str | None:
+                       timeout: int = 60, lane: str | None = None) -> str | None:
     """
     Complétion AVEC recherche web — remplaçant direct de
     Gemini + "tools":[{"google_search":{}}].
@@ -503,7 +487,8 @@ def ai_search_complete(prompt: str, queries: list[str], label: str = "AI",
         if text:
             _cache_put(ck, text)
             return text
-    text = _fallback_post(messages, max_tokens, temperature, timeout, label)
+    text = _fallback_post(messages, max_tokens, temperature, timeout, label,
+                          lane or "search_read")
     if text:
         _cache_put(ck, text)
     return text

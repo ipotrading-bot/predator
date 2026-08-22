@@ -1,11 +1,14 @@
 """
-tests/test_ai_providers.py — Mission 2, Phase 3 : capacité IA par des voies
-légitimes. Un seul compte par fournisseur ; la capacité vient de la
-DIVERSIFICATION (OpenRouter, Cerebras, GitHub Models en repli derrière
-Groq, chacun optionnel et avec son quota journalier dans meta) et de la
-RÉDUCTION de consommation (cache 30 min, palier léger/lourd).
+tests/test_ai_providers.py — la chaîne de repli de `core/ai_search.py` passe
+désormais par `core/ai_router.py` (mission 4).
+
+Ce qui était testé ici depuis la mission 2 — clé absente = fournisseur
+ignoré, budget épuisé = fournisseur suivant, quota compté dans meta — n'a pas
+disparu : c'est le ROUTEUR qui le porte, et `tests/test_ai_router.py` le
+vérifie sur le registre réel. Il reste ici ce qui appartient vraiment à
+ai_search : la délégation, le cache et les paliers de modèles Groq.
 """
-from core import ai_search, daily_quota
+from core import ai_router, ai_search, daily_quota
 
 
 class _R:
@@ -14,14 +17,14 @@ class _R:
         self.text = text
 
     def json(self):
-        return {"choices": [{"message": {"content": self.text}}]}
+        return {"choices": [{"message": {"content": self.text}}],
+                "usage": {"total_tokens": 12}}
 
 
 def _no_groq(monkeypatch):
     monkeypatch.setattr(ai_search, "_groq_keys", lambda: [])
     monkeypatch.setattr(ai_search, "_cache_get", lambda k: None)
     monkeypatch.setattr(ai_search, "_cache_put", lambda k, t: None)
-    ai_search._provider_dead.clear()
 
 
 def _quota(monkeypatch, spent=None):
@@ -32,59 +35,72 @@ def _quota(monkeypatch, spent=None):
     return added
 
 
-class TestFallbackChain:
-    def test_absent_key_means_provider_ignored(self, monkeypatch):
-        _no_groq(monkeypatch); _quota(monkeypatch)
-        for p in ai_search._FALLBACK_PROVIDERS:
-            monkeypatch.delenv(p["env"], raising=False)
+def _inert_health(monkeypatch):
+    """Santé en mémoire : le routeur ne doit toucher aucune base en test."""
+    store = {}
+    monkeypatch.setattr(ai_router, "load_health",
+                        lambda n: store.get(n, {"provider": n, "consecutive_errors": 0,
+                                                "breaker_until": None, "calls_today": 0,
+                                                "tokens_today": 0, "failovers": []}))
+    monkeypatch.setattr(ai_router, "save_health",
+                        lambda h: store.__setitem__(h["provider"], h))
+    return store
+
+
+class TestDelegationAuRouteur:
+    def test_sans_aucune_cle_aucun_appel_nest_tente(self, monkeypatch):
+        _no_groq(monkeypatch); _quota(monkeypatch); _inert_health(monkeypatch)
+        for p in ai_router.REGISTRY:
+            monkeypatch.delenv(p.env_key, raising=False)
         calls = []
-        monkeypatch.setattr(ai_search.requests, "post", lambda *a, **k: calls.append(a) or _R())
+        monkeypatch.setattr(ai_router.requests, "post",
+                            lambda *a, **k: calls.append(a) or _R())
         assert ai_search.ai_complete("q") is None
         assert calls == []
         assert ai_search.providers_available() == []
 
-    def test_first_configured_provider_serves_and_is_metered(self, monkeypatch):
-        _no_groq(monkeypatch); added = _quota(monkeypatch)
-        monkeypatch.delenv("OPENROUTER_API_KEY", raising=False)
-        monkeypatch.setenv("CEREBRAS_API_KEY", "c-key")
-        monkeypatch.delenv("GITHUB_MODELS_TOKEN", raising=False)
-        urls = []
-
-        def post(url, json=None, headers=None, timeout=None):
-            urls.append(url); return _R(text="from-cerebras")
-        monkeypatch.setattr(ai_search.requests, "post", post)
-        assert ai_search.ai_complete("q") == "from-cerebras"
-        assert urls == ["https://api.cerebras.ai/v1/chat/completions"]
-        assert added == [("ai_cerebras", 1)]
-
-    def test_exhausted_budget_skips_to_next_provider(self, monkeypatch):
-        _no_groq(monkeypatch)
-        _quota(monkeypatch, spent={"ai_openrouter": 10_000})
+    def test_providers_available_lit_le_registre_du_routeur(self, monkeypatch):
+        for p in ai_router.REGISTRY:
+            monkeypatch.delenv(p.env_key, raising=False)
         monkeypatch.setenv("OPENROUTER_API_KEY", "o")
-        monkeypatch.setenv("CEREBRAS_API_KEY", "c")
+        monkeypatch.setenv("GROQ_API_KEY", "g")
+        # Groq est exclu : `providers_available` désigne le REPLI derrière lui.
+        assert ai_search.providers_available() == ["openrouter"]
+
+    def test_le_repli_sert_la_reponse_et_compte_le_quota(self, monkeypatch):
+        _no_groq(monkeypatch); added = _quota(monkeypatch); _inert_health(monkeypatch)
+        for p in ai_router.REGISTRY:
+            monkeypatch.delenv(p.env_key, raising=False)
+        monkeypatch.setenv("OPENROUTER_API_KEY", "o")
+        monkeypatch.setattr(ai_router, "fetch_catalog", lambda p, timeout=None: set())
         urls = []
 
         def post(url, json=None, headers=None, timeout=None):
-            urls.append(url); return _R()
-        monkeypatch.setattr(ai_search.requests, "post", post)
-        assert ai_search.ai_complete("q") == "ok-text"
-        assert urls == ["https://api.cerebras.ai/v1/chat/completions"]
+            urls.append(url); return _R(text="depuis-openrouter")
+        monkeypatch.setattr(ai_router.requests, "post", post)
+        assert ai_search.ai_complete("q") == "depuis-openrouter"
+        assert urls == ["https://openrouter.ai/api/v1/chat/completions"]
+        assert added == [("ai_openrouter", 1)]
 
-    def test_429_marks_provider_dead_for_the_process(self, monkeypatch):
+    def test_le_routeur_en_panne_ne_remonte_jamais_dexception(self, monkeypatch):
         _no_groq(monkeypatch); _quota(monkeypatch)
-        monkeypatch.setenv("OPENROUTER_API_KEY", "o")
-        monkeypatch.setenv("CEREBRAS_API_KEY", "c")
-        urls = []
+        def boom(*a, **k):
+            raise RuntimeError("routeur casse")
+        monkeypatch.setattr(ai_router, "route", boom)
+        assert ai_search.ai_complete("q") is None
 
-        def post(url, json=None, headers=None, timeout=None):
-            urls.append(url)
-            return _R(status=429) if "openrouter" in url else _R(text="cb")
-        monkeypatch.setattr(ai_search.requests, "post", post)
-        assert ai_search.ai_complete("q") == "cb"
-        assert "openrouter" in ai_search._provider_dead
-        urls.clear()
-        ai_search.ai_complete("q2")
-        assert all("openrouter" not in u for u in urls)
+    def test_les_fournisseurs_morts_ont_disparu_du_code(self):
+        """Cerebras (403) et GitHub Models (410) ne doivent plus être cités
+        comme fournisseurs — ils l'étaient encore en tête de mission 4."""
+        noms = {p.name for p in ai_router.REGISTRY}
+        assert "cerebras" not in noms and "github" not in noms
+
+    def test_le_modele_openrouter_mort_nest_plus_une_preference(self):
+        """`meta-llama/llama-3.3-70b-instruct:free` a disparu du catalogue
+        :free d'OpenRouter (vérifié live le 2026-08-22) ; seule la variante
+        PAYANTE subsiste. Le garder en tête de liste rendait le repli mort."""
+        orp = ai_router.by_name("openrouter")
+        assert "meta-llama/llama-3.3-70b-instruct:free" not in orp.models
 
 
 class TestConsumptionReduction:

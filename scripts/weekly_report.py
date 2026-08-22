@@ -72,8 +72,38 @@ def _pct(x, signed=False):
     return f"{x*100:+.1f}%" if signed else f"{x*100:.1f}%"
 
 
+def format_ai_health(rows: list[dict]) -> list[str]:
+    """Section « santé IA » du rapport hebdo (mission 4). Pure.
+
+    Ce qu'on veut voir d'un coup d'œil : qui a servi, combien, qui est au
+    repos, et surtout COMBIEN DE BASCULES DE MODÈLE. Une bascule n'est pas
+    une erreur — c'est le routeur qui fait son travail — mais une bascule
+    récurrente sur le même fournisseur annonce un palier gratuit qui se
+    referme, et c'est ça qu'on veut voir venir plutôt que découvrir un matin
+    que le repli ne repliait plus rien.
+    """
+    if not rows:
+        return ["", "🤖 *Santé IA* — aucun fournisseur configuré"]
+    lines = ["", "🤖 *Santé IA* — tokens/jour, échecs, bascules"]
+    for r in sorted(rows, key=lambda x: -int(x.get("calls_today") or 0)):
+        etat = "🔴 repos" if r.get("breaker_open") else (
+            "⚠️" if int(r.get("consecutive_errors") or 0) else "✅")
+        flag = f" ⚖️{r['terms_flag']}" if r.get("terms_flag") not in ("", "-", None) else ""
+        budget = f"/{r['budget']}" if r.get("budget") else ""
+        lines.append(
+            f"{etat} *{r['provider']}*{flag} — {r.get('calls_today', 0)}{budget} appels · "
+            f"{r.get('tokens_today', 0)} tokens · {r.get('consecutive_errors', 0)} échec(s) "
+            f"consécutif(s) · {r.get('failovers', 0)} bascule(s)")
+    lourds = [r["provider"] for r in rows if int(r.get("failovers") or 0) >= 3]
+    if lourds:
+        lines.append("   → ⚠️ bascules répétées : " + ", ".join(sorted(lourds))
+                     + " — palier gratuit probablement en train de se refermer")
+    return lines
+
+
 def format_report(metrics_by_sport: dict[str, dict], verdicts: dict[str, dict],
-                  suspect: tuple[int, int], now: datetime) -> str:
+                  suspect: tuple[int, int], now: datetime,
+                  ai_health: list[dict] | None = None) -> str:
     """Texte Telegram/console du rapport hebdo. Pure."""
     lines = [f"📚 *PREDATOR — rapport hebdo de vérité* · {now:%d/%m %H:%M} UTC",
              "CLV réel > 0 et calibration stable = l'objectif ; le ROI court terme n'est qu'un témoin.",
@@ -107,6 +137,7 @@ def format_report(metrics_by_sport: dict[str, dict], verdicts: dict[str, dict],
         lines.append("")
         lines.append("⚠️ *Alertes* — retrait proposé : " + ", ".join(sorted(alerts))
                      + " (≥30 réglés, edge non démontré — à trancher par l'opérateur)")
+    lines.extend(format_ai_health(ai_health or []))
     return "\n".join(lines)
 
 
@@ -143,7 +174,13 @@ def main() -> int:
     except Exception as e:
         print(f"signals: lecture impossible — {e}")
         suspect = (0, 0)
-    text = format_report(metrics, load_sport_verdicts(sb), suspect, now)
+    try:
+        from core.ai_router import health_summary
+        ai_health = health_summary()
+    except Exception as e:                  # jamais bloquant pour le rapport
+        print(f"santé IA : lecture impossible — {e}")
+        ai_health = []
+    text = format_report(metrics, load_sport_verdicts(sb), suspect, now, ai_health)
     print(text)
     _send(text)
     return 0

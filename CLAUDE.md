@@ -73,5 +73,17 @@ Tout le calcul tourne en crons GitHub Actions ; le dashboard est en lecture seul
 - robots.txt : sur odds.500.com la QUERY STRING est la frontière (`/fenxi/ouzhi-*.shtml`
   autorisé nu, interdit avec `?ctype=`/`?order=`/`?cids=`). Ne jamais paramétrer un
   endpoint — gardé par `tests/test_odds500.py::TestRobotsTxt`.
+- Couche IA (mission 4, 2026-08-22) : `core/ai_router.py` = registre +
+  lanes (FILTER/ANALYZE/TRANSLATE_CJK/SEARCH_READ/SETTLEMENT/WIZ) + disjoncteur
+  (3 échecs → 30 min) + découverte des catalogues au démarrage du run.
+  NE JAMAIS coder un nom de modèle en dur hors du registre : le paysage gratuit
+  churne chaque mois. Morts VÉRIFIÉS : GitHub Models (410, retiré 30/07/2026),
+  Cerebras (403), et `meta-llama/llama-3.3-70b-instruct:free` (retiré du
+  catalogue :free OpenRouter — le repli était mort en silence).
+  `ai_search.py` délègue au routeur ; Mistral reste HORS registre (Wiz).
+  Réserve settlement gardée EN NÉGATIF (les autres lanes sont amputées, elles
+  n'y accèdent jamais) — leçon du 2026-08-02. Un compte par fournisseur ;
+  `terms_flag` (non_commercial/evaluation) = exclu de la production par défaut.
+  Zéro fournisseur configuré n'alerte PAS (sinon spam Telegram en mode REPRICE).
 - Sub-agent `predator-diagnostician` pour tout audit pipeline/santé (isole les
   gros logs hors de la conversation principale).

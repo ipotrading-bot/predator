@@ -45,6 +45,11 @@ def fetch_match_result(match_name: str, sport: str, match_date: str = "") -> dic
         queries=[f"{match_name} {sport_ctx} final score result {match_date}".strip()],
         label=f"Settlement/{match_name}",
         max_tokens=500, temperature=0.0, timeout=45,
+        # Lane SACRÉE : sa réserve journalière ne peut être entamée par aucune
+        # autre lane. Le 2026-08-02, le scan avait épuisé le TPD Groq et le
+        # settlement n'a plus rien réglé de la journée — ledger vide,
+        # /performance figé. Voir AI_SETTLEMENT_RESERVE dans core/ai_router.py.
+        lane="settlement",
     )
     if not text:
         return None

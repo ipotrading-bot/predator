@@ -333,8 +333,12 @@ def resolve_with_ai(source: str, alias: str, league: str = "",
     )
     # tier light : c'est une correspondance de connaissance, pas du
     # raisonnement — le 8b suffit et laisse le 70b au settlement.
+    # Lane TRANSLATE_CJK : les modèles chinois (GLM-Flash, Qwen) résolvent un
+    # nom d'équipe CJK bien mieux qu'un Llama généraliste, et pour rien. Grâce
+    # au dictionnaire, le volume de cette lane est minuscule par construction.
     text = ai_complete(prompt, label="Alias", max_tokens=80,
-                       temperature=0.0, timeout=30, tier="light")
+                       temperature=0.0, timeout=30, tier="light",
+                       lane="translate_cjk")
     daily_quota.add(QUOTA_BUCKET, 1)
     if not text:
         return None
