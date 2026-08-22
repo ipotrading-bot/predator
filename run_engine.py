@@ -287,25 +287,62 @@ _OPTIONAL_COLS = {"selection_name", "kelly_pct", "advice", "sharp_sources", "con
 
 
 def _save(sb, signal) -> bool:
-    """Delete-then-insert to avoid duplicates. Returns True on success. IMPROVED ERROR HANDLING."""
+    """Select-then-update-or-insert — dédup SANS perte. Rend True si persisté.
+
+    L'ancien delete-then-insert avait trois effets destructeurs sous re-scan
+    (et le mode REPRICE re-scanne chaque heure) :
+    - il effaçait les CLOSING_LINE_COLS (`clv_pct_real`, `closing_*`) posées
+      par run_closing_line/audit via update_signal_fields — le CLV, notre
+      juge de rentabilité, était détruit par le scan suivant ;
+    - il changeait l'`id` à chaque passage, donc le `signal_id` recopié dans
+      `ai_learning_ledger` n'était jamais stable ;
+    - il remettait `created_at` à la date du dernier scan, faussant toute
+      analyse de time-to-match.
+    Désormais : une ligne ACTIVE existante pour (match_id, market_key) est
+    mise à jour en place (le payload de _emit ne nomme ni id, ni created_at,
+    ni les colonnes de clôture — elles survivent mécaniquement) ; sinon on
+    insère. Le scope status='active' garantit qu'une ligne settled/closed/
+    expired n'est JAMAIS ressuscitée : on insère une ligne neuve à côté.
+    """
     from core.constants import MAX_DB_RETRIES, DELAY_DB_RETRY
-    
+    from core.db import update_signal_fields
+
     payload = dict(signal)
     mid  = payload.get("match_id", "")
     mkey = payload.get("market_key", "")
     sig_label = f"{payload.get('match', '?')}/{payload.get('market', '?')}"
-    
+
     for attempt in range(1, MAX_DB_RETRIES + 1):
+        existing_id = None
         try:
-            # Delete old version
+            q = sb.table("signals").select("id").eq("status", "active")
             if mid and mkey:
-                sb.table("signals").delete().eq("match_id", mid).eq("market_key", mkey).execute()
+                q = q.eq("match_id", mid).eq("market_key", mkey)
             else:
-                sb.table("signals").delete().eq("match", payload["match"]).eq("market", payload.get("market", "")).execute()
+                q = q.eq("match", payload["match"]).eq("market", payload.get("market", ""))
+            rows = (q.order("created_at", desc=True).limit(1).execute().data) or []
+            existing_id = rows[0]["id"] if rows else None
         except Exception as e:
+            # Un SELECT raté retombe sur INSERT — parité avec l'ancien
+            # comportement où un DELETE raté produisait déjà un doublon
+            # potentiel ; la purge nettoie.
             if DEBUG_MODE:
-                log.debug("Supabase delete (signal %s): %s", sig_label, str(e)[:80])
-        
+                log.debug("Supabase select (signal %s): %s", sig_label, str(e)[:80])
+
+        if existing_id is not None:
+            if update_signal_fields(sb, existing_id, payload,
+                                    optional_cols=frozenset(_OPTIONAL_COLS)):
+                if DEBUG_MODE:
+                    log.debug("✓ Signal refreshed: %s [edge=%.2f%%]",
+                              sig_label, payload.get("edge_pct", 0))
+                return True
+            if attempt < MAX_DB_RETRIES:
+                time.sleep(DELAY_DB_RETRY)
+                continue
+            log.error("Supabase update FAILED after %d retries (signal %s)",
+                      MAX_DB_RETRIES, sig_label)
+            return False
+
         # Insert new signal
         try:
             sb.table("signals").insert(payload).execute()
