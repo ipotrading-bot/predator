@@ -442,3 +442,42 @@ class TestBasculeDeModeleIntraFournisseur:
         p = R.Provider(name="x", base_url="https://x/v1", env_key="X",
                        models=("a", "b"), lanes=(R.ANALYZE,))
         assert R.resolve_models(p, set()) == ["a", "b"]
+
+
+class TestParsageDeCatalogue:
+    """Trois formes réelles rencontrées le 2026-08-22, chacune avait un piège."""
+
+    def _cat(self, monkeypatch, body):
+        R._catalog_cache.clear()
+        monkeypatch.setattr(R.requests, "get", lambda *a, **k: type(
+            "X", (), {"status_code": 200, "json": staticmethod(lambda: body)})())
+        p = R.Provider(name="essai", base_url="https://x/v1", env_key="X",
+                       models=("m",), lanes=(R.ANALYZE,))
+        return R.fetch_catalog(p)
+
+    def test_cloudflare_expose_un_id_UUID_ET_un_name(self, monkeypatch):
+        """Préférer `id` indexait 64 UUID et concluait « aucune préférence au
+        catalogue » sur un fournisseur parfaitement sain."""
+        cat = self._cat(monkeypatch, {"result": [
+            {"id": "3fd0a7e0-uuid", "name": "@cf/meta/llama-3.3-70b-instruct-fp8-fast"}]})
+        assert "@cf/meta/llama-3.3-70b-instruct-fp8-fast" in cat
+        assert "3fd0a7e0-uuid" in cat          # les deux sont acceptés
+
+    def test_le_prefixe_models_de_gemini_est_normalise(self, monkeypatch):
+        cat = self._cat(monkeypatch, {"data": [{"id": "models/gemini-2.5-flash"}]})
+        assert {"models/gemini-2.5-flash", "gemini-2.5-flash"} <= cat
+
+    def test_le_prefixe_arobase_de_cloudflare_nest_PAS_tronque(self, monkeypatch):
+        """`@cf/...` fait partie intégrante de l'identifiant attendu à
+        l'inférence — le tronquer fabriquerait un modèle inexistant."""
+        cat = self._cat(monkeypatch, {"result": [{"name": "@cf/zai-org/glm-4.7-flash"}]})
+        assert "@cf/zai-org/glm-4.7-flash" in cat
+        assert "glm-4.7-flash" not in cat
+
+
+class TestModeleDisparu:
+    def test_un_410_essaie_le_modele_suivant(self, monkeypatch):
+        """Cloudflare rend 410 « deprecated on 2026-05-30 » sur un modèle
+        retiré : c'est une raison d'essayer le suivant, pas d'abandonner le
+        fournisseur."""
+        assert 410 in R._RETRY_NEXT_MODEL and 404 in R._RETRY_NEXT_MODEL

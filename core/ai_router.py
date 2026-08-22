@@ -130,6 +130,10 @@ class Provider:
     daily_tokens: int = 0            # 0 = non documenté / non compté
     terms_flag: str = ""             # "" | "non_commercial" | "evaluation"
     catalog_path: str = "/models"
+    # Chemin d'inférence. Cloudflare sert son catalogue sous `/ai/models/search`
+    # et son endpoint OpenAI sous `/ai/v1/chat/completions` : les deux ne
+    # partagent pas le même préfixe, d'où ce champ plutôt qu'un cas particulier.
+    chat_path: str = "/chat/completions"
     headers: dict = field(default_factory=dict)
     note: str = ""
 
@@ -159,7 +163,7 @@ class Provider:
 
     @property
     def chat_url(self) -> str:
-        return f"{self.resolved_base.rstrip('/')}/chat/completions"
+        return f"{self.resolved_base.rstrip('/')}{self.chat_path}"
 
     @property
     def catalog_url(self) -> str:
@@ -224,15 +228,22 @@ REGISTRY: tuple = (
     ),
     Provider(
         name="cloudflare",
-        base_url="https://api.cloudflare.com/client/v4/accounts/${CLOUDFLARE_ACCOUNT_ID}/ai/v1",
+        base_url="https://api.cloudflare.com/client/v4/accounts/${CLOUDFLARE_ACCOUNT_ID}/ai",
         env_key="CLOUDFLARE_API_TOKEN",
+        chat_path="/v1/chat/completions",
+        catalog_path="/models/search?per_page=100",
+        # Catalogue constaté le 2026-08-22 : 29 modèles texte, dont GLM-4.7-Flash
+        # et GLM-5.2 — d'où la lane CJK, que ce fournisseur sert aussi bien que
+        # Zhipu et sans clause non commerciale.
         models=("@cf/meta/llama-3.3-70b-instruct-fp8-fast",
-                "@cf/qwen/qwen2.5-coder-32b-instruct",
-                "@cf/meta/llama-3.1-8b-instruct"),
-        lanes=(FILTER, ANALYZE, SEARCH_READ),
+                "@cf/zai-org/glm-4.7-flash",
+                "@cf/openai/gpt-oss-120b",
+                "@cf/deepseek-ai/deepseek-v4-flash-0731"),
+        lanes=(FILTER, ANALYZE, SEARCH_READ, TRANSLATE_CJK, SETTLEMENT),
         rpm=0, daily_requests=200,
         note="10 000 neurons/j. Demande AUSSI CLOUDFLARE_ACCOUNT_ID : l'identifiant "
-             "de compte est dans l'URL, pas dans les en-tetes.",
+             "de compte est dans l'URL. Catalogue sous /ai/models/search, inference "
+             "sous /ai/v1 — d'ou chat_path.",
     ),
     Provider(
         name="nebius", base_url="https://api.studio.nebius.ai/v1",
@@ -519,27 +530,36 @@ def fetch_catalog(p: Provider, timeout: int | None = None) -> set:
         _catalog_cache[p.name] = set()
         return set()
 
-    items = body.get("data") or body.get("models") or []
+    items = body.get("data") or body.get("models") or body.get("result") or []
     ids = set()
     for m in items:
         if isinstance(m, dict):
-            mid = m.get("id") or m.get("name") or m.get("model")
+            # TOUS les champs qui peuvent porter une référence de modèle, pas
+            # le premier : Cloudflare publie un `id` (UUID interne) ET un
+            # `name` (`@cf/meta/llama-...`). Préférer `id` indexait 64 UUID et
+            # concluait « aucune préférence au catalogue » sur un fournisseur
+            # parfaitement sain — constaté le 2026-08-22.
+            candidates = [m.get("id"), m.get("name"), m.get("model")]
         elif isinstance(m, str):
-            mid = m
+            candidates = [m]
         else:
             continue
-        if not mid:
-            continue
-        mid = str(mid)
-        ids.add(mid)
+        for mid in candidates:
+            if not mid:
+                continue
+            mid = str(mid)
+            ids.add(mid)
         # Certains catalogues préfixent leurs identifiants alors que
         # l'inférence accepte les deux formes : Gemini publie
         # `models/gemini-2.5-flash` et répond aussi bien à
         # `gemini-2.5-flash`. Sans cette normalisation, une préférence non
         # préfixée serait jugée ABSENTE et le fournisseur écarté à tort —
         # le routeur débrancherait un fournisseur parfaitement sain.
-        if "/" in mid:
-            ids.add(mid.rsplit("/", 1)[-1])
+            if "/" in mid and not mid.startswith("@"):
+                # `models/gemini-2.5-flash` → aussi `gemini-2.5-flash`.
+                # Exclu pour les `@cf/...` de Cloudflare, dont le préfixe fait
+                # partie intégrante de l'identifiant attendu à l'inférence.
+                ids.add(mid.rsplit("/", 1)[-1])
     _catalog_cache[p.name] = ids
     return ids
 
@@ -591,7 +611,10 @@ def resolve_models(p: Provider, catalog: set | None = None) -> list:
 
 # Codes sur lesquels il vaut la peine d'essayer un AUTRE modèle du MÊME
 # fournisseur : la limite est portée par le modèle, pas par le compte.
-_RETRY_NEXT_MODEL = (429, 500, 502, 503, 504)
+# 404/410 = « ce modèle-là n'existe plus » (Cloudflare a rendu 410 sur
+# @cf/meta/llama-3.1-8b-instruct, « deprecated on 2026-05-30 »). C'est une
+# raison d'essayer le modèle SUIVANT, pas d'abandonner le fournisseur.
+_RETRY_NEXT_MODEL = (404, 410, 429, 500, 502, 503, 504)
 
 # Sentinelle : « ce modèle est saturé, essaie le suivant du MÊME fournisseur ».
 # Distincte de None, qui veut dire « ce fournisseur est en panne, passe au suivant ».
