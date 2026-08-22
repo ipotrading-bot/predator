@@ -338,10 +338,18 @@ REGISTRY: tuple = (
     Provider(
         name="scaleway", base_url="https://api.scaleway.ai/v1",
         env_key="SCALEWAY_API_KEY",
-        models=("llama-3.3-70b-instruct", "qwen3-32b"),
-        lanes=(FILTER, ANALYZE, SEARCH_READ),
-        rpm=0, daily_requests=150,
-        note="catalogue derriere cle (401 sans cle) ; souverainete UE",
+        # Noms EXACTS du catalogue (15 modeles, 2026-08-22). `qwen3-32b`, ma
+        # preference d'origine, n'existe pas chez Scaleway.
+        models=("llama-3.3-70b-instruct", "gemma-4-26b-a4b-it",
+                "glm-5.2", "mistral-small-3.2-24b-instruct-2506"),
+        lanes=(FILTER, ANALYZE, SEARCH_READ, TRANSLATE_CJK),
+        rpm=0, daily_requests=150, terms_flag="quota_zero",
+        note="souverainete UE. Cle testee le 2026-08-22 : le catalogue repond 200 "
+             "(15 modeles) mais TOUTE inference rend 429 « INSUFFICIENT QUOTA », y "
+             "compris sur un appel isole apres 70 s d'attente — ce n'est donc pas "
+             "une rafale mais un quota a ZERO. Les Generative APIs Scaleway "
+             "n'accordent de quota qu'a un compte VALIDE. A retester une fois le "
+             "compte valide : le catalogue, lui, est riche (glm-5.2 pour le CJK).",
     ),
     Provider(
         name="ollama_cloud", base_url="https://ollama.com/v1",
