@@ -245,10 +245,15 @@ def run():
     signals = []
     try:
         cutoff = (now - timedelta(hours=REPORT_WINDOW_H)).isoformat()
+        # created_at et non scanned_at : le mode REPRICE rafraîchit scanned_at
+        # de tout le slate chaque heure — filtré sur scanned_at, chaque rapport
+        # bi-horaire re-listerait indéfiniment TOUS les signaux vivants.
+        # created_at est fiable depuis que _save met à jour en place (il porte
+        # la PREMIÈRE émission, jamais rajeuni par un re-scan).
         res = (sb.table("signals")
                .select("*")
                .eq("status", "active")
-               .gte("scanned_at", cutoff)
+               .gte("created_at", cutoff)
                .order("edge_pct", desc=True)
                .limit(30)
                .execute())

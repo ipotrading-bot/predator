@@ -290,6 +290,38 @@ scans engine + 4 deep par jour, cela fait ~224 crédits/jour, soit **une clé
 tous les ~2 jours**. La rotation passe par `app_secrets` (Supabase), pas par le
 secret GitHub ni par Vercel — voir `core/secret_store.py`.
 
+## Le mode REPRICE (2026-08-22) — l'odds screen gratuit
+
+`REPRICE=1` (2e step de `golden_hour.yml`, chaque heure) relit le slate soft
+photographié par les scans complets dans `meta.cache_soft_slate` (TTL 4h,
+`CACHE_SOFT_SLATE_TTL_H`) et le recompare à un prix sharp **Matchbook
+frais** — gratuit, sans clé, 700 req/min. Émission NON fantôme. Invariants
+verrouillés par `tests/test_reprice_mode.py` :
+- AUCUNE source payante ni recherche web : OddsAPI, api-sports, odds-api.io,
+  titan007, blocs MMA/eSports/alt, `fetch_pinnacle_prices` — jamais appelés ;
+  le coupe-circuit `harvest_empty_at` n'est ni lu ni écrit ; un cache vide
+  sort en silence (heartbeat, zéro alerte). L'absence des clés payantes dans
+  l'env du step est la garantie mécanique.
+- Le slate est écrit par les scans COMPLETS uniquement (ni golden hour —
+  fenêtre 2h partielle — ni reprice, sinon TTL immortel), trimé par
+  `_trim_soft_slate` : le sharp d'exchange et les prix `_estimated` n'y sont
+  JAMAIS sérialisés (l'exchange doit repricer frais à chaque tick).
+- `_save` fait depuis le même jour select-then-update-or-insert scopé
+  `status='active'` : id et `created_at` stables, colonnes de clôture
+  (`clv_pct_real`…) préservées sous re-scan horaire — l'ancien
+  delete-then-insert les détruisait. `run_rapport.py` filtre sur
+  `created_at` (pas `scanned_at`, rajeuni chaque heure par REPRICE).
+- Dédup Telegram : `_dedup_systems_for_telegram` (clé meta
+  `alert_system_<hash du contenu>`, TTL 6h) — le même combo ne repart pas à
+  chaque tick ; un tick REPRICE sans rien de neuf se tait.
+- Le CLV réel est désormais un critère de PREMIER rang de la couche
+  d'apprentissage (`_decide_threshold` : montée si avg_clv < −1% sur ≥15
+  lignes, descente accélérée si > +1% avec majorité positive) et
+  `_archive_before_purge` passe par `log_to_ledger` (les expirés portent
+  enfin `clv_pct_real`/`kelly_pct`/`sharp_prob`).
+- Limite assumée : le prix soft peut avoir jusqu'à 4h — le mouvement détecté
+  est côté sharp ; l'advice donne la cote à vérifier au book.
+
 ## L'arbitrage de cadence (2026-08-22)
 
 Quand le pool OddsAPI est mort, CHAQUE scan paie sur les budgets journaliers
@@ -346,7 +378,7 @@ couche de mise, publiés quand même). Depuis :
 
 | Workflow | Cadence | Purpose |
 |---|---|---|
-| `golden_hour.yml` | horaire (H+25) | scan de mouvement de ligne à T-120min, purge à chaque run ; vérifie aussi `meta.scan_request`. **Ses signaux partent en FANTÔME depuis le 2026-08-06** (`SHADOW_GOLDEN_HOUR`) : persistés et réglés, jamais recommandés — mesuré à 39% de réussite pour 54,5% requis, p=0,007. Ne PAS ajouter de poller dédié pour compenser la latence du bouton Scan — c'est l'erreur du 2026-07-07. |
+| `golden_hour.yml` | horaire (H+25) | DEUX exécutions par tick depuis le 2026-08-22 : (1) scan de mouvement de ligne à T-120min, purge à chaque run, vérifie aussi `meta.scan_request` ; (2) step **REPRICE** (voir section dédiée) — gratuit, non fantôme. **Ses signaux partent en FANTÔME depuis le 2026-08-06** (`SHADOW_GOLDEN_HOUR`) : persistés et réglés, jamais recommandés — mesuré à 39% de réussite pour 54,5% requis, p=0,007. Ne PAS ajouter de poller dédié pour compenser la latence du bouton Scan — c'est l'erreur du 2026-07-07. |
 | `engine.yml` | **8x/jour, toutes les 3h (H+03)** depuis le 2026-08-22 (était 12x/2h) | scan complet, fenêtre **24h**. Cadence dimensionnée sur le budget des sources gratuites — voir « L'arbitrage de cadence » ci-dessous |
 | `deep_scan.yml` | **2x/jour (05:33, 17:33)** depuis le 2026-08-22 (était 4) | **fenêtre 24h elle aussi** — `HOURS_AHEAD: "24"` explicite. Le workflow s'appelait « Deep Scan 48h » alors qu'il faisait déjà 24h : renommé « Deep Scan 24h » le 2026-08-06. Ce qui reste « deep » = `MAX_MATCHES=100` et `_QUOTA_DEEP`, pas l'horizon. |
 | `audit.yml` | toutes les 6h | settlement + CLV + couche d'apprentissage |

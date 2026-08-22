@@ -88,7 +88,8 @@ env:
 jobs:
   golden-scan:
     runs-on: ubuntu-latest
-    timeout-minutes: 12
+    timeout-minutes: 15   # 12 → 15 le 2026-08-22 : le job porte désormais deux
+                          # exécutions (golden hour + REPRICE, ce dernier < 1 min)
 
     steps:
       - name: Verify required secrets are present
@@ -210,4 +211,25 @@ jobs:
           BETFAIR_PASSWORD:   ${{ secrets.BETFAIR_PASSWORD }}
           BETFAIR_CERT:       ${{ secrets.BETFAIR_CERT }}
           BETFAIR_CERT_KEY:   ${{ secrets.BETFAIR_CERT_KEY }}
+        run: python run_engine.py
+
+      - name: Run REPRICE scan (Matchbook vs slate soft en cache)
+        # Réutilise le cron horaire existant — JAMAIS de nouveau schedule
+        # (leçon du 2026-07-07 : la surcharge de schedules fait dériver tous
+        # les crons du repo). Aucune clé payante dans cet env : Matchbook est
+        # sans clé ni compte (700 req/min) et le slate soft vient de
+        # meta.cache_soft_slate (posé par engine/deep/guerrilla, TTL 4h).
+        # L'ABSENCE d'ODDS_API_KEY/GROQ/TAVILY/API_FOOTBALL ici est la
+        # garantie mécanique que ce step ne peut rien dépenser.
+        # Sauté sur un tick manuel : le step précédent vient alors de faire
+        # un scan GUERRILLA complet qui a rafraîchi le slate — repricer les
+        # mêmes données dans la même minute n'apporte rien.
+        if: steps.check.outputs.manual != 'true'
+        env:
+          REPRICE:              '1'
+          SUPABASE_URL:         ${{ secrets.SUPABASE_URL }}
+          SUPABASE_KEY:         ${{ secrets.SUPABASE_KEY }}
+          SUPABASE_SERVICE_KEY: ${{ secrets.SUPABASE_SERVICE_KEY }}
+          TELEGRAM_BOT_TOKEN:   ${{ secrets.TELEGRAM_BOT_TOKEN }}
+          TELEGRAM_CHAT_ID:     ${{ secrets.TELEGRAM_CHAT_ID }}
         run: python run_engine.py
