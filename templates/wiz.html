@@ -255,9 +255,24 @@
     <div class="empty-icon">&#9788;</div>
     Aucune analyse Wiz exploitable.<br>
     Wiz tourne toutes les 2&nbsp;heures sur les signaux actifs dont le coup d&rsquo;envoi est dans les 24&nbsp;h.<br>
+    {# Deux vides très différents, et le diagnostic n'est pas le même : rien
+       en base (Wiz n'a pas tourné) contre tout en INDISPONIBLE (Wiz a tourné
+       et n'a rien trouvé). Confondre les deux a coûté une semaine le
+       2026-08-22 : la page conseillait de vérifier la migration alors que
+       14 analyses existaient et que c'étaient les SOURCES qui étaient
+       muettes. #}
     <span style="color:var(--t3)">
-      Si la page reste vide&nbsp;: v&eacute;rifier que <code>sql/migrate_v10_0_wiz.sql</code> est appliqu&eacute;e,<br>
-      et que le secret <code>MISTRAL_API_KEY</code> existe.
+      {% if hidden %}
+        {{ hidden }} analyse{{ 's' if hidden > 1 }} produite{{ 's' if hidden > 1 }} sur cette fen&ecirc;tre,
+        toutes <b>INDISPONIBLE</b>&nbsp;: le moteur tourne, ce sont les sources web qui ne
+        donnent rien.<br>
+        &Agrave; v&eacute;rifier dans cet ordre&nbsp;: quota du connecteur <code>web_search</code> Mistral,
+        puis les sources gratuites (<code>core/wiz_sources.py</code>).
+      {% else %}
+        Rien en base sur cette fen&ecirc;tre&nbsp;: v&eacute;rifier que <code>sql/migrate_v10_0_wiz.sql</code>
+        est appliqu&eacute;e,<br>
+        que le secret <code>MISTRAL_API_KEY</code> existe, et que le cron <code>wiz.yml</code> passe.
+      {% endif %}
     </span>
   </div>
 
@@ -277,7 +292,7 @@
 
 </main>
 
-<footer>PREDATOR WIZ v10.0 &nbsp;&middot;&nbsp; Mistral &rarr; Google News &rarr; Tavily &nbsp;&middot;&nbsp; n&rsquo;alt&egrave;re jamais l&rsquo;edge quantitatif</footer>
+<footer>PREDATOR WIZ v10.0 &nbsp;&middot;&nbsp; Mistral &rarr; Google News + Bing News &rarr; Tavily &nbsp;&middot;&nbsp; n&rsquo;alt&egrave;re jamais l&rsquo;edge quantitatif</footer>
 
 <!-- ── BOTTOM NAV ─────────────────────────── -->
 <nav class="bnav">

@@ -210,6 +210,13 @@ _PROMPT_GROUNDED_HEAD = """\
 que tu as consultées : tout ce que tu affirmes doit en sortir, et chaque \
 "source_url" doit être copiée à l'identique depuis l'une d'elles.
 
+Certaines entrées n'ont qu'un TITRE daté, sans bloc de texte : c'est normal, \
+le flux ne fournit pas toujours d'extrait. Un titre daté qui énonce lui-même \
+un fait ("X forfait", "compos officielles", "Y titulaire") EST une source \
+utilisable — cite-le. Un titre qui n'énonce rien ("où voir le match", \
+"pronostics et cotes") n'en est pas une : ignore-le. Ne déduis jamais rien \
+au-delà de ce qu'un titre dit littéralement.
+
 RÉSULTATS DE RECHERCHE
 {results}
 """

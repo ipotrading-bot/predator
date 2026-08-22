@@ -230,6 +230,13 @@ WIZ_QUERIES_PER_MATCH    = 2     # Tier A : compositions/absences + enjeu (ou m�
 
 WIZ_LOOKAHEAD_H   = 24   # n'analyser que les signaux dont le coup d'envoi est < 24h
 WIZ_TTL_H_DEFAULT = 8    # ne pas ré-analyser un match analysé il y a moins de 8h
+
+# TTL d'une NON-RÉPONSE. Une ligne INDISPONIBLE n'est pas une analyse : c'est
+# l'aveu que Wiz n'a pas pu chercher (quota, source muette, JSON illisible).
+# Lui appliquer le TTL de 8h revient à graver un incident passager dans la
+# page pour la journée — et, le 2026-08-22, à retarder de 8h l'effet de toute
+# réparation des sources. On repasse donc dès le run suivant (cron = 2h).
+WIZ_RETRY_UNAVAILABLE_H = 2
 # Exception au TTL : les compositions officielles tombent ~1h avant le coup
 # d'envoi (cf. MLB_LINEUP_WINDOW_H plus haut, même logique). Une analyse
 # faite à T-20h ne les a pas vues — on autorise donc une seconde passe dans

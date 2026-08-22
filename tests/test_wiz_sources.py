@@ -83,34 +83,148 @@ class TestGoogleNews:
         assert ws.google_news("peu importe") == []
 
 
+def _free(monkeypatch, google=None, bing=None):
+    """Neutralise les DEUX sources gratuites.
+
+    Sans cela, `gather()` appellerait la vraie `bing_news` et le garde-fou
+    réseau de conftest.py ferait échouer le test — ce qui est exactement son
+    rôle, mais ce n'est pas ce qu'on mesure ici.
+    """
+    monkeypatch.setattr(ws, "google_news", google or (lambda *a, **k: []))
+    monkeypatch.setattr(ws, "bing_news", bing or (lambda *a, **k: []))
+    monkeypatch.setattr(ws, "FREE_SOURCES", (ws.google_news, ws.bing_news))
+
+
 class TestCascadeOrder:
     def test_free_source_first_tavily_untouched(self, monkeypatch):
         called = {"tavily": 0}
-        monkeypatch.setattr(ws, "google_news",
-                            lambda q, *a, **k: [{"url": f"https://free/{q}", "title": q}])
+        _free(monkeypatch, google=lambda q, *a, **k: [{"url": f"https://free/{q}", "title": q}])
         monkeypatch.setattr(ws, "_tavily",
                             lambda q, *a, **k: called.__setitem__("tavily", called["tavily"] + 1) or [])
         out = ws.gather(["q1", "q2"])
         assert len(out) == 2 and called["tavily"] == 0
 
     def test_tavily_takes_over_when_free_source_is_empty(self, monkeypatch):
-        monkeypatch.setattr(ws, "google_news", lambda *a, **k: [])
+        _free(monkeypatch)
         monkeypatch.setattr(ws, "_tavily",
                             lambda q, *a, **k: [{"url": "https://tav/1", "title": "t"}])
         assert len(ws.gather(["q1"])) == 1
 
     def test_duplicate_urls_are_collapsed(self, monkeypatch):
-        monkeypatch.setattr(ws, "google_news",
-                            lambda *a, **k: [{"url": "https://same", "title": "x"}])
+        _free(monkeypatch, google=lambda *a, **k: [{"url": "https://same", "title": "x"}])
         monkeypatch.setattr(ws, "_tavily", lambda *a, **k: [])
         assert len(ws.gather(["q1", "q2"])) == 1
 
     def test_a_broken_source_does_not_break_the_gather(self, monkeypatch):
-        monkeypatch.setattr(ws, "google_news",
-                            lambda *a, **k: (_ for _ in ()).throw(RuntimeError("boom")))
+        _free(monkeypatch, google=lambda *a, **k: (_ for _ in ()).throw(RuntimeError("boom")))
         monkeypatch.setattr(ws, "_tavily",
                             lambda *a, **k: [{"url": "https://tav/1", "title": "t"}])
         assert len(ws.gather(["q1"])) == 1
+
+    def test_les_deux_sources_gratuites_sont_fusionnees(self, monkeypatch):
+        """LA régression du 2026-08-22.
+
+        `gather()` s'arrêtait à la première source gratuite qui répondait.
+        Google News répond toujours (des titres), donc Bing — la seule source
+        qui porte de vrais extraits — n'était jamais interrogée, et Wiz
+        rendait INDISPONIBLE sur 100% des matchs faute de matière.
+        """
+        _free(monkeypatch,
+              google=lambda *a, **k: [{"url": "https://gnews/1", "title": "titre"}],
+              bing=lambda *a, **k: [{"url": "https://bing/1", "title": "t",
+                                     "content": "Le gardien titulaire est forfait."}])
+        monkeypatch.setattr(ws, "_tavily", lambda *a, **k: pytest.fail("le gratuit a répondu"))
+        urls = [r["url"] for r in ws.gather(["q1"])]
+        assert urls == ["https://gnews/1", "https://bing/1"]
+
+    def test_le_gratuit_qui_ne_rend_que_des_doublons_ne_paie_pas_tavily(self, monkeypatch):
+        """Deux requêtes qui remontent les mêmes articles = un succès du
+        gratuit, pas une raison d'entamer la réserve du moteur."""
+        _free(monkeypatch, google=lambda *a, **k: [{"url": "https://same", "title": "x"}])
+        monkeypatch.setattr(ws, "_tavily", lambda *a, **k: pytest.fail("Tavily consommé pour rien"))
+        assert len(ws.gather(["q1", "q2"])) == 1
+
+    def test_la_collecte_est_plafonnee(self, monkeypatch):
+        # Depuis la fusion, une requête peut ramener deux fois plus d'items :
+        # le plafond garde la même enveloppe de prompt (« Too many content »).
+        _free(monkeypatch,
+              google=lambda q, *a, **k: [{"url": f"https://g/{q}/{i}", "title": "t"} for i in range(9)],
+              bing=lambda q, *a, **k: [{"url": f"https://b/{q}/{i}", "title": "t"} for i in range(9)])
+        assert len(ws.gather(["q1", "q2"])) == ws.MAX_TOTAL
+
+
+_BING_RSS = b"""<?xml version="1.0"?>
+<rss version="2.0"><channel>
+  <item>
+    <title>Keeper ruled out, back-up starts</title>
+    <link>http://www.bing.com/news/apiclick.aspx?ref=FexRss&amp;aid=&amp;tid=abc&amp;url=https%3A%2F%2Fsportsmole.co.uk%2Fpreview.html&amp;c=1</link>
+    <description>The first-choice goalkeeper is out with a hamstring strain.</description>
+    <pubDate>Sat, 22 Aug 2026 06:59:40 GMT</pubDate>
+  </item>
+  <item>
+    <title>Sans lien</title>
+    <link></link>
+  </item>
+</channel></rss>"""
+
+
+class TestBingNews:
+    def test_extrait_reel_et_url_de_lediteur(self, monkeypatch):
+        monkeypatch.setattr(ws.requests, "get", lambda *a, **k: _Resp(_BING_RSS))
+        out = ws.bing_news("A vs B")
+        assert len(out) == 1
+        # Le redirecteur de tracking de Bing est déballé : l'opérateur qui
+        # clique sur un argument Wiz doit tomber sur l'article, pas sur bing.com.
+        assert out[0]["url"] == "https://sportsmole.co.uk/preview.html"
+        assert out[0]["source"] == "sportsmole.co.uk"
+        assert "hamstring" in out[0]["content"]
+
+    @pytest.mark.parametrize("boom", [
+        lambda *a, **k: _Resp(b"pas du xml"),
+        lambda *a, **k: _Resp(b"", status=403),
+        lambda *a, **k: (_ for _ in ()).throw(OSError("réseau")),
+    ])
+    def test_failure_means_no_result_never_an_exception(self, monkeypatch, boom):
+        monkeypatch.setattr(ws.requests, "get", boom)
+        assert ws.bing_news("peu importe") == []
+
+    def test_user_agent_sans_accent(self):
+        # Un User-Agent accentué se fait encoder en latin-1 par urllib et
+        # déclenche un 403 — le piège déjà payé sur Polymarket.
+        ws._BROWSER_UA.encode("ascii")
+
+
+class TestEchoDeTitre:
+    """La description d'un item Google News EST le titre — pas un extrait.
+
+    Laissée telle quelle, elle donnait au modèle l'illusion d'une source
+    étayée et produisait « aucune information exploitable » sur tous les
+    matchs (mesuré le 2026-08-22, /wiz entièrement vide).
+    """
+
+    def test_la_description_qui_repete_le_titre_est_videe(self, monkeypatch):
+        rss = b"""<?xml version="1.0"?>
+        <rss version="2.0" xmlns:news="http://news.google.com/"><channel><item>
+          <title>Nashville SC vs Columbus Crew: TV channel and kick-off time - Goal.com</title>
+          <link>https://news.google.com/rss/articles/CCC</link>
+          <description>&lt;a href="x"&gt;Nashville SC vs Columbus Crew: TV channel and kick-off \
+time - Goal.com&lt;/a&gt;&amp;nbsp;&amp;nbsp;Goal.com</description>
+          <source url="https://goal.com">Goal.com</source>
+        </item></channel></rss>"""
+        monkeypatch.setattr(ws.requests, "get", lambda *a, **k: _Resp(rss))
+        out = ws.google_news("peu importe")
+        assert out[0]["content"] == ""
+        assert out[0]["title"]                      # l'item reste, il annonce ce qu'il est
+
+    def test_un_vrai_extrait_est_conserve(self, monkeypatch):
+        monkeypatch.setattr(ws.requests, "get", lambda *a, **k: _Resp(_RSS))
+        out = ws.google_news("peu importe")
+        assert out[0]["content"] == "Club confirms the forward is out"
+
+    def test_format_results_nomet_pas_de_ligne_de_contenu_vide(self):
+        block = ws.format_results([{"title": "T", "url": "https://ex.com/a",
+                                    "content": "", "source": "Goal", "published": "hier"}])
+        assert block.rstrip().endswith("https://ex.com/a")
 
 
 class TestTavilyReserve:
@@ -152,14 +266,17 @@ class TestSearchFn:
         assert model == "mistral-small" and len(sources) == 1
         assert "verdict" in text
 
-    def test_groq_is_the_last_resort(self, monkeypatch):
+    def test_le_routeur_ia_est_le_dernier_recours(self, monkeypatch):
         from core import ai_search, wiz_ai
         monkeypatch.setattr(wiz_ai, "search_quota_dead", lambda: True)
         monkeypatch.setattr(ws, "gather", lambda _q: [{"url": "https://n/1", "title": "t"}])
         monkeypatch.setattr(wiz_ai, "mistral_complete", lambda p, label="WIZ": (None, None))
         monkeypatch.setattr(ai_search, "ai_complete", lambda p, label="AI": '{"verdict":"NEUTRE"}')
         _text, _sources, model = ws.make_search_fn(self.ctx)("prompt")
-        assert model == "groq"
+        # PAS "groq" : ai_complete() passe par le routeur AVANT Groq, et
+        # `model_used` sert à diagnostiquer une source morte — une étiquette
+        # qui ment sur le fournisseur envoie chercher la panne ailleurs.
+        assert model == "ai_router"
 
     def test_no_source_yields_unavailable_not_an_unsourced_verdict(self, monkeypatch):
         from core import wiz_ai

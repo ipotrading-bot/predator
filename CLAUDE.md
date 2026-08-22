@@ -77,7 +77,10 @@ Tout le calcul tourne en crons GitHub Actions ; le dashboard est en lecture seul
 - Pièges qui tuent une source en silence : User-Agent avec un accent → urllib encode
   en latin-1 → 403 Cloudflare (Polymarket) ; Kalshi rend `yes_bid`/`volume` à `null`
   et met les prix dans les champs `*_dollars` en chaîne ; un 1X2 amputé d'une patte
-  devient indiscernable d'un moneyline et s'apparie avec lui.
+  devient indiscernable d'un moneyline et s'apparie avec lui ; la `<description>`
+  d'un item Google News RSS est le TITRE recopié, pas un extrait — une source qui
+  « répond » peut ne porter aucun fait (100% d'INDISPONIBLE sur /wiz, 2026-08-22 ;
+  Bing News RSS ajouté pour les vrais extraits, `core/wiz_sources.py`).
 - robots.txt : sur odds.500.com la QUERY STRING est la frontière (`/fenxi/ouzhi-*.shtml`
   autorisé nu, interdit avec `?ctype=`/`?order=`/`?cids=`). Ne jamais paramétrer un
   endpoint — gardé par `tests/test_odds500.py::TestRobotsTxt`.

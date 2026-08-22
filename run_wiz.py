@@ -46,6 +46,7 @@ from core.constants import (
     GLOBAL_TIMEOUT,
     WIZ_CONFIRM_WINDOW_H,
     WIZ_LOOKAHEAD_H,
+    WIZ_RETRY_UNAVAILABLE_H,
     wiz_run_budget,
     wiz_ttl_h,
 )
@@ -190,7 +191,7 @@ def _load_last_analyses(sb, keys) -> dict:
     since = (datetime.now(timezone.utc) - timedelta(hours=max(48.0, wiz_ttl_h() * 3))).isoformat()
     try:
         res = (sb.table("wiz_analysis")
-               .select("match_id,match,analyzed_at")
+               .select("match_id,match,analyzed_at,verdict")
                .gte("analyzed_at", since)
                .order("analyzed_at", desc=True)
                .limit(1000).execute())
@@ -203,23 +204,37 @@ def _load_last_analyses(sb, keys) -> dict:
                     "ce run ; sql/migrate_v10_0_wiz.sql est-elle appliquée ?", e)
         return {}
 
+    # (date, verdict) et pas seulement la date : une non-réponse ne se périme
+    # pas au même rythme qu'une analyse — voir _needs_analysis().
     last: dict = {}
     for r in rows:
         key = (r.get("match_id") or "").strip() or f"name:{(r.get('match') or '').strip().lower()}"
         dt = _parse_dt(r.get("analyzed_at"))
-        if dt and (key not in last or dt > last[key]):
-            last[key] = dt
+        if dt and (key not in last or dt > last[key][0]):
+            last[key] = (dt, (r.get("verdict") or "").strip())
     return last
 
 
-def _needs_analysis(ctx: dict, last_dt, now) -> tuple[bool, str]:
-    """Faut-il (ré)analyser ce match ? Retourne (oui/non, motif pour le log)."""
-    if last_dt is None:
+def _needs_analysis(ctx: dict, last, now) -> tuple[bool, str]:
+    """Faut-il (ré)analyser ce match ? Retourne (oui/non, motif pour le log).
+
+    `last` est le couple (analyzed_at, verdict) de la dernière analyse, ou
+    None si le match n'a jamais été vu.
+    """
+    if last is None:
         return True, "jamais analysé"
 
+    last_dt, last_verdict = last
     age_h = (now - last_dt).total_seconds() / 3600.0
     if age_h >= wiz_ttl_h():
         return True, f"analyse vieille de {age_h:.1f}h"
+
+    # Une ligne INDISPONIBLE n'est pas une analyse, c'est « je n'ai pas pu
+    # chercher ». La garder 8h en cache fige un incident passager — quota du
+    # connecteur, source muette — pour toute la journée, et retarde d'autant
+    # l'effet de toute réparation. On repasse dès le run suivant.
+    if last_verdict == INDISPONIBLE and age_h >= WIZ_RETRY_UNAVAILABLE_H:
+        return True, f"nouvel essai après INDISPONIBLE ({age_h:.1f}h)"
 
     # Fenêtre de confirmation T-3h : les compositions officielles tombent
     # ici. Une analyse faite à T-20h ne les a pas vues, quelle que soit sa
@@ -231,6 +246,8 @@ def _needs_analysis(ctx: dict, last_dt, now) -> tuple[bool, str]:
         if window_start <= now < ko and last_dt < window_start:
             return True, "fenêtre de confirmation T-3h (compositions)"
 
+    if last_verdict == INDISPONIBLE:
+        return False, f"INDISPONIBLE récent ({age_h:.1f}h < {WIZ_RETRY_UNAVAILABLE_H}h)"
     return False, f"en cache ({age_h:.1f}h < TTL {wiz_ttl_h():.0f}h)"
 
 
