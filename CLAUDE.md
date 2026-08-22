@@ -85,9 +85,12 @@ Tout le calcul tourne en crons GitHub Actions ; le dashboard est en lecture seul
   lanes (FILTER/ANALYZE/TRANSLATE_CJK/SEARCH_READ/SETTLEMENT/WIZ) + disjoncteur
   (3 échecs → 30 min) + découverte des catalogues au démarrage du run.
   NE JAMAIS coder un nom de modèle en dur hors du registre : le paysage gratuit
-  churne chaque mois. Morts VÉRIFIÉS : GitHub Models (410, retiré 30/07/2026),
-  Cerebras (403), et `meta-llama/llama-3.3-70b-instruct:free` (retiré du
+  churne chaque mois. SEUL mort prouvé : GitHub Models (410, corps nommant le
+  retrait) ; aussi mort : `meta-llama/llama-3.3-70b-instruct:free` (retiré du
   catalogue :free OpenRouter — le repli était mort en silence).
+  ⚠️ Cerebras avait été retiré À TORT sur un 403 SANS CLÉ : un 401/403 sans clé
+  ne prouve JAMAIS qu'un palier a fermé, il faut une clé INVALIDE pour trancher
+  (Cerebras rend alors 401 wrong_api_key). Rétabli au registre.
   `ai_search.py` délègue au routeur ; Mistral reste HORS registre (Wiz).
   Réserve settlement gardée EN NÉGATIF (les autres lanes sont amputées, elles
   n'y accèdent jamais) — leçon du 2026-08-02. Un compte par fournisseur ;
