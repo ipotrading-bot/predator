@@ -69,6 +69,9 @@ C'est le tableau à consulter avant de toucher à quoi que ce soit.
 | Un verdict Wiz `INDISPONIBLE` est rejoué, un verdict réel non | `tests/test_wiz_retry.py` |
 | Les sources porteuses de faits survivent à la troncature de Wiz | `tests/test_wiz_sources.py::TestLesFaitsDabord` |
 | Les deux sources gratuites de Wiz sont fusionnées, pas mises en concurrence | `…::test_les_deux_sources_gratuites_sont_fusionnees` |
+| `.python-version` reste sur la version de **Vercel** (3.12), jamais « alignée » sur les workflows | `tests/test_workflow_secrets.py::test_python_version_appartient_a_vercel` |
+| `vercel.json` et `.python-version` annoncent la même version | `…::test_vercel_json_annonce_la_meme_version_que_python_version` |
+| Les workflows sont d'accord entre eux sur Python 3.11 | `…::test_les_workflows_partagent_une_seule_version_de_python` |
 
 L'**invariant des sport-keys** (4 fichiers : `core/odds_api.py`,
 `core/learning_layer.py`, `api/index.py`, `core/wiz_engine.py`) est décrit
@@ -250,6 +253,47 @@ trois tests qui disent la règle réelle :
 
 Le code doit rester compatible avec les deux.
 
+### 3.8 Le dépôt vit sur DEUX interpréteurs — et un test avait encodé le contraire
+
+**Régression introduite par cet audit même, et la leçon la plus utile qu'il
+ait produite.**
+
+Le test neuf `test_une_seule_version_de_python` avait trouvé que
+`.python-version` annonçait 3.12 contre 3.11 partout ailleurs. L'alignement
+paraissait évident — il a été fait dans le mauvais sens. L'image de build
+Vercel **n'embarque pas Python 3.11** :
+
+```
+Warning: Python version "3.11" detected in .python-version is not installed
+         and will be ignored.
+Using python version: 3.12
+error: No interpreter found for Python 3.11 in managed installations
+```
+
+Le déploiement a échoué et la production est restée bloquée sur le commit
+précédent — **donc sans le correctif de sécurité de §3.1**. Une correction de
+sécurité non déployée ne protège rien.
+
+La règle réelle, désormais écrite dans le test :
+
+| Fichier | Interpréteur | Qui l'impose |
+|---|---|---|
+| `.python-version`, `vercel.json` | **3.12** | Vercel — son image de build n'a pas 3.11 |
+| les 14 workflows, le dev local | **3.11** | choix du projet |
+
+Ce n'est pas une incohérence à réparer, c'est une contrainte subie.
+
+> **La leçon** : un test qui encode la mauvaise règle ne se contente pas
+> d'être inutile — il donne l'autorité d'une suite verte à une erreur. Ici
+> 1012 tests au vert accompagnaient un déploiement cassé, parce qu'aucun
+> d'eux ne déployait quoi que ce soit. Après toute modification de
+> `vercel.json`, `.python-version`, `requirements.txt` ou `api/index.py` :
+> **vérifier le déploiement, pas seulement la suite.**
+> ```bash
+> python scripts/ops.py vercel deployments | head -3   # READY, pas ERROR
+> curl -s https://predator-two.vercel.app/api/health
+> ```
+
 ---
 
 ## 4. Vérifié sain (ne pas re-diagnostiquer)
@@ -275,6 +319,12 @@ Mesuré le 2026-08-22, avec la méthode :
   (Vercel, lui, construit en 3.12 — divergence VOULUE, voir §3.8).
 - Les 2 fichiers orphelins de la Phase 1 (`api/static/logo.jpg`,
   `.vercel-build-trigger`) ont bien été supprimés.
+- **Vérifié sur la PRODUCTION** (`predator-two.vercel.app`, commit `3934fd5`)
+  et non seulement en local : les 6 pages rendent en 200, `/api/health`
+  annonce la version unique `10.4` et `db_configured: true`,
+  `POST /api/audit/run` sans jeton renvoie bien **401**, et `/api/signals`
+  rend **14** signaux jouables contre **37** en `?all=1` — le filtre mesuré
+  en base (37 actifs, 23 déjà commencés) se retrouve exactement à l'écran.
 
 ---
 

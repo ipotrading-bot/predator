@@ -140,5 +140,14 @@ Tout le calcul tourne en crons GitHub Actions ; le dashboard est en lecture seul
   Bing — mesuré 5/12 items porteurs de faits, 10/12 après. Un modèle à qui l'on
   sert des titres répond INDISPONIBLE, et il a raison. Gardé par
   `tests/test_wiz_sources.py::TestLesFaitsDabord`.
+- DEUX interpréteurs, subis et non choisis : `.python-version` + `vercel.json`
+  = **3.12** (l'image de build Vercel n'embarque PAS 3.11 — l'y « aligner »
+  casse le déploiement et laisse la prod sur le commit précédent, vécu le
+  2026-08-22) ; les 14 workflows et le dev local = **3.11**. Gardé par
+  `tests/test_workflow_secrets.py`.
+- Une suite verte ne prouve RIEN sur le déploiement : aucun test ne déploie.
+  Après toute retouche de `vercel.json`, `.python-version`, `requirements.txt`
+  ou `api/index.py` : `python scripts/ops.py vercel deployments | head -3`
+  (READY, pas ERROR) puis `curl .../api/health`.
 - Sub-agent `predator-diagnostician` pour tout audit pipeline/santé (isole les
   gros logs hors de la conversation principale).
