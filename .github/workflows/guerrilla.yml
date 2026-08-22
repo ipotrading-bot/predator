@@ -13,7 +13,10 @@ on:
     # deep_scan.yml à H+33, et closing_line.yml occupe H+04→H+54 par pas de 10.
     # Heures impaires = pas de collision avec le gros des ticks engine.yml
     # (0/2/4/16/18/22 UTC).
-    - cron: '47 1-23/2 * * *'
+    # 2 runs/jour depuis le 2026-08-22 (était 12) — même arbitrage de budget
+    # que engine.yml : guerrilla saute OddsAPI et paie donc TOUJOURS sur les
+    # sources gratuites. Deux créneaux : matinée asiatique + soirée européenne.
+    - cron: '47 9,21 * * *'
   workflow_dispatch:
   # Toucher ce fichier relance un scan. Régler les budgets ci-dessous sans
   # pouvoir observer le résultat avant 2h rend l'ajustement aveugle : ce

@@ -30,18 +30,21 @@ on:
     # :30. Both workflows run run_engine.py's _purge_old_signals()/_save()
     # (non-atomic delete+insert) against the same signals rows; landing on
     # the exact same minute maximized the chance of a concurrent overlap.
+    # 8 scans/jour depuis le 2026-08-22 (était 12) : quand OddsAPI est mort,
+    # chaque scan paie sur les budgets journaliers des sources gratuites
+    # (api-sports 80/sport, odds-api.io 400, titan007 500 ≈ 8-14 scans
+    # complets). À 12 scans engine + 12 guerrilla + 24 golden hour, tout le
+    # budget partait avant 08:30 UTC et la soirée européenne tournait à sec —
+    # dernier signal du 2026-08-21 émis à 08:24. Réduire la cadence rend
+    # chaque scan complet ; ne pas la remonter sans recalculer le tableau.
     - cron: '3 0  * * *'   # 00:00 UTC
-    - cron: '3 2  * * *'   # 02:00 UTC
-    - cron: '3 4  * * *'   # 04:00 UTC
+    - cron: '3 3  * * *'   # 03:00 UTC
     - cron: '3 6  * * *'   # 06:00 UTC
-    - cron: '3 8  * * *'   # 08:00 UTC
-    - cron: '3 10 * * *'   # 10:00 UTC
+    - cron: '3 9  * * *'   # 09:00 UTC
     - cron: '3 12 * * *'   # 12:00 UTC
-    - cron: '3 14 * * *'   # 14:00 UTC
-    - cron: '3 16 * * *'   # 16:00 UTC
+    - cron: '3 15 * * *'   # 15:00 UTC
     - cron: '3 18 * * *'   # 18:00 UTC
-    - cron: '3 20 * * *'   # 20:00 UTC
-    - cron: '3 22 * * *'   # 22:00 UTC
+    - cron: '3 21 * * *'   # 21:00 UTC
   workflow_dispatch:
 
 # Shared with golden_hour.yml/deep_scan.yml/audit.yml — the

@@ -28,10 +28,10 @@ on:
     # Minute offset to :33 (not :30) — golden_hour.yml fires every :00 and
     # :30, so :30 landed on the exact same minute as a golden_hour run.
     # Still 30min clear of engine.yml (now :03) to avoid DB duplicates.
+    # 2 runs/jour depuis le 2026-08-22 (était 4) — arbitrage de budget des
+    # sources gratuites, voir le commentaire de cadence dans engine.yml.
     - cron: '33 5  * * *'   # 05:30 UTC — KBO/NPB nuit + WC/Copa pré-journée
-    - cron: '33 11 * * *'   # 11:30 UTC — SA opening + MLB preview
     - cron: '33 17 * * *'   # 17:30 UTC — Copa soirée + NBA/NHL T-5h
-    - cron: '33 23 * * *'   # 23:30 UTC — NBA/NHL live + MLB final + Copa nuit
   workflow_dispatch:
 
 # Shared with golden_hour.yml/engine.yml/audit.yml — the
