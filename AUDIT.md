@@ -437,34 +437,73 @@ Mesuré le 2026-08-22, avec la méthode :
 
 Honnêteté du document : ce qui suit n'est **pas** réglé.
 
-### 5.1 Wiz rend 99 % d'INDISPONIBLE — correctif non encore exercé
+### 5.1 🔴 Wiz rend 100 % d'INDISPONIBLE — cause racine identifiée, non corrigée
 
-Mesuré en base : sur 7 jours, **87 `INDISPONIBLE` pour 1 verdict réel**. Le
-2026-08-22 : **42 sur 42**.
+**Le correctif du matin a été exercé, et il n'a pas suffi.** Run du 16:37 UTC
+sur `29174fc` (qui contient les deux commits Wiz du jour) : workflow vert,
+**18 lignes écrites, 18 INDISPONIBLE, 0 verdict réel**.
 
-Deux correctifs sont partis aujourd'hui — les sources qui portent des faits
-(`9bd8a6b`, 15:05 UTC) et les clés du routeur IA passées à `wiz.yml`
-(`f0b620c`). **Le dernier run Wiz date de 14:35 UTC, donc AVANT les deux.**
-Les 42 échecs du jour précèdent tous le correctif : ils ne prouvent ni son
-succès ni son échec.
+Mais la panne s'est DÉPLACÉE, et c'est une information utile :
 
-→ **À vérifier après le run de 16:15 UTC** (cron `15 */2 * * *`) :
-```bash
-python scripts/ops.py supabase sql \
-  "select verdict, count(*) from wiz_analysis \
-   where analyzed_at > '2026-08-22T16:00:00Z' group by 1"
 ```
-Si le taux d'INDISPONIBLE reste à 100 %, le problème n'est ni les sources ni
-les clés, et il faut repartir de `python -m core.wiz_ai`.
+WIZ | Orlando City SC vs Real Salt Lake | INDISPONIBLE | 0 args, 0 red flags, 7 sources
+```
 
-**Ce qui a été mesuré localement depuis** (2026-08-22, réseau réel, sans clé
-Mistral) : les deux sources gratuites répondent bien. `google_news` rend 5
-items à **0 caractère** de contenu, `bing_news` rend de vrais extraits de
-119–203 caractères. La brique « sources » n'est donc **pas** morte — mais
-elle souffrait du défaut §3.7, désormais corrigé (42 % → 83 % d'items
-porteurs de faits). Ce qui reste non vérifié est la brique **Mistral**
-(`core/wiz_ai.py`), non testable ici : `MISTRAL_API_KEY` n'est ni dans le
-`.env` local ni dans `app_secrets` — elle ne vit que dans les secrets GitHub.
+Les sources arrivent maintenant (2 à 7 par match — le correctif de
+`wiz_sources.py` a bien pris) et le modèle répond (`mistral-small-latest`,
+appel réussi). Il dit lui-même, dans son `resume` :
+
+> « Aucune information exploitable trouvée sur les absences, compositions,
+> enjeux ou contexte du match dans les sources consultées. »
+
+Le modèle fait donc son travail correctement. Ce sont les sources qui ne
+portent aucun fait.
+
+**LA CAUSE, reproduite en local (aucune clé requise — ce sont des flux RSS).**
+`core/wiz_engine.build_queries()` produit :
+
+    "{match} team news lineup injuries suspensions {date ISO}"
+
+Deux défauts, dont le premier est le vrai :
+
+1. **La requête sélectionne exactement le bruit qu'elle doit éviter.**
+   « team news, lineups » est *mot pour mot* le titre SEO des pages de
+   preview. Le trio de tête rendu par cette requête :
+   `Preview: Flamengo vs Cruzeiro - prediction, team news, lineups`,
+   `Watch Cruzeiro vs Flamengo Serie A soccer game LIVE: Online streams, TV
+   channel`, `Cruzeiro vs Flamengo: Live stream, TV channel, kick-off time &
+   where to watch`. Or `_PROMPT_GROUNDED_HEAD` ordonne au modèle d'ignorer
+   précisément ces titres (« où voir le match », « pronostics et cotes »).
+   La chaîne est cohérente de bout en bout et ne peut produire que du vide.
+
+   À titre de comparaison, la même collecte avec un vocabulaire de FAIT et
+   dans la langue de la presse locale rend, pour le même match :
+   `Cruzeiro: Artur Jorge tem dois desfalques e um reforço confirmados`,
+   `Escalação do Flamengo: Léo Pereira vira desfalque de última hora`.
+   Les faits existent, la requête ne va pas les chercher.
+
+2. **La date ISO est un terme de recherche littéral.** Aucun article ne
+   contient la chaîne « 2026-08-23 » : la presse écrit « 22 de agosto »,
+   « August 22 ». Effet mesuré sur Inter Miami vs Toronto : 10 items sans la
+   date, 6 avec. Aggravant, pas déclencheur.
+
+**Pourquoi ce n'est pas corrigé dans cette passe.** Le remède est une refonte
+de la stratégie de requête — vocabulaire de fait plutôt que vocabulaire de
+preview, et langue de la compétition plutôt qu'anglais systématique. C'est un
+choix de conception (quel vocabulaire par sport, quelle langue par ligue) qui
+dépasse une correction mécanique, et il demande l'accord de l'opérateur.
+
+Bonne nouvelle pour la suite : **la moitié qui casse est vérifiable en local
+sans aucune clé** — `wiz_sources.gather()` et `format_results()` tournent sur
+des flux RSS publics. Un correctif peut donc être mesuré (ratio d'articles
+porteurs de faits vs pages de preview) avant d'être déployé, sans dépendre du
+quota Mistral.
+
+À noter aussi : Tavily rend `HTTP 432` (« exceeds your plan's set usage
+limit ») sur chaque appel, et le connecteur `web_search` de Mistral est à
+quota. Ni l'un ni l'autre n'est la cause — la cascade RSS a bien fonctionné —
+mais les deux privent Wiz de ses chemins de repli.
+
 
 ### 5.2 Deux clés production-safe ne sont pas encore obtenues
 
