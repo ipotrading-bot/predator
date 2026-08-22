@@ -193,33 +193,31 @@ def calculate_consensus_price(
 
 def compute_alpha(
     xbet_odd: float,
-    pinnacle_price: float,
+    sharp_prob: float,
     min_edge: float = MIN_EDGE,
 ) -> tuple[float, str]:
     """
-    Returns (edge_pct, status).
-    status: "OK"      — valid signal in [min_edge, MAX_EDGE]
-            "DISCARD" — invalid data, negative edge, or outside thresholds.
-    min_edge is the sport's learning-layer-adjusted floor (see
-    core/learning_layer.py).
+    Rend (edge_pct, status) où edge_pct est l'ESPÉRANCE DE GAIN VRAIE :
+        edge = (sharp_prob × cote_soft − 1) × 100
+    avec sharp_prob la probabilité dévigorisée (ensemble de
+    core.math_engine.devig). status: "OK" dans [min_edge, MAX_EDGE],
+    "DISCARD" sinon.
 
-    NOT gated on tax breakeven here (PAIM v9.5 initially did — see git
-    history around 2026-07-08 for the removed `min_edge_for_k(1, ...)`
-    check). That gate used the k=1 floor, the single MOST demanding one
-    (per-leg tax breakeven shrinks as system size k grows — see
-    core.tax_engine.min_edge_required) — applying it before a candidate
-    ever reaches core.tax_engine.suggest_system() killed legs that would
-    have been perfectly viable as part of a k>1 system, before
-    suggest_system() ever got the chance to combine them. Confirmed live:
-    22/22 candidates discarded across a full scan cycle, including an
-    11.35% edge, because near-even-money markets need ~13-14% at k=1.
-    core.tax_engine.suggest_system()/is_combo_tax_viable() is now the
-    ONLY tax gate — it evaluates the real combined probability/odds of
-    whatever combo is actually assembled, not a per-leg approximation.
+    HISTORIQUE — jusqu'au 2026-08-22 cette fonction rendait le RATIO DE PRIX
+    (xbet/pinnacle − 1) contre une cote Pinnacle encore vigorisée : la marge
+    du book sharp (~2 %) comptait comme de l'edge, et la distorsion explosait
+    à cote courte (un 1,08 contre 1,02 affichait +5,9 % pour une EV réelle de
+    −7,3 %). Mesuré sur le ledger réglé au 2026-08-22 : Brier de sharp_prob
+    pire que la proba implicite brute du book soft, pente de recalibration
+    0,12, CLV réel nul (+0,18 %, t=0,18). Ne pas revenir au ratio de prix.
+
+    Toujours PAS de gate fiscal ici (voir l'historique git autour du
+    2026-07-08) : core.tax_engine.suggest_system()/is_combo_tax_viable()
+    reste le seul juge fiscal, sur le combo réellement assemblé.
     """
-    if not xbet_odd or not pinnacle_price or xbet_odd <= 1.01 or pinnacle_price <= 1.01:
+    if not xbet_odd or xbet_odd <= 1.01 or not sharp_prob or not (0.0 < sharp_prob < 1.0):
         return 0.0, "DISCARD"
-    edge = round((xbet_odd / pinnacle_price - 1) * 100, 2)
+    edge = round((sharp_prob * xbet_odd - 1) * 100, 2)
     if edge < min_edge or edge > MAX_EDGE:
         return edge, "DISCARD"
     return edge, "OK"

@@ -9,40 +9,39 @@ from core.math_engine import devig_prob, is_round_number_line
 
 
 class TestComputeAlpha:
-    def test_positive_edge_within_range(self):
-        edge, status = compute_alpha(xbet_odd=1.375, pinnacle_price=1.25, min_edge=1.5)
+    # Depuis 2026-08-22, compute_alpha prend (cote_soft, prob_dévigorisée) et
+    # rend l'EV vraie — plus jamais le ratio de prix contre une cote vigorisée
+    # (voir la docstring de compute_alpha pour le post-mortem chiffré).
+
+    def test_positive_ev_within_range(self):
+        edge, status = compute_alpha(xbet_odd=2.10, sharp_prob=0.52, min_edge=1.5)
         assert status == "OK"
-        assert edge == pytest.approx(10.0, abs=0.01)
+        assert edge == pytest.approx(9.2, abs=0.01)
 
     def test_near_coinflip_edge_not_gated_on_tax_here(self):
-        # Regression guard for the 2026-07-08 signal-drought incident:
-        # compute_alpha() briefly gated every candidate on
-        # min_edge_for_k(k=1, ...) — the single MOST demanding tax floor,
-        # since per-leg requirement shrinks as system size k grows (see
-        # core.tax_engine.min_edge_required). That discarded 22/22 real
-        # candidates in one live scan, including an 11.35% edge, because
-        # near-even-money markets need ~13-14% at k=1 alone — killing legs
-        # before core.tax_engine.suggest_system() ever got the chance to
-        # combine them into a viable k>1 system. compute_alpha() must only
-        # ever gate on the learned min_edge/MAX_EDGE — tax viability is
-        # core.tax_engine.suggest_system()/is_combo_tax_viable()'s job
-        # alone, evaluated on the real assembled combo.
-        edge, status = compute_alpha(xbet_odd=2.09, pinnacle_price=1.93, min_edge=1.5)
+        # Garde de régression, incident 2026-07-08 : compute_alpha a
+        # brièvement appliqué le plancher fiscal k=1 (le plus exigeant) et
+        # jeté 22/22 candidats réels d'un scan. La viabilité fiscale reste
+        # le travail exclusif de core.tax_engine.suggest_system()/
+        # is_combo_tax_viable(), sur le combo réellement assemblé.
+        edge, status = compute_alpha(xbet_odd=2.09, sharp_prob=0.52, min_edge=1.5)
         assert status == "OK"
-        assert edge == pytest.approx(8.29, abs=0.01)
+        assert edge == pytest.approx(8.68, abs=0.01)
 
-    def test_edge_below_min_threshold_discarded(self):
-        edge, status = compute_alpha(xbet_odd=1.90, pinnacle_price=1.89, min_edge=1.5)
+    def test_ev_below_min_threshold_discarded(self):
+        # +0.7% d'EV sous un plancher à 1.5%
+        edge, status = compute_alpha(xbet_odd=1.90, sharp_prob=0.53, min_edge=1.5)
         assert status == "DISCARD"
 
-    def test_zero_or_invalid_odds_discarded(self):
-        assert compute_alpha(0, 1.90)[1] == "DISCARD"
+    def test_zero_or_invalid_inputs_discarded(self):
+        assert compute_alpha(0, 0.5)[1] == "DISCARD"
         assert compute_alpha(1.90, 0)[1] == "DISCARD"
-        assert compute_alpha(1.0, 1.90)[1] == "DISCARD"  # <= 1.01 guard
+        assert compute_alpha(1.0, 0.5)[1] == "DISCARD"   # <= 1.01 guard
+        assert compute_alpha(1.90, 1.0)[1] == "DISCARD"  # prob hors (0,1)
 
-    def test_suspiciously_high_edge_discarded_above_max(self):
-        # Guards against stale/bad data producing an unrealistic edge
-        edge, status = compute_alpha(xbet_odd=5.0, pinnacle_price=1.5, min_edge=1.5)
+    def test_suspiciously_high_ev_discarded_above_max(self):
+        # EV +50% = inversion de mapping ou donnée périmée, pas une opportunité
+        edge, status = compute_alpha(xbet_odd=5.0, sharp_prob=0.30, min_edge=1.5)
         assert status == "DISCARD"
 
 

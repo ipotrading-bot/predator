@@ -3,9 +3,9 @@ tests/test_opposite_sides.py — un marché à deux côtés opposés ne doit
 produire qu'UN signal.
 
 _process_totals boucle sur over/under et _process_spreads sur home/away.
-Quand Melbet est moins margé que Pinnacle, les deux côtés franchissent
-compute_alpha() en même temps : le devig de Pinnacle répartit 50/50 sur une
-ligne symétrique, donc les deux passent aussi le seuil de prob. sharp. Le
+Sur une ligne Pinnacle symétrique (devig = 50/50), deux cotes soft
+au-dessus du breakeven (> 2.03 pour p=0,50 et le plancher d'EV) franchissent
+compute_alpha() en même temps — et le seuil de prob. sharp aussi. Le
 dashboard affichait alors « Over 2.5 VALEUR » ET « Under 2.5 VALEUR » sur le
 même match — deux paris contradictoires, dont un est forcément un artefact de
 marge. _keep_best_side() ne garde que le côté au plus gros edge.
@@ -62,23 +62,23 @@ def _run_spreads(m):
 class TestTotals:
     def test_both_sides_positive_keeps_only_the_best(self):
         # Pinnacle symétrique 1.90/1.90 (devig = 50/50, les deux côtés passent
-        # le seuil de prob.), Melbet plus généreux des deux bords.
-        signals = _run_totals(_totals_match(x_over=2.00, x_under=1.98))
+        # le seuil de prob.), Melbet au-dessus du breakeven des deux bords.
+        signals = _run_totals(_totals_match(x_over=2.10, x_under=2.06))
         assert len(signals) == 1
-        assert signals[0]["market_key"] == "totals_over"     # +5.26% > +4.21%
+        assert signals[0]["market_key"] == "totals_over"     # EV +5.0% > +3.0%
         assert signals[0]["selection_name"] == "Over 2.5"
 
     def test_best_side_is_edge_based_not_order_based(self):
         # Under gagne cette fois : la boucle voit toujours "over" en premier,
         # le tri doit se faire sur l'edge, pas sur l'ordre d'itération.
-        signals = _run_totals(_totals_match(x_over=1.98, x_under=2.00))
+        signals = _run_totals(_totals_match(x_over=2.06, x_under=2.10))
         assert len(signals) == 1
         assert signals[0]["market_key"] == "totals_under"
 
     def test_single_qualifying_side_still_emitted(self):
         # Non-régression : un seul côté au-dessus du seuil doit continuer à
         # sortir normalement.
-        signals = _run_totals(_totals_match(x_over=2.00, x_under=1.80))
+        signals = _run_totals(_totals_match(x_over=2.10, x_under=1.80))
         assert len(signals) == 1
         assert signals[0]["market_key"] == "totals_over"
 
@@ -88,16 +88,16 @@ class TestTotals:
 
 class TestSpreads:
     def test_both_sides_positive_keeps_only_the_best(self):
-        signals = _run_spreads(_spreads_match(x_home=2.00, x_away=1.98))
+        signals = _run_spreads(_spreads_match(x_home=2.10, x_away=2.06))
         assert len(signals) == 1
         assert signals[0]["market_key"] == "spreads_home"
 
     def test_best_side_is_edge_based_not_order_based(self):
-        signals = _run_spreads(_spreads_match(x_home=1.98, x_away=2.00))
+        signals = _run_spreads(_spreads_match(x_home=2.06, x_away=2.10))
         assert len(signals) == 1
         assert signals[0]["market_key"] == "spreads_away"
 
     def test_single_qualifying_side_still_emitted(self):
-        signals = _run_spreads(_spreads_match(x_home=1.80, x_away=2.00))
+        signals = _run_spreads(_spreads_match(x_home=1.80, x_away=2.10))
         assert len(signals) == 1
         assert signals[0]["market_key"] == "spreads_away"

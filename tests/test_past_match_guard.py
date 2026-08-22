@@ -33,7 +33,7 @@ def _totals_match(kickoff_hours):
     return {
         "id": "match-past",
         "commence_time": (_now() + timedelta(hours=kickoff_hours)).isoformat(),
-        "totals_1xbet":    {"over": 2.00, "under": 1.80, "point": 2.5},
+        "totals_1xbet":    {"over": 2.10, "under": 1.80, "point": 2.5},
         "totals_pinnacle": {"over": 1.90, "under": 1.90, "point": 2.5},
     }
 

@@ -23,7 +23,9 @@ from core.closing_line import capture_from_scan
 from core.matchbook import fetch_matchbook_prices
 from core.api_sports import fetch_all as _api_sports_all
 from core.odds_api_io import fetch_all as _odds_api_io_all
-from core.math_engine import to_binary, devig_prob, is_round_number_line
+from core.titan007 import fetch_matches as _titan007_fetch
+from core.math_engine import to_binary, devig_bounds, is_round_number_line
+from core.tax_engine import optimal_stake_fraction as _optimal_stake_fraction
 from core.odds_api import fetch_odds, pool_status as _odds_pool_status
 from core.oracle import get_pinnacle_price
 from core.learning_layer import load_thresholds as _load_thresholds
@@ -36,7 +38,7 @@ from core.paim_engine import (
     market_label, SHARP_PROB_BY_MARKET, calculate_consensus_price,
     correlation_group as _correlation_group, resolve_selection_side,
 )
-from core.constants import ELITE_EDGE as _ELITE_EDGE, SOCCER_ELITE_EDGE as _SOCCER_ELITE_EDGE, BASKETBALL_ELITE_EDGE as _BASKETBALL_ELITE_EDGE, risk_flag as _risk_flag, SUSPECT_EDGE as _SUSPECT_EDGE, KELLY_FRACTION as _KELLY_FRACTION, AH0_VALUE_THRESHOLD as _AH0_VALUE_THRESHOLD, PURGE_EDGE_FLOOR as _PURGE_EDGE_FLOOR, MLB_LINEUP_WINDOW_H as _MLB_LINEUP_WINDOW_H, PUSH_PROB_ROUND_LINE as _PUSH_PROB_ROUND_LINE, TAX_RATE as _TAX_RATE, BANKROLL_REF as _BANKROLL_REF
+from core.constants import ELITE_EDGE as _ELITE_EDGE, SOCCER_ELITE_EDGE as _SOCCER_ELITE_EDGE, BASKETBALL_ELITE_EDGE as _BASKETBALL_ELITE_EDGE, risk_flag as _risk_flag, SUSPECT_EDGE as _SUSPECT_EDGE, KELLY_FRACTION as _KELLY_FRACTION, AH0_VALUE_THRESHOLD as _AH0_VALUE_THRESHOLD, PURGE_EDGE_FLOOR as _PURGE_EDGE_FLOOR, MLB_LINEUP_WINDOW_H as _MLB_LINEUP_WINDOW_H, PUSH_PROB_ROUND_LINE as _PUSH_PROB_ROUND_LINE, TAX_RATE as _TAX_RATE, BANKROLL_REF as _BANKROLL_REF, EV_EDGE_FLOOR as _EV_EDGE_FLOOR
 from core.tax_engine import suggest_system as _suggest_system, is_combo_tax_viable as _is_combo_tax_viable
 import core.risk_manager as _risk_manager
 
@@ -777,16 +779,31 @@ def _purge_old_signals(sb):
 def _emit(signals, sb, now, log, name, sport, league, mkt_key, mkt_label,
           xbet_odd, pin_odd, sharp_prob, emoji, selection_name="", min_edge=None,
           match_time="", match_id="", sharp_sources=None, consensus_score=None,
-          ah0_value: bool = False):
-    """Compute edge, apply quality gates, collect signal for bulk-save."""
-    effective_min = min_edge if min_edge is not None else MIN_EDGE
-    edge, status = compute_alpha(xbet_odd, pin_odd, min_edge=effective_min)
-    if status == "DISCARD":
-        log.info("DISCARD | %s %s | %s — edge %.2f%%", emoji, name, mkt_label, edge)
-        return
+          ah0_value: bool = False, sharp_prob_cons=None):
+    """Calcule l'EV, applique les gates de qualité, collecte le signal.
+
+    `sharp_prob_cons` est la borne worst-case de devig_bounds() : quand elle
+    est fournie, le signal doit rester EV-positif SOUS LA MÉTHODE DE
+    DÉVIGORISATION LA PLUS DÉFAVORABLE pour sortir — c'est le filet standard
+    des outils professionnels contre l'edge d'artefact de modèle."""
+    # Le plancher EV_EDGE_FLOOR s'applique ICI et pas seulement au chargement
+    # des seuils : la règle AH0 (h2h_min_edge=0.8) et tout futur appelant
+    # passent par ce point unique. Sous le plancher, on parie l'erreur de
+    # mesure du devig, pas un edge.
+    effective_min = max(min_edge if min_edge is not None else MIN_EDGE, _EV_EDGE_FLOOR)
     if sharp_prob <= 0:
         log.info("DISCARD | %s %s | %s — sharp_prob=0 (stale/missing data)", emoji, name, mkt_label)
         return
+    edge, status = compute_alpha(xbet_odd, sharp_prob, min_edge=effective_min)
+    if status == "DISCARD":
+        log.info("DISCARD | %s %s | %s — EV %.2f%%", emoji, name, mkt_label, edge)
+        return
+    if sharp_prob_cons is not None:
+        ev_cons = (sharp_prob_cons * xbet_odd - 1) * 100
+        if ev_cons <= 0:
+            log.info("DISCARD | %s %s | %s — EV worst-case %.2f%% <= 0 (médiane %.2f%%) — "
+                     "edge non robuste au choix de devig", emoji, name, mkt_label, ev_cons, edge)
+            return
 
     # Safety Trigger: edge trop élevé = probable erreur de données.
     # H2H : seuil strict 10% (risque inversion team mapping).
@@ -874,15 +891,24 @@ def _emit(signals, sb, now, log, name, sport, league, mkt_key, mkt_label,
     if ah0_value and risk == "LOW_VALUE":
         risk = "VALUE"
 
-    b = xbet_odd - 1
-    kelly_full = (sharp_prob * b - (1 - sharp_prob)) / b if b > 0 else 0.0
-    kelly_fraction = _KELLY_FRACTION.get(sport, 0.12)   # fallback also inside Task 10's temporary 0.10-0.15 band
-    kelly_pct  = round(max(0.0, kelly_full * kelly_fraction) * 100, 2)
+    # Mise via core/tax_engine (Kelly fiscalisé, optimisation bornée) — la
+    # formule inline qu'il remplaçait ignorait TAX_RATE et surtout n'empêchait
+    # pas d'émettre à mise nulle : 37 signaux sur 91 sont partis avec
+    # kelly_pct=0, c'est-à-dire refusés par la couche de mise et publiés
+    # quand même (constaté le 2026-08-22, concentrés sur les cotes 1,08-1,30).
+    kelly_fraction = _KELLY_FRACTION.get(sport, 0.12)   # fraction ≤ 0,15 = réponse standard à l'erreur d'estimation
+    kelly_pct = round(_optimal_stake_fraction(sharp_prob, xbet_odd,
+                                              tax_rate=_TAX_RATE,
+                                              kelly_multiplier=kelly_fraction) * 100, 2)
+    if kelly_pct <= 0:
+        log.info("DISCARD | %s %s | %s — mise Kelly nulle (EV %.2f%% insuffisant après taxe) — "
+                 "un signal qu'on ne miserait pas ne sort pas", emoji, name, mkt_label, edge)
+        return
 
     advice = (
-        f"Edge +{edge:.1f}% détecté — Melbet {xbet_odd:.2f} vs Pinnacle {pin_odd:.2f}. "
-        f"Prob.Sharp {int(sharp_prob * 100)}%. "
-        f"Melbet n'a pas encore ajusté sa cote sur ce mouvement Sharp."
+        f"EV +{edge:.1f}% — cote soft {xbet_odd:.2f} vs sharp {pin_odd:.2f} "
+        f"(prob. dévigorisée {sharp_prob * 100:.1f}%). "
+        f"Mise conseillée {kelly_pct:.2f}% de bankroll (Kelly fractionnaire)."
     )
 
     # Normalize match_time to ISO UTC (+00:00)
@@ -935,6 +961,7 @@ def _process_h2h(m, name, sport, league, home, away, emoji, signals, sb, now, lo
         # hardcoded 1.0, it still trips the sharp_prob quality gate below
         # and doesn't inflate the Kelly stake to the theoretical maximum.
         sharp_prob = round(1 / pin_price, 4) if pin_price > 1.01 else 0.0
+        sharp_cons = sharp_prob   # proba implicite vigorisée = déjà une borne basse
     else:
         xbet_price, _, xbet_fav = to_binary(m["odds_1xbet"], sport, home, away)
         # Strict Matching: lock Pinnacle lookup to the same position as 1XBet
@@ -977,7 +1004,7 @@ def _process_h2h(m, name, sport, league, home, away, emoji, signals, sb, now, lo
                 pin_price = con_fav
             if con_opp > 1.01:
                 dnb_other = con_opp
-            sharp_prob = devig_prob(pin_price, dnb_other)
+            sharp_prob, sharp_cons = devig_bounds(pin_price, dnb_other)
         else:
             pin_price = float(po.get(fav_key, 0) or 0)
             opp_price = float(po.get(opp_key, 0) or 0)
@@ -1002,7 +1029,7 @@ def _process_h2h(m, name, sport, league, home, away, emoji, signals, sb, now, lo
             if con_fav > 1.01:
                 pin_price = con_fav
             opp_for_devig = con_opp if con_opp > 1.01 else opp_price
-            sharp_prob = devig_prob(pin_price, opp_for_devig)
+            sharp_prob, sharp_cons = devig_bounds(pin_price, opp_for_devig)
 
         pin_fav = xbet_fav  # Same outcome guaranteed — no cross-book mismatch possible
 
@@ -1024,6 +1051,7 @@ def _process_h2h(m, name, sport, league, home, away, emoji, signals, sb, now, lo
     lbl = market_label("h2h", "", 0.0, sport)
     _emit(signals, sb, now, log, name, sport, league,
           "h2h", lbl, xbet_price, pin_price, sharp_prob, emoji,
+          sharp_prob_cons=sharp_cons,
           selection_name=xbet_fav, min_edge=h2h_min_edge,
           match_time=m.get("commence_time", ""), match_id=m.get("id", ""),
           sharp_sources=sources_found if sources_found else None,
@@ -1108,17 +1136,19 @@ def _process_totals(m, name, sport, league, emoji, signals, sb, now, log, min_ed
         if con_other > 1.01:
             p_lay = con_other
 
-        sharp_prob = devig_prob(p_odd, p_lay)
+        sharp_prob, sharp_cons = devig_bounds(p_odd, p_lay)
         # Push-adjusted probability: P(win | no push) = P(win) / (1 - P(push))
         # This mechanically lowers EV on round lines vs half-lines, as intended.
         if is_round_line:
             sharp_prob = round(sharp_prob * (1 - _PUSH_PROB_ROUND_LINE), 4)
+            sharp_cons = round(sharp_cons * (1 - _PUSH_PROB_ROUND_LINE), 4)
         if sharp_prob < prob_min:
             continue
         lbl = market_label("totals", side, point, sport)
         sel = f"{'Over' if side == 'over' else 'Under'}{(' ' + str(point)) if point else ''}"
         _emit(sides, sb, now, log, name, sport, league,
               f"totals_{side}", lbl, x_odd, p_odd, sharp_prob, emoji,
+              sharp_prob_cons=sharp_cons,
               selection_name=sel, min_edge=min_edge,
               match_time=m.get("commence_time", ""), match_id=m.get("id", ""),
               sharp_sources=sources_found if sources_found else None,
@@ -1175,13 +1205,14 @@ def _process_spreads(m, name, sport, league, home, away, emoji, signals, sb, now
         if con_other > 1.01:
             p_lay = con_other
 
-        sharp_prob = devig_prob(p_odd, p_lay)
+        sharp_prob, sharp_cons = devig_bounds(p_odd, p_lay)
         if sharp_prob < prob_min:
             continue
         lbl = market_label("spreads", side, pt, sport)
         pt_str = f"+{pt}" if pt > 0 else str(pt)
         _emit(sides, sb, now, log, name, sport, league,
               f"spreads_{side}", lbl, x_odd, p_odd, sharp_prob, emoji,
+              sharp_prob_cons=sharp_cons,
               selection_name=f"{team} {pt_str}", min_edge=min_edge,
               match_time=m.get("commence_time", ""), match_id=m.get("id", ""),
               sharp_sources=sources_found if sources_found else None,
@@ -1536,7 +1567,10 @@ def _segment_min_edge(dyn_thresholds: dict, dyn_segment_thresholds: dict,
     share one bar once there's enough data to tell them apart.
     """
     sport_floor = dyn_thresholds.get(sport, MIN_EDGE)
-    return dyn_segment_thresholds.get(f"{sport}:{market_family}", sport_floor)
+    learned = dyn_segment_thresholds.get(f"{sport}:{market_family}", sport_floor)
+    # Un seuil appris peut monter au-dessus du plancher, jamais descendre en
+    # dessous — voir EV_EDGE_FLOOR dans core/constants.py.
+    return max(learned, _EV_EDGE_FLOOR)
 
 
 # ── main ─────────────────────────────────────────────────────────────
@@ -1810,8 +1844,13 @@ def run():
                         "et odds-api.io restent interrogés (authentifiés par clé, "
                         "quotas séparés, gratuits)",
                         skipped_age, _HARVEST_EMPTY_TTL_H)
+            # Titan007 fait partie du chemin économique pour la même raison
+            # qu'api-sports/odds-api.io : budget journalier propre, aucun
+            # quota partagé avec Groq/Tavily. L'oublier ici reproduit le bug
+            # corrigé par a0767c8 (source saine court-circuitée par ricochet).
             xbet_matches = (_api_sports_all(hours_ahead=hours_ahead)
-                            + _odds_api_io_all(hours_ahead=hours_ahead))
+                            + _odds_api_io_all(hours_ahead=hours_ahead)
+                            + _titan007_fetch(hours_ahead=hours_ahead))
         else:
             log.info("📡 Tier 2 — Harvest Melbet + api-sports + recherche web Pinnacle...")
             xbet_matches = fetch_matches()

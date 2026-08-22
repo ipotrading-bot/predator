@@ -16,6 +16,14 @@ PURGE_EDGE_FLOOR     = 0.5    # % — floor purge : ne jamais supprimer au-dessu
 MIN_STAKE    = 2      # € — below this Kelly stake, signal is not actionable
 BANKROLL_REF = 150    # € — 100 000 XOF (taux fixe 655.96 XOF/€)
 MAX_EDGE     = 15.0   # % — hard cap; above = data mapping error, reject
+
+# Plancher d'EV en DUR sous lequel rien ne sort, quoi que disent les seuils
+# appris (core/learning_layer.py) : filet contre un nouveau glissement vers le
+# bruit. Justification (2026-08-22) : pente de recalibration 0,12 et CLV nul
+# sur le ledger réglé — l'edge estimé porte une erreur de modèle de l'ordre du
+# pourcent, un plancher sous 1,5 % revient à parier l'erreur de mesure.
+EV_EDGE_FLOOR = 1.5   # % EV
+
 SUSPECT_EDGE = 10.0   # % — safety trigger: major sport edge above this = SUSPECT_DATA (cap totals=15%)
 
 # ── Tax (PAIM v9.5) ───────────────────────────────────────────────────
