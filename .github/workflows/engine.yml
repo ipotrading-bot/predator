@@ -80,6 +80,21 @@ jobs:
           API_FOOTBALL_KEY: ${{ secrets.API_FOOTBALL_KEY }}
           GROQ_API_KEY: ${{ secrets.GROQ_API_KEY }}
           TAVILY_API_KEY: ${{ secrets.TAVILY_API_KEY }}
+          # ── Routeur IA multi-fournisseurs (core/ai_router.py) ──
+          # Une clé absente = fournisseur ignoré silencieusement. Sans ces
+          # lignes, les secrets n'atteignent jamais le code : le routeur ne
+          # verrait que Groq et toute la capacité ajoutée resterait morte.
+          OPENROUTER_API_KEY:     ${{ secrets.OPENROUTER_API_KEY }}
+          GEMINI_API_KEY:         ${{ secrets.GEMINI_API_KEY }}
+          CLOUDFLARE_API_TOKEN:   ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          CLOUDFLARE_ACCOUNT_ID:  ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+          OLLAMA_API_KEY:         ${{ secrets.OLLAMA_API_KEY }}
+          NVIDIA_NIM_API_KEY:     ${{ secrets.NVIDIA_NIM_API_KEY }}
+          COHERE_API_KEY:         ${{ secrets.COHERE_API_KEY }}
+          UPSTAGE_API_KEY:        ${{ secrets.UPSTAGE_API_KEY }}
+          NEBIUS_API_KEY:         ${{ secrets.NEBIUS_API_KEY }}
+          MODELSCOPE_API_KEY:     ${{ secrets.MODELSCOPE_API_KEY }}
+          SCALEWAY_API_KEY:       ${{ secrets.SCALEWAY_API_KEY }}
         run: |
           missing=""
           [ -z "$SUPABASE_URL" ]  && missing="$missing SUPABASE_URL"
@@ -149,6 +164,21 @@ jobs:
           # des scans : elle élargit LEUR réserve sans toucher à celle de l'audit.
           GROQ_API_KEY_4:     ${{ secrets.GROQ_API_KEY_4 }}
           TAVILY_API_KEY:     ${{ secrets.TAVILY_API_KEY }}
+          # ── Routeur IA multi-fournisseurs (core/ai_router.py) ──
+          # Une clé absente = fournisseur ignoré silencieusement. Sans ces
+          # lignes, les secrets n'atteignent jamais le code : le routeur ne
+          # verrait que Groq et toute la capacité ajoutée resterait morte.
+          OPENROUTER_API_KEY:     ${{ secrets.OPENROUTER_API_KEY }}
+          GEMINI_API_KEY:         ${{ secrets.GEMINI_API_KEY }}
+          CLOUDFLARE_API_TOKEN:   ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          CLOUDFLARE_ACCOUNT_ID:  ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+          OLLAMA_API_KEY:         ${{ secrets.OLLAMA_API_KEY }}
+          NVIDIA_NIM_API_KEY:     ${{ secrets.NVIDIA_NIM_API_KEY }}
+          COHERE_API_KEY:         ${{ secrets.COHERE_API_KEY }}
+          UPSTAGE_API_KEY:        ${{ secrets.UPSTAGE_API_KEY }}
+          NEBIUS_API_KEY:         ${{ secrets.NEBIUS_API_KEY }}
+          MODELSCOPE_API_KEY:     ${{ secrets.MODELSCOPE_API_KEY }}
+          SCALEWAY_API_KEY:       ${{ secrets.SCALEWAY_API_KEY }}
           SUPABASE_URL:       ${{ secrets.SUPABASE_URL }}
           SUPABASE_KEY:       ${{ secrets.SUPABASE_KEY }}
           SUPABASE_SERVICE_KEY: ${{ secrets.SUPABASE_SERVICE_KEY }}
