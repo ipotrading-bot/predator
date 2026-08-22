@@ -65,11 +65,13 @@ SPORT_DEFAULTS: dict[str, float] = {
     "baseball":    2.0,   # MLB + KBO + NPB — lag timezone documenté
     "rugbyleague": 2.0,   # NRL
     "aussierules": 2.0,   # AFL
-    # MMA — jusqu'au 2026-08-22 pricé par recherche web (core/harvester.py
-    # fetch_mma_events) ; seuil conservateur. eSports/tabletennis/volleyball/
-    # handball retirés le même jour (RETIRED_SPORTS, core/constants.py) : plus
-    # d'apprentissage pour eux, leurs lignes historiques restent lisibles.
+    # Sports de combat — flux OddsAPI réel depuis le 2026-08-22 (Phase 1) ;
+    # seuil conservateur tant que le ledger n'a pas tranché. eSports/
+    # tabletennis/volleyball/handball retirés le même jour (RETIRED_SPORTS,
+    # core/constants.py) : plus d'apprentissage pour eux, leurs lignes
+    # historiques restent lisibles.
     "mma":         2.0,
+    "boxing":      2.0,
 }
 _THRESHOLD_MIN = 1.0   # Floor soccer — permet de capter amicaux et WC avec petit edge
 _THRESHOLD_MAX = 6.0   # Hard cap — relevé de 5.0 pour permettre ajustement sur sports bruyants

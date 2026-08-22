@@ -89,6 +89,14 @@ SPORT_KEYS = {
     # ── PRIORITÉ 7 — Australie (marchés Pinnacle très sharps) ────────
     "aussierules_afl":                       "aussierules", # AFL — ~9 matchs/semaine, Pinnacle ✓
     "rugbyleague_nrl":                       "rugbyleague", # NRL — ~8 matchs/semaine, Pinnacle ✓
+
+    # ── Sports de combat — flux OddsAPI réel depuis le 2026-08-22 (Phase 1) ──
+    # Le MMA était pricé par recherche web (fetch_mma_events, supprimé) : son
+    # +37,5% de ROI sur 8 paris n'était validable par aucun CLV réel. h2h
+    # seulement (_MARKETS_BY_SPORT). Les semaines sans carte ne coûtent rien :
+    # le pré-vol _events_in_window (0 crédit) rend 0 et la ligue est sautée.
+    "mma_mixed_martial_arts":                "mma",         # UFC/PFL/Bellator — cartes ven-dim
+    "boxing_boxing":                         "boxing",      # boxe — marché mince, h2h
 }
 
 # Markets fetched per sport (API supports h2h,spreads,totals in one call)
@@ -104,6 +112,7 @@ _MARKETS_BY_SPORT = {
     "darts":            "h2h",
     "cricket":          "h2h",
     "boxing":           "h2h",
+    "mma":              "h2h",                 # ML seulement — pas de spreads/totals sur un combat
     "soccer":           "h2h,spreads,totals",
 }
 
@@ -216,7 +225,7 @@ def _parse_event(ev: dict, sport_type: str) -> dict | None:
         event["odds_cris"] = cris_h2h
 
     # ── Spreads (binary sports only — tennis/boxing/darts/cricket/baseball have no spreads) ──
-    if sport_type not in ("tennis", "boxing", "darts", "cricket", "baseball", "rugbyleague"):
+    if sport_type not in ("tennis", "boxing", "mma", "darts", "cricket", "baseball", "rugbyleague"):
         xs = _extract_spreads(bookmakers, XBET_KEY,     home, away)
         ps = _extract_spreads(bookmakers, PINNACLE_KEY, home, away)
         if xs and ps:

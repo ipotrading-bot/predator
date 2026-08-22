@@ -18,7 +18,7 @@ import requests
 from dotenv import load_dotenv
 
 from core.db import get_db, MissingCredentialsError, log_to_ledger as _log_to_ledger
-from core.harvester import fetch_matches, fetch_pinnacle_prices, fetch_estimated_prices, fetch_mma_events, fetch_betfair_prices
+from core.harvester import fetch_matches, fetch_pinnacle_prices, fetch_estimated_prices, fetch_betfair_prices
 from core.ai_search import ai_dead as gemini_quota_dead
 from core.closing_line import capture_from_scan
 from core.matchbook import fetch_matchbook_prices
@@ -167,7 +167,6 @@ MAX_MATCHES = 100 if DEEP_SCAN else 50
 # Ils sont surdimensionnés pour le table tennis : le slate ITTF tourne toutes
 # les 30-60 min, donc à 4h de TTL un scan sur deux ne voyait qu'une carte déjà
 # jouée. guerrilla.yml, qui a son propre budget, les raccourcit par l'env.
-_TTL_MMA     = float(os.environ.get("CACHE_MMA_TTL_H",     "8"))
 # TTL d'un résultat VIDE. eSports et sports alternatifs n'ont pas de feed
 # Melbet dans ce flux : si la recherche rend zéro (clé Groq morte, par ex.),
 # le vide reste en cache et le sport est muet jusqu'à expiration.
@@ -191,7 +190,11 @@ _MAX_ORACLE = int(os.environ.get("MAX_ORACLE", "3"))
 # en dernier, donc les 3 slots partaient toujours au foot. Run 30766186188 :
 # les 6 combats UFC récupérés chez Melbet (Blachowicz, Rakic, de Ridder…) sont
 # tous tombés en « Échec prix Sharp » sans qu'un seul appel oracle soit tenté.
-_NO_ODDSAPI_SPORTS = {"mma"}   # eSports/tabletennis/volleyball/handball retirés le 2026-08-22
+# Plus AUCUN sport hors OddsAPI depuis le 2026-08-22 : eSports/tabletennis/
+# volleyball/handball retirés (Phase 0), MMA passé sur flux OddsAPI réel
+# (Phase 1). Conservé vide pour la priorité du Tier 3 (oracle) : tout sport
+# ajouté ici passerait devant les autres dans la file de l'oracle.
+_NO_ODDSAPI_SPORTS: frozenset = frozenset()
 
 SPORT_EMOJI  = {
     "soccer": "⚽", "tennis": "🎾", "basketball": "🏀", "boxing": "🥊",
@@ -228,6 +231,8 @@ GOLDEN_SPORT_KEYS = {
     "baseball_npb":                         "baseball",    # NPB Japon — lag Asie ✓
     "aussierules_afl":                      "aussierules", # AFL — fenêtre AU morning
     "rugbyleague_nrl":                      "rugbyleague", # NRL — fenêtre AU evening
+    "mma_mixed_martial_arts":               "mma",         # cartes ven-dim ; 0 crédit hors carte (pré-vol)
+    "boxing_boxing":                        "boxing",      # idem
 }
 
 # Portfolio Balancer — quotas max par sport par scan (6 sport-types actifs uniquement,
@@ -241,6 +246,8 @@ _QUOTA_FAST = {
     "hockey":       6,   # NHL Cup Finals
     "rugbyleague":  5,   # NRL
     "aussierules":  5,   # AFL
+    "mma":          4,   # cartes UFC/PFL — flux OddsAPI depuis le 2026-08-22
+    "boxing":       2,   # marché mince
 }
 _QUOTA_DEEP = {
     "soccer":      30,
@@ -249,10 +256,12 @@ _QUOTA_DEEP = {
     "hockey":       8,
     "rugbyleague":  8,
     "aussierules":  8,
+    "mma":          6,
+    "boxing":       3,
 }
 SPORT_QUOTA = _QUOTA_DEEP if DEEP_SCAN else _QUOTA_FAST
 # Telegram report order — sports les plus générateurs de signaux en tête
-_SPORT_ORDER = ["soccer", "basketball", "hockey", "baseball", "rugbyleague", "aussierules"]
+_SPORT_ORDER = ["soccer", "basketball", "hockey", "baseball", "rugbyleague", "aussierules", "mma", "boxing"]
 
 # Sessions marché (UTC) — alignées sur les fenêtres d'inefficience
 _SESSIONS = {
@@ -1833,32 +1842,6 @@ def run():
             return
         log.info("💹 REPRICE — %d matchs soft relus du cache", len(matches))
 
-    # ── MMA — now included in Golden Hour too ───────────────────────────
-    # (eSports, table tennis, volley, handball RETIRÉS le 2026-08-22 — voir
-    # RETIRED_SPORTS dans core/constants.py ; le garde de _emit refuse tout
-    # signal pour ces sports, même depuis un cache ou un slate historique.)
-    # Cached in Supabase meta: MMA 8h TTL —
-    # cache is shared across golden_hour/engine/deep_scan runs, so running
-    # this every 30min mostly hits cache and only pays for a fresh web-search
-    # call (Groq/Tavily, core/ai_search.py) when the TTL actually expires
-    # — no longer competes with the main
-    # pipeline's fetch_pinnacle_prices() quota within the same run.
-    # En REPRICE ces trois blocs sont sautés : un cache expiré déclencherait
-    # une recherche web Groq — précisément ce que le mode interdit.
-    if not REPRICE:
-        log.info("🥋 MMA — Recherche web (Melbet vs Pinnacle)...")
-        mma_events = _get_cached(sb, "cache_mma", _TTL_MMA, _TTL_EMPTY) if sb else None
-        if mma_events is None:
-            mma_events = fetch_mma_events()
-            # On mémorise AUSSI un résultat vide (TTL court côté _get_cached) —
-            # sinon le prochain tick Golden Hour repaie la recherche web.
-            if sb:
-                _set_cached(sb, "cache_mma", mma_events or [])
-        if mma_events:
-            matches = (matches or []) + mma_events
-            log.info("🥋 MMA OK — %d combats UFC (Melbet soft)", len(mma_events))
-
-
     # ── Tier 1.5: exchanges (prix sharp pair-à-pair) ───────────────────
     # Remplace un prix Pinnacle ESTIMÉ par l'IA — ou absent — par un vrai
     # prix d'exchange. Deux fournisseurs, dans cet ordre :
@@ -2016,11 +1999,10 @@ def run():
         # sera repris par le prochain scan Tier 1, un combat UFC ne le sera
         # jamais. L'ordre de `matches` n'a pas d'incidence en aval,
         # _portfolio_balance() re-trie par edge décroissant.
-        # Melbet expose le MMA (sport_id=5) et fetch_mma_events() cherche la
-        # même carte sur le web : depuis que ce tier tourne même quand la
-        # recherche a rendu des combats, les deux sources peuvent livrer le
-        # même événement. Le doublon compterait deux fois dans le quota par
-        # sport de _portfolio_balance().
+        # Melbet expose le MMA (sport_id=5) et OddsAPI (mma_mixed_martial_arts)
+        # livre la même carte : les deux sources peuvent rendre le même
+        # événement. Le doublon compterait deux fois dans le quota par sport
+        # de _portfolio_balance().
         seen = {m.get("match", "").strip().lower() for m in matches}
         # Ordre de dépense du budget : (1) les sports hors OddsAPI, seule
         # occasion qu'ils auront jamais d'être prixés ; (2) à égalité, le sport

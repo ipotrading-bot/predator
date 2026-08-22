@@ -136,19 +136,17 @@ KELLY_FRACTION = {
     "baseball":    0.12,   # MLB + KBO + NPB — volume élevé + lag timezone documenté
     "rugbyleague": 0.10,   # NRL — Pinnacle très sharp, marché australien fiable
     "aussierules": 0.10,   # AFL — Pinnacle + Betfair très actifs
-    # ── Sports recherche-web-only (pas de source OddsAPI dédiée) ──────
-    # Ajoutés le 2026-08-06 : ils produisaient des signaux depuis des semaines
-    # (le ledger en contient pour mma, esports et tabletennis) mais aucune
-    # entrée ici, donc tous retombaient sur le `.get(sport, 0.12)` de
-    # run_engine.py — soit la même fraction que le football et le baseball,
-    # alors que leur prix vient d'une recherche web et non de Pinnacle.
-    # Valeurs volontairement SOUS le plancher des sports OddsAPI : la fraction
-    # de Kelly doit refléter la confiance dans le prix de référence, et une
-    # cote lue sur le web en vaut moins qu'une cote de book sharp. Ce n'est pas
-    # un jugement sur le rendement de ces sports — le MMA est d'ailleurs le
-    # meilleur ROI du ledger (+37,5%), mais sur 8 paris seulement, ce qui ne
-    # justifie pas encore de miser plus gros.
-    "mma":         0.08,
+    # ── Sports de combat — flux OddsAPI réel depuis le 2026-08-22 ──────
+    # Jusque-là le MMA était à 0.08 parce que son prix de référence venait
+    # d'une recherche web (fetch_mma_events) et qu'une cote lue sur le web
+    # vaut moins qu'une cote de book sharp. Il passe à 0.10 : le prix devient
+    # un vrai Pinnacle (OddsAPI mma_mixed_martial_arts), mais reste SOUS les
+    # sports majeurs tant que le ledger n'a pas validé l'edge par CLV réel —
+    # le +37,5% de ROI historique tient sur 8 paris.
+    "mma":         0.10,
+    # Boxe : marché mince, jamais validé dans le ledger. À réévaluer après
+    # 30 signaux réglés (critère de promotion de la Phase 4).
+    "boxing":      0.08,
 }
 
 # Sports RETIRÉS le 2026-08-22 (mission « recentrage sports ») : prix de
