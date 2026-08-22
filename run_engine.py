@@ -28,6 +28,8 @@ from core.titan007 import fetch_matches as _titan007_fetch
 from core.math_engine import to_binary, devig_bounds, is_round_number_line
 from core.tax_engine import optimal_stake_fraction as _optimal_stake_fraction
 from core.odds_api import fetch_odds, pool_status as _odds_pool_status
+from core.scan_windows import SpendPolicy as _SpendPolicy
+from core.constants import CLOSING_LINE_WINDOW_MIN as _CLOSING_LINE_WINDOW_MIN
 from core.oracle import get_pinnacle_price
 from core.learning_layer import load_thresholds as _load_thresholds
 from core.learning_layer import load_segment_thresholds as _load_segment_thresholds
@@ -545,6 +547,45 @@ def _alert_once(sb, key: str, text: str, ttl_h: float = _ALERT_TTL_H) -> bool:
     if sb:
         _meta_stamp(sb, key, datetime.now(timezone.utc).isoformat())
     return True
+
+
+def _sports_with_imminent_signals(sb, now) -> set[str]:
+    """Sport-types ayant un signal ACTIF à moins de CLOSING_LINE_WINDOW_MIN du
+    coup d'envoi : leurs ligues ne sont jamais espacées par la politique de
+    dépense — le scan sert la capture de closing line (capture_from_scan),
+    prioritaire sur l'économie de fond."""
+    if not sb:
+        return set()
+    try:
+        horizon = (now + timedelta(minutes=_CLOSING_LINE_WINDOW_MIN)).isoformat()
+        res = (sb.table("signals").select("sport")
+               .eq("status", "active")
+               .gte("match_time", now.isoformat())
+               .lte("match_time", horizon)
+               .limit(500).execute())
+        return {r.get("sport") for r in (res.data or []) if r.get("sport")}
+    except Exception as e:
+        log.debug("imminent signals: %s", e)
+        return set()
+
+
+def _build_spend_policy(sb, now):
+    """Politique de dépense OddsAPI (core/scan_windows) adossée aux
+    horodatages meta `scan_paid_<ligue>`. Sans Supabase : None (on paie
+    comme avant — mieux vaut un crédit de trop qu'un trou de couverture)."""
+    if not sb:
+        return None
+
+    def _age_min(sport_key: str):
+        age_h = _meta_stamp_age_h(sb, f"scan_paid_{sport_key}")
+        return None if age_h is None else age_h * 60.0
+
+    def _note(sport_key: str):
+        _meta_stamp(sb, f"scan_paid_{sport_key}", datetime.now(timezone.utc).isoformat())
+
+    return _SpendPolicy(_age_min, _note,
+                        exempt_sports=_sports_with_imminent_signals(sb, now),
+                        log=log)
 
 
 _SYSTEM_ALERT_TTL_H = float(os.environ.get("SYSTEM_ALERT_TTL_H", "6"))
@@ -1812,7 +1853,13 @@ def run():
         log.info("⚡ Tier 1 — The Odds API (%dh window)...", hours_ahead)
 
     if not GUERRILLA and not REPRICE:
-        oddsapi_events = fetch_odds(hours_ahead=hours_ahead, sport_keys=scan_keys)
+        spend_policy = _build_spend_policy(sb, now)
+        oddsapi_events = fetch_odds(hours_ahead=hours_ahead, sport_keys=scan_keys,
+                                    spend_policy=spend_policy)
+        if spend_policy is not None and spend_policy.skipped:
+            log.info("DÉPENSE | %d ligue(s) peuplée(s) non payée(s) ce scan : %s",
+                     len(spend_policy.skipped),
+                     ", ".join(k for k, _ in spend_policy.skipped))
         if not oddsapi_events:
             _alert_oddsapi_pool_if_dead(sb)
         if oddsapi_events:

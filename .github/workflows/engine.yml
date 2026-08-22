@@ -37,14 +37,20 @@ on:
     # budget partait avant 08:30 UTC et la soirée européenne tournait à sec —
     # dernier signal du 2026-08-21 émis à 08:24. Réduire la cadence rend
     # chaque scan complet ; ne pas la remonter sans recalculer le tableau.
-    - cron: '3 0  * * *'   # 00:00 UTC
-    - cron: '3 3  * * *'   # 03:00 UTC
-    - cron: '3 6  * * *'   # 06:00 UTC
-    - cron: '3 9  * * *'   # 09:00 UTC
-    - cron: '3 12 * * *'   # 12:00 UTC
-    - cron: '3 15 * * *'   # 15:00 UTC
-    - cron: '3 18 * * *'   # 18:00 UTC
-    - cron: '3 21 * * *'   # 21:00 UTC
+    # Placés sur les FENÊTRES FAVORABLES (core/scan_windows.py, Phase 3 du
+    # recentrage 2026-08-22) et non plus à intervalle uniforme : la valeur
+    # d'un scan payant est là où les books soft traînent derrière le sharp.
+    # Toujours 8/jour ; la couverture 24h entre deux ticks est assurée par
+    # golden_hour.yml (horaire, fenêtre 2h, espacé hors fenêtre par la
+    # politique de dépense) et par le step REPRICE gratuit.
+    - cron: '3 2  * * *'   # 02:00 UTC — SA fin de soirée + MLB late + NBA/NHL + cartes MMA (nuit ven-dim)
+    - cron: '3 6  * * *'   # 06:00 UTC — KBO/NPB ouverture (lag Asie) + AFL/NRL
+    - cron: '3 9  * * *'   # 09:00 UTC — KBO/NPB + Australie
+    - cron: '3 12 * * *'   # 12:00 UTC — fond : fin KBO/NPB/AU, midi EU
+    - cron: '3 17 * * *'   # 17:00 UTC — Big 5 + LdC/UEL ouverture + Euroleague (jeu/ven)
+    - cron: '3 19 * * *'   # 19:00 UTC — Big 5 soirée
+    - cron: '3 21 * * *'   # 21:00 UTC — SA + MLB ouverture + Big 5 clôture
+    - cron: '3 23 * * *'   # 23:00 UTC — SA/MLB + NBA/NHL tip-off
   workflow_dispatch:
 
 # Shared with golden_hour.yml/deep_scan.yml/audit.yml — the

@@ -411,6 +411,24 @@ def pool_exhausted() -> bool:
     return st["total"] > 0 and st["live"] == 0
 
 
+# Dernier `x-requests-remaining` vu (sonde gratuite ou réponse payante) —
+# c'est ce que la politique de dépense (core/scan_windows.SpendPolicy) lit
+# pour sa garde de réserve. None = jamais observé.
+_last_remaining: int | None = None
+
+
+def pool_remaining() -> int | None:
+    return _last_remaining
+
+
+def _note_remaining(raw) -> None:
+    global _last_remaining
+    try:
+        _last_remaining = int(raw)
+    except (TypeError, ValueError):
+        pass
+
+
 def probe_key(key: str) -> tuple[bool, str]:
     """(vivante?, détail) via GET /v4/sports — 0 crédit consommé."""
     try:
@@ -433,6 +451,8 @@ def probe_key(key: str) -> tuple[bool, str]:
         left = int(remaining)
     except (TypeError, ValueError):
         left = None
+    if left is not None:
+        _note_remaining(left)
     if left is not None and left < MIN_CREDITS:
         return False, f"quota épuisé — restantes={left} utilisées={used}"
     return True, f"HTTP 200 — restantes={remaining or '?'} utilisées={used}"
@@ -457,9 +477,14 @@ def _next_live_key(keys: list[str], start: int) -> tuple[str | None, int]:
 # ── Public API ────────────────────────────────────────────────────────
 
 def fetch_odds(api_key: str | None = None, hours_ahead: int = 24,
-               sport_keys: dict | None = None) -> list[dict]:
+               sport_keys: dict | None = None, spend_policy=None) -> list[dict]:
     """
     Fetch events in the next `hours_ahead` hours with h2h + spreads + totals.
+
+    `spend_policy` (core/scan_windows.SpendPolicy, optionnel) : consultée
+    ligue par ligue APRÈS le pré-vol gratuit — une ligue peuplée mais hors
+    fenêtre favorable, payée il y a moins de 180 min, ou sous la réserve
+    de crédits, est sautée ET loggée. Sans politique, on paie comme avant.
     Priority: NBA → Tennis Masters → Soccer.
     sport_keys: override the default SPORT_KEYS dict (used by Golden Hour mode).
     Returns [] if API key missing or quota exhausted (engine falls back to Gemini).
@@ -501,6 +526,7 @@ def fetch_odds(api_key: str | None = None, hours_ahead: int = 24,
     scan_plan: list = []
     skipped_empty = 0
     skipped_season = 0
+    skipped_policy = 0
     for sport_key, sport_type in keys_to_scan.items():
         if not _season_open(sport_key, now):
             skipped_season += 1
@@ -509,6 +535,11 @@ def fetch_odds(api_key: str | None = None, hours_ahead: int = 24,
         if n_events == 0:
             skipped_empty += 1
             continue
+        if spend_policy is not None:
+            allowed, _why = spend_policy.allow(sport_key, sport_type, now, _last_remaining)
+            if not allowed:
+                skipped_policy += 1
+                continue
         scan_plan.append((sport_key, sport_type, n_events if n_events is not None else 0))
     scan_plan.sort(key=lambda x: x[2], reverse=True)
     if skipped_empty:
@@ -517,6 +548,9 @@ def fetch_odds(api_key: str | None = None, hours_ahead: int = 24,
     if skipped_season:
         log.info("Hors saison : %d ligue(s) avant leur date d'ouverture (SEASON_OPENS) — "
                  "0 crédit, 0 appel", skipped_season)
+    if skipped_policy:
+        log.info("Politique de dépense : %d ligue(s) peuplée(s) sautée(s) ce scan "
+                 "(fond espacé / réserve) — détail ligne par ligne ci-dessus", skipped_policy)
 
     all_events = []
     for sport_key, sport_type, _n in scan_plan:
@@ -554,6 +588,9 @@ def fetch_odds(api_key: str | None = None, hours_ahead: int = 24,
                     return all_events
             remaining = r.headers.get("x-requests-remaining", "?")
             used      = r.headers.get("x-requests-used", "?")
+            _note_remaining(remaining)
+            if spend_policy is not None and r.status_code == 200:
+                spend_policy.note_paid(sport_key)
 
             if r.status_code == 404:
                 continue  # Not in season
