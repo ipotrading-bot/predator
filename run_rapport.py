@@ -42,10 +42,12 @@ SPORT_EMOJI    = {
     "soccer": "⚽", "tennis": "🎾", "basketball": "🏀", "boxing": "🥊",
     "mma": "🥋", "darts": "🎯", "cricket": "🏏", "hockey": "🏒",
     "esports": "🎮", "americanfootball": "🏈", "baseball": "⚾",
+    "euroleague_basketball": "🏀",
     "rugby": "🏉", "rugbyleague": "🏉", "aussierules": "🦘",
     "volleyball": "🏐", "tabletennis": "🏓", "handball": "🤾",
 }
-SPORT_ORDER    = ["soccer", "basketball", "hockey", "baseball", "rugbyleague", "aussierules"]
+SPORT_ORDER    = ["soccer", "basketball", "hockey", "baseball", "americanfootball",
+                  "euroleague_basketball", "rugbyleague", "aussierules", "mma", "boxing"]
 ELITE_EDGE     = _ELITE_EDGE
 SCAN_STALE_H   = 2      # Alerte si aucun scan depuis X heures
 

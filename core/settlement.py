@@ -26,6 +26,8 @@ def fetch_match_result(match_name: str, sport: str, match_date: str = "") -> dic
 
     sport_ctx = {"soccer": "football/soccer",
                  "basketball": "NBA basketball",
+                 "euroleague_basketball": "Euroleague basketball",
+                 "americanfootball": "NFL american football",
                  "tennis": "tennis"}.get(sport, sport)
     context = match_name + (f" (date: {match_date})" if match_date else "")
 

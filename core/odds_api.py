@@ -97,7 +97,38 @@ SPORT_KEYS = {
     # le pré-vol _events_in_window (0 crédit) rend 0 et la ligue est sautée.
     "mma_mixed_martial_arts":                "mma",         # UFC/PFL/Bellator — cartes ven-dim
     "boxing_boxing":                         "boxing",      # boxe — marché mince, h2h
+
+    # ── Phase 2 (2026-08-22) — auto-activation par le pré-vol gratuit ──────
+    # Ajoutées AVANT leur saison : tant qu'aucun match n'est dans la fenêtre,
+    # _events_in_window rend 0 et rien n'est payé. NFL : gardée en plus par
+    # SEASON_OPENS (pas de présaison — lignes molles, rotations imprévisibles).
+    "americanfootball_nfl":                  "americanfootball",       # NFL — saison régulière uniquement
+    "soccer_uefa_champs_league":             "soccer",                 # LdC — phase de ligue mi-sept.
+    "soccer_uefa_europa_league":             "soccer",                 # UEL — idem
+    "basketball_euroleague":                 "euroleague_basketball",  # mécaniques basketball, Kelly dédiée
 }
+
+# ── Ouverture de saison : une ligue n'est pas scannée avant cette date ───
+# Le pré-vol ne distingue pas présaison et saison régulière : un match NFL
+# d'août est un match. Or la présaison est exactement ce qu'on ne veut pas
+# (lignes molles, rotations imprévisibles — instruction opérateur). Surcharge
+# par env (NFL_SEASON_START=YYYY-MM-DD) ; aucune date = pas de garde.
+SEASON_OPENS: dict[str, str] = {
+    "americanfootball_nfl": os.environ.get("NFL_SEASON_START", "2026-09-10"),
+}
+
+
+def _season_open(sport_key: str, now: datetime) -> bool:
+    """False si la ligue a une date d'ouverture et qu'on est avant (0 crédit)."""
+    raw = SEASON_OPENS.get(sport_key)
+    if not raw:
+        return True
+    try:
+        opens = datetime.fromisoformat(raw).replace(tzinfo=timezone.utc)
+    except ValueError:
+        log.warning("SEASON_OPENS[%s]=%r illisible — garde ignoré", sport_key, raw)
+        return True
+    return now >= opens
 
 # Markets fetched per sport (API supports h2h,spreads,totals in one call)
 _MARKETS_BY_SPORT = {
@@ -114,6 +145,7 @@ _MARKETS_BY_SPORT = {
     "boxing":           "h2h",
     "mma":              "h2h",                 # ML seulement — pas de spreads/totals sur un combat
     "soccer":           "h2h,spreads,totals",
+    "euroleague_basketball": "h2h,spreads,totals",  # mêmes marchés que la NBA
 }
 
 
@@ -214,7 +246,7 @@ def _parse_event(ev: dict, sport_type: str) -> dict | None:
         "away":          away,
         "league":        ev.get("sport_title", ""),
         "sport":         sport_type,
-        "sport_id":      {"soccer": 1, "tennis": 3, "basketball": 4, "boxing": 5, "darts": 6, "cricket": 7, "hockey": 8, "americanfootball": 10, "baseball": 11, "rugby": 12, "volleyball": 13, "tabletennis": 14, "handball": 15, "aussierules": 16, "rugbyleague": 17}.get(sport_type, 1),
+        "sport_id":      {"soccer": 1, "tennis": 3, "basketball": 4, "boxing": 5, "darts": 6, "cricket": 7, "hockey": 8, "americanfootball": 10, "baseball": 11, "rugby": 12, "volleyball": 13, "tabletennis": 14, "handball": 15, "aussierules": 16, "rugbyleague": 17, "euroleague_basketball": 4}.get(sport_type, 1),
         "commence_time": ev.get("commence_time", ""),
         "odds_1xbet":    xbet_h2h,
         "odds_pinnacle": pin_h2h,
@@ -468,7 +500,11 @@ def fetch_odds(api_key: str | None = None, hours_ahead: int = 24,
     # fournies, pas au hasard de l'ordre du dictionnaire.
     scan_plan: list = []
     skipped_empty = 0
+    skipped_season = 0
     for sport_key, sport_type in keys_to_scan.items():
+        if not _season_open(sport_key, now):
+            skipped_season += 1
+            continue
         n_events = _events_in_window(api_key, sport_key, time_from, time_to)
         if n_events == 0:
             skipped_empty += 1
@@ -478,6 +514,9 @@ def fetch_odds(api_key: str | None = None, hours_ahead: int = 24,
     if skipped_empty:
         log.info("Pré-vol gratuit : %d/%d ligues sans match dans la fenêtre — "
                  "%d crédits économisés", skipped_empty, len(keys_to_scan), skipped_empty * 3)
+    if skipped_season:
+        log.info("Hors saison : %d ligue(s) avant leur date d'ouverture (SEASON_OPENS) — "
+                 "0 crédit, 0 appel", skipped_season)
 
     all_events = []
     for sport_key, sport_type, _n in scan_plan:

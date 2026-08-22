@@ -40,7 +40,7 @@ SHARP_PROB_BY_MARKET = {
     "totals":        0.50,   # Idem totals
 }
 
-_SPORT_PFX = {"basketball": "NBA", "hockey": "NHL", "tennis": "TEN", "soccer": "SOC", "boxing": "BOX", "mma": "MMA", "darts": "DRT", "cricket": "CRK", "aussierules": "AFL", "rugbyleague": "NRL", "baseball": "MLB", "rugby": "RUG"}
+_SPORT_PFX = {"basketball": "NBA", "hockey": "NHL", "tennis": "TEN", "soccer": "SOC", "boxing": "BOX", "mma": "MMA", "darts": "DRT", "cricket": "CRK", "aussierules": "AFL", "rugbyleague": "NRL", "baseball": "MLB", "rugby": "RUG", "americanfootball": "NFL", "euroleague_basketball": "EUL"}
 
 
 def market_label(key: str, side: str, point: float, sport: str) -> str:
@@ -134,6 +134,7 @@ MIN_EDGE = 1.2   # % — floor (lowered for visibility — see all movements)
 
 _CONSENSUS_WEIGHTS: dict[str, dict[str, float]] = {
     "basketball": {"pinnacle": 0.30, "circa": 0.50, "cris": 0.10, "isn": 0.10},
+    "euroleague_basketball": {"pinnacle": 0.30, "circa": 0.50, "cris": 0.10, "isn": 0.10},  # mêmes mécaniques
     "baseball":   {"pinnacle": 0.30, "circa": 0.50, "cris": 0.10, "isn": 0.10},
     "soccer":     {"pinnacle": 0.40, "circa": 0.10, "cris": 0.20, "isn": 0.30},
     "tennis":     {"pinnacle": 0.60, "circa": 0.05, "cris": 0.25, "isn": 0.10},

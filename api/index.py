@@ -74,7 +74,7 @@ def _get_meta(sb, key: str) -> dict | None:
 
 _DASH_SPORT_ORDER = {
     "basketball": 0, "hockey": 1, "americanfootball": 2, "baseball": 3,
-    "esports": 4, "rugby": 5, "tennis": 6, "mma": 7,
+    "esports": 4, "rugby": 5, "tennis": 6, "mma": 7, "euroleague_basketball": 0,
     "volleyball": 8, "tabletennis": 9, "handball": 10,
     "boxing": 11, "darts": 12, "cricket": 13, "soccer": 14,
 }
@@ -234,12 +234,14 @@ _SPORT_EMOJI = {
     "soccer": "⚽", "basketball": "🏀", "tennis": "🎾", "hockey": "🏒",
     "mma": "🥋", "boxing": "🥊", "darts": "🎯", "cricket": "🏏",
     "esports": "🎮", "americanfootball": "🏈", "baseball": "⚾",
+    "euroleague_basketball": "🏀",
     "rugby": "🏉", "volleyball": "🏐", "tabletennis": "🏓", "handball": "🤾",
 }
 _SPORT_LABEL = {
     "soccer": "Football", "basketball": "Basket", "tennis": "Tennis",
     "hockey": "Hockey", "mma": "MMA", "boxing": "Boxe", "darts": "Fléchettes",
     "cricket": "Cricket", "esports": "eSports", "americanfootball": "NFL",
+    "euroleague_basketball": "Euroleague",
     "baseball": "MLB", "rugby": "Rugby", "volleyball": "Volley",
     "tabletennis": "Ping-Pong", "handball": "Handball",
 }
@@ -312,6 +314,7 @@ def ledger():
                     "soccer": 2.5, "basketball": 2.0, "tennis": 1.8, "hockey": 2.0,
                     "mma": 2.5, "boxing": 2.5, "darts": 2.0, "cricket": 2.0,
                     "esports": 2.2, "americanfootball": 2.0, "baseball": 2.0,
+                    "euroleague_basketball": 2.0,
                     "rugby": 2.0, "volleyball": 2.0, "tabletennis": 2.0, "handball": 2.0,
                 }
 

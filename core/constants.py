@@ -147,6 +147,13 @@ KELLY_FRACTION = {
     # Boxe : marché mince, jamais validé dans le ledger. À réévaluer après
     # 30 signaux réglés (critère de promotion de la Phase 4).
     "boxing":      0.08,
+    # ── Phase 2 (2026-08-22) ───────────────────────────────────────────
+    # NFL : sharpness niveau NBA (le marché le plus liquide des US) — 0.14,
+    # un cran sous la NBA le temps que le ledger confirme sur ce sport.
+    "americanfootball":      0.14,
+    # Euroleague : mécaniques basketball mais marché nettement moins sharp
+    # que la NBA — ne PAS hériter du 0.15 ; 0.12 (niveau soccer/baseball).
+    "euroleague_basketball": 0.12,
 }
 
 # Sports RETIRÉS le 2026-08-22 (mission « recentrage sports ») : prix de

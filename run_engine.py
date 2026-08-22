@@ -143,7 +143,8 @@ TELEGRAM_TOKEN = os.environ.get("TELEGRAM_BOT_TOKEN")
 TELEGRAM_CHAT  = os.environ.get("TELEGRAM_CHAT_ID")
 
 ELITE_EDGE  = _ELITE_EDGE   # % — send Telegram alert (from core.constants)
-_MAJOR_SPORTS = {"soccer", "basketball", "hockey", "baseball", "rugbyleague", "aussierules"}
+_MAJOR_SPORTS = {"soccer", "basketball", "hockey", "baseball", "rugbyleague", "aussierules",
+                 "americanfootball", "euroleague_basketball"}   # Phase 2 : cap SUSPECT appliqué
 
 # Plafonds d'edge appris, par sport — rempli par run() depuis `meta`, lu par
 # _emit(). Vide = aucun plafond appris, les bornes globales de constants.py
@@ -199,7 +200,7 @@ _NO_ODDSAPI_SPORTS: frozenset = frozenset()
 SPORT_EMOJI  = {
     "soccer": "⚽", "tennis": "🎾", "basketball": "🏀", "boxing": "🥊",
     "mma": "🥋", "darts": "🎯", "cricket": "🏏", "hockey": "🏒",
-    "americanfootball": "🏈", "baseball": "⚾",
+    "americanfootball": "🏈", "baseball": "⚾", "euroleague_basketball": "🏀",
     "rugby": "🏉", "rugbyleague": "🏉", "aussierules": "🦘",
 }
 
@@ -233,6 +234,11 @@ GOLDEN_SPORT_KEYS = {
     "rugbyleague_nrl":                      "rugbyleague", # NRL — fenêtre AU evening
     "mma_mixed_martial_arts":               "mma",         # cartes ven-dim ; 0 crédit hors carte (pré-vol)
     "boxing_boxing":                        "boxing",      # idem
+    # Phase 2 — 0 crédit tant que la saison/phase de ligue n'a pas commencé
+    "americanfootball_nfl":                 "americanfootball",
+    "soccer_uefa_champs_league":            "soccer",
+    "soccer_uefa_europa_league":            "soccer",
+    "basketball_euroleague":                "euroleague_basketball",
 }
 
 # Portfolio Balancer — quotas max par sport par scan (6 sport-types actifs uniquement,
@@ -248,6 +254,8 @@ _QUOTA_FAST = {
     "aussierules":  5,   # AFL
     "mma":          4,   # cartes UFC/PFL — flux OddsAPI depuis le 2026-08-22
     "boxing":       2,   # marché mince
+    "americanfootball":      6,   # NFL — ~16 matchs/semaine, concentrés dim.
+    "euroleague_basketball": 6,   # jeu/ven
 }
 _QUOTA_DEEP = {
     "soccer":      30,
@@ -258,10 +266,13 @@ _QUOTA_DEEP = {
     "aussierules":  8,
     "mma":          6,
     "boxing":       3,
+    "americanfootball":      10,
+    "euroleague_basketball":  8,
 }
 SPORT_QUOTA = _QUOTA_DEEP if DEEP_SCAN else _QUOTA_FAST
 # Telegram report order — sports les plus générateurs de signaux en tête
-_SPORT_ORDER = ["soccer", "basketball", "hockey", "baseball", "rugbyleague", "aussierules", "mma", "boxing"]
+_SPORT_ORDER = ["soccer", "basketball", "hockey", "baseball", "americanfootball",
+                "euroleague_basketball", "rugbyleague", "aussierules", "mma", "boxing"]
 
 # Sessions marché (UTC) — alignées sur les fenêtres d'inefficience
 _SESSIONS = {
@@ -974,8 +985,8 @@ def _emit(signals, sb, now, log, name, sport, league, mkt_key, mkt_label,
     # Seuil VALUE sport-spécifique — évite LOW_VALUE invisible sur le dashboard
     if sport == "soccer":
         elite = _SOCCER_ELITE_EDGE        # 1.5% — AH0 marché serré
-    elif sport == "basketball":
-        elite = _BASKETBALL_ELITE_EDGE    # 2.0% — NBA Finales edges typiques 1.5–2.5%
+    elif sport in ("basketball", "euroleague_basketball"):
+        elite = _BASKETBALL_ELITE_EDGE    # 2.0% — NBA Finales edges typiques 1.5–2.5% (Euroleague : mêmes mécaniques)
     else:
         elite = _ELITE_EDGE               # 2.5% — autres sports
     risk = _risk_flag(edge, elite)

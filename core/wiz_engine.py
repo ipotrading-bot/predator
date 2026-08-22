@@ -91,6 +91,8 @@ _VALID_SEVERITIES = tuple(WIZ_SEVERITY_WEIGHTS)
 _SPORT_QUERY_A = {
     "soccer":      "team news lineup injuries suspensions",
     "basketball":  "injury report starting lineup back-to-back rest",
+    "euroleague_basketball": "injury report starting lineup back-to-back rest",
+    "americanfootball": "injury report inactives starting quarterback weather",
     "baseball":    "starting pitcher confirmed lineup",
     "hockey":      "starting goalie confirmed lineup injuries",
     "rugbyleague": "team list injuries late changes",
