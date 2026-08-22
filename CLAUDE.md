@@ -6,7 +6,7 @@ Tout le calcul tourne en crons GitHub Actions ; le dashboard est en lecture seul
 
 ## Commandes
 
-- Tests : `python -m pytest tests/ -q` (~45 s, 1012 tests, doit rester à 0 échec)
+- Tests : `python -m pytest tests/ -q` (~45 s, 1014 tests, doit rester à 0 échec)
 - Carte des invariants et de leurs gardiens : `AUDIT.md` (à lire avant
   d'ajouter un sport, un fournisseur IA, une route ou un workflow)
 - Lint : `python -m pyflakes $(git ls-files '*.py')` (actuellement propre)

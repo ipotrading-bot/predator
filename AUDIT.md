@@ -9,7 +9,7 @@
 > non vérifiée est marquée comme telle. Un document d'audit qui affirme sans
 > preuve fait exactement le dégât qu'il prétend éviter.
 
-Dernière passe : **2026-08-22**. État à la clôture : **1012 tests, 0 échec**,
+Dernière passe : **2026-08-22**. État à la clôture : **1014 tests, 0 échec**,
 pyflakes propre, les 6 pages du dashboard rendent (smoke test local).
 
 ---
@@ -106,6 +106,11 @@ partout ailleurs (interpréteur local 3.11.15, `CLAUDE.md`, `vercel.json`, les
 14 workflows). Vercel lit ce fichier pour choisir son runtime : le dashboard
 pouvait être servi par un interpréteur sur lequel rien n'est testé.
 
+> ⚠️ **Cette conclusion était FAUSSE, et elle a cassé la production.** Voir
+> §3.8. `.python-version` appartient à Vercel : son image de build n'embarque
+> pas 3.11. Le 3.12 n'était pas une dérive, c'était la contrainte de la
+> plateforme.
+
 `.env.example` — dont tout le propos est « copiez-moi en `.env` » — omettait
 10 credentials réellement lus : les 5 variables Betfair et tout le bloc de
 `scripts/ops.py`, alors que `CLAUDE.md` présente `ops.py` comme *la* façon de
@@ -195,6 +200,56 @@ après. Gardé par `tests/test_wiz_sources.py::TestLesFaitsDabord`.
 > peut être ailleurs (Mistral, quota). Ce défaut-ci est **mesuré et corrigé** ;
 > il reste à voir ce que le run de 16:15 UTC produit.
 
+### 3.8 L'erreur de cet audit : « aligner » `.python-version` a cassé le déploiement
+
+À consigner, parce que la leçon vaut plus que l'incident.
+
+Le test neuf `test_une_seule_version_de_python` a signalé que
+`.python-version` annonçait **3.12** quand `CLAUDE.md`, `vercel.json`,
+l'interpréteur local et les 14 workflows disaient **3.11**. Un fichier contre
+cinq : conclusion tirée, « dérive », aligné sur 3.11.
+
+Le déploiement suivant a échoué :
+
+```
+Failed to run "uv sync --active --no-dev --link-mode hardlink --locked --no-editable"
+error: No interpreter found for Python 3.11 in managed installations or search path
+```
+
+`.python-version` est **le seul fichier du dépôt que Vercel lit** pour choisir
+son interpréteur, et son image de build n'embarque pas 3.11. Le 3.12 n'était
+pas une dérive : c'était la contrainte de la plateforme de déploiement.
+Conséquence concrète : la production est restée sur le commit précédent —
+donc **sans le correctif de sécurité de `/api/audit/run`** — jusqu'à la
+réparation.
+
+**Ce que ça enseigne, au-delà du cas.** Une valeur isolée n'est pas une valeur
+fausse. Avant d'aligner un fichier sur la majorité, il faut savoir **qui le
+lit**. Ici la majorité (les runners GitHub) et le minoritaire (Vercel) ont
+deux lecteurs distincts et deux contraintes distinctes ; les « accorder »
+revenait à casser l'un pour faire plaisir à l'autre.
+
+Et surtout : **un test qui encode la mauvaise règle est pire qu'aucun test**.
+Il donne l'autorité d'une suite verte à une erreur. Le test a été remplacé par
+trois tests qui disent la règle réelle :
+
+- `test_python_version_appartient_a_vercel` — ce fichier reste à 3.12, avec
+  le message d'erreur de Vercel cité dans le code ;
+- `test_vercel_json_annonce_la_meme_version_que_python_version` — deux
+  fichiers de config Vercel qui se contredisent, c'est la prochaine personne
+  qui corrige le mauvais des deux ;
+- `test_les_workflows_partagent_une_seule_version_de_python` — la règle
+  réellement utile : les runners doivent rester d'accord **entre eux**.
+
+État final assumé et testé :
+
+| Lecteur | Version | Fichier |
+|---|---|---|
+| Runners GitHub + dev local | 3.11 | les 14 `.github/workflows/*.yml` |
+| Build Vercel | 3.12 | `.python-version`, `vercel.json` |
+
+Le code doit rester compatible avec les deux.
+
 ---
 
 ## 4. Vérifié sain (ne pas re-diagnostiquer)
@@ -216,7 +271,8 @@ Mesuré le 2026-08-22, avec la méthode :
 - **`team_aliases`** existe en base (12 lignes) : la migration `v10_3` est
   bien appliquée, contrairement à ce que `CLAUDE.md` laissait entendre.
 - **Aucun TODO/FIXME/HACK** dans le code de production.
-- **14 workflows, YAML valide**, tous bornés en durée, tous en Python 3.11.
+- **14 workflows, YAML valide**, tous bornés en durée, tous en Python 3.11
+  (Vercel, lui, construit en 3.12 — divergence VOULUE, voir §3.8).
 - Les 2 fichiers orphelins de la Phase 1 (`api/static/logo.jpg`,
   `.vercel-build-trigger`) ont bien été supprimés.
 
