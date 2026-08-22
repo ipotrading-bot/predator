@@ -251,7 +251,10 @@ REGISTRY: tuple = (
         models=("Qwen/Qwen3-32B", "meta-llama/Llama-3.3-70B-Instruct"),
         lanes=(FILTER, ANALYZE, TRANSLATE_CJK, SEARCH_READ),
         rpm=0, daily_requests=150,
-        note="credits gratuits a l'inscription ; catalogue derriere cle (401 sans cle)",
+        note="credits gratuits a l'inscription ; catalogue derriere cle (401 sans cle). "
+             "Nebius a renomme « AI Studio » en « Token Factory » : api.studio.nebius.ai "
+             "et api.tokenfactory.nebius.com repondent tous deux 401 (donc vivants) — "
+             "si l'un est retire un jour, basculer sur l'autre.",
     ),
     Provider(
         name="chutes", base_url="https://llm.chutes.ai/v1",
