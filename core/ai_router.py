@@ -288,11 +288,18 @@ REGISTRY: tuple = (
     Provider(
         name="nvidia_nim", base_url="https://integrate.api.nvidia.com/v1",
         env_key="NVIDIA_NIM_API_KEY",
+        # Ordre par cout mesure le 2026-08-22 : deepseek-v4-flash rend « OK »
+        # en 11 tokens, llama-3.3-70b en 42.
         models=("deepseek-ai/deepseek-v4-flash-0731",
                 "meta/llama-3.3-70b-instruct"),
         lanes=(ANALYZE, FILTER, SEARCH_READ),
         rpm=40, daily_requests=200, terms_flag="evaluation",
-        note="102 modeles au catalogue (2026-08-22) ; statut evaluation a documenter",
+        note="102 modeles, cle testee OK le 2026-08-22. terms_flag VERIFIE (et non "
+             "plus suppose) : NVIDIA reserve le palier gratuit au developpement, "
+             "test, recherche et evaluation ; « servir de vrais utilisateurs » ou "
+             "« conduire des transactions » releve de la PRODUCTION et exige une "
+             "licence AI Enterprise. PREDATOR mise de l'argent reel : cet usage "
+             "est de la production. Exclu des lanes de production, sans exception.",
     ),
     Provider(
         name="sambanova", base_url="https://api.sambanova.ai/v1",
@@ -876,7 +883,7 @@ def health_summary() -> list:
 _VERIFY_PROMPT = "Reply with exactly: OK"
 
 
-def verify(timeout: int = 40) -> list:
+def verify(timeout: int = 75) -> list:
     """Teste CHAQUE fournisseur configuré par une INFÉRENCE RÉELLE.
 
     POURQUOI PAS SEULEMENT LE CATALOGUE — c'est la leçon du 2026-08-22.
