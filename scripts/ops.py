@@ -6,6 +6,7 @@ scripts/ops.py — pilotage Supabase + Vercel depuis le terminal, sans CLI.
     python scripts/ops.py status                      # santé en un écran : clés OddsAPI, dernier signal, seuils, dernier déploiement
     python scripts/ops.py sources                     # sonde CHAQUE source de cotes : vivante ? quota ? joignable depuis cette IP ?
     python scripts/ops.py ai                          # sonde CHAQUE fournisseur IA par une INFÉRENCE réelle (catalogue ≠ utilisable)
+    python scripts/ops.py secrets-push [--run]        # recopie les clés du .env vers les secrets Actions (403 depuis un Codespace)
 
     python scripts/ops.py supabase secrets list       # app_secrets (noms + mis à jour, jamais les valeurs)
     python scripts/ops.py supabase secrets set KEY VAL
@@ -38,6 +39,7 @@ installés ; ce script couvre les gestes courants du projet.
 """
 import json
 import os
+import pathlib
 import sys
 from datetime import datetime, timezone
 
@@ -228,6 +230,68 @@ def vc_redeploy():
 
 # ── Vue d'ensemble ─────────────────────────────────────────────────────
 
+# Clés du routeur IA à recopier dans les secrets du dépôt. `.env` ne sert
+# qu'en local : les crons GitHub Actions ne lisent QUE les secrets du dépôt.
+_AI_SECRETS = (
+    "GEMINI_API_KEY", "OPENROUTER_API_KEY", "CLOUDFLARE_API_TOKEN",
+    "CLOUDFLARE_ACCOUNT_ID", "OLLAMA_API_KEY", "GROQ_API_KEY",
+    "TAVILY_API_KEY", "NVIDIA_NIM_API_KEY", "COHERE_API_KEY",
+    "UPSTAGE_API_KEY", "NEBIUS_API_KEY", "MODELSCOPE_API_KEY",
+    "SCALEWAY_API_KEY", "CEREBRAS_API_KEY", "SAMBANOVA_API_KEY",
+    "CHUTES_API_KEY", "ZHIPU_API_KEY", "SILICONFLOW_API_KEY",
+)
+
+
+def secrets_push(args):
+    """Recopie les clés du `.env` local vers les secrets Actions du dépôt.
+
+    POURQUOI CETTE COMMANDE — le token d'un Codespace est un token d'APP sans
+    permission `secrets` : il rend 403 sur
+    /repos/{owner}/{repo}/actions/secrets. Impossible de pousser les secrets
+    depuis ici, quelle que soit la bonne volonté. Cette commande fabrique donc
+    la ligne de commande exacte à exécuter depuis une machine où `gh` est
+    authentifié avec un compte personnel, sans avoir à recopier une seule clé
+    à la main — c'est là que les erreurs se glissent.
+
+    `--run` tente réellement l'envoi (utile hors Codespace) ; sans lui, la
+    commande se contente d'AFFICHER, ce qui est le comportement sûr.
+    """
+    import subprocess
+    repo = os.environ.get("GITHUB_REPOSITORY", "ipotrading-bot/predator")
+    run = "--run" in args
+
+    env_path = pathlib.Path(__file__).resolve().parent.parent / ".env"
+    if not env_path.exists():
+        print("Aucun .env — rien à pousser."); return
+    vals = {}
+    for line in env_path.read_text(encoding="utf-8").splitlines():
+        line = line.strip()
+        if not line or line.startswith("#") or "=" not in line:
+            continue
+        k, v = line.split("=", 1)
+        if k.strip() in _AI_SECRETS and v.strip():
+            vals[k.strip()] = v.strip()
+
+    if not vals:
+        print("Aucune clé IA renseignée dans .env."); return
+
+    print(f"Dépôt : {repo}\n{len(vals)} clé(s) trouvée(s) dans .env :\n")
+    for k, v in vals.items():
+        print(f"gh secret set {k} --repo {repo} --body '{v}'")
+    print()
+    if not run:
+        print("↑ Copie ces lignes sur une machine où `gh auth status` montre ton")
+        print("  compte personnel, puis exécute-les. Ou relance ici avec --run.")
+        print(f"\nVérification : gh secret list --repo {repo}")
+        return
+
+    for k, v in vals.items():
+        r = subprocess.run(["gh", "secret", "set", k, "--repo", repo, "--body", v],
+                           capture_output=True, text=True)
+        etat = "OK" if r.returncode == 0 else f"ÉCHEC — {(r.stderr or '').strip()[:90]}"
+        print(f"  {k:<24} {etat}")
+
+
 def ai():
     """Sonde CHAQUE fournisseur IA par une inférence réelle.
 
@@ -391,6 +455,8 @@ def main(argv):
         sources()
     elif cmd == "ai":
         ai()
+    elif cmd == "secrets-push":
+        secrets_push(argv[2:])
     elif cmd == "supabase":
         sub, a = (rest[0] if rest else ""), rest[1:]
         {"secrets": lambda: sb_secrets(a), "meta": lambda: sb_meta(a),
