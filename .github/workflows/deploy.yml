@@ -13,6 +13,10 @@ on:
 jobs:
   deploy:
     runs-on: ubuntu-latest
+    # Seul workflow du dépôt sans borne de durée jusqu'au 2026-08-22. Un
+    # `vercel deploy` qui reste pendu consommerait les 6 h par défaut de
+    # GitHub Actions, sur le workflow le plus fréquent du dépôt.
+    timeout-minutes: 10
     steps:
       - uses: actions/checkout@v4
 

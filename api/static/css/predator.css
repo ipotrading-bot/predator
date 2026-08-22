@@ -168,6 +168,12 @@ nav:not(.bnav) {
   align-items: center; justify-content: center; gap: 4px;
   text-decoration: none; color: var(--t2);
   font-size: 9px; font-weight: 500;
+  /* 6 entrees depuis le 2026-08-22 (/ledger et /audit etaient injoignables
+     au doigt : .nav-pages est masquee sous 640px). A 320px de large cela
+     fait 53px par entree — assez pour « Accueil » a 9px, mais on interdit
+     le retour a la ligne, qui decalerait les icones les unes par rapport
+     aux autres. */
+  white-space: nowrap; min-width: 0;
   transition: color .12s;
 }
 .bnav a.on { color: var(--green); }

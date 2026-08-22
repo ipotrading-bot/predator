@@ -16,7 +16,7 @@ from datetime import datetime, timezone as _tz
 
 import requests
 from dotenv import load_dotenv
-from flask import Flask, jsonify, render_template, send_from_directory
+from flask import Flask, jsonify, render_template, request, send_from_directory
 
 from core.perf_view import filter_rows as _perf_filter_rows, PERF_MONTHS_SHOWN as _PERF_MONTHS_SHOWN
 from core.constants import TAX_RATE as _TAX_RATE, wiz_enforce as _wiz_enforce
@@ -38,9 +38,48 @@ _template_dir = os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", "
 _static_dir   = os.path.join(os.path.dirname(os.path.abspath(__file__)), "static")
 app = Flask(__name__, template_folder=_template_dir, static_folder=_static_dir, static_url_path="/static")
 
+# Version du dashboard — UNE seule définition, injectée dans les templates
+# ({{ version }}) et rendue par /api/health. Elle était écrite en dur à sept
+# endroits : « 8.8 » dans le health-check, et v8.5/v8.6/v8.8/v9.4/v10.0/v1.0
+# dans les six pieds de page. Un numéro de version qui ment fait chercher un
+# bug dans le mauvais déploiement.
+DASHBOARD_VERSION = "10.4"
+
+
+@app.context_processor
+def _inject_version():
+    """`{{ version }}` dans TOUS les templates.
+
+    Les six pieds de page portaient six versions différentes — v8.5, v8.6,
+    v8.8, v9.4, v10.0, v1.0 — parce que chacune était en dur et n'était mise
+    à jour que quand on touchait à cette page-là. Un numéro de version qui
+    varie selon l'onglet ne sert plus à identifier un déploiement.
+    """
+    return {"version": DASHBOARD_VERSION}
+
+
+# Duree de cache des assets statiques. Courte VOLONTAIREMENT : ce depot n'a
+# pas d'etape de build, donc pas d'empreinte dans les noms de fichiers — un
+# cache long garderait un CSS perime sans moyen de l'invalider. Dix minutes
+# suffisent a couvrir une session de consultation (le CSS + 6 icones PWA
+# etaient re-telecharges a CHAQUE page, sur mobile en 4G) tout en faisant
+# apparaitre un deploiement en moins d'un quart d'heure.
+_STATIC_MAX_AGE = 600
+
 
 @app.after_request
 def no_cache(response):
+    """Pas de cache sur les PAGES, cache court sur les ASSETS.
+
+    Le no-store s'appliquait indistinctement : les donnees doivent en effet
+    etre fraiches a chaque chargement (un signal perime affiche comme actif
+    est un faux pari), mais l'appliquer aussi a /static faisait
+    re-telecharger predator.css et les icones a chaque navigation — couteux
+    sur mobile et sans le moindre benefice de fraicheur.
+    """
+    if request.path.startswith("/static/"):
+        response.headers["Cache-Control"] = f"public, max-age={_STATIC_MAX_AGE}"
+        return response
     response.headers["Cache-Control"] = "no-cache, no-store, must-revalidate"
     response.headers["Pragma"]        = "no-cache"
     response.headers["Expires"]       = "0"
@@ -96,6 +135,28 @@ def _parse_match_time(s: str):
         except Exception:
             pass
     return None
+
+
+def _is_playable(s: dict, now) -> bool:
+    """Ce signal est-il encore pariable ? (coup d'envoi pas encore passé)
+
+    RÈGLE UNIQUE, volontairement partagée. Elle était réimplémentée à
+    l'identique en trois endroits — dashboard(), _wiz_rows() et le JS de
+    /system — pendant que /api/signals, lui, ne l'appliquait PAS : au
+    2026-08-22 il renvoyait 37 signaux actifs dont 23 dont le match avait
+    commencé, certains depuis huit heures. Les deux consommateurs connus
+    refiltraient côté client ; le troisième aurait hérité du bug.
+
+    Un signal SANS match_time reste jouable : on ne peut pas prouver qu'il a
+    commencé, et l'écarter reviendrait à masquer un pari valide.
+
+    Ces lignes ne sont pas des déchets : la purge les garde volontairement
+    48 h pour que core/audit_engine.py ait le temps de les régler
+    (run_engine._purge_old_signals). Elles n'ont simplement rien à faire
+    dans une liste de paris à poser.
+    """
+    mt = _parse_match_time(s.get("match_time") or "")
+    return not s.get("match_time") or mt is None or mt > now
 
 
 def _mk_dash_sort(s: dict, now) -> tuple:
@@ -186,11 +247,8 @@ def dashboard():
             # d'envoi gardait des signaux non jouables qui noyaient les
             # signaux encore pariables. Un signal sans match_time reste
             # affiché — on ne peut pas prouver qu'il a commencé.
-            filtered = [
-                s for s in seen.values()
-                if s.get("risk_flag") in _HIGH_QUALITY
-                and (not s.get("match_time") or (_parse_match_time(s["match_time"]) or _now) > _now)
-            ]
+            filtered = [s for s in seen.values()
+                        if s.get("risk_flag") in _HIGH_QUALITY and _is_playable(s, _now)]
             signals = sorted(filtered, key=lambda s: _mk_dash_sort(s, _now))
 
             # (Supprimé 2026-07-22) Le fallback « moins de 3 signaux actifs →
@@ -225,16 +283,28 @@ def dashboard():
 
     from core.constants import BANKROLL_REF
     return render_template("index.html", signals=signals, groups=groups,
-                           last_scan=last_scan, bankroll_ref=BANKROLL_REF)
+                           last_scan=last_scan, bankroll_ref=BANKROLL_REF,
+                           sport_emoji=_SPORT_EMOJI,
+                           sport_label_short=_SPORT_LABEL_SHORT,
+                           sport_order=_SPORT_ORDER)
 
 
 # ── Ledger ───────────────────────────────────────────────────────────
 
+# Clés = valeurs de core.odds_api.SPORT_KEYS (le `sport` écrit dans signals),
+# PAS les sport_keys OddsAPI. Un sport absent d'ici s'affiche en 🎯 générique
+# sur TOUTES les pages — c'est ce qui est arrivé à `aussierules` et
+# `rugbyleague` entre leur mise en production et le 2026-08-22 : deux sports
+# actifs, un emoji de repli, personne ne le voit passer.
+# tests/test_dashboard_sports.py vérifie que tout sport actif est couvert.
+# Les sports RETIRÉS (esports, tabletennis, volleyball, handball) restent
+# listés : les lignes historiques du ledger doivent continuer à s'afficher.
 _SPORT_EMOJI = {
     "soccer": "⚽", "basketball": "🏀", "tennis": "🎾", "hockey": "🏒",
     "mma": "🥋", "boxing": "🥊", "darts": "🎯", "cricket": "🏏",
     "esports": "🎮", "americanfootball": "🏈", "baseball": "⚾",
     "euroleague_basketball": "🏀",
+    "rugbyleague": "🏉", "aussierules": "🏉",
     "rugby": "🏉", "volleyball": "🏐", "tabletennis": "🏓", "handball": "🤾",
 }
 _SPORT_LABEL = {
@@ -242,9 +312,38 @@ _SPORT_LABEL = {
     "hockey": "Hockey", "mma": "MMA", "boxing": "Boxe", "darts": "Fléchettes",
     "cricket": "Cricket", "esports": "eSports", "americanfootball": "NFL",
     "euroleague_basketball": "Euroleague",
+    "rugbyleague": "Rugby XIII", "aussierules": "Foot australien",
     "baseball": "MLB", "rugby": "Rugby", "volleyball": "Volley",
     "tabletennis": "Ping-Pong", "handball": "Handball",
 }
+
+# Libellés COURTS pour les chips de filtre du dashboard (place contrainte).
+# Ils vivaient en dur dans templates/index.html, en double de la table
+# ci-dessus — et la copie JS avait divergé : au 2026-08-22 il lui manquait
+# euroleague_basketball, rugbyleague et aussierules, trois sports ACTIFS
+# affichés « 🎯 rugbyleague » sur mobile. Une table dupliquée dans un
+# template ne se met jamais à jour deux fois : elle est désormais injectée
+# depuis ici (index.html reçoit SPORT_EMOJI/SPORT_LABEL_SHORT/SPORT_ORDER).
+_SPORT_LABEL_SHORT = {
+    "soccer": "FOOT", "basketball": "BASKET", "tennis": "TENNIS",
+    "hockey": "HOCKEY", "mma": "MMA", "boxing": "BOXE", "darts": "FLÉCHETTES",
+    "cricket": "CRICKET", "esports": "eSPORT", "americanfootball": "NFL",
+    "euroleague_basketball": "EUROLEAGUE",
+    "rugbyleague": "RUGBY XIII", "aussierules": "AFL",
+    "baseball": "MLB", "rugby": "RUGBY", "volleyball": "VOLLEY",
+    "tabletennis": "PING", "handball": "HAND",
+}
+
+# Ordre d'affichage des groupes de sport. Un sport absent passe en fin de
+# liste (valeur de repli côté JS), il n'est jamais masqué.
+_SPORT_ORDER = {
+    "basketball": 0, "euroleague_basketball": 1, "hockey": 2,
+    "americanfootball": 3, "baseball": 4, "rugbyleague": 5, "aussierules": 6,
+    "esports": 7, "rugby": 8, "tennis": 9, "mma": 10, "volleyball": 11,
+    "tabletennis": 12, "handball": 13, "boxing": 14, "darts": 15,
+    "cricket": 16, "soccer": 17,
+}
+
 
 def _clv_verdict(avg_clv: float, count: int) -> str:
     """Return BOOST / STABLE / ATTENTION / SUSPENDU based on CLV performance."""
@@ -678,8 +777,7 @@ def _wiz_rows():
                .order("created_at", desc=True).limit(300).execute())
     by_key: dict = {}
     for s in sig_res.data or []:
-        mt = _parse_match_time(s.get("match_time") or "")
-        if s.get("match_time") and mt and mt <= now:
+        if not _is_playable(s, now):
             continue
         by_key.setdefault(_wiz_match_key_sig(s), []).append(s)
     if not by_key:
@@ -783,14 +881,26 @@ def api_wiz():
 
 @app.route("/api/signals")
 def api_signals():
+    """Signaux actifs ENCORE JOUABLES (voir _is_playable).
+
+    `?all=1` rend la liste brute, coup d'envoi passé compris — pour le
+    diagnostic uniquement. Par défaut on filtre : cette API alimente une
+    interface de mise, et un match commencé n'est pas un pari.
+    """
     try:
         sb = _db()
         if not sb:
             return jsonify({"error": "no db"}), 503
-        res = sb.table("signals").select("*").eq("status", "active").order("created_at", desc=True).limit(50).execute()
-        return jsonify(res.data or [])
+        res = (sb.table("signals").select("*").eq("status", "active")
+               .order("created_at", desc=True).limit(200).execute())
+        rows = res.data or []
+        if request.args.get("all") not in ("1", "true", "yes"):
+            now  = datetime.now(_tz.utc)
+            rows = [s for s in rows if _is_playable(s, now)]
+        return jsonify(rows[:50])
     except Exception as e:
-        return jsonify({"error": str(e)}), 500
+        log.error("api_signals: %s", e)
+        return jsonify({"error": "internal error"}), 500
 
 
 @app.route("/api/audit/run", methods=["POST"])
@@ -828,7 +938,26 @@ def favicon():
 
 @app.route("/api/health")
 def health():
-    return jsonify({"status": "ok", "version": "8.8", "source": "harvester+ai_search"})
+    """Santé du DASHBOARD, pas du pipeline.
+
+    Ne fait volontairement aucun appel réseau vers Supabase : cette route
+    doit rester utilisable comme sonde de disponibilité (Vercel, uptime
+    externe) même quand la base est injoignable. Elle dit donc deux choses
+    honnêtes : le processus Flask répond, et les credentials nécessaires
+    sont-ils présents dans cet environnement.
+
+    Le champ `source` a été supprimé : il annonçait « harvester+ai_search »,
+    figé depuis des mois, alors que la collecte passe aujourd'hui par
+    OddsAPI + Matchbook + api-sports + les sources gratuites. Un champ
+    d'information qui ne se met pas à jour est pire qu'absent.
+    """
+    return jsonify({
+        "status":     "ok",
+        "version":    DASHBOARD_VERSION,
+        "db_configured": bool(os.environ.get("SUPABASE_URL")
+                              and os.environ.get("SUPABASE_KEY")),
+        "time":       datetime.now(_tz.utc).isoformat(),
+    })
 
 
 # (/api/odds-quota supprimé le 2026-08-22 — Mission 2, Phase 2 : le widget
