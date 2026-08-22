@@ -332,6 +332,77 @@ Mesuré le 2026-08-22, avec la méthode :
 
 Honnêteté du document : ce qui suit n'est **pas** réglé.
 
+### 5.0 🔴 URGENT — le pool OddsAPI est MORT (action opérateur requise)
+
+Mesuré le 2026-08-22 à 16:05 UTC via `python scripts/ops.py status` :
+
+```
+── OddsAPI pool ──
+  #1 …077b  MORTE quota épuisé — restantes=0 utilisées=500
+```
+
+`meta.alert_oddsapi_pool_dead` s'est déclenchée à **15:41 UTC**, après
+`alert_oddsapi_pool_5` à 04:01. Il n'existe qu'**une seule clé**
+(`app_secrets.ODDS_API_KEY`, posée le 2026-08-06) : aucun secret
+`ODDS_API_KEYS` (le pool) n'est configuré.
+
+C'est **exactement** le scénario que `CLAUDE.md` documente comme ayant coûté
+dix jours sans signal en août 2026 : « une seule clé = dix jours sans signal
+quand elle meurt ».
+
+→ Cela ne se corrige pas dans le code. Il faut ouvrir un compte sur
+the-odds-api.com et **ajouter la clé au POOL** (jamais la remplacer seule) :
+
+```bash
+python scripts/rotate_odds_key.py --add <nouvelle_cle>
+python scripts/ops.py status          # doit montrer #2 vivante
+```
+
+Tant que c'est en l'état, le moteur tourne sur Matchbook + api-sports +
+sources gratuites, sans sa source sharp de Tier 1.
+
+
+### 5.0 🔴 URGENT — le pool de clés OddsAPI est MORT (mesuré 16:10 UTC)
+
+C'est le scénario que `CLAUDE.md` décrit textuellement comme « **dix jours
+sans signal** », et il se produit **en ce moment**.
+
+```
+── Tier 1 · The Odds API ──
+  #1 …077b  MORTE    quota épuisé — restantes=0 utilisées=500
+```
+
+- `app_secrets` ne contient que **`ODDS_API_KEY`** (singulier), pas
+  `ODDS_API_KEYS` : le « pool » est une clé unique — exactement ce que le
+  mécanisme de pool existe pour éviter. Sa dernière mise à jour date du
+  **2026-08-06**.
+- `meta.alert_oddsapi_pool_dead` a été posé à **15:41:36 UTC**. L'alerte a
+  donc bien fonctionné : la surveillance n'est pas en cause.
+- **Plus aucun signal depuis 13:00 UTC.**
+
+**Ce qui tourne encore** (sondé le même jour) — le pipeline n'est pas noir :
+
+| Source | État |
+|---|---|
+| Matchbook (sharp, sans clé) | **OK** — 386 matchs, 188 marchés sharp exploitables sous 24 h |
+| api-sports (soft) | OK — 80/100 req/j sur 4 sports |
+| odds-api.io (soft, 1xbet) | OK — 363/400 req/j |
+| Titan007 | OK — 757 matchs, 418/500 req/j |
+| LineFeed 1xbet/melbet/22bet | mort (filtré par IP) — **normal, documenté** |
+
+Une référence sharp subsiste donc (Matchbook), mais la source primaire est
+tombée.
+
+**Action opérateur — la seule qui débloque :**
+```bash
+# Ouvrir une (ou plusieurs) clé sur the-odds-api.com, puis :
+python scripts/rotate_odds_key.py --add <nouvelle_cle>   # ALIMENTE le POOL
+python scripts/ops.py sources                            # vérifier le Tier 1
+```
+Ajouter **au moins deux** clés : le pool n'a de sens qu'à partir de deux, et
+c'est précisément la leçon d'août 2026 que la configuration actuelle n'avait
+pas appliquée.
+
 ### 5.1 Wiz rend 99 % d'INDISPONIBLE — correctif non encore exercé
 
 Mesuré en base : sur 7 jours, **87 `INDISPONIBLE` pour 1 verdict réel**. Le
