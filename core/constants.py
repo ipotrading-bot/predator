@@ -57,9 +57,11 @@ TAX_RATE = 0.0   # % withheld on net profit of a winning bet — see core/tax_en
 # around that date if this needs revisiting.
 
 # ── Retry & Rate Limiting (Centralized) ──────────────────────────────
-DELAY_XBET_MIN       = 2.0      # Seconds — min delay between 1XBet requests
-DELAY_XBET_MAX       = 5.0      # Seconds — max delay (random jitter)
-DELAY_GEMINI_RATE    = 65.0     # Seconds — Gemini rate limit backoff
+# (Supprimés le 2026-08-22, plus une seule référence dans le dépôt :
+#  DELAY_XBET_MIN/MAX — le LineFeed 1XBet est injoignable depuis les runners
+#  et core/harvester.py ne cadence plus rien ; DELAY_GEMINI_RATE — Gemini
+#  n'est plus appelé en direct, il passe par core/ai_router.py qui porte son
+#  propre rpm. Une constante morte se fait recopier de bonne foi.)
 DELAY_DB_RETRY       = 1.0      # Seconds — Supabase transient error retry
 MAX_DB_RETRIES       = 3        # Attempts — max retries before giving up
 GLOBAL_TIMEOUT       = 540      # Seconds — 9 minutes, safety net for GitHub Actions
