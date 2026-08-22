@@ -5,6 +5,7 @@ Sharp filter: Prob. Sharp (Power devigged, see core/math_engine.py) >= threshold
 Pipeline: OddsAPI → Web Search (Groq/Tavily) → AI Estimator → AH0.0/ML/PS/OU → Edge → Balancer → Supabase
 All timestamps : UTC/GMT — no local-time contamination.
 """
+import hashlib
 import json
 import logging
 import os
@@ -50,6 +51,7 @@ load_dotenv()
 DEEP_SCAN    = os.environ.get("DEEP_SCAN",    "0") == "1"
 GOLDEN_HOUR  = os.environ.get("GOLDEN_HOUR", "0") == "1"
 GUERRILLA    = os.environ.get("GUERRILLA",   "0") == "1"  # skip OddsAPI → Tier 2 direct
+REPRICE      = os.environ.get("REPRICE",     "0") == "1"  # Matchbook seul vs slate soft en cache — zéro source payante
 DEBUG_MODE   = os.environ.get("PREDATOR_DEBUG", "0") == "1"
 
 # ── Mode FANTÔME — segments mesurés mais plus recommandés ────────────
@@ -172,6 +174,10 @@ _TTL_ALT     = float(os.environ.get("CACHE_ALT_TTL_H",     "4"))
 # Melbet dans ce flux : si la recherche rend zéro (clé Groq morte, par ex.),
 # le vide reste en cache et le sport est muet jusqu'à expiration.
 _TTL_EMPTY   = float(os.environ.get("CACHE_EMPTY_TTL_H",   "3"))
+# TTL du slate soft photographié par les scans complets pour le mode REPRICE.
+# Au-delà, le prix soft est trop vieux pour prétendre être jouable : on
+# préfère un tick REPRICE muet à un edge calculé contre une cote fantôme.
+_TTL_SOFT_SLATE = float(os.environ.get("CACHE_SOFT_SLATE_TTL_H", "4"))
 # Coupe-circuit d'urgence si Matchbook devait mal se comporter en prod
 # (géoblocage US non constaté en test, voir core/matchbook.py).
 _MATCHBOOK_OFF = os.environ.get("MATCHBOOK_OFF", "") == "1"
@@ -418,6 +424,39 @@ def _set_cached(sb, key: str, value: list):
         log.warning("Cache set [%s]: %s", key, e)
 
 
+# ── Slate soft en cache pour le mode REPRICE ─────────────────────────────
+# Chaque scan COMPLET photographie son slate soft dans meta.cache_soft_slate ;
+# le mode REPRICE (horaire, gratuit) le relit et le recompare à un prix sharp
+# Matchbook FRAIS. Le côté rare du pipeline est le soft (budgets journaliers) ;
+# le sharp est gratuit — c'est l'équivalent d'un « odds screen » de pro.
+_SLATE_KEYS = ("id", "match", "home", "away", "league", "sport", "sport_id",
+               "commence_time", "odds_1xbet", "totals_1xbet", "spreads_1xbet",
+               "_soft_source")
+
+
+def _trim_soft_slate(matches: list) -> list:
+    """Slate soft minimal pour REPRICE — borne la taille du blob TEXT de meta.
+
+    `odds_pinnacle` n'est sérialisé QUE s'il est réel et non-exchange
+    (Pinnacle extrait d'api-sports/Titan007) : un prix posé par
+    `_enrich_from_exchange` (`_exchange`) ou estimé par l'IA (`_estimated`)
+    est exclu, sinon `_enrich_from_exchange` le verrait comme valide au tick
+    suivant et SAUTERAIT le re-pricing — le sharp resterait figé 4h, l'edge
+    serait calculé contre une référence morte. `totals_pinnacle`/
+    `spreads_pinnacle` et `_oracle_price` tombent pour la même raison
+    (absents de _SLATE_KEYS)."""
+    out = []
+    for m in matches:
+        if not m.get("odds_1xbet"):
+            continue                    # sans prix soft, rien à repricer
+        row = {k: m[k] for k in _SLATE_KEYS if m.get(k) is not None}
+        pin = m.get("odds_pinnacle")
+        if pin and not m.get("_estimated") and not m.get("_exchange"):
+            row["odds_pinnacle"] = pin
+        out.append(row)
+    return out
+
+
 # ── Horodatages meta : coupe-circuit harvest + alertes dédupliquées ─────
 #
 # 10-20 août 2026 : clé OddsAPI à 0 crédit, LineFeed 1xbet/Melbet injoignable,
@@ -489,6 +528,36 @@ def _alert_once(sb, key: str, text: str, ttl_h: float = _ALERT_TTL_H) -> bool:
     if sb:
         _meta_stamp(sb, key, datetime.now(timezone.utc).isoformat())
     return True
+
+
+_SYSTEM_ALERT_TTL_H = float(os.environ.get("SYSTEM_ALERT_TTL_H", "6"))
+
+
+def _dedup_systems_for_telegram(sb, systems: list) -> list:
+    """Écarte les systèmes déjà annoncés il y a moins de _SYSTEM_ALERT_TTL_H.
+
+    Nécessaire depuis le mode REPRICE : le même slate est re-scanné chaque
+    heure, donc le même combo repasserait par _telegram_systems ~23x/jour.
+    La clé identifie le CONTENU du pari (jambes triées), pas le tick : un
+    combo différent — nouvelle jambe, autre sélection — repart normalement.
+    Sans Supabase, tout passe (mieux vaut un doublon qu'un silence)."""
+    if not sb or not systems:
+        return systems
+    fresh = []
+    for sys_ in systems:
+        fingerprint = "|".join(sorted(
+            f"{leg.get('match_id') or leg.get('match', '?')}:"
+            f"{leg.get('market_key', '?')}:{leg.get('selection_name', '?')}"
+            for leg in sys_.get("legs", [])))
+        key = "alert_system_" + hashlib.md5(fingerprint.encode()).hexdigest()[:16]
+        age = _meta_stamp_age_h(sb, key)
+        if age is not None and age < _SYSTEM_ALERT_TTL_H:
+            log.info("Système déjà annoncé il y a %.1fh — silence (%s)",
+                     age, fingerprint[:60])
+            continue
+        _meta_stamp(sb, key, datetime.now(timezone.utc).isoformat())
+        fresh.append(sys_)
+    return fresh
 
 
 def _alert_oddsapi_pool_if_dead(sb) -> None:
@@ -1589,7 +1658,14 @@ def run():
     now     = datetime.now(timezone.utc)
     session = _market_session(now.hour)
     log.info("━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━")
-    if GUERRILLA:
+    # REPRICE en TÊTE : si deux flags sont posés ensemble par erreur (dispatch
+    # manuel), le mode le plus restrictif — zéro source payante — l'emporte.
+    if REPRICE:
+        mode = "REPRICE 💹 Matchbook vs slate soft"
+        if GOLDEN_HOUR or GUERRILLA:
+            log.warning("REPRICE posé avec GOLDEN_HOUR/GUERRILLA — REPRICE prime, "
+                        "les autres flags sont ignorés")
+    elif GUERRILLA:
         mode = "GUERRILLA 🥷 Sans OddsAPI"
     elif GOLDEN_HOUR:
         mode = "GOLDEN HOUR ⚡ T-120min"
@@ -1671,7 +1747,10 @@ def run():
     tier1_ok       = False  # OddsAPI a-t-il rendu quelque chose ? Voir le Tier 2.
 
     # ── Tier 1: The Odds API ──────────────────────────────────────────
-    if GUERRILLA:
+    if REPRICE:
+        hours_ahead = int(os.environ.get("HOURS_AHEAD", 24))
+        log.info("💹 REPRICE — slate soft en cache + Matchbook frais, zéro source payante")
+    elif GUERRILLA:
         hours_ahead = int(os.environ.get("HOURS_AHEAD", 48))
         log.info("🥷 GUERRILLA — OddsAPI ignoré, Tier 2 direct (1XBet + Pinnacle/recherche web)")
     elif GOLDEN_HOUR:
@@ -1707,7 +1786,7 @@ def run():
         scan_keys   = None  # Use default SPORT_KEYS (19 ligues)
         log.info("⚡ Tier 1 — The Odds API (%dh window)...", hours_ahead)
 
-    if not GUERRILLA:
+    if not GUERRILLA and not REPRICE:
         oddsapi_events = fetch_odds(hours_ahead=hours_ahead, sport_keys=scan_keys)
         if not oddsapi_events:
             _alert_oddsapi_pool_if_dead(sb)
@@ -1734,6 +1813,21 @@ def run():
                     log.warning("Closing-line capture: %s", e)
 
 
+    # ── REPRICE : le slate soft vient du cache, pas d'une source payante ──
+    # Sortie AVANT le fetch Matchbook et sans AUCUNE alerte : un cache
+    # vide/expiré n'est pas une panne (le prochain scan complet le remplit),
+    # et un tick muet ne doit ni spammer Telegram ni toucher harvest_empty_at.
+    if REPRICE:
+        matches = (_get_cached(sb, "cache_soft_slate", _TTL_SOFT_SLATE) or []) if sb else []
+        if not matches:
+            log.info("💹 REPRICE — cache_soft_slate vide/expiré → exit (rien à repricer)")
+            if sb:
+                _heartbeat(sb, now, 0, 0)
+            if credentials_failed:
+                raise SystemExit(1)
+            return
+        log.info("💹 REPRICE — %d matchs soft relus du cache", len(matches))
+
     # ── MMA/eSports/Alternatifs — now included in Golden Hour too ──────
     # Cached in Supabase meta: MMA/eSports 8h TTL, alt sports 4h TTL —
     # cache is shared across golden_hour/engine/deep_scan runs, so running
@@ -1741,37 +1835,40 @@ def run():
     # call (Groq/Tavily, core/ai_search.py) when the TTL actually expires
     # — no longer competes with the main
     # pipeline's fetch_pinnacle_prices() quota within the same run.
-    log.info("🥋 MMA — Recherche web (Melbet vs Pinnacle)...")
-    mma_events = _get_cached(sb, "cache_mma", _TTL_MMA, _TTL_EMPTY) if sb else None
-    if mma_events is None:
-        mma_events = fetch_mma_events()
-        # On mémorise AUSSI un résultat vide (TTL court côté _get_cached) —
-        # sinon le prochain tick Golden Hour repaie la recherche web.
-        if sb:
-            _set_cached(sb, "cache_mma", mma_events or [])
-    if mma_events:
-        matches = (matches or []) + mma_events
-        log.info("🥋 MMA OK — %d combats UFC (Melbet soft)", len(mma_events))
+    # En REPRICE ces trois blocs sont sautés : un cache expiré déclencherait
+    # une recherche web Groq — précisément ce que le mode interdit.
+    if not REPRICE:
+        log.info("🥋 MMA — Recherche web (Melbet vs Pinnacle)...")
+        mma_events = _get_cached(sb, "cache_mma", _TTL_MMA, _TTL_EMPTY) if sb else None
+        if mma_events is None:
+            mma_events = fetch_mma_events()
+            # On mémorise AUSSI un résultat vide (TTL court côté _get_cached) —
+            # sinon le prochain tick Golden Hour repaie la recherche web.
+            if sb:
+                _set_cached(sb, "cache_mma", mma_events or [])
+        if mma_events:
+            matches = (matches or []) + mma_events
+            log.info("🥋 MMA OK — %d combats UFC (Melbet soft)", len(mma_events))
 
-    log.info("🎮 eSports — Recherche web (CS2/LoL/Valorant/DOTA2)...")
-    esports_events = _get_cached(sb, "cache_esports", _TTL_ESPORTS, _TTL_EMPTY) if sb else None
-    if esports_events is None:
-        esports_events = fetch_esports_events()
-        if sb:
-            _set_cached(sb, "cache_esports", esports_events or [])
-    if esports_events:
-        matches = (matches or []) + esports_events
-        log.info("🎮 eSports OK — %d matchs", len(esports_events))
+        log.info("🎮 eSports — Recherche web (CS2/LoL/Valorant/DOTA2)...")
+        esports_events = _get_cached(sb, "cache_esports", _TTL_ESPORTS, _TTL_EMPTY) if sb else None
+        if esports_events is None:
+            esports_events = fetch_esports_events()
+            if sb:
+                _set_cached(sb, "cache_esports", esports_events or [])
+        if esports_events:
+            matches = (matches or []) + esports_events
+            log.info("🎮 eSports OK — %d matchs", len(esports_events))
 
-    log.info("🏓🏐🤾 Sports alternatifs — Recherche web (Table Tennis / Volleyball / Handball)...")
-    alt_events = _get_cached(sb, "cache_altsports", _TTL_ALT, _TTL_EMPTY) if sb else None
-    if alt_events is None:
-        alt_events = fetch_alternative_sports_batch()
-        if sb:
-            _set_cached(sb, "cache_altsports", alt_events or [])
-    if alt_events:
-        matches = (matches or []) + alt_events
-        log.info("🏓🏐🤾 Sports alternatifs OK — %d matchs", len(alt_events))
+        log.info("🏓🏐🤾 Sports alternatifs — Recherche web (Table Tennis / Volleyball / Handball)...")
+        alt_events = _get_cached(sb, "cache_altsports", _TTL_ALT, _TTL_EMPTY) if sb else None
+        if alt_events is None:
+            alt_events = fetch_alternative_sports_batch()
+            if sb:
+                _set_cached(sb, "cache_altsports", alt_events or [])
+        if alt_events:
+            matches = (matches or []) + alt_events
+            log.info("🏓🏐🤾 Sports alternatifs OK — %d matchs", len(alt_events))
 
     # ── Tier 1.5: exchanges (prix sharp pair-à-pair) ───────────────────
     # Remplace un prix Pinnacle ESTIMÉ par l'IA — ou absent — par un vrai
@@ -1828,13 +1925,37 @@ def run():
             raise SystemExit(1)
         return
 
+    # ── REPRICE : seuls les matchs repricés par l'exchange continuent ────
+    # Aucune recherche web n'est autorisée en reprice : un match que
+    # Matchbook ne couvre pas (et sans Pinnacle réel conservé du scan
+    # complet) est simplement écarté — fetch_pinnacle_prices n'est JAMAIS
+    # atteint dans ce mode, le quota Groq/Tavily reste au settlement.
+    if REPRICE:
+        before = len(matches)
+        matches = [m for m in matches
+                   if (m.get("odds_pinnacle") or {}).get("1", 0) > 1.01
+                   and (m.get("odds_pinnacle") or {}).get("2", 0) > 1.01]
+        if before - len(matches):
+            log.info("💹 REPRICE — %d/%d matchs sans prix sharp écartés "
+                     "(aucune recherche web en reprice)", before - len(matches), before)
+        if not matches:
+            log.info("💹 REPRICE — 0 match repricé par l'exchange → exit")
+            if sb:
+                _heartbeat(sb, now, 0, 0)
+            if credentials_failed:
+                raise SystemExit(1)
+            return
+        sharp_source = "Matchbook/Reprice"
+
     # ── Tier 2: recherche web (Groq/Tavily) — activé si OddsAPI vide/GUERRILLA ──
     # Gardé sur `tier1_ok` et non sur `matches` : les blocs MMA/eSports/sports
     # alternatifs ci-dessus alimentent `matches` AVANT ce test, donc un seul
     # combat trouvé suffisait à sauter tout le harvest Melbet. Run 30768093911 :
     # 1 combat UFC remonté → 0 match foot/tennis/basket scanné, 0 signal, là où
     # le run précédent (0 combat) en avait sorti 12 matchs et 1 signal.
-    if not tier1_ok:
+    # REPRICE saute TOUT le tier : coupe-circuit ni lu ni écrit, budgets des
+    # sources payantes intacts, aucune alerte « 0 matchs ».
+    if not tier1_ok and not REPRICE:
         # Coupe-circuit : une tentative vide il y a < HARVEST_EMPTY_TTL_H ne
         # se rejoue pas — voir le bloc « Horodatages meta » plus haut. Quand
         # LineFeed, Tavily et Groq sont morts ensemble, 40 runs/jour ne
@@ -2001,6 +2122,20 @@ def run():
             raise SystemExit(1)
         return
 
+    # ── Photographie du slate soft pour le mode REPRICE ──────────────────
+    # Chaque scan COMPLET (engine/deep/guerrilla) écrit ici. Ni golden hour
+    # (fenêtre 2h, slate partiel — il ÉCRASERAIT le slate 24h du dernier
+    # scan complet), ni reprice (ré-écrire rafraîchirait updated_at à chaque
+    # tick horaire : le TTL ne serait jamais atteint et des cotes soft
+    # mortes seraient repricées indéfiniment).
+    if sb and not GOLDEN_HOUR and not REPRICE:
+        try:
+            slate = _trim_soft_slate(matches)
+            _set_cached(sb, "cache_soft_slate", slate)
+            log.info("💹 Slate soft photographié pour REPRICE — %d matchs", len(slate))
+        except Exception as e:
+            log.warning("cache_soft_slate: %s", e)
+
     candidates = []
 
     for m in matches:
@@ -2124,7 +2259,17 @@ def run():
         else:
             systems = _suggest_systems_by_window(emit_signals, log, sb)
             systems = _last_look_reprice(systems, log)
-            _telegram_systems(systems, now, session, len(matches), sharp_source, no_pin_count)
+            already_announced = len(systems)
+            systems = _dedup_systems_for_telegram(sb, systems)
+            already_announced -= len(systems)
+            if REPRICE and not systems:
+                # Un tick REPRICE sans rien de NEUF se tait — sinon le mode
+                # horaire enverrait ~23 « Aucun pari de valeur »/jour, ou
+                # ré-annoncerait le même combo à chaque tick.
+                log.info("💹 REPRICE — rien de neuf à annoncer (%d déjà signalé(s))",
+                         already_announced)
+            else:
+                _telegram_systems(systems, now, session, len(matches), sharp_source, no_pin_count)
 
     elite = [s for s in signals if s["edge_pct"] >= ELITE_EDGE]
     log.info("Done. %d candidates | %d balanced | %d elite.",
