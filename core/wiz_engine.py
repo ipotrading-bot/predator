@@ -85,40 +85,121 @@ _VALID_SEVERITIES = tuple(WIZ_SEVERITY_WEIGHTS)
 # information qui, elle, est déjà dans la cote.
 
 # Requête 1 par sport — ce qui, dans ce sport, change une ligne du jour au
-# lendemain. Le vocabulaire est en anglais parce que c'est la langue des
-# sources qui publient ces informations en premier (beat writers, comptes
-# officiels), pas par préférence.
+# lendemain.
+#
+# ⚠️ REFONTE DU 2026-08-22, APRÈS MESURE. La version précédente produisait
+# `"{match} team news lineup injuries suspensions {date ISO}"` et rendait
+# **0 source porteuse de fait sur 19** (six matchs réels, flux Google News).
+# Wiz écrivait donc INDISPONIBLE sur 100 % des matchs — le modèle marchait,
+# les sources arrivaient, elles ne disaient simplement rien.
+#
+# Trois causes, toutes mesurées :
+#
+#  1. « team news, lineups » est MOT POUR MOT le titre SEO des pages de
+#     preview. La requête allait chercher exactement ce que le prompt
+#     (`_PROMPT_GROUNDED_HEAD`) ordonne au modèle d'ignorer : « Preview: X vs
+#     Y - prediction, team news, lineups », « Watch … LIVE: Online streams,
+#     TV channel ». Cohérente de bout en bout, et incapable de produire
+#     autre chose que du vide.
+#
+#  2. Les termes étaient combinés en ET implicite. Cinq mots de vocabulaire
+#     font tomber le flux à ZÉRO résultat (mesuré). D'où la forme retenue :
+#     un groupe `(motA OR motB OR motC)`, qui cible le fait sans sacrifier
+#     le rappel.
+#
+#  3. Le vocabulaire était en anglais pour TOUS les championnats. L'ancien
+#     commentaire le justifiait ainsi : « c'est la langue des sources qui
+#     publient ces informations en premier ». C'est vrai pour la MLS, la NBA
+#     ou la NFL ; c'est faux pour le Brésil, l'Argentine ou l'Italie, où le
+#     fait sort dans la presse locale et n'est jamais traduit. Mesuré sur
+#     Cruzeiro–Flamengo : 0 fait en anglais, 3 faits en portugais.
+#
+# Le vocabulaire reste anglais par DÉFAUT — c'est le bon choix quand on ne
+# sait pas. Il est localisé quand la ligue nomme son pays (voir _PRESS_LANG).
 _SPORT_QUERY_A = {
-    "soccer":      "team news lineup injuries suspensions",
-    "basketball":  "injury report starting lineup back-to-back rest",
-    "euroleague_basketball": "injury report starting lineup back-to-back rest",
-    "americanfootball": "injury report inactives starting quarterback weather",
-    "baseball":    "starting pitcher confirmed lineup",
-    "hockey":      "starting goalie confirmed lineup injuries",
-    "rugbyleague": "team list injuries late changes",
-    "aussierules": "team news selection injuries late out",
+    "soccer":      "injury OR suspended OR lineup OR doubtful",
+    "basketball":  "injury OR questionable OR \"starting lineup\" OR rest",
+    "euroleague_basketball": "injury OR questionable OR \"starting lineup\" OR rest",
+    "americanfootball": "injury OR inactives OR quarterback OR questionable",
+    "baseball":    "\"starting pitcher\" OR lineup OR injury",
+    "hockey":      "goalie OR lineup OR injury",
+    "rugbyleague": "\"team list\" OR injury OR suspended",
+    "aussierules": "\"team news\" OR injury OR omitted",
     # Sports de combat : « composition » et « absences » n'existent pas. Ce
     # qui déplace une cote ici, c'est la pesée (ratée = handicap réel), un
     # remplaçant de dernière minute, une blessure de camp ou un changement de
     # catégorie. Sans cette entrée ils tombaient sur la requête générique
     # « team news lineup injuries », qui ne remonte rien d'exploitable — et
     # depuis 2026-08-22 MMA et boxe sont sur flux OddsAPI réel, donc émis.
-    "mma":         "weigh-in result injury withdrawal replacement short notice",
-    "boxing":      "weigh-in result injury withdrawal replacement catchweight",
+    "mma":         "weigh-in OR withdrawal OR replacement OR injury",
+    "boxing":      "weigh-in OR withdrawal OR replacement OR catchweight",
 }
-_DEFAULT_QUERY_A = "team news lineup injuries"
+_DEFAULT_QUERY_A = "injury OR suspended OR lineup"
 
 # Requête 2 — l'ENJEU, angle mort classique du modèle quantitatif : une
 # équipe déjà qualifiée fait tourner, un match sans enjeu se joue à 70%.
 # La cote intègre ça bien avant le devigging.
-_QUERY_B_STAKE = "preview stakes already qualified dead rubber rotation"
+_QUERY_B_STAKE = "\"already qualified\" OR \"dead rubber\" OR rotation"
 
 # Sur les totals, la météo déplace la ligne plus que n'importe quelle
 # absence individuelle — elle remplace donc l'angle « enjeu ».
-_QUERY_B_TOTALS = "weather forecast wind conditions preview"
+_QUERY_B_TOTALS = "weather OR wind OR forecast"
 
 
-def build_queries(match: str, sport: str, market_keys=(), kickoff: str = "") -> list[str]:
+# ── Langue de la presse, déduite du pays porté par le nom de ligue ─────
+# `signals.league` arrive préfixé du pays (« Brazil - Brasileiro Serie B »,
+# « Azerbaijan - Premier League », « Italy - Serie A »). C'est la seule
+# information de localisation dont Wiz dispose, et elle suffit.
+#
+# Ne sont listés que les pays dont la presse sportive publie le fait AVANT
+# — ou à la place de — toute source anglophone. Un pays absent retombe sur
+# l'anglais, ce qui est le bon défaut : mieux vaut un vocabulaire correct
+# dans une langue approximative qu'un vocabulaire inventé dans la bonne.
+_PRESS_LANG = {
+    "Brazil": "pt", "Portugal": "pt",
+    "Spain": "es", "Argentina": "es", "Mexico": "es", "Colombia": "es",
+    "Chile": "es", "Peru": "es", "Uruguay": "es", "Ecuador": "es",
+    "Paraguay": "es", "Bolivia": "es", "Venezuela": "es", "Costa Rica": "es",
+    "France": "fr", "Italy": "it",
+    "Germany": "de", "Austria": "de", "Switzerland": "de",
+}
+
+# Vocabulaire de FAIT par langue — uniquement pour le football, seul sport
+# dont les championnats majeurs vivent hors du monde anglophone. Le basket,
+# le hockey, le baseball et le football américain sont couverts par une
+# presse anglophone (NBA, NHL, MLB, NFL, et l'essentiel de leurs ligues
+# secondaires) : les localiser serait de la complexité sans mesure derrière.
+_SOCCER_FACTS = {
+    "pt": "escalação OR desfalques OR lesionado OR suspenso",
+    "es": "alineación OR bajas OR lesionados OR suspendido",
+    "fr": "compo OR blessure OR suspendu OR forfait",
+    "it": "formazioni OR infortunati OR squalificati",
+    "de": "Aufstellung OR Verletzung OR gesperrt",
+}
+
+
+def press_lang(league: str) -> str:
+    """Langue de la presse locale pour cette ligue — « en » par défaut.
+
+    Le pays est le préfixe avant « - ». Une ligue sans préfixe (« Allsvenskan »,
+    « CFU CUP ») ou d'un pays non listé retombe sur l'anglais.
+    """
+    pays = (league or "").split(" - ")[0].strip()
+    return _PRESS_LANG.get(pays, "en")
+
+
+def topic_for(sport: str, league: str) -> str:
+    """Le groupe de mots-clés de fait, dans la langue qui a une chance de le
+    trouver. Anglais dès qu'on n'est pas certain."""
+    if sport == "soccer":
+        lang = press_lang(league)
+        if lang in _SOCCER_FACTS:
+            return _SOCCER_FACTS[lang]
+    return _SPORT_QUERY_A.get(sport, _DEFAULT_QUERY_A)
+
+
+def build_queries(match: str, sport: str, market_keys=(), kickoff: str = "",
+                  league: str = "") -> list[str]:
     """2 requêtes Brave max pour un match, adaptées au sport et aux marchés.
 
     `market_keys` est l'ensemble des marchés couverts par les signaux de ce
@@ -128,19 +209,21 @@ def build_queries(match: str, sport: str, market_keys=(), kickoff: str = "") -> 
     if not match:
         return []
 
-    day = ""
-    if kickoff:
-        try:
-            day = datetime.fromisoformat(kickoff.replace("Z", "+00:00")).strftime("%Y-%m-%d")
-        except (ValueError, TypeError, AttributeError):
-            day = ""
-
-    topic_a = _SPORT_QUERY_A.get(sport, _DEFAULT_QUERY_A)
+    # `kickoff` n'est plus utilisé pour construire la requête (voir plus bas),
+    # mais reste dans la signature : il est passé par tous les appelants et le
+    # retirer casserait leur appel sans rien gagner.
+    topic_a = topic_for(sport, league)
     has_totals = any("totals" in (k or "") for k in market_keys)
     topic_b = _QUERY_B_TOTALS if has_totals else _QUERY_B_STAKE
 
-    suffix = f" {day}" if day else ""
-    queries = [f"{match} {topic_a}{suffix}", f"{match} {topic_b}{suffix}"]
+    # La date n'est PAS ajoutée à la requête. Elle l'était sous forme ISO
+    # (« 2026-08-23 ») — une chaîne qu'aucun article ne contient : la presse
+    # écrit « 22 de agosto », « August 22 ». C'était donc un terme de
+    # recherche qui ne pouvait que restreindre (mesuré sur Inter Miami vs
+    # Toronto : 10 items sans, 6 avec), et surtout un DOUBLON :
+    # `wiz_sources.google_news()` applique déjà `when:Nd`, qui borne la
+    # fraîcheur du côté du moteur, là où c'est exact.
+    queries = [f"{match} ({topic_a})", f"{match} ({topic_b})"]
     return queries[:WIZ_QUERIES_PER_MATCH]
 
 

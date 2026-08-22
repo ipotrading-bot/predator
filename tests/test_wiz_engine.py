@@ -76,11 +76,71 @@ def test_deux_axes_de_recherche_maximum():
 
 
 def test_requete_adaptee_au_sport():
+    """MIS À JOUR le 2026-08-22 avec la refonte des requêtes.
+
+    Le vocabulaire est passé de phrases en ET implicite (« starting pitcher
+    confirmed lineup ») à des groupes OR (« "starting pitcher" OR lineup OR
+    injury »). Raison mesurée : cinq mots combinés en ET font tomber Google
+    News à ZÉRO résultat, et la phrase « team news lineup » du football
+    sélectionnait les pages de preview qui portent ce titre exact.
+    """
     assert "starting pitcher" in build_queries("A vs B", "baseball", ["h2h"])[0]
     assert "goalie" in build_queries("A vs B", "hockey", ["h2h"])[0]
-    assert "back-to-back" in build_queries("A vs B", "basketball", ["h2h"])[0]
+    assert "injury" in build_queries("A vs B", "basketball", ["h2h"])[0]
     # Sport inconnu : on retombe sur la requête générique, pas d'exception.
     assert build_queries("A vs B", "sport_inexistant", ["h2h"])[0]
+
+
+def test_la_requete_est_un_groupe_ou_pas_une_conjonction():
+    """Le ET implicite de Google News était le défaut le plus coûteux : plus
+    on ajoutait de vocabulaire, moins on trouvait — jusqu'à zéro."""
+    q = build_queries("A vs B", "soccer", ["h2h"])[0]
+    assert q.startswith("A vs B (") and q.endswith(")")
+    assert " OR " in q
+
+
+def test_la_date_nest_plus_un_terme_de_recherche():
+    """Elle l'était au format ISO. Aucun article ne contient « 2026-08-23 » :
+    la presse écrit « August 22 », « 22 de agosto ». C'était donc un terme
+    qui ne pouvait que restreindre — et un doublon de `when:Nd`, que
+    wiz_sources.google_news() applique déjà côté moteur de recherche."""
+    q = build_queries("A vs B", "soccer", ["h2h"], "2026-08-23T00:30:00Z")[0]
+    assert "2026" not in q
+
+
+class TestLangueDeLaPresse:
+    """Le fait sort dans la presse locale, et n'est jamais traduit.
+
+    Mesuré le 2026-08-22 sur Cruzeiro–Flamengo : la requête anglaise rend
+    0 source porteuse de fait, la portugaise en rend 3. Et sur Atlético
+    Tucumán, l'édition US du flux Google News ne rend RIEN en espagnol —
+    d'où la locale, qui va de pair (core/wiz_sources._GNEWS_LOCALE).
+    """
+
+    def test_le_pays_est_lu_dans_le_nom_de_ligue(self):
+        from core.wiz_engine import press_lang
+        assert press_lang("Brazil - Serie A") == "pt"
+        assert press_lang("Argentina - Liga Profesional") == "es"
+        assert press_lang("Italy - Serie A") == "it"
+
+    def test_anglais_par_defaut_quand_on_ne_sait_pas(self):
+        """Un pays non listé, une ligue sans préfixe, une chaîne vide :
+        l'anglais est le bon défaut — mieux vaut un vocabulaire correct dans
+        une langue approximative qu'un vocabulaire inventé."""
+        from core.wiz_engine import press_lang
+        for l in ("", "Allsvenskan", "CFU CUP", "Japan - J.League 2", None):
+            assert press_lang(l) == "en"
+
+    def test_le_vocabulaire_suit_la_langue(self):
+        q = build_queries("Cruzeiro vs Flamengo", "soccer", ["h2h"], "",
+                          "Brazil - Serie A")[0]
+        assert "escalação" in q or "desfalques" in q
+
+    def test_seul_le_football_est_localise(self):
+        """NBA, NHL, MLB, NFL : la presse qui publie le fait est anglophone.
+        Localiser ces sports serait de la complexité sans mesure derrière."""
+        q = build_queries("A vs B", "basketball", ["h2h"], "", "Spain - ACB")[0]
+        assert "injury" in q
 
 
 def test_totals_bascule_sur_la_meteo():
@@ -109,7 +169,10 @@ def test_prompt_contient_le_contexte_et_les_axes_de_recherche():
     assert "Real Madrid vs Barcelona" in p
     assert "+6.00%" in p
     assert "RECHERCHE WEB" in p.upper()
-    assert "team news" in p          # axe Tier A du soccer
+    # Le vocabulaire du football est passé en groupe OR le 2026-08-22
+    # (« team news lineup » sélectionnait les pages de preview qui portent
+    # ce titre exact — voir test_requete_adaptee_au_sport).
+    assert "injury" in p or "suspended" in p     # axe Tier A du soccer
 
 
 def test_prompt_exige_la_recherche_du_faux_edge():

@@ -74,6 +74,32 @@ import requests
 log = logging.getLogger("PREDATOR.wiz_sources")
 
 GOOGLE_NEWS_RSS = "https://news.google.com/rss/search"
+
+# Locale Google News par langue de presse. AJOUTÉ le 2026-08-22, après
+# mesure : l'édition US du flux n'indexe PAS la presse hispanophone. Sur
+# Atlético Tucumán vs Instituto, la même requête rend 0 item en `en-US` et
+# 5 en `es-419/AR`. Le vocabulaire local ne sert donc à rien sans la locale
+# qui va avec — les deux forment un seul levier, pas deux.
+#
+# Le marché retenu par langue est le plus gros producteur d'articles :
+# Brésil pour le portugais, Argentine pour l'espagnol (l'édition `es-419`
+# couvre toute l'Amérique latine ET l'Espagne — vérifié : `es/ES` rend les
+# mêmes articles argentins).
+_GNEWS_LOCALE = {
+    "en": ("en-US", "US", "US:en"),
+    "pt": ("pt-BR", "BR", "BR:pt-419"),
+    "es": ("es-419", "AR", "AR:es"),
+    "fr": ("fr",    "FR", "FR:fr"),
+    "it": ("it",    "IT", "IT:it"),
+    "de": ("de",    "DE", "DE:de"),
+}
+
+# Marché Bing équivalent. Bing accepte `setmkt`; une valeur inconnue est
+# ignorée sans erreur, ce qui rend ce réglage sûr par construction.
+_BING_MARKET = {
+    "en": "en-US", "pt": "pt-BR", "es": "es-AR",
+    "fr": "fr-FR", "it": "it-IT", "de": "de-DE",
+}
 BING_NEWS_RSS   = "https://www.bing.com/news/search"
 
 # Bing sert le flux RSS à un navigateur, pas à un client anonyme : sans
@@ -132,7 +158,7 @@ def _echoes_title(content: str, title: str, source: str = "") -> bool:
 
 
 def google_news(query: str, limit: int = MAX_PER_QUERY,
-                within_days: int = FRESHNESS_DAYS) -> list[dict]:
+                within_days: int = FRESHNESS_DAYS, lang: str = "en") -> list[dict]:
     """Articles Google News pour cette requête — 0 crédit, aucune clé.
 
     `when:Nd` est OBLIGATOIRE, pas un raffinement. Vérifié live le
@@ -148,7 +174,8 @@ def google_news(query: str, limit: int = MAX_PER_QUERY,
     jamais une exception — Wiz doit pouvoir enchaîner sur la source suivante.
     """
     q = f"{query} when:{max(1, int(within_days))}d"
-    url = f"{GOOGLE_NEWS_RSS}?q={quote_plus(q)}&hl=en-US&gl=US&ceid=US:en"
+    hl, gl, ceid = _GNEWS_LOCALE.get(lang, _GNEWS_LOCALE["en"])
+    url = f"{GOOGLE_NEWS_RSS}?q={quote_plus(q)}&hl={hl}&gl={gl}&ceid={ceid}"
     try:
         r = requests.get(url, timeout=12,
                          headers={"User-Agent": "Mozilla/5.0 (compatible; PredatorWiz/1.0)"})
@@ -183,7 +210,7 @@ def google_news(query: str, limit: int = MAX_PER_QUERY,
     return out
 
 
-def bing_news(query: str, limit: int = MAX_PER_QUERY) -> list[dict]:
+def bing_news(query: str, limit: int = MAX_PER_QUERY, lang: str = "en") -> list[dict]:
     """Articles Bing News pour cette requête — 0 crédit, aucune clé.
 
     Deux propriétés que Google News n'a pas, et qui sont la raison d'être de
@@ -199,7 +226,8 @@ def bing_news(query: str, limit: int = MAX_PER_QUERY) -> list[dict]:
     Renvoie [{title, url, content, published, source}]. Toujours une liste :
     tout échec vaut « rien trouvé », jamais une exception.
     """
-    url = f"{BING_NEWS_RSS}?q={quote_plus(query)}&format=RSS"
+    mkt = _BING_MARKET.get(lang, _BING_MARKET["en"])
+    url = f"{BING_NEWS_RSS}?q={quote_plus(query)}&format=RSS&setmkt={mkt}"
     try:
         r = requests.get(url, timeout=12, headers={"User-Agent": _BROWSER_UA})
         if r.status_code != 200:
@@ -243,7 +271,9 @@ def _unwrap_bing(link: str) -> str:
     return real or link
 
 
-def _tavily(query: str, limit: int = MAX_PER_QUERY) -> list[dict]:
+def _tavily(query: str, limit: int = MAX_PER_QUERY, lang: str = "en") -> list[dict]:
+    # `lang` est accepté pour que _fetch appelle toutes les sources de la
+    # même façon ; Tavily fait sa propre détection de langue.
     """Tavily, mais seulement au-dessus de la réserve du moteur."""
     from core import ai_search
     if ai_search.search_credits_left() <= WIZ_TAVILY_RESERVE:
@@ -258,16 +288,16 @@ def _tavily(query: str, limit: int = MAX_PER_QUERY) -> list[dict]:
 FREE_SOURCES = (google_news, bing_news)
 
 
-def _fetch(source, query: str) -> list[dict]:
+def _fetch(source, query: str, lang: str = "en") -> list[dict]:
     """Une source ne casse jamais Wiz : une panne vaut « rien trouvé »."""
     try:
-        return source(query) or []
+        return source(query, lang=lang) or []
     except Exception as e:
         log.debug("source %s: %s", getattr(source, "__name__", "?"), e)
         return []
 
 
-def gather(queries: list[str]) -> list[dict]:
+def gather(queries: list[str], lang: str = "en") -> list[dict]:
     """Sources web pour ces requêtes, dédupliquées par URL, gratuit d'abord.
 
     Les sources gratuites sont FUSIONNÉES, pas mises en concurrence : Google
@@ -298,11 +328,11 @@ def gather(queries: list[str]) -> list[dict]:
         # sont un succès du gratuit, pas une raison d'aller payer Tavily.
         servie = 0
         for source in FREE_SOURCES:
-            found = _fetch(source, query)
+            found = _fetch(source, query, lang)
             servie += len(found)
             keep(found)
         if not servie:       # aucune source gratuite n'a rien pour cette requête
-            keep(_fetch(_tavily, query))
+            keep(_fetch(_tavily, query, lang))
 
     # LES FAITS D'ABORD, PUIS on tronque (2026-08-22).
     #
@@ -381,8 +411,9 @@ def make_search_fn(ctx: dict):
         # 2. Les yeux : Google News (gratuit) puis Tavily (sous réserve).
         queries = wiz_engine.build_queries(
             ctx.get("match", ""), ctx.get("sport", ""),
-            ctx.get("market_keys") or [], ctx.get("kickoff") or "")
-        sources = gather(queries)
+            ctx.get("market_keys") or [], ctx.get("kickoff") or "",
+            ctx.get("league") or "")
+        sources = gather(queries, wiz_engine.press_lang(ctx.get("league") or ""))
         if not sources:
             return None, [], None
 

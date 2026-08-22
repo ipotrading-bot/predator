@@ -326,7 +326,7 @@ class TestSearchFn:
         monkeypatch.setattr(wiz_ai, "search_quota_dead", lambda: False)
         monkeypatch.setattr(wiz_ai, "mistral_search",
                             lambda p, label="WIZ": ("{}", [{"url": "u"}], "mistral-x"))
-        monkeypatch.setattr(ws, "gather", lambda _q: pytest.fail("cascade inutile"))
+        monkeypatch.setattr(ws, "gather", lambda _q, _l="en": pytest.fail("cascade inutile"))
         text, sources, model = ws.make_search_fn(self.ctx)("prompt")
         assert (text, model) == ("{}", "mistral-x")
 
@@ -334,7 +334,7 @@ class TestSearchFn:
         from core import wiz_ai
         monkeypatch.setattr(wiz_ai, "search_quota_dead", lambda: True)
         monkeypatch.setattr(ws, "gather",
-                            lambda _q: [{"url": "https://n/1", "title": "t", "content": "c"}])
+                            lambda _q, _l="en": [{"url": "https://n/1", "title": "t", "content": "c"}])
         monkeypatch.setattr(wiz_ai, "mistral_complete",
                             lambda p, label="WIZ": ('{"verdict":"NEUTRE"}', "mistral-small"))
         text, sources, model = ws.make_search_fn(self.ctx)("prompt")
@@ -344,7 +344,7 @@ class TestSearchFn:
     def test_le_routeur_ia_est_le_dernier_recours(self, monkeypatch):
         from core import ai_search, wiz_ai
         monkeypatch.setattr(wiz_ai, "search_quota_dead", lambda: True)
-        monkeypatch.setattr(ws, "gather", lambda _q: [{"url": "https://n/1", "title": "t"}])
+        monkeypatch.setattr(ws, "gather", lambda _q, _l="en": [{"url": "https://n/1", "title": "t"}])
         monkeypatch.setattr(wiz_ai, "mistral_complete", lambda p, label="WIZ": (None, None))
         monkeypatch.setattr(ai_search, "ai_complete", lambda p, label="AI": '{"verdict":"NEUTRE"}')
         _text, _sources, model = ws.make_search_fn(self.ctx)("prompt")
@@ -356,7 +356,7 @@ class TestSearchFn:
     def test_no_source_yields_unavailable_not_an_unsourced_verdict(self, monkeypatch):
         from core import wiz_ai
         monkeypatch.setattr(wiz_ai, "search_quota_dead", lambda: True)
-        monkeypatch.setattr(ws, "gather", lambda _q: [])
+        monkeypatch.setattr(ws, "gather", lambda _q, _l="en": [])
         monkeypatch.setattr(wiz_ai, "mistral_complete",
                             lambda *a, **k: pytest.fail("aucun raisonnement sans source"))
         assert ws.make_search_fn(self.ctx)("prompt") == (None, [], None)
@@ -404,3 +404,84 @@ def test_run_budget_is_not_conflated_with_connector_quota(monkeypatch):
     monkeypatch.setattr(wiz_ai, "_searches_used", 0, raising=False)
     assert wiz_ai.search_exhausted() is True
     assert wiz_ai.run_budget_exhausted() is False
+
+
+class TestLocaleDuFlux:
+    """La locale du flux Google News, sans laquelle le vocabulaire local est inerte.
+
+    MESURÉ le 2026-08-22 sur « Atlético Tucumán vs Instituto », requête
+    identique : **0 item** en `hl=en-US&gl=US`, **5 items** en
+    `hl=es-419&gl=AR`. L'édition US du flux n'indexe pas la presse
+    hispanophone. Traduire le vocabulaire sans changer la locale revenait
+    donc à chercher des mots espagnols dans un index anglais — c'est-à-dire
+    à passer de « des sources inutiles » à « aucune source ».
+
+    Vocabulaire et locale forment un seul levier, jamais deux.
+    """
+
+    def _url_appelee(self, monkeypatch, **kw):
+        vue = {}
+
+        class _R:
+            status_code = 200
+            content = b"<rss><channel></channel></rss>"
+
+        def _get(url, **_):
+            vue["url"] = url
+            return _R()
+
+        monkeypatch.setattr(ws.requests, "get", _get)
+        ws.google_news("Boca River", **kw)
+        return vue["url"]
+
+    def test_langue_connue_change_la_locale(self, monkeypatch):
+        url = self._url_appelee(monkeypatch, lang="es")
+        assert "hl=es-419" in url and "gl=AR" in url
+
+    def test_portugais(self, monkeypatch):
+        url = self._url_appelee(monkeypatch, lang="pt")
+        assert "hl=pt-BR" in url and "gl=BR" in url
+
+    def test_langue_inconnue_retombe_sur_langlais(self, monkeypatch):
+        """Un code de langue jamais vu ne doit pas produire une URL cassée."""
+        url = self._url_appelee(monkeypatch, lang="xx")
+        assert "hl=en-US" in url and "gl=US" in url
+
+    def test_defaut_sans_argument(self, monkeypatch):
+        assert "hl=en-US" in self._url_appelee(monkeypatch)
+
+    def test_la_fraicheur_reste_appliquee(self, monkeypatch):
+        """`when:Nd` borne la fraîcheur côté moteur — c'est ce qui remplace la
+        date ISO retirée de la requête, et c'est exact là où elle ne l'était
+        pas."""
+        assert "when%3A" in self._url_appelee(monkeypatch, within_days=3)
+
+    def test_toutes_les_langues_de_presse_ont_une_locale(self):
+        """Une langue déclarée dans wiz_engine sans locale ici enverrait des
+        mots portugais dans l'index américain — le pire des deux mondes."""
+        from core.wiz_engine import _SOCCER_FACTS
+        manquantes = sorted(set(_SOCCER_FACTS) - set(ws._GNEWS_LOCALE))
+        assert not manquantes, (
+            f"_SOCCER_FACTS déclare {manquantes} sans locale Google News "
+            "correspondante dans _GNEWS_LOCALE.")
+
+    def test_chaque_locale_a_son_marche_bing(self):
+        manquantes = sorted(set(ws._GNEWS_LOCALE) - set(ws._BING_MARKET))
+        assert not manquantes, f"_BING_MARKET ne couvre pas {manquantes}"
+
+
+class TestGatherPropageLaLangue:
+    def test_la_langue_atteint_les_sources(self, monkeypatch):
+        """Sans propagation, `gather()` collecterait en anglais quelle que
+        soit la ligue — la panne serait identique à celle d'avant, mais
+        invisible puisque les requêtes, elles, seraient bien localisées."""
+        vues = []
+
+        def _faux(query, lang="en"):
+            vues.append(lang)
+            return []
+
+        monkeypatch.setattr(ws, "FREE_SOURCES", (_faux,))
+        monkeypatch.setattr(ws, "_tavily", lambda q, lang="en": [])
+        ws.gather(["q"], "pt")
+        assert vues == ["pt"]

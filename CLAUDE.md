@@ -6,7 +6,7 @@ Tout le calcul tourne en crons GitHub Actions ; le dashboard est en lecture seul
 
 ## Commandes
 
-- Tests : `python -m pytest tests/ -q` (~45 s, 1014 tests, doit rester à 0 échec)
+- Tests : `python -m pytest tests/ -q` (~45 s, 1033 tests, doit rester à 0 échec)
 - Carte des invariants et de leurs gardiens : `AUDIT.md` (à lire avant
   d'ajouter un sport, un fournisseur IA, une route ou un workflow)
 - Lint : `python -m pyflakes $(git ls-files '*.py')` (actuellement propre)
@@ -165,5 +165,16 @@ Tout le calcul tourne en crons GitHub Actions ; le dashboard est en lecture seul
   taxe sont désormais rendus en une phrase française (« il faut 57 % pour
   être rentable, et 85 paris ne suffisent pas à le prouver »). Ne pas
   supprimer cette ligne en croyant simplifier : c'est une garde de sûreté.
+- Wiz — REQUÊTES : jamais de phrase en ET (5 mots ⇒ 0 résultat Google News),
+  jamais le vocabulaire des pages de preview (« team news lineup » EST leur
+  titre SEO — la requête ramenait 100 % de bruit et Wiz sortait INDISPONIBLE
+  partout), jamais de date en terme de recherche (`when:Nd` le fait déjà,
+  côté moteur). Forme : `{match} (motA OR motB)`. Le vocabulaire ET la locale
+  du flux suivent la langue de la presse locale, déduite du pays préfixant
+  `signals.league` (`wiz_engine.press_lang`) — les deux ensemble ou rien :
+  des mots espagnols dans l'index `en-US` rendent ZÉRO source. Mesuré :
+  3 % → 23 % de sources porteuses de faits. Gardiens :
+  `tests/test_wiz_engine.py::TestLangueDeLaPresse`,
+  `tests/test_wiz_sources.py::TestLocaleDuFlux`.
 - Sub-agent `predator-diagnostician` pour tout audit pipeline/santé (isole les
   gros logs hors de la conversation principale).
