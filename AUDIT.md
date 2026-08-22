@@ -312,6 +312,21 @@ Mesuré le 2026-08-22, avec la méthode :
 - **Les 6 fournisseurs IA non câblés** portent tous un `terms_flag`
   (`payment_required`, `non_commercial`, `evaluation`, `quota_zero`) — ils
   sont exclus de `PRODUCTION_SAFE` **exprès**, ce n'est pas un oubli.
+- **Les `terms_flag` du registre sont confirmés PAR L'INFÉRENCE RÉELLE**
+  (`python scripts/ops.py ai`, 2026-08-22) — pas par lecture de catalogue,
+  qui ne prouve rien. Chaque fournisseur marqué échoue bien comme annoncé :
+
+  | Fournisseur | `terms_flag` | Réponse réelle |
+  |---|---|---|
+  | cerebras, chutes, sambanova | `payment_required` | **HTTP 402** |
+  | scaleway | `quota_zero` | **HTTP 429** INSUFFICIENT QUOTA |
+  | cohere, upstage | `non_commercial` / `evaluation` | OK — mais exclus de la production **exprès** |
+  | gemini, cloudflare, openrouter, ollama_cloud | *(aucun)* | **OK** |
+
+  Le registre dit donc la vérité sur le terrain. Seule nouveauté :
+  `ZHIPU_API_KEY` rend **401 « token expired or incorrect »** — la clé est
+  périmée. Impact nul (Zhipu est `non_commercial`, donc hors production), à
+  renouveler ou à retirer du `.env` au choix de l'opérateur.
 - **`team_aliases`** existe en base (12 lignes) : la migration `v10_3` est
   bien appliquée, contrairement à ce que `CLAUDE.md` laissait entendre.
 - **Aucun TODO/FIXME/HACK** dans le code de production.
