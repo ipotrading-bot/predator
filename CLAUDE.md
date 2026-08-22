@@ -6,7 +6,9 @@ Tout le calcul tourne en crons GitHub Actions ; le dashboard est en lecture seul
 
 ## Commandes
 
-- Tests : `python -m pytest tests/ -q` (~35 s, doit rester à 0 échec)
+- Tests : `python -m pytest tests/ -q` (~45 s, 1012 tests, doit rester à 0 échec)
+- Carte des invariants et de leurs gardiens : `AUDIT.md` (à lire avant
+  d'ajouter un sport, un fournisseur IA, une route ou un workflow)
 - Lint : `python -m pyflakes $(git ls-files '*.py')` (actuellement propre)
 - Dashboard local : skill `predator-dashboard-check` (mode démo sans credentials)
 - Piloter Supabase/Vercel : `python scripts/ops.py doctor|status|supabase …|vercel …`
@@ -63,9 +65,12 @@ Tout le calcul tourne en crons GitHub Actions ; le dashboard est en lecture seul
   (7M = source de NOMS anglais, pas de cotes — aucun endpoint de cotes gratuit),
   `core/prediction_markets.py` (Kalshi/Polymarket, rôle consensus).
   Nowgoal/win007 = MORTE depuis les runners (DNS), ne pas réessayer.
-  Dictionnaire `team_aliases` (`sql/migrate_v10_3_team_aliases.sql`, À APPLIQUER) :
+  Dictionnaire `team_aliases` (`sql/migrate_v10_3_team_aliases.sql`) :
   clé = identifiant numérique de la source, pas le libellé ; un nom résolu ne
-  repasse jamais par l'IA. Migration APPLIQUÉE le 2026-08-22.
+  repasse jamais par l'IA. Migration APPLIQUÉE le 2026-08-22 — vérifié en base
+  le même jour (table présente, 12 lignes). L'ancienne mention « À APPLIQUER »
+  contredisait la ligne suivante ; une consigne qui se contredit fait rejouer
+  une migration déjà passée.
   Câblage : `core/free_sources.py` (appelé EN DERNIER par harvester.fetch_matches,
   car il se mesure contre les sources déjà collectées). odds500 démarre en MODE
   OMBRE → rend [] tant qu'il n'a pas 100 matchs appariés à <2 pts de divergence :
@@ -109,5 +114,31 @@ Tout le calcul tourne en crons GitHub Actions ; le dashboard est en lecture seul
   Un catalogue lisible ne prouve RIEN : Cerebras/SambaNova/Chutes rendent 200 sur
   /models et 402 à l'inférence ; Scaleway rend 429 quota-zéro. `ops.py ai` fait le
   vrai appel — c'est le seul diagnostic qui tranche.
+- LISTES QUI DIVERGENT = la panne la plus fréquente de ce dépôt (3 occurrences
+  le 2026-08-22, toutes silencieuses). Un fournisseur IA sans clé est ignoré
+  SANS ERREUR — propriété désirable, mais elle laisse une capacité morte des
+  mois. Ne JAMAIS tenir à la main une liste qui existe déjà ailleurs : soit on
+  la dérive (`ops.py::_AI_SECRETS` ← `REGISTRY`, tables sport injectées dans
+  les templates), soit un test la compare à sa source. Gardiens :
+  `tests/test_workflow_secrets.py` (clés IA × workflows × `ops.py` ×
+  `.env.example`, bornes de durée, version de Python unique) et
+  `tests/test_dashboard_sports.py` (sport → emoji/libellé/ordre).
+  AVANT d'ajouter un fournisseur, un sport ou un workflow : lire AUDIT.md §2.
+- Le dashboard écrit DEUX fois : `/api/scan` (demande de scan dans `meta`,
+  cooldown 120 s) et `/api/audit/run` (déclenche `audit.yml`). Cette dernière
+  exige `DASHBOARD_ADMIN_TOKEN` et ÉCHOUE FERMÉ depuis le 2026-08-22 — elle
+  était ouverte à tout Internet. Ne pas « réparer » son 401 en retirant la
+  garde.
+- Une version, un seul endroit : `DASHBOARD_VERSION` (`api/index.py`), injectée
+  dans les 6 templates et rendue par `/api/health`. Ne jamais réécrire un
+  numéro de version dans un pied de page.
+- Wiz — sources : `gather()` FUSIONNE Google News et Bing (jamais « la première
+  qui répond » : Google répond toujours, donc Bing ne serait jamais interrogé),
+  puis trie LES FAITS D'ABORD avant de tronquer à `MAX_TOTAL`. Google News ne
+  rend que des titres nus (sa `<description>` RSS recopie le titre) ; sans ce
+  tri, le plafond gardait 58 % de titres sans fait et jetait les extraits de
+  Bing — mesuré 5/12 items porteurs de faits, 10/12 après. Un modèle à qui l'on
+  sert des titres répond INDISPONIBLE, et il a raison. Gardé par
+  `tests/test_wiz_sources.py::TestLesFaitsDabord`.
 - Sub-agent `predator-diagnostician` pour tout audit pipeline/santé (isole les
   gros logs hors de la conversation principale).

@@ -1,51 +1,309 @@
-# AUDIT — PREDATOR (Phase 1, lecture seule, 2026-08-20)
+# AUDIT — PREDATOR
 
-## Cartographie
+> **Document de référence.** Il enregistre ce qui a été vérifié, ce qui a été
+> corrigé, et surtout **quel test garde quel invariant**. Quand un doute
+> revient sur l'équilibre du système, c'est ici qu'on regarde avant de
+> rouvrir le code.
+>
+> Règle de tenue : on n'écrit ici que ce qui a été **mesuré**. Une hypothèse
+> non vérifiée est marquée comme telle. Un document d'audit qui affirme sans
+> preuve fait exactement le dégât qu'il prétend éviter.
 
-- **Stack** : Python 3.11, Flask (dashboard Vercel serverless), Supabase (PostgreSQL), GitHub Actions (11 workflows cron/manuels), pytest.
-- **Points d'entrée** : `run_engine.py` (scan), `run_audit.py` (settlement), `run_wiz.py`, `run_rapport.py`, `run_closing_line.py`, `run_monte_carlo.py`, `backfill_ledger.py`, `api/index.py` (dashboard), `validator.py` (health-check manuel), `scripts/*` (outils ponctuels).
-- **État général** : sain. **483 tests, 0 échec** (36 s). Aucune dépendance inutilisée (6/6 entrées de `requirements.txt` importées). Aucun import cassé, aucun cache/build committé, pas de node_modules. Repo 7,2 Mo dont ~1 Mo d'icônes PWA.
+Dernière passe : **2026-08-22**. État à la clôture : **1012 tests, 0 échec**,
+pyflakes propre, les 6 pages du dashboard rendent (smoke test local).
 
-## SUPPRIMER (attente de validation)
+---
 
-| Item | Justification |
+## 1. La classe de bug qui domine ce dépôt
+
+Trois des cinq défauts sérieux trouvés le 2026-08-22 sont **la même panne** :
+une liste tenue à la main qui a divergé de sa source, sans qu'aucune erreur
+ne soit levée.
+
+| Liste | A divergé de | Conséquence mesurée |
+|---|---|---|
+| Clés IA dans `wiz.yml` | `core/ai_router.py` | Tout le repli de Wiz partait sur Groq — le workflow contournait la réserve settlement qu'il prétendait protéger |
+| Clés IA dans les 7 workflows | `PRODUCTION_SAFE` | OVH et SiliconFlow inatteignables : 2 fournisseurs sur 9 morts en production |
+| `_AI_SECRETS` dans `scripts/ops.py` | `REGISTRY` | `secrets-push` sautait `OVH_AI_API_KEY` en silence |
+| Tables sport→emoji dans `index.html` | `api/index.py` | 3 sports actifs affichés « 🎯 rugbyleague » |
+| 6 pieds de page + `/api/health` | (aucune source) | 6 numéros de version différents sur 6 onglets |
+
+**Pourquoi c'est coûteux ici en particulier.** `core/ai_router.py` ignore
+silencieusement un fournisseur sans clé — et c'est sa propriété *désirable* :
+un palier gratuit qui ferme ne doit pas casser un run. La contrepartie, c'est
+qu'une capacité peut rester morte des mois sans un log, sans un test rouge.
+La suite de tests ne pouvait rien voir : **le code était correct**, c'est le
+câblage qui manquait.
+
+**La parade retenue** — ne plus jamais tenir ces listes à la main. Soit elles
+sont dérivées de leur source (`_AI_SECRETS`, tables sport injectées dans les
+templates), soit un test compare la copie à la source à chaque exécution.
+
+---
+
+## 2. Invariants et leur gardien
+
+C'est le tableau à consulter avant de toucher à quoi que ce soit.
+
+| Invariant | Gardien |
 |---|---|
-| `api/static/logo.jpg` (84 Ko) | Référencé nulle part — les templates utilisent `icons/icon-96.png` ; asset orphelin. |
-| `.vercel-build-trigger` | Artefact ponctuel du 07/05 pour forcer un rebuild Vercel ; plus aucun rôle. |
+| Tout fournisseur `PRODUCTION_SAFE` est câblé dans **tout** workflow qui fait de l'IA | `tests/test_workflow_secrets.py::test_tout_fournisseur_de_production_est_cable` |
+| Les workflows IA ne divergent pas entre eux | `…::test_les_workflows_ia_ne_divergent_pas_entre_eux` |
+| `CLOUDFLARE_API_TOKEN` ne va jamais sans `CLOUDFLARE_ACCOUNT_ID` | `…::test_cloudflare_a_son_identifiant_de_compte` |
+| Aucune clé d'API inconnue du registre (attrape la faute de frappe) | `…::test_aucune_cle_ia_inconnue_du_registre` |
+| `ops.py::_AI_SECRETS` couvre tout le registre | `…::test_secrets_push_couvre_tout_le_registre` |
+| `secrets-push` n'emporte **pas** les clés d'opérateur vers les runners | `…::test_secrets_push_nemporte_pas_les_cles_operateur` |
+| `.env.example` documente tout credential réellement lu | `…::test_env_example_documente_les_credentials_reellement_lus` |
+| Tout fournisseur du registre est documenté dans `.env.example` | `…::test_tout_fournisseur_du_registre_est_documente…` |
+| Chaque job GitHub a une borne de durée | `…::test_chaque_job_a_une_borne_de_duree` |
+| Une seule version de Python dans tout le dépôt | `…::test_une_seule_version_de_python` |
+| Tout sport actif a emoji + libellé + libellé court + ordre | `tests/test_dashboard_sports.py::test_tout_sport_actif_est_couvert` |
+| Les sports retirés gardent leur emoji (lignes historiques) | `…::test_les_sports_retires_gardent_leur_emoji` |
+| `index.html` ne redéfinit pas les tables sport en dur | `…::TestPasDeTableDupliquee` |
+| Tout sport scanné a un seuil d'edge par défaut | `…::test_les_seuils_appris_couvrent_le_meme_perimetre` |
+| `/api/audit/run` échoue **fermé** sans jeton | `tests/test_api_admin_auth.py::test_sans_jeton_configure_la_route_refuse` |
+| Le jeton ne se devine pas préfixe par préfixe | `…::test_bon_prefixe_mais_jeton_tronque_refuse` |
+| Les refus sont indiscernables entre eux | `…::test_la_reponse_ne_dit_pas_pourquoi` |
+| Aucune exception brute ne part dans une réponse HTTP | `…::TestPasDeFuiteDansLesReponses` |
+| `/api/health` répond base injoignable et ne publie aucun secret | `…::TestSondeDeSante` |
+| Un verdict Wiz `INDISPONIBLE` est rejoué, un verdict réel non | `tests/test_wiz_retry.py` |
+| Les sources porteuses de faits survivent à la troncature de Wiz | `tests/test_wiz_sources.py::TestLesFaitsDabord` |
+| Les deux sources gratuites de Wiz sont fusionnées, pas mises en concurrence | `…::test_les_deux_sources_gratuites_sont_fusionnees` |
 
-C'est tout. Pas de code mort détecté : chaque module de `core/` est importé par au moins un point d'entrée ou test ; `validator.py` est un outil manuel documenté comme volontairement non importé.
+L'**invariant des sport-keys** (4 fichiers : `core/odds_api.py`,
+`core/learning_layer.py`, `api/index.py`, `core/wiz_engine.py`) est décrit
+dans `CLAUDE.md` ; son maillon d'affichage est tenu par
+`tests/test_dashboard_sports.py`. Vérifié propre sur les 4 fichiers le
+2026-08-22.
 
-## CORRIGER
+---
 
-| Item | Justification |
-|---|---|
-| 10 findings pyflakes (imports/variables inutilisés) | `core/ai_search.py:29` (json), `core/harvester.py:24` (SPORT_LABELS), `core/odds_api.py:359` (quota_remaining), `core/settlement.py:128` (scanned), `run_engine.py:445` (MIN_EDGE), `run_monte_carlo.py:10` (sys), `scripts/probe_xbet_sports.py:24`, `scripts/rank_sports.py:20`, `tests/test_odds_api_preflight.py:14`, `tests/test_tax_engine.py:14`. Trivial, zéro risque comportemental. |
-| `.env.example` périmé | Sections 7/8/9/11 (`NEWS_API_KEY`, `PERPLEXITY_API_KEY`, `HISTORICAL_ODDS_KEY`, `BETTERSTACK_*`) et `PREDATOR_SECRET`/`API_SECRET_KEY` : **aucun code ne les lit**. Section 12 référence un `config.py` inexistant ; la checklist cite `pulse_hunter.yml` inexistant. `GITHUB_PAT`, lui, est bien lu (`api/index.py`). |
-| Doc drift `.claude/skills/` | `predator-pipeline` et `predator-dashboard-check` affirment « no test suite / no automated tests » — faux depuis `tests/` (483 tests) + `tests.yml`. Une skill qui ment fait prendre de mauvaises décisions de diagnostic. |
-| `validator.py` en-tête « v8.5 » | Cosmétique — le repo est en v10.x. |
+## 3. Corrections du 2026-08-22 (avec la preuve)
 
-## REFACTORER (optionnel — recommandation : ne pas toucher maintenant)
+### 3.1 `/api/audit/run` était ouverte à tout Internet — `28afaa4`
 
-| Item | Justification |
-|---|---|
-| `run_engine.py` (1 840 lignes), `core/harvester.py` (977), `core/learning_layer.py` (941), `api/index.py` (901) | Gros mais couverts par les tests et stables ; découper un moteur qui gagne de l'argent pour un critère de taille = risque > gain. |
-| Nav bar + `<head>` dupliqués dans les 6 templates | Un `base.html` Jinja éliminerait la duplication, mais chaque template a des variations de style volontaires (couleurs par page) ; à faire seulement si on retouche le dashboard de toute façon. |
+`POST /api/audit/run` déclenchait `audit.yml` : 45 min de runner, le
+settlement, et la consommation de la réserve IA gardée en négatif exprès.
+**Aucune authentification, aucun cooldown, aucune limite de débit**, sur une
+URL Vercel publique. Aucune interface du dépôt ne l'appelle — elle n'était
+connue que de la table du README. Une boucle `curl` anonyme épuisait le quota.
 
-## GARDER (faux positifs du template d'audit)
+Le coût est documenté : incident du 10→20 août 2026, dix jours sans signal.
 
-- `sql/migrate_*.sql` (18 fichiers) — migrations manuelles, seule trace du schéma ; jamais supprimer.
-- `reports/edge_frequency_audit.md` — rapport d'analyse committé volontairement (généré par `scripts/edge_frequency_audit.py`).
-- Icônes PWA (10 fichiers, ~1 Mo) — toutes listées dans `manifest.json`. Candidates à une **compression lossless en Phase 4** (icon-512 fait 432 Ko, ~4× trop lourd), pas à la suppression.
-- Entrées `ui/.next` etc. dans `.gitignore` pour un dossier inexistant — inoffensif.
-- `_SPORT_EMOJI`/`_SPORT_LABEL` superset dans `api/index.py` — documenté comme volontaire.
+Corrigé par un jeton `DASHBOARD_ADMIN_TOKEN` en **échec fermé**. C'est le
+point qui compte : la forme du bug d'origine était « pas de PAT → 503 », donc
+« PAT présent → ouvert à tous ». Comparaison par `hmac.compare_digest`, refus
+indiscernables.
 
-## Poids (top 10 hors .git)
+> ⚠️ **Changement de comportement assumé** : la route ne répond plus tant que
+> le jeton n'est pas posé dans les variables d'environnement Vercel.
 
-icon-512.png 432 Ko · icon-384.png 248 Ko · run_engine.py 92 Ko · logo.jpg 84 Ko (orphelin) · icon-192.png 68 Ko · learning_layer.py 48 Ko · icon-152.png 44 Ko · predator.css 44 Ko · api/index.py 44 Ko · system.html 40 Ko.
+### 3.2 Deux fournisseurs IA inatteignables + trois listes divergentes — `37f4de0`
 
-## Phases suivantes — périmètre réel
+Voir §1. En corrigeant, le test neuf a immédiatement trouvé un défaut que la
+lecture n'avait pas vu : **`.python-version` annonçait 3.12** contre 3.11
+partout ailleurs (interpréteur local 3.11.15, `CLAUDE.md`, `vercel.json`, les
+14 workflows). Vercel lit ce fichier pour choisir son runtime : le dashboard
+pouvait être servi par un interpréteur sur lequel rien n'est testé.
 
-- **Phase 2 (nettoyage)** : 2 fichiers à supprimer + toilettage `.env.example`. Rien à désinstaller.
-- **Phase 3 (corrections)** : les 10 pyflakes + doc drift des skills. **Aucun bug fonctionnel identifié.** La gestion d'erreurs réseau existe déjà partout (politique « retourne [] sans crash », documentée et testée).
-- **Phase 4 (perf)** : **fait le 2026-08-20** — icônes PWA passées de 916 Ko à 360 Ko (−61 %, pngquant qualité 85–98 + optipng, vérifié visuellement indiscernable). icon-512 : 432→154 Ko. Pas de bundle JS ni lazy loading applicable — stack Python/Jinja.
-- **Phase 5 (setup Claude)** : **déjà en place à 80 %** — 2 skills projet, 1 subagent (`predator-diagnostician`), hooks (`dashboard_smoketest.sh`, `settings.json`). Manquant : un `CLAUDE.md` racine. Les 4 sub-agents génériques du template (code-reviewer, test-runner…) feraient doublon avec `/code-review`, le hook de smoke-test et `tests.yml` — déconseillé.
+`.env.example` — dont tout le propos est « copiez-moi en `.env` » — omettait
+10 credentials réellement lus : les 5 variables Betfair et tout le bloc de
+`scripts/ops.py`, alors que `CLAUDE.md` présente `ops.py` comme *la* façon de
+piloter Supabase et Vercel. La commande documentée était inutilisable après
+une copie propre.
+
+### 3.3 Dashboard : nav amputée, version qui ment, tables dupliquées — `ec2cacf`
+
+- **`/ledger` et `/audit` n'étaient atteignables sur mobile par aucun lien** —
+  `.nav-pages` est masquée sous 640 px et la barre du bas ne portait que 4
+  entrées sur 6. Deux pages entières injoignables au doigt.
+- Six pieds de page, six versions (`v8.5`, `v8.6`, `v8.8`, `v9.4`, `v10.0`,
+  `v1.0`) + `« 8.8 »` en dur dans `/api/health`. Désormais `DASHBOARD_VERSION`,
+  une seule définition, injectée par un `context_processor`.
+- `/api/signals` ne filtrait pas les matchs commencés alors que les trois
+  autres consommateurs le faisaient. **Mesuré en base le 2026-08-22 : 37
+  signaux actifs, dont 23 déjà commencés — 62 % de lignes non jouables.**
+  Règle extraite dans `_is_playable()`, partagée ; `?all=1` pour le
+  diagnostic.
+- `Cache-Control` : `no-store` gardé sur les **pages** (un signal périmé
+  affiché comme actif est un faux pari), 10 min sur `/static` qui était
+  re-téléchargé à chaque navigation.
+
+### 3.4 Une cote ronde était lue comme absente — `328c0ec`
+
+`core/oracle.py` exigeait `\d+\.\d+`, point décimal obligatoire. Or un modèle
+sérialise très souvent une cote ronde sans décimale (`"draw": 3`,
+`"price": 2`). Le motif ne matchait pas, la fonction rendait `(None, None)`,
+et **le prix sharp était perdu en silence** sur le chemin du settlement —
+pour la seule raison que la cote tombait juste.
+
+### 3.5 MMA/boxe cherchaient des « compositions » — `f0b620c`
+
+Depuis la refonte du périmètre, MMA et boxe sont sur flux OddsAPI réel, donc
+émis, donc analysés par Wiz. `_SPORT_QUERY_A` n'avait pas d'entrée pour eux :
+requête générique « team news lineup injuries ». Dans un sport de combat,
+« composition » et « absences » n'existent pas — ce qui déplace la cote c'est
+la pesée ratée, le remplaçant de dernière minute, le changement de catégorie.
+
+### 3.6 README : un produit qui n'existe pas — `README.md`
+
+Vérification poste par poste contre le code. **Sept éléments annoncés
+n'existent nulle part dans le dépôt** : console de log « style Matrix »,
+courbes Chart.js, intégration QuantStats, export PDF, ticker de news, ratios
+Sortino/Calmar, monitoring BetterStack.
+
+Le plus grave était chiffré : le README annonçait **« Kelly 25 % »** avec la
+formule `Mise = Bankroll × (Edge / Odds) × 0.25`. Le code applique 0.08–0.15
+selon le sport (`KELLY_FRACTION`). **Faux dans un rapport de 2 à 3.** Sur un
+système de mise, un chiffre de documentation faux ne fait pas perdre du
+temps : il fait perdre de l'argent.
+
+Également retirés : « Max Drawdown 15 % (hard stop) » et « Stop Loss dynamique
+selon volatilité » (aucune constante, aucun code), et le tableau de valeurs
+cibles (Win Rate > 65 %, Sharpe > 2.0, Sortino > 2.5, Profit Factor > 2.0)
+dont **rien n'était calculé** — `sharpe` n'apparaît que dans un commentaire.
+
+### 3.7 Wiz : le correctif des sources ramenait des faits, le plafond les jetait
+
+Trouvé en **mesurant les sources en réseau réel**, pas en lisant le code.
+
+`core/wiz_sources.py::gather()` fusionne Google News et Bing News, déduplique,
+puis tronque à `MAX_TOTAL = 12`. Or `FREE_SOURCES` commence par Google News —
+qui couvre presque tous les matchs mais dont **tous** les items sont des
+titres nus : sa `<description>` RSS recopie le titre, et `_echoes_title()` en
+vide donc le contenu. `keep()` empilant dans l'ordre des sources, la
+troncature finale **gardait en priorité ce qui ne porte aucun fait**.
+
+Mesuré sur Espanyol–Real Madrid, deux requêtes, avant correction :
+
+| | items rendus | dont porteurs de faits |
+|---|---|---|
+| avant | 12 | **5 (42 %)** |
+| après | 12 | **10 (83 %)** |
+
+Les 7 titres nus occupaient 58 % du prompt pour n'y annoncer que leur propre
+titre, et la troncature faisait tomber **tous** les extraits de la seconde
+requête. Un modèle à qui l'on sert majoritairement des titres répond
+`INDISPONIBLE` — et c'est la bonne réponse de sa part : on ne lui avait rien
+donné à lire.
+
+Correction : tri **stable** « les faits d'abord » avant la troncature. Les
+titres nus ne sont pas supprimés (un titre « X forfait » informe), ils passent
+après. Gardé par `tests/test_wiz_sources.py::TestLesFaitsDabord`.
+
+> Ceci n'annule pas §5.1 : la cause racine de l'`INDISPONIBLE` en production
+> peut être ailleurs (Mistral, quota). Ce défaut-ci est **mesuré et corrigé** ;
+> il reste à voir ce que le run de 16:15 UTC produit.
+
+---
+
+## 4. Vérifié sain (ne pas re-diagnostiquer)
+
+Mesuré le 2026-08-22, avec la méthode :
+
+- **Invariant des sport-keys** — les 4 fichiers couvrent les 10 sports actifs,
+  0 manquant.
+- **Routes ↔ liens ↔ assets** — les 13 routes Flask répondent ; tous les
+  `href`/`src` locaux des 6 pages résolvent en 200 ; aucun résidu Jinja ni
+  trace d'exception dans le HTML rendu. Les 6 pages portent 6 entrées de nav
+  avec le bon état actif.
+- **Garde des sports retirés** — dernière émission `esports` le 2026-08-05 et
+  `tabletennis` le 2026-08-02, toutes deux **antérieures** au retrait du
+  2026-08-22. La garde de `_emit` tient.
+- **Les 6 fournisseurs IA non câblés** portent tous un `terms_flag`
+  (`payment_required`, `non_commercial`, `evaluation`, `quota_zero`) — ils
+  sont exclus de `PRODUCTION_SAFE` **exprès**, ce n'est pas un oubli.
+- **`team_aliases`** existe en base (12 lignes) : la migration `v10_3` est
+  bien appliquée, contrairement à ce que `CLAUDE.md` laissait entendre.
+- **Aucun TODO/FIXME/HACK** dans le code de production.
+- **14 workflows, YAML valide**, tous bornés en durée, tous en Python 3.11.
+- Les 2 fichiers orphelins de la Phase 1 (`api/static/logo.jpg`,
+  `.vercel-build-trigger`) ont bien été supprimés.
+
+---
+
+## 5. Ouvert / non vérifié
+
+Honnêteté du document : ce qui suit n'est **pas** réglé.
+
+### 5.1 Wiz rend 99 % d'INDISPONIBLE — correctif non encore exercé
+
+Mesuré en base : sur 7 jours, **87 `INDISPONIBLE` pour 1 verdict réel**. Le
+2026-08-22 : **42 sur 42**.
+
+Deux correctifs sont partis aujourd'hui — les sources qui portent des faits
+(`9bd8a6b`, 15:05 UTC) et les clés du routeur IA passées à `wiz.yml`
+(`f0b620c`). **Le dernier run Wiz date de 14:35 UTC, donc AVANT les deux.**
+Les 42 échecs du jour précèdent tous le correctif : ils ne prouvent ni son
+succès ni son échec.
+
+→ **À vérifier après le run de 16:15 UTC** (cron `15 */2 * * *`) :
+```bash
+python scripts/ops.py supabase sql \
+  "select verdict, count(*) from wiz_analysis \
+   where analyzed_at > '2026-08-22T16:00:00Z' group by 1"
+```
+Si le taux d'INDISPONIBLE reste à 100 %, le problème n'est ni les sources ni
+les clés, et il faut repartir de `python -m core.wiz_ai`.
+
+**Ce qui a été mesuré localement depuis** (2026-08-22, réseau réel, sans clé
+Mistral) : les deux sources gratuites répondent bien. `google_news` rend 5
+items à **0 caractère** de contenu, `bing_news` rend de vrais extraits de
+119–203 caractères. La brique « sources » n'est donc **pas** morte — mais
+elle souffrait du défaut §3.7, désormais corrigé (42 % → 83 % d'items
+porteurs de faits). Ce qui reste non vérifié est la brique **Mistral**
+(`core/wiz_ai.py`), non testable ici : `MISTRAL_API_KEY` n'est ni dans le
+`.env` local ni dans `app_secrets` — elle ne vit que dans les secrets GitHub.
+
+### 5.2 Deux clés production-safe ne sont pas encore obtenues
+
+`OVH_AI_API_KEY` et `SILICONFLOW_API_KEY` sont désormais **câblées** dans les
+7 workflows, mais aucun secret n'existe côté GitHub ni dans le `.env` local.
+Le câblage est inoffensif (clé absente = fournisseur ignoré) et deviendra
+actif le jour où l'opérateur ouvre les comptes. Rien à faire si ce n'est
+souhaité — c'est de la capacité de repli, pas un manque.
+
+### 5.3 `DASHBOARD_ADMIN_TOKEN` doit être posé sur Vercel
+
+Tant qu'il ne l'est pas, `/api/audit/run` refuse (c'est voulu). Aucune
+interface ne l'appelle, donc rien d'autre n'est affecté.
+```bash
+python -c "import secrets; print(secrets.token_urlsafe(32))"
+python scripts/ops.py vercel env set DASHBOARD_ADMIN_TOKEN <jeton> production
+```
+
+### 5.4 Non traité délibérément
+
+- **Découpage des gros fichiers** (`run_engine.py`, `core/ai_router.py` 1086 l.,
+  `core/learning_layer.py` 1085 l., `api/index.py` ~1050 l.) — couverts par
+  les tests et stables. Découper un moteur qui gagne de l'argent pour un
+  critère de taille : risque > gain.
+- **`base.html` Jinja** pour les 6 templates — la duplication du `<head>` et
+  de la nav est réelle, mais chaque page a des variations de style voulues.
+  À faire seulement si on retouche le dashboard pour une autre raison. La nav
+  du bas, elle, est désormais identique partout (vérifiée par smoke test).
+- **Entrées mortes de `.env.example`** (`NEWS_API_KEY`, `PERPLEXITY_API_KEY`,
+  `BETTERSTACK_*`, `PREDATOR_SECRET`…) — conservées **exprès**, chacune avec
+  une mention `⚠️ UNUSED` datée. Elles servent de pierre tombale : sans
+  elles, quelqu'un les réintroduit de bonne foi.
+
+---
+
+## 6. Comment refaire cet audit
+
+```bash
+python -m pytest tests/ -q                      # doit rester à 0 échec
+python -m pyflakes $(git ls-files '*.py')       # doit rester vide
+python scripts/ops.py doctor                    # credentials
+python scripts/ops.py status                    # santé pipeline en un écran
+python scripts/ops.py ai                        # INFÉRENCE réelle par fournisseur
+python scripts/ops.py sources                   # chaque source de cotes
+```
+
+Le dashboard ne se vérifie **que** par rendu réel — la suite de tests ne rend
+aucun template et n'appelle aucune route Flask. Utiliser la skill
+`predator-dashboard-check`.
+
+> `python scripts/ops.py ai` est le seul diagnostic qui tranche pour l'IA :
+> un catalogue lisible ne prouve rien (Cerebras/SambaNova/Chutes rendent 200
+> sur `/models` et 402 à l'inférence ; Scaleway rend 429 quota-zéro).

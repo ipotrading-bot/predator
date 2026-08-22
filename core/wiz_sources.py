@@ -304,6 +304,26 @@ def gather(queries: list[str]) -> list[dict]:
         if not servie:       # aucune source gratuite n'a rien pour cette requête
             keep(_fetch(_tavily, query))
 
+    # LES FAITS D'ABORD, PUIS on tronque (2026-08-22).
+    #
+    # `results` est empilé dans l'ordre des sources, et FREE_SOURCES commence
+    # par Google News — qui couvre presque tout mais dont TOUS les items sont
+    # des titres nus (`_echoes_title` leur vide le contenu). Tronquer à la fin
+    # gardait donc en priorité ce qui ne porte aucun fait, et jetait les
+    # extraits de Bing des requêtes suivantes.
+    #
+    # Mesuré sur un match réel, deux requêtes, avant correction : 12 items
+    # rendus, 5 seulement avec du contenu — les 7 autres occupaient 58 % du
+    # prompt pour n'y annoncer que leur propre titre, et les extraits de la
+    # 2e requête tombaient entièrement sous le plafond. Un modèle à qui l'on
+    # sert majoritairement des titres répond INDISPONIBLE, et c'est la bonne
+    # réponse : on ne lui avait rien donné à lire.
+    #
+    # Tri STABLE : à contenu égal l'ordre d'origine est conservé (pertinence
+    # de la source, ordre des requêtes). Les titres nus ne sont pas
+    # supprimés — ils gardent une valeur de signal (un titre « X forfait »
+    # informe) — ils passent simplement APRÈS ce qui porte un fait.
+    results.sort(key=lambda r: 0 if (r.get("content") or "").strip() else 1)
     return results[:MAX_TOTAL]
 
 

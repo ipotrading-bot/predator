@@ -135,7 +135,82 @@ class TestCascadeOrder:
                                      "content": "Le gardien titulaire est forfait."}])
         monkeypatch.setattr(ws, "_tavily", lambda *a, **k: pytest.fail("le gratuit a répondu"))
         urls = [r["url"] for r in ws.gather(["q1"])]
-        assert urls == ["https://gnews/1", "https://bing/1"]
+        # L'objet de ce test est la FUSION, pas l'ordre — celui-ci est fixé
+        # par la règle « les faits d'abord » (voir la classe ci-dessous).
+        assert set(urls) == {"https://gnews/1", "https://bing/1"}
+
+
+class TestLesFaitsDabord:
+    """`gather()` trie les items porteurs de contenu AVANT de tronquer.
+
+    MESURÉ EN LIVE le 2026-08-22 sur Espanyol–Real Madrid, deux requêtes :
+    `gather()` rendait 12 items dont 5 seulement portaient un contenu. Les 7
+    autres — tous de Google News, dont `_echoes_title` vide la description
+    parce qu'elle recopie le titre — occupaient 58 % du prompt sans y
+    apporter un seul fait, ET la troncature à MAX_TOTAL faisait tomber les
+    extraits de la seconde requête.
+
+    Google News passe en premier dans FREE_SOURCES (il couvre presque tous
+    les matchs) ; l'empilement suivait cet ordre et le plafond gardait donc
+    en priorité ce qui ne dit rien. Servir majoritairement des titres à un
+    modèle produit un INDISPONIBLE — et c'est la bonne réponse de sa part :
+    on ne lui avait rien donné à lire.
+    """
+
+    def test_les_extraits_passent_devant_les_titres_nus(self, monkeypatch):
+        _free(monkeypatch,
+              google=lambda *a, **k: [{"url": f"https://g/{i}", "title": "titre"}
+                                      for i in range(5)],
+              bing=lambda *a, **k: [{"url": "https://b/1", "title": "t",
+                                     "content": "Le gardien titulaire est forfait."}])
+        monkeypatch.setattr(ws, "_tavily", lambda *a, **k: [])
+        assert ws.gather(["q1"])[0]["url"] == "https://b/1"
+
+    def test_un_extrait_survit_a_la_troncature(self, monkeypatch):
+        """Le cas mesuré : assez de titres nus pour remplir MAX_TOTAL à eux
+        seuls, et un unique extrait en dernière position."""
+        nus = [{"url": f"https://g/{i}", "title": "titre"}
+               for i in range(ws.MAX_TOTAL + 5)]
+        _free(monkeypatch,
+              google=lambda *a, **k: nus,
+              bing=lambda *a, **k: [{"url": "https://b/1", "title": "t",
+                                     "content": "Fait décisif."}])
+        monkeypatch.setattr(ws, "_tavily", lambda *a, **k: [])
+        res = ws.gather(["q1"])
+        assert len(res) == ws.MAX_TOTAL
+        assert "https://b/1" in [r["url"] for r in res]
+
+    def test_les_titres_nus_ne_sont_pas_supprimes(self, monkeypatch):
+        """Ils gardent une valeur de signal (« X forfait » informe même sans
+        extrait) : on les déclasse, on ne les jette pas."""
+        _free(monkeypatch,
+              google=lambda *a, **k: [{"url": "https://g/1", "title": "titre"}],
+              bing=lambda *a, **k: [{"url": "https://b/1", "title": "t",
+                                     "content": "Fait."}])
+        monkeypatch.setattr(ws, "_tavily", lambda *a, **k: [])
+        assert len(ws.gather(["q1"])) == 2
+
+    def test_lordre_dorigine_est_conserve_a_contenu_egal(self, monkeypatch):
+        """Tri STABLE : la pertinence de la source et l'ordre des requêtes
+        départagent ce qui porte le même niveau de fait."""
+        _free(monkeypatch,
+              google=lambda *a, **k: [
+                  {"url": "https://g/1", "title": "t", "content": "Fait A."},
+                  {"url": "https://g/2", "title": "t", "content": "Fait B."}],
+              bing=lambda *a, **k: [])
+        monkeypatch.setattr(ws, "_tavily", lambda *a, **k: [])
+        assert [r["url"] for r in ws.gather(["q1"])] == ["https://g/1", "https://g/2"]
+
+    def test_un_contenu_vide_compte_comme_un_titre_nu(self, monkeypatch):
+        """`_echoes_title` VIDE le contenu au lieu de retirer l'item : la
+        règle doit reconnaître la chaîne vide et les espaces."""
+        _free(monkeypatch,
+              google=lambda *a, **k: [{"url": "https://g/1", "title": "t",
+                                       "content": "   "}],
+              bing=lambda *a, **k: [{"url": "https://b/1", "title": "t",
+                                     "content": "Fait."}])
+        monkeypatch.setattr(ws, "_tavily", lambda *a, **k: [])
+        assert ws.gather(["q1"])[0]["url"] == "https://b/1"
 
     def test_le_gratuit_qui_ne_rend_que_des_doublons_ne_paie_pas_tavily(self, monkeypatch):
         """Deux requêtes qui remontent les mêmes articles = un succès du
