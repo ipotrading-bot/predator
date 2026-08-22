@@ -312,7 +312,7 @@ _SPORT_EMOJI = {
     "soccer": "⚽", "basketball": "🏀", "tennis": "🎾", "hockey": "🏒",
     "mma": "🥋", "boxing": "🥊", "darts": "🎯", "cricket": "🏏",
     "esports": "🎮", "americanfootball": "🏈", "baseball": "⚾",
-    "euroleague_basketball": "🏀",
+    "euroleague_basketball": "🏀", "college_football": "🏈",
     "rugbyleague": "🏉", "aussierules": "🏉",
     "rugby": "🏉", "volleyball": "🏐", "tabletennis": "🏓", "handball": "🤾",
 }
@@ -320,7 +320,7 @@ _SPORT_LABEL = {
     "soccer": "Football", "basketball": "Basket", "tennis": "Tennis",
     "hockey": "Hockey", "mma": "MMA", "boxing": "Boxe", "darts": "Fléchettes",
     "cricket": "Cricket", "esports": "eSports", "americanfootball": "NFL",
-    "euroleague_basketball": "Euroleague",
+    "euroleague_basketball": "Euroleague", "college_football": "NCAA Football",
     "rugbyleague": "Rugby XIII", "aussierules": "Foot australien",
     "baseball": "MLB", "rugby": "Rugby", "volleyball": "Volley",
     "tabletennis": "Ping-Pong", "handball": "Handball",
@@ -337,7 +337,7 @@ _SPORT_LABEL_SHORT = {
     "soccer": "FOOT", "basketball": "BASKET", "tennis": "TENNIS",
     "hockey": "HOCKEY", "mma": "MMA", "boxing": "BOXE", "darts": "FLÉCHETTES",
     "cricket": "CRICKET", "esports": "eSPORT", "americanfootball": "NFL",
-    "euroleague_basketball": "EUROLEAGUE",
+    "euroleague_basketball": "EUROLEAGUE", "college_football": "NCAAF",
     "rugbyleague": "RUGBY XIII", "aussierules": "AFL",
     "baseball": "MLB", "rugby": "RUGBY", "volleyball": "VOLLEY",
     "tabletennis": "PING", "handball": "HAND",
@@ -347,10 +347,10 @@ _SPORT_LABEL_SHORT = {
 # liste (valeur de repli côté JS), il n'est jamais masqué.
 _SPORT_ORDER = {
     "basketball": 0, "euroleague_basketball": 1, "hockey": 2,
-    "americanfootball": 3, "baseball": 4, "rugbyleague": 5, "aussierules": 6,
-    "esports": 7, "rugby": 8, "tennis": 9, "mma": 10, "volleyball": 11,
-    "tabletennis": 12, "handball": 13, "boxing": 14, "darts": 15,
-    "cricket": 16, "soccer": 17,
+    "americanfootball": 3, "college_football": 4, "baseball": 5,
+    "rugbyleague": 6, "aussierules": 7, "esports": 8, "rugby": 9,
+    "tennis": 10, "mma": 11, "volleyball": 12, "tabletennis": 13,
+    "handball": 14, "boxing": 15, "darts": 16, "cricket": 17, "soccer": 18,
 }
 
 

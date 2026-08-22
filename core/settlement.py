@@ -28,6 +28,8 @@ def fetch_match_result(match_name: str, sport: str, match_date: str = "") -> dic
                  "basketball": "NBA basketball",
                  "euroleague_basketball": "Euroleague basketball",
                  "americanfootball": "NFL american football",
+                 # NCAAF : « NFL » biaiserait la recherche vers la mauvaise ligue
+                 "college_football": "NCAA college football",
                  "tennis": "tennis"}.get(sport, sport)
     context = match_name + (f" (date: {match_date})" if match_date else "")
 

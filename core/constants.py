@@ -165,6 +165,13 @@ KELLY_FRACTION = {
     # Euroleague : mécaniques basketball mais marché nettement moins sharp
     # que la NBA — ne PAS hériter du 0.15 ; 0.12 (niveau soccer/baseball).
     "euroleague_basketball": 0.12,
+    # ── Phase 3 (2026-08-22) — NCAAF + tennis Grand Chelem ────────────
+    # Deux sports choisis pour la même raison : le favori COURT y est la
+    # norme, et c'est la seule tranche que le ledger valide (81 % sous 1,50).
+    # Fraction basse identique pour les deux — « non validé au ledger » vaut
+    # plus que toute intuition de sharpness ; à réévaluer après 30 réglés.
+    "college_football": 0.10,   # NCAAF — lignes moins sharp que la NFL, ne PAS hériter du 0.14
+    "tennis":           0.10,   # Slams + Masters 1000 seulement (clés dynamiques)
 }
 
 # Sports RETIRÉS le 2026-08-22 (mission « recentrage sports ») : prix de

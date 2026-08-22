@@ -9,7 +9,7 @@
 > non vérifiée est marquée comme telle. Un document d'audit qui affirme sans
 > preuve fait exactement le dégât qu'il prétend éviter.
 
-Dernière passe : **2026-08-22**. État à la clôture : **1033 tests, 0 échec**,
+Dernière passe : **2026-08-22**. État à la clôture : **1055 tests, 0 échec**,
 pyflakes propre, les 6 pages du dashboard rendent (smoke test local).
 
 ---
@@ -70,6 +70,10 @@ C'est le tableau à consulter avant de toucher à quoi que ce soit.
 | Aucun mois antérieur à l'époque (août 2026) ne remonte sur /performance | `tests/test_mission2_dashboard_quota.py::test_une_fenetre_elargie_ne_rouvre_pas_juillet` |
 | La fenêtre reste glissante AU-DESSUS de l'époque (pas figée) | `…::test_la_fenetre_reste_glissante_au_dessus_de_lepoque` |
 | L'archivage ne touche jamais un signal `active` | `…::test_le_script_darchivage_de_juillet_existe_et_narchive_pas_a_laveugle` |
+| Tout sport-type servi a Kelly/seuil/quotas/emoji/labels/Wiz — y compris `tennis`, invisible au test statique | `tests/test_new_sports_phase3.py::TestInvariantDesQuatreFichiers` |
+| Les clés tennis sont dynamiques (jamais statiques dans `SPORT_KEYS`/`GOLDEN_SPORT_KEYS`) et injectées dans `fetch_odds` | `tests/test_tennis_discovery.py::TestInjectionDansFetchOdds` |
+| Un seul `GET /sports` par scan (la découverte réutilise la sonde) | `…::test_un_seul_get_sports_par_scan` + `tests/test_odds_api_keypool.py` |
+| NCAAF a son sport-type dédié, Kelly < NFL, contexte de settlement « NCAA » | `tests/test_new_sports_phase3.py::TestNCAAF` |
 | Les sources porteuses de faits survivent à la troncature de Wiz | `tests/test_wiz_sources.py::TestLesFaitsDabord` |
 | Les deux sources gratuites de Wiz sont fusionnées, pas mises en concurrence | `…::test_les_deux_sources_gratuites_sont_fusionnees` |
 | `.python-version` reste sur la version de **Vercel** (3.12), jamais « alignée » sur les workflows | `tests/test_workflow_secrets.py::test_python_version_appartient_a_vercel` |
@@ -383,6 +387,29 @@ La table d'emojis codée en dur dans le template (deux copies, divergentes de
 `api/index.py`) est remplacée par l'injection — même correctif que sur
 `index.html`, même raison (§1). 386 → 286 lignes, 13 règles CSS mortes
 retirées, quatre appels Supabase de moins par chargement.
+
+### 3.11 Périmètre sports : Predator ne parie jamais au-dessus de 2,20 — par construction
+
+À la question « quels sports à plus grosses cotes ? », la mesure a répondu avant l'opinion.
+Sur 254 paris décisifs (ledger + archive), **un seul** au-dessus de 2,20, perdu. Ce n'est pas
+l'échantillon : `SHARP_PROB_BY_MARKET` (`core/paim_engine.py:36-41`) n'accepte que les
+sélections à ≥ 50–55 % de probabilité sharp (cote juste ≤ 2,0), le football ne produit que
+l'AH 0.0 du favori (`core/math_engine.py:200-219`), et le plafond de cote appris
+`_ODDS_CEILINGS` est dormant (commit `1af5ff2`). Et la seule tranche rentable est la plus
+courte : **< 1,50 → 81 % de réussite, +2,2 u ; 1,50–2,20 → 44–48 %, −33 u.**
+
+Conséquence écrite noir sur blanc parce que la question reviendra : **un sport « à grosses
+cotes » ne changerait pas les cotes pariées** — le moteur y chercherait encore le favori, et le
+biais favori-outsider joue contre un bot d'edge-contre-le-sharp. Décision opérateur : doctrine
+inchangée ; on ajoute pour le volume. Les sports choisis sont ceux où le favori court est la
+norme : **NCAAF** (sport-type dédié `college_football`) et **tennis Grand Chelem / Masters**
+(clés OddsAPI dynamiques, infra déjà complète). Détail, coûts, non-retenus :
+`reports/refonte_scope_2026-08.md` §9.
+
+Deux contraintes à garder en tête pour le prochain ajout : le **settlement est une recherche
+web pour tous les sports** (aucune API de scores — un sport aux scores introuvables laisse ses
+signaux `active` pour toujours), et le **catalogue OddsAPI** est sondable gratuitement
+(`/sports`, 175 clés le 2026-08-22 : ni darts, ni snooker, ni golf en match, ni volley).
 
 ---
 

@@ -893,3 +893,81 @@ repliait plus rien depuis des semaines.
    d'usage. Rien ne les active par accident.
 4. **Vérifier SambaNova** : le palier ~200k tokens/j par modèle était documenté sans carte ; la
    sonde publique ne permet pas de confirmer si une carte est désormais exigée.
+
+---
+
+## 9. Phase 3 (2026-08-22, soir) — NCAAF et tennis Grand Chelem
+
+### La question posée, et ce que les données ont répondu
+
+Demande opérateur : « quels autres sports, avec de plus grosses cotes, mieux adaptés à
+predator ? ». Avant de proposer quoi que ce soit, mesure sur le ledger complet (vivant +
+archive, 254 paris décisifs) :
+
+| tranche de cote | n | réussite | P&L (u) |
+|---|---|---|---|
+| < 1,50 | 32 | **81 %** | **+2,2** |
+| 1,50–1,79 | 75 | 48 % | −15,5 |
+| 1,80–2,19 | 146 | 44 % | −17,9 |
+| ≥ 2,20 | 1 | 0 % | −1,0 |
+
+**Predator ne parie jamais au-dessus de 2,20**, et ce n'est pas un hasard d'échantillon :
+`SHARP_PROB_BY_MARKET` (`core/paim_engine.py:36-41`) n'accepte que les sélections à ≥ 50–55 %
+de probabilité sharp, donc cote juste ≤ 2,0 ; en football seul l'AH 0.0 du **favori** est
+produit (`core/math_engine.py:200-219`) ; le plafond de cote appris `_ODDS_CEILINGS` est dormant.
+Un « sport à grosses cotes » ne changerait donc pas les cotes pariées — le moteur y chercherait
+encore le favori. Et le biais favori-outsider joue contre un bot d'edge-contre-le-sharp.
+
+**Décision opérateur** : doctrine inchangée. On ajoute pour le volume et la diversification. La
+seule tranche rentable étant < 1,50, les sports recherchés sont ceux où le **favori court est la
+norme** — l'inverse de la question, mais c'est ce que le ledger dit.
+
+### Deux contraintes structurelles
+
+1. **Settlement = recherche web pour tous les sports** (aucune API de scores dans le dépôt). Un
+   sport n'est ajoutable que si ses scores sont triviaux à trouver.
+2. **Budget OddsAPI** : 500 req/mois/clé, ~14 crédits par scan pour 18 clés. Le pré-vol `/events`
+   est gratuit et rend 0 hors saison : une clé ajoutée ne coûte que les jours où elle a des
+   matchs en fenêtre.
+
+### Ajouté
+
+| sport-key | sport-type | marchés | crédits/scan | Kelly | pourquoi |
+|---|---|---|---|---|---|
+| `americanfootball_ncaaf` | **`college_football`** (dédié) | h2h,spreads,totals | 3, jeu–sam seulement | 0,10 | 50+ matchs/week-end dès fin août, très liquide, « cupcake games » à 1,05–1,30 ; scores triviaux |
+| `tennis_atp_*` / `tennis_wta_*` — **dynamiques** | `tennis` (existant) | h2h,totals | 2 par tournoi actif, ~8–10 sem./an | 0,10 | infra déjà complète (Matchbook id 9, odds-api.io, consensus, settlement) ; favoris 1,10–1,40 aux premiers tours ; 64–128 matchs/tour |
+
+NCAAF a un sport-type **dédié**, pas `americanfootball` — même raisonnement que
+`euroleague_basketball` vs `basketball` : lignes moins sharp que la NFL, Kelly basse tant que non
+validé, et un contexte de settlement qui ne dit pas « NFL » pour un match universitaire.
+
+Tennis : OddsAPI ne le sert pas comme sport permanent — une clé par tournoi, éphémère. Les clés
+sont résolues à chaque `fetch_odds` via le catalogue `/sports` (gratuit), **réutilisant la
+réponse de la sonde de clé** (zéro appel supplémentaire), filtrées sur `TENNIS_TOURNAMENTS`
+(4 Slams + Masters/WTA 1000), injectées dans `keys_to_scan` — ce qui couvre scan normal et
+Golden Hour sans troisième liste. Fenêtre de dépense par préfixe `tennis_`
+(`core/scan_windows._PREFIX_WINDOWS`). Coupe-circuit `TENNIS_DYNAMIC=0`. Vérifié en live le
+2026-08-22 : `tennis_atp_cincinnati_open` + `tennis_wta_cincinnati_open` découverts, rien d'autre.
+
+### Non retenus — pour ne pas y revenir
+
+- **Ligues de football supplémentaires** : zéro code, mais le football est le pire sport réalisé
+  (43,6 %, P&L négatif) avec déjà 47 ligues / 113 signaux — son problème n'est pas le volume.
+- **NCAAB** (novembre) : le basket est le meilleur sport (56,5 %, CLV +1,38) ; à préparer à coût
+  zéro plus tard.
+- **Cricket** : exclu explicitement (marchés inefficients), nul possible en Test, settlement web
+  fragile. **Handball Bundesliga** : sport retiré le matin même — la raison du retrait (pas de
+  sharp) ne tient plus avec OddsAPI, mais on ne rouvre pas un sport fermé le jour même.
+- **CFL, lacrosse PLL, MiLB, AFLW, NRLW** : volume/liquidité faibles, settlement hasardeux.
+- **Darts, snooker, golf en match, tennis de table, volley** : absents du catalogue OddsAPI
+  (sondé : 175 clés).
+
+### Tests (28)
+
+`tests/test_new_sports_phase3.py` (câblage, Kelly < NFL, miroir des mécaniques, contexte
+settlement, fenêtre samedi, pas de garde de saison, invariant des 4 fichiers étendu aux deux
+sport-types — dont tennis, invisible au test statique) · `tests/test_tennis_discovery.py`
+(filtre Slams/Masters, ATP 250 exclu, outrights/inactifs exclus, panne → {}, coupe-circuit,
+un seul GET /sports par scan, injection dans fetch_odds, pas de clé tennis statique, fenêtre par
+préfixe).
+

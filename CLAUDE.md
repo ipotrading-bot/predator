@@ -6,7 +6,7 @@ Tout le calcul tourne en crons GitHub Actions ; le dashboard est en lecture seul
 
 ## Commandes
 
-- Tests : `python -m pytest tests/ -q` (~45 s, 1033 tests, doit rester à 0 échec)
+- Tests : `python -m pytest tests/ -q` (~45 s, 1055 tests, doit rester à 0 échec)
 - Carte des invariants et de leurs gardiens : `AUDIT.md` (à lire avant
   d'ajouter un sport, un fournisseur IA, une route ou un workflow)
 - Lint : `python -m pyflakes $(git ls-files '*.py')` (actuellement propre)
@@ -176,5 +176,22 @@ Tout le calcul tourne en crons GitHub Actions ; le dashboard est en lecture seul
   3 % → 23 % de sources porteuses de faits. Gardiens :
   `tests/test_wiz_engine.py::TestLangueDeLaPresse`,
   `tests/test_wiz_sources.py::TestLocaleDuFlux`.
+- PÉRIMÈTRE SPORTS — Predator ne parie JAMAIS > 2,20 par construction
+  (`SHARP_PROB_BY_MARKET` ≥ 0,50/0,55 ; football = AH 0.0 du favori) et la
+  seule tranche rentable est < 1,50 (81 %, mesuré sur 254 paris). Un sport
+  « à grosses cotes » ne change rien aux cotes pariées : on ajoute pour le
+  VOLUME, là où le favori court est la norme (AUDIT.md §3.11). Settlement =
+  recherche web pour tous les sports — un sport aux scores introuvables
+  laisse ses signaux `active` à vie. Catalogue OddsAPI sondable à 0 crédit
+  (`/sports`).
+- Phase 3 (2026-08-22) : NCAAF = sport-type DÉDIÉ `college_football`, ne pas
+  fusionner avec `americanfootball` (Kelly 0,10 < 0,14 ; contexte settlement
+  « NCAA », pas « NFL »). Tennis = clés OddsAPI DYNAMIQUES par tournoi
+  (`discover_tennis_keys`, liste blanche `TENNIS_TOURNAMENTS` = Slams +
+  Masters 1000, réutilise le catalogue de `probe_key` → UN seul GET /sports
+  par scan), injectées dans `fetch_odds` — JAMAIS de clé `tennis_*` statique
+  dans `SPORT_KEYS`/`GOLDEN_SPORT_KEYS`. Fenêtre de dépense par préfixe
+  `tennis_` (`scan_windows._PREFIX_WINDOWS`). Coupe-circuit `TENNIS_DYNAMIC=0`.
+  Gardiens : `tests/test_new_sports_phase3.py`, `tests/test_tennis_discovery.py`.
 - Sub-agent `predator-diagnostician` pour tout audit pipeline/santé (isole les
   gros logs hors de la conversation principale).

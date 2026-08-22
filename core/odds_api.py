@@ -44,12 +44,17 @@ CRIS_KEY     = "bookmaker"    # Bookmaker.eu — CRIS network
 #   4. Données Pinnacle + Melbet confirmées disponibles
 #
 # EXCLUS (signal/bruit trop faible) :
-#   - Cricket / Darts / Boxing (Kelly 0.10–0.15, marchés peu efficients)
+#   - Cricket / Darts (Kelly 0.10–0.15, marchés peu efficients)
 #   - Ligues Scandi / Irlande / Chine / Japon / Corée soccer (lag faible, volumes bas)
-#   - Copa Sudamericana / Brazil B / Chile / Colombia / Argentina (Pinnacle peu liquide)
-#   - Tennis (saison de transition gazon — incertitude surface/forme)
+#   - Copa Sudamericana / Brazil B / Chile / Colombia (Pinnacle peu liquide)
+#   (Mis à jour le 2026-08-22 : la boxe est entrée en Phase 1, l'Argentine est
+#    scannée, et le tennis — exclu pour une raison SAISONNIÈRE, la transition
+#    gazon — est servi depuis la Phase 3 par des clés dynamiques, voir
+#    discover_tennis_keys. Un bloc d'exclusions qu'on ne relit pas contredit
+#    le dictionnaire qu'il précède.)
 #
-# Budget : Engine 6×/j × 11 = 66/j | Deep 2×/j × 11 = 22/j | Total : ~2 640/mois.
+# Budget : voir reports/refonte_scope_2026-08.md §4 — le chiffre d'origine
+# (« ~2 640/mois pour 11 clés ») a dérivé deux fois, on ne le recopie plus ici.
 SPORT_KEYS = {
     # (Retiré 2026-08-06 — la Coupe du Monde 2026 est terminée, instruction
     # opérateur. Elle occupait la priorité 1 ; la ligue ne rend plus que des
@@ -106,6 +111,19 @@ SPORT_KEYS = {
     "soccer_uefa_champs_league":             "soccer",                 # LdC — phase de ligue mi-sept.
     "soccer_uefa_europa_league":             "soccer",                 # UEL — idem
     "basketball_euroleague":                 "euroleague_basketball",  # mécaniques basketball, Kelly dédiée
+
+    # ── Phase 3 (2026-08-22) — NCAAF, sport-type DÉDIÉ ──────────────────────
+    # Football universitaire US : 50+ matchs par week-end dès fin août, marché
+    # très liquide, lag soft-books documenté, et — ce qui a décidé l'ajout —
+    # les « cupcake games » de septembre mettent le favori à 1,05–1,30 : la
+    # seule tranche de cote où le ledger est rentable (81 % de réussite sous
+    # 1,50, contre 44–48 % entre 1,50 et 2,20 — mesuré sur 254 paris).
+    # Sport-type `college_football` et non `americanfootball` : lignes moins
+    # sharp que la NFL (Kelly 0.10 tant que non validé), et le contexte de
+    # settlement « NFL american football » biaiserait la recherche du score.
+    # Pas de SEASON_OPENS : pas de présaison universitaire, le pré-vol gratuit
+    # suffit — 0 crédit tant qu'aucun match n'est dans la fenêtre.
+    "americanfootball_ncaaf":                "college_football",
 }
 
 # ── Ouverture de saison : une ligue n'est pas scannée avant cette date ───
@@ -130,6 +148,78 @@ def _season_open(sport_key: str, now: datetime) -> bool:
         return True
     return now >= opens
 
+
+# ── Tennis : clés OddsAPI DYNAMIQUES (Phase 3, 2026-08-22) ──────────────
+# OddsAPI ne sert pas le tennis comme un sport permanent : chaque tournoi a
+# sa propre clé, qui apparaît quelques jours avant et disparaît après
+# (`tennis_atp_cincinnati_open`, `tennis_wta_us_open`…). Une entrée statique
+# dans SPORT_KEYS serait morte onze mois sur douze et fausse le douzième.
+#
+# On résout donc les clés au DÉBUT de chaque fetch_odds, via GET /v4/sports —
+# endpoint GRATUIT, déjà utilisé par le pool pour sonder les clés — filtrées
+# sur une liste blanche de tournois : les quatre Grands Chelems et les
+# Masters / WTA 1000. Ce sont les seuls où Pinnacle est liquide ET où les
+# premiers tours mettent le favori à 1,10–1,40 — la tranche rentable.
+# Un Challenger ou un ATP 250 n'a ni la liquidité ni le lag : exclu.
+#
+# Pourquoi le tennis, et pourquoi maintenant : toute l'infrastructure existe
+# depuis des mois (marchés h2h+totals ci-dessous, Matchbook id 9 demandé en
+# prod, odds-api.io, poids de consensus dédiés, contexte de settlement) — il
+# ne manquait que les clés. L'exclusion historique (« saison de transition
+# gazon ») était saisonnière, pas structurelle.
+#
+# Coupe-circuit : TENNIS_DYNAMIC=0 dans l'environnement rend {} sans appel.
+TENNIS_TOURNAMENTS: tuple = (
+    # Grands Chelems (slugs OddsAPI : aus_open_singles, french_open, wimbledon, us_open)
+    "aus_open", "french_open", "wimbledon", "us_open",
+    # Masters 1000 / WTA 1000
+    "indian_wells", "miami", "monte_carlo", "madrid", "italian_open", "rome",
+    "canadian", "canada", "cincinnati", "shanghai", "paris_masters",
+    "china_open", "wuhan",
+)
+_TENNIS_PREFIXES = ("tennis_atp_", "tennis_wta_")
+
+
+def discover_tennis_keys(api_key: str, catalogue: list | None = None) -> dict[str, str]:
+    """Clés tennis ACTIVES du catalogue, restreintes aux tournois majeurs.
+
+    0 crédit. `catalogue` est la réponse de GET /sports si l'appelant l'a
+    déjà — fetch_odds passe celle que probe_key vient de télécharger pour
+    sonder la clé, donc en production cette fonction ne fait AUCUN appel
+    réseau. Sans catalogue fourni, elle appelle /sports elle-même (gratuit).
+    Rend {clé: "tennis"} à fusionner dans keys_to_scan. Toute panne (réseau,
+    HTTP ≠ 200, JSON illisible) rend {} ET logge : le scan continue sur les
+    clés statiques, jamais d'exception — politique « retour [] + log ».
+    """
+    if os.environ.get("TENNIS_DYNAMIC", "1") == "0":
+        return {}
+    if catalogue is None:
+        try:
+            r = requests.get(f"{BASE_URL}/sports", params={"apiKey": api_key}, timeout=10)
+            if r.status_code != 200:
+                log.debug("tennis discovery: HTTP %s", r.status_code)
+                return {}
+            catalogue = r.json() or []
+        except Exception as e:
+            log.debug("tennis discovery: %s", e)
+            return {}
+
+    found: dict[str, str] = {}
+    for s in catalogue:
+        key = str(s.get("key") or "")
+        if not key.startswith(_TENNIS_PREFIXES):
+            continue
+        if not s.get("active") or s.get("has_outrights"):
+            continue
+        slug = key.split("_", 2)[-1]          # "tennis_atp_us_open" → "us_open"
+        if any(t in slug for t in TENNIS_TOURNAMENTS):
+            found[key] = "tennis"
+    if found:
+        log.info("Tennis : %d tournoi(s) majeur(s) au catalogue — %s",
+                 len(found), ", ".join(sorted(found)))
+    return found
+
+
 # Markets fetched per sport (API supports h2h,spreads,totals in one call)
 _MARKETS_BY_SPORT = {
     "basketball":       "h2h,spreads,totals",
@@ -146,6 +236,7 @@ _MARKETS_BY_SPORT = {
     "mma":              "h2h",                 # ML seulement — pas de spreads/totals sur un combat
     "soccer":           "h2h,spreads,totals",
     "euroleague_basketball": "h2h,spreads,totals",  # mêmes marchés que la NBA
+    "college_football": "h2h,spreads,totals",       # NCAAF — mêmes marchés que la NFL
 }
 
 
@@ -246,7 +337,7 @@ def _parse_event(ev: dict, sport_type: str) -> dict | None:
         "away":          away,
         "league":        ev.get("sport_title", ""),
         "sport":         sport_type,
-        "sport_id":      {"soccer": 1, "tennis": 3, "basketball": 4, "boxing": 5, "darts": 6, "cricket": 7, "hockey": 8, "americanfootball": 10, "baseball": 11, "rugby": 12, "volleyball": 13, "tabletennis": 14, "handball": 15, "aussierules": 16, "rugbyleague": 17, "euroleague_basketball": 4}.get(sport_type, 1),
+        "sport_id":      {"soccer": 1, "tennis": 3, "basketball": 4, "boxing": 5, "darts": 6, "cricket": 7, "hockey": 8, "americanfootball": 10, "baseball": 11, "rugby": 12, "volleyball": 13, "tabletennis": 14, "handball": 15, "aussierules": 16, "rugbyleague": 17, "euroleague_basketball": 4, "college_football": 10}.get(sport_type, 1),
         "commence_time": ev.get("commence_time", ""),
         "odds_1xbet":    xbet_h2h,
         "odds_pinnacle": pin_h2h,
@@ -359,6 +450,7 @@ POOL_SECRET = "ODDS_API_KEYS"
 MIN_CREDITS = int(os.environ.get("ODDS_MIN_CREDITS", "1"))
 _dead_keys: dict[str, str] = {}      # clé -> raison (process-local)
 _last_failure: str = ""
+_LAST_CATALOGUE: list | None = None  # dernier GET /sports réussi (probe_key) — réutilisé par discover_tennis_keys
 
 
 def _split_keys(raw: str | None) -> list[str]:
@@ -466,6 +558,15 @@ def probe_key(key: str) -> tuple[bool, str]:
         return False, "HTTP 422 — quota épuisé"
     if r.status_code != 200:
         return False, f"HTTP {r.status_code}"
+    # Le catalogue est dans la réponse : on le garde pour la découverte des
+    # clés tennis (discover_tennis_keys), qui n'a alors AUCUN appel à faire.
+    # Une sonde qui télécharge le catalogue et une découverte qui le
+    # re-télécharge, c'était deux GET /sports pour une information.
+    global _LAST_CATALOGUE
+    try:
+        _LAST_CATALOGUE = r.json() or []
+    except Exception:
+        _LAST_CATALOGUE = None
     # Le compteur, pas seulement le code HTTP : mesuré en direct le
     # 2026-08-20, une clé à 499/500 crédits répond encore 200 sur /sports
     # (endpoint gratuit) alors qu'elle n'a plus de quoi payer un scan. La
@@ -538,6 +639,10 @@ def fetch_odds(api_key: str | None = None, hours_ahead: int = 24,
     assert api_key is not None  # narrow type after early return
 
     keys_to_scan = sport_keys if sport_keys is not None else SPORT_KEYS
+    # Tennis : clés éphémères résolues à chaque scan (0 crédit). Fusionnées
+    # ICI — et non dans SPORT_KEYS / GOLDEN_SPORT_KEYS — pour couvrir les
+    # deux modes sans tenir deux listes de plus (cf. AUDIT.md §1).
+    keys_to_scan = {**keys_to_scan, **discover_tennis_keys(api_key, catalogue=_LAST_CATALOGUE)}
 
     now       = datetime.now(timezone.utc)
     until     = now + timedelta(hours=hours_ahead)

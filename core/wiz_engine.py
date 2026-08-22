@@ -133,6 +133,12 @@ _SPORT_QUERY_A = {
     # depuis 2026-08-22 MMA et boxe sont sur flux OddsAPI réel, donc émis.
     "mma":         "weigh-in OR withdrawal OR replacement OR injury",
     "boxing":      "weigh-in OR withdrawal OR replacement OR catchweight",
+    # Phase 3 (2026-08-22). NCAAF : le quarterback titulaire et les
+    # suspensions de conférence déplacent la ligne. Tennis : un forfait, un
+    # abandon au tour précédent ou un walkover — rien d'autre n'explique un
+    # écart de cote à J-1.
+    "college_football": "injury OR quarterback OR questionable OR suspended",
+    "tennis":      "injury OR withdrawal OR retired OR walkover OR \"pulled out\"",
 }
 _DEFAULT_QUERY_A = "injury OR suspended OR lineup"
 

@@ -78,6 +78,24 @@ _WINDOWS: dict[str, list[tuple]] = {
     # Combat : vendredi–dimanche autour des cartes
     "mma_mixed_martial_arts":            [((4, 5, 6), 0, 24)],
     "boxing_boxing":                     [((4, 5, 6), 0, 24)],
+    # NCAAF : jeudi/vendredi soir US (= 22:00 UTC → 05:00 UTC) et samedi
+    # toute la journée/nuit US — le gros du volume.
+    "americanfootball_ncaaf":            [((3, 4), 22, 24), ((4, 5), 0, 5),
+                                          ((5,), 16, 24), ((6,), 0, 5)],
+}
+
+# Fenêtres par PRÉFIXE de clé — pour les ligues dont la clé exacte n'existe
+# pas à l'avance. Le tennis en est le cas : `tennis_atp_us_open` n'apparaît
+# au catalogue OddsAPI que quelques jours avant le tournoi (voir
+# core.odds_api.discover_tennis_keys). Sans cette table, is_favorable() les
+# traiterait comme « jamais favorable » et ne les paierait qu'en scan de
+# fond — c'est-à-dire à peu près jamais pendant un Slam.
+# Sessions : US Open 15:00→04:00 UTC, Slams européens 09:00→21:00, Australie
+# 00:00→12:00 ; la fenêtre couvre l'union — c'est une fenêtre de dépense,
+# pas une règle métier, être large ne coûte que des crédits sur des matchs
+# qui existent vraiment.
+_PREFIX_WINDOWS: dict[str, list[tuple]] = {
+    "tennis_": [(_ALL, 9, 24), (_ALL, 0, 4)],
 }
 
 
@@ -87,7 +105,12 @@ def is_favorable(sport_key: str, now: datetime | None = None) -> bool:
     (scan de fond seulement) — ajouter une entrée plutôt que d'ouvrir tout."""
     now = now or datetime.now(timezone.utc)
     wd, hour = now.weekday(), now.hour
-    for days, start, end in _WINDOWS.get(sport_key, []):
+    windows = _WINDOWS.get(sport_key)
+    if windows is None:
+        # Clé inconnue : une fenêtre par préfixe s'applique-t-elle ?
+        windows = next((w for pfx, w in _PREFIX_WINDOWS.items()
+                        if sport_key.startswith(pfx)), [])
+    for days, start, end in windows:
         if days is not None and wd not in days:
             continue
         if start <= hour < end:

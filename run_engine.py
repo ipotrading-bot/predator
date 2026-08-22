@@ -146,7 +146,8 @@ TELEGRAM_CHAT  = os.environ.get("TELEGRAM_CHAT_ID")
 
 ELITE_EDGE  = _ELITE_EDGE   # % — send Telegram alert (from core.constants)
 _MAJOR_SPORTS = {"soccer", "basketball", "hockey", "baseball", "rugbyleague", "aussierules",
-                 "americanfootball", "euroleague_basketball"}   # Phase 2 : cap SUSPECT appliqué
+                 "americanfootball", "euroleague_basketball",   # Phase 2 : cap SUSPECT appliqué
+                 "college_football"}                            # Phase 3 : marché liquide, un edge > 10 % = prix mal apparié
 
 # Plafonds d'edge appris, par sport — rempli par run() depuis `meta`, lu par
 # _emit(). Vide = aucun plafond appris, les bornes globales de constants.py
@@ -204,6 +205,7 @@ SPORT_EMOJI  = {
     "mma": "🥋", "darts": "🎯", "cricket": "🏏", "hockey": "🏒",
     "americanfootball": "🏈", "baseball": "⚾", "euroleague_basketball": "🏀",
     "rugby": "🏉", "rugbyleague": "🏉", "aussierules": "🦘",
+    "college_football": "🏈",
 }
 
 # Golden Hour — T-120min — 7 sports à lag maximal et volume élevé (juin 2026)
@@ -241,6 +243,8 @@ GOLDEN_SPORT_KEYS = {
     "soccer_uefa_champs_league":            "soccer",
     "soccer_uefa_europa_league":            "soccer",
     "basketball_euroleague":                "euroleague_basketball",
+    # Phase 3 — NCAAF (tennis : clés dynamiques injectées par fetch_odds)
+    "americanfootball_ncaaf":               "college_football",
 }
 
 # Portfolio Balancer — quotas max par sport par scan (6 sport-types actifs uniquement,
@@ -258,6 +262,8 @@ _QUOTA_FAST = {
     "boxing":       2,   # marché mince
     "americanfootball":      6,   # NFL — ~16 matchs/semaine, concentrés dim.
     "euroleague_basketball": 6,   # jeu/ven
+    "college_football":      6,   # NCAAF — 50+ matchs/week-end, concentrés sam.
+    "tennis":                8,   # Slams : 64–128 matchs par tour
 }
 _QUOTA_DEEP = {
     "soccer":      30,
@@ -270,10 +276,13 @@ _QUOTA_DEEP = {
     "boxing":       3,
     "americanfootball":      10,
     "euroleague_basketball":  8,
+    "college_football":      10,
+    "tennis":                12,
 }
 SPORT_QUOTA = _QUOTA_DEEP if DEEP_SCAN else _QUOTA_FAST
 # Telegram report order — sports les plus générateurs de signaux en tête
 _SPORT_ORDER = ["soccer", "basketball", "hockey", "baseball", "americanfootball",
+                "college_football", "tennis",
                 "euroleague_basketball", "rugbyleague", "aussierules", "mma", "boxing"]
 
 # Sessions marché (UTC) — alignées sur les fenêtres d'inefficience

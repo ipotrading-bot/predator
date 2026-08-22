@@ -75,6 +75,9 @@ SPORT_DEFAULTS: dict[str, float] = {
     # Phase 2 (2026-08-22) — nouveaux flux, seuil conservateur au départ.
     "americanfootball":      2.0,
     "euroleague_basketball": 2.0,
+    # Phase 3 (2026-08-22) — NCAAF + tennis majeur, même prudence.
+    "college_football":      2.0,
+    "tennis":                2.0,
 }
 _THRESHOLD_MIN = 1.0   # Floor soccer — permet de capter amicaux et WC avec petit edge
 _THRESHOLD_MAX = 6.0   # Hard cap — relevé de 5.0 pour permettre ajustement sur sports bruyants
