@@ -290,6 +290,41 @@ scans engine + 4 deep par jour, cela fait ~224 crédits/jour, soit **une clé
 tous les ~2 jours**. La rotation passe par `app_secrets` (Supabase), pas par le
 secret GitHub ni par Vercel — voir `core/secret_store.py`.
 
+## L'arbitrage de cadence (2026-08-22)
+
+Quand le pool OddsAPI est mort, CHAQUE scan paie sur les budgets journaliers
+des sources gratuites : api-sports 80 req/sport (~8 scans), odds-api.io 400
+(~14), titan007 500 (~12, 41 req/scan). À 12 engine + 12 guerrilla + 4 deep,
+le budget entier partait avant 08:30 UTC — dernier signal du 2026-08-21 émis
+à 08:24, soirée européenne à sec. Cadences réduites à 8+2+2 = 12 scans
+finançables. Golden hour ne paie rien (il sort avant le Tier 2 sans OddsAPI).
+Ne pas remonter une cadence sans refaire ce tableau. Titan007 est branché
+dans le chemin économique du coupe-circuit depuis le même jour (même classe
+de bug que a0767c8 : source saine court-circuitée par ricochet).
+
+## La refonte mathématique du 2026-08-22 — edge = EV vraie
+
+Jusqu'au 2026-08-22, `compute_alpha` rendait un RATIO DE PRIX
+(xbet/pinnacle − 1) contre une cote sharp encore VIGORISÉE, et `devig_prob`
+appliquait une formule qui n'était ni la méthode puissance (que sa docstring
+annonçait) ni la proportionnelle — favori sous-estimé de 2,6-3,1 points sous
+1,10. Audit du ledger réglé : Brier de sharp_prob PIRE que la proba implicite
+brute du book soft, pente de recalibration 0,12, CLV réel +0,18 % (t=0,18,
+nul). 37 signaux sur 91 étaient partis avec kelly_pct=0 (refusés par la
+couche de mise, publiés quand même). Depuis :
+- `core/math_engine.devig()` = ensemble {proportionnelle, puissance, Shin},
+  médiane renormalisée ; `devig_bounds()` rend aussi la borne worst-case
+  (min des trois) — gardés par `tests/test_ev_gates.py` ;
+- `edge_pct` = (prob dévigorisée × cote soft − 1) — une EV, plus un ratio.
+  Les seuils/plafonds appris d'avant cette date (meta `threshold_*`,
+  `edge_ceiling_*`, `odds_ceiling_*`) ont été SUPPRIMÉS le 2026-08-22 : ils
+  étaient calibrés sur l'ancienne grandeur. Toute analyse du ledger qui
+  traverse cette date compare deux échelles d'`initial_edge` différentes ;
+- `_emit` refuse : EV worst-case ≤ 0, mise Kelly nulle (via
+  `core/tax_engine.optimal_stake_fraction`, plus jamais la formule inline),
+  et tout EV sous `EV_EDGE_FLOOR` (1,5 %, `core/constants.py`) — plancher
+  appliqué DANS `_emit`, la règle AH0 ne peut pas le contourner.
+
 ## Manual steps this stack does NOT automate
 
 - **Supabase schema changes** live in `sql/migrate_vX_Y.sql` but nothing runs them
@@ -312,13 +347,13 @@ secret GitHub ni par Vercel — voir `core/secret_store.py`.
 | Workflow | Cadence | Purpose |
 |---|---|---|
 | `golden_hour.yml` | horaire (H+25) | scan de mouvement de ligne à T-120min, purge à chaque run ; vérifie aussi `meta.scan_request`. **Ses signaux partent en FANTÔME depuis le 2026-08-06** (`SHADOW_GOLDEN_HOUR`) : persistés et réglés, jamais recommandés — mesuré à 39% de réussite pour 54,5% requis, p=0,007. Ne PAS ajouter de poller dédié pour compenser la latence du bouton Scan — c'est l'erreur du 2026-07-07. |
-| `engine.yml` | **12x/jour, toutes les 2h (H+03)** | scan complet, fenêtre **24h** (était 72h jusqu'au 2026-08-06) |
-| `deep_scan.yml` | 4x/jour (H+33) | **fenêtre 24h elle aussi** — `HOURS_AHEAD: "24"` explicite. Le workflow s'appelait « Deep Scan 48h » alors qu'il faisait déjà 24h : renommé « Deep Scan 24h » le 2026-08-06. Ce qui reste « deep » = `MAX_MATCHES=100` et `_QUOTA_DEEP`, pas l'horizon. |
+| `engine.yml` | **8x/jour, toutes les 3h (H+03)** depuis le 2026-08-22 (était 12x/2h) | scan complet, fenêtre **24h**. Cadence dimensionnée sur le budget des sources gratuites — voir « L'arbitrage de cadence » ci-dessous |
+| `deep_scan.yml` | **2x/jour (05:33, 17:33)** depuis le 2026-08-22 (était 4) | **fenêtre 24h elle aussi** — `HOURS_AHEAD: "24"` explicite. Le workflow s'appelait « Deep Scan 48h » alors qu'il faisait déjà 24h : renommé « Deep Scan 24h » le 2026-08-06. Ce qui reste « deep » = `MAX_MATCHES=100` et `_QUOTA_DEEP`, pas l'horizon. |
 | `audit.yml` | toutes les 6h | settlement + CLV + couche d'apprentissage |
 | `rapport.yml` | **toutes les 2h (H+35)** | rapport Telegram — était 07:05 & 18:05 jusqu'au 2026-08-06. `run_rapport.py:REPORT_WINDOW_H` (2h) doit rester égal à l'intervalle du cron, sinon un même signal repart dans plusieurs rapports. |
 | `wiz.yml` | toutes les 2h (H+15) | analyse contextuelle Wiz — écrit `wiz_analysis` uniquement, jamais `signals`. Délibérément HORS du groupe `predator-signals-write` (il ne lit que `signals` ; le mettre en file derrière un audit de 45 min lui ferait manquer la fenêtre de compositions T-3h). Ne pas raccourcir cette cadence — voir l'incident du 2026-07-07. |
 | `closing_line.yml` | horaire (H+00) | capture de la ligne de clôture |
-| `guerrilla.yml` | **toutes les 2h (H+47)** depuis le 2026-08-02 (était manuel) | scan sans OddsAPI (1XBet direct + recherche web) — c'est lui, pas un bouton, qui consomme le TPD Groq quand les sources sont mortes ; le coupe-circuit `harvest_empty_at` le neutralise 3h après un Tier 2 vide |
+| `guerrilla.yml` | **2x/jour (09:47, 21:47)** depuis le 2026-08-22 (était toutes les 2h) | scan sans OddsAPI (1XBet direct + recherche web) — c'est lui, pas un bouton, qui consomme le TPD Groq quand les sources sont mortes ; le coupe-circuit `harvest_empty_at` le neutralise 3h après un Tier 2 vide |
 | `backfill.yml` | manuel | réparation one-shot de `ai_learning_ledger` |
 
 When a fix touches purge, audit, or learning-layer logic, sanity-check it against
