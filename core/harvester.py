@@ -278,6 +278,17 @@ def _fetch_multi_book(sport_id: int) -> list:
         if t7_matches:
             per_book["titan007"] = t7_matches
 
+    # odds.500.com (mission 3) — EN DERNIER, et ce n'est pas un détail : elle
+    # se mesure CONTRE les sources déjà collectées (divergence → scorecard →
+    # promotion). Tant qu'elle est en mode ombre, `_fetch_from_odds500` rend
+    # [] : ses prix sont enregistrés et comparés, ils ne créent aucun signal.
+    # Ses libellés d'équipes sont chinois ; c'est core/free_sources.py qui les
+    # résout en noms canoniques et ÉCARTE les matchs qu'il ne sait pas nommer.
+    trusted_so_far = [m for ms in per_book.values() for m in ms]
+    o500_matches = _fetch_from_odds500(sport_id, trusted_so_far)
+    if o500_matches:
+        per_book["odds500"] = o500_matches
+
     if not per_book:
         return []
 
@@ -318,6 +329,21 @@ def _fetch_multi_book(sport_id: int) -> list:
                 existing["_soft_source"] = "+".join(sorted(sources))
 
     return merged
+
+
+def _fetch_from_odds500(sport_id: int, trusted: list) -> list[dict]:
+    """Sources gratuites Asie (mission 3) — best-effort, jamais bloquant.
+
+    Import PARESSEUX : `core/free_sources` tire odds500 + sevenm +
+    team_aliases, et un harvester qui ne sert pas le football n'a aucune
+    raison de payer ces imports.
+    """
+    try:
+        from core.free_sources import fetch_odds500
+        return fetch_odds500(sport_id, trusted)
+    except Exception as e:
+        log.warning("odds500: %s — ignorée ce cycle", e)
+        return []
 
 
 def _fetch_from_gemini(sport_id):

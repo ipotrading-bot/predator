@@ -65,7 +65,15 @@ Tout le calcul tourne en crons GitHub Actions ; le dashboard est en lecture seul
   Nowgoal/win007 = MORTE depuis les runners (DNS), ne pas réessayer.
   Dictionnaire `team_aliases` (`sql/migrate_v10_3_team_aliases.sql`, À APPLIQUER) :
   clé = identifiant numérique de la source, pas le libellé ; un nom résolu ne
-  repasse jamais par l'IA. Adaptateurs livrés mais PAS ENCORE CÂBLÉS dans run_engine.
+  repasse jamais par l'IA. Migration APPLIQUÉE le 2026-08-22.
+  Câblage : `core/free_sources.py` (appelé EN DERNIER par harvester.fetch_matches,
+  car il se mesure contre les sources déjà collectées). odds500 démarre en MODE
+  OMBRE → rend [] tant qu'il n'a pas 100 matchs appariés à <2 pts de divergence :
+  zéro signal au premier déploiement, c'est voulu. Coupe-circuit `FREE_SOURCES=0`.
+  Un match dont une équipe ne se résout pas est ÉCARTÉ, jamais émis en chinois.
+  Curseur `meta.sevenm_sitemap_cursor` OBLIGATOIRE : le sitemap 7M (936 ids)
+  commence par des coupes mineures sans recoupement — sans curseur, 0 alias
+  appris à chaque run et branchement inerte en silence (constaté en live).
 - Pièges qui tuent une source en silence : User-Agent avec un accent → urllib encode
   en latin-1 → 403 Cloudflare (Polymarket) ; Kalshi rend `yes_bid`/`volume` à `null`
   et met les prix dans les champs `*_dollars` en chaîne ; un 1X2 amputé d'une patte

@@ -253,7 +253,7 @@ accepter une découverte Tier 1 partielle, portée par api-sports/odds-api.io/Ti
 
 # Mission 3 — nouvelles sources de cotes gratuites (Asie incluse) (2026-08-22)
 
-**Suite : 808 tests, 0 échec · pyflakes propre · 85 tests ajoutés · migration `sql/migrate_v10_3_team_aliases.sql` (additive, à appliquer à la main)**
+**Suite : 862 tests, 0 échec · pyflakes propre · 103 tests ajoutés · migration `sql/migrate_v10_3_team_aliases.sql` (additive, à appliquer à la main)**
 
 Règle tenue : **aucune source n'est intégrée sur une supposition**. Chaque ligne du tableau
 « preuve de vie » ci-dessous est un `curl` réel, passé depuis le runner (IP datacenter Azure) le
@@ -572,16 +572,90 @@ Les deux tests exigés par le cahier des charges :
    sans cotes, étaient appariés arbitrairement. C'est la seule erreur de ce pipeline qui produise un
    edge élevé, crédible **et entièrement imaginaire**. Garde d'unicité/marge ajouté.
 
-## 9. Ce qui reste à l'opérateur
+## 9. Branchement dans le scan (fait) — `core/free_sources.py`
 
-1. **Appliquer `sql/migrate_v10_3_team_aliases.sql`** dans le SQL Editor Supabase (aucun runner de
-   migration dans ce dépôt). Sans cette table, le dictionnaire dégrade proprement (mémoire du run
-   seulement) mais ne persiste rien.
-2. **Brancher les adaptateurs dans `run_engine.py` / `core/harvester.py`.** Les modules, le cadre
-   commun et les tests sont livrés ; le câblage dans le scan n'est **pas** fait — c'est un
-   changement du chemin critique d'émission des signaux, qui mérite sa propre revue et son propre
-   passage en mode ombre observé.
-3. **Décider du sort de wisetoto** (n° 4) : l'hôte vit, mais aucun endpoint de cotes n'a été trouvé,
+Les adaptateurs sont désormais **câblés**, derrière une couche de coordination dédiée. Ils ne
+pouvaient pas être branchés directement : `odds500` rend des matchs dont les libellés d'équipes
+sont **en chinois**. Les verser tels quels dans le harvester enverrait « 曼联 » dans `signals`, puis
+dans `ai_learning_ledger`, et le settlement chercherait six heures plus tard le score d'un match
+qu'il ne sait pas nommer.
+
+`core/free_sources.fetch_odds500()` tient donc trois étapes, dans cet ordre :
+
+1. **APPRENDRE** — apparier le calendrier chinois (500.com) et le calendrier anglais (7M) par
+   temps + ligue + structure, et en déduire les alias. N'interroge 7M **que s'il reste des noms
+   inconnus** : quand le dictionnaire couvre le slate, ce module ne coûte plus une seule requête.
+2. **RÉSOUDRE** — remplacer les libellés chinois par les noms canoniques. Un match dont **une** des
+   deux équipes ne se résout pas est **écarté**, jamais émis avec son libellé brut.
+3. **MESURER puis DÉCIDER** — comparer les prix aux sources déjà collectées (d'où l'appel **en
+   dernier** dans `harvester.fetch_matches`), alimenter le scorecard, et ne rendre des matchs
+   misables **que si la source est sortie du mode ombre**.
+
+> ⚠️ **Conséquence à connaître : au premier déploiement, ce branchement produit ZÉRO signal, par
+> construction.** `odds500` démarre en mode ombre ; il lui faut 100 matchs appariés avec une
+> divergence médiane ≤ 2 points avant d'émettre quoi que ce soit. Ce n'est pas une panne.
+> Coupe-circuit sans redéploiement : `FREE_SOURCES=0`.
+
+### Le premier passage en live a trouvé un défaut qui rendait le branchement INERTE
+
+Le cycle complet a été lancé pour de vrai (table `team_aliases` créée, sources réellement
+interrogées, écritures Supabase réelles). Résultat du premier passage :
+
+```
+free_sources: 25 match(s) écarté(s) faute d'alias fiable
+free_sources: odds500 en MODE OMBRE — 0 matchs mesurés, 0 émis
+DICTIONNAIRE APRÈS : {'total': 0, 'utilisables': 0}
+```
+
+**Zéro alias appris.** La plomberie marchait — scorecard écrit, mode ombre tenu — mais le
+dictionnaire ne se remplissait pas, et n'aurait jamais pu se remplir.
+
+Cause : `sevenm.fetch_fixtures(max_matches=30)` prenait les **30 PREMIERS** identifiants d'un
+sitemap qui en compte **936**, et celui-ci n'est pas trié par intérêt — ses premières entrées sont
+des coupes mineures (FA Cup amateur, coupes nationales) qui ne recoupent **jamais** le slate de
+500.com. Chaque run aurait réinterrogé les mêmes 30 matchs sans intérêt, indéfiniment. Le
+branchement aurait été inerte **en silence** : aucune erreur, aucun log alarmant, simplement
+25 matchs écartés à chaque cycle.
+
+**Correctif** : un curseur persistant (`meta.sevenm_sitemap_cursor`) fait balayer tout le sitemap
+au fil des runs, avec bouclage. Il avance **même quand un run n'apprend rien** — c'est précisément
+quand une tranche ne recoupe pas le slate qu'il faut passer à la suivante. Les ~936 identifiants
+sont couverts en une trentaine de runs ; comme un alias appris ne périme jamais, ce balayage n'a
+lieu qu'une fois.
+
+### Preuve de bout en bout, après correctif
+
+Curseur positionné sur une tranche productive, sources et base **réelles** :
+
+```
+500.com 64 (zh) x 7M 26 (en)  ->  6 paires
+   毕尔巴鄂 / 塞维利亚   ->  Athletic Bilbao / Sevilla FC
+   巴伦西亚 / 塞尔塔    ->  Valencia CF / RC Celta de Vigo
+   西班牙人 / 皇马      ->  RCD Espanyol / Real Madrid CF
+   马竞 / 比利亚雷      ->  Atletico Madrid / Villarreal CF
+   赫塔费 / 桑坦德      ->  Getafe CF / Racing de Santander
+   埃尔切 / 巴萨       ->  Elche CF / FC Barcelona
+apply_pairing : {'appris': 12, 'confirmés': 0, 'contredits': 0}
+```
+
+Contrôle dans la table `team_aliases` : **12 alias persistés**, chacun avec son identifiant
+numérique 500.com (`皇马`→`883`, `巴萨`→`653`…), `lang=zh`, `confidence=0.7`,
+`resolved_by=sevenm` — donc **zéro appel IA**, exactement l'économie visée par la mission.
+
+18 tests (`tests/test_free_sources.py`) verrouillent les garanties : aucun libellé chinois ne
+survit à la résolution, le mode ombre tient quoi que la source ait collecté, le curseur avance même
+sans apprentissage et boucle en fin de sitemap, et rien de tout cela ne peut faire tomber un scan
+(panne réseau, base absente, 7M muet → `[]`, jamais une exception).
+
+## 10. Ce qui reste à l'opérateur
+
+1. ~~Appliquer `sql/migrate_v10_3_team_aliases.sql`~~ — **fait le 2026-08-22** (`ops.py supabase
+   migrate`). Table créée : 14 colonnes, 4 index, RLS activée avec ses deux policies.
+2. ~~Brancher les adaptateurs~~ — **fait** (§ 9).
+3. **Surveiller la sortie du mode ombre.** La promotion est écrite dans
+   `meta.source_scorecard_odds500` et loggée ; elle n'arrivera qu'après ~100 matchs appariés, soit
+   plusieurs jours de crons. Jusque-là, `odds500` mesure sans émettre — c'est voulu.
+4. **Décider du sort de wisetoto** (n° 4) : l'hôte vit, mais aucun endpoint de cotes n'a été trouvé,
    et sa condition d'activation (« si 1 et 2 sont en prod ») n'est pas remplie puisque Nowgoal est morte.
 
 ---

@@ -156,13 +156,23 @@ def fetch_fixture(gid: str) -> Fixture | None:
 
 
 def fetch_fixtures(hours_ahead: int = 36, max_matches: int | None = None,
-                   match_ids: list | None = None) -> list:
+                   match_ids: list | None = None, offset: int = 0) -> list:
     """Calendrier anglais borné par le budget journalier.
 
     Rend [] sur toute panne — source best-effort. Les matchs hors fenêtre sont
     ignorés APRÈS l'appel (le sitemap ne porte pas les dates), ce qui est le
     coût du choix « pas de flux en masse ». Le budget est dimensionné pour
     l'absorber : ces appels servent un dictionnaire, pas un scan.
+
+    ⚠️ `offset` N'EST PAS COSMÉTIQUE. Le sitemap compte ~936 identifiants et
+    n'est PAS trié par intérêt : ses premières entrées sont des coupes
+    mineures (FA Cup amateur, coupes nationales) qui ne recoupent jamais le
+    slate de 500.com. Un appelant qui prendrait toujours les `max_matches`
+    PREMIERS identifiants réinterrogerait les mêmes matchs sans intérêt à
+    chaque run et n'apprendrait jamais un seul alias — constaté en live le
+    2026-08-22 : 30 identifiants, 0 alias appris, 25 matchs écartés.
+    `core/free_sources.py` fait donc tourner un curseur persistant d'un run à
+    l'autre pour balayer TOUT le sitemap.
     """
     spent = daily_quota.spent(QUOTA_BUCKET)
     if spent >= DAILY_BUDGET:
@@ -177,6 +187,12 @@ def fetch_fixtures(hours_ahead: int = 36, max_matches: int | None = None,
     now = datetime.now(timezone.utc)
     until = now + timedelta(hours=hours_ahead)
     cap = max_matches or MAX_MATCHES
+
+    # Fenêtre glissante, avec bouclage : le curseur balaie tout le sitemap au
+    # fil des runs plutôt que de repasser sur la même tête de liste.
+    if ids and offset:
+        offset %= len(ids)
+        ids = ids[offset:] + ids[:offset]
 
     out = []
     for i, gid in enumerate(ids[:cap]):
