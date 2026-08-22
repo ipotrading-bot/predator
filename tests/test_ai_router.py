@@ -530,3 +530,11 @@ class TestQuatreCentTrois:
     def test_la_lane_settlement_a_bien_deux_fournisseurs_de_production(self):
         n = [p.name for p in R.REGISTRY if R.SETTLEMENT in p.lanes and not p.terms_flag]
         assert len(n) >= R.LANE_MIN_HEALTHY, n
+
+
+class TestBudgetsRealistes:
+    def test_le_budget_ne_depasse_pas_le_plafond_du_fournisseur(self):
+        """OpenRouter free tier ≈ 50 req/j (confirmé par /key : is_free_tier).
+        Un budget PREDATOR supérieur ne récolterait que des 429 : on veut
+        basculer AVANT de se faire couper, pas après."""
+        assert R.by_name("openrouter").daily_requests <= 50

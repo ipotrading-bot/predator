@@ -286,7 +286,14 @@ REGISTRY: tuple = (
                 "nvidia/nemotron-nano-9b-v2:free",
                 "liquid/lfm-2.5-2.6b:free"),
         lanes=(ANALYZE, FILTER, TRANSLATE_CJK, SEARCH_READ),
-        rpm=20, daily_requests=150,
+        # 40 et non 150 : l'endpoint /key confirme `is_free_tier: true` et
+        # `total_credits: 0`. Le palier gratuit d'OpenRouter plafonne à ~50
+        # requetes/jour (1000 apres un credit unique de 10 $). Un budget
+        # PREDATOR SUPERIEUR au plafond du fournisseur ne sert a rien : il
+        # garantit seulement qu'on continue d'appeler pour recolter des 429.
+        # On veut basculer AVANT de se faire couper — regle heritee du compte
+        # api-sports trouve SUSPENDU le 2026-08-20.
+        rpm=20, daily_requests=40,
         headers={"HTTP-Referer": "https://github.com/predator-paim",
                  "X-Title": "PREDATOR"},
         note="421 modeles, 18 en :free (2026-08-22) ; ~50 req/j, 1000/j apres credit unique",
