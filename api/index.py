@@ -18,9 +18,9 @@ import requests
 from dotenv import load_dotenv
 from flask import Flask, jsonify, render_template, send_from_directory
 
+from core.perf_view import filter_rows as _perf_filter_rows, PERF_MONTHS_SHOWN as _PERF_MONTHS_SHOWN
 from core.constants import TAX_RATE as _TAX_RATE, wiz_enforce as _wiz_enforce
 from core.db import get_db as _get_db_client, MissingCredentialsError
-from core.odds_api import BASE_URL as _ODDS_BASE_URL
 from core.learning_layer import (
     SPORT_DEFAULTS as _SPORT_DEFAULTS,
     load_thresholds as _load_thresholds,
@@ -484,7 +484,10 @@ def performance():
                    .order("created_at", desc=True)
                    .limit(500)
                    .execute())
-            rows = res.data or []
+            # Mission 2 (2026-08-22) : sports retirés et mois archivés
+            # n'apparaissent plus — filtre d'AFFICHAGE (core/perf_view.py),
+            # rien n'est supprimé du ledger.
+            rows = _perf_filter_rows(res.data or [])
 
             if rows:
                 # Learning layer state — current thresholds and why they
@@ -619,7 +622,8 @@ def performance():
     except Exception as e:
         log.error("Performance: %s", e)
 
-    return render_template("performance.html", rows=rows, history=history, monthly=monthly, global_s=global_s)
+    return render_template("performance.html", rows=rows, history=history, monthly=monthly,
+                           global_s=global_s, months_shown=_PERF_MONTHS_SHOWN)
 
 
 @app.route("/system")
@@ -827,46 +831,11 @@ def health():
     return jsonify({"status": "ok", "version": "8.8", "source": "harvester+ai_search"})
 
 
-@app.route("/api/odds-quota")
-def api_odds_quota():
-    # GET /v4/sports is the one Odds API endpoint that does NOT consume
-    # quota — it's the documented way to read x-requests-remaining without
-    # burning a request, so this can be polled from the dashboard freely.
-    #
-    # La clé vient de Supabase (app_secrets) en priorité, de l'env ensuite.
-    # C'est ce qui règle l'incohérence historique du widget : la variable
-    # d'env Vercel ne bougeait qu'au prix d'un Redeploy manuel, et affichait
-    # donc le quota d'une clé déjà remplacée côté moteur.
-    # v10.3 : le moteur lit un POOL (ODDS_API_KEYS puis ODDS_API_KEY, voir
-    # core/odds_api.py). Le widget montre la première clé VIVANTE du pool —
-    # celle que le prochain scan utilisera — et la taille du pool.
-    from core.odds_api import candidate_keys as _candidate_keys
-    keys = _candidate_keys()
-    if not keys:
-        return jsonify({"error": "ODDS_API_KEY non configurée"}), 503
-    try:
-        dead = 0
-        last_status = None
-        for api_key in keys:
-            r = requests.get(f"{_ODDS_BASE_URL}/sports", params={"apiKey": api_key}, timeout=10)
-            last_status = r.status_code
-            if r.status_code in (401, 403, 422):
-                dead += 1
-                continue
-            if r.status_code != 200:
-                return jsonify({"error": f"HTTP {r.status_code}"}), 502
-            remaining = r.headers.get("x-requests-remaining")
-            used = r.headers.get("x-requests-used")
-            return jsonify({
-                "remaining": int(remaining) if remaining and remaining.isdigit() else None,
-                "used": int(used) if used and used.isdigit() else None,
-                "pool": len(keys), "dead": dead, "active": dead + 1,
-            })
-        return jsonify({"error": f"{dead}/{len(keys)} clé(s) OddsAPI épuisée(s)/invalide(s) "
-                                 f"(HTTP {last_status}) — rotation requise",
-                        "pool": len(keys), "dead": dead}), 502
-    except Exception as e:
-        return jsonify({"error": str(e)}), 500
+# (/api/odds-quota supprimé le 2026-08-22 — Mission 2, Phase 2 : le widget
+# « Quota OddsAPI » de la page Sys est remplacé par une ALERTE Telegram
+# backend (run_engine._alert_oddsapi_pool_levels : paliers 20 % et 5 %,
+# dédupliqués 24h via meta) + une ligne de log à chaque run. La surveillance
+# devient invisible mais pas muette — voir l'incident du 10→20 août 2026.)
 
 
 _SCAN_REQUEST_COOLDOWN_S = 120  # golden_hour.yml picks this up on its next run (every 30 min)

@@ -27,7 +27,7 @@ from core.odds_api_io import fetch_all as _odds_api_io_all
 from core.titan007 import fetch_matches as _titan007_fetch
 from core.math_engine import to_binary, devig_bounds, is_round_number_line
 from core.tax_engine import optimal_stake_fraction as _optimal_stake_fraction
-from core.odds_api import fetch_odds, pool_status as _odds_pool_status
+from core.odds_api import fetch_odds, pool_status as _odds_pool_status, pool_counters as _odds_pool_counters
 from core.scan_windows import SpendPolicy as _SpendPolicy
 from core.constants import CLOSING_LINE_WINDOW_MIN as _CLOSING_LINE_WINDOW_MIN
 from core.oracle import get_pinnacle_price
@@ -547,6 +547,36 @@ def _alert_once(sb, key: str, text: str, ttl_h: float = _ALERT_TTL_H) -> bool:
     if sb:
         _meta_stamp(sb, key, datetime.now(timezone.utc).isoformat())
     return True
+
+
+_POOL_ALERT_TIERS = ((5.0, "alert_oddsapi_pool_5", "🔴"), (20.0, "alert_oddsapi_pool_20", "🟠"))
+
+
+def _alert_oddsapi_pool_levels(sb) -> str | None:
+    """Surveillance du quota OddsAPI — invisible (le widget de la page Sys a
+    été retiré le 2026-08-22) mais PAS muette : une ligne de log à chaque
+    run, et une alerte Telegram quand le pool passe sous 20 % puis sous 5 %,
+    UNE seule par palier et par 24 h (dédup meta via _alert_once). Rappel de
+    l'incident du 10→20 août 2026 : une clé à 0 crédit pendant dix jours sans
+    que personne ne le voie. Rend la clé d'alerte envoyée, ou None."""
+    c = _odds_pool_counters()
+    if c.get("pct") is None:
+        log.info("Quota OddsAPI : inconnu (aucune réponse OddsAPI observée ce run)")
+        return None
+    log.info("Quota OddsAPI : %d restantes / %d (%.1f%%) — clé active",
+             c["remaining"], c["total"], c["pct"])
+    for threshold, key, icon in _POOL_ALERT_TIERS:
+        if c["pct"] < threshold:
+            sent = _alert_once(
+                sb, key,
+                f"{icon} *OddsAPI : pool sous {threshold:.0f}%* — {c['remaining']} crédits "
+                f"restants sur {c['total']} ({c['pct']:.1f}%).\n"
+                f"Fenêtres favorables et closing line restent prioritaires ; le fond "
+                f"s'espace (core/scan_windows). Ajouter une clé : "
+                f"`python scripts/rotate_odds_key.py --add <clé>`",
+                ttl_h=24.0)
+            return key if sent else None
+    return None
 
 
 def _sports_with_imminent_signals(sb, now) -> set[str]:
@@ -1860,6 +1890,7 @@ def run():
             log.info("DÉPENSE | %d ligue(s) peuplée(s) non payée(s) ce scan : %s",
                      len(spend_policy.skipped),
                      ", ".join(k for k, _ in spend_policy.skipped))
+        _alert_oddsapi_pool_levels(sb)
         if not oddsapi_events:
             _alert_oddsapi_pool_if_dead(sb)
         if oddsapi_events:

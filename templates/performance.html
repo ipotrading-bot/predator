@@ -267,7 +267,7 @@
   {% endif %}
 
   {% if monthly %}
-  <div class="sec-hdr">&#9632; PAR MOIS <em>{{ monthly|length }} mois</em></div>
+  <div class="sec-hdr">&#9632; PAR MOIS <em>{{ monthly|length }} mois affichés (les {{ months_shown }} derniers — PERF_MONTHS_SHOWN)</em></div>
   <div class="month-grid">
     {% for m in monthly %}
     {% set wr = m.win_rate %}

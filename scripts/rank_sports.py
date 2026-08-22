@@ -21,6 +21,7 @@ import os
 logging.basicConfig(level=logging.WARNING,
                     format="%(levelname)s | %(message)s")
 
+from core.constants import RETIRED_SPORTS  # noqa: E402
 from core.db import get_db                                    # noqa: E402
 from core.learning_layer import (SPORT_DEFAULTS, _LEDGER_SELECT,  # noqa: E402
                                  _MIN_SAMPLES, _sport_stats)
@@ -37,6 +38,8 @@ def main() -> int:
 
     rows_by_sport: dict[str, list[dict]] = {}
     for sport in SPORT_DEFAULTS:
+        if sport in RETIRED_SPORTS:   # jamais dans les vues (Mission 2)
+            continue
         try:
             res = (sb.table("ai_learning_ledger")
                    .select(_LEDGER_SELECT)

@@ -424,18 +424,34 @@ def pool_exhausted() -> bool:
 # c'est ce que la politique de dépense (core/scan_windows.SpendPolicy) lit
 # pour sa garde de réserve. None = jamais observé.
 _last_remaining: int | None = None
+_last_used: int | None = None
 
 
 def pool_remaining() -> int | None:
     return _last_remaining
 
 
-def _note_remaining(raw) -> None:
-    global _last_remaining
+def pool_counters() -> dict:
+    """{'remaining', 'used', 'total', 'pct'} de la clé ACTIVE (celle que le
+    prochain scan utilisera) — None partout si jamais observé. Sert à la
+    ligne de log et à l'alerte par paliers de run_engine (Mission 2)."""
+    r, u = _last_remaining, _last_used
+    if r is None or u is None or (r + u) <= 0:
+        return {"remaining": r, "used": u, "total": None, "pct": None}
+    return {"remaining": r, "used": u, "total": r + u, "pct": 100.0 * r / (r + u)}
+
+
+def _note_remaining(raw, used=None) -> None:
+    global _last_remaining, _last_used
     try:
         _last_remaining = int(raw)
     except (TypeError, ValueError):
         pass
+    if used is not None:
+        try:
+            _last_used = int(used)
+        except (TypeError, ValueError):
+            pass
 
 
 def probe_key(key: str) -> tuple[bool, str]:
@@ -461,7 +477,7 @@ def probe_key(key: str) -> tuple[bool, str]:
     except (TypeError, ValueError):
         left = None
     if left is not None:
-        _note_remaining(left)
+        _note_remaining(left, used)
     if left is not None and left < MIN_CREDITS:
         return False, f"quota épuisé — restantes={left} utilisées={used}"
     return True, f"HTTP 200 — restantes={remaining or '?'} utilisées={used}"
@@ -597,7 +613,7 @@ def fetch_odds(api_key: str | None = None, hours_ahead: int = 24,
                     return all_events
             remaining = r.headers.get("x-requests-remaining", "?")
             used      = r.headers.get("x-requests-used", "?")
-            _note_remaining(remaining)
+            _note_remaining(remaining, used)
             if spend_policy is not None and r.status_code == 200:
                 spend_policy.note_paid(sport_key)
 

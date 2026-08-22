@@ -33,6 +33,7 @@ import os
 logging.basicConfig(level=logging.WARNING, format="%(levelname)s | %(message)s")
 
 from core.constants import TAX_RATE                       # noqa: E402
+from core.constants import RETIRED_SPORTS  # noqa: E402
 from core.db import get_db                                # noqa: E402
 from core.learning_layer import (SPORT_DEFAULTS, _DECISIVE_OUTCOMES,  # noqa: E402
                                  _LEDGER_SELECT)
@@ -130,6 +131,8 @@ def main() -> int:
     print(f"{'=' * 78}")
 
     for sport in SPORT_DEFAULTS:
+        if sport in RETIRED_SPORTS:   # jamais dans les vues (Mission 2)
+            continue
         try:
             res = (sb.table("ai_learning_ledger").select(_LEDGER_SELECT)
                    .eq("sport", sport).order("created_at", desc=True)

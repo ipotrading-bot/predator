@@ -331,7 +331,6 @@ function SystemBetCalculator() {
   const taxBase = "net_system"; // 'net_system' | 'per_line'
   const [activeCell, setActiveCell] = useState(null);
   const [signalsStatus, setSignalsStatus] = useState("loading"); // loading | error | empty | `ok:N`
-  const [oddsQuota, setOddsQuota] = useState({ status: "loading" }); // loading | ok | error
   const [availableSignals, setAvailableSignals] = useState([]);
   const [pickerOpen, setPickerOpen] = useState(false);
 
@@ -387,28 +386,6 @@ function SystemBetCalculator() {
     return () => { cancelled = true; };
   }, []);
 
-  // Quota OddsAPI restant, temps réel — poll léger (l'endpoint interroge
-  // /v4/sports côté serveur, le seul appel OddsAPI qui ne consomme pas de quota).
-  useEffect(() => {
-    let cancelled = false;
-    const poll = async () => {
-      try {
-        const res = await fetch("/api/odds-quota");
-        const data = await res.json();
-        if (cancelled) return;
-        if (!res.ok || data.error) {
-          setOddsQuota({ status: "error", message: data.error || `HTTP ${res.status}` });
-        } else {
-          setOddsQuota({ status: "ok", remaining: data.remaining, used: data.used, checkedAt: new Date() });
-        }
-      } catch (e) {
-        if (!cancelled) setOddsQuota({ status: "error", message: "requête impossible" });
-      }
-    };
-    poll();
-    const id = setInterval(poll, 30000);
-    return () => { cancelled = true; clearInterval(id); };
-  }, []);
 
   // Système M/N : tous les paliers de M à N sont inclus d'office (comme betbuzz)
   const sortedFolds = useMemo(() => {
@@ -744,42 +721,9 @@ function SystemBetCalculator() {
           </div>
         </div>
 
-        {/* Quota OddsAPI — temps réel, pas de coût de quota (endpoint /v4/sports) */}
-        <div style={{ background: C.panel, border: `1px solid ${C.border}`, borderRadius: 12 }} className="mt-5 p-3 flex items-center justify-between flex-wrap gap-2">
-          <span style={{ color: C.muted, fontFamily: SANS }} className="text-xs uppercase tracking-wide">Quota OddsAPI</span>
-          {oddsQuota.status === "loading" && (
-            <span style={{ color: C.faint, fontFamily: MONO }} className="text-xs">chargement…</span>
-          )}
-          {oddsQuota.status === "error" && (
-            <span style={{ color: C.loss, fontFamily: MONO }} className="text-xs">indisponible — {oddsQuota.message}</span>
-          )}
-          {oddsQuota.status === "ok" && (() => {
-            const total = oddsQuota.used != null ? oddsQuota.remaining + oddsQuota.used : null;
-            const pct = total ? Math.max(0, Math.min(100, (oddsQuota.remaining / total) * 100)) : null;
-            const color = pct != null
-              ? (pct < 10 ? C.loss : pct < 25 ? C.partial : C.win)
-              : (oddsQuota.remaining < 500 ? C.loss : oddsQuota.remaining < 2000 ? C.partial : C.win);
-            return (
-              <div className="flex items-center gap-3 flex-wrap">
-                {pct != null && (
-                  <div style={{ width: 90, height: 6, background: C.panel2, borderRadius: 4, overflow: "hidden" }}>
-                    <div style={{ width: `${pct}%`, height: "100%", background: color, transition: "width 0.3s" }} />
-                  </div>
-                )}
-                <span style={{ color, fontFamily: MONO, fontWeight: 600 }} className="text-xs">
-                  {oddsQuota.remaining ?? "?"} restantes{pct != null ? ` (${pct.toFixed(1)}%)` : ""}
-                </span>
-                {oddsQuota.used != null && (
-                  <span style={{ color: C.faint, fontFamily: MONO }} className="text-xs">· {oddsQuota.used} utilisées</span>
-                )}
-                {oddsQuota.checkedAt && (
-                  <span style={{ color: C.faint, fontFamily: MONO }} className="text-xs">
-                    · vérifié {oddsQuota.checkedAt.toLocaleTimeString("fr-FR", { hour12: false })}
-                  </span>
-                )}
-              </div>
-            );
-          })()}
+        {/* Widget « Quota OddsAPI » retiré le 2026-08-22 (Mission 2, Phase 2) :
+            la surveillance est backend — alerte Telegram 20 % / 5 % + log à
+            chaque run (run_engine._alert_oddsapi_pool_levels). */}
         </div>
       </div>
     </div>
