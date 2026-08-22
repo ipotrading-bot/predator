@@ -170,3 +170,81 @@ utile : elle déplace les crédits vers les fenêtres où la ligne bouge et vers
 1. Pool OddsAPI : la clé unique est à 499/500 — `python scripts/rotate_odds_key.py --add <clé>` (×3-4).
 2. Activer `NFL_SEASON_START` si la date réelle diffère du 10/09.
 3. Décider, sur le rapport hebdo, des promotions Kelly et des retraits proposés.
+
+
+---
+---
+
+# Mission 2 — nettoyage dashboard, quota, capacité IA (2026-08-22)
+
+**Commits : `fix(oddsapi)` résolution des clés · `feat(dashboard)` Phases 1-2 · `feat(ai)` Phase 3 · Suite : 723 tests, 0 échec · pyflakes propre · hook dashboard OK (×3).**
+
+## Préalable — « l'ancien OddsAPI, on a réglé ça hier » : vérifié, et ce n'était pas visible du moteur
+Constat live (22/08 03:00 UTC) : `app_secrets.ODDS_API_KEY` = `…077b` (maj **06/08**), 499/500, et le
+scan engine de 01:43 UTC se terminait encore sur `HTTP 401 → pool épuisé`. Cause : `get_secret()` ne
+regarde l'environnement QUE si la table est vide — une clé neuve posée dans les secrets GitHub restait
+invisible tant que la valeur périmée était dans la table. Correctif (`candidate_keys`) : l'env
+(`ODDS_API_KEYS`, `ODDS_API_KEY`) rejoint TOUJOURS le pool après la table (la clé morte est écartée par la
+sonde gratuite, la neuve prend le relais), et les workflows engine/deep/golden transmettent aussi
+`ODDS_API_KEYS`. À vérifier sur le prochain run : la ligne « OddsAPI clé #k/N active (…xxxx) ».
+
+## Phase 1 — vues modifiées
+| Vue / composant | Avant | Après |
+|---|---|---|
+| `/performance` — héros win rate + KPIs | tout le ledger (500 lignes) | lignes filtrées par `core/perf_view.filter_rows` : sports ∉ `RETIRED_SPORTS` **et** mois ∈ `PERF_MONTHS_SHOWN` (défaut 2) |
+| `/performance` — « Par sport » | incluait tabletennis/esports/… | retirés absents |
+| `/performance` — « Calibration » (Brier) | idem | calculée sur les lignes filtrées |
+| `/performance` — « Par mois » | tous les mois | N derniers mois, libellé « (les N derniers — PERF_MONTHS_SHOWN) » |
+| `/performance` — « Historique » | idem | lignes filtrées |
+| `scripts/rank_sports.py`, `scripts/calibration_report.py` | boucle `SPORT_DEFAULTS` | garde explicite `RETIRED_SPORTS` |
+| `sql/archive_retired_sports.sql` | — | archivage MANUEL (jamais par workflow) vers `ai_learning_ledger_archive` (+`archived_at`), réversible, delete borné aux lignes copiées |
+
+Rien n'est supprimé : filtre d'affichage pur, testé sans rendu de template (`tests/test_mission2_dashboard_quota.py`).
+
+## Phase 2 — comportement d'alerte quota (capture)
+Widget « Quota OddsAPI » et `/api/odds-quota` retirés (page Sys). La surveillance reste backend :
+```
+INFO    | Quota OddsAPI : 20 restantes / 500 (4.0%) — clé active
+Telegram → 🔴 *OddsAPI : pool sous 5%* — 20 crédits restants sur 500 (4.0%).
+           Fenêtres favorables et closing line restent prioritaires ; le fond s'espace (core/scan_windows).
+           Ajouter une clé : `python scripts/rotate_odds_key.py --add <clé>`
+[run suivant, même palier] INFO | Alerte [alert_oddsapi_pool_5] déjà envoyée il y a 1.0h — silence
+```
+Paliers 20 % (`alert_oddsapi_pool_20`) et 5 % (`alert_oddsapi_pool_5`), **une alerte par palier et par
+24 h** (dédup `meta` via `_alert_once`). Test : pool à 4 % → exactement une alerte, silence au run suivant ;
+18 % → palier 20 % ; 80 % → log seul. La réserve journalière de la Mission 1 lit la même mesure
+(`pool_counters`, alimentée par la sonde gratuite et chaque réponse payante).
+
+## Phase 3 — fournisseurs IA : ordre de repli et quotas
+| Rang | Fournisseur | Rôle | Quota (gratuit, 1 compte) | Suivi | Env |
+|---|---|---|---|---|---|
+| 1 | Groq `groq/compound-mini` | recherche web intégrée | TPD 100k tokens/jour par org (modèle 70b) | par modèle × clé (process) | `GROQ_API_KEY` (+`_2.._4` si autres orgs) |
+| 1' | Groq `llama-3.3-70b` / `llama-3.1-8b` | extraction / complétion (paliers heavy/light) | 100k TPD 70b ; 8b plus large | idem | idem |
+| 2 | Tavily | snippets web (étage 2) | 1 000 crédits/mois | budget/run 25 | `TAVILY_API_KEY` |
+| 3 | OpenRouter (`…:free`) | repli complétion | ≈ 200 req/jour free | `meta.quota_ai_openrouter` (150) | `OPENROUTER_API_KEY` |
+| 4 | Cerebras | repli complétion | ≈ 1M tokens/jour free | `meta.quota_ai_cerebras` (500) | `CEREBRAS_API_KEY` |
+| 5 | GitHub Models | repli complétion | ≈ 150 req/jour (low tier) | `meta.quota_ai_github` (100) | `GITHUB_MODELS_TOKEN` |
+| — | Mistral | **hors chaîne** | — | — | domaine de panne Wiz, par construction |
+| — | Gemini | **mort** en gratuit | — | — | — |
+
+Réduction de consommation : cache de réponses 30 min (`meta.ai_cache_<hash>`, requête normalisée) — le
+même slate n'est jamais recherché deux fois ; palier `light` (8b d'abord) pour l'estimateur, `heavy` pour
+le settlement ; `SEARCH_MAX_TOKENS` réévalué (2048 reste le plancher sûr d'un lot Pinnacle de 25).
+
+## OddsAPI — payant vs gratuit optimisé (décision opérateur)
+Tarifs constatés (the-odds-api.com, 22/08) : Starter **gratuit 500 crédits/mois** · **20K = 30 $/mois** ·
+100K = 59 $/mois · 5M = 119 $/mois.
+
+| Scénario | Crédits/mois | Couverture |
+|---|---|---|
+| Gratuit, 1 clé, rythme d'avant Mission 1 (≈356/j) | 500 | ≈ 1,4 jour |
+| Gratuit, 1 clé, crons optimisés (≈208/j ≈ 6 240/mois) | 500 | ≈ 2,4 jours |
+| Gratuit, pool de 4 comptes (exclu par la règle « un compte par fournisseur ») | 2 000 | ≈ 10 jours |
+| **Payant 20K (30 $/mois)** | 20 000 | ≈ 3,2 × le besoin optimisé — marge pour deep scans et nouvelles ligues |
+| Payant 100K (59 $/mois) | 100 000 | surdimensionné au périmètre actuel |
+
+Lecture : à 6 240 crédits/mois après optimisation, **le palier 20K (30 $) couvre le besoin avec 3× de marge** ;
+le gratuit ne tient que 2-3 jours par clé et la règle « un compte par fournisseur » interdit le pool de
+comptes. Le step REPRICE (Matchbook, gratuit) couvre la fraîcheur hors fenêtre mais pas la découverte du
+slate Tier 1. Recommandation : 20K si l'opérateur veut le Tier 1 en continu ; sinon rester gratuit et
+accepter une découverte Tier 1 partielle, portée par api-sports/odds-api.io/Titan007 + Matchbook.
