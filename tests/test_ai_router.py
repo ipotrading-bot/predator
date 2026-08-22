@@ -62,13 +62,18 @@ class TestRegistre:
         monkeypatch.setenv("OPENROUTER_API_KEY", "o")
         assert [p.name for p in R.active_providers()] == ["openrouter"]
 
-    def test_les_fournisseurs_morts_ne_sont_pas_au_registre(self):
-        """GitHub Models : HTTP 410 « github_models_retirement_brownout ».
-        Cerebras : HTTP 403. Vérifiés live le 2026-08-22."""
+    def test_seul_github_models_est_reellement_mort(self):
+        """GitHub Models rend HTTP 410 dont le CORPS nomme le retrait
+        (« github_models_retirement_brownout ») : preuve directe.
+
+        Cerebras, lui, a été retiré à tort au premier passage sur la foi d'un
+        403 sans clé — qui ne prouve rien : c'est la signature d'un endpoint
+        authentifié par clé, comme Scaleway ou Cohere qui rendent 401 dans les
+        mêmes conditions. Avec une clé invalide il répond
+        `401 {"code":"wrong_api_key"}`, donc il est vivant. Il est rétabli."""
         noms = {p.name for p in R.REGISTRY}
-        assert "cerebras" not in noms
-        assert "github" not in noms
-        assert "github_models" not in noms
+        assert "github" not in noms and "github_models" not in noms
+        assert "cerebras" in noms
 
     def test_les_endpoints_anonymes_ne_sont_pas_enroles(self):
         """Même défaut fatal que les sources sans clé de l'incident d'août :
@@ -343,13 +348,50 @@ class TestDocumentation:
             i = txt.index(f"{p.env_key}=")
             assert "⚖️" in txt[max(0, i - 400):i], p.env_key
 
-    def test_les_variables_des_fournisseurs_morts_ne_sont_plus_proposees(self):
-        """CEREBRAS_API_KEY / GITHUB_MODELS_TOKEN ne doivent plus apparaître
-        comme des variables à renseigner — seulement, au plus, dans une note
-        d'historique."""
+    def test_la_variable_du_seul_fournisseur_mort_nest_plus_proposee(self):
+        """GITHUB_MODELS_TOKEN ne doit plus apparaître comme une variable à
+        renseigner. CEREBRAS_API_KEY, elle, est de retour : son retrait
+        reposait sur un 403 sans clé qui ne prouvait rien."""
         for line in self._env_example().splitlines():
             stripped = line.strip()
             if stripped.startswith("#"):
                 continue
-            assert not stripped.startswith("CEREBRAS_API_KEY=")
             assert not stripped.startswith("GITHUB_MODELS_TOKEN=")
+
+
+class TestGabaritsDURL:
+    """Cloudflare porte son identifiant de compte DANS l'URL."""
+
+    def test_les_variables_sont_substituees(self, monkeypatch):
+        monkeypatch.setenv("CLOUDFLARE_ACCOUNT_ID", "abc123")
+        cf = R.by_name("cloudflare")
+        assert "abc123" in cf.resolved_base and "${" not in cf.resolved_base
+        assert cf.chat_url.endswith("/ai/v1/chat/completions")
+
+    def test_une_cle_sans_son_identifiant_de_compte_est_ignoree(self, monkeypatch):
+        """Sinon on appellerait une URL contenant littéralement `${...}` et on
+        logguerait un échec réseau incompréhensible."""
+        monkeypatch.setenv("CLOUDFLARE_API_TOKEN", "t")
+        monkeypatch.delenv("CLOUDFLARE_ACCOUNT_ID", raising=False)
+        assert "cloudflare" not in [p.name for p in R.active_providers()]
+
+    def test_avec_les_deux_le_fournisseur_est_actif(self, monkeypatch):
+        monkeypatch.setenv("CLOUDFLARE_API_TOKEN", "t")
+        monkeypatch.setenv("CLOUDFLARE_ACCOUNT_ID", "abc123")
+        assert "cloudflare" in [p.name for p in R.active_providers()]
+
+
+class TestCouvertureDesLanes:
+    def test_chaque_lane_de_production_a_au_moins_deux_fournisseurs(self):
+        """Sinon elle alerterait en permanence — et une alerte permanente est
+        une alerte qu'on n'ouvre plus."""
+        for lane in R.LANES:
+            if lane == R.WIZ:
+                continue
+            n = [p for p in R.REGISTRY if lane in p.lanes and not p.terms_flag]
+            assert len(n) >= R.LANE_MIN_HEALTHY, f"{lane}: {len(n)}"
+
+    def test_gemini_ne_sert_jamais_la_lane_de_recherche(self):
+        """Le grounding Google Search gratuit est MORT (limit:0, vérifié sur
+        4 clés le 2026-07-21). Seule la génération simple survit."""
+        assert R.SEARCH_READ not in R.by_name("gemini").lanes

@@ -253,7 +253,7 @@ accepter une découverte Tier 1 partielle, portée par api-sports/odds-api.io/Ti
 
 # Mission 3 — nouvelles sources de cotes gratuites (Asie incluse) (2026-08-22)
 
-**Suite : 862 tests, 0 échec · pyflakes propre · 103 tests ajoutés · migration `sql/migrate_v10_3_team_aliases.sql` (additive, à appliquer à la main)**
+**Suite : 867 tests, 0 échec · pyflakes propre · 108 tests ajoutés · migration `sql/migrate_v10_3_team_aliases.sql` (additive, à appliquer à la main)**
 
 Règle tenue : **aucune source n'est intégrée sur une supposition**. Chaque ligne du tableau
 « preuve de vie » ci-dessous est un `curl` réel, passé depuis le runner (IP datacenter Azure) le
@@ -677,8 +677,29 @@ Le paysage des paliers gratuits churne chaque mois. Les deux corrections demand�
 
 | Fournisseur | Requête | Réponse | Verdict |
 |---|---|---|---|
-| GitHub Models | `GET models.github.ai/catalog/models` | **HTTP 410** `{"code":"github_models_retirement_brownout"}` | **Retiré** — sorti du code |
-| Cerebras | `GET api.cerebras.ai/v1/models` | **HTTP 403** `{"detail":"Not authenticated"}` | Palier gratuit sans carte **fermé** — sorti du code |
+| GitHub Models | `GET models.github.ai/catalog/models` | **HTTP 410** `{"code":"github_models_retirement_brownout"}` | **Retiré** — le corps NOMME le retrait. Sorti du code. |
+| Cerebras | `GET api.cerebras.ai/v1/models` | HTTP 403 `{"detail":"Not authenticated"}` | ⚠️ **conclusion initiale ERRONÉE — voir ci-dessous** |
+
+### ⚠️ Correction : Cerebras n'est pas mort, et l'erreur est instructive
+
+Le premier passage a conclu à la mort de Cerebras sur un `403 {"detail":"Not authenticated"}`. **Ce
+raisonnement ne tenait pas** : 403 sans clé est la signature d'un endpoint *authentifié par clé* —
+exactement ce que rendent Scaleway, Cohere, Zhipu, SiliconFlow et Upstage (401) dans les mêmes
+conditions, et qu'on comptait, eux, comme vivants. Re-testé avec une clé délibérément invalide :
+
+```
+GET  /v1/models           + Bearer bogus → 401 {"code":"wrong_api_key"}
+POST /v1/chat/completions + Bearer bogus → 401 {"code":"wrong_api_key"}
+```
+
+Une API qui sait dire « mauvaise clé » est vivante. **Cerebras est rétabli au registre** (~1 M
+tokens/jour annoncés, le plus gros volume gratuit du lot).
+
+La leçon vaut plus que le fournisseur, et elle est écrite en tête de `core/ai_router.py` :
+**un 401/403 sans clé ne prouve jamais qu'un palier gratuit a fermé.** Il faut une clé invalide pour
+distinguer « authentifié par clé » de « porte close », et un 410 ou un message explicite pour
+conclure à un retrait. L'affirmation du cahier des charges avait été reprise, puis habillée d'une
+sonde qui ne la démontrait pas — c'est le genre de « vérification » qui donne faussement confiance.
 
 ### Et une troisième mort, trouvée en chemin — celle qui prouve le besoin
 

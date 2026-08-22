@@ -89,11 +89,10 @@ class TestDelegationAuRouteur:
         monkeypatch.setattr(ai_router, "route", boom)
         assert ai_search.ai_complete("q") is None
 
-    def test_les_fournisseurs_morts_ont_disparu_du_code(self):
-        """Cerebras (403) et GitHub Models (410) ne doivent plus être cités
-        comme fournisseurs — ils l'étaient encore en tête de mission 4."""
+    def test_github_models_a_disparu_du_code(self):
+        """HTTP 410, corps nommant le retrait : le seul mort prouvé."""
         noms = {p.name for p in ai_router.REGISTRY}
-        assert "cerebras" not in noms and "github" not in noms
+        assert "github" not in noms
 
     def test_le_modele_openrouter_mort_nest_plus_une_preference(self):
         """`meta-llama/llama-3.3-70b-instruct:free` a disparu du catalogue

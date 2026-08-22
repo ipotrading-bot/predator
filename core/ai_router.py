@@ -10,12 +10,27 @@ crainte, c'est l'historique de ce projet :
     2026-07-30 GitHub Models : RETIRÉ par GitHub
     2026-08   Cerebras : palier gratuit sans carte fermé
 
-Vérifié en live le 2026-08-22 depuis le runner, et c'est sans appel :
+Vérifié en live le 2026-08-22 depuis le runner :
 
     GET https://models.github.ai/catalog/models
       → HTTP 410 {"code":"github_models_retirement_brownout"}
-    GET https://api.cerebras.ai/v1/models
-      → HTTP 403 {"detail":"Not authenticated"}
+    Le corps NOMME le retrait : preuve directe, GitHub Models est sorti du registre.
+
+⚠️ CORRECTION DU 2026-08-22 (même jour) — CERBRAS N'EST PAS MORT.
+Le premier passage concluait à sa mort sur un `GET /v1/models` → HTTP 403
+`{"detail":"Not authenticated"}`. **Cette lecture était fausse** : 403 sans
+clé signifie seulement « endpoint authentifié par clé », exactement comme
+Scaleway, Cohere ou Zhipu qui rendent 401 dans les mêmes conditions. Re-testé
+avec une clé délibérément invalide :
+
+    GET  /v1/models            + Bearer bogus → 401 {"code":"wrong_api_key"}
+    POST /v1/chat/completions  + Bearer bogus → 401 {"code":"wrong_api_key"}
+
+Une API qui sait dire « mauvaise clé » est vivante. Cerebras est donc RÉTABLI
+au registre. La leçon vaut plus que le fournisseur : **un 401/403 sans clé ne
+prouve jamais qu'un palier gratuit a fermé** — il faut une clé invalide pour
+distinguer « authentifié par clé » de « porte close », et un 410 ou un message
+explicite pour conclure à un retrait.
 
 **Conséquence architecturale : un nom de modèle n'est JAMAIS une dépendance
 vitale.** Chaque lane déclare une LISTE de préférences ; le routeur retient le
@@ -62,6 +77,7 @@ CE QUI N'EST PAS ENRÔLÉ, ET POURQUOI
 import json
 import logging
 import os
+import re
 from dataclasses import dataclass, field
 from datetime import datetime, timedelta, timezone
 
@@ -122,12 +138,32 @@ class Provider:
         return f"ai_{self.name}"
 
     @property
+    def resolved_base(self) -> str:
+        """base_url avec ses ${VARIABLES} d'environnement substituées.
+
+        Cloudflare Workers AI expose son endpoint OpenAI-compatible sous
+        `/accounts/{account_id}/ai/v1` : l'identifiant de compte fait partie
+        de l'URL, pas des en-têtes. Plutôt qu'un cas particulier dans le
+        client, le registre porte un gabarit.
+        """
+        url = self.base_url
+        for var in re.findall(r"\$\{([A-Z0-9_]+)\}", url):
+            val = os.environ.get(var)
+            if val:
+                url = url.replace("${" + var + "}", val)
+            # Variable absente : on LAISSE le gabarit en place. Le remplacer
+            # par une chaîne vide fabriquerait une URL d'apparence valide
+            # (`/accounts//ai/v1`) qui échouerait plus tard avec un message
+            # réseau incompréhensible, au lieu d'être écartée proprement ici.
+        return url
+
+    @property
     def chat_url(self) -> str:
-        return f"{self.base_url.rstrip('/')}/chat/completions"
+        return f"{self.resolved_base.rstrip('/')}/chat/completions"
 
     @property
     def catalog_url(self) -> str:
-        return f"{self.base_url.rstrip('/')}{self.catalog_path}"
+        return f"{self.resolved_base.rstrip('/')}{self.catalog_path}"
 
     def key(self) -> str | None:
         return os.environ.get(self.env_key) or None
@@ -150,6 +186,56 @@ REGISTRY: tuple = (
     ),
     # ── Palier gratuit permanent, sans carte — priorité 1 ──
     Provider(
+        name="cerebras", base_url="https://api.cerebras.ai/v1",
+        env_key="CEREBRAS_API_KEY",
+        models=("llama-3.3-70b", "gpt-oss-120b", "qwen-3-32b"),
+        lanes=(FILTER, ANALYZE, SETTLEMENT, SEARCH_READ),
+        rpm=30, daily_requests=250, daily_tokens=1_000_000,
+        note="~1M tokens/j annonces, sans carte. RETABLI le 2026-08-22 : la "
+             "conclusion de mort reposait sur un 403 sans cle, qui ne prouvait rien "
+             "(401 'wrong_api_key' avec une cle invalide = API vivante).",
+    ),
+    Provider(
+        name="gemini",
+        base_url="https://generativelanguage.googleapis.com/v1beta/openai",
+        env_key="GEMINI_API_KEY",
+        models=("gemini-2.5-flash", "gemini-2.5-flash-lite"),
+        lanes=(ANALYZE, FILTER, TRANSLATE_CJK),
+        rpm=15, daily_requests=200,
+        note="⚠️ NE PAS CONFONDRE avec le grounding Google Search, lui bien MORT en "
+             "gratuit (limit:0, verifie sur 4 cles le 2026-07-21 — c'est pourquoi "
+             "core/oracle.py est passe a Groq/Tavily). La GENERATION simple garde un "
+             "palier gratuit. Ce fournisseur ne sert donc JAMAIS la lane SEARCH_READ.",
+    ),
+    Provider(
+        name="cloudflare",
+        base_url="https://api.cloudflare.com/client/v4/accounts/${CLOUDFLARE_ACCOUNT_ID}/ai/v1",
+        env_key="CLOUDFLARE_API_TOKEN",
+        models=("@cf/meta/llama-3.3-70b-instruct-fp8-fast",
+                "@cf/qwen/qwen2.5-coder-32b-instruct",
+                "@cf/meta/llama-3.1-8b-instruct"),
+        lanes=(FILTER, ANALYZE, SEARCH_READ),
+        rpm=0, daily_requests=200,
+        note="10 000 neurons/j. Demande AUSSI CLOUDFLARE_ACCOUNT_ID : l'identifiant "
+             "de compte est dans l'URL, pas dans les en-tetes.",
+    ),
+    Provider(
+        name="nebius", base_url="https://api.studio.nebius.ai/v1",
+        env_key="NEBIUS_API_KEY",
+        models=("Qwen/Qwen3-32B", "meta-llama/Llama-3.3-70B-Instruct"),
+        lanes=(FILTER, ANALYZE, TRANSLATE_CJK, SEARCH_READ),
+        rpm=0, daily_requests=150,
+        note="credits gratuits a l'inscription ; catalogue derriere cle (401 sans cle)",
+    ),
+    Provider(
+        name="chutes", base_url="https://llm.chutes.ai/v1",
+        env_key="CHUTES_API_KEY",
+        models=("Qwen/Qwen3-32B", "deepseek-ai/DeepSeek-V3-0324"),
+        lanes=(FILTER, ANALYZE, TRANSLATE_CJK, SEARCH_READ),
+        rpm=0, daily_requests=150,
+        note="catalogue PUBLIC (200 sans cle) ; palier gratuit avec quota quotidien",
+    ),
+    Provider(
         name="openrouter", base_url="https://openrouter.ai/api/v1",
         env_key="OPENROUTER_API_KEY",
         # Préférences vérifiées présentes au catalogue :free du 2026-08-22.
@@ -158,7 +244,7 @@ REGISTRY: tuple = (
                 "z-ai/glm-5.2:free",
                 "google/gemma-4-31b-it:free",
                 "nvidia/nemotron-3-nano-30b-a3b:free"),
-        lanes=(ANALYZE, FILTER, TRANSLATE_CJK),
+        lanes=(ANALYZE, FILTER, TRANSLATE_CJK, SEARCH_READ),
         rpm=20, daily_requests=150,
         headers={"HTTP-Referer": "https://github.com/predator-paim",
                  "X-Title": "PREDATOR"},
@@ -169,7 +255,7 @@ REGISTRY: tuple = (
         env_key="NVIDIA_NIM_API_KEY",
         models=("deepseek-ai/deepseek-v4-flash-0731",
                 "meta/llama-3.3-70b-instruct"),
-        lanes=(ANALYZE, FILTER),
+        lanes=(ANALYZE, FILTER, SEARCH_READ),
         rpm=40, daily_requests=200, terms_flag="evaluation",
         note="102 modeles au catalogue (2026-08-22) ; statut evaluation a documenter",
     ),
@@ -177,7 +263,7 @@ REGISTRY: tuple = (
         name="sambanova", base_url="https://api.sambanova.ai/v1",
         env_key="SAMBANOVA_API_KEY",
         models=("Meta-Llama-3.3-70B-Instruct", "DeepSeek-V3.2", "gpt-oss-120b"),
-        lanes=(FILTER, ANALYZE, SETTLEMENT),
+        lanes=(FILTER, ANALYZE, SETTLEMENT, SEARCH_READ),
         rpm=60, daily_requests=200, daily_tokens=200_000,
         note="7 modeles (2026-08-22) ; ~200k tokens/j par modele — verifier si carte requise",
     ),
@@ -186,7 +272,7 @@ REGISTRY: tuple = (
         env_key="OVH_AI_API_KEY",
         models=("Meta-Llama-3_3-70B-Instruct", "Qwen3-32B",
                 "Mistral-Small-3.2-24B-Instruct-2506"),
-        lanes=(FILTER, ANALYZE, TRANSLATE_CJK),
+        lanes=(FILTER, ANALYZE, TRANSLATE_CJK, SEARCH_READ),
         rpm=0, daily_requests=150,
         note="24 modeles (2026-08-22) ; souverainete UE",
     ),
@@ -194,7 +280,7 @@ REGISTRY: tuple = (
         name="scaleway", base_url="https://api.scaleway.ai/v1",
         env_key="SCALEWAY_API_KEY",
         models=("llama-3.3-70b-instruct", "qwen3-32b"),
-        lanes=(FILTER, ANALYZE),
+        lanes=(FILTER, ANALYZE, SEARCH_READ),
         rpm=0, daily_requests=150,
         note="catalogue derriere cle (401 sans cle) ; souverainete UE",
     ),
@@ -268,7 +354,16 @@ def active_providers() -> list:
     obligatoire, exactement comme les adaptateurs de sources de la mission 3 :
     un déploiement qui ne configure que Groq doit tourner sans un warning.
     """
-    return [p for p in REGISTRY if p.key()]
+    out = []
+    for p in REGISTRY:
+        if not p.key():
+            continue
+        if "${" in p.resolved_base:
+            log.warning("ai_router[%s]: clé présente mais variable d'URL absente "
+                        "(%s) — fournisseur ignoré", p.name, p.base_url)
+            continue
+        out.append(p)
+    return out
 
 
 # ── Santé partagée (table `meta`, mécanique daily_quota) ─────────────
