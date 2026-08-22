@@ -377,6 +377,15 @@ def candidate_keys(explicit: str | None = None) -> list[str]:
     add(explicit)
     add(get_secret(POOL_SECRET))
     add(get_secret("ODDS_API_KEY"))
+    # L'ENVIRONNEMENT rejoint TOUJOURS le pool, même quand app_secrets a une
+    # valeur : get_secret() ne regarde l'env que si la table est VIDE, donc
+    # une clé neuve posée dans les secrets GitHub restait invisible tant
+    # qu'une clé périmée traînait dans la table (constaté le 2026-08-22 :
+    # app_secrets figé au 06/08 sur une clé à 499/500, rotation opérateur
+    # sans effet). La clé morte est écartée par la sonde gratuite, la
+    # neuve prend le relais — sans toucher à la priorité de la table.
+    add(os.environ.get(POOL_SECRET))
+    add(os.environ.get("ODDS_API_KEY"))
     for i in range(2, 10):
         add(os.environ.get(f"ODDS_API_KEY_{i}"))
     return out

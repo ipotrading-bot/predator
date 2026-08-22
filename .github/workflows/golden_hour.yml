@@ -98,6 +98,7 @@ jobs:
           SUPABASE_KEY: ${{ secrets.SUPABASE_KEY }}
           SUPABASE_SERVICE_KEY: ${{ secrets.SUPABASE_SERVICE_KEY }}
           ODDS_API_KEY: ${{ secrets.ODDS_API_KEY }}
+          ODDS_API_KEYS: ${{ secrets.ODDS_API_KEYS }}
           API_FOOTBALL_KEY: ${{ secrets.API_FOOTBALL_KEY }}
           GROQ_API_KEY: ${{ secrets.GROQ_API_KEY }}
           TAVILY_API_KEY: ${{ secrets.TAVILY_API_KEY }}
@@ -191,6 +192,7 @@ jobs:
           GOLDEN_HOUR:        ${{ steps.check.outputs.manual != 'true' && '1' || '' }}
           GUERRILLA:          ${{ steps.check.outputs.manual == 'true' && '1' || '' }}
           ODDS_API_KEY:       ${{ secrets.ODDS_API_KEY }}
+          ODDS_API_KEYS:      ${{ secrets.ODDS_API_KEYS }}
           API_FOOTBALL_KEY:   ${{ secrets.API_FOOTBALL_KEY }}
           GROQ_API_KEY:       ${{ secrets.GROQ_API_KEY }}
           GROQ_API_KEY_2:     ${{ secrets.GROQ_API_KEY_2 }}
