@@ -125,26 +125,26 @@ http://localhost:5000
 
 | Variable | Description | Requis |
 |----------|-------------|--------|
-| `ODDS_API_KEY` | The-Odds API key | ✅ |
-| `GEMINI_API_KEY` | Google Gemini API key | ✅ |
-| `SUPABASE_URL` | Supabase project URL | ✅ |
-| `SUPABASE_KEY` | Supabase anon key | ✅ |
-| `TELEGRAM_BOT_TOKEN` | Telegram bot token | ✅ |
-| `TELEGRAM_CHAT_ID` | Telegram chat/channel ID | ✅ |
-| `GROQ_API_KEY` | Groq API key (Llama 3) | ❌ |
-| `MISTRAL_API_KEY` | Wiz — raisonnement **et** recherche web (console.mistral.ai) | ❌ |
-| `NEWS_API_KEY` | NewsAPI.org key | ❌ |
-| `BETTERSTACK_TOKEN` | BetterStack log token | ❌ |
-| `PREDATOR_SECRET` | API auth secret | ❌ |
+| `ODDS_API_KEYS` / `ODDS_API_KEY` | Pool de clés The-Odds API (rotation auto ; source de vérité : `app_secrets`) | ✅ |
+| `SUPABASE_URL` / `SUPABASE_KEY` / `SUPABASE_SERVICE_KEY` | Supabase (anon pour lire, service_role pour écrire) | ✅ |
+| `TELEGRAM_BOT_TOKEN` / `TELEGRAM_CHAT_ID` | Notifications Telegram | ✅ |
+| `GROQ_API_KEY` / `TAVILY_API_KEY` | Recherche web (settlement + prix Pinnacle de repli) | ❌ |
+| `API_SPORTS_KEY` / `ODDS_API_IO_KEY` | Books soft authentifiés par clé (Tier 2) | ❌ |
+| `MISTRAL_API_KEY` | Wiz — raisonnement **et** recherche web (domaine de panne séparé) | ❌ |
+| `NFL_SEASON_START` | Date d'ouverture NFL (défaut `2026-09-10`) — pas de scan de présaison | ❌ |
+| `ODDS_API_RESERVE_CREDITS` / `BACKGROUND_MIN_INTERVAL_MIN` | Politique de dépense OddsAPI (`core/scan_windows.py`) — défauts 60 / 180 | ❌ |
+
+Le périmètre des sports (retraits du 2026-08-22, MMA/boxe/NFL/LdC/UEL/Euroleague sur flux OddsAPI réel,
+budget crédits avant/après, carte des crons, boucle de calibration) est documenté dans
+[`reports/refonte_scope_2026-08.md`](reports/refonte_scope_2026-08.md).
 
 ### Obtenir les Clés API
 
-1. **The-Odds API** — [the-odds-api.com](https://the-odds-api.com/)
-2. **Google Gemini** — [aistudio.google.com](https://aistudio.google.com/)
-3. **Groq** — [console.groq.com](https://console.groq.com/) (Gratuit !)
-4. **NewsAPI** — [newsapi.org](https://newsapi.org/) (Plan gratuit)
-5. **Supabase** — [supabase.com](https://supabase.com/) (Plan gratuit)
-6. **BetterStack** — [betterstack.com/logs](https://betterstack.com/logs) (Plan gratuit)
+1. **The-Odds API** — [the-odds-api.com](https://the-odds-api.com/) (500 crédits/mois/clé — prévoir un pool de 3-4 clés)
+2. **Groq** — [console.groq.com](https://console.groq.com/) · **Tavily** — [tavily.com](https://tavily.com/)
+3. **api-sports** — [api-sports.io](https://api-sports.io/) · **odds-api.io** — [odds-api.io](https://odds-api.io/)
+4. **Supabase** — [supabase.com](https://supabase.com/) (Plan gratuit)
+5. **Mistral** (Wiz, optionnel) — [console.mistral.ai](https://console.mistral.ai/)
 
 ---
 
@@ -183,13 +183,14 @@ predator/
 │   └── static/           # CSS, icônes, manifest PWA
 ├── core/
 │   ├── odds_api.py        # Tier 1 — The Odds API (Pinnacle + 1XBet réel)
-│   ├── harvester.py        # Tier 2/3 — Gemini Search (1XBet, MMA, eSports, alt sports)
+│   ├── harvester.py        # Tier 2/3 — soft books (api-sports, odds-api.io, Titan007) + recherche web Pinnacle
+│   ├── scan_windows.py     # Fenêtres favorables (UTC) + politique de dépense OddsAPI (Phase 3, 2026-08-22)
 │   ├── oracle.py            # Prix Pinnacle unitaire (fallback, max 3 appels/scan)
 │   ├── math_engine.py     # Devigging (Power method), calc_dnb, to_binary
 │   ├── paim_engine.py      # compute_alpha, consensus, strict_team_match
 │   ├── settlement.py        # Résultat réel du match → outcome WIN/LOSS/PUSH
 │   ├── audit_engine.py     # Pipeline settlement + CLV (run_audit.py)
-│   ├── learning_layer.py  # Seuils MIN_EDGE adaptatifs par sport
+│   ├── learning_layer.py  # Seuils MIN_EDGE adaptatifs par sport + verdicts promotion/retrait (meta sport_verdict_*)
 │   ├── wiz_ai.py             # Wiz — client Mistral (domaine de panne SÉPARÉ de Groq/Tavily)
 │   ├── wiz_engine.py         # Wiz — prompts, parsing, pondération des tiers, wiz_rank_score
 │   ├── constants.py         # Single source of truth (seuils, Kelly, risk_flag, seuils Wiz)
@@ -199,7 +200,8 @@ predator/
 ├── tests/                    # pytest — core/math_engine, core/constants, core/db
 ├── run_engine.py            # Pipeline de scan complet (Portfolio Balancer inclus)
 ├── run_audit.py             # Entry point de core/audit_engine.py
-├── run_rapport.py           # Rapport Telegram bi-quotidien
+├── run_rapport.py           # Rapport Telegram (toutes les 2h)
+├── scripts/weekly_report.py # Rapport hebdo de vérité : CLV réel, Brier, ROI net taxe, SUSPECT, verdicts (lundi 07:00 UTC)
 ├── run_wiz.py               # Wiz — batch d'analyse contextuelle (cron 2h, n'écrit que wiz_analysis)
 ├── backfill_ledger.py       # Script one-shot de réparation ai_learning_ledger
 ├── requirements.txt

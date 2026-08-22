@@ -19,7 +19,12 @@ Tout le calcul tourne en crons GitHub Actions ; le dashboard est en lecture seul
 - `core/odds_api.py` / `harvester.py` / `oracle.py` — sources de cotes (Tier 1/2/3)
 - `core/math_engine.py` + `paim_engine.py` — devig, edge, consensus
 - `core/audit_engine.py` + `settlement.py` — règlement, CLV, remplit `ai_learning_ledger`
-- `core/learning_layer.py` — seuils d'edge auto-ajustés (`meta.threshold_<sport>`)
+- `core/learning_layer.py` — seuils d'edge auto-ajustés (`meta.threshold_<sport>`) + verdicts
+  promotion/retrait par sport (`meta.sport_verdict_<sport>`, ≥30 réglés, Wilson vs rentabilité) —
+  loggés, jamais appliqués ; rapport hebdo `scripts/weekly_report.py` (lundi 07:00 UTC)
+- `core/scan_windows.py` — fenêtres favorables (UTC) + politique de dépense OddsAPI
+  (180 min mini entre deux scans payants d'une ligue hors fenêtre, réserve de crédits ;
+  fenêtres favorables et closing line jamais espacées ; chaque ligue sautée est loggée)
 - `run_wiz.py` + `core/wiz_*` — analyse contextuelle Mistral, écrit `wiz_analysis` UNIQUEMENT
 - `api/index.py` + `templates/*.html` — dashboard Flask
 
@@ -46,5 +51,9 @@ Tout le calcul tourne en crons GitHub Actions ; le dashboard est en lecture seul
   Matchbook (sans clé) + OddsAPI ; soft = api-sports. `ops.py sources` les sonde.
 - OddsAPI = POOL de clés (`ODDS_API_KEYS`, bascule auto sur 401/422) ; une seule
   clé = dix jours sans signal quand elle meurt (août 2026). `rotate_odds_key.py --add`.
+- Périmètre sports (2026-08-22) : eSports/tennis de table/volley/handball RETIRÉS
+  (`RETIRED_SPORTS`, garde dans `_emit`, données historiques conservées) ; MMA/boxe/NFL/
+  LdC/UEL/Euroleague sur flux OddsAPI réel (pré-vol 0 crédit, `SEASON_OPENS` pour la NFL).
+  Plus aucun sport pricé par recherche web. Détail : `reports/refonte_scope_2026-08.md`.
 - Sub-agent `predator-diagnostician` pour tout audit pipeline/santé (isole les
   gros logs hors de la conversation principale).

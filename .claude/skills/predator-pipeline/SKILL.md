@@ -290,6 +290,33 @@ scans engine + 4 deep par jour, cela fait ~224 crédits/jour, soit **une clé
 tous les ~2 jours**. La rotation passe par `app_secrets` (Supabase), pas par le
 secret GitHub ni par Vercel — voir `core/secret_store.py`.
 
+## Le recentrage sports du 2026-08-22 (mission « recentrage / quota / apprentissage »)
+
+Détail complet : `reports/refonte_scope_2026-08.md`. Ce qu'il faut savoir pour diagnostiquer :
+- **Retirés** : eSports, tennis de table, volleyball, handball (`RETIRED_SPORTS`,
+  `core/constants.py`). Le garde vit dans `_emit` : aucun signal possible, même
+  depuis un cache meta résiduel ou un slate REPRICE. Les fonctions de recherche
+  web `fetch_esports_events`/`fetch_alternative_sports_batch`/`fetch_mma_events`
+  N'EXISTENT PLUS. Lignes historiques conservées, settlement inchangé.
+- **Plus aucun sport pricé par recherche web** : MMA et boxe (h2h) via
+  `mma_mixed_martial_arts`/`boxing_boxing`, NFL (`americanfootball_nfl`, gardée
+  par `SEASON_OPENS` — pas de présaison), LdC/UEL, Euroleague (sport-type
+  `euroleague_basketball`, mécaniques basketball, Kelly 0.12). Le pré-vol rend 0
+  hors saison/hors carte : l'ajout ne coûte rien.
+- **L'invariant des 4 fichiers est désormais testé** (`tests/test_new_sports_phase2.py`,
+  `tests/test_retired_sports.py`) : tout sport-type de `SPORT_KEYS` doit être
+  dans `KELLY_FRACTION`, `SPORT_DEFAULTS`, `_QUOTA_FAST/_QUOTA_DEEP`, `SPORT_EMOJI`.
+- **Politique de dépense OddsAPI** (`core/scan_windows.py`, injectée dans
+  `fetch_odds`) : en fenêtre favorable → payé ; sport avec un signal actif à
+  < 240 min du coup d'envoi → payé (closing line prioritaire) ; sinon 180 min mini
+  entre deux scans payants d'une ligue, et sous `ODDS_API_RESERVE_CREDITS` (60) le
+  fond s'espace. Chercher « DÉPENSE | » dans les logs pour savoir POURQUOI une
+  ligue peuplée n'a pas été payée. `pool_remaining()` suit `x-requests-remaining`.
+- **Verdicts par sport** (`meta.sport_verdict_<sport>`, posés par
+  `compute_and_save` à chaque audit) : `promotion_eligible` (≥30 réglés, Wilson bas
+  > rentabilité) / `perte_prouvee` / `non_demontre` → « retrait proposé ». Jamais
+  appliqués : `KELLY_FRACTION` ne bouge que par commit.
+
 ## Le mode REPRICE (2026-08-22) — l'odds screen gratuit
 
 `REPRICE=1` (2e step de `golden_hour.yml`, chaque heure) relit le slate soft
@@ -379,7 +406,7 @@ couche de mise, publiés quand même). Depuis :
 | Workflow | Cadence | Purpose |
 |---|---|---|
 | `golden_hour.yml` | horaire (H+25) | DEUX exécutions par tick depuis le 2026-08-22 : (1) scan de mouvement de ligne à T-120min, purge à chaque run, vérifie aussi `meta.scan_request` ; (2) step **REPRICE** (voir section dédiée) — gratuit, non fantôme. **Ses signaux partent en FANTÔME depuis le 2026-08-06** (`SHADOW_GOLDEN_HOUR`) : persistés et réglés, jamais recommandés — mesuré à 39% de réussite pour 54,5% requis, p=0,007. Ne PAS ajouter de poller dédié pour compenser la latence du bouton Scan — c'est l'erreur du 2026-07-07. |
-| `engine.yml` | **8x/jour, toutes les 3h (H+03)** depuis le 2026-08-22 (était 12x/2h) | scan complet, fenêtre **24h**. Cadence dimensionnée sur le budget des sources gratuites — voir « L'arbitrage de cadence » ci-dessous |
+| `engine.yml` | **8x/jour sur les FENÊTRES FAVORABLES** (02/06/09/12/17/19/21/23 UTC) depuis le 2026-08-22 (était 12x/2h uniforme) | scan complet, fenêtre **24h**. Placement = `core/scan_windows.py` ; cadence dimensionnée sur le budget des sources gratuites — voir « L'arbitrage de cadence » |
 | `deep_scan.yml` | **2x/jour (05:33, 17:33)** depuis le 2026-08-22 (était 4) | **fenêtre 24h elle aussi** — `HOURS_AHEAD: "24"` explicite. Le workflow s'appelait « Deep Scan 48h » alors qu'il faisait déjà 24h : renommé « Deep Scan 24h » le 2026-08-06. Ce qui reste « deep » = `MAX_MATCHES=100` et `_QUOTA_DEEP`, pas l'horizon. |
 | `audit.yml` | toutes les 6h | settlement + CLV + couche d'apprentissage |
 | `rapport.yml` | **toutes les 2h (H+35)** | rapport Telegram — était 07:05 & 18:05 jusqu'au 2026-08-06. `run_rapport.py:REPORT_WINDOW_H` (2h) doit rester égal à l'intervalle du cron, sinon un même signal repart dans plusieurs rapports. |
@@ -387,6 +414,7 @@ couche de mise, publiés quand même). Depuis :
 | `closing_line.yml` | horaire (H+00) | capture de la ligne de clôture |
 | `guerrilla.yml` | **2x/jour (09:47, 21:47)** depuis le 2026-08-22 (était toutes les 2h) | scan sans OddsAPI (1XBet direct + recherche web) — c'est lui, pas un bouton, qui consomme le TPD Groq quand les sources sont mortes ; le coupe-circuit `harvest_empty_at` le neutralise 3h après un Tier 2 vide |
 | `backfill.yml` | manuel | réparation one-shot de `ai_learning_ledger` |
+| `rank_sports.yml` | **hebdo, lundi 07:00 UTC** (était manuel) | classement des sports + `calibration_report.py` + **rapport hebdo de vérité** (`scripts/weekly_report.py` : CLV réel, Brier, ROI net taxe, SUSPECT, verdicts promotion/retrait) |
 
 When a fix touches purge, audit, or learning-layer logic, sanity-check it against
 this cadence table — anything that runs more often than `audit.yml` (6h) can race
