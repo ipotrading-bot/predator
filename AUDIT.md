@@ -464,66 +464,45 @@ Mesuré le 2026-08-22, avec la méthode :
 
 Honnêteté du document : ce qui suit n'est **pas** réglé.
 
-### 5.1 Wiz : requêtes refondues et mesurées — reste à confirmer en run réel
+### 5.1 Wiz : 100 % d'INDISPONIBLE — troisième cause trouvée, la localisation ne tirait jamais
 
-**État au 2026-08-22, fin de passe.** La cause racine du 100 %
-d'INDISPONIBLE a été trouvée, corrigée et **mesurée**. Ce qui manque encore,
-c'est la confirmation par un run réel : le quota Mistral n'est pas disponible
-en local, donc la moitié « le modèle en tire-t-il un verdict ? » n'est pas
-vérifiée.
+**Chronologie des trois causes, toutes mesurées le 2026-08-22.**
 
-**Le diagnostic.** Le modèle marchait, les sources arrivaient, elles ne
-disaient rien — il écrivait lui-même « aucune information exploitable trouvée
-dans les sources consultées ». Trois causes, toutes reproduites en local sur
-les flux RSS publics (aucune clé requise) :
+1. Matin — les sources ne portaient pas de faits (titres nus de Google News, plafond qui
+   jetait les extraits de Bing). Corrigé (`9bd8a6b`).
+2. Après-midi — la requête sélectionnait les pages de preview (« team news lineup » est
+   leur titre SEO), en ET implicite, en anglais partout. Refondue en groupes OR dans la
+   langue de la presse locale, avec la locale du flux (`cb4f44f`). Mesuré en local :
+   3 % → 23 % de sources porteuses de faits.
+3. Soir — **run 18:46 sur `e6ff5ad` : 13 INDISPONIBLE, 0 verdict, mais 6,2 sources en
+   moyenne contre 4,8.** R4 n'est pas en cause (le modèle rend lui-même `arguments: []`,
+   aucun rejet loggé). En rejouant la chaîne exacte de prod en local : **`signals.league`
+   vaut « Serie A » nu, « Liga Profesional Argentina », « Major League Soccer » — sans le
+   préfixe pays que `press_lang` lisait.** La localisation, juste sur le papier, n'avait
+   JAMAIS tiré en production pour le Brésil et l'Argentine : Cruzeiro–Flamengo partait en
+   requête anglaise (2 items de fait) au lieu de portugaise (7). Le libellé de ligue vient
+   de QUATRE sources avec quatre conventions — OddsAPI met le pays en suffixe ou dans le nom,
+   Matchbook/api-sports donnent des noms nus ou abrégés, seules les sources gratuites
+   préfixent. `press_lang` accepte désormais les quatre, testé sur les 54 libellés réels
+   de la base (`tests/test_wiz_engine.py::TestLangueDeLaPresse`).
 
-1. **La requête sélectionnait le bruit qu'elle devait éviter.** « team news
-   lineup injuries » est mot pour mot le titre SEO des pages de preview, que
-   `_PROMPT_GROUNDED_HEAD` ordonne justement au modèle d'ignorer. Chaîne
-   cohérente de bout en bout, incapable de produire autre chose que du vide.
-2. **Les termes étaient combinés en ET implicite.** Cinq mots font tomber le
-   flux à zéro résultat. Remplacés par un groupe `(motA OR motB OR motC)`.
-3. **Vocabulaire anglais pour tous les championnats** — vrai pour la MLS ou
-   la NBA, faux pour le Brésil ou l'Argentine, où le fait sort dans la presse
-   locale et n'est jamais traduit. Corollaire découvert en mesurant :
-   traduire ne suffit pas, **l'édition US du flux n'indexe pas la presse
-   hispanophone** (0 item en `en-US`, 5 en `es-419/AR`, requête identique).
-   Vocabulaire et locale sont un seul levier.
+**Ce que le rejeu local a aussi montré**, à garder en tête si le prochain run reste à
+100 % : via le routeur IA (pas de clé Mistral en local), un modèle a bien produit un verdict
+(VETO, 1 red flag) à partir des mêmes sources — mais en **confondant** le match de
+Libertadores déjà joué avec celui de Serie A à venir. Et un modèle à raisonnement a rendu sa
+chaîne de pensée au lieu du JSON (non parsable). Donc, si la collecte localisée ne suffit
+pas : (a) le prompt ancré devrait rappeler la DATE du match et exiger d'écarter les articles
+sur un autre match des mêmes équipes ; (b) `mistral-small-latest` est peut-être trop prudent
+pour extraire un fait d'un titre — à comparer avec un modèle plus grand sur le même bloc.
 
-Retiré aussi : la date ISO passée comme terme de recherche. Aucun article ne
-contient « 2026-08-23 » ; et c'était un doublon de `when:Nd`, que
-`google_news()` applique déjà côté moteur, là où c'est exact.
-
-**Mesure avant/après** — 7 matchs réels, collecte complète (Google + Bing) :
-
-| | avant | après |
-|---|---|---|
-| sources totales | 30 | **60** |
-| porteuses de faits | 1 (3 %) | **14 (23 %)** |
-| matchs sans aucune source | 1 | **0** |
-
-Aucun match ne régresse. Le banc de mesure classe une source en « fait » sur
-un vocabulaire de terrain multilingue (absence, suspension, composition,
-retour) et en « bruit » sur le vocabulaire de preview (où voir, pronostic,
-cote, diffusion).
-
-**Ce qui reste à faire** : lire le prochain run Wiz. Le taux de sources
-porteuses de faits est passé de 3 % à 23 %, mais c'est une mesure de la
-matière première, pas du verdict. La requête à passer après le run suivant :
-
+→ Requête à passer après le prochain run (cron `15 */2`) :
 ```bash
-python scripts/ops.py supabase sql \
-  "select verdict, count(*) from wiz_analysis \
-   where analyzed_at > now() - interval '2 hours' group by 1"
+python scripts/ops.py supabase sql "select verdict, count(*), round(avg(sources_count),1) \
+  from wiz_analysis where analyzed_at > now() - interval '2 hours' group by 1"
 ```
 
-Si le taux d'INDISPONIBLE reste à 100 % avec 23 % de sources porteuses de
-faits, la cause suivante est dans le prompt ou la validation R4, plus dans la
-collecte.
-
-**Indépendant de tout ça** : Tavily rend `HTTP 432` (quota de plan) et le
-connecteur `web_search` de Mistral est épuisé. Ni l'un ni l'autre n'était la
-cause — la cascade RSS a fonctionné — mais Wiz est privé de ses deux replis.
+Indépendant : Tavily `HTTP 432` (quota de plan) et connecteur `web_search` Mistral épuisé —
+pas la cause, mais Wiz est privé de ses deux replis.
 
 
 ### 5.2 Deux clés production-safe ne sont pas encore obtenues
@@ -534,14 +513,16 @@ Le câblage est inoffensif (clé absente = fournisseur ignoré) et deviendra
 actif le jour où l'opérateur ouvre les comptes. Rien à faire si ce n'est
 souhaité — c'est de la capacité de repli, pas un manque.
 
-### 5.3 `DASHBOARD_ADMIN_TOKEN` doit être posé sur Vercel
+### 5.3 ✅ `DASHBOARD_ADMIN_TOKEN` — posé sur Vercel le 2026-08-22 (19:15 UTC)
 
-Tant qu'il ne l'est pas, `/api/audit/run` refuse (c'est voulu). Aucune
-interface ne l'appelle, donc rien d'autre n'est affecté.
-```bash
-python -c "import secrets; print(secrets.token_urlsafe(32))"
-python scripts/ops.py vercel env set DASHBOARD_ADMIN_TOKEN <jeton> production
-```
+Fait : jeton généré (`secrets.token_urlsafe(32)`), posé en variable
+d'environnement **production** sur Vercel, redéploiement effectué, copie dans
+le `.env` local (gitignoré) pour l'opérateur. Vérifié en prod sur l'alias
+public : `POST /api/audit/run` sans jeton → **401**, mauvais jeton → **401**,
+`GET` → **405**. Le bon jeton n'a volontairement pas été testé en production :
+il déclencherait un vrai `audit.yml` de 45 minutes.
+
+Usage : `curl -X POST https://predator-two.vercel.app/api/audit/run -H "X-Predator-Token: $DASHBOARD_ADMIN_TOKEN"`
 
 ### 5.4 Non traité délibérément
 

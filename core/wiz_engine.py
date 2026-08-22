@@ -184,14 +184,66 @@ _SOCCER_FACTS = {
 }
 
 
+# Indices de langue quand le libellé ne porte PAS le pays — ou le porte
+# autrement qu'en préfixe. MESURÉ en base le 2026-08-22 : `signals.league`
+# vient de QUATRE sources avec quatre conventions. OddsAPI met le pays en
+# SUFFIXE (« Serie A - Italy », « Primera División - Argentina ») ou dans
+# le nom (« Brazil Série A »), ou pas du tout (« MLS », « Liga MX ») ;
+# Matchbook / api-sports donnent des noms nus ou abrégés (« Serie A »,
+# « Liga Profesional Argentina », « ARG D2 », « MEX Lig2A ») ; seules les
+# sources gratuites préfixent (« Brazil - Brasileiro Serie B »).
+#
+# Conséquence vécue : la première version de press_lang ne lisait que le
+# préfixe, donc « Serie A » (Cruzeiro–Flamengo) → anglais → requête anglaise
+# → 2 items de fait au lieu de 7. La localisation, juste sur le papier,
+# n'avait JAMAIS tiré en production pour le Brésil et l'Argentine.
+#
+# Ordre d'application : (1) un nom de pays de _PRESS_LANG n'importe où dans
+# le libellé, (2) ces motifs, (3) anglais. Les motifs sont ancrés en mots
+# entiers pour que « Serie A » ne capture pas « Serie A - Italy » (qui
+# aura déjà matché « Italy » en (1)).
+_LEAGUE_LANG_HINTS: tuple = (
+    # Amérique du Sud / Mexique — espagnol. Les abréviations (ARG D2, MEX Lig2A,
+    # URU D1C) finissent par un chiffre ou une lettre collés : \w* les absorbe.
+    (r"\b(primera división|primera division|primera nacional|primera b|liga profesional|"
+     r"liga mx|liga de expansion|copa libertadores|copa sudamericana|"
+     r"arg d\d\w*|mex lig\w*|uru d\d\w*|chi d\d\w*|col d\d\w*|per d\d\w*|"
+     r"par d\d\w*|ecu d\d\w*|bol d\d\w*|ven d\d\w*)\b", "es"),
+    # Brésil — portugais. « Serie A »/« Serie B » NUS (sans pays) : en base,
+    # ces libellés viennent de Matchbook pour des matchs brésiliens ; les
+    # lignes italiennes portent toujours le pays (« Italy - Serie A »,
+    # « Serie A - Italy ») et sont attrapées avant par _PRESS_LANG.
+    (r"\b(brasileir\w*|série [ab]|serie [ab]|bra d\d\w*)\b", "pt"),
+    # France
+    (r"\b(ligue [12]|fra d\d\w*|coupe de france)\b", "fr"),
+    # Allemagne / Autriche
+    (r"\b(bundesliga|dfb[- ]pokal|ger [a-z]{2}\w*|aut d\d\w*|2\. liga)\b", "de"),
+    # Italie
+    (r"\b(coppa italia|ita d\d\w*)\b", "it"),
+)
+_LANG_HINTS_RE = tuple((re.compile(pat, re.I), lang) for pat, lang in _LEAGUE_LANG_HINTS)
+_COUNTRY_RE = tuple((re.compile(r"\b" + re.escape(pays) + r"\b", re.I), lang)
+                    for pays, lang in _PRESS_LANG.items())
+
+
 def press_lang(league: str) -> str:
     """Langue de la presse locale pour cette ligue — « en » par défaut.
 
-    Le pays est le préfixe avant « - ». Une ligue sans préfixe (« Allsvenskan »,
-    « CFU CUP ») ou d'un pays non listé retombe sur l'anglais.
+    Accepte les quatre conventions de libellé présentes en base (voir
+    _LEAGUE_LANG_HINTS). Une ligue inconnue (« Allsvenskan », « CFU CUP »,
+    « AQWC ») retombe sur l'anglais : mieux vaut un vocabulaire correct dans
+    une langue approximative qu'un vocabulaire inventé dans la bonne.
     """
-    pays = (league or "").split(" - ")[0].strip()
-    return _PRESS_LANG.get(pays, "en")
+    label = (league or "").strip()
+    if not label:
+        return "en"
+    for rx, lang in _COUNTRY_RE:          # pays n'importe où : préfixe, suffixe, embarqué
+        if rx.search(label):
+            return lang
+    for rx, lang in _LANG_HINTS_RE:       # libellés nus / abrégés
+        if rx.search(label):
+            return lang
+    return "en"
 
 
 def topic_for(sport: str, league: str) -> str:

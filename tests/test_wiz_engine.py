@@ -123,6 +123,42 @@ class TestLangueDeLaPresse:
         assert press_lang("Argentina - Liga Profesional") == "es"
         assert press_lang("Italy - Serie A") == "it"
 
+    def test_les_quatre_conventions_de_libelle_reellement_en_base(self):
+        """MESURÉ le 2026-08-22 : `signals.league` vient de quatre sources
+        avec quatre conventions. La première version ne lisait que le préfixe
+        pays ; « Serie A » nu (Cruzeiro–Flamengo, via Matchbook) tombait en
+        anglais et la localisation n'avait JAMAIS tiré en production pour le
+        Brésil et l'Argentine. Ces libellés sont ceux de la base, pas des
+        exemples inventés."""
+        from core.wiz_engine import press_lang
+        attendu = {
+            # OddsAPI — pays en suffixe ou embarqué
+            "Primera División - Argentina": "es", "Serie A - Italy": "it",
+            "La Liga - Spain": "es", "Ligue 1 - France": "fr",
+            "Bundesliga - Germany": "de", "Brazil Série A": "pt",
+            "Liga MX": "es", "Copa Libertadores": "es",
+            # Matchbook / api-sports — nus ou abrégés
+            "Serie A": "pt", "Liga Profesional Argentina": "es",
+            "Primera Nacional": "es", "ARG D2": "es", "MEX Lig2A": "es",
+            "FRA D1": "fr", "URU D1C": "es",
+            # Sources gratuites — pays en préfixe
+            "Brazil - Brasileiro Serie B": "pt", "Italy - Serie A": "it",
+            "Portugal - Liga Portugal": "pt", "Spain - LaLiga 2": "es",
+            "Mexico - Liga de Expansion MX, Apertura": "es",
+            "Colombia - Torneo DIMAYOR, Clausura": "es",
+            "Chile - Liga de Ascenso": "es",
+        }
+        erreurs = {l: (press_lang(l), lang) for l, lang in attendu.items()
+                   if press_lang(l) != lang}
+        assert not erreurs, f"{{libellé: (obtenu, attendu)}} = {erreurs}"
+
+    def test_anglophones_restent_en_anglais(self):
+        from core.wiz_engine import press_lang
+        for l in ("MLS", "Major League Soccer", "USL Championship", "USL League One",
+                  "EPL", "England - Premier League", "Scotland - Premiership",
+                  "Australia - Victoria NPL", "Japan - J.League 2", "SPL"):
+            assert press_lang(l) == "en", l
+
     def test_anglais_par_defaut_quand_on_ne_sait_pas(self):
         """Un pays non listé, une ligue sans préfixe, une chaîne vide :
         l'anglais est le bon défaut — mieux vaut un vocabulaire correct dans

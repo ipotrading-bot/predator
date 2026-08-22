@@ -44,8 +44,13 @@ Tout le calcul tourne en crons GitHub Actions ; le dashboard est en lecture seul
 - Skill `predator-pipeline` : carte du flux, invariant des sport-keys (4 fichiers
   synchrones), règles de purge (`status='active'` obligatoire), cadences cron,
   quota OddsAPI, zone jouable 2-24h pour toute analyse du ledger.
-- Wiz : jamais Groq/Tavily (domaine de panne séparé), jamais d'écriture hors
-  `wiz_analysis`, poids Tier C négatif — gardé par `tests/test_wiz_engine.py`.
+- Wiz : Mistral HORS du registre IA (domaine de panne séparé) ; Groq et
+  Tavily ne sont JAMAIS son chemin principal — mais ils SONT ses derniers
+  recours (`ai_search.ai_complete` après `mistral_complete`, Tavily après
+  Google/Bing dans `wiz_sources.gather`). Une formulation antérieure disait
+  « jamais Groq/Tavily » et contredisait le code (corrigé 2026-08-22). Jamais
+  d'écriture hors `wiz_analysis`, poids Tier C négatif — gardé par
+  `tests/test_wiz_engine.py`.
 - Secrets : `core/secret_store.py` (table Supabase `app_secrets`) bat `os.environ` ;
   une valeur périmée dans la table gagne quand même.
 - Sources de cotes : la règle est « authentifié par clé = joignable, sinon filtré
@@ -170,8 +175,12 @@ Tout le calcul tourne en crons GitHub Actions ; le dashboard est en lecture seul
   titre SEO — la requête ramenait 100 % de bruit et Wiz sortait INDISPONIBLE
   partout), jamais de date en terme de recherche (`when:Nd` le fait déjà,
   côté moteur). Forme : `{match} (motA OR motB)`. Le vocabulaire ET la locale
-  du flux suivent la langue de la presse locale, déduite du pays préfixant
-  `signals.league` (`wiz_engine.press_lang`) — les deux ensemble ou rien :
+  du flux suivent la langue de la presse locale, déduite du LIBELLÉ de
+  `signals.league` (`wiz_engine.press_lang`) — qui vient de QUATRE sources
+  avec quatre conventions (pays en préfixe, en suffixe, embarqué, ou nom
+  nu/abrégé : « Serie A », « Liga MX », « ARG D2 »). La 1re version ne lisait
+  que le préfixe et n'avait JAMAIS tiré en prod (vécu 2026-08-22). Les deux
+  ensemble ou rien :
   des mots espagnols dans l'index `en-US` rendent ZÉRO source. Mesuré :
   3 % → 23 % de sources porteuses de faits. Gardiens :
   `tests/test_wiz_engine.py::TestLangueDeLaPresse`,
