@@ -129,6 +129,15 @@ CLOSING_SRC_ORACLE  = "oracle"    # web-search estimate, h2h/DNB favourite only
 # real money on a still-unvalidated edge. Relative ordering (sharper
 # market = higher fraction) is preserved, just compressed into the
 # smaller band. Restore the original values once validated.
+#
+# CRITÈRE DE RESTAURATION (Phase 4 du recentrage, 2026-08-22) — chiffré et
+# loggé dans meta `sport_verdict_<sport>` par core/learning_layer.sport_verdict :
+# ≥ 30 signaux réglés (zone jouable) ET borne basse de Wilson > rentabilité
+# post-taxe → « promotion_eligible » : la fraction peut être remontée
+# PROGRESSIVEMENT (un cran par cycle hebdo) vers sa valeur d'origine
+# (0.20-0.30 selon le sport). ≥ 30 réglés et edge non démontré → « retrait
+# proposé » au rapport hebdo. Les deux sont des DÉCISIONS OPÉRATEUR : ce
+# dict ne bouge jamais tout seul.
 KELLY_FRACTION = {
     "basketball":  0.15,   # NBA — marché le plus sharp au monde, confiance max
     "hockey":      0.13,   # NHL — sharp, liquid, peu de bruit

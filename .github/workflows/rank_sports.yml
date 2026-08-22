@@ -10,6 +10,11 @@ name: Classement des sports (lecture seule)
 
 on:
   workflow_dispatch:
+  schedule:
+    # Hebdo (Phase 4 du recentrage, 2026-08-22) : la boucle de calibration
+    # tourne à date fixe — lundi 07:00 UTC, après l'audit de 06:00 qui a
+    # réglé le week-end. Un seul schedule de plus (leçon 2026-07-07).
+    - cron: '0 7 * * 1'
   push:
     paths:
       - 'scripts/rank_sports.py'
@@ -41,3 +46,14 @@ jobs:
           SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
           SUPABASE_KEY: ${{ secrets.SUPABASE_KEY }}
         run: python scripts/calibration_report.py
+
+      - name: Rapport hebdo de vérité (CLV réel, Brier, ROI net taxe, SUSPECT, verdicts)
+        # Lecture seule + Telegram. Les verdicts promotion/retrait viennent de
+        # meta sport_verdict_* (posés par l'audit) — aucune écriture ici.
+        env:
+          PYTHONPATH: .
+          SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
+          SUPABASE_KEY: ${{ secrets.SUPABASE_KEY }}
+          TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
+          TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID }}
+        run: python scripts/weekly_report.py

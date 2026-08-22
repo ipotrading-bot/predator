@@ -101,6 +101,91 @@ _TARGET_HI     = 0.82  # Idem : conservé pour compatibilité, plus utilisé com
 _CLV_MIN_SAMPLES = 15
 _CLV_STRONG      = 1.0   # % — au-delà de ±1, le marché a tranché
 
+# ── Promotion / rétrogradation d'un sport (Phase 4 du recentrage, 2026-08-22) ──
+# Critères CHIFFRÉS, loggés dans meta (`sport_verdict_<sport>`), jamais
+# appliqués automatiquement à KELLY_FRACTION : la restauration d'une fraction
+# Kelly et le retrait d'un sport sont des décisions opérateur. La barre est
+# 30 signaux réglés (et non _MIN_SAMPLES=20, qui sert aux seuils) : on ne
+# change pas la TAILLE des mises sur l'échantillon qui sert à régler les
+# PLANCHERS — plus de preuve pour plus d'argent.
+_PROMOTION_MIN_SAMPLES = 30
+_VERDICT_KEY_PREFIX    = "sport_verdict_"
+
+
+def sport_verdict(stats: dict, clv: dict | None = None) -> dict:
+    """Verdict d'un sport d'après ses résultats RÉELS (outcome, jamais
+    clv_final) et son CLV réel :
+      - insuffisant          : n < 30 ;
+      - promotion_eligible   : borne basse de Wilson > rentabilité post-taxe
+                               → éligible à la restauration PROGRESSIVE de sa
+                               fraction Kelly d'origine (voir KELLY_FRACTION) ;
+      - perte_prouvee        : borne HAUTE < rentabilité — retrait proposé ;
+      - non_demontre         : n ≥ 30 et l'intervalle chevauche encore la
+                               rentabilité — edge non démontré, retrait proposé
+                               au rapport hebdo (décision opérateur).
+    `avg_clv` est joint à titre d'éclairage (le CLV réel converge plus vite)."""
+    n = stats.get("n", 0) or 0
+    lo, hi, be = stats.get("wilson_lower"), stats.get("wilson_upper"), stats.get("p_breakeven")
+    avg_clv = (clv or {}).get("avg_clv")
+    out = {"n": n, "wilson_lower": lo, "wilson_upper": hi, "p_breakeven": be,
+           "hit_rate": stats.get("hit_rate"), "roi": stats.get("roi"),
+           "avg_clv": avg_clv, "clv_n": (clv or {}).get("n", 0)}
+    if n < _PROMOTION_MIN_SAMPLES or lo is None or be is None:
+        out.update(status="insuffisant", retrait_propose=False,
+                   reason=f"{n}/{_PROMOTION_MIN_SAMPLES} signaux réglés")
+    elif lo > be:
+        out.update(status="promotion_eligible", retrait_propose=False,
+                   reason=f"Wilson bas {lo*100:.1f}% > rentabilité {be*100:.1f}% (n={n})")
+    elif hi is not None and hi < be:
+        out.update(status="perte_prouvee", retrait_propose=True,
+                   reason=f"Wilson haut {hi*100:.1f}% < rentabilité {be*100:.1f}% (n={n})")
+    else:
+        out.update(status="non_demontre", retrait_propose=True,
+                   reason=(f"IC [{lo*100:.1f}–{(hi or 0)*100:.1f}%] chevauche la "
+                           f"rentabilité {be*100:.1f}% après {n} réglés"))
+    return out
+
+
+def _save_sport_verdicts(sb, stats_by_sport: dict[str, dict],
+                         clv_by_sport: dict[str, dict], now: str) -> list[str]:
+    """Persiste un verdict par sport dans meta et rend les lignes de résumé
+    (reprises par run_rapport.py via learning_summary — c'est l'alerte
+    Telegram rapide ; le rapport hebdo formalise la proposition)."""
+    lines: list[str] = []
+    for sport, stats in stats_by_sport.items():
+        v = sport_verdict(stats, clv_by_sport.get(sport))
+        v["computed_at"] = now
+        try:
+            sb.table("meta").upsert({
+                "key":        f"{_VERDICT_KEY_PREFIX}{sport}",
+                "value":      json.dumps(v),
+                "updated_at": now,
+            }).execute()
+        except Exception as e:
+            log.warning("sport_verdict[%s]: %s", sport, e)
+        if v["status"] == "promotion_eligible":
+            lines.append(f"{sport}: ✅ edge validé ({v['reason']}) — éligible à la "
+                         f"restauration progressive de sa fraction Kelly")
+        elif v["retrait_propose"]:
+            lines.append(f"{sport}: ⚠️ retrait proposé — {v['reason']} "
+                         f"(décision opérateur, rien d'automatique)")
+    return lines
+
+
+def load_sport_verdicts(sb) -> dict[str, dict]:
+    """{sport: verdict} depuis meta — pour le rapport hebdo et le dashboard."""
+    out: dict[str, dict] = {}
+    try:
+        res = sb.table("meta").select("key,value").like("key", f"{_VERDICT_KEY_PREFIX}%").execute()
+        for row in res.data or []:
+            try:
+                out[row["key"][len(_VERDICT_KEY_PREFIX):]] = json.loads(row["value"])
+            except (ValueError, TypeError):
+                continue
+    except Exception as e:
+        log.warning("load_sport_verdicts: %s", e)
+    return out
+
 # ── Zone jouable — ce sur quoi le moteur apprend ─────────────────────
 #
 # L'apprentissage ne doit porter que sur les paris que le système RECOMMANDE
@@ -758,6 +843,7 @@ def compute_and_save(sb) -> dict[str, float]:
     now     = datetime.now(timezone.utc).isoformat()
     summary_lines: list[str] = []
     ranking_stats: dict[str, dict] = {}   # sport -> stats, pour _save_sport_ranking
+    clv_by_sport: dict[str, dict] = {}    # sport -> _clv_stats, pour les verdicts
     all_preds: list[tuple[float, int]] = []   # calibration, tous sports confondus
 
     for sport in SPORT_DEFAULTS:
@@ -780,6 +866,7 @@ def compute_and_save(sb) -> dict[str, float]:
 
             stats = _sport_stats(rows)
             ranking_stats[sport] = stats
+            clv_by_sport[sport] = _clv_stats(rows)
             all_preds.extend(
                 (r["sharp_prob"], 1 if r["outcome"] == "WIN" else 0)
                 for r in rows
@@ -870,6 +957,12 @@ def compute_and_save(sb) -> dict[str, float]:
 
         except Exception as e:
             log.error("learning_layer [%s]: %s", sport, e)
+
+    # Verdicts promotion/rétrogradation (Phase 4) — loggés, jamais appliqués.
+    try:
+        summary_lines.extend(_save_sport_verdicts(sb, ranking_stats, clv_by_sport, now))
+    except Exception as e:
+        log.warning("sport verdicts: %s", e)
 
     try:
         sb.table("meta").upsert({
