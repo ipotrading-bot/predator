@@ -25,6 +25,7 @@ Aucune assertion ici ne teste du COMPORTEMENT : elles testent que le câblage
 existe. C'est précisément ce que la suite ne pouvait pas voir, puisque les
 tests tournent sans workflow et que le code, lui, est correct.
 """
+import json
 import re
 from pathlib import Path
 
@@ -149,19 +150,64 @@ def test_chaque_job_a_une_borne_de_duree(wf):
     assert not sans, f"{wf.name}: jobs sans timeout-minutes : {sans}"
 
 
+# Le dépôt vit sur DEUX interpréteurs, et c'est SUBI, pas choisi :
+#
+#   - les crons GitHub Actions et le développement local  → Python 3.11
+#   - le dashboard construit par Vercel                   → Python 3.12
+#
+# Ce n'est pas une incohérence à « réparer ». L'image de build Vercel
+# n'embarque tout simplement pas 3.11 :
+#
+#     Warning: Python version "3.11" detected in .python-version is not
+#              installed and will be ignored.
+#     Using python version: 3.12
+#     error: No interpreter found for Python 3.11 in managed installations
+#
+# VÉCU LE 2026-08-22 : un premier passage de cet audit a « aligné »
+# `.python-version` sur 3.11 en le croyant seul discordant contre les 14
+# workflows. Le déploiement suivant a ÉCHOUÉ, et la production est restée
+# bloquée sur le commit précédent — donc sans le correctif de sécurité de
+# `/api/audit/run`. Un test qui encode la mauvaise règle ne se contente pas
+# d'être inutile : il donne l'autorité d'une suite verte à une erreur.
+#
+# `.python-version` appartient donc à VERCEL. La règle réellement utile est
+# que les workflows ne divergent pas ENTRE EUX.
+VERSION_VERCEL = "3.12"
+VERSION_RUNNERS = "3.11"
+
+
+def test_python_version_appartient_a_vercel():
+    """Ne pas « aligner » ce fichier sur les workflows — voir le commentaire
+    ci-dessus : Vercel n'a pas 3.11 et le déploiement casse."""
+    lu = (Path(__file__).resolve().parent.parent
+          / ".python-version").read_text(encoding="utf-8").strip()
+    assert lu == VERSION_VERCEL, (
+        f".python-version vaut {lu!r} ; Vercel exige {VERSION_VERCEL!r} — "
+        "son image de build n'embarque pas 3.11 et le déploiement échoue, "
+        "laissant la production sur le commit précédent.")
+
+
+def test_vercel_json_annonce_la_meme_version_que_python_version():
+    """Deux fichiers de configuration Vercel qui se contredisent, c'est la
+    prochaine personne qui « corrige » le mauvais des deux."""
+    racine = Path(__file__).resolve().parent.parent
+    conf = json.loads((racine / "vercel.json").read_text(encoding="utf-8"))
+    annonce = (conf.get("env") or {}).get("PYTHON_VERSION")
+    assert annonce == VERSION_VERCEL, (
+        f"vercel.json annonce PYTHON_VERSION={annonce!r} et .python-version "
+        f"{VERSION_VERCEL!r}.")
+
+
 @pytest.mark.parametrize("wf", WORKFLOWS, ids=lambda p: p.name)
-def test_une_seule_version_de_python(wf):
-    """Le dépôt est en 3.11 (`.python-version`, `vercel.json`). Un runner en
-    3.12 ferait diverger le comportement testé de celui exécuté."""
-    attendu = (Path(__file__).resolve().parent.parent
-               / ".python-version").read_text(encoding="utf-8").strip()
+def test_les_workflows_partagent_une_seule_version_de_python(wf):
+    """Les runners, eux, doivent rester d'accord entre eux : un workflow en
+    3.12 exécuterait un code testé sur 3.11 par tous les autres."""
     versions = set(re.findall(r"python-version:\s*'?\"?([0-9.]+)",
                               wf.read_text(encoding="utf-8")))
-    fautives = sorted(v for v in versions if not attendu.startswith(v)
-                      and not v.startswith(attendu))
+    fautives = sorted(v for v in versions if v != VERSION_RUNNERS)
     assert not fautives, (
-        f"{wf.name} utilise Python {fautives} alors que .python-version "
-        f"annonce {attendu}.")
+        f"{wf.name} utilise Python {fautives} ; les workflows du dépôt sont "
+        f"sur {VERSION_RUNNERS}.")
 
 
 # ── La TROISIÈME liste : scripts/ops.py ──────────────────────────────
