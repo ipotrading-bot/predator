@@ -92,6 +92,16 @@ _TARGET_LO     = 0.60  # Conservé pour la seule garde de surconfiance (_calibra
                        # N'est PLUS le critère de montée du seuil — voir _decide_threshold.
 _TARGET_HI     = 0.82  # Idem : conservé pour compatibilité, plus utilisé comme critère.
 
+# ── Le CLV réel comme critère de PREMIER rang (2026-08-22) ───────────────
+# L'incertitude du CLV à n donné est ~4,2 points contre ~7,1 pour le
+# win-rate : il converge ~3x plus vite vers le verdict. D'où une barre
+# d'échantillon PLUS BASSE que _SEGMENT_MIN_SAMPLES (20) — c'est voulu, pas
+# une incohérence à « harmoniser » : le garde existant sur positive_rate
+# (descente bloquée) garde sa barre à 20, ces deux règles-ci jugent
+# l'AMPLITUDE (avg_clv), statistiquement plus riche qu'un simple taux.
+_CLV_MIN_SAMPLES = 15
+_CLV_STRONG      = 1.0   # % — au-delà de ±1, le marché a tranché
+
 # ── Zone jouable — ce sur quoi le moteur apprend ─────────────────────
 #
 # L'apprentissage ne doit porter que sur les paris que le système RECOMMANDE
@@ -569,6 +579,15 @@ def _decide_threshold(old_t: float, stats: dict, clv: dict, overconfident: bool,
         likely variance rather than genuine edge decay, so the operator can
         tell the two apart in the rapport.
 
+    Depuis le 2026-08-22, le CLV réel est aussi un critère de PREMIER rang
+    (l'amplitude, plus seulement le taux) — il converge ~3x plus vite que le
+    win-rate :
+      - avg_clv < −_CLV_STRONG sur ≥ _CLV_MIN_SAMPLES lignes → ↑ sans
+        attendre que le win-rate décroche (sauf top_band_fake) ;
+      - avg_clv > +_CLV_STRONG, majorité de captures positives, hit_rate à
+        la rentabilité et pas de surconfiance → ↓ sans attendre la borne de
+        Wilson (jamais sous _THRESHOLD_MIN ; EV_EDGE_FLOOR reste le filet).
+
     Returns (new_threshold_or_None, reason). None means "no change".
     """
     hit_rate = stats["hit_rate"]
@@ -598,6 +617,20 @@ def _decide_threshold(old_t: float, stats: dict, clv: dict, overconfident: bool,
     if overconfident and not (hit_rate < _TARGET_LO):
         new_t = min(_THRESHOLD_MAX, round(old_t + _STEP_UP, 2))
         return new_t, f"win rate {hit_rate*100:.0f}% ok but overconfident on 80%+ picks → ↑"
+
+    # ── Montée sur CLV réel nettement négatif — sans attendre le win-rate ──
+    # Un CLV moyen sous −1% sur ≥15 lignes dit que le marché n'a JAMAIS
+    # confirmé ces prix : le win-rate peut encore avoir l'air correct par
+    # variance, le verdict CLV arrive ~3x plus vite. Le garde top_band_fake
+    # garde la priorité (monter le plancher pousserait l'émission dans la
+    # bande mesurée perdante — même logique que le bloc au-dessus).
+    if (not top_band_fake and clv.get("avg_clv") is not None
+            and clv["n"] >= _CLV_MIN_SAMPLES and clv["avg_clv"] < -_CLV_STRONG):
+        new_t = min(_THRESHOLD_MAX, round(old_t + _STEP_UP, 2))
+        if new_t != old_t:
+            return new_t, (f"CLV réel moyen {clv['avg_clv']:+.2f}% sur {clv['n']} "
+                           f"lignes — le marché n'a jamais confirmé ces prix → ↑ "
+                           f"(sans attendre le win-rate)")
 
     # ── Le critère est la RENTABILITÉ mesurée, plus un taux absolu ───────
     #
@@ -654,6 +687,25 @@ def _decide_threshold(old_t: float, stats: dict, clv: dict, overconfident: bool,
         new_t = max(_THRESHOLD_MIN, round(old_t - _STEP_DOWN, 2))
         return new_t, (f"gain établi : borne basse {lo*100:.0f}% > rentabilité "
                        f"{be*100:.0f}% (n={stats['n']}) → ↓")
+
+    # ── Descente accélérée sur CLV réel nettement positif ────────────────
+    # La borne de Wilson exige des dizaines de paris réglés ; un CLV moyen
+    # au-dessus de +1% sur ≥15 lignes, avec une majorité de captures
+    # positives, est la preuve que le marché confirme — plus rapide et plus
+    # robuste au tirage. Jamais sous _THRESHOLD_MIN, et run_engine clampe de
+    # toute façon à EV_EDGE_FLOOR (1,5%) au chargement : le filet tient même
+    # si cette règle se trompe. Bloquée par la surconfiance (cohérence avec
+    # le bloc du haut) et par un hit_rate sous la rentabilité (la montée a
+    # déjà primé, la garde rend l'invariant explicite si l'ordre bougeait).
+    if (hit_rate >= be and not overconfident
+            and clv.get("avg_clv") is not None and clv["n"] >= _CLV_MIN_SAMPLES
+            and clv["avg_clv"] > _CLV_STRONG
+            and clv.get("positive_rate") is not None and clv["positive_rate"] >= 0.5):
+        new_t = max(_THRESHOLD_MIN, round(old_t - _STEP_DOWN, 2))
+        if new_t != old_t:
+            return new_t, (f"CLV réel moyen {clv['avg_clv']:+.2f}% ({clv['n']} lignes, "
+                           f"{clv['positive_rate']*100:.0f}% positives) — le marché "
+                           f"confirme → ↓ sans attendre la borne de Wilson")
 
     return None, (f"win rate {hit_rate*100:.0f}% au-dessus de la rentabilité "
                   f"{be*100:.0f}% mais borne basse {lo*100:.0f}% en dessous "

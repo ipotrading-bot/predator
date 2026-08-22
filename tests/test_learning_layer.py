@@ -391,6 +391,76 @@ class TestDecideThreshold:
         assert "variance" in reason
 
 
+class TestClvFirstRankRules:
+    """Les deux règles du 2026-08-22 : l'AMPLITUDE du CLV réel (avg_clv)
+    devient un critère de premier rang — il converge ~3x plus vite que le
+    win-rate, c'est l'échantillon le plus précieux du ledger."""
+
+    def _stats(self, hit_rate, n=40, wilson_lower=0.50, p_breakeven=0.55):
+        # lo < be : la règle Wilson classique rend "hold" — c'est exprès,
+        # pour isoler ce que les règles CLV changent.
+        return {"hit_rate": hit_rate, "n": n, "wilson_lower": wilson_lower,
+                "p_breakeven": p_breakeven, "roi": None}
+
+    def test_strong_negative_clv_raises_despite_healthy_hit_rate(self):
+        stats = self._stats(hit_rate=0.65)   # au-dessus de la rentabilité
+        clv = {"n": 20, "avg_clv": -2.5, "positive_rate": 0.3}
+        new_t, reason = _decide_threshold(2.0, stats, clv, overconfident=False)
+        assert new_t is not None and new_t > 2.0
+        assert "CLV" in reason and "↑" in reason
+
+    def test_negative_clv_below_sample_bar_does_not_raise(self):
+        stats = self._stats(hit_rate=0.65)
+        clv = {"n": 14, "avg_clv": -2.5, "positive_rate": 0.3}
+        new_t, _ = _decide_threshold(2.0, stats, clv, overconfident=False)
+        assert new_t is None
+
+    def test_top_band_fake_blocks_the_clv_raise(self):
+        # Monter le plancher pousserait l'émission dans la bande mesurée
+        # perdante — même logique que le garde du bloc win-rate.
+        stats = self._stats(hit_rate=0.65)
+        clv = {"n": 20, "avg_clv": -2.5, "positive_rate": 0.3}
+        new_t, _ = _decide_threshold(2.0, stats, clv, overconfident=False,
+                                     top_band_fake=True)
+        assert new_t is None or new_t <= 2.0
+
+    def test_strong_positive_clv_lowers_without_wilson(self):
+        stats = self._stats(hit_rate=0.65)   # Wilson ne tranche pas (lo < be)
+        clv = {"n": 20, "avg_clv": 2.0, "positive_rate": 0.6}
+        new_t, reason = _decide_threshold(2.0, stats, clv, overconfident=False)
+        assert new_t is not None and new_t < 2.0
+        assert "CLV" in reason and "↓" in reason
+
+    def test_positive_clv_with_minority_positive_rate_holds(self):
+        # Une moyenne tirée par quelques grosses captures ne suffit pas :
+        # la majorité des lignes doit confirmer.
+        stats = self._stats(hit_rate=0.65)
+        clv = {"n": 20, "avg_clv": 2.0, "positive_rate": 0.4}
+        new_t, _ = _decide_threshold(2.0, stats, clv, overconfident=False)
+        assert new_t is None
+
+    def test_clv_lowering_never_goes_below_threshold_min(self):
+        from core.learning_layer import _THRESHOLD_MIN
+        stats = self._stats(hit_rate=0.65)
+        clv = {"n": 20, "avg_clv": 2.0, "positive_rate": 0.6}
+        new_t, _ = _decide_threshold(_THRESHOLD_MIN, stats, clv, overconfident=False)
+        assert new_t is None or new_t >= _THRESHOLD_MIN
+
+    def test_overconfidence_blocks_the_clv_lowering(self):
+        stats = self._stats(hit_rate=0.65)
+        clv = {"n": 20, "avg_clv": 2.0, "positive_rate": 0.6}
+        new_t, _ = _decide_threshold(2.0, stats, clv, overconfident=True)
+        # La surconfiance prime : soit montée, soit hold — jamais de descente.
+        assert new_t is None or new_t > 2.0
+
+    def test_hit_rate_below_breakeven_still_raises_first(self):
+        # La montée win-rate garde la priorité sur la descente CLV.
+        stats = self._stats(hit_rate=0.50, p_breakeven=0.55)
+        clv = {"n": 20, "avg_clv": 2.0, "positive_rate": 0.6}
+        new_t, _ = _decide_threshold(2.0, stats, clv, overconfident=False)
+        assert new_t is not None and new_t > 2.0
+
+
 class TestSegmentThresholds:
     def test_load_segment_thresholds_parses_sport_and_family(self):
         class _Sel:

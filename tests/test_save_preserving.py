@@ -137,6 +137,47 @@ def test_settled_row_is_never_resurrected():
     assert fresh["status"] == "active"
 
 
+def test_archive_before_purge_carries_clv_kelly_and_sharp_prob():
+    """L'insert ledger manuel omettait clv_pct_real/kelly_pct/sharp_prob :
+    tous les expirés arrivaient avec CLV NULL, affamant _clv_stats. Le
+    passage par core.db.log_to_ledger doit les porter."""
+    captured = []
+
+    class _LedgerQ:
+        def __init__(self, sink):
+            self.sink = sink
+
+        def insert(self, payload):
+            self.sink.append(payload)
+            return self
+
+        def execute(self):
+            return _R([])
+
+    class _LedgerSB:
+        def table(self, _name):
+            return _LedgerQ(captured)
+
+    sig = {
+        "id": 42, "match": "Boca vs River", "sport": "soccer", "league": "Copa",
+        "market_key": "h2h", "market": "AH 0.0", "selection_name": "Boca",
+        "xbet_odd": 1.92, "pinnacle_price": 1.85, "edge_pct": 2.4,
+        "kelly_pct": 0.61, "sharp_prob": 0.548, "clv_pct_real": 1.7,
+        "closing_pinnacle_price": 1.81, "match_time": "2026-08-22T20:00:00+00:00",
+        "scanned_at": "2026-08-22T10:00:00+00:00",
+    }
+    eng._archive_before_purge(_LedgerSB(), [sig])
+    assert len(captured) == 1
+    row = captured[0]
+    assert row["outcome"] == "expired"
+    assert row["clv_pct_real"] == 1.7
+    assert row["kelly_pct"] == 0.61
+    assert row["sharp_prob"] == 0.548
+    assert row["closing_pinnacle_price"] == 1.81
+    assert row["signal_id"] == 42
+    assert row["time_to_match_minutes"] == 600
+
+
 def test_schema_mismatch_on_insert_strips_optional_cols():
     class _FailingFirstInsert(FakeSB):
         def __init__(self):

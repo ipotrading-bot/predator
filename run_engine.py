@@ -16,7 +16,7 @@ from datetime import datetime, timedelta, timezone
 import requests
 from dotenv import load_dotenv
 
-from core.db import get_db, MissingCredentialsError
+from core.db import get_db, MissingCredentialsError, log_to_ledger as _log_to_ledger
 from core.harvester import fetch_matches, fetch_pinnacle_prices, fetch_estimated_prices, fetch_mma_events, fetch_esports_events, fetch_alternative_sports_batch, fetch_betfair_prices
 from core.ai_search import ai_dead as gemini_quota_dead
 from core.closing_line import capture_from_scan
@@ -643,52 +643,24 @@ def _heartbeat(sb, scan_time: datetime, matches: int, signals: int):
 
 
 def _archive_before_purge(sb, signals: list):
-    """Archive active signals to ai_learning_ledger before purging (proxy CLV, outcome=expired)."""
+    """Archive les signaux actifs dans ai_learning_ledger avant purge
+    (CLV proxy, outcome=expired).
+
+    Passe par core.db.log_to_ledger — l'insert manuel qu'il remplace
+    OMETTAIT clv_pct_real, kelly_pct, sharp_prob et les closing_* : tous les
+    expirés arrivaient au ledger avec un CLV réel NULL, ce qui affamait le
+    `n` de learning_layer._clv_stats (le CLV converge ~3x plus vite que le
+    win-rate — c'est l'échantillon qu'on ne peut pas se permettre de jeter).
+    log_to_ledger porte aussi la dégradation colonne par colonne et le log
+    CRITICAL en dernier recours : le contrat « un signal purgé ne disparaît
+    jamais sans trace » reste tenu."""
     if not signals:
         return
-    archived = 0
     for sig in signals:
         orig_pin = sig.get("pinnacle_price") or 0.0
         clv = round((sig["xbet_odd"] / orig_pin - 1) * 100, 2) if orig_pin > 1.01 else 0.0
-        match_time = sig.get("match_time")
-        scanned_at = sig.get("scanned_at")
-        ttm = None
-        if match_time and scanned_at:
-            try:
-                mt = datetime.fromisoformat(match_time.replace("Z", "+00:00"))
-                sc = datetime.fromisoformat(scanned_at.replace("Z", "+00:00"))
-                ttm = int((mt - sc).total_seconds() / 60)
-            except (ValueError, OverflowError):
-                pass
-        try:
-            sb.table("ai_learning_ledger").insert({
-                "signal_id":             sig.get("id"),
-                "match":                 sig["match"],
-                "sport":                 sig.get("sport"),
-                "league":                sig.get("league"),
-                "market_type":           sig.get("market_key"),
-                "market":                sig.get("market"),
-                "selection":             sig.get("selection_name"),
-                "odds":                  sig.get("xbet_odd"),
-                "time_to_match_minutes": ttm,
-                "initial_edge":          sig.get("edge_pct"),
-                "clv_final":             float(clv),
-                "was_clv_positive":      clv > 0,
-                "outcome":               "expired",
-            }).execute()
-            archived += 1
-        except Exception as e:
-            # Worst of the three ledger-insert sites: this signal is about to
-            # be purged from `signals` right after this call, so a swallowed
-            # failure here means the row is gone with NO trace anywhere, not
-            # even a queryable `signals` row. Was previously log.debug with
-            # the message truncated to 60 chars — nearly invisible. See
-            # core/settlement.py's settle_signal for the likely cause
-            # (sql/migrate_v9_4_ledger_display_fields.sql not yet applied).
-            log.critical("ai_learning_ledger INSERT FAILED before purge [%s] — "
-                          "signal will be LOST with no trace: %s", sig.get("match", "?"), e)
-    if archived:
-        log.info("Archived %d/%d signals to ledger before purge", archived, len(signals))
+        _log_to_ledger(sb, sig, float(clv), "expired")
+    log.info("Archived %d signals to ledger before purge", len(signals))
 
 
 def _purge_old_signals(sb):
