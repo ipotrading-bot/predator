@@ -481,3 +481,52 @@ class TestModeleDisparu:
         retiré : c'est une raison d'essayer le suivant, pas d'abandonner le
         fournisseur."""
         assert 410 in R._RETRY_NEXT_MODEL and 404 in R._RETRY_NEXT_MODEL
+
+
+class TestQuatreCentTrois:
+    """Un 403 ne veut pas toujours dire « clé refusée ».
+
+    Mesuré le 2026-08-22 sur Ollama Cloud AVEC UNE CLÉ VALIDE : `glm-5.2` rend
+    403 « this model requires a subscription » pendant que `gpt-oss:120b`
+    répond « OK ». Traiter ce 403 comme une clé refusée écartait tout le
+    fournisseur — et avec lui la moitié de la lane settlement.
+    """
+
+    def test_un_403_essaie_le_modele_suivant(self, monkeypatch):
+        monkeypatch.setenv("OLLAMA_API_KEY", "k")
+        oll = R.by_name("ollama_cloud")
+        monkeypatch.setattr(R, "fetch_catalog", lambda p, timeout=None: set(oll.models))
+        vus = []
+
+        def post(url, json=None, headers=None, timeout=None):
+            vus.append(json["model"])
+            return _R(status=403, text="requires a subscription") if len(vus) == 1 \
+                else _R(text="OK")
+        monkeypatch.setattr(R.requests, "post", post)
+        text, prov = R.route([], R.SETTLEMENT)
+        assert text == "OK" and prov == "ollama_cloud"
+        assert len(vus) == 2
+
+    def test_une_cle_invalide_reste_bornee_par_le_disjoncteur(self, monkeypatch):
+        """Le prix à payer pour inclure 403 : sur une clé réellement refusée on
+        épuise la liste. Borné — chaque tentative compte comme un échec."""
+        monkeypatch.setenv("OLLAMA_API_KEY", "k")
+        oll = R.by_name("ollama_cloud")
+        monkeypatch.setattr(R, "fetch_catalog", lambda p, timeout=None: set(oll.models))
+        vus = []
+        monkeypatch.setattr(R.requests, "post",
+                            lambda url, json=None, headers=None, timeout=None:
+                            vus.append(json["model"]) or _R(status=403))
+        assert R.route([], R.SETTLEMENT) == (None, None)
+        assert len(vus) == len(oll.models)
+        assert R.load_health("ollama_cloud")["consecutive_errors"] >= R.BREAKER_THRESHOLD
+
+    def test_le_palier_gratuit_dollama_est_en_tete(self):
+        """gpt-oss:120b est le seul des préférences accessible sans
+        abonnement : le mettre ailleurs qu'en tête écarterait le fournisseur
+        à chaque run."""
+        assert R.by_name("ollama_cloud").models[0] == "gpt-oss:120b"
+
+    def test_la_lane_settlement_a_bien_deux_fournisseurs_de_production(self):
+        n = [p.name for p in R.REGISTRY if R.SETTLEMENT in p.lanes and not p.terms_flag]
+        assert len(n) >= R.LANE_MIN_HEALTHY, n

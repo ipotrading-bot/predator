@@ -336,19 +336,33 @@ REGISTRY: tuple = (
     Provider(
         name="ollama_cloud", base_url="https://ollama.com/v1",
         env_key="OLLAMA_API_KEY",
-        models=("glm-5.2", "kimi-k3", "gpt-oss:120b", "deepseek-v4-flash:0731"),
+        # Ordre etabli par inference reelle le 2026-08-22 AVEC CETTE CLE :
+        # gpt-oss:120b repond « OK » ; glm-5.2 et deepseek-v4-flash rendent
+        # 403 « this model requires a subscription ». Le palier gratuit ne
+        # donne donc acces qu'a une PARTIE du catalogue — mettre un modele
+        # payant en tete aurait ecarte le fournisseur a chaque run.
+        models=("gpt-oss:120b", "gemma4:31b", "glm-5.2", "kimi-k3"),
         lanes=(SETTLEMENT, ANALYZE, TRANSLATE_CJK),
         rpm=0, daily_requests=100,
         catalog_path="/models",
-        note="19 modeles (2026-08-22) ; 1 requete a la fois, sessions 5h — batch de nuit",
+        note="19 modeles au catalogue mais tous ne sont pas dans le palier gratuit "
+             "(403 « requires a subscription »). 1 requete a la fois, sessions 5h "
+             "— convient au batch de nuit, pas au scan.",
     ),
     Provider(
         name="cohere", base_url="https://api.cohere.com/compatibility/v1",
         env_key="COHERE_API_KEY",
-        models=("command-r-plus", "command-r"),
-        lanes=(ANALYZE,),
+        # Les preferences d'origine — command-r-plus et command-r — ont ete
+        # SUPPRIMEES par Cohere le 15/09/2025 (404 explicite). Remplacees
+        # d'apres le catalogue reel du 2026-08-22 (31 modeles).
+        # command-a-translate est un modele SPECIALISE traduction, d'ou la
+        # lane CJK.
+        models=("command-a-03-2025", "command-a-plus-05-2026",
+                "command-a-translate-08-2025", "command-r7b-12-2024"),
+        lanes=(ANALYZE, TRANSLATE_CJK),
         rpm=0, daily_requests=30, terms_flag="non_commercial",
-        note="1000 appels/mois ; NON COMMERCIAL explicite — hors production",
+        note="cle testee OK le 2026-08-22 (command-a-03-2025, 6 tokens). "
+             "1000 appels/mois ; cle d'essai NON COMMERCIALE — hors production.",
     ),
     # ── Asie — priorité 2, excellents en CJK (double emploi mission 3) ──
     Provider(
@@ -357,7 +371,13 @@ REGISTRY: tuple = (
         models=("glm-4.7-flash", "glm-4.5-flash"),
         lanes=(TRANSLATE_CJK, FILTER),
         rpm=0, daily_requests=200, terms_flag="non_commercial",
-        note="GLM-Flash gratuit ; carve-out recherche/non-commercial",
+        note="GLM-Flash gratuit ; carve-out recherche/non-commercial. ⚠️ DEUX cles "
+             "essayees le 2026-08-22, toutes deux refusees en 401 « token expired or "
+             "incorrect » sur api.z.ai ET open.bigmodel.cn. Les cles Zhipu sont de la "
+             "forme {id}.{secret} ; celles fournies etaient du hex 32 sans point, "
+             "donc vraisemblablement une moitie seulement. Sans consequence : "
+             "Cloudflare sert GLM-4.7-Flash et GLM-5.2 pour la lane CJK, sans clause "
+             "non commerciale.",
     ),
     Provider(
         name="modelscope", base_url="https://api-inference.modelscope.cn/v1",
@@ -624,10 +644,19 @@ def resolve_models(p: Provider, catalog: set | None = None) -> list:
 
 # Codes sur lesquels il vaut la peine d'essayer un AUTRE modèle du MÊME
 # fournisseur : la limite est portée par le modèle, pas par le compte.
-# 404/410 = « ce modèle-là n'existe plus » (Cloudflare a rendu 410 sur
-# @cf/meta/llama-3.1-8b-instruct, « deprecated on 2026-05-30 »). C'est une
-# raison d'essayer le modèle SUIVANT, pas d'abandonner le fournisseur.
-_RETRY_NEXT_MODEL = (404, 410, 429, 500, 502, 503, 504)
+# Codes qui disqualifient LE MODÈLE, pas le fournisseur — donc on essaie le
+# suivant du même fournisseur :
+#   404/410  « ce modèle n'existe plus » — Cloudflare a rendu 410 sur
+#            @cf/meta/llama-3.1-8b-instruct, « deprecated on 2026-05-30 » ;
+#   429/5xx  saturation amont, fluctuante modèle par modèle chez OpenRouter ;
+#   403      Ollama Cloud rend 403 « this model requires a subscription » sur
+#            glm-5.2 alors que gpt-oss:120b répond normalement AVEC LA MÊME
+#            CLÉ. Un 403 n'est donc pas toujours « clé refusée ».
+# Le risque d'inclure 403 — épuiser la liste sur une clé réellement invalide —
+# est borné : chaque tentative compte comme un échec, et le disjoncteur s'ouvre
+# au bout de BREAKER_THRESHOLD. On perd au pire deux ou trois appels, contre la
+# perte d'un fournisseur entier dans l'autre sens.
+_RETRY_NEXT_MODEL = (403, 404, 410, 429, 500, 502, 503, 504)
 
 # Sentinelle : « ce modèle est saturé, essaie le suivant du MÊME fournisseur ».
 # Distincte de None, qui veut dire « ce fournisseur est en panne, passe au suivant ».
