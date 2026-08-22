@@ -26,13 +26,64 @@ le quota journalier d'un compte est épuisé (voir _groq_keys). Sans aucune
 clé Groq, tout retourne None/[] silencieusement (même dégradation que
 l'ancien `if not api_key: return []`).
 """
+import hashlib
+import json
 import logging
 import os
+import re
 import time
+from datetime import datetime, timezone
 
 import requests
 
+from core import daily_quota
+
 log = logging.getLogger("PREDATOR.ai_search")
+
+# ── Mission 2, Phase 3 (2026-08-22) : capacité IA par des voies légitimes ──
+# UN SEUL COMPTE PAR FOURNISSEUR (CGU) — la capacité vient de la
+# DIVERSIFICATION des fournisseurs, jamais de comptes multiples. Chaîne de
+# repli derrière Groq, dans l'ordre coût/latence, chacun OPTIONNEL (clé d'env
+# absente = fournisseur ignoré, zéro dépendance obligatoire) et doté de son
+# propre suivi de quota journalier dans meta (core/daily_quota) : un
+# fournisseur épuisé bascule sur le suivant sans jamais toucher au
+# settlement — même principe de domaines de panne séparés que Wiz/Mistral.
+# Mistral reste HORS de cette chaîne : c'est le domaine de panne de Wiz, par
+# construction (voir core/wiz_ai.py) ; Gemini est mort en gratuit (voir plus
+# haut). Tous parlent le format OpenAI chat/completions.
+_FALLBACK_PROVIDERS: list[dict] = [
+    {"name": "openrouter", "env": "OPENROUTER_API_KEY",
+     "url": "https://openrouter.ai/api/v1/chat/completions",
+     "model": os.environ.get("OPENROUTER_MODEL", "meta-llama/llama-3.3-70b-instruct:free"),
+     "budget": int(os.environ.get("OPENROUTER_DAILY_BUDGET", "150")),   # free tier ≈ 200 req/j
+     "headers": {"HTTP-Referer": "https://github.com/predator-paim", "X-Title": "PREDATOR"}},
+    {"name": "cerebras", "env": "CEREBRAS_API_KEY",
+     "url": "https://api.cerebras.ai/v1/chat/completions",
+     "model": os.environ.get("CEREBRAS_MODEL", "llama-3.3-70b"),
+     "budget": int(os.environ.get("CEREBRAS_DAILY_BUDGET", "500")),      # free ≈ 1M tokens/j
+     "headers": {}},
+    {"name": "github", "env": "GITHUB_MODELS_TOKEN",
+     "url": "https://models.github.ai/inference/chat/completions",
+     "model": os.environ.get("GITHUB_MODELS_MODEL", "openai/gpt-4o-mini"),
+     "budget": int(os.environ.get("GITHUB_MODELS_DAILY_BUDGET", "100")), # free ≈ 150 req/j (low tier)
+     "headers": {}},
+]
+_provider_dead: set[str] = set()     # épuisé/refusé pour ce process
+
+# Cache de réponses (même requête normalisée, fenêtre 30 min) dans meta : le
+# même slate ne doit jamais être recherché deux fois dans la même fenêtre —
+# souvent plus rentable que de la capacité en plus. Sans Supabase : pas de
+# cache, on appelle (même dégradation que daily_quota).
+AI_CACHE_TTL_MIN = int(os.environ.get("AI_CACHE_TTL_MIN", "30"))
+
+# Paliers de modèles : le « léger » filtre vite et pas cher (estimateur Tier 3,
+# pré-filtrage), le « lourd » est réservé aux candidats qui ont passé le
+# premier filtre et au settlement (exactitude). Déjà la philosophie Groq ;
+# rendue explicite par le paramètre `tier` de ai_complete().
+_TIER_MODELS = {
+    "heavy": ["llama-3.3-70b-versatile", "llama-3.1-8b-instant"],
+    "light": ["llama-3.1-8b-instant", "llama-3.3-70b-versatile"],
+}
 
 GROQ_URL   = "https://api.groq.com/openai/v1/chat/completions"
 TAVILY_URL = "https://api.tavily.com/search"
@@ -294,17 +345,112 @@ def tavily_search(query: str, max_results: int = 5) -> list[dict]:
         return []
 
 
+def _cache_key(prompt: str, queries: list[str] | None) -> str:
+    norm = re.sub(r"\s+", " ", (prompt or "").strip().lower())
+    qn = "|".join(sorted(re.sub(r"\s+", " ", q.strip().lower()) for q in (queries or [])))
+    return "ai_cache_" + hashlib.md5(f"{norm}||{qn}".encode()).hexdigest()[:20]
+
+
+def _cache_get(key: str) -> str | None:
+    sb = daily_quota._db()
+    if sb is None:
+        return None
+    try:
+        row = sb.table("meta").select("value,updated_at").eq("key", key).maybe_single().execute()
+        if not row or not row.data:
+            return None
+        ts = datetime.fromisoformat(str(row.data.get("updated_at")).replace("Z", "+00:00"))
+        if (datetime.now(timezone.utc) - ts).total_seconds() > AI_CACHE_TTL_MIN * 60:
+            return None
+        return json.loads(row.data["value"])
+    except Exception as e:
+        log.debug("ai cache get: %s", e)
+        return None
+
+
+def _cache_put(key: str, text: str) -> None:
+    sb = daily_quota._db()
+    if sb is None or not text:
+        return
+    try:
+        sb.table("meta").upsert({"key": key, "value": json.dumps(text),
+                                 "updated_at": datetime.now(timezone.utc).isoformat()},
+                                on_conflict="key").execute()
+    except Exception as e:
+        log.debug("ai cache put: %s", e)
+
+
+def providers_available() -> list[str]:
+    """Fournisseurs de repli configurés (clé présente), dans l'ordre d'essai."""
+    return [p["name"] for p in _FALLBACK_PROVIDERS if os.environ.get(p["env"])]
+
+
+def _fallback_post(messages: list, max_tokens: int, temperature: float,
+                   timeout: int, label: str) -> str | None:
+    """Essaie les fournisseurs de repli dans l'ordre. Chacun : clé absente →
+    ignoré ; budget journalier atteint (meta) → ignoré ; 401/403/429-jour →
+    marqué mort pour le process et on passe au suivant. Rend None si aucun
+    ne répond — le caller dégrade comme avant."""
+    for p in _FALLBACK_PROVIDERS:
+        key = os.environ.get(p["env"])
+        if not key or p["name"] in _provider_dead:
+            continue
+        bucket = f"ai_{p['name']}"
+        spent = daily_quota.spent(bucket)
+        if spent >= p["budget"]:
+            log.info("%s[%s]: budget journalier atteint (%d/%d) — ignoré",
+                     label, p["name"], spent, p["budget"])
+            continue
+        try:
+            r = requests.post(p["url"], json={
+                "model": p["model"], "messages": messages,
+                "max_tokens": max_tokens, "temperature": temperature,
+            }, headers={"Authorization": f"Bearer {key}",
+                        "Content-Type": "application/json", **p["headers"]},
+                timeout=timeout)
+            daily_quota.add(bucket, 1)
+            if r.status_code in (401, 403):
+                _provider_dead.add(p["name"])
+                log.warning("%s[%s]: HTTP %d — clé refusée, fournisseur écarté", label, p["name"], r.status_code)
+                continue
+            if r.status_code == 429:
+                _provider_dead.add(p["name"])
+                log.warning("%s[%s]: 429 — quota atteint, fournisseur écarté ce run", label, p["name"])
+                continue
+            if r.status_code != 200:
+                log.warning("%s[%s]: HTTP %d: %s", label, p["name"], r.status_code, r.text[:200])
+                continue
+            text = r.json()["choices"][0]["message"]["content"] or ""
+            if text.strip():
+                log.info("%s[%s]: réponse servie par le fournisseur de repli", label, p["name"])
+                return text
+        except Exception as e:
+            log.warning("%s[%s]: %s", label, p["name"], e)
+    return None
+
+
 def ai_complete(prompt: str, label: str = "AI",
                 max_tokens: int = 2048, temperature: float = 0.1,
-                timeout: int = 45) -> str | None:
+                timeout: int = 45, tier: str = "heavy") -> str | None:
     """Complétion SANS recherche web (connaissance interne du modèle).
-    Équivalent de l'ancien appel Gemini sans tools."""
+    `tier` : "heavy" (70b d'abord — settlement, candidats filtrés) ou
+    "light" (8b d'abord — filtrage, estimateur). Chaîne : Groq (par palier)
+    → fournisseurs de repli → None. Cache 30 min sur la requête normalisée."""
+    ck = _cache_key(prompt, None)
+    hit = _cache_get(ck)
+    if hit:
+        log.info("%s: cache IA (fenêtre %d min) — aucun appel", label, AI_CACHE_TTL_MIN)
+        return hit
     messages = [{"role": "user", "content": prompt}]
-    for model in _EXTRACT_MODELS:
+    for model in _TIER_MODELS.get(tier, _EXTRACT_MODELS):
         text = _groq_post(model, messages, max_tokens, temperature, timeout, label)
         if text:
+            _cache_put(ck, text)
             return text
-    return None
+    text = _fallback_post(messages, max_tokens, temperature, timeout, label)
+    if text:
+        _cache_put(ck, text)
+    return text
 
 
 def ai_search_complete(prompt: str, queries: list[str], label: str = "AI",
@@ -318,16 +464,23 @@ def ai_search_complete(prompt: str, queries: list[str], label: str = "AI",
     Étage 2 : Tavily (queries) + extraction llama-3.3-70b.
     Retourne le texte brut (le caller extrait/parse le JSON) ou None.
     """
+    ck = _cache_key(prompt, queries)
+    hit = _cache_get(ck)
+    if hit:
+        log.info("%s: cache IA (fenêtre %d min) — aucune recherche", label, AI_CACHE_TTL_MIN)
+        return hit
+
     # ── Étage 1 : compound-mini fait sa propre recherche ──────────────
     messages = [{"role": "user", "content": prompt}]
     text = _groq_post(_SEARCH_MODEL, messages, max_tokens, temperature, timeout, label)
     if text and text.strip():
+        _cache_put(ck, text)
         return text
 
     # compound-mini mort ne veut PAS dire abandon : son quota est celui du
-    # 70b, alors que l'étage 2 peut encore tourner sur llama-3.1-8b-instant.
-    # On ne renonce que si plus aucun modèle ne répond.
-    if ai_dead():
+    # 70b, alors que l'étage 2 peut encore tourner sur llama-3.1-8b-instant —
+    # ou sur un fournisseur de repli (Mission 2, Phase 3).
+    if ai_dead() and not providers_available():
         return None
 
     # ── Étage 2 : Tavily + extraction ─────────────────────────────────
@@ -348,5 +501,9 @@ def ai_search_complete(prompt: str, queries: list[str], label: str = "AI",
     for model in _EXTRACT_MODELS:
         text = _groq_post(model, messages, max_tokens, temperature, timeout, label)
         if text:
+            _cache_put(ck, text)
             return text
-    return None
+    text = _fallback_post(messages, max_tokens, temperature, timeout, label)
+    if text:
+        _cache_put(ck, text)
+    return text

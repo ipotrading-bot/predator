@@ -47,6 +47,11 @@ SPORT_IDS = {1: "soccer", 3: "tennis", 4: "basketball", 5: "mma"}
 # `fetch_pinnacle_prices` (PINNACLE_BATCH) des sports OddsAPI quand le Tier 1
 # est muet. Le MMA passe sur flux OddsAPI réel (Phase 1 de la même mission) :
 # à terme SEARCH_MAX_TOKENS ne sert plus qu'à la recherche de prix Pinnacle.
+# Réévalué le 2026-08-22 après le retrait des 4 sports : les seuls
+# consommateurs restants sont le lot Pinnacle (PINNACLE_BATCH=25 matchs ≈
+# 1 500 tokens de JSON) et le settlement/oracle (réponses courtes). 2048
+# reste le plancher sûr pour un lot de 25 ; le gain vient du cache IA 30 min
+# et de la chaîne de repli (core/ai_search.py), pas d'une coupe du plafond.
 SEARCH_MAX_TOKENS       = int(os.environ.get("SEARCH_MAX_TOKENS", "2048"))
 PINNACLE_BATCH          = int(os.environ.get("PINNACLE_BATCH", "25"))
 PINNACLE_TAVILY_QUERIES = int(os.environ.get("PINNACLE_TAVILY_QUERIES", "4"))
@@ -554,7 +559,7 @@ def fetch_estimated_prices(matches: list) -> dict:
         f"X=0 for tennis/basketball. Include ALL matches from the list."
     )
 
-    text = ai_complete(prompt, label="Estimator/AI",
+    text = ai_complete(prompt, label="Estimator/AI", tier="light",   # filtrage : petit modèle d'abord
                        max_tokens=2048, temperature=0.2, timeout=60)
     if not text:
         return {}
