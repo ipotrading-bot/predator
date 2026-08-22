@@ -103,6 +103,29 @@ jobs:
           # qui produit les WIN/LOSS.
           GROQ_API_KEY_4:       ${{ secrets.GROQ_API_KEY_4 }}
           TAVILY_API_KEY:       ${{ secrets.TAVILY_API_KEY }}
+          # ── Routeur IA (core/ai_router.py) ────────────────────────────
+          # AJOUTÉ le 2026-08-22. Sans ces lignes, le dernier recours du
+          # cerveau de Wiz — `ai_search.ai_complete()` — trouvait le routeur
+          # VIDE (aucune clé dans l'environnement du job) et tombait droit
+          # sur Groq. Autrement dit : le workflow qui prétend protéger la
+          # réserve du moteur en omettant GROQ_API_KEY_3 la contournait par
+          # l'autre bout, en envoyant tout le repli de Wiz sur les clés Groq
+          # 1/2/4 du scan. Avec les fournisseurs gratuits ci-dessous, ce
+          # repli s'exerce d'abord sur eux, et Groq redevient ce qu'il doit
+          # être pour Wiz : le tout dernier recours.
+          # Liste alignée sur engine.yml — deux listes qui divergent, c'est
+          # exactement ce qui a rendu cette capacité inerte sans un log.
+          OPENROUTER_API_KEY:    ${{ secrets.OPENROUTER_API_KEY }}
+          GEMINI_API_KEY:        ${{ secrets.GEMINI_API_KEY }}
+          CLOUDFLARE_API_TOKEN:  ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+          OLLAMA_API_KEY:        ${{ secrets.OLLAMA_API_KEY }}
+          NEBIUS_API_KEY:        ${{ secrets.NEBIUS_API_KEY }}
+          MODELSCOPE_API_KEY:    ${{ secrets.MODELSCOPE_API_KEY }}
+          NVIDIA_NIM_API_KEY:    ${{ secrets.NVIDIA_NIM_API_KEY }}
+          COHERE_API_KEY:        ${{ secrets.COHERE_API_KEY }}
+          UPSTAGE_API_KEY:       ${{ secrets.UPSTAGE_API_KEY }}
+          SCALEWAY_API_KEY:      ${{ secrets.SCALEWAY_API_KEY }}
           SUPABASE_URL:         ${{ secrets.SUPABASE_URL }}
           SUPABASE_KEY:         ${{ secrets.SUPABASE_KEY }}
           SUPABASE_SERVICE_KEY: ${{ secrets.SUPABASE_SERVICE_KEY }}

@@ -97,6 +97,14 @@ _SPORT_QUERY_A = {
     "hockey":      "starting goalie confirmed lineup injuries",
     "rugbyleague": "team list injuries late changes",
     "aussierules": "team news selection injuries late out",
+    # Sports de combat : « composition » et « absences » n'existent pas. Ce
+    # qui déplace une cote ici, c'est la pesée (ratée = handicap réel), un
+    # remplaçant de dernière minute, une blessure de camp ou un changement de
+    # catégorie. Sans cette entrée ils tombaient sur la requête générique
+    # « team news lineup injuries », qui ne remonte rien d'exploitable — et
+    # depuis 2026-08-22 MMA et boxe sont sur flux OddsAPI réel, donc émis.
+    "mma":         "weigh-in result injury withdrawal replacement short notice",
+    "boxing":      "weigh-in result injury withdrawal replacement catchweight",
 }
 _DEFAULT_QUERY_A = "team news lineup injuries"
 
