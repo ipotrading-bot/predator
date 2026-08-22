@@ -124,7 +124,17 @@ une copie propre.
 
 - **`/ledger` et `/audit` n'étaient atteignables sur mobile par aucun lien** —
   `.nav-pages` est masquée sous 640 px et la barre du bas ne portait que 4
-  entrées sur 6. Deux pages entières injoignables au doigt. Les six entrées
+  entrées sur 6. Deux pages entières injoignables au doigt.
+
+  > **Suite, le même jour (`0866820`, décision opérateur)** : le menu a été
+  > volontairement ramené à quatre entrées — *Accueil · Sys · Wiz · Perf* —
+  > et `/ledger` et `/audit` en ont été **retirés**. Les deux routes
+  > fonctionnent toujours (200 en production) mais ne sont plus atteignables
+  > par aucun lien, ni mobile ni desktop : il faut saisir l'URL.
+  > Ce n'est plus le bug corrigé ci-dessus (une nav amputée par accident,
+  > incohérente entre desktop et mobile) mais un choix de produit assumé et
+  > uniforme sur les 6 pages. Consigné ici pour que personne ne le
+  > « re-corrige » en croyant retrouver le défaut d'origine. Les six entrées
   ont d'abord été alignées sur les deux menus.
 
   > **Suite, le même jour — décision opérateur.** `/ledger` et `/audit` ont
