@@ -55,5 +55,23 @@ Tout le calcul tourne en crons GitHub Actions ; le dashboard est en lecture seul
   (`RETIRED_SPORTS`, garde dans `_emit`, données historiques conservées) ; MMA/boxe/NFL/
   LdC/UEL/Euroleague sur flux OddsAPI réel (pré-vol 0 crédit, `SEASON_OPENS` pour la NFL).
   Plus aucun sport pricé par recherche web. Détail : `reports/refonte_scope_2026-08.md`.
+- Sources gratuites Asie (mission 3, 2026-08-22) : cadre commun `core/source_adapter.py`
+  (appariement par temps+ligue+STRUCTURE de cotes, jamais par nom ; divergence en
+  POINTS de probabilité, pas en % relatif — un seuil relatif crie au loup sur tout
+  outsider) ; `core/odds500.py` (odds.500.com, 30 books dont Pinnacle `cid=1055`,
+  books identifiés par marge+pays car les noms sont masqués), `core/sevenm.py`
+  (7M = source de NOMS anglais, pas de cotes — aucun endpoint de cotes gratuit),
+  `core/prediction_markets.py` (Kalshi/Polymarket, rôle consensus).
+  Nowgoal/win007 = MORTE depuis les runners (DNS), ne pas réessayer.
+  Dictionnaire `team_aliases` (`sql/migrate_v10_3_team_aliases.sql`, À APPLIQUER) :
+  clé = identifiant numérique de la source, pas le libellé ; un nom résolu ne
+  repasse jamais par l'IA. Adaptateurs livrés mais PAS ENCORE CÂBLÉS dans run_engine.
+- Pièges qui tuent une source en silence : User-Agent avec un accent → urllib encode
+  en latin-1 → 403 Cloudflare (Polymarket) ; Kalshi rend `yes_bid`/`volume` à `null`
+  et met les prix dans les champs `*_dollars` en chaîne ; un 1X2 amputé d'une patte
+  devient indiscernable d'un moneyline et s'apparie avec lui.
+- robots.txt : sur odds.500.com la QUERY STRING est la frontière (`/fenxi/ouzhi-*.shtml`
+  autorisé nu, interdit avec `?ctype=`/`?order=`/`?cids=`). Ne jamais paramétrer un
+  endpoint — gardé par `tests/test_odds500.py::TestRobotsTxt`.
 - Sub-agent `predator-diagnostician` pour tout audit pipeline/santé (isole les
   gros logs hors de la conversation principale).

@@ -248,3 +248,338 @@ le gratuit ne tient que 2-3 jours par clé et la règle « un compte par fournis
 comptes. Le step REPRICE (Matchbook, gratuit) couvre la fraîcheur hors fenêtre mais pas la découverte du
 slate Tier 1. Recommandation : 20K si l'opérateur veut le Tier 1 en continu ; sinon rester gratuit et
 accepter une découverte Tier 1 partielle, portée par api-sports/odds-api.io/Titan007 + Matchbook.
+
+---
+
+# Mission 3 — nouvelles sources de cotes gratuites (Asie incluse) (2026-08-22)
+
+**Suite : 808 tests, 0 échec · pyflakes propre · 85 tests ajoutés · migration `sql/migrate_v10_3_team_aliases.sql` (additive, à appliquer à la main)**
+
+Règle tenue : **aucune source n'est intégrée sur une supposition**. Chaque ligne du tableau
+« preuve de vie » ci-dessous est un `curl` réel, passé depuis le runner (IP datacenter Azure) le
+2026-08-22, avec le User-Agent de production. Trois des six sources du cahier des charges ont été
+écartées sur la foi de ces mesures, et le rapport dit pourquoi.
+
+## 1. Preuve de vie — depuis le runner, le 2026-08-22
+
+Contrôle de calibration d'abord : `bf.titan007.com` (source connue vivante) répond **200**, et
+`www.matchbook.com/edge/rest/events` **200** depuis la même sortie. Les échecs ci-dessous sont donc
+des échecs réels, pas un réseau muet.
+
+### Sources retenues
+
+| Source | Endpoint (sans query string) | Code | Taille | Extrait de réponse |
+|---|---|---|---|---|
+| **500.com** | `odds.500.com/` | **200** | 288 418 o | `<title>【足球指数】…500彩票网</title>` — 64 matchs, `data-fid` + `date-dtime` |
+| **500.com** | `odds.500.com/fenxi/ouzhi-1420317.shtml` | **200** | 275 767 o | `<title>赫尔城VS曼彻斯特联(2026/2027英超)-百家欧指</title>` — 30 books |
+| **500.com** | `odds.500.com/fenxi/yazhi-1420317.shtml` | **200** | 189 228 o | 亚盘 (handicap asiatique) |
+| **500.com** | `odds.500.com/fenxi/daxiao-1420317.shtml` | **200** | 190 833 o | 大小球 (totals) |
+| **7M** | `www.7msport.com/sitemap/soccer_match.xml` | **200** | 132 129 o | 936 identifiants `goaldata/en/{id}.shtml` |
+| **7M** | `px-analyse.7mdt.com/5170957/data/gameinfo_en.js` | **200** | 444 o | `{"time":"1787407200000","taname":"Broadfields United","tbname":"Corinthian FC","mname":"England FA Cup"}` |
+| **Kalshi** | `api.elections.kalshi.com/trade-api/v2/markets?series_ticker=KXEPLGAME` | **200** | 4 596 o | `KXEPLGAME-26AUG29TOTNEW-TOT`, `no_ask_dollars:"0.5800"` |
+| **Polymarket** | `gamma-api.polymarket.com/events?tag_slug=epl` | **200** | 211 140 o | `epl-hul-mun-2026-08-22` → `["0.095","0.185","0.715"]` |
+
+### Sources écartées — et la mesure qui les écarte
+
+| Source | Mesure | Verdict |
+|---|---|---|
+| **Nowgoal / win007** (n° 2 du cahier des charges) | `www.nowgoal.com` **000** (pas de résolution DNS) · `live.nowgoal.com` **000** · `football.nowgoal.com` **000** · `bf.win007.com` **000** · `www.win007.com` **000** · `1x2.nowgoal.com` **000** · `www.nowgoal5.com` **301 → canadafbm2020.com → 403** | **Morte.** Toute la famille est injoignable depuis une IP datacenter ; le seul hôte qui répond redirige vers un domaine parqué qui rend 403. Aucune ligne de code écrite. |
+| **Betman / 프로토 (wisetoto)** (n° 4) | `www.wisetoto.com/` **200** mais `/proto/index.htm`, `/proto/`, `/rate/index.htm` → **302 vers `/errorpage/404.htm`** · `www.betman.co.kr` **000** | **Non codée**, conformément à la règle du cahier des charges (« priorité basse, n'y passer du temps que si 1 et 2 sont en prod ») : la n° 2 est morte, la condition n'est pas remplie. L'hôte vit, mais aucun endpoint de cotes n'a été trouvé. |
+| **Japon WINNER/toto** (n° 6) | — | **Non codée**, comme demandé. |
+
+### Le cas 7M : vivante, mais pas pour ce qu'on venait chercher
+
+7M était retenue comme **redondance de cotes sur un hôte différent**. Cette redondance **n'existe
+pas** : il n'y a aucun endpoint de cotes gratuit.
+
+| Endpoint testé | Code | Contenu réel |
+|---|---|---|
+| `px-analyse.7mdt.com/{id}/data/gameoddsway_en.js` | 200 | **pas des prix** — statistiques historiques de résultats par book |
+| `px-analyse.7mdt.com/{id}/data/gameodds_en.js` | **500** | — |
+| `…/gameoz_en.js` (欧赔) · `…/gameyp_en.js` (亚盘) · `…/gamedx_en.js` (大小球) | **500** | — |
+| `data.7msport.com/matches_data/odds_way_en.shtml` | 200 | « Stat. on Payout », pas de cotes par match |
+
+**Mais l'exploration a trouvé mieux pour un autre problème.** `gameinfo_en.js` publie le même
+calendrier **en anglais**, avec identifiants numériques d'équipe et horodatage epoch. C'est
+exactement ce qui manquait au dictionnaire d'alias : 7M est donc intégrée avec le rôle `names` et
+remplace l'appel IA prévu au cahier des charges par une résolution **gratuite et déterministe**.
+C'est une réaffectation, pas un abandon — et elle est documentée en tête de `core/sevenm.py`.
+
+## 2. Statut juridique constaté, source par source
+
+| Hôte | `robots.txt` | Ce qu'il dit | Conséquence tenue dans le code |
+|---|---|---|---|
+| `odds.500.com` | **200** | Interdit `/fenxi1/`, `/js/`, `/static/`, `/images/`, les motifs **ancrés racine** `/ouzhi-*.shtml`, et les variantes **paramétrées** `/fenxi/ouzhi-*.shtml?ctype=*`, `?order=*`, `?cids=*` | Les 3 endpoints utilisés sont sous `/fenxi/` **sans query string** → hors Disallow. Le lien `/fenxi1/ouzhi_same.php?cid=…` présent dans chaque ligne de la page n'est **jamais** suivi. |
+| `www.7msport.com` | **200** | **Une seule ligne : `Sitemap:`** — aucun Disallow | Les identifiants viennent du sitemap, c'est-à-dire du chemin que le site publie *pour* être moissonné. |
+| `data.7msport.com` | **200** | Interdit les variantes de langue `/*_gb.shtml`, `_kr`, `_jp`, `_th`, `_vn`, `_fr`, `_id`, `_es` | On n'utilise que la variante **anglaise** `/goaldata/en/`, hors de ces motifs. |
+| `px-analyse.7mdt.com` | **200** | Bloc Cloudflare : `User-agent: *` → `Content-Signal: search=yes,ai-train=no,use=reference` + **`Allow: /`**. Puis `Disallow: /` nommément pour ClaudeBot, GPTBot, CCBot, Google-Extended, Bytespider, Amazonbot… | Le pipeline tombe sous `User-agent: *` → autorisé, et son usage est bien `use=reference` (aucun entraînement de modèle). **Condition : le User-Agent doit rester honnête** et ne se faire passer pour aucun agent nommé. |
+| `api.elections.kalshi.com` · `gamma-api.polymarket.com` | n/a (API) | API publiques documentées, lecture seule, sans clé | Le statut le plus propre du lot : aucun scraping. |
+| `trade.500.com` | **200** | Longue liste de Disallow **tous paramétrés** (`/jczq/?`, `…?lotid=*`, `…?step=*`) | Hôte non utilisé ; sa liste confirme la doctrine « la query string est la frontière ». |
+
+**La règle héritée de titan007 (« ne jamais ajouter de paramètre à un endpoint ») n'est plus une
+prudence sur cette source : c'est littéralement le texte du robots.txt d'`odds.500.com`.** Le même
+chemin est autorisé nu et interdit avec `?ctype=`. C'est verrouillé par
+`tests/test_odds500.py::TestRobotsTxt`, qui garde une copie du robots.txt publié et vérifie la
+bascule.
+
+> **Correction d'une observation transitoire.** Au premier passage, `odds.500.com/robots.txt`
+> répondait **403** et `live.500.com` / `www.500.com` répondaient **567 « Restricted Access »**
+> (WAF Tencent EdgeOne). Quelques minutes plus tard, les trois servaient un `robots.txt` normal en
+> **200**. C'était un blocage transitoire du WAF, pas une politique : aucune conclusion juridique
+> n'en est tirée. `live.500.com` et `www.500.com` restent simplement hors périmètre parce qu'ils
+> n'apportent rien de plus qu'`odds.500.com`.
+
+## 3. Tableau des adaptateurs
+
+| Adaptateur | Rôle | Trust initial | Budget/jour | Langue | Cadence | Hôte |
+|---|---|---|---|---|---|---|
+| `core/odds500.py` | `consensus` (→ `sharp` après promotion) | **0,55** | 400 req | `zh` | 1 req / 2 s | `odds.500.com` |
+| `core/sevenm.py` | `names` | **0,70** | 80 req | `en` | 1 req / 2 s | `px-analyse.7mdt.com` |
+| `core/prediction_markets.py` (Kalshi) | `consensus` | **0,50** | 200 req (partagé) | `en` | API | `api.elections.kalshi.com` |
+| `core/prediction_markets.py` (Polymarket) | `consensus` | **0,50** | 200 req (partagé) | `en` | API | `gamma-api.polymarket.com` |
+
+Trust initial **effectivement divisé par deux tant que la source est en mode ombre**
+(`source_adapter.effective_trust`). Aucune ne démarre en `sharp` : 500.com ne peut y prétendre
+qu'après promotion mesurée (§ 6).
+
+### Carte des books de 500.com — identifiée sans lire un seul nom
+
+Pour un visiteur anonyme, la page de cotes **masque les libellés** (`P*********`, `*冠`, `*门`).
+L'identifiant numérique `cid`, lui, est en clair et stable. L'identité de chaque book a été établie
+par deux signatures qui n'ont pas de langue — **la marge et le pays** :
+
+| `cid` | Marge 1X2 mesurée | Pays affiché | Identité | Rôle |
+|---|---|---|---|---|
+| 18 | **0,46 %** | Royaume-Uni | Betfair Exchange | `sharp` (exchange) |
+| 1055 | **3,87 %** | Pays-Bas | **Pinnacle** | `sharp` (référence) |
+| 3 | 5,71 % | Royaume-Uni | Bet365 | `soft` |
+| 280 | 10,26 % | Philippines | 皇冠 / Crown | pseudo |
+| 5 | 11,12 % | Macao | 澳门 / Macau | pseudo |
+
+Le calendrier publie par ailleurs **deux libellés en clair** (`Bet365` pour `cid=3`, `澳门` pour
+`cid=5`) : `verify_book_map()` s'en sert à chaque run pour détecter gratuitement une renumérotation
+des books — sans quoi `BOOK_MAP` deviendrait fausse **en silence** et un prix « Pinnacle » pourrait
+être celui d'un book à 13 % de marge, donc des edges massifs et faux.
+
+## 4. Schéma `team_aliases` (`sql/migrate_v10_3_team_aliases.sql`)
+
+Additive, idempotente, RLS activée (lecture publique, écriture `service_role`).
+
+| Colonne | Type | Rôle |
+|---|---|---|
+| `source` | `text` | Adaptateur qui a vu le libellé (`odds500`, `sevenm`…) |
+| `alias_source` | `text` | Libellé **brut** publié par la source (`鹿岛鹿角`) |
+| **`source_team_id`** | `text` | **Identifiant numérique stable chez la source — la vraie clé** |
+| `lang` | `text` | `zh` / `ja` / `ko` / `en`, détecté par plage Unicode |
+| `canonical_name` | `text` | Nom anglais canonique utilisé par le moteur et le ledger |
+| `league` | `text` | Ligue au moment de la résolution |
+| `confidence` | `float8` | 0..1 — monte à chaque appariement confirmé, tombe à 0 sur contradiction |
+| `hits` / `contradictions` | `int` | Compteurs d'auto-validation |
+| `resolved_by` | `text` | `sevenm` (gratuit) · `ai` (Groq) · `manual` |
+| `verified_at` | `timestamptz` | Dernier appariement indépendant confirmant l'alias |
+
+Index unique sur `(source, alias_source, COALESCE(league,''))`, index de lecture sur
+`(source, source_team_id)`.
+
+**Pourquoi `source_team_id` et pas le libellé.** 500.com expose `liansai.500.com/team/1029/` et 7M
+expose `taid`. Ces identifiants **n'ont pas de langue** : ils survivent à un changement de graphie
+(`曼联` → `曼彻斯特联`), à une abréviation, à un nom de sponsor. Le libellé n'est gardé que pour la
+lisibilité et comme repli. C'est la transposition, aux équipes, de la règle d'appariement du
+moteur : la structure d'abord, le nom en confirmation.
+
+**Économie du dictionnaire.** Une résolution par nom, **à vie** :
+1. `sevenm` — appariement 500.com ↔ 7M par (coup d'envoi ± 15 min, ligue, structure) → traduction
+   **gratuite**, confiance de départ 0,70 ;
+2. `ai` — Groq, prompt court, **uniquement pour ce que 7M n'a pas couvert**, confiance de départ
+   0,40, budget 40 résolutions/jour (`meta.quota_alias_ai_<date>`).
+
+Un alias déjà connu **ne repasse jamais** par l'IA — vérifié par
+`test_team_aliases.py::test_un_nom_deja_connu_ne_repasse_jamais_par_lIA`. Le budget bas est
+volontaire : le dictionnaire se remplit sur plusieurs jours, ce qui est sans conséquence pour une
+donnée qui ne périme pas, alors qu'épuiser le TPD Groq casserait le settlement **le jour même**
+(incident du 2026-08-02).
+
+**Auto-validation.** `confidence +0,10` par appariement indépendant confirmé ; **`0,0` immédiat sur
+contradiction**. Asymétrie voulue : plusieurs confirmations pour monter, **une seule** contradiction
+pour tomber. Un alias faux produit un edge élevé, crédible et entièrement imaginaire ; un alias
+écarté à tort ne coûte qu'un match. Seuil d'usage `MIN_CONFIDENCE = 0,60` : un alias 7M passe dès le
+premier appariement, un alias IA exige **deux** confirmations indépendantes.
+
+## 4 bis. Preuve d'appariement multilingue — mesurée, pas supposée
+
+Le cœur du cahier des charges (« appariement SANS dépendre des noms ») a été passé **en réel** :
+les 64 fixtures `odds.500.com` (libellés chinois) contre les **936** fixtures 7M (libellés anglais)
+du sitemap complet, appariées uniquement par **(coup d'envoi ± 15 min, ligue mappée, structure)**.
+Aucun libellé n'est comparé à aucun autre, à aucun moment.
+
+**Résultat : 34 paires, 34 correctes (68 alias appris), 0 fausse — vérifiées une à une.**
+Couverture : 西甲 8, 葡超 6, 英超 4, 荷甲 4, 法甲 3, 意甲 2, 日职 2, 美职足 2, 瑞超 2, 英冠 1, 巴甲 1.
+
+| 500.com (`zh`) | 7M (`en`) — obtenu sans lire un nom |
+|---|---|
+| 日职 鹿岛鹿角 / 福冈黄蜂 | Kashima Antlers / Avispa Fukuoka |
+| 日职 町田泽维 / 浦和红钻 | FC Machida Zelvia / Urawa Red Diamonds |
+| 英超 赫尔城 / 曼联 | Hull City A.F.C. / Manchester United F.C. |
+| 英超 纽卡斯尔 / 利物浦 | Newcastle United F.C. / Liverpool F.C. |
+| 英超 布伦特 / 热刺 | Brentford F.C. / Tottenham Hotspur F.C. |
+| 英超 富勒姆 / 切尔西 | Fulham F.C. / Chelsea F.C. |
+| 西甲 西班牙人 / 皇马 | RCD Espanyol / Real Madrid CF |
+| 西甲 埃尔切 / 巴萨 | Elche CF / FC Barcelona |
+| 西甲 马竞 / 比利亚雷 | Atletico Madrid / Villarreal CF |
+| 西甲 毕尔巴鄂 / 塞维利亚 | Athletic Bilbao / Sevilla FC |
+| 意甲 罗马 / 佛罗伦萨 | AS Roma / ACF Fiorentina |
+| 意甲 博洛尼亚 / 拉齐奥 | Bologna FC 1909 / SS Lazio |
+| 法甲 朗斯 / 欧塞尔 | RC Lens / AJ Auxerre |
+| 法甲 勒阿弗尔 / 摩纳哥 | Le Havre AC / AS Monaco FC |
+| 荷甲 埃因霍温 / 格罗宁根 | PSV Eindhoven / FC Groningen |
+| 荷甲 坎布尔 / 费耶诺德 | SC Cambuur / Feyenoord |
+| 葡超 波尔图 / 阿罗卡 | FC Porto / FC Arouca |
+| 巴甲 博塔弗戈 / 巴竞技 | Botafogo de Futebol e Regatas / Atletico Paranaense |
+| 瑞超 马尔默 / 佐加顿斯 | Malmo FF / Djurgardens IF |
+| 美职足 新英格兰 / 纽约城 | New England Revolution / New York City FC |
+
+*(20 des 34 ; les 14 autres — 葡超, 西甲, 英冠, 荷甲, 美职足, 瑞超 — sont du même acabit.)*
+
+Le taux d'appariement (34 sur 64 côté 500.com) est plafonné par la **couverture de `LEAGUE_MAP`**,
+pas par l'algorithme : une ligue non mappée des deux côtés ne s'apparie pas, par construction.
+Ajouter une entrée à la carte ne fait qu'AUTORISER un appariement de plus, jamais l'imposer.
+
+### Le premier passage rendait 16 paires, dont UNE fausse
+
+C'est le résultat le plus utile de la mission. Avant le garde d'ambiguïté, l'appariement rendait
+aussi :
+
+```
+[英冠] 斯旺西 / 谢菲联  (Swansea / Sheffield Utd)
+    ->  Wrexham A.F.C. / Watford F.C.        ← FAUX
+```
+
+Les deux rencontres sont en **EFL Championship à la même minute**, et les calendriers ne portent
+pas de cotes : le critère (a) temps et le critère (b) ligue ne distinguent rien, et le critère (c)
+structure est indisponible. Le tri glouton tranchait **au hasard** — et aurait écrit `斯旺西 →
+Wrexham` dans le dictionnaire, à vie.
+
+**Correctif** (`source_adapter.pair_fixtures`) : un appariement doit être *justifié*, pas seulement
+*le meilleur*.
+- sans signature de cotes → on exige l'**unicité** (un seul candidat de chaque côté) ;
+- avec signature → on exige que le second candidat soit à plus de `AMBIGUITY_MARGIN_PTS` (2,0 pts).
+
+Après correctif : **0 fausse paire** sur les 34. Le prix payé est la perte de Millwall/Norwich — une
+paire *correcte* mais dont le rival était indiscernable. C'est le bon arbitrage : un match perdu ne coûte
+qu'un match, un alias faux empoisonne le dictionnaire et produit un edge crédible et imaginaire.
+Verrouillé par trois tests, dont
+`test_les_cotes_departagent_ce_que_le_temps_ne_departage_pas` qui montre que les mêmes deux matchs
+**redeviennent** appariables dès que les cotes sont disponibles.
+
+## 5. Seuils du cross-check — et pourquoi le « 3 % » du cahier des charges a été remplacé
+
+Le cahier des charges demandait « divergence > 3 % sur le même marché → `SUSPECT_DATA` ». **Mesuré,
+ce seuil est inutilisable.** Sur Hull City–Manchester United, trois chemins indépendants
+(500.com/Pinnacle, 500.com/Betfair, Polymarket) :
+
+| Comparaison (no-vig) | 1 (outsider, 9,5 %) | X | 2 (favori) |
+|---|---|---|---|
+| **écart relatif** — 500/Pinnacle vs Polymarket | **9,73 %** | 0,74 % | 1,48 % |
+| **écart relatif** — 500/Betfair vs Polymarket | **4,26 %** | 0,86 % | 0,34 % |
+| **écart en points** — 500/Pinnacle vs Polymarket | **0,93 pt** | 0,14 pt | 1,07 pt |
+| **écart en points** — 500/Betfair vs Polymarket | **0,41 pt** | 0,16 pt | 0,25 pt |
+
+Les trois sources sont **d'accord** — l'écart maximal réel est de **1,07 point de probabilité**.
+Le relatif explose sur l'outsider parce qu'un tick d'un cent à 0,095 pèse déjà 1,05 % relatif. Un
+seuil relatif à 3 % marquerait `SUSPECT_DATA` sur presque **chaque outsider** — c'est-à-dire
+exactement là où ce pipeline trouve ses edges.
+
+**Décision : on garde la magnitude choisie par l'opérateur (2/3), mais en points de probabilité
+absolus**, stables sur toute la plage de prix.
+
+| Seuil | Valeur | Variable | Rôle |
+|---|---|---|---|
+| Divergence → `SUSPECT_DATA` | **3,0 points** | `SOURCE_SUSPECT_PTS` | 2+ chemins vers le même prix divergent → **aucun signal** |
+| Distance structurelle max (appariement) | **12,0 points** | `SOURCE_STRUCT_MAX_PTS` | Filtre anti-absurdité, large exprès |
+| Marge d'ambiguïté (appariement) | **2,0 points** | `SOURCE_AMBIGUITY_MARGIN_PTS` | En deçà, deux candidats se valent → paire **écartée** |
+| Tolérance de coup d'envoi | **± 15 min** | `SOURCE_KICKOFF_TOL_MIN` | Critère (a) de l'appariement |
+| Sortie du mode ombre — matchs | **100 appariés** | `SOURCE_SHADOW_MIN_MATCHES` | Condition 1 |
+| Sortie du mode ombre — divergence | **médiane ≤ 2,0 points** | `SOURCE_SHADOW_MAX_MED_PTS` | Condition 2 |
+| Écart bid/ask max (marchés de prédiction) | **4,0 points** | `PREDMKT_MAX_SPREAD_PTS` | Un carnet plus large que le seuil `SUSPECT` n'apprend rien |
+| Marge max du panel pseudo-sharp | **6,0 %** | `ODDS500_PSEUDO_MAX_VIG` | Sélection **par marge mesurée** |
+| Pénalité pseudo-sharp | **+1,0 %** | `ODDS500_PSEUDO_PENALTY` | Gonfle la référence → **réduit** l'edge (mécanique `core/oracle.py`) |
+
+**Médiane et non moyenne** pour la promotion : un seul prix périmé ne doit ni bloquer une bonne
+source, ni sauver une mauvaise. **Rétrogradation immédiate** si une source promue dérive au-dessus
+de 2,0 points — asymétrie symétrique de celle des alias.
+
+### Correction au pseudo-sharp du cahier des charges
+
+Le cahier des charges proposait la médiane no-vig de **{皇冠/Crown, Bet365, 澳门/Macau}**. Mesuré,
+ce trio porte **5,71 % / 10,26 % / 11,12 %** de marge sur le 1X2 : 皇冠 et 澳门 sont des books de
+**handicap asiatique** dont le 1X2 est décoratif. Les prendre comme référence sharp reviendrait à
+calculer un edge contre un prix chargé à 11 %.
+
+`pseudo_sharp_price()` sélectionne donc les books **par marge mesurée sur le match courant**
+(≤ 6 %), pas par liste écrite d'avance. C'est le même critère — « prendre les books sharps » —
+appliqué à la donnée du jour. Le gain est concret : sur un autre match, Crown est ressorti à
+**4,22 %** de marge et a été **inclus** ; une liste figée l'aurait soit toujours pris, soit toujours
+exclu. Médiane des **probabilités dévigorisées** (grandeur additive), jamais des cotes — une médiane
+de cotes ne somme pas à 1 et fabriquerait une marge parasite.
+
+## 6. Mode ombre et ordre d'appel
+
+**Mode ombre obligatoire.** Toute nouvelle source démarre en `shadow=True` : ses prix sont
+enregistrés et comparés, mais **ne créent aucun signal misable** tant qu'elle n'a pas **100 matchs
+appariés avec une divergence médiane ≤ 2,0 points** face à une source de confiance. On ne coupe pas
+la collecte — on retire la recommandation, exactement comme `tests/test_shadow_mode.py` : couper le
+cron aurait aussi arrêté la mesure, et on n'aurait jamais su si la source est bonne. Promotion et
+rétrogradation **loggées dans `meta.source_scorecard_<name>`**, jamais silencieuses.
+
+**Scorecard par source** (`meta`, fenêtre glissante de 300 observations) : fraîcheur médiane
+(gratuite — 500.com publie `data-time` **par book**), taux d'erreur, nombre de requêtes, divergence
+médiane vs source de confiance.
+
+**Ordre d'appel par scan** (`source_adapter.CALL_ORDER`) — ces sources **s'ajoutent** à la discipline
+quota de la mission 1, elles ne la remplacent pas :
+
+```
+odds_api (si crédits) → odds500 → titan007 → matchbook → api_sports
+  → odds_api_io → prediction_markets → web_search (dernier recours, budget IA)
+```
+
+## 7. Tests ajoutés (85)
+
+| Fichier | Tests | Ce qui est verrouillé |
+|---|---|---|
+| `tests/test_source_adapter.py` | 33 | **Appariement multilingue** (chinois ↔ canonique) sans comparer un libellé · **divergence → `SUSPECT_DATA`** · démonstration chiffrée que le seuil relatif à 3 % était inutilisable · mode ombre et rétrogradation · **garde d'ambiguïté** (régression de la fausse paire Swansea→Wrexham) |
+| `tests/test_odds500.py` | 25 | Parseurs sur **HTML réel capturé** · fuseau UTC+8 · carte des books et détection de renumérotation · pseudo-sharp par marge mesurée · **conformité `robots.txt` publié** |
+| `tests/test_team_aliases.py` | 12 | Apprentissage 鹿岛鹿角 → Kashima Antlers · confirmation · invalidation immédiate · seuils de confiance · budget IA borné · dégradation sans base |
+| `tests/test_prediction_markets.py` | 15 | Champs `*_dollars` (les entiers sont `null`) · chaînes JSON de Polymarket · rejet d'un 1X2 amputé · concordance avec 500.com |
+
+Les deux tests exigés par le cahier des charges :
+`test_source_adapter.py::TestAppariementSansLesNoms::test_chinois_et_anglais_sapparient` et
+`test_source_adapter.py::TestDivergenceEtSuspectData::test_un_prix_perime_declenche_suspect_data`.
+
+## 8. Bugs trouvés par les tests, avant la production
+
+1. **User-Agent non-ASCII → 403 silencieux.** L'ancien UA contenait « usage privé ». `urllib` encode
+   les en-têtes en **latin-1** ; Cloudflare rendait **403** sur `gamma-api.polymarket.com` là où
+   `curl` passait. Une source morte pour un accent — indiagnosticable depuis un log de cron.
+   Corrigé sur les trois adaptateurs, verrouillé par un test.
+2. **`novig_probs([0.0, 3.0, 2.0])` rendait une signature à 2 issues.** Un 1X2 amputé de son nul
+   devenait indiscernable d'un moneyline, donc **appariable avec lui** par `structure_distance` —
+   le scénario qui lie des cotes au mauvais match sans rien logger. Garde corrigé.
+3. **Kalshi : un 1X2 amputé passait pour un moneyline.** Une patte écartée pour carnet trop large
+   laissait `[Brentford, Tie]`. Même risque que ci-dessus. On exige désormais les trois pattes, ou rien.
+4. **Appariement ambigu tranché au hasard → alias faux.** Trouvé en confrontant réellement les deux
+   calendriers (§ 4 bis), pas en relisant le code : deux matchs d'une même ligue à la même minute,
+   sans cotes, étaient appariés arbitrairement. C'est la seule erreur de ce pipeline qui produise un
+   edge élevé, crédible **et entièrement imaginaire**. Garde d'unicité/marge ajouté.
+
+## 9. Ce qui reste à l'opérateur
+
+1. **Appliquer `sql/migrate_v10_3_team_aliases.sql`** dans le SQL Editor Supabase (aucun runner de
+   migration dans ce dépôt). Sans cette table, le dictionnaire dégrade proprement (mémoire du run
+   seulement) mais ne persiste rien.
+2. **Brancher les adaptateurs dans `run_engine.py` / `core/harvester.py`.** Les modules, le cadre
+   commun et les tests sont livrés ; le câblage dans le scan n'est **pas** fait — c'est un
+   changement du chemin critique d'émission des signaux, qui mérite sa propre revue et son propre
+   passage en mode ombre observé.
+3. **Décider du sort de wisetoto** (n° 4) : l'hôte vit, mais aucun endpoint de cotes n'a été trouvé,
+   et sa condition d'activation (« si 1 et 2 sont en prod ») n'est pas remplie puisque Nowgoal est morte.
