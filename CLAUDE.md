@@ -149,5 +149,21 @@ Tout le calcul tourne en crons GitHub Actions ; le dashboard est en lecture seul
   Après toute retouche de `vercel.json`, `.python-version`, `requirements.txt`
   ou `api/index.py` : `python scripts/ops.py vercel deployments | head -3`
   (READY, pas ERROR) puis `curl .../api/health`.
+- ÉPOQUE ZÉRO = août 2026. `core/perf_view.PERF_START_MONTH` masque tout mois
+  antérieur sur /performance, et juillet 2026 a été ARCHIVÉ en base
+  (`sql/migrate_v10_5_archive_pre_august.sql` : 206 lignes vers
+  `ai_learning_ledger_archive`, 7 signaux vers `signals_archive`). Décision
+  opérateur : « predator n'était pas au point en juillet ». Ne pas
+  « réparer » l'absence de juillet ; pour le rouvrir il faut restaurer
+  l'archive ET abaisser PERF_START_MONTH — les deux, sinon rien ne s'affiche.
+  Archiver, JAMAIS supprimer sèchement : ces lignes sont la seule trace
+  empirique et tout backtest qui les ignorerait aurait un biais de survie.
+- /performance est volontairement DÉPOUILLÉE (2026-08-22) : plus de seuils
+  appris, ni de cycle d'apprentissage, ni de calibration Brier, ni de
+  découpage mensuel — rouages internes, pas résultats. Mais la règle « jamais
+  un taux de réussite nu » TIENT TOUJOURS : Wilson + seuil rentable après
+  taxe sont désormais rendus en une phrase française (« il faut 57 % pour
+  être rentable, et 85 paris ne suffisent pas à le prouver »). Ne pas
+  supprimer cette ligne en croyant simplifier : c'est une garde de sûreté.
 - Sub-agent `predator-diagnostician` pour tout audit pipeline/santé (isole les
   gros logs hors de la conversation principale).

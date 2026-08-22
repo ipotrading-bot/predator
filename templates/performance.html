@@ -57,33 +57,20 @@
 .sec-hdr em { color: var(--blue); font-style: normal; font-family: var(--font-data); }
 @media (min-width: 640px) { .sec-hdr { padding: 22px 24px 12px; } }
 
-.month-grid {
   display: grid; grid-template-columns: repeat(2, 1fr);
   gap: 10px; padding: 0 16px 20px;
 }
 @media (min-width: 640px) { .month-grid { grid-template-columns: repeat(3, 1fr); gap: 12px; padding: 0 24px 24px; } }
 @media (min-width: 960px) { .month-grid { grid-template-columns: repeat(4, 1fr); } }
 
-.mc {
   background: var(--bg1); border: 1px solid var(--bd);
   border-radius: var(--r); padding: 14px 15px;
 }
-.mc-month {
   font-size: 11px; font-weight: 700; color: var(--t1);
   margin-bottom: 12px; font-family: var(--font-data);
   display: flex; justify-content: space-between; align-items: center;
 }
-.mc-wr { font-size: 9px; font-weight: 700; padding: 2px 8px; border-radius: 100px; }
-.wr-good { background: rgba(0,232,127,.08);  color: var(--green);  border: 1px solid rgba(0,232,127,.2); }
-.wr-ok   { background: rgba(245,197,24,.08); color: var(--yellow); border: 1px solid rgba(245,197,24,.2); }
-.wr-bad  { background: rgba(251,78,110,.08); color: var(--red);    border: 1px solid rgba(251,78,110,.2); }
-.wr-none { background: transparent;          color: var(--t3);     border: 1px solid var(--bd2); }
 
-.mc-stats { display: flex; gap: 8px; margin-bottom: 10px; }
-.mc-stat { flex: 1; }
-.mc-sv { font-size: 18px; font-weight: 800; line-height: 1; font-family: var(--font-data); }
-.mc-sl { font-size: 8px; color: var(--t2); text-transform: uppercase; letter-spacing: .5px; margin-top: 4px; }
-.mc-foot {
   padding-top: 8px; border-top: 1px solid var(--bd);
   display: flex; justify-content: space-between;
   font-size: 9px; color: var(--t3); font-family: var(--font-data);
@@ -131,206 +118,120 @@
 <div class="wrap">
 
   <div class="page-hdr">
-    <div class="page-title">&#9660; PERFORMANCE — RÉSULTATS RÉELS</div>
+    <div class="page-title">&#9660; PERFORMANCE</div>
     <div class="page-sub">
-      Historique complet des signaux audités &middot; pronostic vs résultat réel du match<br>
-      Source : <b>ai_learning_ledger</b> — alimenté par l'audit engine toutes les 6h
+      Résultats réels depuis <b>août 2026</b> &middot; mis à jour toutes les 6 h
     </div>
   </div>
 
   {% if global_s %}
 
+  {# ── Réussite ────────────────────────────────────────────────────
+     Le pourcentage seul ne dit RIEN : 3 gagnés sur 4 fait 75 % et ne
+     prouve rien du tout. La ligne de verdict dessous traduit en français
+     ce que l'intervalle de Wilson et le seuil rentable après taxe disent
+     vraiment — c'est la même rigueur qu'avant, sans le jargon. #}
   {% set wr_color = 'var(--green)' if global_s.above_breakeven else ('var(--yellow)' if global_s.win_rate >= 50 else 'var(--red)') %}
   <div class="wr-hero" style="border-color:{{ wr_color }}">
     <div class="wr-hero-v" style="color:{{ wr_color }}">{{ "%.1f"|format(global_s.win_rate) }}%</div>
-    <div class="wr-hero-l">POURCENTAGE DE GAINS <span style="color:var(--t3)">(cible &ge;65%)</span></div>
-    <div class="wr-hero-s">{{ global_s.wins }} gagnés &middot; {{ global_s.losses }} perdus{% if global_s.pushes %} &middot; {{ global_s.pushes }} push{% endif %}</div>
-    {% if global_s.win_rate_lo is not none %}
-    <div class="wr-hero-s" style="margin-top:4px">
-      IC 95% [{{ "%.1f"|format(global_s.win_rate_lo) }}% – {{ "%.1f"|format(global_s.win_rate_hi) }}%]
-      {% if global_s.p_breakeven is not none %}
-        &middot; seuil rentable net taxe <b>{{ "%.1f"|format(global_s.p_breakeven) }}%</b>
-        {% if global_s.above_breakeven %}<span style="color:var(--green)">&#10003; au-dessus</span>
-        {% else %}<span style="color:var(--red)">&#10007; pas confirmé</span>{% endif %}
+    <div class="wr-hero-l">RÉUSSITE</div>
+    <div class="wr-hero-s">
+      {{ global_s.wins }} gagnés &middot; {{ global_s.losses }} perdus{% if global_s.pushes %} &middot; {{ global_s.pushes }} annulés{% endif %}
+    </div>
+    <div class="wr-hero-s" style="margin-top:6px">
+      {% if global_s.above_breakeven %}
+        <span style="color:var(--green)">&#10003; Rentable</span>
+        <span style="color:var(--t3)">— confirmé sur {{ global_s.wins + global_s.losses }} paris</span>
+      {% elif global_s.p_breakeven is not none %}
+        <span style="color:var(--yellow)">À confirmer</span>
+        <span style="color:var(--t3)">— il faut {{ "%.0f"|format(global_s.p_breakeven) }}% de réussite pour être rentable, et {{ global_s.wins + global_s.losses }} paris ne suffisent pas encore à le prouver</span>
+      {% else %}
+        <span style="color:var(--t3)">Pas assez de paris réglés pour conclure</span>
       {% endif %}
     </div>
-    {% endif %}
   </div>
 
   <div class="perf-kpis">
     <div class="pk">
-      <div class="pk-v" style="color:var(--t1)">{{ global_s.total }}</div>
-      <div class="pk-l">Signaux<br>archivés</div>
-      <div class="pk-s">{{ global_s.settled }} avec résultat connu</div>
+      <div class="pk-v" style="color:var(--t1)">{{ global_s.settled }}</div>
+      <div class="pk-l">Paris<br>réglés</div>
+      <div class="pk-s">sur {{ global_s.total }} signaux</div>
     </div>
     <div class="pk">
-      <div class="pk-v" style="color:var(--green)">{{ global_s.wins }}</div>
-      <div class="pk-l">Gagnés</div>
-    </div>
-    <div class="pk">
-      <div class="pk-v" style="color:var(--red)">{{ global_s.losses }}</div>
-      <div class="pk-l">Perdus</div>
+      {# CLV = valeur contre la ligne de clôture, le juge de paix du projet.
+         `clv_is_real` distingue la VRAIE mesure (cote prise vs clôture
+         sharp) du repli sur l'edge d'entrée — les deux ne sont jamais
+         confondus, sinon la page raconterait ce qu'on savait déjà en
+         pariant plutôt que ce que le marché a tranché. #}
+      {% if global_s.clv_is_real and global_s.avg_clv is not none %}
+      <div class="pk-v" style="color:{{ 'var(--green)' if global_s.avg_clv >= 0 else 'var(--red)' }}">{{ "%+.2f"|format(global_s.avg_clv) }}%</div>
+      <div class="pk-l">CLV<br>moyen</div>
+      <div class="pk-s">battre la ligne de clôture</div>
+      {% elif global_s.avg_edge is not none %}
+      <div class="pk-v" style="color:var(--t2)">{{ "%+.2f"|format(global_s.avg_edge) }}%</div>
+      <div class="pk-l">Edge<br>à l'entrée</div>
+      <div class="pk-s">CLV pas encore mesuré</div>
+      {% else %}
+      <div class="pk-v" style="color:var(--t3)">&mdash;</div>
+      <div class="pk-l">CLV<br>moyen</div>
+      {% endif %}
     </div>
   </div>
 
   {% if global_s.by_sport %}
-  <div class="sec-hdr">&#9632; PAR SPORT <em>IC 95% &middot; seuil rentable</em></div>
+  <div class="sec-hdr">&#9632; PAR SPORT</div>
   <div class="tbl-outer">
     <table class="perf-table">
       <thead>
-        <tr>
-          <th>Sport</th><th>N</th><th>Win rate</th><th>IC 95%</th><th>Seuil rentable</th><th>Statut</th>
-        </tr>
+        <tr><th>Sport</th><th>Paris</th><th>Réussite</th><th>Verdict</th></tr>
       </thead>
       <tbody>
-        {% set E = {'soccer':'⚽','basketball':'🏀','tennis':'🎾','hockey':'🏒','mma':'🥋','boxing':'🥊','darts':'🎯','cricket':'🏏','esports':'🎮','americanfootball':'🏈','baseball':'⚾','rugby':'🏉','volleyball':'🏐','tabletennis':'🏓','handball':'🤾','rugbyleague':'🏉','aussierules':'🏉'} %}
         {% for sport, sp in global_s.by_sport.items() %}
         <tr>
-          <td>{{ E.get(sport, '🎯') }} {{ sport }}</td>
+          <td>{{ sport_emoji.get(sport, '🎯') }} {{ sport_label.get(sport, sport) }}</td>
           <td style="font-family:var(--font-data)">{{ sp.n }}</td>
           <td style="font-weight:700;font-family:var(--font-data)">{{ "%.1f"|format(sp.win_rate) }}%</td>
-          <td style="color:var(--t2);font-family:var(--font-data)">[{{ "%.1f"|format(sp.win_rate_lo) }}–{{ "%.1f"|format(sp.win_rate_hi) }}%]</td>
-          <td style="color:var(--t2);font-family:var(--font-data)">{% if sp.p_breakeven is not none %}{{ "%.1f"|format(sp.p_breakeven) }}%{% else %}—{% endif %}</td>
           <td>
             {% if sp.above_breakeven %}<span class="oc-win">&#10003; rentable</span>
-            {% else %}<span class="oc-exp">non confirmé</span>{% endif %}
+            {% else %}<span class="oc-exp">à confirmer</span>{% endif %}
           </td>
         </tr>
         {% endfor %}
       </tbody>
     </table>
-  </div>
-  {% endif %}
-
-  {% if global_s.thresholds %}
-  <div class="sec-hdr">&#9632; SEUILS & APPRENTISSAGE <em>MIN_EDGE actuel par sport/marché</em></div>
-  <div class="tbl-outer">
-    <table class="perf-table">
-      <thead>
-        <tr><th>Sport</th><th>Seuil</th><th>h2h</th><th>totals</th><th>spreads</th><th>Statut</th></tr>
-      </thead>
-      <tbody>
-        {% set TE = {'soccer':'⚽','basketball':'🏀','tennis':'🎾','hockey':'🏒','mma':'🥋','boxing':'🥊','darts':'🎯','cricket':'🏏','esports':'🎮','americanfootball':'🏈','baseball':'⚾','rugby':'🏉','volleyball':'🏐','tabletennis':'🏓','handball':'🤾','rugbyleague':'🏉','aussierules':'🏉'} %}
-        {% for sport, t in global_s.thresholds.items() %}
-        <tr>
-          <td>{{ TE.get(sport, '🎯') }} {{ sport }}</td>
-          <td style="font-weight:700;font-family:var(--font-data)">{{ "%.2f"|format(t) }}%</td>
-          {% for fam in ['h2h', 'totals', 'spreads'] %}
-          {% set seg_key = sport ~ ':' ~ fam %}
-          <td style="color:var(--t2);font-family:var(--font-data)">{% if seg_key in global_s.segment_thresholds %}{{ "%.2f"|format(global_s.segment_thresholds[seg_key]) }}%{% else %}—{% endif %}</td>
-          {% endfor %}
-          <td>
-            {% if sport in global_s.paused_sports %}<span class="oc-loss">&#9724; pause circuit breaker</span>
-            {% else %}<span class="oc-win">actif</span>{% endif %}
-          </td>
-        </tr>
-        {% endfor %}
-      </tbody>
-    </table>
-    <div style="font-size:10px;color:var(--t3);padding:8px 0 0">Seuil = edge minimum (%) requis pour émettre un signal. Colonnes h2h/totals/spreads : seuil de marché une fois assez de données propres à ce segment (sinon hérite du seuil sport). Ajustés automatiquement par core/learning_layer.py toutes les 6h.</div>
-  </div>
-  {% endif %}
-
-  {% if global_s.learning_summary %}
-  <div class="sec-hdr">&#9632; DERNIER CYCLE D'APPRENTISSAGE</div>
-  <div class="tbl-outer" style="padding:12px 16px">
-    <ul style="margin:0;padding-left:18px;color:var(--t2);font-size:13px;line-height:1.6">
-      {% for s in global_s.learning_summary %}
-      <li>{{ s }}</li>
-      {% endfor %}
-    </ul>
-  </div>
-  {% endif %}
-
-  {% if global_s.brier_buckets %}
-  <div class="sec-hdr">&#9632; CALIBRATION <em>Brier score par confiance annoncée</em></div>
-  <div class="tbl-outer">
-    <table class="perf-table">
-      <thead>
-        <tr><th>Confiance annoncée</th><th>N</th><th>Win rate observé</th><th>Brier</th></tr>
-      </thead>
-      <tbody>
-        {% for label, b in global_s.brier_buckets.items() %}
-        <tr>
-          <td style="font-family:var(--font-data)">{{ label }}</td>
-          <td style="font-family:var(--font-data)">{{ b.n }}</td>
-          <td style="font-family:var(--font-data)">{% if b.win_rate is not none %}{{ "%.1f"|format(b.win_rate * 100) }}%{% else %}—{% endif %}</td>
-          <td style="font-family:var(--font-data)">{% if b.brier is not none %}{{ "%.3f"|format(b.brier) }}{% else %}—{% endif %}</td>
-        </tr>
-        {% endfor %}
-      </tbody>
-    </table>
-    <div style="font-size:10px;color:var(--t3);padding:8px 0 0">Brier: 0 = parfait, 0.25 = pile-ou-face non informatif, 1 = toujours faux. Win rate observé loin de la confiance annoncée = mauvaise calibration.</div>
-  </div>
-  {% endif %}
-
-  {% if monthly %}
-  <div class="sec-hdr">&#9632; PAR MOIS <em>{{ monthly|length }} mois affichés (les {{ months_shown }} derniers — PERF_MONTHS_SHOWN)</em></div>
-  <div class="month-grid">
-    {% for m in monthly %}
-    {% set wr = m.win_rate %}
-    {% set wr_cls = 'wr-good' if wr and wr >= 65 else ('wr-ok' if wr and wr >= 50 else ('wr-bad' if wr else 'wr-none')) %}
-    <div class="mc">
-      <div class="mc-month">
-        {{ m.month }}
-        <span class="mc-wr {{ wr_cls }}">{% if wr %}{{ "%.0f"|format(wr) }}%{% else %}—{% endif %}</span>
-      </div>
-      <div class="mc-stats">
-        <div class="mc-stat">
-          <div class="mc-sv" style="color:var(--green)">{{ m.wins }}</div>
-          <div class="mc-sl">Wins</div>
-        </div>
-        <div class="mc-stat">
-          <div class="mc-sv" style="color:var(--red)">{{ m.losses }}</div>
-          <div class="mc-sl">Losses</div>
-        </div>
-        <div class="mc-stat">
-          <div class="mc-sv" style="color:var(--t2)">{{ m.total }}</div>
-          <div class="mc-sl">Total</div>
-        </div>
-      </div>
-    </div>
-    {% endfor %}
   </div>
   {% endif %}
 
   {% if history %}
-  <div class="sec-hdr">&#9632; HISTORIQUE <em>{{ history|length }} entrées · résultat connu</em></div>
+  <div class="sec-hdr">&#9632; HISTORIQUE <em>{{ history|length }} paris réglés</em></div>
   <div class="tbl-outer">
     <table class="perf-table">
       <thead>
-        <tr>
-          <th>Sport</th>
-          <th>Match</th>
-          <th>Marché</th>
-          <th>Pronostic</th>
-          <th>Côte</th>
-          <th>Résultat</th>
-          <th>Date</th>
-        </tr>
+        <tr><th>Sport</th><th>Match</th><th>Pronostic</th><th>Côte</th><th>Résultat</th><th>Date</th></tr>
       </thead>
       <tbody>
-        {% set E = {'soccer':'⚽','basketball':'🏀','tennis':'🎾','hockey':'🏒','mma':'🥋','boxing':'🥊','darts':'🎯','cricket':'🏏','esports':'🎮','americanfootball':'🏈','baseball':'⚾','rugby':'🏉','volleyball':'🏐','tabletennis':'🏓','handball':'🤾'} %}
         {% for r in history %}
         {% set oc = r.outcome or '' %}
         <tr>
-          <td>{{ E.get(r.sport or '', '🎯') }}</td>
+          <td>{{ sport_emoji.get(r.sport or '', '🎯') }}</td>
           <td>
             <div style="color:var(--t1);font-weight:700;white-space:nowrap">{{ r.match or '—' }}</div>
             {% if r.league %}<div style="color:var(--t3);font-size:10px">{{ r.league }}</div>{% endif %}
           </td>
-          <td style="color:var(--t2)">{{ r.market or r.market_type or '—' }}</td>
-          <td style="color:var(--t1)">{{ r.selection or '—' }}</td>
+          <td style="color:var(--t1)">
+            {{ r.selection or '—' }}
+            {% if r.market or r.market_type %}<div style="color:var(--t3);font-size:10px">{{ r.market or r.market_type }}</div>{% endif %}
+          </td>
           <td style="color:var(--t1);font-weight:700;font-family:var(--font-data)">
             {{ "%.2f"|format(r.odds) if r.odds else '—' }}
           </td>
           <td>
             {% if oc == 'WIN' %}<span class="oc-win">✓ GAGNÉ</span>
             {% elif oc == 'LOSS' %}<span class="oc-loss">✗ PERDU</span>
-            {% elif oc == 'PUSH' %}<span class="oc-push">PUSH</span>
-            {% else %}<span class="oc-exp">résultat inconnu</span>{% endif %}
+            {% elif oc == 'PUSH' %}<span class="oc-push">ANNULÉ</span>
+            {% else %}<span class="oc-exp">en attente</span>{% endif %}
           </td>
-          <td class="ts">{{ r.created_at[:16]|replace('T',' ') if r.created_at else '—' }}</td>
+          <td class="ts">{{ r.created_at[:10] if r.created_at else '—' }}</td>
         </tr>
         {% endfor %}
       </tbody>
@@ -341,15 +242,14 @@
   {% else %}
   <div class="perf-empty">
     <div class="perf-empty-icon">&#9634;</div>
-    <div>Aucune donnée de performance disponible.</div>
-    <div>L'audit engine alimente cette page toutes les 6h.</div>
-    <div style="margin-top:6px;font-size:10px;color:var(--t3)">Workflow : <strong style="color:var(--t2)">Predator Audit</strong> &middot; GitHub Actions</div>
+    <div>Aucun pari réglé depuis août 2026.</div>
+    <div style="font-size:10px;color:var(--t3)">Cette page se remplit toutes les 6 h, après chaque audit.</div>
   </div>
   {% endif %}
 
 </div>
 
-<footer>PREDATOR PERFORMANCE v{{ version }} &nbsp;&middot;&nbsp; WIN/LOSS/PUSH &middot; <code>ai_learning_ledger</code></footer>
+<footer>PREDATOR PERFORMANCE v{{ version }} &nbsp;&middot;&nbsp; résultats réels depuis août 2026</footer>
 
 <nav class="bnav">
   <a href="/" aria-label="Accueil">

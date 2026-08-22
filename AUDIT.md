@@ -67,6 +67,9 @@ C'est le tableau à consulter avant de toucher à quoi que ce soit.
 | Aucune exception brute ne part dans une réponse HTTP | `…::TestPasDeFuiteDansLesReponses` |
 | `/api/health` répond base injoignable et ne publie aucun secret | `…::TestSondeDeSante` |
 | Un verdict Wiz `INDISPONIBLE` est rejoué, un verdict réel non | `tests/test_wiz_retry.py` |
+| Aucun mois antérieur à l'époque (août 2026) ne remonte sur /performance | `tests/test_mission2_dashboard_quota.py::test_une_fenetre_elargie_ne_rouvre_pas_juillet` |
+| La fenêtre reste glissante AU-DESSUS de l'époque (pas figée) | `…::test_la_fenetre_reste_glissante_au_dessus_de_lepoque` |
+| L'archivage ne touche jamais un signal `active` | `…::test_le_script_darchivage_de_juillet_existe_et_narchive_pas_a_laveugle` |
 | Les sources porteuses de faits survivent à la troncature de Wiz | `tests/test_wiz_sources.py::TestLesFaitsDabord` |
 | Les deux sources gratuites de Wiz sont fusionnées, pas mises en concurrence | `…::test_les_deux_sources_gratuites_sont_fusionnees` |
 | `.python-version` reste sur la version de **Vercel** (3.12), jamais « alignée » sur les workflows | `tests/test_workflow_secrets.py::test_python_version_appartient_a_vercel` |
@@ -313,6 +316,73 @@ Ce n'est pas une incohérence à réparer, c'est une contrainte subie.
 > python scripts/ops.py vercel deployments | head -3   # READY, pas ERROR
 > curl -s https://predator-two.vercel.app/api/health
 > ```
+
+### 3.9 Époque zéro : le système commence en août 2026
+
+Décision opérateur du 2026-08-22 : « predator n'était pas au point et avait
+des bugs en juillet, on recommence tout en août ». Les lignes de juillet ne
+mesurent donc pas le système actuel — les garder dans les agrégats revenait à
+juger la version d'aujourd'hui sur les erreurs d'une version corrigée depuis.
+
+**Ce qui a été fait, en deux temps qui se complètent.**
+
+*En base* — `sql/migrate_v10_5_archive_pre_august.sql` a déplacé 206 lignes
+vers `ai_learning_ledger_archive` : 194 de juillet, plus 12 de sports retirés
+encore présents en août. Sept lignes de `signals` (esports, tabletennis,
+toutes `settled`/`closed`) sont parties vers `signals_archive`. Il reste 126
+lignes vivantes, août uniquement, quatre sports.
+
+C'est un **déplacement, pas une destruction**, conformément à la politique
+déjà écrite dans `sql/archive_retired_sports.sql` : ces lignes (cotes, edge
+d'entrée, CLV, issue réelle) sont la seule trace empirique du comportement
+passé, et « juillet était buggé » est une hypothèse qu'on peut vouloir
+re-vérifier sur pièces. Un backtest futur qui ignorerait des paris réglés
+souffrirait d'un biais de survie. Le bloc RESTAURATION du script donne le
+chemin inverse. Une sauvegarde JSON des 206 lignes a été prise avant
+exécution.
+
+*Dans le code* — `PERF_START_MONTH` (`core/perf_view.py`, défaut `2026-08`)
+empêche tout mois antérieur de remonter sur /performance, **même si des
+lignes étaient réinsérées**. La condition est portée deux fois — dans
+`shown_months()` et dans `filter_rows()` — parce que relever
+`PERF_MONTHS_SHOWN` pour inspecter un historique ne doit pas ramener juillet
+en douce dans les agrégats : il faut abaisser la borne explicitement.
+
+Sans cette borne, la fenêtre glissante afficherait une carte « juillet
+0 gagné / 0 perdu » — un mois vide qui ne dit pas « aucun pari » mais
+« période exclue ». Afficher 0/0 pour une période volontairement écartée
+trompe davantage que de ne rien afficher.
+
+### 3.10 /performance : moins de littérature, même rigueur
+
+Demande opérateur : « il y a trop de littérature et d'informations, mets
+juste les infos essentielles ». Quatre sections ont quitté la page — seuils
+d'edge appris, dernier cycle d'apprentissage, calibration de Brier par
+tranche de confiance, découpage par mois. Ce sont des rouages internes, pas
+des résultats ; ils restent mesurés et lisibles ailleurs (table
+`brier_scores`, `meta.threshold_<sport>`, `scripts/weekly_report.py`).
+
+**Ce qui n'a PAS été simplifié, et pourquoi.** Le code portait une règle
+explicite : *ne jamais afficher un taux de réussite sans son intervalle de
+Wilson et le seuil de rentabilité après taxe* — parce que « 3 gagnés sur 4 »
+fait 75 % et ne prouve rien. Supprimer cette garde aurait été une régression
+de sûreté sur un système de mise, pas une simplification.
+
+Elle est donc **traduite au lieu d'être retirée**. Là où la page affichait
+« IC 95% [41.2 – 66.8%] · seuil rentable net taxe 57.0% ✗ pas confirmé »,
+elle affiche maintenant :
+
+> **À confirmer** — il faut 57 % de réussite pour être rentable, et 85 paris
+> ne suffisent pas encore à le prouver.
+
+Même calcul, même prudence, une phrase que l'on lit sans dictionnaire. Le
+tableau par sport suit la même logique : les colonnes « IC 95% » et « seuil
+rentable » disparaissent, la colonne **Verdict** qu'elles alimentaient reste.
+
+La table d'emojis codée en dur dans le template (deux copies, divergentes de
+`api/index.py`) est remplacée par l'injection — même correctif que sur
+`index.html`, même raison (§1). 386 → 286 lignes, 13 règles CSS mortes
+retirées, quatre appels Supabase de moins par chargement.
 
 ---
 

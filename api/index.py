@@ -27,17 +27,17 @@ import requests
 from dotenv import load_dotenv
 from flask import Flask, jsonify, render_template, request, send_from_directory
 
-from core.perf_view import filter_rows as _perf_filter_rows, PERF_MONTHS_SHOWN as _PERF_MONTHS_SHOWN
+# (Allégé le 2026-08-22.) Les imports de la couche d'apprentissage
+# (SPORT_DEFAULTS, load_thresholds, load_segment_thresholds,
+# load_learning_summary), du disjoncteur par sport et de bucket_predictions
+# ont été retirés avec les sections qu'ils alimentaient sur /performance :
+# seuils appris, dernier cycle d'apprentissage, calibration de Brier. Ces
+# mesures existent toujours — elles vivent dans la base et dans
+# scripts/weekly_report.py — elles ne sont simplement plus rendues ici.
+from core.perf_view import filter_rows as _perf_filter_rows
 from core.constants import TAX_RATE as _TAX_RATE, wiz_enforce as _wiz_enforce
 from core.db import get_db as _get_db_client, MissingCredentialsError
-from core.learning_layer import (
-    SPORT_DEFAULTS as _SPORT_DEFAULTS,
-    load_thresholds as _load_thresholds,
-    load_segment_thresholds as _load_segment_thresholds,
-    load_learning_summary as _load_learning_summary,
-)
-from core.risk_manager import is_sport_emission_paused as _is_sport_emission_paused
-from core.stats_utils import bucket_predictions, p_breakeven, wilson_ci
+from core.stats_utils import p_breakeven, wilson_ci
 
 log = logging.getLogger("PREDATOR.api")
 
@@ -582,7 +582,6 @@ def audit():
 def performance():
     rows: list      = []
     history: list   = []   # sous-ensemble de `rows` affiché dans le tableau HISTORIQUE
-    monthly: list   = []
     global_s: dict  = {}
     try:
         sb = _db()
@@ -598,16 +597,14 @@ def performance():
             rows = _perf_filter_rows(res.data or [])
 
             if rows:
-                # Learning layer state — current thresholds and why they
-                # last moved (core/learning_layer.py), plus which sports (if
-                # any) have their own circuit breaker tripped
-                # (core/risk_manager.py). Nested under `if rows` so an empty
-                # ledger still falls through to the existing empty-state
-                # page below instead of a half-populated `global_s`.
-                global_s["thresholds"] = _load_thresholds(sb)
-                global_s["segment_thresholds"] = _load_segment_thresholds(sb)
-                global_s["learning_summary"] = _load_learning_summary(sb)
-                global_s["paused_sports"] = [s for s in _SPORT_DEFAULTS if _is_sport_emission_paused(sb, s)]
+                # (Retiré le 2026-08-22 — simplification demandée par
+                # l'opérateur : « trop de littérature et d'informations ».)
+                # Les seuils d'edge appris, le résumé du dernier cycle
+                # d'apprentissage et l'état des disjoncteurs par sport ne
+                # sont plus affichés ici : ce sont des rouages internes, pas
+                # un résultat. Ils restent lisibles côté base
+                # (meta.threshold_<sport>) et par `scripts/weekly_report.py`.
+                # Quatre appels Supabase de moins par chargement de page.
 
                 settled = [r for r in rows if r.get("outcome") in ("WIN", "LOSS", "PUSH")]
                 decisive = [r for r in rows if r.get("outcome") in ("WIN", "LOSS")]
@@ -681,57 +678,25 @@ def performance():
                     }
                 global_s["by_sport"] = sport_perf
 
-                # Brier score / reliability by predicted-probability bucket
-                # — a win rate alone can't detect miscalibration (e.g. picks
-                # tagged "80% confident" that only win 60% of the time).
-                predictions = [(r["sharp_prob"], 1 if r["outcome"] == "WIN" else 0)
-                              for r in decisive if r.get("sharp_prob") is not None]
-                global_s["brier_buckets"] = bucket_predictions(predictions) if predictions else None
+                # (Retiré le 2026-08-22 : le tableau de CALIBRATION — Brier
+                # par tranche de confiance — quittait la page. Le score de
+                # Brier reste calculé et suivi côté pipeline, table
+                # `brier_scores`, et repris dans le rapport hebdomadaire.)
 
-                # Monthly breakdown
-                months_map: dict = {}
-                for r in rows:
-                    ca = r.get("created_at") or ""
-                    mo = ca[:7]  # "2026-07"
-                    if not mo:
-                        continue
-                    m = months_map.setdefault(mo, {"month": mo, "total": 0, "wins": 0, "losses": 0, "pushes": 0, "expired": 0, "clv_sum": 0.0, "clv_n": 0, "clv_real_sum": 0.0, "clv_real_n": 0, "edge_sum": 0.0, "edge_n": 0})
-                    m["total"] += 1
-                    oc = r.get("outcome")
-                    if oc == "WIN":     m["wins"]    += 1
-                    elif oc == "LOSS":  m["losses"]  += 1
-                    elif oc == "PUSH":  m["pushes"]  += 1
-                    else:               m["expired"]  += 1
-                    # Same precedence as the global block above, and the same
-                    # rule: the two are accumulated separately and never
-                    # averaged together. A month with any real closing-line
-                    # measurement reports those; months predating capture
-                    # keep the entry-edge proxy.
-                    if r.get("clv_pct_real") is not None:
-                        m["clv_real_sum"] += r["clv_pct_real"]; m["clv_real_n"] += 1
-                    if r.get("clv_final") is not None:
-                        m["clv_sum"] += r["clv_final"]; m["clv_n"] += 1
-                    if r.get("initial_edge") is not None:
-                        m["edge_sum"] += r["initial_edge"]; m["edge_n"] += 1
-
-                for m in months_map.values():
-                    denom = m["wins"] + m["losses"]
-                    m["win_rate"] = round(m["wins"] / denom * 100, 1) if denom else None
-                    if m["clv_real_n"]:
-                        m["avg_clv"] = round(m["clv_real_sum"] / m["clv_real_n"], 2)
-                        m["clv_is_real"] = True
-                    else:
-                        m["avg_clv"] = round(m["clv_sum"] / m["clv_n"], 2) if m["clv_n"] else None
-                        m["clv_is_real"] = False
-                    m["avg_edge"] = round(m["edge_sum"] / m["edge_n"], 2) if m["edge_n"] else None
-
-                monthly = sorted(months_map.values(), key=lambda x: x["month"], reverse=True)
+                # (Retiré le 2026-08-22 : la section « PAR MOIS » quittait
+                # la page. Depuis que l'époque du système est fixée à août
+                # 2026 — core/perf_view.PERF_START_MONTH — il n'y a qu'UN
+                # mois à montrer, et une grille de cartes pour une seule
+                # carte répète simplement les chiffres déjà en haut de page.
+                # Le découpage mensuel reste disponible dans le rapport
+                # hebdomadaire, scripts/weekly_report.py.)
 
     except Exception as e:
         log.error("Performance: %s", e)
 
-    return render_template("performance.html", rows=rows, history=history, monthly=monthly,
-                           global_s=global_s, months_shown=_PERF_MONTHS_SHOWN)
+    return render_template("performance.html", rows=rows, history=history,
+                           global_s=global_s,
+                           sport_emoji=_SPORT_EMOJI, sport_label=_SPORT_LABEL)
 
 
 @app.route("/system")
