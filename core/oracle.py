@@ -107,11 +107,16 @@ def _query_book(
 
 def _parse_soccer(text: str) -> tuple[float | None, str | None]:
     """Extract 1X2 odds + team names → compute AH 0.0 for the favorite."""
+    # `\d+(?:\.\d+)?` et non `\d+\.\d+` : une cote ronde est très souvent
+    # sérialisée sans décimale par le modèle (`"draw": 3`, `"away": 12`).
+    # L'ancien motif exigeait le point et rendait alors (None, None) — un
+    # prix sharp perdu en silence sur le chemin du settlement, pour la seule
+    # raison que la cote tombait juste.
     m_ht = re.search(r'"home_team"\s*:\s*"([^"]+)"', text)
     m_at = re.search(r'"away_team"\s*:\s*"([^"]+)"', text)
-    m_h  = re.search(r'"home"\s*:\s*(\d+\.\d+)', text)
-    m_d  = re.search(r'"draw"\s*:\s*(\d+\.\d+)', text)
-    m_a  = re.search(r'"away"\s*:\s*(\d+\.\d+)', text)
+    m_h  = re.search(r'"home"\s*:\s*(\d+(?:\.\d+)?)', text)
+    m_d  = re.search(r'"draw"\s*:\s*(\d+(?:\.\d+)?)', text)
+    m_a  = re.search(r'"away"\s*:\s*(\d+(?:\.\d+)?)', text)
 
     if m_h and m_d and m_a:
         home_odd = float(m_h.group(1))
@@ -134,7 +139,8 @@ def _parse_soccer(text: str) -> tuple[float | None, str | None]:
 
 def _parse_moneyline(text: str) -> tuple[float | None, str | None]:
     """Extract the sharp Moneyline price and team name."""
-    m_p = re.search(r'"price"\s*:\s*(\d+\.\d+)', text)
+    # Idem : `"price": 2` est une cote valide de 2.00 (voir _parse_soccer).
+    m_p = re.search(r'"price"\s*:\s*(\d+(?:\.\d+)?)', text)
     m_t = re.search(r'"team"\s*:\s*"([^"]+)"', text)
     price = float(m_p.group(1)) if m_p else None
     team  = m_t.group(1) if m_t else None
