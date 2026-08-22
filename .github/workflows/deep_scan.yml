@@ -76,6 +76,8 @@ jobs:
           NEBIUS_API_KEY:         ${{ secrets.NEBIUS_API_KEY }}
           MODELSCOPE_API_KEY:     ${{ secrets.MODELSCOPE_API_KEY }}
           SCALEWAY_API_KEY:       ${{ secrets.SCALEWAY_API_KEY }}
+          OVH_AI_API_KEY:         ${{ secrets.OVH_AI_API_KEY }}
+          SILICONFLOW_API_KEY:    ${{ secrets.SILICONFLOW_API_KEY }}
         run: |
           missing=""
           [ -z "$SUPABASE_URL" ]  && missing="$missing SUPABASE_URL"
@@ -160,6 +162,8 @@ jobs:
           NEBIUS_API_KEY:         ${{ secrets.NEBIUS_API_KEY }}
           MODELSCOPE_API_KEY:     ${{ secrets.MODELSCOPE_API_KEY }}
           SCALEWAY_API_KEY:       ${{ secrets.SCALEWAY_API_KEY }}
+          OVH_AI_API_KEY:         ${{ secrets.OVH_AI_API_KEY }}
+          SILICONFLOW_API_KEY:    ${{ secrets.SILICONFLOW_API_KEY }}
           SUPABASE_URL:       ${{ secrets.SUPABASE_URL }}
           SUPABASE_KEY:       ${{ secrets.SUPABASE_KEY }}
           SUPABASE_SERVICE_KEY: ${{ secrets.SUPABASE_SERVICE_KEY }}

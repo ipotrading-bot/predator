@@ -232,14 +232,34 @@ def vc_redeploy():
 
 # Clés du routeur IA à recopier dans les secrets du dépôt. `.env` ne sert
 # qu'en local : les crons GitHub Actions ne lisent QUE les secrets du dépôt.
-_AI_SECRETS = (
-    "GEMINI_API_KEY", "OPENROUTER_API_KEY", "CLOUDFLARE_API_TOKEN",
-    "CLOUDFLARE_ACCOUNT_ID", "OLLAMA_API_KEY", "GROQ_API_KEY",
-    "TAVILY_API_KEY", "NVIDIA_NIM_API_KEY", "COHERE_API_KEY",
-    "UPSTAGE_API_KEY", "NEBIUS_API_KEY", "MODELSCOPE_API_KEY",
-    "SCALEWAY_API_KEY", "CEREBRAS_API_KEY", "SAMBANOVA_API_KEY",
-    "CHUTES_API_KEY", "ZHIPU_API_KEY", "SILICONFLOW_API_KEY",
-)
+# Clés d'IA que `secrets-push` recopie du .env vers les secrets Actions.
+#
+# DÉRIVÉE DU REGISTRE, PLUS ÉCRITE À LA MAIN (2026-08-22). La liste était un
+# tuple figé : il lui manquait OVH_AI_API_KEY — un fournisseur pourtant
+# PRODUCTION_SAFE. Conséquence, si l'opérateur obtenait une clé OVH et la
+# mettait dans son .env, `secrets-push` la SAUTAIT sans un mot, et le
+# fournisseur restait invisible en production. Exactement la même panne, au
+# même moment, que les deux workflows qui ne passaient pas ces clés.
+#
+# Toute liste de fournisseurs tenue à la main finit par diverger de
+# core/ai_router.py. Celle-ci se calcule ; tests/test_workflow_secrets.py
+# vérifie qu'elle reste complète.
+def _ai_secrets() -> tuple:
+    from core.ai_router import REGISTRY
+    noms = {p.env_key for p in REGISTRY}
+    # Compagnons et clés d'IA légitimement HORS registre :
+    #  - CLOUDFLARE_ACCOUNT_ID : l'URL Workers AI contient l'id de compte ;
+    #  - MISTRAL_API_KEY : Wiz, volontairement hors registre (domaine de
+    #    panne séparé, cf. CLAUDE.md) — mais c'est bien un secret d'IA ;
+    #  - TAVILY_API_KEY : recherche web de Wiz ;
+    #  - GROQ_API_KEY_2/3/4 : pool géré par core/ai_search.py, dont la clé
+    #    _3 réservée au settlement.
+    noms |= {"CLOUDFLARE_ACCOUNT_ID", "MISTRAL_API_KEY", "TAVILY_API_KEY",
+             "GROQ_API_KEY_2", "GROQ_API_KEY_3", "GROQ_API_KEY_4"}
+    return tuple(sorted(noms))
+
+
+_AI_SECRETS = _ai_secrets()
 
 
 def secrets_push(args):

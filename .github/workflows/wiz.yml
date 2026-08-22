@@ -126,6 +126,8 @@ jobs:
           COHERE_API_KEY:        ${{ secrets.COHERE_API_KEY }}
           UPSTAGE_API_KEY:       ${{ secrets.UPSTAGE_API_KEY }}
           SCALEWAY_API_KEY:      ${{ secrets.SCALEWAY_API_KEY }}
+          OVH_AI_API_KEY:        ${{ secrets.OVH_AI_API_KEY }}
+          SILICONFLOW_API_KEY:   ${{ secrets.SILICONFLOW_API_KEY }}
           SUPABASE_URL:         ${{ secrets.SUPABASE_URL }}
           SUPABASE_KEY:         ${{ secrets.SUPABASE_KEY }}
           SUPABASE_SERVICE_KEY: ${{ secrets.SUPABASE_SERVICE_KEY }}
