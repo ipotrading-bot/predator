@@ -60,15 +60,11 @@ SPORT_IDS = {
     "americanfootball":  1,
     "tennis":            9,
     "mma":             126,
-    "esports":         123,
     "cricket":         110,
     "darts":           116,
     "rugbyleague":     114,
     "rugby":            18,
     "aussierules":     112,
-    "tabletennis":  1389388027310017,
-    "volleyball":   1939998342510016,
-    "handball":     1326054153540017,
 }
 
 # Un marché d'exchange peu liquide affiche des cotes fantaisistes (back 110

@@ -32,16 +32,22 @@ log = logging.getLogger("PREDATOR.harvester")
 SPORT_IDS = {1: "soccer", 3: "tennis", 4: "basketball", 5: "mma"}
 
 # ── Budget recherche web (Groq/Tavily) ───────────────────────────────
-# Ces plafonds bornent la TAILLE de la réponse IA, donc le nombre de matchs
-# qu'un scan peut ramener sur les sports que le plan OddsAPI ne couvre pas
-# (MMA, eSports, table tennis, volley, handball) : à 2048 tokens le tableau
-# JSON est tronqué bien avant la fin de la carte, et la moitié du slate ne
-# franchit jamais le parseur. Les défauts restent bas parce que les ~24 runs
-# quotidiens de golden_hour.yml partagent leur TPD Groq avec le settlement —
-# c'est ce partage qui a verrouillé le quota le 2026-08-02. guerrilla.yml
-# tourne sur un budget dédié et les relève par l'env.
+# Ce plafond borne la TAILLE de la réponse IA. Il partage son TPD Groq avec
+# le settlement — c'est ce partage qui a verrouillé le quota le 2026-08-02.
+#
+# RÉPARTITION depuis le 2026-08-22 (retrait des sports bruités — mission
+# « recentrage sports ») : les deux appels de recherche web par run qui
+# ramenaient eSports (≈2 048 tokens) et table tennis/volley/handball
+# (≈3 000 tokens, ALT_SEARCH_MAX_TOKENS — supprimé) ont disparu, soit
+# ≈5 000 tokens réservés par run × ~10 runs payants/jour ≈ 50k TPD
+# libérés sur un quota de 100k par clé. Ce budget N'EST PAS réinjecté dans
+# un nouveau consommateur de scan : il revient d'abord au settlement
+# (core/settlement.py, même TPD, fetch_match_result) — c'est lui qui
+# manquait de tokens le 2026-08-02 — puis, au second rang, aux lots
+# `fetch_pinnacle_prices` (PINNACLE_BATCH) des sports OddsAPI quand le Tier 1
+# est muet. Le MMA passe sur flux OddsAPI réel (Phase 1 de la même mission) :
+# à terme SEARCH_MAX_TOKENS ne sert plus qu'à la recherche de prix Pinnacle.
 SEARCH_MAX_TOKENS       = int(os.environ.get("SEARCH_MAX_TOKENS", "2048"))
-ALT_SEARCH_MAX_TOKENS   = int(os.environ.get("ALT_SEARCH_MAX_TOKENS", "3000"))
 PINNACLE_BATCH          = int(os.environ.get("PINNACLE_BATCH", "25"))
 PINNACLE_TAVILY_QUERIES = int(os.environ.get("PINNACLE_TAVILY_QUERIES", "4"))
 
@@ -666,175 +672,6 @@ def fetch_mma_events() -> list[dict]:
             continue
 
     log.info("MMA/Search: %d events found (Melbet vs Pinnacle)", len(events))
-    return events
-
-
-def fetch_esports_events() -> list[dict]:
-    """
-    Recherche web (Groq/Tavily) → upcoming eSports matches with BOTH
-    1XBet (soft) and Pinnacle (sharp) decimal ML odds.
-    Cibles : CS2, League of Legends, Valorant, DOTA2 — tournois top tier.
-    """
-    if not ai_available():
-        return []
-
-    from datetime import date
-    today = date.today().isoformat()
-
-    prompt = (
-        f"Today is {today}. Search the web to find upcoming eSports matches "
-        f"in CS2, League of Legends, Valorant, or DOTA2 scheduled in the next 3 days. "
-        f"Focus on top-tier tournaments (ESL Pro League, BLAST, LCS, LEC, VCT, The International).\n\n"
-        f"For each match, search for:\n"
-        f"1. Current 1XBet decimal moneyline odds (no draw — only winner odds)\n"
-        f"2. Current Pinnacle decimal moneyline odds\n\n"
-        f"Return ONLY a valid JSON array. Omit any match where you cannot confirm both books have lines:\n"
-        f'[{{"match":"Team A vs Team B","home":"Team A","away":"Team B",'
-        f'"game":"CS2","event":"ESL Pro League","commence_time":"2026-05-17T18:00:00Z",'
-        f'"odds_1xbet":{{"1":1.85,"X":0,"2":2.00}},'
-        f'"odds_pinnacle":{{"1":1.75,"X":0,"2":2.10}}}}]\n\n'
-        f"X must always be 0 (no draw in eSports). "
-        f"Only include matches with confirmed lines on BOTH 1XBet AND Pinnacle."
-    )
-
-    text = ai_search_complete(
-        prompt,
-        queries=["CS2 LoL Valorant Dota2 upcoming matches betting odds"],
-        label="eSports/Search",
-        max_tokens=SEARCH_MAX_TOKENS, temperature=0.1, timeout=90,
-    )
-    if not text:
-        return []
-
-    try:
-        text = re.sub(r'```(?:json)?|```', '', text).strip()
-        m_arr = re.search(r'\[[\s\S]*\]', text)
-        if not m_arr:
-            log.warning("eSports/Search: aucun tableau JSON dans la réponse")
-            return []
-        raw = json.loads(m_arr.group())
-    except Exception as e:
-        log.error("eSports/Search parse error: %s", e)
-        return []
-
-    events = []
-    for ev in raw:
-        try:
-            home = str(ev.get("home", "")).strip()
-            away = str(ev.get("away", "")).strip()
-            if not home or not away:
-                continue
-            om = ev.get("odds_1xbet", {})
-            op = ev.get("odds_pinnacle", {})
-            xbet_h = _odd(om.get("1")); xbet_a = _odd(om.get("2"))
-            pin_h  = _odd(op.get("1")); pin_a  = _odd(op.get("2"))
-            if xbet_h <= 1.01 or xbet_a <= 1.01 or pin_h <= 1.01 or pin_a <= 1.01:
-                continue
-            game = ev.get("game", "eSports")
-            events.append({
-                "id":            _stable_id("esports", home, away, ev.get("commence_time", "")),
-                "match":         ev.get("match", f"{home} vs {away}"),
-                "home":          home,
-                "away":          away,
-                "league":        f"{game} — {ev.get('event', 'Tournoi')}",
-                "sport":         "esports",
-                "sport_id":      9,
-                "commence_time": ev.get("commence_time", ""),
-                "odds_1xbet":    {"1": xbet_h, "X": 0.0, "2": xbet_a},
-                "odds_pinnacle": {"1": pin_h,  "X": 0.0, "2": pin_a},
-            })
-        except Exception:
-            continue
-
-    log.info("eSports/Search: %d matchs trouvés", len(events))
-    return events
-
-
-def fetch_alternative_sports_batch() -> list[dict]:
-    """
-    UN SEUL appel recherche web pour Table Tennis + Volleyball + Handball.
-    Groupé en une seule requête pour éviter les cascades de rate-limit 429.
-    Retourne les événements au format standard moteur.
-    """
-    if not ai_available():
-        return []
-
-    from datetime import date
-    today = date.today().isoformat()
-
-    prompt = (
-        f"Today is {today}. Search the web to find upcoming matches in the next 3 days "
-        f"for these 3 sports: Table Tennis, Volleyball (men/women), Handball.\n\n"
-        f"For each match find current 1XBet AND Pinnacle decimal moneyline odds.\n"
-        f"Target tournaments:\n"
-        f"- Table Tennis: ITTF World Tour, Bundesliga TT, Champions League TT, top Asian leagues\n"
-        f"- Volleyball: CEV Champions League, Bundesliga, top European leagues (men/women)\n"
-        f"- Handball: EHF Champions League, Bundesliga, Liga ASOBAL\n\n"
-        f"Return ONLY a valid JSON array. Omit any match without confirmed odds on BOTH books:\n"
-        f'[{{"match":"Team A vs Team B","home":"Team A","away":"Team B","sport":"tabletennis",'
-        f'"event":"ITTF World Tour","commence_time":"2026-05-18T14:00:00Z",'
-        f'"odds_1xbet":{{"1":1.70,"X":0,"2":2.10}},'
-        f'"odds_pinnacle":{{"1":1.60,"X":0,"2":2.25}}}}]\n\n'
-        f'sport field must be exactly: "tabletennis", "volleyball", or "handball". '
-        f"X=0 always (no draw in these sports). Only include matches with confirmed lines on BOTH books."
-    )
-
-    text = ai_search_complete(
-        prompt,
-        queries=["table tennis volleyball handball matches today betting odds"],
-        label="AltSports/Search",
-        max_tokens=ALT_SEARCH_MAX_TOKENS, temperature=0.1, timeout=90,
-    )
-    if not text:
-        return []
-
-    try:
-        text = re.sub(r'```(?:json)?|```', '', text).strip()
-        m_arr = re.search(r'\[[\s\S]*\]', text)
-        if not m_arr:
-            log.warning("AltSports/Search: aucun tableau JSON")
-            return []
-        raw = json.loads(m_arr.group())
-    except Exception as e:
-        log.error("AltSports/Search parse error: %s", e)
-        return []
-
-    _SPORT_IDS = {"tabletennis": 14, "volleyball": 13, "handball": 15}
-    events = []
-    counts: dict[str, int] = {}
-    for ev in raw:
-        try:
-            home = str(ev.get("home", "")).strip()
-            away = str(ev.get("away", "")).strip()
-            if not home or not away:
-                continue
-            sport = str(ev.get("sport", "")).strip().lower()
-            if sport not in _SPORT_IDS:
-                continue
-            om = ev.get("odds_1xbet", {})
-            op = ev.get("odds_pinnacle", {})
-            xbet_h = _odd(om.get("1")); xbet_a = _odd(om.get("2"))
-            pin_h  = _odd(op.get("1")); pin_a  = _odd(op.get("2"))
-            if xbet_h <= 1.01 or xbet_a <= 1.01 or pin_h <= 1.01 or pin_a <= 1.01:
-                continue
-            events.append({
-                "id":            _stable_id(sport, home, away, ev.get("commence_time", "")),
-                "match":         ev.get("match", f"{home} vs {away}"),
-                "home":          home,
-                "away":          away,
-                "league":        ev.get("event", sport.title()),
-                "sport":         sport,
-                "sport_id":      _SPORT_IDS[sport],
-                "commence_time": ev.get("commence_time", ""),
-                "odds_1xbet":    {"1": xbet_h, "X": 0.0, "2": xbet_a},
-                "odds_pinnacle": {"1": pin_h,  "X": 0.0, "2": pin_a},
-            })
-            counts[sport] = counts.get(sport, 0) + 1
-        except Exception:
-            continue
-
-    log.info("AltSports/Search: %d matchs — %s",
-             len(events), " | ".join(f"{s}={n}" for s, n in counts.items()))
     return events
 
 

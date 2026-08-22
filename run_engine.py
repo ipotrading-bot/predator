@@ -18,7 +18,7 @@ import requests
 from dotenv import load_dotenv
 
 from core.db import get_db, MissingCredentialsError, log_to_ledger as _log_to_ledger
-from core.harvester import fetch_matches, fetch_pinnacle_prices, fetch_estimated_prices, fetch_mma_events, fetch_esports_events, fetch_alternative_sports_batch, fetch_betfair_prices
+from core.harvester import fetch_matches, fetch_pinnacle_prices, fetch_estimated_prices, fetch_mma_events, fetch_betfair_prices
 from core.ai_search import ai_dead as gemini_quota_dead
 from core.closing_line import capture_from_scan
 from core.matchbook import fetch_matchbook_prices
@@ -39,7 +39,7 @@ from core.paim_engine import (
     market_label, SHARP_PROB_BY_MARKET, calculate_consensus_price,
     correlation_group as _correlation_group, resolve_selection_side,
 )
-from core.constants import ELITE_EDGE as _ELITE_EDGE, SOCCER_ELITE_EDGE as _SOCCER_ELITE_EDGE, BASKETBALL_ELITE_EDGE as _BASKETBALL_ELITE_EDGE, risk_flag as _risk_flag, SUSPECT_EDGE as _SUSPECT_EDGE, KELLY_FRACTION as _KELLY_FRACTION, AH0_VALUE_THRESHOLD as _AH0_VALUE_THRESHOLD, PURGE_EDGE_FLOOR as _PURGE_EDGE_FLOOR, MLB_LINEUP_WINDOW_H as _MLB_LINEUP_WINDOW_H, PUSH_PROB_ROUND_LINE as _PUSH_PROB_ROUND_LINE, TAX_RATE as _TAX_RATE, BANKROLL_REF as _BANKROLL_REF, EV_EDGE_FLOOR as _EV_EDGE_FLOOR
+from core.constants import ELITE_EDGE as _ELITE_EDGE, SOCCER_ELITE_EDGE as _SOCCER_ELITE_EDGE, BASKETBALL_ELITE_EDGE as _BASKETBALL_ELITE_EDGE, risk_flag as _risk_flag, SUSPECT_EDGE as _SUSPECT_EDGE, KELLY_FRACTION as _KELLY_FRACTION, AH0_VALUE_THRESHOLD as _AH0_VALUE_THRESHOLD, PURGE_EDGE_FLOOR as _PURGE_EDGE_FLOOR, MLB_LINEUP_WINDOW_H as _MLB_LINEUP_WINDOW_H, PUSH_PROB_ROUND_LINE as _PUSH_PROB_ROUND_LINE, TAX_RATE as _TAX_RATE, BANKROLL_REF as _BANKROLL_REF, EV_EDGE_FLOOR as _EV_EDGE_FLOOR, RETIRED_SPORTS as _RETIRED_SPORTS
 from core.tax_engine import suggest_system as _suggest_system, is_combo_tax_viable as _is_combo_tax_viable
 import core.risk_manager as _risk_manager
 
@@ -168,8 +168,6 @@ MAX_MATCHES = 100 if DEEP_SCAN else 50
 # les 30-60 min, donc à 4h de TTL un scan sur deux ne voyait qu'une carte déjà
 # jouée. guerrilla.yml, qui a son propre budget, les raccourcit par l'env.
 _TTL_MMA     = float(os.environ.get("CACHE_MMA_TTL_H",     "8"))
-_TTL_ESPORTS = float(os.environ.get("CACHE_ESPORTS_TTL_H", "8"))
-_TTL_ALT     = float(os.environ.get("CACHE_ALT_TTL_H",     "4"))
 # TTL d'un résultat VIDE. eSports et sports alternatifs n'ont pas de feed
 # Melbet dans ce flux : si la recherche rend zéro (clé Groq morte, par ex.),
 # le vide reste en cache et le sport est muet jusqu'à expiration.
@@ -193,14 +191,13 @@ _MAX_ORACLE = int(os.environ.get("MAX_ORACLE", "3"))
 # en dernier, donc les 3 slots partaient toujours au foot. Run 30766186188 :
 # les 6 combats UFC récupérés chez Melbet (Blachowicz, Rakic, de Ridder…) sont
 # tous tombés en « Échec prix Sharp » sans qu'un seul appel oracle soit tenté.
-_NO_ODDSAPI_SPORTS = {"mma", "esports", "tabletennis", "volleyball", "handball"}
+_NO_ODDSAPI_SPORTS = {"mma"}   # eSports/tabletennis/volleyball/handball retirés le 2026-08-22
 
 SPORT_EMOJI  = {
     "soccer": "⚽", "tennis": "🎾", "basketball": "🏀", "boxing": "🥊",
     "mma": "🥋", "darts": "🎯", "cricket": "🏏", "hockey": "🏒",
-    "esports": "🎮", "americanfootball": "🏈", "baseball": "⚾",
+    "americanfootball": "🏈", "baseball": "⚾",
     "rugby": "🏉", "rugbyleague": "🏉", "aussierules": "🦘",
-    "volleyball": "🏐", "tabletennis": "🏓", "handball": "🤾",
 }
 
 # Golden Hour — T-120min — 7 sports à lag maximal et volume élevé (juin 2026)
@@ -869,6 +866,14 @@ def _emit(signals, sb, now, log, name, sport, league, mkt_key, mkt_label,
     # passent par ce point unique. Sous le plancher, on parie l'erreur de
     # mesure du devig, pas un edge.
     effective_min = max(min_edge if min_edge is not None else MIN_EDGE, _EV_EDGE_FLOOR)
+    if sport in _RETIRED_SPORTS:
+        # Retirés le 2026-08-22 (bruit : prix de référence issu d'une recherche
+        # web, jamais d'un book sharp). Le garde vit ICI, au point unique
+        # d'émission, pour qu'un cache meta résiduel, un slate REPRICE ou un
+        # harvest tiers ne puisse plus jamais produire un signal — le
+        # settlement des lignes historiques, lui, ne passe pas par _emit.
+        log.info("RETIRED | %s %s | %s — sport retiré, aucun signal", emoji, name, mkt_label)
+        return
     if sharp_prob <= 0:
         log.info("DISCARD | %s %s | %s — sharp_prob=0 (stale/missing data)", emoji, name, mkt_label)
         return
@@ -1828,8 +1833,11 @@ def run():
             return
         log.info("💹 REPRICE — %d matchs soft relus du cache", len(matches))
 
-    # ── MMA/eSports/Alternatifs — now included in Golden Hour too ──────
-    # Cached in Supabase meta: MMA/eSports 8h TTL, alt sports 4h TTL —
+    # ── MMA — now included in Golden Hour too ───────────────────────────
+    # (eSports, table tennis, volley, handball RETIRÉS le 2026-08-22 — voir
+    # RETIRED_SPORTS dans core/constants.py ; le garde de _emit refuse tout
+    # signal pour ces sports, même depuis un cache ou un slate historique.)
+    # Cached in Supabase meta: MMA 8h TTL —
     # cache is shared across golden_hour/engine/deep_scan runs, so running
     # this every 30min mostly hits cache and only pays for a fresh web-search
     # call (Groq/Tavily, core/ai_search.py) when the TTL actually expires
@@ -1850,25 +1858,6 @@ def run():
             matches = (matches or []) + mma_events
             log.info("🥋 MMA OK — %d combats UFC (Melbet soft)", len(mma_events))
 
-        log.info("🎮 eSports — Recherche web (CS2/LoL/Valorant/DOTA2)...")
-        esports_events = _get_cached(sb, "cache_esports", _TTL_ESPORTS, _TTL_EMPTY) if sb else None
-        if esports_events is None:
-            esports_events = fetch_esports_events()
-            if sb:
-                _set_cached(sb, "cache_esports", esports_events or [])
-        if esports_events:
-            matches = (matches or []) + esports_events
-            log.info("🎮 eSports OK — %d matchs", len(esports_events))
-
-        log.info("🏓🏐🤾 Sports alternatifs — Recherche web (Table Tennis / Volleyball / Handball)...")
-        alt_events = _get_cached(sb, "cache_altsports", _TTL_ALT, _TTL_EMPTY) if sb else None
-        if alt_events is None:
-            alt_events = fetch_alternative_sports_batch()
-            if sb:
-                _set_cached(sb, "cache_altsports", alt_events or [])
-        if alt_events:
-            matches = (matches or []) + alt_events
-            log.info("🏓🏐🤾 Sports alternatifs OK — %d matchs", len(alt_events))
 
     # ── Tier 1.5: exchanges (prix sharp pair-à-pair) ───────────────────
     # Remplace un prix Pinnacle ESTIMÉ par l'IA — ou absent — par un vrai

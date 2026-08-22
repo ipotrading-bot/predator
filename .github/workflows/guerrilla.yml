@@ -109,8 +109,7 @@ jobs:
           # quota-minute à chaque appel : 413 sur tennis, basket, MMA et
           # l'oracle, donc bascule Tavily systématique. 2500 laisse la marge
           # que compound-mini consomme en injectant ses résultats de recherche.
-          SEARCH_MAX_TOKENS:       "2500"   # défaut 2048 — MMA / eSports / Pinnacle
-          ALT_SEARCH_MAX_TOKENS:   "3000"   # défaut 3000 — 3 sports en un appel
+          SEARCH_MAX_TOKENS:       "2500"   # défaut 2048 — MMA / Pinnacle (eSports + alt sports retirés le 2026-08-22)
           PINNACLE_BATCH:          "25"     # défaut 25   — au-delà, le prompt pousse au 413
 
           # Tavily est un service séparé : il ne consomme pas le TPM Groq.

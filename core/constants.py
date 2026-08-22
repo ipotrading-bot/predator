@@ -149,11 +149,14 @@ KELLY_FRACTION = {
     # meilleur ROI du ledger (+37,5%), mais sur 8 paris seulement, ce qui ne
     # justifie pas encore de miser plus gros.
     "mma":         0.08,
-    "esports":     0.08,
-    "tabletennis": 0.08,
-    "volleyball":  0.08,
-    "handball":    0.08,
 }
+
+# Sports RETIRÉS le 2026-08-22 (mission « recentrage sports ») : prix de
+# référence issu d'une recherche web IA, jamais d'un book sharp — du bruit.
+# run_engine._emit refuse tout signal pour ces sports ; les lignes
+# historiques de `signals`/`ai_learning_ledger` sont CONSERVÉES (zéro perte
+# de données) et leur settlement continue normalement.
+RETIRED_SPORTS = frozenset({"esports", "tabletennis", "volleyball", "handball"})
 
 
 # ══════════════════════════════════════════════════════════════════════

@@ -100,7 +100,6 @@ _MARKETS_BY_SPORT = {
     "rugby":            "h2h,spreads,totals",
     "rugbyleague":      "h2h,spreads,totals",  # NRL — même structure que rugby union
     "aussierules":      "h2h,spreads,totals",  # AFL — ligne = 6.5+ pts typique
-    "volleyball":       "h2h,totals",
     "tennis":           "h2h,totals",
     "darts":            "h2h",
     "cricket":          "h2h",
@@ -217,7 +216,7 @@ def _parse_event(ev: dict, sport_type: str) -> dict | None:
         event["odds_cris"] = cris_h2h
 
     # ── Spreads (binary sports only — tennis/boxing/darts/cricket/baseball have no spreads) ──
-    if sport_type not in ("tennis", "boxing", "darts", "cricket", "baseball", "volleyball", "rugbyleague"):
+    if sport_type not in ("tennis", "boxing", "darts", "cricket", "baseball", "rugbyleague"):
         xs = _extract_spreads(bookmakers, XBET_KEY,     home, away)
         ps = _extract_spreads(bookmakers, PINNACLE_KEY, home, away)
         if xs and ps:

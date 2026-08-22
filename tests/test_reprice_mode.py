@@ -161,7 +161,6 @@ def reprice_env(monkeypatch):
     # Sentinelles : toute source payante ou recherche web fait ÉCHOUER le test.
     for fn in ("fetch_odds", "fetch_matches", "fetch_pinnacle_prices",
                "fetch_estimated_prices", "fetch_mma_events",
-               "fetch_esports_events", "fetch_alternative_sports_batch",
                "fetch_betfair_prices", "_api_sports_all", "_odds_api_io_all",
                "_titan007_fetch", "capture_from_scan"):
         monkeypatch.setattr(eng, fn, _sentinel(fn))
@@ -257,8 +256,6 @@ def test_full_scan_writes_trimmed_slate(reprice_env, monkeypatch):
     monkeypatch.setattr(eng, "fetch_matches", lambda: [match])
     monkeypatch.setattr(eng, "fetch_pinnacle_prices", lambda ms: ms)
     monkeypatch.setattr(eng, "fetch_mma_events", lambda: [])
-    monkeypatch.setattr(eng, "fetch_esports_events", lambda: [])
-    monkeypatch.setattr(eng, "fetch_alternative_sports_batch", lambda: [])
     eng.run()
     slate = json.loads(sb.meta["cache_soft_slate"]["value"])
     assert len(slate) == 1 and slate[0]["id"] == "rp1"
