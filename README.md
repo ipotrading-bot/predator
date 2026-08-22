@@ -164,13 +164,36 @@ budget crédits avant/après, carte des crons, boucle de calibration) est docume
 
 | Endpoint | Method | Description |
 |----------|--------|-------------|
-| `/api/signals` | GET | Signaux actifs (JSON) |
+| `/api/signals` | GET | Signaux actifs **encore jouables** — coup d'envoi non passé (`?all=1` pour la liste brute, diagnostic) |
 | `/api/wiz` | GET | Analyses Wiz + drapeau `enforce` (JSON) |
 | `/api/scan` | POST | Demander un scan PAIM — pose le flag `meta.scan_request`, ramassé par `golden_hour.yml` (≤ 30 min) |
-| `/api/audit/run` | POST | Déclencher `audit.yml` (requiert `GITHUB_PAT`) |
-| `/api/health` | GET | Health check |
+| `/api/audit/run` | POST | Déclencher `audit.yml` — **jeton d'admin requis** (`X-Predator-Token`), voir ci-dessous |
+| `/api/health` | GET | Santé du **dashboard** (aucun appel à Supabase — reste utilisable base injoignable) |
 
 Toutes les routes sont définies dans [`api/index.py`](api/index.py) — c'est la seule source de vérité, cette table doit rester synchronisée avec ce fichier.
+
+#### Route d'administration — `DASHBOARD_ADMIN_TOKEN`
+
+`/api/audit/run` était **ouverte à tout Internet** jusqu'au 2026-08-22 : un
+POST anonyme déclenchait `audit.yml`, soit 45 minutes de runner, le settlement
+et la consommation de la réserve IA — sans authentification, sans cooldown,
+sans limite de débit, sur une URL Vercel publique. Aucune interface du dépôt
+ne l'appelait ; elle n'était connue que de cette table.
+
+Elle exige désormais un jeton, et elle **échoue fermé** : sans
+`DASHBOARD_ADMIN_TOKEN` configuré sur le déploiement, elle refuse tout.
+
+```bash
+# Générer un jeton, puis le poser sur Vercel (Settings → Environment Variables)
+python -c "import secrets; print(secrets.token_urlsafe(32))"
+
+curl -X POST https://<déploiement>/api/audit/run \
+     -H "X-Predator-Token: $DASHBOARD_ADMIN_TOKEN"
+```
+
+Les chemins normaux restent le cron de `audit.yml` (toutes les 6 h) et le
+`workflow_dispatch` depuis l'interface GitHub ; cette route n'est qu'un
+raccourci d'opérateur.
 
 ---
 

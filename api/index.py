@@ -1,14 +1,23 @@
 """
-api/index.py — PREDATOR PAIM v8.8 — Vercel Dashboard + Ledger + Audit
-Routes: / (Dashboard)  /ledger (CLV Bilan)  /audit (CLV par sport)
-        /api/signals  /api/health  /api/scan
+api/index.py — dashboard PREDATOR (Flask, déployé sur Vercel, LECTURE SEULE).
 
-Version tag kept in sync with README.md and run_engine.py's own v8.8
-header — the single source of truth for the whole-app version number.
-Individual core/ modules carry their own, independent per-module version
-tags (last significant touch to that file) — those are NOT meant to track
-this one.
+Pages   : /            signaux actifs encore jouables
+          /ledger      bilan CLV
+          /audit       distribution d'alpha par sport
+          /performance WIN/LOSS/PUSH (ai_learning_ledger)
+          /system      calculateur de paris système
+          /wiz         analyse contextuelle (wiz_analysis)
+API     : /api/signals /api/wiz /api/health
+Écriture: /api/scan       met une demande de scan dans meta (cooldown 120 s)
+          /api/audit/run  déclenche audit.yml — JETON D'ADMIN REQUIS
+
+Le numéro de version vit dans DASHBOARD_VERSION (une seule définition,
+injectée dans les templates et rendue par /api/health). Cet en-tête portait
+« v8.8 » et une liste de routes amputée de trois pages — il n'était mis à
+jour par personne, ce qui est le sort de tout numéro recopié à la main.
+Les modules de core/ portent leurs propres versions, indépendantes.
 """
+import hmac
 import json
 import logging
 import os
@@ -903,11 +912,54 @@ def api_signals():
         return jsonify({"error": "internal error"}), 500
 
 
+ADMIN_TOKEN_ENV = "DASHBOARD_ADMIN_TOKEN"
+
+
+def _admin_autorise() -> bool:
+    """Le jeton d'administration est-il présent et correct ?
+
+    ÉCHEC FERMÉ : sans `DASHBOARD_ADMIN_TOKEN` configuré, la réponse est
+    NON. Une route d'administration qui s'ouvre faute de configuration est
+    précisément le défaut qu'on corrige ici.
+
+    Comparaison à temps constant : `==` sur une chaîne s'arrête au premier
+    octet différent, ce qui laisse mesurer le préfixe correct.
+    """
+    attendu = os.environ.get(ADMIN_TOKEN_ENV, "")
+    if not attendu:
+        return False
+    fourni = (request.headers.get("X-Predator-Token")
+              or request.args.get("token") or "")
+    return hmac.compare_digest(fourni, attendu)
+
+
 @app.route("/api/audit/run", methods=["POST"])
 def trigger_audit():
+    """Déclenche `audit.yml` — RÉSERVÉ À L'ADMINISTRATION.
+
+    AUTHENTIFICATION AJOUTÉE LE 2026-08-22. Cette route était ouverte à
+    tout Internet. Le dashboard est déployé sur une URL Vercel publique et
+    aucune interface ne l'appelle — mais un POST anonyme suffisait à
+    déclencher `audit.yml` : 45 minutes de runner, le settlement, et la
+    consommation de la réserve IA gardée en négatif exprès. Sans cooldown
+    et sans limite de débit, une boucle `curl` épuisait le quota — et
+    CLAUDE.md rappelle ce que coûte un quota épuisé : dix jours sans
+    signal (incident du 10→20 août 2026).
+
+    Le cron de `audit.yml` (toutes les 6 h) et le `workflow_dispatch` depuis
+    l'interface GitHub restent les chemins normaux ; cette route n'est qu'un
+    raccourci d'opérateur. Elle refuse donc tant que
+    `DASHBOARD_ADMIN_TOKEN` n'est pas configuré sur le déploiement.
+    """
+    if not _admin_autorise():
+        # Volontairement muet sur la cause (jeton non configuré / mauvais
+        # jeton) : la distinction n'aide que celui qui cherche à entrer.
+        log.warning("audit trigger refusé (jeton absent ou invalide)")
+        return jsonify({"error": "non autorisé"}), 401
+
     pat = os.environ.get("GITHUB_PAT")
     if not pat:
-        return jsonify({"error": "GITHUB_PAT not configured"}), 503
+        return jsonify({"error": "GITHUB_PAT non configuré"}), 503
     try:
         resp = requests.post(
             "https://api.github.com/repos/ipotrading-bot/predator/actions/workflows/audit.yml/dispatches",
@@ -921,9 +973,15 @@ def trigger_audit():
         )
         if resp.status_code == 204:
             return jsonify({"status": "triggered"}), 200
-        return jsonify({"error": resp.text}), resp.status_code
+        # La réponse de GitHub n'est PAS recopiée telle quelle : elle peut
+        # nommer le dépôt, le workflow, la portée du jeton. Le détail va au
+        # log du déploiement, où il sert au diagnostic sans être publié.
+        log.error("audit dispatch: HTTP %s — %s", resp.status_code, resp.text[:300])
+        return jsonify({"error": "le déclenchement a échoué",
+                        "github_status": resp.status_code}), 502
     except Exception as e:
-        return jsonify({"error": str(e)}), 500
+        log.error("audit dispatch: %s", e)
+        return jsonify({"error": "le déclenchement a échoué"}), 502
 
 
 @app.route("/manifest.json")
@@ -1006,8 +1064,11 @@ def trigger_scan():
         }, on_conflict="key").execute()
         return jsonify({"status": "queued", "message": "Scan demandé — résultats sous 30 min max (prochain passage planifié)"}), 200
     except Exception as exc:
+        # Le détail va au log du déploiement, pas dans la réponse : un
+        # message PostgREST brut nomme la table, la colonne et la politique
+        # RLS qui a refusé. Utile en diagnostic, inutile à publier.
         log.error("scan queue error: %s", exc)
-        return jsonify({"error": str(exc)}), 500
+        return jsonify({"error": "la demande de scan a échoué"}), 500
 
 
 if __name__ == "__main__":
