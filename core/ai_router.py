@@ -256,10 +256,16 @@ REGISTRY: tuple = (
     Provider(
         name="chutes", base_url="https://llm.chutes.ai/v1",
         env_key="CHUTES_API_KEY",
-        models=("Qwen/Qwen3-32B", "deepseek-ai/DeepSeek-V3-0324"),
-        lanes=(FILTER, ANALYZE, TRANSLATE_CJK, SEARCH_READ),
-        rpm=0, daily_requests=150,
-        note="catalogue PUBLIC (200 sans cle) ; palier gratuit avec quota quotidien",
+        # Noms EXACTS du catalogue (suffixe -TEE, constate le 2026-08-22) :
+        # sans lui, l'API rend 404 « model not found ».
+        models=("Qwen/Qwen3-32B-TEE",
+                "deepseek-ai/DeepSeek-V4-Flash-0731-TEE",
+                "zai-org/GLM-5.2-TEE"),
+        lanes=(FILTER, ANALYZE, TRANSLATE_CJK, SEARCH_READ, SETTLEMENT),
+        rpm=0, daily_requests=150, terms_flag="payment_required",
+        note="catalogue PUBLIC lisible (14 modeles) mais inference 402 sur TOUS : "
+             "« Quota exceeded and account balance is $0.0 ». Compte a crediter. "
+             "Verifie le 2026-08-22.",
     ),
     Provider(
         name="openrouter", base_url="https://openrouter.ai/api/v1",
