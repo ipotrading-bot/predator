@@ -1,0 +1,50 @@
+name: Predator Tools (manuel)
+
+# Utilitaires déclenchés À LA MAIN uniquement — aucun schedule ici, jamais.
+#   monte_carlo     — aide à la décision avant tout retrait. Pool `readonly`.
+#   backfill_ledger — remplit ai_learning_ledger depuis les signaux en statut
+#                     terminal (one-shot, idempotent). Pool `backfill`, prend
+#                     le verrou des scans (écrit dans le ledger).
+
+on:
+  workflow_dispatch:
+    inputs:
+      tool:
+        type: choice
+        default: monte_carlo
+        options: [monte_carlo, backfill_ledger]
+
+env:
+  FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: true
+
+jobs:
+  monte_carlo:
+    if: inputs.tool == 'monte_carlo'
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    env:
+      SECRETS_JSON: ${{ toJSON(secrets) }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: ./.github/actions/setup
+        with:
+          pool: readonly
+      - name: Simulation Monte Carlo
+        run: python scripts/ci_env.py --pool readonly -- python run_monte_carlo.py
+
+  backfill_ledger:
+    if: inputs.tool == 'backfill_ledger'
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    concurrency:
+      group: predator-signals-write
+      cancel-in-progress: false
+    env:
+      SECRETS_JSON: ${{ toJSON(secrets) }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: ./.github/actions/setup
+        with:
+          pool: backfill
+      - name: Backfill du ledger
+        run: python scripts/ci_env.py --pool backfill -- python backfill_ledger.py

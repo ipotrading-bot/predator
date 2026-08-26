@@ -1,0 +1,59 @@
+name: CI
+
+# tests.yml + deploy.yml fusionnés : le déploiement Vercel attend une suite
+# verte (avant : parallèles, une régression pouvait partir en prod).
+#
+# ⚠️ Ce gate n'est RÉEL que parce que le déploiement Git automatique de Vercel
+# est désactivé dans vercel.json ("git.deploymentEnabled.main": false).
+# Mesuré le 2026-08-26 : chaque commit touchant api/templates/core partait
+# DEUX fois (source `git` ET source `cli`, en course). Tant que la voie Git
+# est active, elle déploie sans attendre `test` et ce `needs:` ne protège rien.
+#
+# Les secrets VERCEL_* vivent dans l'environnement GitHub `production`, pas
+# dans les secrets du dépôt : ainsi `toJSON(secrets)` des autres workflows ne
+# les contient JAMAIS (voir scripts/ci_env.py). Ce job est le seul à les voir.
+
+on:
+  push:
+    paths:
+      - '**.py'
+      - 'api/**'
+      - 'templates/**'
+      - 'requirements.txt'
+      - 'vercel.json'
+  pull_request:
+    paths:
+      - '**.py'
+  workflow_dispatch:
+
+env:
+  FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: true
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+      - uses: ./.github/actions/setup   # pool 'none' : aucun secret, tests purs
+      - name: Tests
+        run: python -m pytest tests/ -q
+      - name: Lint
+        run: pip install -q pyflakes && python -m pyflakes $(git ls-files '*.py')
+
+  deploy:
+    needs: test
+    if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+    runs-on: ubuntu-latest
+    environment: production
+    timeout-minutes: 10   # un `vercel deploy` pendu consommait 6 h avant le 2026-08-22
+    steps:
+      - uses: actions/checkout@v4
+      - name: Installer Vercel CLI
+        run: npm install -g vercel@latest
+      - name: Déployer sur Vercel (production)
+        env:
+          VERCEL_TOKEN:      ${{ secrets.VERCEL_TOKEN }}
+          VERCEL_ORG_ID:     ${{ secrets.VERCEL_ORG_ID }}
+          VERCEL_PROJECT_ID: ${{ secrets.VERCEL_PROJECT_ID }}
+        run: vercel deploy --prod --token=$VERCEL_TOKEN --yes

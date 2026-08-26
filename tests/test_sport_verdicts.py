@@ -95,9 +95,10 @@ class TestWeeklyReport:
 
 
 def test_weekly_workflow_is_scheduled_and_runs_the_report():
-    wf = yaml.safe_load(open(".github/workflows/rank_sports.yml"))
+    # Refonte 2026-08-26 : rank_sports.yml → job `hebdo` de reports.yml.
+    wf = yaml.safe_load(open(".github/workflows/reports.yml"))
     on = wf.get("on") or wf.get(True)
     assert any("cron" in s for s in on["schedule"])
-    steps = wf["jobs"]["rank"]["steps"]
+    steps = wf["jobs"]["hebdo"]["steps"]
     assert any("weekly_report.py" in (s.get("run") or "") for s in steps)
     assert any("calibration_report.py" in (s.get("run") or "") for s in steps)

@@ -1,20 +1,20 @@
 name: Predator Audit
 
-# Runs every 6h to compute CLV for signals scanned > 3h ago,
-# then updates sport-specific MIN_EDGE thresholds via learning_layer.
-# Manual trigger available for testing.
+# Settlement + CLV + couche d'apprentissage, toutes les 6 h.
+# ⚠️ NE PAS RENOMMER CE FICHIER : api/index.py (/api/audit/run) le déclenche
+# par son nom via l'API GitHub (…/actions/workflows/audit.yml/dispatches).
+#
+# Pool `settlement` (scripts/ci_env.py) : GROQ_API_KEY = secret GROQ_API_KEY_3
+# et AUCUNE autre clé Groq — cloisonnement des quotas du 2026-08-02. Le
+# préflight vérifie que _3 existe et n'est identique à aucune clé de scan.
 
 on:
   schedule:
-    - cron: '0 */6 * * *'   # Every 6h: 00:00 06:00 12:00 18:00 UTC
+    - cron: '0 */6 * * *'   # 00:00 06:00 12:00 18:00 UTC
   workflow_dispatch:
 
-# Shared with golden_hour.yml/engine.yml/deep_scan.yml. Without
-# this, a purge in one of those workflows can race a settlement UPDATE this
-# job is mid-way through on the same still-'active' signal row (purge wins,
-# the UPDATE silently affects 0 rows, the outcome is lost). Also prevents two
-# overlapping audit.yml runs (scheduled + manual) from double-settling the
-# same signal.
+# Settlement = UPDATE sur `signals` + INSERT dans `ai_learning_ledger`, en
+# concurrence avec la purge des scans : même verrou que scan.yml.
 concurrency:
   group: predator-signals-write
   cancel-in-progress: false
@@ -25,167 +25,13 @@ env:
 jobs:
   audit:
     runs-on: ubuntu-latest
-    # Settlement is rate-limited (Gemini: 65s/30s backoff on 429) and each
-    # signal can need several Oracle fallback calls on top of that — 2026-07-07
-    # saw a 17-signal backlog take >20min and get killed mid-run by GitHub's
-    # timeout (job 28874758363), losing 7 signals to concurrent RLS failures
-    # on top of that. 45min gives real headroom for a backlog without
-    # papering over the real fix, which is not letting a backlog form (see
-    # the SERVICE_KEY role check below — the 2026-07-07 backlog itself was
-    # caused by settlement re-inserts failing RLS and never actually clearing).
     timeout-minutes: 45
-
+    env:
+      SECRETS_JSON: ${{ toJSON(secrets) }}
     steps:
-      - name: Verify required secrets are present
-        env:
-          SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
-          SUPABASE_KEY: ${{ secrets.SUPABASE_KEY }}
-          SUPABASE_SERVICE_KEY: ${{ secrets.SUPABASE_SERVICE_KEY }}
-        run: |
-          missing=""
-          [ -z "$SUPABASE_URL" ]  && missing="$missing SUPABASE_URL"
-          [ -z "$SUPABASE_KEY" ]  && missing="$missing SUPABASE_KEY"
-          [ -z "$SUPABASE_SERVICE_KEY" ] && missing="$missing SUPABASE_SERVICE_KEY"
-          if [ -n "$missing" ]; then
-            echo "::error::Missing secrets:$missing — job would otherwise exit 0 having audited nothing"
-            exit 1
-          fi
-          # 2026-07-07 incident: SUPABASE_SERVICE_KEY was present but held the
-          # anon/publishable key, not the service_role secret — it authenticates
-          # fine (no 401) then fails every single write with RLS 42501, silently,
-          # for as long as nobody notices the "SIGNAL X LOST" critical logs.
-          # Decode the JWT locally (no network call) and fail loud right here.
-          # Handles both the legacy JWT format (role claim in the payload)
-          # and Supabase's newer sb_secret_.../sb_publishable_... keys
-          # (role is the prefix, not a JWT at all — decoding one as base64
-          # silently returns role='?', which is what happened here).
-          if [[ "$SUPABASE_SERVICE_KEY" == sb_secret_* ]]; then
-            role="service_role"
-          elif [[ "$SUPABASE_SERVICE_KEY" == sb_publishable_* ]]; then
-            role="anon"
-          else
-            role=$(python3 -c "import base64,json,os; s=os.environ.get('SUPABASE_SERVICE_KEY','').split('.'); print(json.loads(base64.urlsafe_b64decode(s[1]+'='*(-len(s[1])%4))).get('role','?') if len(s)>1 else '?')" 2>/dev/null || echo "?")
-          fi
-          if [ "$role" != "service_role" ]; then
-            echo "::error::SUPABASE_SERVICE_KEY decodes to role='$role', not 'service_role' — this is the anon/publishable key, not the service_role secret. Writes will be rejected by RLS (42501). Fix: Supabase dashboard -> Project Settings -> API Keys -> copy the 'service_role' secret into this GitHub secret (not 'anon'/'public')."
-            exit 1
-          fi
-
-      - name: Vérifier le cloisonnement du quota Groq
-        env:
-          GROQ_API_KEY: ${{ secrets.GROQ_API_KEY }}
-          GROQ_API_KEY_2: ${{ secrets.GROQ_API_KEY_2 }}
-          GROQ_API_KEY_3: ${{ secrets.GROQ_API_KEY_3 }}
-          GROQ_API_KEY_4: ${{ secrets.GROQ_API_KEY_4 }}
-          GROQ_API_KEY_5: ${{ secrets.GROQ_API_KEY_5 }}
-          TAVILY_API_KEY: ${{ secrets.TAVILY_API_KEY }}
-          # ── Routeur IA multi-fournisseurs (core/ai_router.py) ──
-          # Une clé absente = fournisseur ignoré silencieusement. Sans ces
-          # lignes, les secrets n'atteignent jamais le code : le routeur ne
-          # verrait que Groq et toute la capacité ajoutée resterait morte.
-          OPENROUTER_API_KEY:     ${{ secrets.OPENROUTER_API_KEY }}
-          # Mistral : ex-fournisseur exclusif de Wiz (supprime le 2026-08-26),
-          # rapatrie au registre pour les lanes de signaux FILTER/ANALYZE.
-          MISTRAL_API_KEY:        ${{ secrets.MISTRAL_API_KEY }}
-          GEMINI_API_KEY:         ${{ secrets.GEMINI_API_KEY }}
-          CLOUDFLARE_API_TOKEN:   ${{ secrets.CLOUDFLARE_API_TOKEN }}
-          CLOUDFLARE_ACCOUNT_ID:  ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
-          OLLAMA_API_KEY:         ${{ secrets.OLLAMA_API_KEY }}
-          NVIDIA_NIM_API_KEY:     ${{ secrets.NVIDIA_NIM_API_KEY }}
-          COHERE_API_KEY:         ${{ secrets.COHERE_API_KEY }}
-          UPSTAGE_API_KEY:        ${{ secrets.UPSTAGE_API_KEY }}
-          NEBIUS_API_KEY:         ${{ secrets.NEBIUS_API_KEY }}
-          MODELSCOPE_API_KEY:     ${{ secrets.MODELSCOPE_API_KEY }}
-          SCALEWAY_API_KEY:       ${{ secrets.SCALEWAY_API_KEY }}
-          OVH_AI_API_KEY:         ${{ secrets.OVH_AI_API_KEY }}
-          SILICONFLOW_API_KEY:    ${{ secrets.SILICONFLOW_API_KEY }}
-        run: |
-          # Depuis le 2026-08-02, GROQ_API_KEY_3 est la clé DÉDIÉE au
-          # settlement : c'est la seule que l'étape suivante expose au moteur,
-          # et les workflows de scan ne la reçoivent plus. Ce garde vérifie que
-          # la cloison tient vraiment — un secret dupliqué la rendrait fictive
-          # sans qu'aucun log ne le dise.
-          if [ -z "$GROQ_API_KEY_3" ]; then
-            echo "::error::GROQ_API_KEY_3 not set — c'est la clé réservée au settlement depuis le cloisonnement des quotas. Sans elle, l'audit n'a AUCUNE clé Groq (les scans gardent _1/_2) et ne peut ni settler ni calculer le CLV. Créer une clé gratuite sur console.groq.com."
-            exit 1
-          fi
-          if [ -z "$TAVILY_API_KEY" ]; then
-            echo "::warning::TAVILY_API_KEY not set — web-search fallback tier disabled; only groq/compound-mini's built-in search is available. Free key at app.tavily.com."
-          fi
-          # Le TPD Groq (100k tokens/jour) est compté PAR ORGANISATION : deux
-          # secrets pointant le même compte partagent le quota, donc la cloison
-          # ne cloisonne rien.
-          if [ "$GROQ_API_KEY_3" = "$GROQ_API_KEY" ] || [ "$GROQ_API_KEY_3" = "$GROQ_API_KEY_2" ] \
-             || { [ -n "$GROQ_API_KEY_4" ] && [ "$GROQ_API_KEY_3" = "$GROQ_API_KEY_4" ]; } \
-             || { [ -n "$GROQ_API_KEY_5" ] && [ "$GROQ_API_KEY_3" = "$GROQ_API_KEY_5" ]; }; then
-            echo "::error::GROQ_API_KEY_3 est identique à une clé de scan — même organisation Groq, donc même quota journalier. Le cloisonnement est fictif : les scans continueront de vider le TPD du settlement. Créer la clé sur un AUTRE compte console.groq.com."
-            exit 1
-          fi
-          # _4 est la clé d'appoint des SCANS (voir engine/golden_hour/...). Elle
-          # n'ajoute une réserve que si elle vient encore d'un autre compte.
-          if [ -z "$GROQ_API_KEY_4" ]; then
-            echo "::notice::GROQ_API_KEY_4 non définie — les scans tournent sur 2 organisations (200k TPD). Une 4e clé sur un nouveau compte console.groq.com leur en donnerait 300k, sans toucher à la réserve du settlement."
-          elif [ "$GROQ_API_KEY_4" = "$GROQ_API_KEY" ] || [ "$GROQ_API_KEY_4" = "$GROQ_API_KEY_2" ]; then
-            echo "::warning::GROQ_API_KEY_4 duplique une clé de scan — même organisation, donc aucun quota supplémentaire. core/ai_search.py la déduplique."
-          fi
-          if [ -z "$GROQ_API_KEY" ]; then
-            echo "::warning::GROQ_API_KEY not set — les workflows de scan n'ont plus de clé Groq du tout (ils ne reçoivent que _1 et _2 depuis le cloisonnement)."
-          fi
-          if [ -z "$GROQ_API_KEY_2" ]; then
-            echo "::warning::GROQ_API_KEY_2 not set — les scans tournent sur une seule organisation Groq (100k TPD pour golden_hour + engine + deep_scan + closing_line + guerrilla)."
-          fi
-          if [ -n "$GROQ_API_KEY_2" ] && [ "$GROQ_API_KEY_2" = "$GROQ_API_KEY" ]; then
-            echo "::warning::GROQ_API_KEY_2 est identique à GROQ_API_KEY — même organisation, donc même quota journalier. Aucun gain."
-          fi
-
       - uses: actions/checkout@v4
-
-      - uses: actions/setup-python@v5
+      - uses: ./.github/actions/setup
         with:
-          python-version: '3.11'
-          cache: 'pip'
-
-      - name: Install dependencies
-        run: pip install -r requirements.txt
-
-      - name: Run audit engine
-        env:
-          # ── Quota Groq réservé au settlement ───────────────────────────
-          # core/ai_search.py lit GROQ_API_KEY, _2, _3 dans cet ordre : ne lui
-          # exposer QUE la 3e clé revient à lui donner une organisation Groq
-          # entière (100k TPD) que les scans ne peuvent pas toucher.
-          # Pourquoi : le 2026-08-02, 39 runs de scan (golden_hour, engine,
-          # deep_scan, closing_line, guerrilla) et 4 runs d'audit se
-          # partageaient les 3 clés. Les scans, 10x plus nombreux, vidaient le
-          # TPD avant que l'audit ait pu settler — sans WIN/LOSS,
-          # core/learning_layer.py n'a pas ses 10 échantillons et les seuils
-          # restent collés au plafond. Un settlement est permanent, un signal
-          # manqué revient au scan suivant : c'est l'audit qui doit être servi.
-          GROQ_API_KEY:       ${{ secrets.GROQ_API_KEY_3 }}
-          TAVILY_API_KEY:     ${{ secrets.TAVILY_API_KEY }}
-          # ── Routeur IA multi-fournisseurs (core/ai_router.py) ──
-          # Une clé absente = fournisseur ignoré silencieusement. Sans ces
-          # lignes, les secrets n'atteignent jamais le code : le routeur ne
-          # verrait que Groq et toute la capacité ajoutée resterait morte.
-          OPENROUTER_API_KEY:     ${{ secrets.OPENROUTER_API_KEY }}
-          # Mistral : ex-fournisseur exclusif de Wiz (supprime le 2026-08-26),
-          # rapatrie au registre pour les lanes de signaux FILTER/ANALYZE.
-          MISTRAL_API_KEY:        ${{ secrets.MISTRAL_API_KEY }}
-          GEMINI_API_KEY:         ${{ secrets.GEMINI_API_KEY }}
-          CLOUDFLARE_API_TOKEN:   ${{ secrets.CLOUDFLARE_API_TOKEN }}
-          CLOUDFLARE_ACCOUNT_ID:  ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
-          OLLAMA_API_KEY:         ${{ secrets.OLLAMA_API_KEY }}
-          NVIDIA_NIM_API_KEY:     ${{ secrets.NVIDIA_NIM_API_KEY }}
-          COHERE_API_KEY:         ${{ secrets.COHERE_API_KEY }}
-          UPSTAGE_API_KEY:        ${{ secrets.UPSTAGE_API_KEY }}
-          NEBIUS_API_KEY:         ${{ secrets.NEBIUS_API_KEY }}
-          MODELSCOPE_API_KEY:     ${{ secrets.MODELSCOPE_API_KEY }}
-          SCALEWAY_API_KEY:       ${{ secrets.SCALEWAY_API_KEY }}
-          OVH_AI_API_KEY:         ${{ secrets.OVH_AI_API_KEY }}
-          SILICONFLOW_API_KEY:    ${{ secrets.SILICONFLOW_API_KEY }}
-          SUPABASE_URL:       ${{ secrets.SUPABASE_URL }}
-          SUPABASE_KEY:       ${{ secrets.SUPABASE_KEY }}
-          SUPABASE_SERVICE_KEY: ${{ secrets.SUPABASE_SERVICE_KEY }}
-          TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
-          TELEGRAM_CHAT_ID:   ${{ secrets.TELEGRAM_CHAT_ID }}
-        run: python run_audit.py
+          pool: settlement
+      - name: Lancer le moteur d'audit
+        run: python scripts/ci_env.py --pool settlement -- python run_audit.py

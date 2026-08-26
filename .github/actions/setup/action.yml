@@ -1,0 +1,56 @@
+name: Predator — préparation du runner
+description: >-
+  Python 3.11, dépendances (site-packages mis en cache sur le hash de
+  requirements.txt : pip n'est relancé que quand il change), puis préflight
+  des secrets du pool via scripts/ci_env.py — l'unique source de vérité des
+  clés par job, dérivée du registre IA. Le checkout reste dans l'appelant :
+  une action locale ne peut pas tourner avant que le dépôt soit présent.
+
+  Le job appelant DOIT poser `SECRETS_JSON: ${{ toJSON(secrets) }}` dans son env.
+
+  ⚠️ L'ORDRE DES STEPS EST LOAD-BEARING : le préflight importe
+  core.ai_router, qui importe `requests`. Le remonter avant l'installation
+  pour « échouer plus tôt » ferait échouer sur un ModuleNotFoundError au lieu
+  du message qui nomme le secret manquant.
+
+inputs:
+  pool:
+    description: >-
+      Pool de secrets à vérifier — scan | closing | settlement | reprice |
+      readonly | backfill (voir scripts/ci_env.py). 'none' → pas de préflight
+      (CI de tests, aucun secret).
+    default: 'none'
+  fast-install:
+    description: >-
+      'true' → restaure site-packages depuis le cache et saute pip quand
+      requirements.txt n'a pas changé. Mettre 'false' pour revenir au pip
+      systématique si un paquet natif se comporte mal après restauration.
+    default: 'true'
+
+runs:
+  using: composite
+  steps:
+    - uses: actions/setup-python@v5
+      with:
+        python-version: '3.11'
+        cache: 'pip'
+
+    - name: Restaurer site-packages
+      if: inputs.fast-install == 'true'
+      id: pkg
+      uses: actions/cache@v4
+      with:
+        path: ${{ env.pythonLocation }}/lib/python3.11/site-packages
+        key: ${{ runner.os }}-py311-sitepkg-${{ hashFiles('requirements.txt') }}
+
+    - name: Installer les dépendances
+      if: inputs.fast-install != 'true' || steps.pkg.outputs.cache-hit != 'true'
+      shell: bash
+      run: pip install -r requirements.txt
+
+    - name: Préflight des secrets (pool ${{ inputs.pool }})
+      if: inputs.pool != 'none'
+      shell: bash
+      env:
+        POOL: ${{ inputs.pool }}
+      run: python scripts/ci_env.py --pool "$POOL" --check

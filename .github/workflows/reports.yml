@@ -1,0 +1,70 @@
+name: Predator Reports
+
+# Deux rapports EN LECTURE SEULE — pool `readonly` : clé anon + Telegram,
+# jamais SUPABASE_SERVICE_KEY. Hors de tout verrou : rien à courser.
+#
+#   rapport → Telegram toutes les 2 h à H+35 (run_rapport.py:REPORT_WINDOW_H
+#             doit rester égal à cet intervalle).
+#   hebdo   → lundi 07:00 UTC, après l'audit de 06:00 : classement des sports,
+#             calibration par bande, rapport de vérité (CLV, Brier, ROI, verdicts).
+
+on:
+  schedule:
+    - cron: '35 */2 * * *'   # rapport
+    - cron: '0 7 * * 1'      # hebdo
+  workflow_dispatch:
+    inputs:
+      report:
+        type: choice
+        default: rapport
+        options: [rapport, hebdo]
+  push:
+    # Toucher un script hebdo le rejoue (boucle courte pour l'ajuster).
+    # weekly_report.py était absent de cette liste dans rank_sports.yml : le
+    # modifier ne rejouait rien, alors que c'est le rapport qu'on ajuste le plus.
+    paths:
+      - 'scripts/rank_sports.py'
+      - 'scripts/calibration_report.py'
+      - 'scripts/weekly_report.py'
+
+env:
+  FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: true
+
+jobs:
+  rapport:
+    if: >-
+      github.event.schedule == '35 */2 * * *' ||
+      (github.event_name == 'workflow_dispatch' && inputs.report == 'rapport')
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    env:
+      SECRETS_JSON: ${{ toJSON(secrets) }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: ./.github/actions/setup
+        with:
+          pool: readonly
+      - name: Envoyer le rapport Telegram
+        run: python scripts/ci_env.py --pool readonly -- python run_rapport.py
+
+  hebdo:
+    if: >-
+      github.event.schedule == '0 7 * * 1' ||
+      github.event_name == 'push' ||
+      (github.event_name == 'workflow_dispatch' && inputs.report == 'hebdo')
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    env:
+      SECRETS_JSON: ${{ toJSON(secrets) }}
+      PYTHONPATH: .
+    steps:
+      - uses: actions/checkout@v4
+      - uses: ./.github/actions/setup
+        with:
+          pool: readonly
+      - name: Classement des sports par réussite
+        run: python scripts/ci_env.py --pool readonly -- python scripts/rank_sports.py
+      - name: Rapport de calibration par bande
+        run: python scripts/ci_env.py --pool readonly -- python scripts/calibration_report.py
+      - name: Rapport hebdo de vérité (lecture seule + Telegram)
+        run: python scripts/ci_env.py --pool readonly -- python scripts/weekly_report.py

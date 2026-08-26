@@ -1,31 +1,44 @@
 name: Predator Closing Line
 
-# Runs hourly to capture the REAL Pinnacle closing price (~5min before
-# kickoff) for signals about to go live — Task 3 of the PAIM v9.5 audit.
-# Independent of audit.yml's 6h settlement/CLV cadence: a 5-minute
-# pre-kickoff window rarely lines up with a 6h schedule, so most matches
-# would otherwise never get a genuine closing-line measurement at all.
-# Manual trigger available for testing.
+# Capture du VRAI prix de clôture Pinnacle pour les signaux dont le coup
+# d'envoi approche — indépendante de la cadence 6 h du settlement/CLV.
+#
+# LA FENÊTRE N'EST PAS DE 5 MIN (l'en-tête historique était périmé) :
+# core/constants.py — CLOSING_LINE_WINDOW_MIN = 240 (première capture),
+# CLOSING_LINE_TIGHTEN_MIN = 90 (on ne re-price qu'à moins de 90 min),
+# CLOSING_LINE_REFRESH_MIN = 20 (et jamais plus souvent que toutes les 20 min).
+# Un tick plus fréquent que 20 min est donc, par construction, un no-op pour
+# un signal DÉJÀ tarifé (~1 min de runner pour rien).
+#
+# ⚠️ NUANCE MESURÉE, à lire avant de remonter ou redescendre cette cadence :
+# GitHub ne livre pas les ticks demandés. Mesuré le 2026-08-01 : 0,48
+# exécution/h pour un cron horaire. L'ancien `4-59/10` demandait 6 ticks/h
+# pour en faire atterrir ~2,9, soit un espacement réel proche des 20 min de
+# REFRESH_MIN — ce n'était pas du gaspillage pur. À 3 ticks/h demandés on en
+# livre ~1,4, espacement médian ~40 min. Ce qui compense : une passe à la fin
+# de CHAQUE scan (scan.yml, 36/j), soit 108 passes/jour contre 144 ticks
+# avant. Elles sont agglutinées sur les minutes de scan et non réparties :
+# surveiller `count_missed_closing_lines` (loggé par run_closing_line.py) —
+# s'il monte, le retour arrière tient en une ligne.
+#
+# HORS du verrou `predator-signals-write`. Justification exacte, parce que la
+# version courte est fausse : le SETTLEMENT ne peut pas toucher ces lignes
+# (fetch_closing_line_candidates prend `match_time >= now`, fetch_pending
+# `match_time < now − 4 h`). La PURGE, elle, le peut : les `purge_rules` de
+# run_engine._purge_old_signals suppriment des lignes actives sur des critères
+# de qualité (edge, sharp_prob, SUSPECT_DATA…) SANS filtre sur match_time.
+# Mais elle ne peut que les SUPPRIMER, et Postgres sérialise déjà cette course
+# ligne par ligne : au pire une écriture est perdue sur une ligne que la purge
+# condamnait de toute façon. Le verrou n'achetait pas de correction — il
+# achetait de l'attente derrière un deep scan de 25 min.
 
 on:
   schedule:
-    # Measured 2026-08-01: a '0 * * * *' cron here delivered only 0.48 runs/h
-    # (100 runs over 206h), median gap between executions 116 min, worst 254.
-    # GitHub drops scheduled ticks under load and never backfills them, so the
-    # capture window can't be sized to the requested cadence — only to the
-    # delivered one. Asking every 10 min (offset off the :00 rush, where
-    # contention is worst) raises the number of executions that actually land;
-    # core/audit_engine.py then refreshes each signal's price on whichever runs
-    # do fire, so a dropped tick costs precision, never the whole measurement.
-    # Cost: ~6x the Actions minutes of the hourly schedule (~30s per run).
-    - cron: '4-59/10 * * * *'
+    - cron: '14,34,54 * * * *'   # = CLOSING_LINE_REFRESH_MIN, décalé des ticks de scan
   workflow_dispatch:
 
-# Shared with golden_hour.yml/engine.yml/deep_scan.yml/audit.yml — same
-# reasoning as audit.yml: avoid a purge or settlement UPDATE racing this
-# job's write to the same still-'active' signal row.
 concurrency:
-  group: predator-signals-write
+  group: predator-closing-line
   cancel-in-progress: false
 
 env:
@@ -35,79 +48,12 @@ jobs:
   closing-line:
     runs-on: ubuntu-latest
     timeout-minutes: 15
-
+    env:
+      SECRETS_JSON: ${{ toJSON(secrets) }}
     steps:
-      - name: Verify required secrets are present
-        env:
-          SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
-          SUPABASE_KEY: ${{ secrets.SUPABASE_KEY }}
-          SUPABASE_SERVICE_KEY: ${{ secrets.SUPABASE_SERVICE_KEY }}
-        run: |
-          missing=""
-          [ -z "$SUPABASE_URL" ]  && missing="$missing SUPABASE_URL"
-          [ -z "$SUPABASE_KEY" ]  && missing="$missing SUPABASE_KEY"
-          [ -z "$SUPABASE_SERVICE_KEY" ] && missing="$missing SUPABASE_SERVICE_KEY"
-          if [ -n "$missing" ]; then
-            echo "::error::Missing secrets:$missing — job would otherwise exit 0 having captured nothing"
-            exit 1
-          fi
-          # Same RLS role check as audit.yml — see that workflow for the
-          # full 2026-07-07 incident writeup this guards against.
-          if [[ "$SUPABASE_SERVICE_KEY" == sb_secret_* ]]; then
-            role="service_role"
-          elif [[ "$SUPABASE_SERVICE_KEY" == sb_publishable_* ]]; then
-            role="anon"
-          else
-            role=$(python3 -c "import base64,json,os; s=os.environ.get('SUPABASE_SERVICE_KEY','').split('.'); print(json.loads(base64.urlsafe_b64decode(s[1]+'='*(-len(s[1])%4))).get('role','?') if len(s)>1 else '?')" 2>/dev/null || echo "?")
-          fi
-          if [ "$role" != "service_role" ]; then
-            echo "::error::SUPABASE_SERVICE_KEY decodes to role='$role', not 'service_role' — this is the anon/publishable key, not the service_role secret. Writes will be rejected by RLS (42501). Fix: Supabase dashboard -> Project Settings -> API Keys -> copy the 'service_role' secret into this GitHub secret (not 'anon'/'public')."
-            exit 1
-          fi
-
       - uses: actions/checkout@v4
-
-      - uses: actions/setup-python@v5
+      - uses: ./.github/actions/setup
         with:
-          python-version: '3.11'
-          cache: 'pip'
-
-      - name: Install dependencies
-        run: pip install -r requirements.txt
-
-      - name: Capture closing lines
-        env:
-          GROQ_API_KEY:       ${{ secrets.GROQ_API_KEY }}
-          GROQ_API_KEY_2:     ${{ secrets.GROQ_API_KEY_2 }}
-          # GROQ_API_KEY_3 volontairement absent : c'est la clé réservée au
-          # settlement (audit.yml). Voir le cloisonnement des quotas du
-          # 2026-08-02 — les scans, 10x plus nombreux que l'audit, vidaient le
-          # TPD avant qu'un seul WIN/LOSS soit écrit. _4 est la clé d'appoint
-          # des scans : elle élargit LEUR réserve sans toucher à celle de l'audit.
-          GROQ_API_KEY_4:     ${{ secrets.GROQ_API_KEY_4 }}
-          GROQ_API_KEY_5:     ${{ secrets.GROQ_API_KEY_5 }}
-          TAVILY_API_KEY:     ${{ secrets.TAVILY_API_KEY }}
-          # ── Routeur IA multi-fournisseurs (core/ai_router.py) ──
-          # Une clé absente = fournisseur ignoré silencieusement. Sans ces
-          # lignes, les secrets n'atteignent jamais le code : le routeur ne
-          # verrait que Groq et toute la capacité ajoutée resterait morte.
-          OPENROUTER_API_KEY:     ${{ secrets.OPENROUTER_API_KEY }}
-          # Mistral : ex-fournisseur exclusif de Wiz (supprime le 2026-08-26),
-          # rapatrie au registre pour les lanes de signaux FILTER/ANALYZE.
-          MISTRAL_API_KEY:        ${{ secrets.MISTRAL_API_KEY }}
-          GEMINI_API_KEY:         ${{ secrets.GEMINI_API_KEY }}
-          CLOUDFLARE_API_TOKEN:   ${{ secrets.CLOUDFLARE_API_TOKEN }}
-          CLOUDFLARE_ACCOUNT_ID:  ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
-          OLLAMA_API_KEY:         ${{ secrets.OLLAMA_API_KEY }}
-          NVIDIA_NIM_API_KEY:     ${{ secrets.NVIDIA_NIM_API_KEY }}
-          COHERE_API_KEY:         ${{ secrets.COHERE_API_KEY }}
-          UPSTAGE_API_KEY:        ${{ secrets.UPSTAGE_API_KEY }}
-          NEBIUS_API_KEY:         ${{ secrets.NEBIUS_API_KEY }}
-          MODELSCOPE_API_KEY:     ${{ secrets.MODELSCOPE_API_KEY }}
-          SCALEWAY_API_KEY:       ${{ secrets.SCALEWAY_API_KEY }}
-          OVH_AI_API_KEY:         ${{ secrets.OVH_AI_API_KEY }}
-          SILICONFLOW_API_KEY:    ${{ secrets.SILICONFLOW_API_KEY }}
-          SUPABASE_URL:       ${{ secrets.SUPABASE_URL }}
-          SUPABASE_KEY:       ${{ secrets.SUPABASE_KEY }}
-          SUPABASE_SERVICE_KEY: ${{ secrets.SUPABASE_SERVICE_KEY }}
-        run: python run_closing_line.py
+          pool: closing
+      - name: Capturer les closing lines
+        run: python scripts/ci_env.py --pool closing -- python run_closing_line.py
