@@ -106,6 +106,43 @@ def test_la_version_de_python_des_runners_est_declaree_une_seule_fois():
         "./.github/actions/setup")
 
 
+def test_vercel_ne_deploie_pas_aussi_depuis_git():
+    """Le `needs: test` de ci.yml n'est un gate QUE si Vercel ne déploie pas
+    de son côté.
+
+    Mesuré le 2026-08-26 via l'API Vercel : chaque commit touchant
+    api/templates/core partait DEUX fois, source `git` ET source `cli`, en
+    course l'une avec l'autre (249ac32, 3d639b4, d94ea7c, 9aef90d…). La voie
+    Git ne connaît pas la suite de tests : tant qu'elle est active, une
+    régression part en production pendant que `test` tourne encore, et le
+    gate ne protège rien tout en ayant l'air de le faire.
+
+    Ce test ne vérifie pas Vercel — il vérifie qu'on n'a pas retiré la clé
+    en croyant nettoyer un fichier de trois lignes."""
+    racine = Path(__file__).resolve().parent.parent
+    conf = json.loads((racine / "vercel.json").read_text(encoding="utf-8"))
+    git = (conf.get("git") or {}).get("deploymentEnabled") or {}
+    assert git.get("main") is False, (
+        "vercel.json ne désactive plus le déploiement Git de `main` : le "
+        "`needs: test` de ci.yml redevient décoratif, Vercel déploiera sans "
+        "attendre la suite.")
+
+
+def test_le_deploiement_est_le_seul_job_a_porter_un_environnement():
+    """Les secrets VERCEL_* vivent dans l'environnement GitHub `production`
+    pour qu'aucun autre job ne les voie dans son `toJSON(secrets)`. Un second
+    job qui réclamerait cet environnement les ferait réapparaître dans le
+    bloc que scripts/ci_env.py filtre — c'est-à-dire dans la portée de tous
+    les steps de ce job, y compris les actions tierces."""
+    porteurs = []
+    for wf in WORKFLOWS:
+        doc = yaml.safe_load(wf.read_text(encoding="utf-8"))
+        for nom, job in (doc.get("jobs") or {}).items():
+            if job.get("environment"):
+                porteurs.append(f"{wf.name}:{nom}")
+    assert porteurs == ["ci.yml:deploy"], (
+        f"jobs portant un `environment:` : {porteurs} — attendu ci.yml:deploy seul")
+
 # ── La TROISIÈME liste : scripts/ops.py ──────────────────────────────
 
 def _ops_module():

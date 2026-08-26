@@ -2,5 +2,10 @@
   "version": 2,
   "env": {
     "PYTHON_VERSION": "3.12"
+  },
+  "git": {
+    "deploymentEnabled": {
+      "main": false
+    }
   }
 }
