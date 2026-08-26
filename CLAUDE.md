@@ -184,16 +184,19 @@ Tout le calcul tourne en crons GitHub Actions ; le dashboard est en lecture seul
   chercher. Encodage vérifié à travers le relais : 518 noms chinois, ZÉRO
   mojibake. 7M a été joint pour la PREMIÈRE fois (435 ids) — sa joignabilité
   n'est plus inconnue. `ops.py sources` affiche `[via relais Cloudflare]` sur
-  les deux. PREMIER RUN DEPUIS UN RUNNER (Guerrilla 16:15 et 16:48) : le
-  relais est ATTEINT mais odds500 rend 403 — y compris après rotation du
-  jeton des deux côtés, donc CE N'EST PAS LE JETON. Hypothèse la plus
-  probable : 500.com accepte l'edge Cloudflare de LONDRES (LHR, d'où le
-  poste de dev a testé) mais refuse les colos US par lesquels passent les
-  runners GitHub. `net.describe_failure` distingue désormais un 403 du
-  Worker (jeton/hôte, pas de `X-Relay-By`) d'un 403 de l'AMONT relayé, et
-  nomme le colo (`cf-ray`) — c'est le prochain run qui tranchera. Si c'est
-  l'amont : aucun réglage de jeton n'y changera rien, il faudra une sortie
-  hors des colos US (proxy à IP dédiée, ou Worker appelé depuis l'Europe).
+  les deux. ⛔ TRANCHÉ le 2026-08-26 (run engine 32994959190, 17:34) : depuis
+  un runner, odds500 rend « 403 de l'AMONT via le relais (colo Cloudflare
+  IAD) ». Le Worker s'exécute au colo le plus proche de l'APPELANT — Londres
+  (LHR) depuis le poste de dev, où 500.com répond 200 ; Washington (IAD)
+  depuis les runners GitHub, où 500.com REFUSE l'IP de sortie. Ce n'est ni
+  le jeton (tourné des deux côtés, même résultat), ni le code, ni la liste
+  blanche. `net.describe_failure` le dit en clair : un 403 SANS `X-Relay-By`
+  serait le Worker (jeton/hôte) ; AVEC, c'est l'amont, et le colo est nommé.
+  Conséquence : le relais Cloudflare tel quel NE SUFFIT PAS depuis GitHub
+  Actions. Il faut une sortie hors des colos US — relais épinglé en Europe
+  (Fly.io/Render région EU), proxy à IP dédiée, ou runner auto-hébergé en
+  Europe. Tant que ce n'est pas fait, odds500 → 7M → `team_aliases` reste
+  INERTE (12 lignes) : ne pas chercher un bug de code, il n'y en a pas.
 - Kalshi/Polymarket : BRANCHÉS le 2026-08-26 (`free_sources.measure_slate_consensus`,
   appelé par `harvester._fetch_multi_book`). Ils étaient importés NULLE PART
   hors de leurs tests depuis le 2026-08-22 — capacité morte en silence. Rôle
