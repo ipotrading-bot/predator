@@ -498,6 +498,67 @@ def run_closing_lines():
     log.info("━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━")
 
 
+
+# ── Un audit stérile doit CRIER (2026-08-26) ──────────────────────────
+# « Audit done: 0 settled | 0 closed | 0 expired | 52 skipped » sortait en
+# log.info, le run GitHub était VERT, et rien n'alertait. La régression du
+# 24 août (taux de résolution 65 % → 11 %) a donc vécu deux jours sans être
+# vue. C'est la même panne que le job de closing line resté vert un mois en ne
+# capturant rien : un travail nul est indiscernable d'un travail sans objet
+# tant que personne ne dit la différence.
+SETTLEMENT_STARVED_KEY = "settlement_starved_at"
+
+
+def _alerte_telegram(texte: str) -> None:
+    """Envoi best-effort. Une alerte qui plante ne doit pas tuer l'audit."""
+    jeton = os.environ.get("TELEGRAM_BOT_TOKEN")
+    chat = os.environ.get("TELEGRAM_CHAT_ID")
+    if not (jeton and chat):
+        return
+    try:
+        import requests
+        requests.post(f"https://api.telegram.org/bot{jeton}/sendMessage", timeout=10,
+                      json={"chat_id": chat, "text": texte, "parse_mode": "Markdown"})
+    except Exception as e:                                       # noqa: BLE001
+        log.warning("alerte Telegram: %s", e)
+
+
+def _signaler_audit_sterile(sb, counts: dict, total: int) -> None:
+    """Alerte + marqueur en base quand un audit n'a RIEN pu régler.
+
+    Le marqueur `meta.settlement_starved_at` sert à run_engine._purge_old_signals :
+    tant qu'il est frais, la purge laisse aux signaux non réglés plus que les
+    48 h habituelles. Sans cela, une panne de recherche ne retarde pas
+    l'apprentissage — elle détruit l'échantillon, puisqu'un signal purgé part
+    en `expired` et que learning_layer._clv_stats exclut ces lignes.
+    """
+    if counts.get("settled") or not total:
+        return
+    msg = (f"⚠️ *Audit stérile* — 0 signal réglé sur {total} éligibles "
+           f"({counts.get('skipped', 0)} sautés).\n"
+           "Les deux chemins de score sont probablement indisponibles : "
+           "api-sports (clé/budget) et la recherche web (quota Groq/Tavily). "
+           "Chercher « compound-mini KO » et « HTTP 432 » dans le log du job.")
+    log.error("AUDIT STÉRILE — 0 réglé sur %d éligibles ; les signaux restent "
+              "actifs et la purge est repoussée", total)
+    _alerte_telegram(msg)
+    try:
+        sb.table("meta").upsert(
+            {"key": SETTLEMENT_STARVED_KEY,
+             "value": datetime.now(timezone.utc).isoformat(),
+             "updated_at": datetime.now(timezone.utc).isoformat()},
+            on_conflict="key").execute()
+    except Exception as e:                                       # noqa: BLE001
+        log.warning("marqueur %s: %s", SETTLEMENT_STARVED_KEY, e)
+
+
+def _effacer_marqueur_sterile(sb) -> None:
+    """Un audit qui règle quelque chose lève la famine."""
+    try:
+        sb.table("meta").delete().eq("key", SETTLEMENT_STARVED_KEY).execute()
+    except Exception as e:                                       # noqa: BLE001
+        log.debug("effacement %s: %s", SETTLEMENT_STARVED_KEY, e)
+
 def run():
     # This module only ever deletes/inserts/upserts, it never serves public
     # reads — write=True fails fast and loud if SUPABASE_SERVICE_KEY is
@@ -546,6 +607,10 @@ def run():
 
     log.info("Audit done: %d settled | %d closed | %d expired | %d skipped",
              counts["settled"], counts["closed"], counts["expired"], counts["skipped"])
+    if counts["settled"]:
+        _effacer_marqueur_sterile(sb)
+    else:
+        _signaler_audit_sterile(sb, counts, len(pending))
     log.info("Oracle: %d/%d | Settlement: %d/%d calls used",
              ORACLE_BUDGET - oracle_budget[0], ORACLE_BUDGET,
              SETTLE_BUDGET - settle_budget[0], SETTLE_BUDGET)

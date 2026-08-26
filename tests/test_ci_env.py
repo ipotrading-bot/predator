@@ -83,6 +83,18 @@ def test_liste_ia_derivee_du_registre_comme_ops_py():
     assert TOUTES_CLES_IA <= set(ops._AI_SECRETS)
 
 
+
+def test_le_settlement_porte_les_cles_de_resultats():
+    """Le score final vient d'api-sports (`/fixtures?date=`), pas d'un LLM.
+    Sans ces clés dans le pool `settlement`, core/settlement retombe sur la
+    recherche web — le chemin dont la panne du 2026-08-26 (Tavily HTTP 432 +
+    limite minute Groq) a fait tomber le taux de résolution de 65 % à 11 %.
+    Une capacité non câblée meurt SANS ERREUR ; c'est tout l'objet de ce
+    fichier."""
+    env = ci_env.env_for("settlement", {})
+    manquants = sorted(set(ci_env.RESULTS_SOURCES) - set(env))
+    assert not manquants, f"le pool settlement ne transmet pas {manquants}"
+
 def test_le_pool_scan_porte_les_relais_des_sources_filtrees_par_ip():
     """odds500 et 7M sont filtrées par IP depuis les runners (2026-08-26) : sans
     FREE_SOURCES_RELAY/_TOKEN, core/net.py est INERTE et rien ne change — sans

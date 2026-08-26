@@ -1,13 +1,33 @@
 """
 core/settlement.py — PAIM v8.5 — Match Settlement Engine
-Fetches actual match scores via web search (Groq/Tavily, see core/ai_search.py)
-→ determines WIN/LOSS/PUSH → updates signal status to 'settled' in Supabase.
+Trouve le score réel d'un match → WIN/LOSS/PUSH → `status='settled'`.
+
+DEUX CHEMINS, DANS CET ORDRE (2026-08-26).
+
+1. `core/api_sports.fetch_results` — le score est un CHAMP de la réponse
+   `/fixtures?date=`, déterministe et gratuit, UNE requête par journée quel que
+   soit le nombre de matchs. Les résultats d'une journée sont mémorisés le
+   temps du run : régler 52 signaux du même jour coûte 1 requête, pas 52.
+2. Recherche web (Groq/Tavily, `core/ai_search.py`) — DERNIER RECOURS, pour ce
+   qu'api-sports ne couvre pas.
+
+POURQUOI CET ORDRE. Jusqu'ici la recherche web était l'unique chemin. Mesuré le
+2026-08-26 : le taux de résolution réelle est tombé de 65 % (23 août) à 11 %
+(24-26 août) parce que ses DEUX quotas gratuits ont lâché en même temps —
+Tavily au plafond de plan (HTTP 432) et le `compound-mini` de Groq en limite
+par minute. Un audit a rendu « 0 settled | 52 skipped », en vert. Et un signal
+non réglé est purgé à 48 h en `expired`, ligne que `learning_layer._clv_stats`
+exclut : une panne de recherche ne retardait pas l'apprentissage, elle
+DÉTRUISAIT l'échantillon.
 """
 import json
 import logging
 import re
+from datetime import timedelta
 
 from core.ai_search import ai_available, ai_search_complete
+from core.api_sports import fetch_results
+from core.paim_engine import strict_team_match
 from core.db import log_to_ledger, replace_signal_row
 from core.paim_engine import resolve_selection_side
 
@@ -15,12 +35,78 @@ log = logging.getLogger("PREDATOR.settlement")
 
 _SETTLEMENT_OPTIONAL = frozenset({"outcome", "settled_at"})
 
+# Résultats api-sports déjà téléchargés pendant CE run : {(sport, jour): [...]}.
+# Un audit règle des dizaines de matchs de la même journée ; sans ce cache,
+# chaque signal coûterait une requête et le budget de 100/jour partirait en
+# une passe.
+_CACHE_RESULTATS: dict[tuple, list] = {}
+
+
+def reset_cache() -> None:
+    """Vide le cache de résultats (tests, et runs longs)."""
+    _CACHE_RESULTATS.clear()
+
+
+def _resultats_du_jour(sport: str, jour: str) -> list:
+    cle = (sport, jour)
+    if cle not in _CACHE_RESULTATS:
+        _CACHE_RESULTATS[cle] = fetch_results(jour, sport)
+    return _CACHE_RESULTATS[cle]
+
+
+def result_from_api_sports(match_name: str, sport: str, match_date: str) -> dict | None:
+    """Score final depuis le calendrier api-sports, sans aucune IA.
+
+    Apparie sur les DEUX noms d'équipe avec `strict_team_match` — le même
+    rapprochement que partout ailleurs dans ce dépôt — et n'accepte qu'un
+    candidat UNIQUE : deux prétendants signifient qu'on ne sait pas lequel est
+    le bon, et régler le mauvais match écrirait un WIN/LOSS faux et
+    définitif dans le ledger. Le refus est le comportement correct.
+
+    Le match peut avoir été joué la veille en UTC (coup d'envoi tardif) : on
+    regarde `match_date` ET le lendemain, qui est déjà en cache si un autre
+    signal l'a demandé.
+    """
+    if not match_date or " vs " not in match_name:
+        return None
+    home, away = (p.strip() for p in match_name.split(" vs ", 1))
+    if len(home) < 3 or len(away) < 3:
+        return None
+
+    jours = [match_date]
+    try:
+        from datetime import datetime as _dt
+        veille = _dt.fromisoformat(match_date) - timedelta(days=1)
+        lendemain = _dt.fromisoformat(match_date) + timedelta(days=1)
+        jours += [lendemain.strftime("%Y-%m-%d"), veille.strftime("%Y-%m-%d")]
+    except ValueError:
+        pass
+
+    for jour in jours:
+        candidats = [r for r in _resultats_du_jour(sport, jour)
+                     if strict_team_match(home, r["home"]) and strict_team_match(away, r["away"])]
+        if len(candidats) == 1:
+            r = candidats[0]
+            log.info("SETTLE api-sports | %s | %d-%d (0 appel IA)",
+                     match_name, r["home_score"], r["away_score"])
+            return {"home_score": r["home_score"], "away_score": r["away_score"],
+                    "completed": True, "source": "api_sports"}
+        if len(candidats) > 1:
+            log.info("SETTLE SKIP | %s — %d matchs api-sports correspondent, on ne devine pas",
+                     match_name, len(candidats))
+            return None
+    return None
+
 
 def fetch_match_result(match_name: str, sport: str, match_date: str = "") -> dict | None:
     """
-    Recherche web → final score of a completed match.
+    Score final d'un match terminé, api-sports d'abord puis recherche web.
     Returns {"home_score": int, "away_score": int, "completed": True} or None.
     """
+    exact = result_from_api_sports(match_name, sport, match_date)
+    if exact:
+        return exact
+
     if not ai_available():
         return None
 

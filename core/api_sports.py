@@ -446,6 +446,101 @@ def fetch_sport(sport: str, api_key: str | None = None, hours_ahead: int = 24) -
     return matches
 
 
+
+# ── Résultats terminés (settlement déterministe, 2026-08-26) ──────────
+# Le score final est un CHAMP de la réponse `/fixtures?date=`, pas quelque
+# chose à faire chercher sur le web par un LLM. fetch_sport() télécharge déjà
+# cette réponse à chaque scan et JETTE les matchs commencés (`if when < now:
+# continue`) : la donnée du settlement était déjà payée, puis mise à la
+# poubelle.
+#
+# Mesuré le 2026-08-26 : le settlement ne trouvait un résultat réel que pour
+# 11 % des signaux depuis le 24 août (65 % trois jours plus tôt), parce que ses
+# DEUX chemins de recherche web étaient morts en même temps — Tavily au plafond
+# de plan (HTTP 432) et le `compound-mini` de Groq en limite par minute. Un
+# audit a rendu « 0 settled | 52 skipped », en vert et sans alerte. Ici, aucun
+# quota d'IA n'intervient : une requête par journée de calendrier règle tous
+# les matchs de cette journée.
+_STATUTS_TERMINES = frozenset({"FT", "AET", "PEN"})
+
+
+def _score(item: dict, cote: str):
+    """Buts d'un côté, quel que soit le sport (foot: goals.*, autres: scores.*)."""
+    for chemin in (f"goals.{cote}", f"scores.{cote}.total", f"scores.{cote}.points",
+                   f"scores.{cote}", f"{cote}.total"):
+        v = _first(item, chemin)
+        if isinstance(v, dict):
+            v = v.get("total", v.get("points"))
+        if v is not None:
+            try:
+                return int(v)
+            except (TypeError, ValueError):
+                continue
+    return None
+
+
+def fetch_results(jour: str, sport: str = "soccer", api_key: str | None = None) -> list[dict]:
+    """Matchs TERMINÉS d'une journée UTC, avec leur score final.
+
+    `jour` au format YYYY-MM-DD. Retourne
+    [{"id", "home", "away", "home_score", "away_score", "when"}].
+    Rend [] sur toute panne : le settlement retombe alors sur la recherche web.
+
+    Coût : UNE requête par journée et par sport, quel que soit le nombre de
+    matchs — à comparer aux 52 recherches LLM d'un seul audit.
+    """
+    prov = PROVIDERS.get(sport)
+    if prov is None:
+        return []
+    key = api_key or _key_for(sport)
+    if not key:
+        log.debug("api-sports[%s] résultats : pas de clé — recherche web en repli", sport)
+        return []
+    spent = _usage_get(sport)
+    if spent >= DAILY_BUDGET:
+        log.warning("api-sports[%s] résultats : budget journalier atteint (%d/%d)",
+                    sport, spent, DAILY_BUDGET)
+        return []
+
+    try:
+        r = requests.get(f"https://{prov['host']}/{prov['schedule']}",
+                         headers={"x-apisports-key": key}, timeout=15,
+                         params={"date": jour, "timezone": "UTC"})
+        _usage_add(sport, 1)
+        if r.status_code != 200:
+            log.warning("api-sports[%s] résultats %s: HTTP %d", sport, jour, r.status_code)
+            return []
+        body = r.json() or {}
+        if body.get("errors"):
+            log.warning("api-sports[%s] résultats %s: %s", sport, jour, body["errors"])
+            return []
+    except Exception as e:                       # jamais bloquant : c'est un bonus
+        log.warning("api-sports[%s] résultats %s: %s", sport, jour, e)
+        return []
+
+    out: list[dict] = []
+    for item in body.get("response") or []:
+        try:
+            statut = str(_first(item, "fixture.status.short", "status.short",
+                                "status.long", default="") or "").upper()
+            if statut not in _STATUTS_TERMINES:
+                continue
+            home = str(_first(item, "teams.home.name", "home.name", default="")).strip()
+            away = str(_first(item, "teams.away.name", "away.name", default="")).strip()
+            hs, as_ = _score(item, "home"), _score(item, "away")
+            if not home or not away or hs is None or as_ is None:
+                continue
+            out.append({"id": _first(item, "fixture.id", "game.id", "id"),
+                        "home": home, "away": away,
+                        "home_score": hs, "away_score": as_,
+                        "when": _parse_dt(_first(item, "fixture.timestamp", "timestamp",
+                                                 "fixture.date", "date"))})
+        except (TypeError, ValueError) as e:
+            log.debug("api-sports[%s] parse résultat: %s", sport, e)
+    log.info("api-sports[%s] résultats %s : %d match(s) terminé(s) — 1 requête",
+             sport, jour, len(out))
+    return out
+
 def fetch_all(hours_ahead: int = 24, sports: list[str] | None = None) -> list[dict]:
     """Tous les sports configurés. Un sport sans clé, hors quota ou en panne
     ne pénalise pas les autres (quotas séparés, erreurs isolées)."""

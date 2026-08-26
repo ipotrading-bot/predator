@@ -804,6 +804,30 @@ def _archive_before_purge(sb, signals: list):
     log.info("Archived %d signals to ledger before purge", len(signals))
 
 
+
+_STARVED_TTL_H = 24   # au-delà, le marqueur est considéré comme périmé
+
+
+def _settlement_affame(sb) -> bool:
+    """`meta.settlement_starved_at` est-il frais ? Jamais bloquant."""
+    try:
+        res = (sb.table("meta").select("value").eq("key", "settlement_starved_at")
+               .limit(1).execute())
+        rows = res.data or []
+        if not rows:
+            return False
+        pose = datetime.fromisoformat(str(rows[0]["value"]).replace("Z", "+00:00"))
+        if pose.tzinfo is None:
+            pose = pose.replace(tzinfo=timezone.utc)
+        frais = (datetime.now(timezone.utc) - pose) < timedelta(hours=_STARVED_TTL_H)
+        if frais:
+            log.warning("PURGE | famine de settlement signalée le %s — fenêtre portée "
+                        "à 96 h pour ne pas détruire d'échantillon", pose.isoformat()[:16])
+        return frais
+    except Exception as e:                                       # noqa: BLE001
+        log.debug("lecture settlement_starved_at: %s", e)
+        return False
+
 def _purge_old_signals(sb):
     """Delete stale signals. IMPROVED: batched operations + better logging."""
     cutoff_48h = (datetime.now(timezone.utc) - timedelta(hours=48)).isoformat()
@@ -843,7 +867,19 @@ def _purge_old_signals(sb):
     # mid-retry and it would never reach ai_learning_ledger at all. 48h matches
     # the window already used elsewhere in this function and leaves a full 6h
     # audit cycle of headroom past EXPIRE_AFTER_H.
-    purge_match_cutoff = (datetime.now(timezone.utc) - timedelta(hours=48)).isoformat()
+    # ── Famine de settlement : on ne purge pas ce qu'on n'a pas pu lire ──
+    # Un signal non réglé part en `expired`, et learning_layer._clv_stats
+    # exclut ces lignes : une panne de recherche de score ne retarde pas
+    # l'apprentissage, elle DÉTRUIT l'échantillon. Le 2026-08-26, les deux
+    # chemins de score étaient morts en même temps (Tavily HTTP 432, Groq
+    # compound-mini en limite par minute) et un audit a rendu « 0 settled |
+    # 52 skipped » — 52 échantillons condamnés par une panne d'API.
+    # `core/audit_engine` pose `meta.settlement_starved_at` dans ce cas ; tant
+    # qu'il est frais, on double la fenêtre. BORNÉ à 96 h : au-delà, le score
+    # n'est plus retrouvable de toute façon et laisser gonfler la table
+    # créerait une seconde panne pour en éviter une première.
+    _heures_purge = 96 if _settlement_affame(sb) else 48
+    purge_match_cutoff = (datetime.now(timezone.utc) - timedelta(hours=_heures_purge)).isoformat()
     try:
         sb.table("signals").delete().eq("status", "active").lt("match_time", purge_match_cutoff).execute()
     except Exception as e:

@@ -102,6 +102,9 @@ jobs:
           FREE_SOURCES_RELAY_TOKEN: ${{ secrets.FREE_SOURCES_RELAY_TOKEN }}
           ODDS500_RELAY: ${{ secrets.ODDS500_RELAY }}
           SEVENM_RELAY: ${{ secrets.SEVENM_RELAY }}
+          API_SPORTS_KEY: ${{ secrets.API_SPORTS_KEY }}
+          API_BASKETBALL_KEY: ${{ secrets.API_BASKETBALL_KEY }}
+          API_BASEBALL_KEY: ${{ secrets.API_BASEBALL_KEY }}
           GROQ_API_KEY: ${{ secrets.GROQ_API_KEY }}
           GROQ_API_KEY_2: ${{ secrets.GROQ_API_KEY_2 }}
           GROQ_API_KEY_4: ${{ secrets.GROQ_API_KEY_4 }}
@@ -154,6 +157,9 @@ jobs:
           FREE_SOURCES_RELAY_TOKEN: ${{ secrets.FREE_SOURCES_RELAY_TOKEN }}
           ODDS500_RELAY: ${{ secrets.ODDS500_RELAY }}
           SEVENM_RELAY: ${{ secrets.SEVENM_RELAY }}
+          API_SPORTS_KEY: ${{ secrets.API_SPORTS_KEY }}
+          API_BASKETBALL_KEY: ${{ secrets.API_BASKETBALL_KEY }}
+          API_BASEBALL_KEY: ${{ secrets.API_BASEBALL_KEY }}
           GROQ_API_KEY: ${{ secrets.GROQ_API_KEY }}
           GROQ_API_KEY_2: ${{ secrets.GROQ_API_KEY_2 }}
           GROQ_API_KEY_4: ${{ secrets.GROQ_API_KEY_4 }}
@@ -204,6 +210,9 @@ jobs:
           FREE_SOURCES_RELAY_TOKEN: ${{ secrets.FREE_SOURCES_RELAY_TOKEN }}
           ODDS500_RELAY: ${{ secrets.ODDS500_RELAY }}
           SEVENM_RELAY: ${{ secrets.SEVENM_RELAY }}
+          API_SPORTS_KEY: ${{ secrets.API_SPORTS_KEY }}
+          API_BASKETBALL_KEY: ${{ secrets.API_BASKETBALL_KEY }}
+          API_BASEBALL_KEY: ${{ secrets.API_BASEBALL_KEY }}
           GROQ_API_KEY: ${{ secrets.GROQ_API_KEY }}
           GROQ_API_KEY_2: ${{ secrets.GROQ_API_KEY_2 }}
           GROQ_API_KEY_4: ${{ secrets.GROQ_API_KEY_4 }}

@@ -85,6 +85,13 @@ TELEGRAM = ("TELEGRAM_BOT_TOKEN", "TELEGRAM_CHAT_ID")
 # ODDS_API_KEY(S) restent câblées mais ne sont plus REQUISES (OddsAPI obsolète
 # depuis le 2026-08-26) : ne jamais les remettre en garde bloquante.
 ODDS_SOURCES = ("ODDS_API_KEY", "ODDS_API_KEYS", "API_FOOTBALL_KEY")
+# Clés api-sports du SETTLEMENT (2026-08-26). Le score final est un champ de
+# `/fixtures?date=` : sans ces clés dans le pool, core/settlement retomberait
+# sur la recherche web — exactement le chemin dont la panne a fait tomber le
+# taux de résolution à 11 %. Une capacité non câblée est une capacité morte,
+# et elle meurt SANS ERREUR.
+RESULTS_SOURCES = ("API_FOOTBALL_KEY", "API_SPORTS_KEY",
+                   "API_BASKETBALL_KEY", "API_BASEBALL_KEY")
 BETFAIR = ("BETFAIR_APP_KEY", "BETFAIR_USERNAME", "BETFAIR_PASSWORD",
            "BETFAIR_CERT", "BETFAIR_CERT_KEY")
 # Sources filtrées par IP (core/net.py) : proxy OU relais Cloudflare Worker.
@@ -131,14 +138,14 @@ AI_NO_GROQ = tuple(k for k in AI_FULL if k != "GROQ_API_KEY")
 POOLS: dict[str, dict] = {
     "scan": dict(
         passthrough=_uniq(SUPABASE_RW, TELEGRAM, ODDS_SOURCES, BETFAIR, RELAYS,
-                          GROQ_SCAN, SEARCH, AI_FULL),
+                          RESULTS_SOURCES, GROQ_SCAN, SEARCH, AI_FULL),
         required=SUPABASE_RW, service_role=True, warn_missing=FALLBACK_SOURCES,
         groq_pool=True, groq_fingerprint=True),
     "closing": dict(
         passthrough=_uniq(SUPABASE_RW, GROQ_SCAN, SEARCH, AI_FULL),
         required=SUPABASE_RW, service_role=True),
     "settlement": dict(
-        passthrough=_uniq(SUPABASE_RW, TELEGRAM, SEARCH, AI_NO_GROQ),
+        passthrough=_uniq(SUPABASE_RW, TELEGRAM, RESULTS_SOURCES, SEARCH, AI_NO_GROQ),
         rename={"GROQ_API_KEY": GROQ_SETTLEMENT_SOURCE},
         # ⚠️ EN NOMS D'ENV, PAS DE SECRETS. Le bloc généré pose la valeur du
         # secret GROQ_API_KEY_3 sous le nom GROQ_API_KEY ; le nom

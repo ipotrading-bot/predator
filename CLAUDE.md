@@ -235,6 +235,34 @@ Tout le calcul tourne en crons GitHub Actions ; le dashboard est en lecture seul
   (Fly.io/Render région EU), proxy à IP dédiée, ou runner auto-hébergé en
   Europe. Tant que ce n'est pas fait, odds500 → 7M → `team_aliases` reste
   INERTE (12 lignes) : ne pas chercher un bug de code, il n'y en a pas.
+- SETTLEMENT : LE SCORE VIENT D'UN CHAMP, PLUS D'UN LLM (2026-08-26).
+  `core/settlement.result_from_api_sports` interroge `core/api_sports.fetch_results`
+  (`/fixtures?date=`) AVANT toute recherche web : déterministe, gratuit, UNE
+  requête par journée quel que soit le nombre de matchs (cache de run). La
+  recherche web (Groq `compound-mini` + Tavily) reste en DERNIER RECOURS.
+  Pourquoi : mesuré le 2026-08-26, le taux de résolution réelle du ledger est
+  tombé de 65 % (23 août) à 11 % (24-26) parce que les DEUX quotas gratuits ont
+  lâché ensemble — Tavily au plafond de plan (HTTP 432) et Groq en limite par
+  minute. Un audit a rendu « 0 settled | 52 skipped », EN VERT. Or la réponse
+  qui porte les scores était DÉJÀ téléchargée à chaque scan par `fetch_sport`,
+  qui jette les matchs commencés (`if when < now: continue`).
+  ⚠️ Appariement par `strict_team_match` sur les DEUX équipes, candidat UNIQUE
+  exigé : deux prétendants → REFUS. Régler le mauvais match écrirait un
+  WIN/LOSS faux et DÉFINITIF dans le ledger. On cherche aussi la veille et le
+  lendemain UTC (un coup d'envoi à 23h30 bascule de journée).
+  ⚠️ Les clés `API_*` doivent être dans le pool `settlement` de `ci_env.py`,
+  sinon le chemin est INERTE sans erreur. Gardien :
+  `tests/test_ci_env.py::test_le_settlement_porte_les_cles_de_resultats`.
+- UN AUDIT STÉRILE ALERTE (2026-08-26). « 0 settled » sortait en `log.info`,
+  run vert, aucune alerte : la régression du 24 août a vécu deux jours sans
+  être vue. `_signaler_audit_sterile` envoie un Telegram ET pose
+  `meta.settlement_starved_at` ; tant que ce marqueur est frais (< 24 h),
+  `_purge_old_signals` porte sa fenêtre de 48 h à 96 h. Sans ce filet, une
+  panne de recherche ne retarde pas l'apprentissage, elle DÉTRUIT
+  l'échantillon : un signal purgé part en `expired`, ligne que
+  `learning_layer._clv_stats` exclut. Borné à 96 h — au-delà le score n'est
+  plus retrouvable et laisser gonfler la table créerait une seconde panne pour
+  en éviter une première. Gardien : `tests/test_settlement_deterministe.py`.
 - CLOSING LINE : `capture_from_scan` (payload OddsAPI) est MORTE avec OddsAPI —
   elle vit dans une branche que `ODDS_API_ENABLED=0` ne franchit plus.
   `capture_from_exchange` (2026-08-26) la remplace sur les prix Matchbook que

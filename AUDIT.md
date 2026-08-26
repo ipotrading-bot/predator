@@ -60,6 +60,10 @@ C'est le tableau à consulter avant de toucher à quoi que ce soit.
 | `GROQ_API_KEY_3` n'atteint QUE le settlement, sous le nom `GROQ_API_KEY` | `…::test_settlement_voit_groq_3_sous_le_nom_groq_et_rien_dautre` |
 | Le step REPRICE ne reçoit aucune clé payante (lisible dans le YAML) | `…::test_le_step_reprice_ne_peut_mecaniquement_rien_depenser` |
 | `readonly` ne détient aucun jeton d'écriture | `…::test_readonly_ne_detient_aucun_jeton_decriture` |
+| Le pool `settlement` porte les clés api-sports (sinon score cherché par LLM) | `…::test_le_settlement_porte_les_cles_de_resultats` |
+| Le score vient d'api-sports, sans aucun appel d'IA | `tests/test_settlement_deterministe.py::TestScoreSansIA::test_le_score_vient_dapi_sports_sans_aucun_appel_ia` |
+| Deux matchs candidats → refus, jamais un WIN/LOSS deviné | `…::test_deux_candidats_font_REFUSER_pas_deviner` |
+| Un audit qui ne règle rien alerte et repousse la purge | `…::TestAuditSterile`, `…::TestPurgeNeDetruitPasLechantillon` |
 | Le pool `scan` porte les relais des sources filtrées par IP | `…::test_le_pool_scan_porte_les_relais_des_sources_filtrees_par_ip` |
 | Le préflight refuse une `SUPABASE_SERVICE_KEY` qui n'est pas `service_role` | `…::test_preflight_refuse_une_cle_qui_nest_pas_service_role` |
 | `ODDS_API_KEY` n'est PLUS requise (la garde échouait fermé) | `…::test_preflight_odds_api_key_nest_plus_requise` |
