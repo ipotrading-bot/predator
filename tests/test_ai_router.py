@@ -307,10 +307,30 @@ class TestLanes:
         noms = [p.name for p in R.REGISTRY if R.SETTLEMENT in p.lanes]
         assert len(noms) >= 2
 
-    def test_wiz_nest_pas_servi_par_le_routeur(self):
-        """Mistral reste hors registre : c'est le domaine de panne de Wiz."""
-        assert [p for p in R.REGISTRY if R.WIZ in p.lanes] == []
-        assert "mistral" not in {p.name for p in R.REGISTRY}
+    def test_mistral_est_au_registre_pour_les_lanes_de_signaux(self):
+        """L'INVERSE de la règle d'avant, et c'est voulu.
+
+        Mistral vivait hors registre parce qu'il était le fournisseur unique
+        de Wiz — un domaine de panne isolé. Wiz supprimé le 2026-08-26, son
+        quota est réalloué à la recherche de signaux.
+
+        Ce que ce test verrouille, c'est la RETENUE de cette réallocation :
+        à 2 requêtes/minute, Mistral n'a rien à faire dans SETTLEMENT (dont
+        la réserve doit répondre vite), ni dans SEARCH_READ — sa valeur pour
+        Wiz était son connecteur `web_search`, dont le quota était épuisé au
+        niveau du COMPTE. L'y enrôler promettrait une capacité inexistante.
+        """
+        m = R.by_name("mistral")
+        assert m is not None, "Mistral doit être au registre depuis la suppression de Wiz"
+        assert set(m.lanes) == {R.FILTER, R.ANALYZE}, m.lanes
+        assert R.SETTLEMENT not in m.lanes and R.SEARCH_READ not in m.lanes
+        assert m.rpm == 2, "palier gratuit Mistral — 2 req/min"
+
+    def test_la_lane_wiz_nexiste_plus(self):
+        """Elle était mono-fournisseur et portait une exception dans
+        refresh_catalogues(). Une lane de moins, une exception de moins."""
+        assert not hasattr(R, "WIZ")
+        assert "wiz" not in R.LANES
 
 
 class TestCacheAvantTout:
@@ -386,8 +406,6 @@ class TestCouvertureDesLanes:
         """Sinon elle alerterait en permanence — et une alerte permanente est
         une alerte qu'on n'ouvre plus."""
         for lane in R.LANES:
-            if lane == R.WIZ:
-                continue
             n = [p for p in R.REGISTRY if lane in p.lanes and not p.terms_flag]
             assert len(n) >= R.LANE_MIN_HEALTHY, f"{lane}: {len(n)}"
 

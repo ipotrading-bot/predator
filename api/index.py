@@ -6,8 +6,7 @@ Pages   : /            signaux actifs encore jouables
           /audit       distribution d'alpha par sport
           /performance WIN/LOSS/PUSH (ai_learning_ledger)
           /system      calculateur de paris système
-          /wiz         analyse contextuelle (wiz_analysis)
-API     : /api/signals /api/wiz /api/health
+API     : /api/signals /api/health
 Écriture: /api/scan       met une demande de scan dans meta (cooldown 120 s)
           /api/audit/run  déclenche audit.yml — JETON D'ADMIN REQUIS
 
@@ -35,7 +34,7 @@ from flask import Flask, jsonify, render_template, request, send_from_directory
 # mesures existent toujours — elles vivent dans la base et dans
 # scripts/weekly_report.py — elles ne sont simplement plus rendues ici.
 from core.perf_view import filter_rows as _perf_filter_rows
-from core.constants import TAX_RATE as _TAX_RATE, wiz_enforce as _wiz_enforce
+from core.constants import TAX_RATE as _TAX_RATE
 from core.db import get_db as _get_db_client, MissingCredentialsError
 from core.stats_utils import p_breakeven, wilson_ci
 
@@ -150,8 +149,9 @@ def _is_playable(s: dict, now) -> bool:
     """Ce signal est-il encore pariable ? (coup d'envoi pas encore passé)
 
     RÈGLE UNIQUE, volontairement partagée. Elle était réimplémentée à
-    l'identique en trois endroits — dashboard(), _wiz_rows() et le JS de
-    /system — pendant que /api/signals, lui, ne l'appliquait PAS : au
+    l'identique en trois endroits — dashboard(), la page Wiz (supprimée le
+    2026-08-26) et le JS de /system — pendant que /api/signals, lui, ne
+    l'appliquait PAS : au
     2026-08-22 il renvoyait 37 signaux actifs dont 23 dont le match avait
     commencé, certains depuis huit heures. Les deux consommateurs connus
     refiltraient côté client ; le troisième aurait hérité du bug.
@@ -612,7 +612,14 @@ def performance():
                 # résultat est connu (demande opérateur) — les stats plus haut
                 # continuent de se baser sur `rows` complet, y compris les
                 # signaux encore non audités.
-                history = settled
+                # ANNULÉS (PUSH) MASQUÉS — demande opérateur du 2026-08-26.
+                # Un push est un enjeu remboursé : il n'a ni gagné ni perdu,
+                # et il encombrait l'historique sans rien apprendre. Filtre
+                # d'AFFICHAGE uniquement — la ligne reste dans le ledger, et
+                # `settled` (donc le compte des pushes) sert encore aux stats
+                # plus haut. Les taux se calculent déjà sur `decisive`
+                # (WIN|LOSS), ils sont donc inchangés par ce masquage.
+                history = [r for r in settled if r.get("outcome") != "PUSH"]
                 wins    = sum(1 for r in settled if r.get("outcome") == "WIN")
                 losses  = sum(1 for r in settled if r.get("outcome") == "LOSS")
                 pushes  = sum(1 for r in settled if r.get("outcome") == "PUSH")
@@ -702,153 +709,6 @@ def performance():
 @app.route("/system")
 def system():
     return render_template("system.html")
-
-
-# ── Wiz (PAIM v10.0) ─────────────────────────────────────────────────
-#
-# ⚠️  CES ROUTES NE FONT QUE LIRE. Aucun appel IA, aucune recherche web ici.
-# Une analyse Wiz prend 10 à 60 secondes par match (throttle Mistral 2 RPM +
-# 2 requêtes Brave), Vercel est en serverless avec un timeout court : la
-# requête HTTP mourrait avant la fin du premier match. Toute la charge vit
-# dans .github/workflows/wiz.yml → run_wiz.py, qui écrit dans wiz_analysis ;
-# ces routes se contentent d'afficher ce qui a déjà été calculé.
-
-def _wiz_match_key_sig(s: dict) -> str:
-    """Même clé de regroupement que run_wiz.py `_match_key` — match_id quand
-    il existe, nom du match sinon (les signaux harvester/oracle ont
-    match_id='')."""
-    mid = (s.get("match_id") or "").strip()
-    return mid if mid else f"name:{(s.get('match') or '').strip().lower()}"
-
-
-def _wiz_json(value, default):
-    """arguments/red_flags/signal_ids sont en jsonb : Supabase les rend déjà
-    désérialisés, mais une colonne text ou un client plus ancien les rend en
-    chaîne. On accepte les deux plutôt que de casser la page."""
-    if value is None:
-        return default
-    if isinstance(value, str):
-        try:
-            return json.loads(value)
-        except Exception:
-            return default
-    return value
-
-
-def _wiz_rows():
-    """Dernière analyse par match, jointe aux signaux actifs, triée par
-    wiz_rank_score décroissant. Retourne (rows, enforce)."""
-    rows = []
-    sb = _db()
-    if not sb:
-        return rows, False
-
-    # Signaux actifs non commencés — même règle que le dashboard : une
-    # analyse dont le match a déjà commencé n'est plus actionnable.
-    now = datetime.now(_tz.utc)
-    sig_res = (sb.table("signals").select("*")
-               .eq("status", "active")
-               .order("created_at", desc=True).limit(300).execute())
-    by_key: dict = {}
-    for s in sig_res.data or []:
-        if not _is_playable(s, now):
-            continue
-        by_key.setdefault(_wiz_match_key_sig(s), []).append(s)
-    if not by_key:
-        return rows, False
-
-    an_res = (sb.table("wiz_analysis").select("*")
-              .order("analyzed_at", desc=True).limit(400).execute())
-
-    seen = set()
-    for a in an_res.data or []:
-        key = (a.get("match_id") or "").strip() or \
-            f"name:{(a.get('match') or '').strip().lower()}"
-        if key in seen:
-            continue          # déjà vue : la plus récente gagne (tri DESC)
-        sigs = by_key.get(key)
-        if not sigs:
-            continue          # analyse orpheline (match commencé/réglé)
-        seen.add(key)
-
-        best = max(sigs, key=lambda s: float(s.get("edge_pct") or 0.0))
-        args = _wiz_json(a.get("arguments"), [])
-        flags = _wiz_json(a.get("red_flags"), [])
-        # Groupés par tier pour l'affichage : le Tier A est ce qui explique
-        # un edge, il doit être lisible en premier.
-        by_tier = {t: [x for x in args if (x or {}).get("tier") == t] for t in ("A", "B", "C")}
-
-        rows.append({
-            "match":          a.get("match"),
-            "sport":          best.get("sport") or a.get("sport"),
-            "league":         best.get("league") or a.get("league"),
-            "emoji":          _SPORT_EMOJI.get(best.get("sport") or "", "🎯"),
-            "market":         best.get("market") or best.get("market_key") or "",
-            "selection":      best.get("selection_name") or best.get("match"),
-            "edge_pct":       float(best.get("edge_pct") or 0.0),
-            "xbet_odd":       best.get("xbet_odd"),
-            "match_time":     best.get("match_time"),
-            "n_signals":      len(sigs),
-            "verdict":        a.get("verdict") or "INDISPONIBLE",
-            "confidence":     a.get("wiz_confidence"),
-            "rank_score":     float(a.get("wiz_rank_score") or 0.0),
-            "resume":         a.get("resume") or "",
-            "args_a":         by_tier["A"],
-            "args_b":         by_tier["B"],
-            "args_c":         by_tier["C"],
-            "red_flags":      flags,
-            "sources_count":  a.get("sources_count") or 0,
-            "model_used":     a.get("model_used") or "",
-            "analyzed_at":    a.get("analyzed_at"),
-        })
-
-    rows.sort(key=lambda r: r["rank_score"], reverse=True)
-    return rows, _wiz_enforce()
-
-
-def _split_unavailable(rows: list) -> tuple[list, int]:
-    """Sépare les analyses exploitables des INDISPONIBLE.
-
-    Une carte INDISPONIBLE ne dit rien du pari : c'est l'aveu que Wiz n'a pas
-    pu chercher (quota fournisseur, aucune source datée sur ce match). Elle
-    occupe pourtant autant de place à l'écran qu'un VETO — et au 2026-08-01
-    elles étaient 79 sur 93, soit une page entière de bruit sur mobile.
-
-    Elles ne sont pas supprimées, seulement sorties du flux principal : leur
-    NOMBRE reste affiché, parce qu'un taux d'INDISPONIBLE qui remonte est le
-    symptôme n°1 d'une source morte — c'est exactement comme ça que la panne
-    du connecteur Mistral est passée inaperçue pendant une semaine.
-    """
-    usable = [r for r in rows if r.get("verdict") != "INDISPONIBLE"]
-    return usable, len(rows) - len(usable)
-
-
-@app.route("/wiz")
-def wiz():
-    rows, enforce, hidden = [], False, 0
-    try:
-        rows, enforce = _wiz_rows()
-        rows, hidden = _split_unavailable(rows)
-    except Exception as e:
-        # Cas le plus probable au premier déploiement :
-        # sql/migrate_v10_0_wiz.sql pas encore appliquée. La page doit
-        # afficher son état vide, pas une 500.
-        log.error("Wiz: %s", e)
-    return render_template("wiz.html", rows=rows, enforce=enforce, hidden=hidden)
-
-
-@app.route("/api/wiz")
-def api_wiz():
-    try:
-        rows, enforce = _wiz_rows()
-        # L'API sert tout, y compris les INDISPONIBLE : c'est la page qui
-        # filtre pour l'œil humain, pas la donnée qui disparaît.
-        usable, hidden = _split_unavailable(rows)
-        return jsonify({"enforce": enforce, "count": len(rows),
-                        "usable": len(usable), "unavailable": hidden,
-                        "rows": rows})
-    except Exception as e:
-        return jsonify({"error": str(e)}), 500
 
 
 # ── JSON API ─────────────────────────────────────────────────────────

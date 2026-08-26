@@ -60,9 +60,10 @@ log = logging.getLogger("PREDATOR.ai_search")
 # sains. Le registre, les quotas, les disjoncteurs et les lanes sont là-bas.
 #
 # Ce qui NE change PAS (compat ascendante, voulue) : Groq reste le préféré de
-# ses lanes avec sa mécanique de quota par-modèle/par-clé ci-dessous, Tavily
-# reste l'étage 2 de la recherche, et Mistral reste HORS chaîne (domaine de
-# panne de Wiz, par construction).
+# ses lanes avec sa mécanique de quota par-modèle/par-clé ci-dessous, et
+# Tavily reste l'étage 2 de la recherche. Mistral, lui, est passé DANS le
+# registre le 2026-08-26 avec la suppression de Wiz : il n'est plus un
+# domaine de panne isolé, c'est un fournisseur des lanes de signaux.
 
 # Cache de réponses (même requête normalisée, fenêtre 30 min) dans meta : le
 # même slate ne doit jamais être recherché deux fois dans la même fenêtre —
@@ -122,6 +123,21 @@ _SEARCH_MODEL = "groq/compound-mini"       # recherche web intégrée
 # contre un run pathologique. Chaque search basic = 1 crédit.
 _TAVILY_RUN_BUDGET = int(os.environ.get("TAVILY_RUN_BUDGET", "25"))
 _tavily_used = 0
+
+# Plafond de PLAN atteint (HTTP 432) — distinct du budget de run ci-dessus.
+#
+# Mesuré le 2026-08-26 : Tavily rendait 432 « exceeds your plan's set usage
+# limit » à CHAQUE appel, 11 fois par scan et 25+ par audit. Sans mémoire, on
+# repayait l'aller-retour à chaque requête d'un run pour un refus certain.
+#
+# Ce n'est pas qu'une question de latence : `search_exhausted()` est ce que
+# `core/audit_engine.py` teste AVANT d'écrire un état TERMINAL. Tant que le
+# drapeau n'était pas levé, il fallait brûler les 25 crédits du budget de run
+# pour que la fonction dise enfin la vérité — 25 refus avant que le settlement
+# comprenne qu'il n'avait pas pu chercher.
+#
+# SEUL le 432 verrouille. Un 429 est un débit par minute : il se repasse.
+_tavily_plan_dead = False
 
 # Quota JOURNALIER mort — PAR MODÈLE **ET PAR CLÉ** (par-modèle 2026-07-22,
 # par-clé 2026-08-02).
@@ -232,7 +248,7 @@ def search_exhausted() -> bool:
     tester ceci avant de conclure : un None renvoyé dans cet état veut dire
     « je n'ai pas pu chercher », pas « l'information n'existe pas ».
     """
-    return _tavily_used >= _TAVILY_RUN_BUDGET
+    return _tavily_plan_dead or _tavily_used >= _TAVILY_RUN_BUDGET
 
 
 def search_credits_left() -> int:
@@ -356,6 +372,8 @@ def tavily_search(query: str, max_results: int = 5) -> list[dict]:
     api_key = os.environ.get("TAVILY_API_KEY")
     if not api_key:
         return []
+    if _tavily_plan_dead:
+        return []                       # plafond de plan : inutile de redemander
     if _tavily_used >= _TAVILY_RUN_BUDGET:
         log.warning("Tavily: budget du run épuisé (%d) — recherche sautée", _TAVILY_RUN_BUDGET)
         return []
@@ -367,6 +385,11 @@ def tavily_search(query: str, max_results: int = 5) -> list[dict]:
             "search_depth": "basic",
         }, timeout=20)
         _tavily_used += 1
+        if r.status_code == 432:
+            globals()["_tavily_plan_dead"] = True
+            log.warning("Tavily: plafond de PLAN atteint (HTTP 432) — plus aucune "
+                        "recherche Tavily de ce run : %s", r.text[:160])
+            return []
         if r.status_code != 200:
             log.warning("Tavily HTTP %d: %s", r.status_code, r.text[:200])
             return []

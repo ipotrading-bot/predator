@@ -296,6 +296,48 @@ class TestAiSearchFallbackChain:
         assert ai_search.tavily_search("q2") == []   # budget épuisé
         assert len([c for c in calls if "tavily" in c]) == 1
 
+    def test_un_432_condamne_tavily_pour_le_run(self, monkeypatch):
+        """Régression 2026-08-26 — Tavily rendait 432 « plan usage limit » à
+        CHAQUE requête : 11 aller-retours par scan, 25+ par audit, tous
+        certains d'échouer, faute d'une mémoire du refus.
+
+        Deux propriétés, et la seconde est une question de SÛRETÉ, pas de
+        latence : `search_exhausted()` est ce que core/audit_engine.py teste
+        avant d'écrire un état TERMINAL. Tant qu'il ne disait pas la vérité
+        immédiatement, il fallait brûler les 25 crédits du budget de run pour
+        que le settlement comprenne enfin qu'il n'avait pas pu CHERCHER — et
+        non que l'information n'existait pas.
+        """
+        monkeypatch.setattr(ai_search, "_tavily_plan_dead", False)
+        monkeypatch.setattr(ai_search, "_tavily_used", 0)
+        monkeypatch.setattr(ai_search, "_TAVILY_RUN_BUDGET", 25)
+        calls = []
+
+        def fake_post(url, json=None, headers=None, timeout=None):
+            calls.append(url)
+            return _FakeResponse(432, text='{"detail":{"error":"exceeds your plan"}}')
+
+        monkeypatch.setattr(ai_search.requests, "post", fake_post)
+        assert ai_search.tavily_search("q1") == []
+        assert ai_search.search_exhausted(), "le settlement doit le savoir TOUT DE SUITE"
+        for i in range(5):
+            assert ai_search.tavily_search(f"q{i}") == []
+        assert len([c for c in calls if "tavily" in c]) == 1, \
+            f"un seul aller-retour attendu, {len(calls)} effectués"
+        # Remise à zéro explicite : l'état vit au niveau du MODULE et
+        # fuiterait sur les tests suivants.
+        monkeypatch.setattr(ai_search, "_tavily_plan_dead", False)
+
+    def test_un_429_ne_condamne_pas_tavily(self, monkeypatch):
+        """Un 429 est un débit PAR MINUTE : il se repasse. Le verrouiller
+        ferait perdre le reste du run pour une limite de quelques secondes."""
+        monkeypatch.setattr(ai_search, "_tavily_plan_dead", False)
+        monkeypatch.setattr(ai_search, "_tavily_used", 0)
+        monkeypatch.setattr(ai_search.requests, "post",
+                            lambda *a, **k: _FakeResponse(429, text="slow down"))
+        assert ai_search.tavily_search("q1") == []
+        assert not ai_search._tavily_plan_dead
+
 
 class TestGroqKeyRotation:
     """core/ai_search.py : bascule sur GROQ_API_KEY_2 quand le quota

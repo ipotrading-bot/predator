@@ -50,7 +50,7 @@ def test_tout_sport_actif_est_couvert(nom):
     manquants = [s for s in SPORTS_ACTIFS if s not in TABLES[nom]]
     assert not manquants, (
         f"{nom} n'a pas d'entrée pour {manquants} — ces sports s'afficheront "
-        "avec le repli générique 🎯 sur le dashboard et sur /wiz.")
+        "avec le repli générique 🎯 sur le dashboard.")
 
 
 def test_les_seuils_appris_couvrent_le_meme_perimetre():

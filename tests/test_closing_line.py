@@ -216,7 +216,7 @@ class TestRefreshBeatsCronDrift:
     def test_far_from_kickoff_is_not_repriced_even_when_stale(self, monkeypatch):
         # 3h out with a price already on file: the line has not converged, so
         # re-pricing buys no accuracy and just burns web-search quota shared
-        # with the audit and WIZ.
+        # with the audit.
         now = datetime.now(timezone.utc)
         sig = _sig(1, "Ajax vs Feyenoord", 2.00,
                    (now + timedelta(minutes=180)).isoformat())

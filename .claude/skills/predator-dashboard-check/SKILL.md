@@ -41,7 +41,7 @@ broken `{% %}` blocks) throw 500s even with no data.
    ```
 5. Nav-bar parity check — every page's `<div class="nav-pages">` block AND its
    `<nav class="bnav">` (mobile) block should list the same four links, in the
-   same order: **ACCUEIL / SYSTÈME / WIZ / PERF**.
+   same order: **ACCUEIL / SYSTÈME / PERF**.
 
    `/ledger` and `/audit` are deliberately **hidden from both menus** (operator
    decision, 2026-08-22). The pages are still served and still render — they

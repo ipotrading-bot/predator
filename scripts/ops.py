@@ -247,14 +247,16 @@ def vc_redeploy():
 def _ai_secrets() -> tuple:
     from core.ai_router import REGISTRY
     noms = {p.env_key for p in REGISTRY}
-    # Compagnons et clés d'IA légitimement HORS registre :
+    # Compagnons légitimement HORS registre :
     #  - CLOUDFLARE_ACCOUNT_ID : l'URL Workers AI contient l'id de compte ;
-    #  - MISTRAL_API_KEY : Wiz, volontairement hors registre (domaine de
-    #    panne séparé, cf. CLAUDE.md) — mais c'est bien un secret d'IA ;
-    #  - TAVILY_API_KEY : recherche web de Wiz ;
+    #  - TAVILY_API_KEY : étage 2 de la recherche web de core/ai_search.py ;
     #  - GROQ_API_KEY_2/3/4 : pool géré par core/ai_search.py, dont la clé
     #    _3 réservée au settlement.
-    noms |= {"CLOUDFLARE_ACCOUNT_ID", "MISTRAL_API_KEY", "TAVILY_API_KEY",
+    # MISTRAL_API_KEY N'EST PLUS listée ici : depuis la suppression de Wiz
+    # (2026-08-26), Mistral est un fournisseur ORDINAIRE du registre, donc
+    # déjà couvert par `noms` ci-dessus. La garder en dur rétablirait
+    # exactement la duplication que ce fichier existe pour éviter.
+    noms |= {"CLOUDFLARE_ACCOUNT_ID", "TAVILY_API_KEY",
              "GROQ_API_KEY_2", "GROQ_API_KEY_3", "GROQ_API_KEY_4"}
     return tuple(sorted(noms))
 

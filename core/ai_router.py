@@ -97,9 +97,15 @@ ANALYZE       = "analyze"         # analyse contextuelle profonde
 TRANSLATE_CJK = "translate_cjk"   # alias d'équipes CJK (mission 3)
 SEARCH_READ   = "search_read"     # recherche / lecture web
 SETTLEMENT    = "settlement"      # SACRÉE — voir plus bas
-WIZ           = "wiz"             # Mistral seul, domaine de panne isolé
 
-LANES = (FILTER, ANALYZE, TRANSLATE_CJK, SEARCH_READ, SETTLEMENT, WIZ)
+# La lane WIZ a été RETIRÉE le 2026-08-26 avec la page et le moteur Wiz
+# (décision opérateur : « la page wiz ne me sert pas »). Elle était
+# mono-fournisseur par construction — Mistral seul, domaine de panne isolé —
+# et portait à ce titre une exception dans refresh_catalogues(). Mistral n'est
+# plus une exception : il rejoint le registre ci-dessous comme fournisseur
+# ordinaire des lanes de SIGNAUX, ce qui est précisément la réallocation
+# demandée. Une lane de moins, une exception de moins.
+LANES = (FILTER, ANALYZE, TRANSLATE_CJK, SEARCH_READ, SETTLEMENT)
 
 # Circuit breaker par fournisseur : 3 échecs consécutifs → 30 min de repos.
 BREAKER_THRESHOLD = int(os.environ.get("AI_BREAKER_THRESHOLD", "3"))
@@ -452,6 +458,51 @@ REGISTRY: tuple = (
         rpm=0, daily_requests=50, terms_flag="evaluation",
         note="credits d'essai ; utile ponctuellement pour le coreen",
     ),
+    # ── Mistral — RAPATRIÉ DANS LE REGISTRE le 2026-08-26 ──────────────
+    #
+    # Il vivait HORS registre parce qu'il était le fournisseur unique de Wiz :
+    # un domaine de panne isolé, pour qu'une panne Wiz ne puisse pas emporter
+    # le scan. Wiz supprimé (page + moteur), cet isolement n'a plus d'objet et
+    # son quota est REDIRIGÉ VERS LA RECHERCHE DE SIGNAUX — c'est la
+    # réallocation demandée par l'opérateur.
+    #
+    # ⚠️ CHIFFRES À VALIDER PAR UN VRAI APPEL. La clé n'est pas dans
+    # l'environnement de développement (elle vit dans les secrets GitHub), donc
+    # rien ici n'a pu être vérifié par inférence, contrairement à tous les
+    # autres fournisseurs de ce registre. Ce qui suit vient de ce que Wiz
+    # utilisait RÉELLEMENT en production, pas d'une page de tarifs :
+    #   - modèles : la liste que portait `constants.WIZ_MISTRAL_MODELS` ;
+    #   - rpm=2 : le palier gratuit Mistral, d'où l'intervalle de 31 s que
+    #     Wiz s'imposait (`WIZ_MISTRAL_MIN_INTERVAL_S`) ;
+    #   - daily_requests=120 : MESURÉ, pas projeté. Le 2026-08-26, les 8 runs
+    #     Wiz de la journée ont passé 79 appels chat sans UNE erreur HTTP ;
+    #     à 12 runs/jour la cadence complète en projette ~120. Un budget de
+    #     200 (première estimation, tirée du plafond théorique 20×12) était
+    #     au-dessus de tout ce qui a jamais été observé — et un budget qu'on
+    #     n'a pas mesuré n'est pas un budget, c'est un espoir.
+    # Premier geste après déploiement : `python scripts/ops.py ai` — c'est le
+    # seul diagnostic qui tranche (cf. Cerebras/SambaNova, 200 au catalogue et
+    # 402 à l'inférence).
+    #
+    # PAS DE LANE SEARCH_READ, sciemment : la valeur de Mistral pour Wiz était
+    # son connecteur `web_search`, dont le quota était épuisé AU NIVEAU DU
+    # COMPTE au 2026-08-26. L'enrôler pour la recherche web promettrait une
+    # capacité qui n'existe pas. Et à 2 requêtes/minute il n'a rien à faire
+    # dans SETTLEMENT, dont la réserve doit répondre vite et sûrement.
+    Provider(
+        name="mistral", base_url="https://api.mistral.ai/v1",
+        env_key="MISTRAL_API_KEY",
+        models=("mistral-small-latest", "open-mistral-nemo",
+                "mistral-large-latest"),
+        lanes=(FILTER, ANALYZE),
+        rpm=2, daily_requests=120,
+        note="ex-fournisseur exclusif de Wiz (supprime le 2026-08-26), "
+             "rapatrie au registre pour les lanes de signaux. Palier gratuit "
+             "2 req/min : bon pour de l'analyse par lots, inutilisable pour du "
+             "volume. 79 appels chat sans erreur le 2026-08-26 : la TETE de liste "
+             "repond, les deux suivantes ne sont PAS verifiees. Confirmer par "
+             "`ops.py ai` avec la vraie cle.",
+    ),
 )
 
 # Fournisseurs utilisables en PRODUCTION : ceux dont les conditions ne
@@ -755,8 +806,6 @@ def refresh_catalogues(alert=None) -> dict:
         healthy = [p.name for p in REGISTRY
                    if lane in p.lanes and p.name in resolved]
         report["lanes"][lane] = healthy
-        if lane == WIZ:
-            continue          # Wiz est mono-fournisseur PAR CONSTRUCTION
         if len(healthy) < LANE_MIN_HEALTHY:
             msg = (f"⚠️ IA — lane `{lane}` : {len(healthy)} fournisseur(s) sain(s) "
                    f"({', '.join(healthy) or 'aucun'}), minimum {LANE_MIN_HEALTHY}")

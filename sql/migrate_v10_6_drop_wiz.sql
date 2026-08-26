@@ -1,0 +1,44 @@
+-- ══════════════════════════════════════════════════════════════════════
+-- migrate_v10_6_drop_wiz.sql — retrait de la table wiz_analysis
+-- ══════════════════════════════════════════════════════════════════════
+--
+-- CONTEXTE : le 2026-08-26, la page /wiz et son moteur (run_wiz.py,
+-- core/wiz_ai.py, core/wiz_engine.py, core/wiz_sources.py, wiz.yml) ont été
+-- SUPPRIMÉS sur décision opérateur — « la page wiz ne me sert pas ». Plus
+-- aucune ligne de code ne lit ni n'écrit `wiz_analysis`.
+--
+-- ⚠️  CETTE MIGRATION N'EST PAS APPLIQUÉE, ET C'EST VOLONTAIRE.
+--
+-- Le code n'a plus besoin de la table : la laisser en base ne casse rien, ne
+-- coûte presque rien, et ne ralentit aucune requête (personne ne l'interroge).
+-- La supprimer, en revanche, est IRRÉVERSIBLE. La convention de ce dépôt est
+-- « archiver, jamais supprimer sèchement » (cf. migrate_v10_5, où juillet 2026
+-- a été archivé plutôt qu'effacé) : ces lignes sont la seule trace empirique
+-- de ce que l'analyse contextuelle avait produit, et si l'idée revient un jour
+-- sous une autre forme, c'est le seul jeu de données pour juger si elle
+-- valait quelque chose.
+--
+-- À APPLIQUER À LA MAIN dans le SQL Editor Supabase, et seulement si
+-- l'opérateur veut vraiment récupérer la place. Choisir UNE des deux options.
+
+-- ── Option A (RECOMMANDÉE) : archiver, puis libérer la table active ────
+-- Conserve les données sous un autre nom, hors du chemin de tout code.
+--
+-- ALTER TABLE public.wiz_analysis RENAME TO wiz_analysis_archive;
+--
+-- Rien d'autre n'est nécessaire : aucun code ne référence l'un ni l'autre.
+
+
+-- ── Option B : suppression définitive ─────────────────────────────────
+-- IRRÉVERSIBLE. Ne l'exécuter qu'après avoir exporté ce qui mérite de l'être
+-- (Supabase → Table Editor → Export CSV), ou en assumant la perte.
+--
+-- DROP TABLE IF EXISTS public.wiz_analysis;
+
+
+-- ── Ce qui reste dans le dépôt, et pourquoi ───────────────────────────
+-- `sql/migrate_v10_0_wiz.sql` est CONSERVÉ : il documente le schéma que la
+-- table portait et le raisonnement derrière (Wiz n'écrivait jamais dans
+-- `signals`, cloisonnement volontaire). Effacer une migration passée réécrit
+-- l'histoire du schéma et rend incompréhensible une base restaurée d'un
+-- backup antérieur au 2026-08-26.

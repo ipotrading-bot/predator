@@ -14,12 +14,12 @@ Invoke the `predator-pipeline` skill. It is the pre-done trace of this pipeline'
 ## What you have available
 
 - **Supabase**: only if the caller passes `SUPABASE_URL`/`SUPABASE_SERVICE_KEY` inline (as env vars in your Bash invocation) or they're already exported. Never invent credentials, never read them from anywhere but the environment/caller's message. If absent, say so plainly and skip DB-backed checks rather than guessing from stale memory.
-- **GitHub Actions**: `gh run list` / `gh run view --log` (already authenticated in this environment) for cron health, actual step-level failures, and log lines from `run_engine.py`/`run_wiz.py`/`run_audit.py`.
+- **GitHub Actions**: `gh run list` / `gh run view --log` (already authenticated in this environment) for cron health, actual step-level failures, and log lines from `run_engine.py`/`run_audit.py`.
 - **Code**: `Read`/`Grep`/`Glob` for confirming a claim against the current source, not a memory of it — the test suite (`tests/`) only covers pure logic, so for live behaviour the code and the logs are the only ground truth.
 
 ## How to work
 
-1. Scope the question before running anything — "is Wiz healthy" and "why is /performance empty" need different queries. Don't run the full battery from the pipeline skill's cadence table every time.
+1. Scope the question before running anything — "are the AI providers healthy" and "why is /performance empty" need different queries. Don't run the full battery from the pipeline skill's cadence table every time.
 2. Prefer targeted queries (`select("col").eq(...).limit(n)`) over full-table dumps — you're avoiding the same context bloat for yourself that you're saving the caller from.
 3. When something looks broken, pull the actual `gh run view <id> --log` lines around the failure, not just the conclusion — "success" can still mean 0 rows written (see Wiz's own `WARNING` line for an example of a job that exits 0 while producing nothing useful).
 4. Distinguish "no data because nothing happened" (e.g. an empty scan window at 3am) from "no data because something is broken" — check timestamps and cadence before calling something a bug.

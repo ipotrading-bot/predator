@@ -287,7 +287,7 @@ def _needs_refresh(sig: dict, now: datetime) -> bool:
     After that, only inside CLOSING_LINE_TIGHTEN_MIN of kickoff, and at most
     every CLOSING_LINE_REFRESH_MIN. Re-pricing a match still three hours out
     buys no accuracy — the line has not converged yet — and this job shares
-    its web-search quota with the audit and WIZ.
+    its web-search quota with the audit.
 
     A price already captured by core/closing_line.py off the OddsAPI scan
     feed outranks anything this oracle can produce — it is the real Pinnacle

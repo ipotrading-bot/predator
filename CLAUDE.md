@@ -6,7 +6,7 @@ Tout le calcul tourne en crons GitHub Actions ; le dashboard est en lecture seul
 
 ## Commandes
 
-- Tests : `python -m pytest tests/ -q` (~45 s, 1075 tests, doit rester à 0 échec)
+- Tests : `python -m pytest tests/ -q` (~45 s, 941 tests, doit rester à 0 échec)
 - Carte des invariants et de leurs gardiens : `AUDIT.md` (à lire avant
   d'ajouter un sport, un fournisseur IA, une route ou un workflow)
 - Lint : `python -m pyflakes $(git ls-files '*.py')` (actuellement propre)
@@ -27,7 +27,6 @@ Tout le calcul tourne en crons GitHub Actions ; le dashboard est en lecture seul
 - `core/scan_windows.py` — fenêtres favorables (UTC) + politique de dépense OddsAPI
   (180 min mini entre deux scans payants d'une ligue hors fenêtre, réserve de crédits ;
   fenêtres favorables et closing line jamais espacées ; chaque ligue sautée est loggée)
-- `run_wiz.py` + `core/wiz_*` — analyse contextuelle Mistral, écrit `wiz_analysis` UNIQUEMENT
 - `api/index.py` + `templates/*.html` — dashboard Flask
 
 ## Conventions
@@ -44,13 +43,22 @@ Tout le calcul tourne en crons GitHub Actions ; le dashboard est en lecture seul
 - Skill `predator-pipeline` : carte du flux, invariant des sport-keys (4 fichiers
   synchrones), règles de purge (`status='active'` obligatoire), cadences cron,
   quota OddsAPI, zone jouable 2-24h pour toute analyse du ledger.
-- Wiz : Mistral HORS du registre IA (domaine de panne séparé) ; Groq et
-  Tavily ne sont JAMAIS son chemin principal — mais ils SONT ses derniers
-  recours (`ai_search.ai_complete` après `mistral_complete`, Tavily après
-  Google/Bing dans `wiz_sources.gather`). Une formulation antérieure disait
-  « jamais Groq/Tavily » et contredisait le code (corrigé 2026-08-22). Jamais
-  d'écriture hors `wiz_analysis`, poids Tier C négatif — gardé par
-  `tests/test_wiz_engine.py`.
+- WIZ A ÉTÉ SUPPRIMÉ le 2026-08-26 (page, moteur, workflow, tests, lane du
+  routeur) — décision opérateur : « la page wiz ne me sert pas ». Ne pas le
+  réintroduire par inadvertance en recréant `/wiz` ou `core/wiz_*`. La table
+  `wiz_analysis` est CONSERVÉE en base : plus aucun code ne la lit, et
+  `sql/migrate_v10_6_drop_wiz.sql` propose son archivage — NON APPLIQUÉ,
+  volontairement (archiver, jamais supprimer sèchement).
+  Conséquence directe : MISTRAL EST ENTRÉ AU REGISTRE IA. Il en était exclu
+  parce qu'il était le fournisseur unique de Wiz (domaine de panne isolé) ;
+  son quota sert désormais la RECHERCHE DE SIGNAUX, lanes `filter`/`analyze`
+  seulement. PAS `settlement` (2 req/min, la réserve doit répondre vite) et
+  PAS `search_read` (son connecteur `web_search` avait son quota épuisé au
+  niveau du COMPTE — l'y enrôler promettrait une capacité inexistante).
+  ⚠️ Ses modèles et ses budgets sont les SEULS du registre à n'avoir jamais
+  été validés par une inférence réelle : la clé n'est pas disponible en dev.
+  Premier geste après déploiement : `python scripts/ops.py ai`.
+  Gardien : `tests/test_ai_router.py::TestLanes`.
 - Secrets : `core/secret_store.py` (table Supabase `app_secrets`) bat `os.environ` ;
   une valeur périmée dans la table gagne quand même.
 - Sources de cotes : la règle est « authentifié par clé = joignable, sinon filtré
@@ -191,13 +199,13 @@ Tout le calcul tourne en crons GitHub Actions ; le dashboard est en lecture seul
   et met les prix dans les champs `*_dollars` en chaîne ; un 1X2 amputé d'une patte
   devient indiscernable d'un moneyline et s'apparie avec lui ; la `<description>`
   d'un item Google News RSS est le TITRE recopié, pas un extrait — une source qui
-  « répond » peut ne porter aucun fait (100% d'INDISPONIBLE sur /wiz, 2026-08-22 ;
-  Bing News RSS ajouté pour les vrais extraits, `core/wiz_sources.py`).
+  « répond » peut ne porter aucun fait (mesuré sur /wiz avant sa suppression,
+  2026-08-22 — la leçon vaut pour toute source d'actualité).
 - robots.txt : sur odds.500.com la QUERY STRING est la frontière (`/fenxi/ouzhi-*.shtml`
   autorisé nu, interdit avec `?ctype=`/`?order=`/`?cids=`). Ne jamais paramétrer un
   endpoint — gardé par `tests/test_odds500.py::TestRobotsTxt`.
 - Couche IA (mission 4, 2026-08-22) : `core/ai_router.py` = registre +
-  lanes (FILTER/ANALYZE/TRANSLATE_CJK/SEARCH_READ/SETTLEMENT/WIZ) + disjoncteur
+  lanes (FILTER/ANALYZE/TRANSLATE_CJK/SEARCH_READ/SETTLEMENT) + disjoncteur
   (3 échecs → 30 min) + découverte des catalogues au démarrage du run.
   NE JAMAIS coder un nom de modèle en dur hors du registre : le paysage gratuit
   churne chaque mois. SEUL mort prouvé : GitHub Models (410, corps nommant le
@@ -223,7 +231,7 @@ Tout le calcul tourne en crons GitHub Actions ; le dashboard est en lecture seul
   ⚠️ Cerebras avait été retiré À TORT sur un 403 SANS CLÉ : un 401/403 sans clé
   ne prouve JAMAIS qu'un palier a fermé, il faut une clé INVALIDE pour trancher
   (Cerebras rend alors 401 wrong_api_key). Rétabli au registre.
-  `ai_search.py` délègue au routeur ; Mistral reste HORS registre (Wiz).
+  `ai_search.py` délègue au routeur ; Mistral y est ENTRÉ le 2026-08-26.
   Réserve settlement gardée EN NÉGATIF (les autres lanes sont amputées, elles
   n'y accèdent jamais) — leçon du 2026-08-02. Un compte par fournisseur ;
   `terms_flag` (non_commercial/evaluation) = exclu de la production par défaut.
@@ -256,14 +264,6 @@ Tout le calcul tourne en crons GitHub Actions ; le dashboard est en lecture seul
 - Une version, un seul endroit : `DASHBOARD_VERSION` (`api/index.py`), injectée
   dans les 6 templates et rendue par `/api/health`. Ne jamais réécrire un
   numéro de version dans un pied de page.
-- Wiz — sources : `gather()` FUSIONNE Google News et Bing (jamais « la première
-  qui répond » : Google répond toujours, donc Bing ne serait jamais interrogé),
-  puis trie LES FAITS D'ABORD avant de tronquer à `MAX_TOTAL`. Google News ne
-  rend que des titres nus (sa `<description>` RSS recopie le titre) ; sans ce
-  tri, le plafond gardait 58 % de titres sans fait et jetait les extraits de
-  Bing — mesuré 5/12 items porteurs de faits, 10/12 après. Un modèle à qui l'on
-  sert des titres répond INDISPONIBLE, et il a raison. Gardé par
-  `tests/test_wiz_sources.py::TestLesFaitsDabord`.
 - DEUX interpréteurs, subis et non choisis : `.python-version` + `vercel.json`
   = **3.12** (l'image de build Vercel n'embarque PAS 3.11 — l'y « aligner »
   casse le déploiement et laisse la prod sur le commit précédent, vécu le
@@ -289,37 +289,5 @@ Tout le calcul tourne en crons GitHub Actions ; le dashboard est en lecture seul
   taxe sont désormais rendus en une phrase française (« il faut 57 % pour
   être rentable, et 85 paris ne suffisent pas à le prouver »). Ne pas
   supprimer cette ligne en croyant simplifier : c'est une garde de sûreté.
-- Wiz — REQUÊTES : jamais de phrase en ET (5 mots ⇒ 0 résultat Google News),
-  jamais le vocabulaire des pages de preview (« team news lineup » EST leur
-  titre SEO — la requête ramenait 100 % de bruit et Wiz sortait INDISPONIBLE
-  partout), jamais de date en terme de recherche (`when:Nd` le fait déjà,
-  côté moteur). Forme : `{match} (motA OR motB)`. Le vocabulaire ET la locale
-  du flux suivent la langue de la presse locale, déduite du LIBELLÉ de
-  `signals.league` (`wiz_engine.press_lang`) — qui vient de QUATRE sources
-  avec quatre conventions (pays en préfixe, en suffixe, embarqué, ou nom
-  nu/abrégé : « Serie A », « Liga MX », « ARG D2 »). La 1re version ne lisait
-  que le préfixe et n'avait JAMAIS tiré en prod (vécu 2026-08-22). Les deux
-  ensemble ou rien :
-  des mots espagnols dans l'index `en-US` rendent ZÉRO source. Mesuré :
-  3 % → 23 % de sources porteuses de faits. Gardiens :
-  `tests/test_wiz_engine.py::TestLangueDeLaPresse`,
-  `tests/test_wiz_sources.py::TestLocaleDuFlux`.
-- PÉRIMÈTRE SPORTS — Predator ne parie JAMAIS > 2,20 par construction
-  (`SHARP_PROB_BY_MARKET` ≥ 0,50/0,55 ; football = AH 0.0 du favori) et la
-  seule tranche rentable est < 1,50 (81 %, mesuré sur 254 paris). Un sport
-  « à grosses cotes » ne change rien aux cotes pariées : on ajoute pour le
-  VOLUME, là où le favori court est la norme (AUDIT.md §3.11). Settlement =
-  recherche web pour tous les sports — un sport aux scores introuvables
-  laisse ses signaux `active` à vie. Catalogue OddsAPI sondable à 0 crédit
-  (`/sports`).
-- Phase 3 (2026-08-22) : NCAAF = sport-type DÉDIÉ `college_football`, ne pas
-  fusionner avec `americanfootball` (Kelly 0,10 < 0,14 ; contexte settlement
-  « NCAA », pas « NFL »). Tennis = clés OddsAPI DYNAMIQUES par tournoi
-  (`discover_tennis_keys`, liste blanche `TENNIS_TOURNAMENTS` = Slams +
-  Masters 1000, réutilise le catalogue de `probe_key` → UN seul GET /sports
-  par scan), injectées dans `fetch_odds` — JAMAIS de clé `tennis_*` statique
-  dans `SPORT_KEYS`/`GOLDEN_SPORT_KEYS`. Fenêtre de dépense par préfixe
-  `tennis_` (`scan_windows._PREFIX_WINDOWS`). Coupe-circuit `TENNIS_DYNAMIC=0`.
-  Gardiens : `tests/test_new_sports_phase3.py`, `tests/test_tennis_discovery.py`.
 - Sub-agent `predator-diagnostician` pour tout audit pipeline/santé (isole les
   gros logs hors de la conversation principale).

@@ -22,7 +22,6 @@ ne soit levée.
 
 | Liste | A divergé de | Conséquence mesurée |
 |---|---|---|
-| Clés IA dans `wiz.yml` | `core/ai_router.py` | Tout le repli de Wiz partait sur Groq — le workflow contournait la réserve settlement qu'il prétendait protéger |
 | Clés IA dans les 7 workflows | `PRODUCTION_SAFE` | OVH et SiliconFlow inatteignables : 2 fournisseurs sur 9 morts en production |
 | `_AI_SECRETS` dans `scripts/ops.py` | `REGISTRY` | `secrets-push` sautait `OVH_AI_API_KEY` en silence |
 | Tables sport→emoji dans `index.html` | `api/index.py` | 3 sports actifs affichés « 🎯 rugbyleague » |
@@ -66,22 +65,19 @@ C'est le tableau à consulter avant de toucher à quoi que ce soit.
 | Les refus sont indiscernables entre eux | `…::test_la_reponse_ne_dit_pas_pourquoi` |
 | Aucune exception brute ne part dans une réponse HTTP | `…::TestPasDeFuiteDansLesReponses` |
 | `/api/health` répond base injoignable et ne publie aucun secret | `…::TestSondeDeSante` |
-| Un verdict Wiz `INDISPONIBLE` est rejoué, un verdict réel non | `tests/test_wiz_retry.py` |
 | Aucun mois antérieur à l'époque (août 2026) ne remonte sur /performance | `tests/test_mission2_dashboard_quota.py::test_une_fenetre_elargie_ne_rouvre_pas_juillet` |
 | La fenêtre reste glissante AU-DESSUS de l'époque (pas figée) | `…::test_la_fenetre_reste_glissante_au_dessus_de_lepoque` |
 | L'archivage ne touche jamais un signal `active` | `…::test_le_script_darchivage_de_juillet_existe_et_narchive_pas_a_laveugle` |
-| Tout sport-type servi a Kelly/seuil/quotas/emoji/labels/Wiz — y compris `tennis`, invisible au test statique | `tests/test_new_sports_phase3.py::TestInvariantDesQuatreFichiers` |
+| Tout sport-type servi a Kelly/seuil/quotas/emoji/labels — y compris `tennis`, invisible au test statique | `tests/test_new_sports_phase3.py::TestInvariantDesQuatreFichiers` |
 | Les clés tennis sont dynamiques (jamais statiques dans `SPORT_KEYS`/`GOLDEN_SPORT_KEYS`) et injectées dans `fetch_odds` | `tests/test_tennis_discovery.py::TestInjectionDansFetchOdds` |
 | Un seul `GET /sports` par scan (la découverte réutilise la sonde) | `…::test_un_seul_get_sports_par_scan` + `tests/test_odds_api_keypool.py` |
 | NCAAF a son sport-type dédié, Kelly < NFL, contexte de settlement « NCAA » | `tests/test_new_sports_phase3.py::TestNCAAF` |
-| Les sources porteuses de faits survivent à la troncature de Wiz | `tests/test_wiz_sources.py::TestLesFaitsDabord` |
-| Les deux sources gratuites de Wiz sont fusionnées, pas mises en concurrence | `…::test_les_deux_sources_gratuites_sont_fusionnees` |
 | `.python-version` reste sur la version de **Vercel** (3.12), jamais « alignée » sur les workflows | `tests/test_workflow_secrets.py::test_python_version_appartient_a_vercel` |
 | `vercel.json` et `.python-version` annoncent la même version | `…::test_vercel_json_annonce_la_meme_version_que_python_version` |
 | Les workflows sont d'accord entre eux sur Python 3.11 | `…::test_les_workflows_partagent_une_seule_version_de_python` |
 
 L'**invariant des sport-keys** (4 fichiers : `core/odds_api.py`,
-`core/learning_layer.py`, `api/index.py`, `core/wiz_engine.py`) est décrit
+`core/learning_layer.py`, `api/index.py`) est décrit
 dans `CLAUDE.md` ; son maillon d'affichage est tenu par
 `tests/test_dashboard_sports.py`. Vérifié propre sur les 4 fichiers le
 2026-08-22.
@@ -134,7 +130,8 @@ une copie propre.
   entrées sur 6. Deux pages entières injoignables au doigt.
 
   > **Suite, le même jour (`0866820`, décision opérateur)** : le menu a été
-  > volontairement ramené à quatre entrées — *Accueil · Sys · Wiz · Perf* —
+  > volontairement ramené à quatre entrées — *Accueil · Sys · Wiz · Perf*,
+  > devenues trois après la suppression de Wiz le 2026-08-26 —
   > et `/ledger` et `/audit` en ont été **retirés**. Les deux routes
   > fonctionnent toujours (200 en production) mais ne sont plus atteignables
   > par aucun lien, ni mobile ni desktop : il faut saisir l'URL.
@@ -146,7 +143,8 @@ une copie propre.
 
   > **Suite, le même jour — décision opérateur.** `/ledger` et `/audit` ont
   > ensuite été **volontairement masqués des DEUX menus**, qui portent
-  > désormais quatre entrées dans l'ordre **Accueil · Sys · Wiz · Perf**.
+  > désormais trois entrées dans l'ordre **Accueil · Sys · Perf**
+  > (Wiz retiré le 2026-08-26 avec sa page et son moteur).
   > Les deux pages restent servies et rendent normalement : elles ne sont
   > simplement plus liées, et s'atteignent par URL directe. Ce n'est donc
   > plus un défaut à « réparer » en les remettant — la skill
@@ -199,6 +197,14 @@ cibles (Win Rate > 65 %, Sharpe > 2.0, Sortino > 2.5, Profit Factor > 2.0)
 dont **rien n'était calculé** — `sharpe` n'apparaît que dans un commentaire.
 
 ### 3.7 Wiz : le correctif des sources ramenait des faits, le plafond les jetait
+
+> ⚠️ **SOUS-SYSTÈME SUPPRIMÉ le 2026-08-26.** La page /wiz et son moteur
+> (`run_wiz.py`, `core/wiz_*`, `wiz.yml`) n'existent plus — décision
+> opérateur. Les fichiers et tests cités ci-dessous ont été supprimés avec
+> eux ; cette section est conservée comme RÉCIT (la leçon sur les sources
+> qui « répondent » sans porter de fait reste valable ailleurs), pas comme
+> carte d'un code existant.
+
 
 Trouvé en **mesurant les sources en réseau réel**, pas en lisant le code.
 
@@ -465,6 +471,14 @@ Mesuré le 2026-08-22, avec la méthode :
 Honnêteté du document : ce qui suit n'est **pas** réglé.
 
 ### 5.1 Wiz : 100 % d'INDISPONIBLE — troisième cause trouvée, la localisation ne tirait jamais
+
+> ⚠️ **SOUS-SYSTÈME SUPPRIMÉ le 2026-08-26.** La page /wiz et son moteur
+> (`run_wiz.py`, `core/wiz_*`, `wiz.yml`) n'existent plus — décision
+> opérateur. Les fichiers et tests cités ci-dessous ont été supprimés avec
+> eux ; cette section est conservée comme RÉCIT (la leçon sur les sources
+> qui « répondent » sans porter de fait reste valable ailleurs), pas comme
+> carte d'un code existant.
+
 
 **Chronologie des trois causes, toutes mesurées le 2026-08-22.**
 

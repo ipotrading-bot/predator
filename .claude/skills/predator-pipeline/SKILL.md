@@ -44,51 +44,16 @@ trace the flow by hand. This skill is that trace, pre-done.
    needs ≥10 samples with `outcome not in ('expired', None)` before it will move a
    threshold. Thresholds persist to Supabase `meta` as `threshold_<sport>` and are
    read back by `run_engine.py` (`_load_thresholds`) as the next scan's `min_edge`.
-6. **Wiz (v10.0, side branch — does NOT feed back into 1–5)** — `run_wiz.py` →
-   `core/wiz_engine.py` + `core/wiz_ai.py` (cron: every 2h). Reads `signals`
-   (`status='active'`, kickoff < 24h) read-only, groups them **by `match_id`**,
-   makes ONE Mistral call per match (the `web_search` connector does the
-   searching inside that call), and writes one row into `wiz_analysis`. Its job is to catch a FALSE edge — a high edge that
-   exists because the soft book knows something (starter out, MLB pitcher
-   changed, team already qualified), not because it's slow.
-   Three things that must stay true, and that a well-meaning refactor would
-   break silently:
-   - **It writes nothing outside `wiz_analysis`.** Not `signals`, not `meta`.
-     The quantitative edge is validated; the qualitative data Wiz collects is
-     a losing bet on average the moment it touches the maths. Separate tables
-     are the mechanical guarantee, not a convention.
-   - **It uses Mistral, never Groq/Tavily** — separate failure domain on
-     purpose. Steps 1/4 already depend on Groq and its daily quota dies
-     regularly (see `core/ai_search.py`); sharing it would let an optional
-     layer starve a real settlement. Brave was dropped 2026-07-23 (its free
-     tier demands a credit card); Mistral's built-in `web_search` connector
-     replaced it and is itself Brave-powered under the hood.
-   - **The run is bounded by TIME, not by a request quota.** Mistral's free
-     tier is 2 requests/minute, so one match costs ~31s of pure waiting.
-     `WIZ_RUN_BUDGET` (20) and `timeout-minutes: 20` in the workflow must be
-     raised together or the job gets killed mid-run.
-   - **Tier C (pundit consensus) carries a NEGATIVE weight** in
-     `core/constants.py` `WIZ_TIER_WEIGHTS`. Public consensus agreeing with a
-     signal is a yellow flag (odds inflated by public flow), never a
-     confirmation. This is encoded in the sign of a coefficient rather than in
-     the prompt, precisely so a model can't ignore it — `tests/test_wiz_engine.py`
-     guards it. Flipping it to a small positive is the single easiest way to
-     silently make Wiz harmful.
-   `WIZ_ENFORCE` (default `0`) gates the `VETO` verdict's power to block
-   anything; nothing reads it today except the `/wiz` banner. It stays off
-   until `wiz_confidence` has been validated against real outcomes via
-   `core/learning_layer.py`'s Brier score (~30 settled signals).
-7. **Dashboard** — `api/index.py` Flask routes render `templates/*.html`. `/` and
-   `/ledger`/`/audit` read the `signals` table directly (so they only ever show the
-   last ~48h — that's by design, not a bug). `/performance` reads
-   `ai_learning_ledger` directly — if it's empty, the bug is almost always upstream
-   in step 3 or a not-yet-applied migration (see below), not in `api/index.py`.
-   `/wiz` and `/api/wiz` read `wiz_analysis` joined against active `signals` —
-   **read-only, no AI call and no web search in the request cycle**. One
-   analysis takes 10–60s (Mistral is throttled to 2 RPM); Vercel's serverless
-   timeout would kill the request before the first match finished. All the
-   work lives in `wiz.yml`/`run_wiz.py`. An empty `/wiz` is almost always
-   `sql/migrate_v10_0_wiz.sql` not applied, or `MISTRAL_API_KEY` missing.
+6. **Wiz — SUPPRIMÉ le 2026-08-26.** La page `/wiz`, son moteur
+(`run_wiz.py`, `core/wiz_*`), son workflow `wiz.yml`, ses tests et la lane
+`WIZ` du routeur n'existent plus (décision opérateur : « la page wiz ne me
+sert pas »). Ne pas les rechercher, ne pas les recréer. La table
+`wiz_analysis` reste en base mais plus aucun code ne la lit —
+`sql/migrate_v10_6_drop_wiz.sql` propose son archivage, NON APPLIQUÉ.
+Conséquence à connaître pour tout diagnostic IA : **Mistral n'est plus hors
+registre**, c'est un fournisseur ordinaire de `core/ai_router.py` sur les
+lanes `filter`/`analyze` (recherche de signaux). Il n'a jamais été validé par
+une inférence réelle — `python scripts/ops.py ai` est le seul juge.
 
 ## The sport-key invariant
 
@@ -410,7 +375,6 @@ couche de mise, publiés quand même). Depuis :
 | `deep_scan.yml` | **2x/jour (05:33, 17:33)** depuis le 2026-08-22 (était 4) | **fenêtre 24h elle aussi** — `HOURS_AHEAD: "24"` explicite. Le workflow s'appelait « Deep Scan 48h » alors qu'il faisait déjà 24h : renommé « Deep Scan 24h » le 2026-08-06. Ce qui reste « deep » = `MAX_MATCHES=100` et `_QUOTA_DEEP`, pas l'horizon. |
 | `audit.yml` | toutes les 6h | settlement + CLV + couche d'apprentissage |
 | `rapport.yml` | **toutes les 2h (H+35)** | rapport Telegram — était 07:05 & 18:05 jusqu'au 2026-08-06. `run_rapport.py:REPORT_WINDOW_H` (2h) doit rester égal à l'intervalle du cron, sinon un même signal repart dans plusieurs rapports. |
-| `wiz.yml` | toutes les 2h (H+15) | analyse contextuelle Wiz — écrit `wiz_analysis` uniquement, jamais `signals`. Délibérément HORS du groupe `predator-signals-write` (il ne lit que `signals` ; le mettre en file derrière un audit de 45 min lui ferait manquer la fenêtre de compositions T-3h). Ne pas raccourcir cette cadence — voir l'incident du 2026-07-07. |
 | `closing_line.yml` | horaire (H+00) | capture de la ligne de clôture |
 | `guerrilla.yml` | **2x/jour (09:47, 21:47)** depuis le 2026-08-22 (était toutes les 2h) | scan sans OddsAPI (1XBet direct + recherche web) — c'est lui, pas un bouton, qui consomme le TPD Groq quand les sources sont mortes ; le coupe-circuit `harvest_empty_at` le neutralise 3h après un Tier 2 vide |
 | `backfill.yml` | manuel | réparation one-shot de `ai_learning_ledger` |

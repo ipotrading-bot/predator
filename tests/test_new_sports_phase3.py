@@ -15,7 +15,7 @@ NCAAF a un sport-type DÉDIÉ, pas `americanfootball` : même raisonnement que
 un contexte de settlement qui ne dit pas « NFL » pour un match universitaire.
 """
 import run_engine
-from core import odds_api, scan_windows, settlement, wiz_engine
+from core import odds_api, scan_windows, settlement
 from core.constants import KELLY_FRACTION
 from core.learning_layer import SPORT_DEFAULTS
 from core.odds_api import SPORT_KEYS, _MARKETS_BY_SPORT
@@ -81,8 +81,10 @@ class TestInvariantDesQuatreFichiers:
             assert s in run_engine._SPORT_ORDER, s
             for tbl in (_SPORT_EMOJI, _SPORT_LABEL, _SPORT_LABEL_SHORT, _SPORT_ORDER):
                 assert s in tbl, s
-            assert s in wiz_engine._SPORT_QUERY_A, s
-            assert " OR " in wiz_engine._SPORT_QUERY_A[s], s   # groupe OR, pas de phrase en ET
+            # La vérification des requêtes Wiz par sport a disparu avec Wiz
+            # (page + moteur supprimés le 2026-08-26). Le reste de ce test —
+            # l'invariant des sport-keys à travers Kelly, quotas, emoji et
+            # libellés du dashboard — est intact.
 
     def test_aucun_sport_actif_retire(self):
         for key in ("americanfootball_nfl", "basketball_euroleague",

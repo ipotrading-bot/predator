@@ -22,7 +22,7 @@
    Matchbook    (sharp, sans clé)         Lanes : FILTER / ANALYZE /
    api-sports   (soft)                            TRANSLATE_CJK /
    odds.500.com (gratuit, mode ombre)             SEARCH_READ /
-   7M           (noms d'équipes)                  SETTLEMENT / WIZ
+   7M           (noms d'équipes)                  SETTLEMENT
    Kalshi / Polymarket (consensus)        Disjoncteur : 3 échecs → 30 min
           │                               Découverte du catalogue au run
           ▼                                        │
@@ -39,7 +39,7 @@
    ┌──────────────────────┐        ┌────────────────────────────────┐
    │  run_engine.py       │───────►│  Supabase  (signals, meta,     │
    │  scan, purge, émission│        │  ai_learning_ledger,          │
-   └──────────┬───────────┘        │  wiz_analysis, app_secrets)    │
+   └──────────┬───────────┘        │  app_secrets)                  │
               │                     └───────────────┬────────────────┘
               ▼                                     │
      Telegram (alertes)                             ▼
@@ -49,8 +49,6 @@
    core/closing_line.py  (CLV)      └────────────────────────────────┘
    core/learning_layer.py (seuils appris, verdicts par sport)
 
-   run_wiz.py + core/wiz_* — analyse contextuelle (Mistral, HORS registre
-   IA : domaine de panne séparé). N'écrit QUE dans wiz_analysis.
 ```
 
 Détail des invariants inter-fichiers et des pièges connus :
@@ -77,7 +75,6 @@ mauvais endroit.
 | `/audit` | Distribution d'alpha par sport, verdicts de promotion/retrait |
 | `/performance` | WIN/LOSS/PUSH depuis `ai_learning_ledger`, score de Brier |
 | `/system` | Calculateur de paris système, pré-rempli avec les signaux actifs |
-| `/wiz` | Analyse contextuelle par match (`wiz_analysis`), avec ses sources |
 
 Pas de build, pas de bundler : Jinja + CSS + JavaScript inline. Le dashboard
 n'écrit qu'une chose, une demande de scan dans `meta` (`/api/scan`, cooldown
@@ -97,8 +94,9 @@ de 120 s), ramassée par `golden_hour.yml` au passage suivant.
   Groq → 42 après correction).
 - **Réserve settlement gardée en négatif** — les autres lanes sont amputées
   et n'y touchent jamais. Le règlement des paris passe avant tout le reste.
-- **Wiz** (Mistral) est délibérément **hors** de ce registre : un domaine de
-  panne séparé, pour qu'un incident sur le routeur ne prenne pas Wiz avec lui.
+- **Mistral** y est entré le 2026-08-26, avec la suppression de Wiz : il en
+  était le fournisseur exclusif et vivait hors registre à ce titre. Son quota
+  sert désormais les lanes de signaux (`filter`, `analyze`).
 
 ### 📈 Mesure de la performance
 
@@ -167,7 +165,7 @@ http://localhost:5000
 | `TELEGRAM_BOT_TOKEN` / `TELEGRAM_CHAT_ID` | Notifications Telegram | ✅ |
 | `GROQ_API_KEY` / `TAVILY_API_KEY` | Recherche web (settlement + prix Pinnacle de repli) | ❌ |
 | `API_SPORTS_KEY` / `ODDS_API_IO_KEY` | Books soft authentifiés par clé (Tier 2) | ❌ |
-| `MISTRAL_API_KEY` | Wiz — raisonnement **et** recherche web (domaine de panne séparé) | ❌ |
+| `MISTRAL_API_KEY` | Fournisseur du registre IA — lanes `filter` / `analyze` | ❌ |
 | `NFL_SEASON_START` | Date d'ouverture NFL (défaut `2026-09-10`) — pas de scan de présaison | ❌ |
 | `ODDS_API_RESERVE_CREDITS` / `BACKGROUND_MIN_INTERVAL_MIN` | Politique de dépense OddsAPI (`core/scan_windows.py`) — défauts 60 / 180 | ❌ |
 
@@ -181,7 +179,7 @@ budget crédits avant/après, carte des crons, boucle de calibration) est docume
 2. **Groq** — [console.groq.com](https://console.groq.com/) · **Tavily** — [tavily.com](https://tavily.com/)
 3. **api-sports** — [api-sports.io](https://api-sports.io/) · **odds-api.io** — [odds-api.io](https://odds-api.io/)
 4. **Supabase** — [supabase.com](https://supabase.com/) (Plan gratuit)
-5. **Mistral** (Wiz, optionnel) — [console.mistral.ai](https://console.mistral.ai/)
+5. **Mistral** (optionnel) — [console.mistral.ai](https://console.mistral.ai/)
 
 ---
 
@@ -192,7 +190,6 @@ budget crédits avant/après, carte des crons, boucle de calibration) est docume
 | Endpoint | Method | Description |
 |----------|--------|-------------|
 | `/` | GET | Dashboard — signaux actifs |
-| `/wiz` | GET | **Wiz v10.0** — analyse contextuelle IA, classée par `wiz_rank_score` (lecture seule de `wiz_analysis`) |
 | `/ledger` | GET | Bilan CLV par sport |
 | `/audit` | GET | Audit CLV détaillé + seuils dynamiques |
 | `/performance` | GET | Rapport de performance AI learning (`ai_learning_ledger`) |
@@ -202,7 +199,6 @@ budget crédits avant/après, carte des crons, boucle de calibration) est docume
 | Endpoint | Method | Description |
 |----------|--------|-------------|
 | `/api/signals` | GET | Signaux actifs **encore jouables** — coup d'envoi non passé (`?all=1` pour la liste brute, diagnostic) |
-| `/api/wiz` | GET | Analyses Wiz + drapeau `enforce` (JSON) |
 | `/api/scan` | POST | Demander un scan PAIM — pose le flag `meta.scan_request`, ramassé par `golden_hour.yml` (≤ 30 min) |
 | `/api/audit/run` | POST | Déclencher `audit.yml` — **jeton d'admin requis** (`X-Predator-Token`), voir ci-dessous |
 | `/api/health` | GET | Santé du **dashboard** (aucun appel à Supabase — reste utilisable base injoignable) |
@@ -275,20 +271,15 @@ predator/
 │   ├── ai_router.py         # Registre 17 fournisseurs, lanes, disjoncteur, budgets
 │   ├── ai_search.py         # Recherche web (délègue au routeur) + pool de clés Groq
 │   ├── daily_quota.py       # Comptage des budgets journaliers
-│   │  ── Wiz (domaine de panne SÉPARÉ) ───────────────────────────────
-│   ├── wiz_ai.py            # Client Mistral — volontairement hors du registre
-│   ├── wiz_engine.py        # Prompts, parsing, pondération des tiers, wiz_rank_score
-│   ├── wiz_sources.py       # Sources d'actualité (Google News + Bing News RSS)
 │   │  ── Infrastructure ──────────────────────────────────────────────
 │   ├── db.py                # Source unique des clients Supabase (lecture vs écriture)
 │   └── secret_store.py      # Table `app_secrets` — BAT os.environ
-├── templates/               # index / wiz / ledger / audit / performance / system
+├── templates/               # index / ledger / audit / performance / system
 ├── sql/                     # Migrations Supabase — À APPLIQUER À LA MAIN
 ├── tests/                   # pytest — voir AUDIT.md pour la carte des invariants testés
 ├── .github/workflows/       # 14 workflows — tout le calcul tourne ici
 ├── run_engine.py            # Scan complet : collecte, purge, émission
 ├── run_audit.py             # Settlement + CLV
-├── run_wiz.py               # Wiz — batch d'analyse (n'écrit que wiz_analysis)
 ├── run_closing_line.py      # Capture des lignes de clôture
 ├── run_rapport.py           # Rapport Telegram (toutes les 2 h)
 ├── run_monte_carlo.py       # Simulation
@@ -394,7 +385,7 @@ réellement mesuré, et où :
 - **Supabase** (PostgreSQL) — seul état persistant
 - **Routeur IA maison** ([`core/ai_router.py`](core/ai_router.py)) — 17
   fournisseurs enregistrés, 9 utilisables en production ; aucun modèle codé
-  en dur. Mistral pour Wiz, hors registre.
+  en dur. Mistral est au registre depuis la suppression de Wiz (2026-08-26).
 
 ### Frontend
 - **Aucun framework, aucun bundler** — Jinja, CSS écrit à la main
