@@ -51,15 +51,27 @@ jobs:
       (github.event_name == 'workflow_dispatch' && github.event.inputs.report == 'rapport')
     runs-on: ubuntu-latest
     timeout-minutes: 10
-    env:
-      SECRETS_JSON: ${{ toJSON(secrets) }}
     steps:
       - uses: actions/checkout@v4
       - uses: ./.github/actions/setup
         with:
           pool: readonly
+        env:
+          # ▼ GÉNÉRÉ par `python scripts/ci_env.py --write` — pool `readonly`. NE PAS ÉDITER.
+          SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
+          SUPABASE_KEY: ${{ secrets.SUPABASE_KEY }}
+          TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
+          TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID }}
+          # ▲ fin du bloc généré (pool `readonly`)
       - name: Envoyer le rapport Telegram
-        run: python scripts/ci_env.py --pool readonly -- python run_rapport.py
+        env:
+          # ▼ GÉNÉRÉ par `python scripts/ci_env.py --write` — pool `readonly`. NE PAS ÉDITER.
+          SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
+          SUPABASE_KEY: ${{ secrets.SUPABASE_KEY }}
+          TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
+          TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID }}
+          # ▲ fin du bloc généré (pool `readonly`)
+        run: python run_rapport.py
 
   hebdo:
     if: >-
@@ -69,16 +81,43 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 10
     env:
-      SECRETS_JSON: ${{ toJSON(secrets) }}
       PYTHONPATH: .
     steps:
       - uses: actions/checkout@v4
       - uses: ./.github/actions/setup
         with:
           pool: readonly
+        env:
+          # ▼ GÉNÉRÉ par `python scripts/ci_env.py --write` — pool `readonly`. NE PAS ÉDITER.
+          SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
+          SUPABASE_KEY: ${{ secrets.SUPABASE_KEY }}
+          TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
+          TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID }}
+          # ▲ fin du bloc généré (pool `readonly`)
       - name: Classement des sports par réussite
-        run: python scripts/ci_env.py --pool readonly -- python scripts/rank_sports.py
+        env:
+          # ▼ GÉNÉRÉ par `python scripts/ci_env.py --write` — pool `readonly`. NE PAS ÉDITER.
+          SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
+          SUPABASE_KEY: ${{ secrets.SUPABASE_KEY }}
+          TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
+          TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID }}
+          # ▲ fin du bloc généré (pool `readonly`)
+        run: python scripts/rank_sports.py
       - name: Rapport de calibration par bande
-        run: python scripts/ci_env.py --pool readonly -- python scripts/calibration_report.py
+        env:
+          # ▼ GÉNÉRÉ par `python scripts/ci_env.py --write` — pool `readonly`. NE PAS ÉDITER.
+          SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
+          SUPABASE_KEY: ${{ secrets.SUPABASE_KEY }}
+          TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
+          TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID }}
+          # ▲ fin du bloc généré (pool `readonly`)
+        run: python scripts/calibration_report.py
       - name: Rapport hebdo de vérité (lecture seule + Telegram)
-        run: python scripts/ci_env.py --pool readonly -- python scripts/weekly_report.py
+        env:
+          # ▼ GÉNÉRÉ par `python scripts/ci_env.py --write` — pool `readonly`. NE PAS ÉDITER.
+          SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
+          SUPABASE_KEY: ${{ secrets.SUPABASE_KEY }}
+          TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
+          TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID }}
+          # ▲ fin du bloc généré (pool `readonly`)
+        run: python scripts/weekly_report.py

@@ -9,9 +9,9 @@ name: CI
 # DEUX fois (source `git` ET source `cli`, en course). Tant que la voie Git
 # est active, elle déploie sans attendre `test` et ce `needs:` ne protège rien.
 #
-# Les secrets VERCEL_* vivent dans l'environnement GitHub `production`, pas
-# dans les secrets du dépôt : ainsi `toJSON(secrets)` des autres workflows ne
-# les contient JAMAIS (voir scripts/ci_env.py). Ce job est le seul à les voir.
+# Les secrets VERCEL_* vivent dans l'environnement GitHub `production` : aucun
+# autre job ne les voit, et ils ne figurent dans aucun bloc généré par
+# scripts/ci_env.py. Ce job est le seul à les nommer.
 
 on:
   push:

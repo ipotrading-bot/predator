@@ -14,22 +14,39 @@ Mesuré le 2026-08-26 : le registre porte 18 fournisseurs, les workflows n'en
 câblaient que 15 (CEREBRAS/CHUTES/SAMBANOVA/ZHIPU manquaient partout). La
 divergence était déjà là au moment d'écrire ce fichier.
 
-COMMENT. Le workflow expose TOUS ses secrets en un seul bloc masqué :
+COMMENT — ET POURQUOI PAS `toJSON(secrets)`. La première version de ce
+fichier (2026-08-26) exposait tout d'un coup :
 
     env:
       SECRETS_JSON: ${{ toJSON(secrets) }}
 
-et chaque commande passe par ce script, qui ne laisse atteindre le process
-QUE les clés du pool demandé :
+GITHUB REFUSE DE FAIRE TOURNER UN WORKFLOW QUI FAIT ÇA. Message exact, relevé
+sur la page des runs : « GitHub detected that this workflow file may be
+malicious. It will not run until someone with write access approves it. »
+Conclusion `action_required`, ZÉRO job créé, aucun log, aucune annotation —
+sur TOUT événement, cron comme dispatch. Cinq des six workflows du dépôt sont
+restés muets ainsi ; seul `ci.yml`, qui ne contient pas cette expression,
+tournait.
 
-    python scripts/ci_env.py --pool scan --check                 # préflight : sort 1 si KO
-    python scripts/ci_env.py --pool scan -- python run_engine.py # exec avec l'env du pool
+Et GitHub a raison : verser l'intégralité des secrets dans une variable
+d'environnement est la signature d'un workflow d'exfiltration, et cette
+variable était de toute façon lisible par chaque step du job, `actions/checkout`
+et `pip install` compris. Ne JAMAIS chercher à contourner cette détection : ce
+serait évader un contrôle de sécurité pour rétablir une pratique qui était
+réellement dangereuse.
 
-Rien n'est écrit dans $GITHUB_ENV ni sur disque : SECRETS_JSON reste confiné à
-l'env du step, retiré de l'env du process lancé. Aucune valeur n'est jamais
-imprimée. ⚠️ NE JAMAIS ajouter un `echo` de debug dans ces steps : le masquage
-de GitHub reconnaît mal une valeur multi-lignes ré-encodée par toJSON (le PEM
-de BETFAIR_CERT devient des `\n` littéraux).
+Les blocs de secrets sont donc de nouveau ÉCRITS dans les YAML — mais plus
+JAMAIS à la main : ils sont GÉNÉRÉS depuis les pools ci-dessous et un test
+compare chaque bloc à sa source (tests/test_ci_env.py). C'est la parade que
+CLAUDE.md prescrit pour toute liste dupliquée : « soit on la dérive, soit un
+test la compare à sa source ». Ici, les deux.
+
+    python scripts/ci_env.py --write                # régénère les blocs des workflows
+    python scripts/ci_env.py --pool scan --render   # imprime le bloc d'un pool
+    python scripts/ci_env.py --pool scan --check    # préflight : sort 1 si KO
+
+Le préflight lit l'environnement du step, jamais un dump. Aucune valeur n'est
+imprimée, et il ne faut pas ajouter d'`echo` de debug dans ces steps.
 
 POOLS.
     scan        moteur de scan (run_engine.py) — tout sauf GROQ_API_KEY_3
@@ -155,6 +172,60 @@ def secret_names_for(pool: str) -> set:
     return names
 
 
+
+# ── Rendu des blocs YAML (l'ancienne voie toJSON est interdite, cf. en-tête) ──
+MARQUE_DEBUT = "# ▼ GÉNÉRÉ par `python scripts/ci_env.py --write` — pool `{pool}`. NE PAS ÉDITER."
+MARQUE_FIN = "# ▲ fin du bloc généré (pool `{pool}`)"
+_RE_BLOC = None  # compilé à la volée dans _blocs_de
+
+
+def render(pool: str, indent: int = 10) -> str:
+    """Le bloc `env:` YAML du pool — une ligne `NOM: ${{ secrets.SOURCE }}`
+    par clé, marqueurs compris. Déterministe : l'ordre vient des pools."""
+    pad = " " * indent
+    spec = POOLS[pool]
+    renames = spec.get("rename") or {}
+    lignes = [pad + MARQUE_DEBUT.format(pool=pool)]
+    for nom in spec["passthrough"]:
+        if nom in renames:
+            continue
+        lignes.append(f"{pad}{nom}: ${{{{ secrets.{nom} }}}}")
+    for dst, src in renames.items():
+        lignes.append(f"{pad}{dst}: ${{{{ secrets.{src} }}}}   "
+                      f"# cloisonnement : {dst} du process = secret {src}")
+    lignes.append(pad + MARQUE_FIN.format(pool=pool))
+    return "\n".join(lignes)
+
+
+def _blocs_de(texte: str):
+    """[(pool, indent, bloc_tel_qu_ecrit)] trouvés dans un YAML."""
+    import re
+    trouves = []
+    debut = re.compile(r"^([ ]*)# \u25bc GÉNÉRÉ par `python scripts/ci_env\.py --write` "
+                       r"— pool `([a-z]+)`\. NE PAS ÉDITER\.$")
+    lignes = texte.split("\n")
+    i = 0
+    while i < len(lignes):
+        m = debut.match(lignes[i])
+        if not m:
+            i += 1
+            continue
+        indent, pool = len(m.group(1)), m.group(2)
+        fin = MARQUE_FIN.format(pool=pool)
+        j = i + 1
+        while j < len(lignes) and lignes[j].strip() != fin:
+            j += 1
+        trouves.append((pool, indent, "\n".join(lignes[i:j + 1])))
+        i = j + 1
+    return trouves
+
+
+def reecrire(texte: str) -> str:
+    """Remplace chaque bloc marqué par son rendu à jour."""
+    for pool, indent, ancien in _blocs_de(texte):
+        texte = texte.replace(ancien, render(pool, indent), 1)
+    return texte
+
 # ── Préflight ─────────────────────────────────────────────────────────
 def supabase_role(key: str) -> str:
     """Rôle porté par une clé Supabase, décodé LOCALEMENT (aucun appel réseau).
@@ -228,46 +299,52 @@ def check(pool: str, secrets: dict) -> list[tuple[str, str]]:
 
 
 # ── CLI ───────────────────────────────────────────────────────────────
-def _load_secrets() -> dict:
-    raw = os.environ.get("SECRETS_JSON", "")
-    if not raw:
-        sys.stderr.write("::error::SECRETS_JSON absent — le job doit poser "
-                         "`SECRETS_JSON: ${{ toJSON(secrets) }}` dans son env.\n")
-        sys.exit(2)
-    try:
-        data = json.loads(raw)
-    except json.JSONDecodeError:
-        sys.stderr.write("::error::SECRETS_JSON n'est pas du JSON valide.\n")
-        sys.exit(2)
-    return {k: ("" if v is None else str(v)) for k, v in data.items()}
+def _load_secrets(pool: str) -> dict:
+    """Les secrets du pool, lus dans l'ENVIRONNEMENT du step.
+
+    C'est le bloc généré du workflow qui les y a mis, un par un. Il n'existe
+    plus de dump JSON : GitHub refuse de faire tourner un workflow qui en
+    fabrique un (cf. l'en-tête de ce fichier)."""
+    noms = set(POOLS[pool]["passthrough"]) | set((POOLS[pool].get("rename") or {}))
+    return {k: os.environ.get(k, "") for k in noms}
 
 
 def main(argv: list[str] | None = None) -> int:
     ap = argparse.ArgumentParser(description=__doc__.split("\n\n")[0])
-    ap.add_argument("--pool", required=True, choices=sorted(POOLS))
+    ap.add_argument("--pool", choices=sorted(POOLS))
     ap.add_argument("--check", action="store_true",
                     help="préflight seul : annotations GitHub, sort 1 si une erreur")
-    ap.add_argument("cmd", nargs="*", help="commande à exécuter avec l'env du pool (après --)")
+    ap.add_argument("--render", action="store_true",
+                    help="imprime le bloc `env:` YAML du pool")
+    ap.add_argument("--write", action="store_true",
+                    help="régénère les blocs marqués de .github/workflows/*.yml")
     args = ap.parse_args(argv)
 
-    secrets = _load_secrets()
+    if args.write:
+        change = []
+        for wf in sorted((ROOT / ".github" / "workflows").glob("*.yml")):
+            avant = wf.read_text(encoding="utf-8")
+            apres = reecrire(avant)
+            if apres != avant:
+                wf.write_text(apres, encoding="utf-8")
+                change.append(wf.name)
+        print("Blocs régénérés :", ", ".join(change) if change else "aucun changement")
+        return 0
+    if not args.pool:
+        ap.error("--pool est requis (sauf avec --write)")
+    if args.render:
+        print(render(args.pool))
+        return 0
+
+    secrets = _load_secrets(args.pool)
     findings = check(args.pool, secrets)
     for level, msg in findings:
         print(f"::{level}::{msg}")
     if any(lvl == "error" for lvl, _ in findings):
         return 1
-    if args.check:
-        print(f"Préflight pool={args.pool} OK — {len(POOLS[args.pool]['passthrough'])} variables "
-              f"transmises, aucune valeur affichée.")
-        return 0
-    if not args.cmd:
-        ap.error("aucune commande : `--check` ou `-- <commande>`")
-
-    env = {k: v for k, v in os.environ.items() if k != "SECRETS_JSON"}
-    env.update(env_for(args.pool, secrets))
-    sys.stdout.flush()
-    os.execvpe(args.cmd[0], args.cmd, env)
-    return 0  # jamais atteint
+    print(f"Préflight pool={args.pool} OK — {len(POOLS[args.pool]['passthrough'])} variables "
+          f"attendues, aucune valeur affichée.")
+    return 0
 
 
 if __name__ == "__main__":

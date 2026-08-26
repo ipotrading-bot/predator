@@ -6,19 +6,13 @@ description: >-
   clés par job, dérivée du registre IA. Le checkout reste dans l'appelant :
   une action locale ne peut pas tourner avant que le dépôt soit présent.
 
-  Le job appelant DOIT exposer ses secrets en un bloc JSON masqué dans son
-  env, sous le nom SECRETS_JSON. La syntaxe exacte est dans scan.yml — elle
-  ne peut PAS être recopiée ici : GitHub ÉVALUE les expressions du champ
-  `description` d'un manifeste d'action, où `secrets` n'est pas un
-  named-value valide. Le manifeste entier refuse alors de se charger
-  (« Unrecognized named-value: 'secrets' ») et TOUS les workflows du dépôt
-  échouent en 11 s. Vécu le 2026-08-26 : ni le parsing YAML ni la suite de
-  tests ne voient ce piège, seul un run GitHub le révèle.
-
-  ⚠️ L'ORDRE DES STEPS EST LOAD-BEARING : le préflight importe
-  core.ai_router, qui importe `requests`. Le remonter avant l'installation
-  pour « échouer plus tôt » ferait échouer sur un ModuleNotFoundError au lieu
-  du message qui nomme le secret manquant.
+  Le step appelant DOIT poser le bloc `env:` de son pool, généré par
+  `python scripts/ci_env.py --write`. NE JAMAIS fabriquer un dump de tous les
+  secrets (`toJSON(secrets)`) : GitHub refuse de faire tourner un workflow qui
+  en contient un — « GitHub detected that this workflow file may be malicious »,
+  conclusion `action_required`, zéro job, aucun log. Vécu le 2026-08-26 sur
+  cinq des six workflows. Et la détection a raison : ce dump était lisible par
+  chaque step du job, `actions/checkout` compris.
 
 inputs:
   pool:

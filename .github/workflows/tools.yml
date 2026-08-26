@@ -28,11 +28,21 @@ jobs:
         with:
           pool: readonly
         env:
-          SECRETS_JSON: ${{ toJSON(secrets) }}
+          # ▼ GÉNÉRÉ par `python scripts/ci_env.py --write` — pool `readonly`. NE PAS ÉDITER.
+          SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
+          SUPABASE_KEY: ${{ secrets.SUPABASE_KEY }}
+          TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
+          TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID }}
+          # ▲ fin du bloc généré (pool `readonly`)
       - name: Simulation Monte Carlo
         env:
-          SECRETS_JSON: ${{ toJSON(secrets) }}
-        run: python scripts/ci_env.py --pool readonly -- python run_monte_carlo.py
+          # ▼ GÉNÉRÉ par `python scripts/ci_env.py --write` — pool `readonly`. NE PAS ÉDITER.
+          SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
+          SUPABASE_KEY: ${{ secrets.SUPABASE_KEY }}
+          TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
+          TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID }}
+          # ▲ fin du bloc généré (pool `readonly`)
+        run: python run_monte_carlo.py
 
   backfill_ledger:
     if: github.event.inputs.tool == 'backfill_ledger'
@@ -47,8 +57,16 @@ jobs:
         with:
           pool: backfill
         env:
-          SECRETS_JSON: ${{ toJSON(secrets) }}
+          # ▼ GÉNÉRÉ par `python scripts/ci_env.py --write` — pool `backfill`. NE PAS ÉDITER.
+          SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
+          SUPABASE_KEY: ${{ secrets.SUPABASE_KEY }}
+          SUPABASE_SERVICE_KEY: ${{ secrets.SUPABASE_SERVICE_KEY }}
+          # ▲ fin du bloc généré (pool `backfill`)
       - name: Backfill du ledger
         env:
-          SECRETS_JSON: ${{ toJSON(secrets) }}
-        run: python scripts/ci_env.py --pool backfill -- python backfill_ledger.py
+          # ▼ GÉNÉRÉ par `python scripts/ci_env.py --write` — pool `backfill`. NE PAS ÉDITER.
+          SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
+          SUPABASE_KEY: ${{ secrets.SUPABASE_KEY }}
+          SUPABASE_SERVICE_KEY: ${{ secrets.SUPABASE_SERVICE_KEY }}
+          # ▲ fin du bloc généré (pool `backfill`)
+        run: python backfill_ledger.py

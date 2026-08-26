@@ -237,52 +237,83 @@ def test_closing_line_cadence_alignee_sur_refresh_min():
         f"closing_line.yml tire toutes les {min(ecarts)} min, refresh à {CLOSING_LINE_REFRESH_MIN}"
 
 
-# ── Les workflows n'ont plus de liste de secrets à la main ────────────
+# ── Les blocs de secrets sont GÉNÉRÉS, et vérifiés à chaque exécution ──
 
 WORKFLOWS = sorted((RACINE / ".github" / "workflows").glob("*.yml"))
-SECRETS_MAIN_AUTORISES = {"VERCEL_TOKEN", "VERCEL_ORG_ID", "VERCEL_PROJECT_ID"}  # environnement `production`
+# `production` (environnement GitHub) — jamais dans un bloc généré.
+SECRETS_HORS_BLOC = {"VERCEL_TOKEN", "VERCEL_ORG_ID", "VERCEL_PROJECT_ID"}
 
 
 @pytest.mark.parametrize("wf", WORKFLOWS, ids=lambda p: p.name)
-def test_aucun_workflow_ne_liste_un_secret_a_la_main(wf):
-    noms = set(re.findall(r"secrets\.([A-Za-z0-9_]+)", wf.read_text(encoding="utf-8")))
-    interdits = sorted(noms - SECRETS_MAIN_AUTORISES)
-    assert not interdits, (f"{wf.name} liste {interdits} à la main — passer par "
-                           "SECRETS_JSON + scripts/ci_env.py --pool (liste dérivée du registre)")
+def test_chaque_bloc_genere_est_conforme_a_son_pool(wf):
+    """Les workflows RÉÉCRIVENT les secrets, mais personne ne les tient à la main.
 
+    La première version (2026-08-26) exposait `SECRETS_JSON: ${{ toJSON(secrets) }}`
+    et filtrait à l'exécution. GitHub REFUSE un workflow qui fait ça : « GitHub
+    detected that this workflow file may be malicious. It will not run until
+    someone with write access approves it. » — conclusion `action_required`,
+    ZÉRO job, aucun log, sur tout événement. Cinq des six workflows sont restés
+    muets ainsi. La détection a raison : verser tous les secrets dans une
+    variable est la signature d'une exfiltration, et cette variable était
+    lisible par chaque step du job.
 
-@pytest.mark.parametrize("wf", WORKFLOWS, ids=lambda p: p.name)
-def test_aucun_workflow_nutilise_le_contexte_inputs_nu(wf):
-    """`inputs.x` n'existe que pendant un workflow_dispatch/workflow_call.
-
-    Vécu le 2026-08-26 sur reports.yml : ses `if:` de job écrivaient
-    `inputs.report == 'rapport'`. Sur un `push`, le run était créé puis se
-    terminait INSTANTANÉMENT en `action_required`, avec ZÉRO job, sans message
-    d'erreur, sans log consultable et sans annotation. Reproduit deux fois. Un
-    `if:` de job est évalué AVANT la création des jobs : une référence qu'il ne
-    peut pas résoudre ne donne pas un job rouge, elle donne un workflow qui
-    n'existe pas — le mode de panne le plus coûteux de ce dépôt, celui qui ne
-    lève rien.
-
-    `github.event.inputs.*` est un simple accès au payload de l'événement :
-    nul hors dispatch, identique pendant un dispatch. Il n'y a aucune raison
-    d'utiliser la forme nue ici."""
+    Les blocs sont donc écrits — mais générés par `ci_env.py --write` depuis les
+    pools, eux-mêmes dérivés du registre IA. Ce test est la moitié « un test
+    compare la copie à sa source » de la parade de CLAUDE.md.
+    """
     texte = wf.read_text(encoding="utf-8")
-    fautifs = []
-    for ligne in texte.splitlines():
-        nu = ligne.split("#", 1)[0]
-        if re.search(r"(?<!event\.)\binputs\.[a-z_]+", nu):
-            fautifs.append(ligne.strip()[:80])
-    assert not fautifs, (f"{wf.name} utilise le contexte `inputs` nu : {fautifs} — "
-                          "écrire `github.event.inputs.…`")
+    for pool, indent, ecrit in ci_env._blocs_de(texte):
+        assert ecrit == ci_env.render(pool, indent), (
+            f"{wf.name} : le bloc du pool `{pool}` a divergé de sa source — "
+            "lancer `python scripts/ci_env.py --write`")
 
 
 @pytest.mark.parametrize("wf", WORKFLOWS, ids=lambda p: p.name)
-def test_chaque_job_a_secrets_passe_par_un_pool(wf):
-    doc = yaml.safe_load(wf.read_text(encoding="utf-8"))
-    for nom, job in (doc.get("jobs") or {}).items():
-        texte = yaml.dump(job)
-        if "toJSON(secrets)" in texte:
-            pools = set(re.findall(r"--pool[ :\"']+([a-z]+)", texte))
-            assert pools and pools <= set(ci_env.POOLS), \
-                f"{wf.name}:{nom} expose SECRETS_JSON sans pool valide ({pools})"
+def test_aucun_secret_nommé_hors_dun_bloc_genere(wf):
+    """Un secret ajouté à la main échappe au générateur : c'est la divergence
+    que toute cette mécanique existe pour rendre impossible."""
+    texte = wf.read_text(encoding="utf-8")
+    dedans = set()
+    for _pool, _i, bloc in ci_env._blocs_de(texte):
+        dedans |= set(re.findall(r"secrets\.([A-Za-z0-9_]+)", bloc))
+    dehors = set(re.findall(r"secrets\.([A-Za-z0-9_]+)", texte)) - dedans - SECRETS_HORS_BLOC
+    assert not dehors, (f"{wf.name} nomme {sorted(dehors)} hors d'un bloc généré — "
+                        "l'ajouter au pool dans scripts/ci_env.py puis `--write`")
+
+
+@pytest.mark.parametrize("wf", WORKFLOWS, ids=lambda p: p.name)
+def test_aucun_workflow_ne_fabrique_un_dump_de_secrets(wf):
+    """`toJSON(secrets)` fait refuser le workflow par GitHub — et à raison.
+    Ne jamais chercher à contourner cette détection : ce serait évader un
+    contrôle de sécurité pour rétablir une pratique réellement dangereuse."""
+    texte = wf.read_text(encoding="utf-8")
+    fautives = [l.strip()[:70] for l in texte.splitlines()
+                if "toJSON" in l.split("#", 1)[0] and "secrets" in l.split("#", 1)[0]]
+    assert not fautives, f"{wf.name} fabrique un dump de secrets : {fautives}"
+
+
+def test_le_step_reprice_ne_peut_mecaniquement_rien_depenser():
+    """Le bloc du step REPRICE ne contient que Supabase et Telegram : la
+    garantie n'est plus un filtrage à l'exécution mais ce que le YAML transmet.
+    C'est plus fort, et c'est vérifiable en lisant le fichier."""
+    texte = (RACINE / ".github" / "workflows" / "scan.yml").read_text(encoding="utf-8")
+    blocs = {pool: b for pool, _i, b in ci_env._blocs_de(texte)}
+    assert "reprice" in blocs, "scan.yml n'a plus de bloc `reprice`"
+    noms = set(re.findall(r"secrets\.([A-Za-z0-9_]+)", blocs["reprice"]))
+    assert not (noms & CLES_PAYANTES), f"REPRICE reçoit des clés payantes : {noms & CLES_PAYANTES}"
+
+
+def test_le_settlement_ne_recoit_que_la_cle_groq_de_reserve():
+    texte = (RACINE / ".github" / "workflows" / "audit.yml").read_text(encoding="utf-8")
+    blocs = {pool: b for pool, _i, b in ci_env._blocs_de(texte)}
+    groq = re.findall(r"GROQ_API_KEY: \$\{\{ secrets\.([A-Za-z0-9_]+)", blocs["settlement"])
+    assert groq == [ci_env.GROQ_SETTLEMENT_SOURCE], groq
+    assert "secrets.GROQ_API_KEY " not in blocs["settlement"]
+
+
+def test_write_est_idempotent(tmp_path):
+    """`--write` relancé sur un dépôt à jour ne change rien : sinon le test
+    ci-dessus deviendrait un bruit permanent."""
+    for wf in WORKFLOWS:
+        texte = wf.read_text(encoding="utf-8")
+        assert ci_env.reecrire(texte) == texte, f"{wf.name} n'est pas à jour"
