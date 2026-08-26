@@ -159,15 +159,24 @@ Tout le calcul tourne en crons GitHub Actions ; le dashboard est en lecture seul
   chinois en mojibake — panne silencieuse ressemblant à un parseur cassé.
   Chemin relais VÉRIFIÉ de bout en bout contre un serveur local conforme :
   15 fixtures, `大田市民 vs 蔚山现代` intact ; jeton faux → 403 ; hôte hors
-  liste avec jeton valide → 403 ; 7M → 435 ids. Il MANQUE le déploiement du
-  Worker et les deux secrets : rien ne change tant qu'ils n'existent pas.
-  ⚠️ NON VÉRIFIÉ, ET NON VÉRIFIABLE D'ICI : que 500.com accepte les IP de
-  sortie de Cloudflare. Un 502 du Worker = l'edge est bloqué aussi, il
-  faudra alors un proxy à IP dédiée. Corollaire : tant qu'aucun
-  proxy n'est fourni, la chaîne odds500 → 7M → `team_aliases` reste morte en
-  prod, et 7M avec elle (l'appariement a besoin du côté chinois ; titan007 ne
-  peut pas le remplacer, il rend déjà des noms anglais). La joignabilité de 7M
-  depuis un runner est INCONNUE, pas bonne : il n'a jamais été appelé.
+  liste avec jeton valide → 403 ; 7M → 435 ids.
+  EN PRODUCTION DEPUIS LE 2026-08-26 : Worker `predator-relay` déployé sur le
+  compte, sous-domaine `predator-relay.ipotradingbot.workers.dev`, et les deux
+  secrets GitHub posés. ⚠️ LE PIÈGE QUI A COÛTÉ LE PLUS DE TEMPS : le Worker
+  était uploadé ET son binding `RELAY_TOKEN` présent, mais le sous-domaine
+  `workers.dev` était DÉSACTIVÉ — le script n'avait donc aucune URL publique
+  et rendait 404 sur tout. Un `workers/scripts` qui liste le Worker ne prouve
+  PAS qu'il est joignable : vérifier `GET workers/scripts/<nom>/subdomain`
+  (`enabled: true`). La valeur d'un `RELAY_TOKEN` déjà posé étant ILLISIBLE,
+  la seule façon de faire correspondre les deux côtés est de le faire tourner.
+  ✅ LEVÉ — que 500.com accepte les IP de sortie de Cloudflare : mesuré le
+  2026-08-26, 200 et 58 807 octets à travers le relais, soit exactement la
+  taille obtenue en direct. Pas de 502, donc pas de proxy à IP dédiée à
+  chercher. Encodage vérifié à travers le relais : 518 noms chinois, ZÉRO
+  mojibake. 7M a été joint pour la PREMIÈRE fois (435 ids) — sa joignabilité
+  n'est plus inconnue. `ops.py sources` affiche `[via relais Cloudflare]` sur
+  les deux. Reste le seul juge qui compte : un run GitHub Actions (un poste de
+  dev joint déjà 500.com en direct, il ne prouve rien).
 - Kalshi/Polymarket : BRANCHÉS le 2026-08-26 (`free_sources.measure_slate_consensus`,
   appelé par `harvester._fetch_multi_book`). Ils étaient importés NULLE PART
   hors de leurs tests depuis le 2026-08-22 — capacité morte en silence. Rôle
