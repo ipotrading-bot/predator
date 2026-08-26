@@ -6,7 +6,14 @@ description: >-
   clés par job, dérivée du registre IA. Le checkout reste dans l'appelant :
   une action locale ne peut pas tourner avant que le dépôt soit présent.
 
-  Le job appelant DOIT poser `SECRETS_JSON: ${{ toJSON(secrets) }}` dans son env.
+  Le job appelant DOIT exposer ses secrets en un bloc JSON masqué dans son
+  env, sous le nom SECRETS_JSON. La syntaxe exacte est dans scan.yml — elle
+  ne peut PAS être recopiée ici : GitHub ÉVALUE les expressions du champ
+  `description` d'un manifeste d'action, où `secrets` n'est pas un
+  named-value valide. Le manifeste entier refuse alors de se charger
+  (« Unrecognized named-value: 'secrets' ») et TOUS les workflows du dépôt
+  échouent en 11 s. Vécu le 2026-08-26 : ni le parsing YAML ni la suite de
+  tests ne voient ce piège, seul un run GitHub le révèle.
 
   ⚠️ L'ORDRE DES STEPS EST LOAD-BEARING : le préflight importe
   core.ai_router, qui importe `requests`. Le remonter avant l'installation
