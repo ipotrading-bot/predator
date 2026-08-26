@@ -18,7 +18,9 @@ from datetime import datetime, timezone
 
 import requests
 
-from core.constants import TAX_RATE
+from core.audit_engine import count_missed_closing_lines
+from core.constants import (CLOSING_SRC_EXCHANGE, CLOSING_SRC_ODDSAPI,
+                            CLOSING_SRC_ORACLE, TAX_RATE)
 from core.db import get_db
 from core.learning_layer import (SPORT_DEFAULTS, _LEDGER_SELECT, _clv_stats,
                                  _sport_stats, load_sport_verdicts, playable_rows)
@@ -66,6 +68,66 @@ def suspect_rate(signal_rows: list[dict]) -> tuple[int, int]:
     return sus, total
 
 
+# Relevé en base le 2026-08-26 à 19:32 UTC, juste avant que la capture depuis
+# l'exchange n'entre en service : 77 signaux actifs avaient dépassé leur coup
+# d'envoi sans le moindre prix de clôture, sur 92 actifs — 6 seulement en
+# portaient un. C'est le chiffre contre lequel se lisent les suivants. Sans
+# lui, « 60 manqués » se lit comme une panne alors que ce serait un progrès.
+CLOSING_MISSED_BASELINE = 77
+CLOSING_BASELINE_DATE = "2026-08-26"
+
+
+def closing_coverage(signal_rows: list[dict], missed: int) -> list[str]:
+    """Section « couverture closing line » du rapport hebdo. Pure.
+
+    POURQUOI ELLE EXISTE. Le CLV réel est le juge de rentabilité de tout ce
+    pipeline, et `core/learning_layer.py` en fait un critère de premier rang —
+    mais un signal sans prix de clôture n'y participe simplement pas. Le
+    compteur existait déjà (`count_missed_closing_lines`), il ne vivait que
+    dans les logs d'un job : personne ne le voyait monter. Une métrique que
+    seul un humain attentif peut remarquer n'est pas surveillée.
+
+    CE QU'ELLE DOIT RENDRE VISIBLE. La cadence de closing_line.yml est passée
+    de 144 ticks/jour à 108 passes le 2026-08-26 (`4-59/10` → `14,34,54`, plus
+    une passe après chaque scan). C'est un arbitrage mesurable, pas un gain
+    acquis : les passes post-scan sont agglutinées sur les minutes de scan et
+    non réparties. Si les manqués montent au-dessus de la référence, le retour
+    arrière tient en une ligne de cron.
+    """
+    captures: dict[str, int] = {}
+    for r in signal_rows:
+        src = r.get("closing_source")
+        if r.get("closing_pinnacle_price") and src:
+            captures[str(src)] = captures.get(str(src), 0) + 1
+
+    delta = missed - CLOSING_MISSED_BASELINE
+    if delta <= -5:
+        verdict = f"🟢 {abs(delta)} de moins qu'au {CLOSING_BASELINE_DATE}"
+    elif delta >= 5:
+        verdict = (f"🔴 {delta} de PLUS qu'au {CLOSING_BASELINE_DATE} — vérifier la cadence "
+                   "de closing_line.yml et la passe post-scan de scan.yml")
+    else:
+        verdict = f"⚪ stable vs {CLOSING_BASELINE_DATE}"
+
+    lignes = ["", "📉 *Couverture closing line*",
+              f"   {missed} signal(s) actif(s) ont dépassé le coup d'envoi sans prix de "
+              f"clôture (référence {CLOSING_MISSED_BASELINE}) — {verdict}"]
+    if captures:
+        libelles = {CLOSING_SRC_EXCHANGE: "exchange (exact, gratuit)",
+                    CLOSING_SRC_ODDSAPI: "oddsapi (voie morte depuis le 2026-08-26)",
+                    CLOSING_SRC_ORACLE: "oracle (estimation web, favori h2h)"}
+        detail = " · ".join(f"{libelles.get(k, k)} : {v}"
+                            for k, v in sorted(captures.items(), key=lambda kv: -kv[1]))
+        lignes.append(f"   Captures en base — {detail}")
+    else:
+        lignes.append("   Aucune capture en base : le CLV réel ne peut alimenter aucun seuil.")
+    if not captures.get(CLOSING_SRC_EXCHANGE):
+        lignes.append("   ⚠️ ZÉRO capture `exchange` — `capture_from_exchange` ne produit rien. "
+                      "Elle est appelée après `_enrich_from_exchange` dans run_engine.py ; "
+                      "un slate sans marché Matchbook apparié donne ce résultat.")
+    return lignes
+
+
 def _pct(x, signed=False):
     if x is None:
         return "—"
@@ -103,7 +165,8 @@ def format_ai_health(rows: list[dict]) -> list[str]:
 
 def format_report(metrics_by_sport: dict[str, dict], verdicts: dict[str, dict],
                   suspect: tuple[int, int], now: datetime,
-                  ai_health: list[dict] | None = None) -> str:
+                  ai_health: list[dict] | None = None,
+                  closing: list[str] | None = None) -> str:
     """Texte Telegram/console du rapport hebdo. Pure."""
     lines = [f"📚 *PREDATOR — rapport hebdo de vérité* · {now:%d/%m %H:%M} UTC",
              "CLV réel > 0 et calibration stable = l'objectif ; le ROI court terme n'est qu'un témoin.",
@@ -137,6 +200,7 @@ def format_report(metrics_by_sport: dict[str, dict], verdicts: dict[str, dict],
         lines.append("")
         lines.append("⚠️ *Alertes* — retrait proposé : " + ", ".join(sorted(alerts))
                      + " (≥30 réglés, edge non démontré — à trancher par l'opérateur)")
+    lines.extend(closing or [])
     lines.extend(format_ai_health(ai_health or []))
     return "\n".join(lines)
 
@@ -169,18 +233,26 @@ def main() -> int:
         except Exception as e:
             print(f"{sport}: lecture impossible — {e}")
     try:
-        res = sb.table("signals").select("risk_flag").limit(1000).execute()
-        suspect = suspect_rate(res.data or [])
+        res = (sb.table("signals")
+               .select("risk_flag,closing_source,closing_pinnacle_price")
+               .limit(1000).execute())
+        signal_rows = res.data or []
+        suspect = suspect_rate(signal_rows)
     except Exception as e:
         print(f"signals: lecture impossible — {e}")
-        suspect = (0, 0)
+        signal_rows, suspect = [], (0, 0)
+    try:
+        closing = closing_coverage(signal_rows, count_missed_closing_lines(sb))
+    except Exception as e:                  # jamais bloquant pour le rapport
+        print(f"couverture closing line : lecture impossible — {e}")
+        closing = []
     try:
         from core.ai_router import health_summary
         ai_health = health_summary()
     except Exception as e:                  # jamais bloquant pour le rapport
         print(f"santé IA : lecture impossible — {e}")
         ai_health = []
-    text = format_report(metrics, load_sport_verdicts(sb), suspect, now, ai_health)
+    text = format_report(metrics, load_sport_verdicts(sb), suspect, now, ai_health, closing)
     print(text)
     _send(text)
     return 0

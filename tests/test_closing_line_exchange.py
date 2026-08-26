@@ -244,3 +244,64 @@ def test_needs_refresh_laisse_repricer_un_prix_exchange_perime():
                            "closing_source": CLOSING_SRC_EXCHANGE,
                            "match_time": (NOW + timedelta(minutes=30)).isoformat()},
                           NOW) is True
+
+
+# ── La couverture est SURVEILLÉE, pas laissée aux logs ───────────────
+
+class TestCouvertureAuRapportHebdo:
+    """`count_missed_closing_lines` existait déjà mais ne vivait que dans les
+    logs d'un job : personne ne le voyait monter. Une métrique que seul un
+    humain attentif peut remarquer n'est pas surveillée — et celle-ci décide
+    de la quantité de CLV réel qui alimente `core/learning_layer.py`.
+
+    Elle part désormais dans le rapport hebdo, avec la référence mesurée en
+    base le 2026-08-26 (77 manqués sur 92 actifs, 6 captures) : sans elle,
+    « 60 manqués » se lirait comme une panne alors que ce serait un progrès.
+    """
+
+    def _mod(self):
+        import importlib.util
+        from pathlib import Path
+        chemin = Path(__file__).resolve().parent.parent / "scripts" / "weekly_report.py"
+        spec = importlib.util.spec_from_file_location("_weekly_sous_test", chemin)
+        mod = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(mod)
+        return mod
+
+    def test_une_hausse_est_signalee_en_rouge(self):
+        w = self._mod()
+        texte = "\n".join(w.closing_coverage([], w.CLOSING_MISSED_BASELINE + 20))
+        assert "🔴" in texte and "closing_line.yml" in texte, \
+            "une hausse doit nommer le levier de retour arrière, pas seulement un chiffre"
+
+    def test_une_baisse_est_signalee_en_vert(self):
+        w = self._mod()
+        assert "🟢" in "\n".join(w.closing_coverage([], w.CLOSING_MISSED_BASELINE - 20))
+
+    def test_le_chiffre_brut_est_toujours_lu_contre_sa_reference(self):
+        """Un compte nu ne veut rien dire : c'est l'écart qui informe."""
+        w = self._mod()
+        texte = "\n".join(w.closing_coverage([], 40))
+        assert str(w.CLOSING_MISSED_BASELINE) in texte and "40" in texte
+
+    def test_zero_capture_exchange_est_une_alerte(self):
+        """La capture d'exchange peut ne rien produire sans lever d'erreur —
+        c'est même son contrat (refus plutôt que prix faux). Le silence ne doit
+        pas se confondre avec le succès."""
+        w = self._mod()
+        rows = [{"closing_source": CLOSING_SRC_ORACLE, "closing_pinnacle_price": 1.9}]
+        assert "ZÉRO capture `exchange`" in "\n".join(w.closing_coverage(rows, 10))
+
+    def test_des_captures_exchange_font_taire_lalerte(self):
+        w = self._mod()
+        rows = [{"closing_source": CLOSING_SRC_EXCHANGE, "closing_pinnacle_price": 1.9}]
+        texte = "\n".join(w.closing_coverage(rows, 10))
+        assert "ZÉRO capture" not in texte and "exchange" in texte
+
+    def test_la_section_est_bien_montee_dans_le_rapport(self):
+        """Une fonction pure jamais appelée serait le même angle mort qu'avant."""
+        from datetime import datetime, timezone
+        w = self._mod()
+        texte = w.format_report({}, {}, (0, 0), datetime(2026, 8, 26, tzinfo=timezone.utc),
+                                [], w.closing_coverage([], 99))
+        assert "Couverture closing line" in texte and "99" in texte
