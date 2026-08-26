@@ -257,7 +257,7 @@ def _ai_secrets() -> tuple:
     # déjà couvert par `noms` ci-dessus. La garder en dur rétablirait
     # exactement la duplication que ce fichier existe pour éviter.
     noms |= {"CLOUDFLARE_ACCOUNT_ID", "TAVILY_API_KEY",
-             "GROQ_API_KEY_2", "GROQ_API_KEY_3", "GROQ_API_KEY_4"}
+             "GROQ_API_KEY_2", "GROQ_API_KEY_3", "GROQ_API_KEY_4", "GROQ_API_KEY_5"}
     return tuple(sorted(noms))
 
 

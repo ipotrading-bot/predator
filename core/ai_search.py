@@ -180,7 +180,12 @@ def _all_models() -> list:
 # uniformément : audit.yml ne reçoit que la clé du settlement (sous le nom
 # GROQ_API_KEY), les workflows de scan reçoivent les autres. C'est le workflow
 # qui décide de la réserve, pas ce module — d'où l'ordre simple ci-dessous.
-_KEY_ENVS = ("GROQ_API_KEY", "GROQ_API_KEY_2", "GROQ_API_KEY_3", "GROQ_API_KEY_4")
+# _5 ajoutée le 2026-08-26 : 4e organisation de SCAN (vérifiée neuve — compound-mini
+# y répond 200 pendant que les trois autres orgs rendent 429 TPD). Chaque org
+# distincte = +100k tokens/jour de recherche web, la seule ressource que rien
+# d'autre ne remplace. Une clé de plus sur une org EXISTANTE ne compterait pas.
+_KEY_ENVS = ("GROQ_API_KEY", "GROQ_API_KEY_2", "GROQ_API_KEY_3", "GROQ_API_KEY_4",
+             "GROQ_API_KEY_5")
 
 
 def _groq_keys() -> list[str]:

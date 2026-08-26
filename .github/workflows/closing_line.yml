@@ -85,6 +85,7 @@ jobs:
           # TPD avant qu'un seul WIN/LOSS soit écrit. _4 est la clé d'appoint
           # des scans : elle élargit LEUR réserve sans toucher à celle de l'audit.
           GROQ_API_KEY_4:     ${{ secrets.GROQ_API_KEY_4 }}
+          GROQ_API_KEY_5:     ${{ secrets.GROQ_API_KEY_5 }}
           TAVILY_API_KEY:     ${{ secrets.TAVILY_API_KEY }}
           # ── Routeur IA multi-fournisseurs (core/ai_router.py) ──
           # Une clé absente = fournisseur ignoré silencieusement. Sans ces

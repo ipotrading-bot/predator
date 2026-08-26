@@ -128,7 +128,7 @@ def test_aucune_cle_ia_inconnue_du_registre():
     connues = {
         "ODDS_API_KEY", "ODDS_API_KEYS", "API_FOOTBALL_KEY", "API_SPORTS_KEY",
         "MISTRAL_API_KEY", "TAVILY_API_KEY", "TELEGRAM_BOT_TOKEN",
-        "GROQ_API_KEY_2", "GROQ_API_KEY_3", "GROQ_API_KEY_4",
+        "GROQ_API_KEY_2", "GROQ_API_KEY_3", "GROQ_API_KEY_4", "GROQ_API_KEY_5",
         "BETFAIR_APP_KEY", "VERCEL_TOKEN",
     }
     inconnues = sorted(suspects - connues)
