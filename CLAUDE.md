@@ -246,6 +246,12 @@ Tout le calcul tourne en crons GitHub Actions ; le dashboard est en lecture seul
   minute. Un audit a rendu « 0 settled | 52 skipped », EN VERT. Or la réponse
   qui porte les scores était DÉJÀ téléchargée à chaque scan par `fetch_sport`,
   qui jette les matchs commencés (`if when < now: continue`).
+  MESURÉ EN RÉEL le 2026-08-26 contre l'API : 1 requête = 201 fixtures dont
+  197 terminées avec leur score. Rejoué sur les 17 matchs que l'audit venait
+  d'échouer à régler : **11 appariés (65 %), 1 refusé pour ambiguïté, 5 non
+  trouvés** — et c'est un PLANCHER, le test n'interrogeait que 2 journées là
+  où le code en interroge 3 autour du coup d'envoi. À comparer aux 11 % que
+  la recherche web obtenait.
   ⚠️ Appariement par `strict_team_match` sur les DEUX équipes, candidat UNIQUE
   exigé : deux prétendants → REFUS. Régler le mauvais match écrirait un
   WIN/LOSS faux et DÉFINITIF dans le ledger. On cherche aussi la veille et le
