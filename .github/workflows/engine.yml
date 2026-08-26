@@ -102,7 +102,11 @@ jobs:
           [ -z "$SUPABASE_URL" ]  && missing="$missing SUPABASE_URL"
           [ -z "$SUPABASE_KEY" ]  && missing="$missing SUPABASE_KEY"
           [ -z "$SUPABASE_SERVICE_KEY" ] && missing="$missing SUPABASE_SERVICE_KEY"
-          [ -z "$ODDS_API_KEY" ]  && missing="$missing ODDS_API_KEY"
+          # ODDS_API_KEY n'est PLUS requise : OddsAPI est obsolète depuis le
+          # 2026-08-26 (run_engine.ODDS_API_ENABLED, défaut 0). Le scan tourne
+          # sur les sources gratuites. Cette garde échouait FERMÉ : la laisser
+          # ferait planter tous les scans le jour où le secret est retiré,
+          # pour une clé que le moteur n'appelle plus.
           if [ -n "$missing" ]; then
             echo "::error::Missing secrets:$missing — job would otherwise exit 0 having scanned/persisted nothing"
             exit 1

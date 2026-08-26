@@ -53,6 +53,27 @@ load_dotenv()
 DEEP_SCAN    = os.environ.get("DEEP_SCAN",    "0") == "1"
 GOLDEN_HOUR  = os.environ.get("GOLDEN_HOUR", "0") == "1"
 GUERRILLA    = os.environ.get("GUERRILLA",   "0") == "1"  # skip OddsAPI → Tier 2 direct
+
+# ── OddsAPI DÉCLARÉ OBSOLÈTE — décision opérateur du 2026-08-26 ──────
+# Predator ne s'appuie plus sur une source de cotes PAYANTE. Le Tier 1 est
+# éteint par défaut : chaque scan part directement sur les sources gratuites
+# (api-sports, odds-api.io, titan007, Matchbook, harvest soft).
+#
+# POURQUOI un interrupteur plutôt qu'une suppression : `core/odds_api.py`
+# n'est pas qu'une source, c'est aussi le VOCABULAIRE des sports — ses
+# `SPORT_KEYS` sont les valeurs écrites dans `signals.sport` et relues par
+# `api/index.py`. L'arracher casserait l'invariant des sport-keys (4 fichiers
+# synchrones, cf. AUDIT.md §2) pour supprimer du code qui ne coûte plus rien
+# une fois qu'on ne l'appelle plus.
+#
+# CE QUI MEURT AVEC LUI, en clair : les sports qu'AUCUNE source gratuite ne
+# price (MMA/boxe, NFL, NCAAF, LdC/UEL, Euroleague, tennis par clés
+# dynamiques) n'émettront plus rien, et la capture closing-line « en
+# stop » sur le payload payant s'arrête — seul `run_closing_line.py` la
+# fait encore. C'est le prix assumé de la sortie du payant.
+#
+# Réactivation explicite, sans autre changement : ODDS_API=1
+ODDS_API_ENABLED = os.environ.get("ODDS_API", "0") == "1"
 REPRICE      = os.environ.get("REPRICE",     "0") == "1"  # Matchbook seul vs slate soft en cache — zéro source payante
 DEBUG_MODE   = os.environ.get("PREDATOR_DEBUG", "0") == "1"
 
@@ -1881,6 +1902,14 @@ def run():
     elif GUERRILLA:
         hours_ahead = int(os.environ.get("HOURS_AHEAD", 48))
         log.info("🥷 GUERRILLA — OddsAPI ignoré, Tier 2 direct (1XBet + Pinnacle/recherche web)")
+    elif not ODDS_API_ENABLED:
+        # OddsAPI obsolète : le Tier 1 ne s'exécute plus. GOLDEN_HOUR garde
+        # sa fenêtre T-120min, qui a du sens pour les sources gratuites aussi
+        # (c'est l'approche du coup d'envoi qu'elle vise, pas un fournisseur).
+        hours_ahead = 2 if GOLDEN_HOUR else int(os.environ.get("HOURS_AHEAD", 24))
+        log.info("🚫 OddsAPI OBSOLÈTE — Tier 1 éteint, sources gratuites "
+                 "uniquement (%dh window)%s",
+                 hours_ahead, " | GOLDEN HOUR" if GOLDEN_HOUR else "")
     elif GOLDEN_HOUR:
         hours_ahead  = 2  # T-120min window only
         scan_keys    = GOLDEN_SPORT_KEYS
@@ -1914,7 +1943,12 @@ def run():
         scan_keys   = None  # Use default SPORT_KEYS (19 ligues)
         log.info("⚡ Tier 1 — The Odds API (%dh window)...", hours_ahead)
 
-    if not GUERRILLA and not REPRICE:
+    # ODDS_API_ENABLED en tête : obsolète = aucun appel, et surtout AUCUNE
+    # alerte de pool. Les alertes vivent dans ce bloc, donc les éteindre est
+    # automatique — c'est voulu : un pool mort n'est plus une panne, c'est
+    # l'état nominal. Sans ça, Telegram recevrait « rotation requise » à
+    # chaque scan, pour toujours (même leçon que le mode REPRICE muet).
+    if ODDS_API_ENABLED and not GUERRILLA and not REPRICE:
         spend_policy = _build_spend_policy(sb, now)
         oddsapi_events = fetch_odds(hours_ahead=hours_ahead, sport_keys=scan_keys,
                                     spend_policy=spend_policy)
@@ -2010,7 +2044,15 @@ def run():
     # Si OddsAPI ne trouve rien dans la fenêtre 2h, les lignes ne bougent pas.
     # Tier 2/3 (recherche web) ne sert à rien ici : trop lent, rate-limited,
     # et les prix estimés ont moins de valeur que le vrai mouvement Pinnacle.
-    if GOLDEN_HOUR and not matches:
+    #
+    # ⚠️ CETTE SORTIE SUPPOSE UN TIER 1 VIVANT. OddsAPI obsolète (2026-08-26),
+    # `matches` est TOUJOURS vide ici — la garde ferait de golden_hour.yml un
+    # no-op permanent, une fois par heure, pour toujours. C'était déjà le cas
+    # en prod avant la décision (run 32965494280, 11:52 : « 0 events dans
+    # T-2h → exit rapide » alors que les sources gratuites, elles, avaient de
+    # quoi travailler). Sans OddsAPI on laisse donc le scan descendre au
+    # Tier 2, qui garde la fenêtre T-120min posée plus haut.
+    if GOLDEN_HOUR and not matches and ODDS_API_ENABLED:
         log.info("⚡ GOLDEN HOUR — 0 events dans T-2h → exit rapide (lignes stables)")
         if sb:
             _heartbeat(sb, now, 0, 0)
@@ -2083,12 +2125,21 @@ def run():
         # recherche MMA/eSports/alternatifs a déjà rempli `matches`. Sortir ici
         # jetterait ces événements-là.
         if not xbet_matches and not matches:
-            msg = "📡 PREDATOR: 0 matchs trouvés — Tier 1 vide et harvest (1xbet/Melbet/API-Football/recherche web) sans résultat."
-            st = _odds_pool_status()
-            if st["total"] and st["live"] == 0:
-                msg += (f"\n🔑 CAUSE : {st['dead']}/{st['total']} clé(s) OddsAPI épuisée(s) "
-                        f"({st['reason']}) — rotation requise : "
-                        f"`python scripts/rotate_odds_key.py --add <clé>`")
+            if ODDS_API_ENABLED:
+                msg = "📡 PREDATOR: 0 matchs trouvés — Tier 1 vide et harvest (1xbet/Melbet/API-Football/recherche web) sans résultat."
+                # Cause OddsAPI : n'a de sens que si on l'interroge encore.
+                # Obsolète, un pool mort n'explique plus rien — l'afficher
+                # enverrait chercher une clé dont le pipeline n'a plus besoin.
+                st = _odds_pool_status()
+                if st["total"] and st["live"] == 0:
+                    msg += (f"\n🔑 CAUSE : {st['dead']}/{st['total']} clé(s) OddsAPI épuisée(s) "
+                            f"({st['reason']}) — rotation requise : "
+                            f"`python scripts/rotate_odds_key.py --add <clé>`")
+            else:
+                msg = ("📡 PREDATOR: 0 matchs trouvés — sources gratuites "
+                       "(api-sports, odds-api.io, titan007, Matchbook, harvest soft) "
+                       "sans résultat. OddsAPI est obsolète : ce n'est PAS une "
+                       "histoire de clé.")
             if gemini_quota_dead():
                 msg += "\n⚠️ Quota IA journalier épuisé (Groq) — fallback recherche web indisponible."
             log.warning(msg)
