@@ -256,11 +256,15 @@ def test_daily_budget_stops_the_cycle_before_any_call(monkeypatch, caplog):
     SUSPENDU le 2026-08-20 — ce garde-fou existe pour ne pas y revenir."""
     touched = []
     monkeypatch.setattr(aps.requests, "get", lambda *a, **k: touched.append(a))
-    monkeypatch.setattr(aps, "_usage_get", lambda sport: aps.DAILY_BUDGET)
+    # Depuis le 2026-08-26 les SCANS s'arrêtent à SCAN_BUDGET, pas au plafond :
+    # les dernières requêtes sont la réserve du settlement, qui lit les scores
+    # finaux (core/api_sports.fetch_results). Les scans sont amputés, jamais la
+    # réserve — même remède que le cloisonnement Groq du 2026-08-02.
+    monkeypatch.setattr(aps, "_usage_get", lambda sport: aps.SCAN_BUDGET)
     with caplog.at_level(logging.WARNING, logger="PREDATOR.api_sports"):
         assert aps.fetch_sport("soccer", api_key="k") == []
     assert touched == []
-    assert any("budget journalier" in r.getMessage() for r in caplog.records)
+    assert any("budget de SCAN" in r.getMessage() for r in caplog.records)
 
 
 def test_requests_actually_spent_are_counted(monkeypatch):
@@ -282,7 +286,10 @@ def test_a_429_burns_the_local_budget_for_the_day(monkeypatch):
     spent = []
     monkeypatch.setattr(aps, "_usage_add", lambda sport, n: spent.append(n))
     assert aps.fetch_sport("soccer", api_key="k") == []
-    assert spent and spent[0] >= aps.DAILY_BUDGET
+    # Cale au budget de SCAN et non au plafond total : un 429 pendant un scan
+    # ne doit pas emporter la réserve du settlement avec lui.
+    assert spent and spent[0] >= aps.SCAN_BUDGET
+    assert spent[0] < aps.DAILY_BUDGET, "le 429 d'un scan a condamné la réserve du settlement"
 
 
 def test_suspended_account_is_counted_and_reported(monkeypatch, caplog):

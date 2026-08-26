@@ -172,3 +172,48 @@ class TestPurgeNeDetruitPasLechantillon:
         ferait gonfler la table sans fin."""
         import run_engine as eng
         assert eng._settlement_affame(self._SB("pas-une-date")) is False
+
+
+class TestReserveDeBudget:
+    """La réserve du settlement est tenue EN NÉGATIF : les scans sont amputés.
+
+    Mesuré le 2026-08-26 — le premier audit à utiliser api-sports pour les
+    scores s'est heurté à « budget journalier atteint (80/80) » : les scans
+    avaient tout consommé avant lui, 0 réglé sur 55. Exactement la panne du
+    cloisonnement Groq du 2026-08-02, sur une autre ressource. Un scan de plus
+    vaut moins qu'un résultat de moins : un signal sans score sort du ledger en
+    `expired` et n'apprend rien à personne.
+    """
+
+    def test_les_scans_sarretent_avant_la_reserve(self):
+        from core import api_sports as a
+        assert a.SCAN_BUDGET < a.DAILY_BUDGET
+        assert a.DAILY_BUDGET - a.SCAN_BUDGET == a.RESULTS_RESERVE
+
+    def test_le_total_ne_depasse_pas_le_plafond_du_plan(self):
+        """Le compte a déjà été SUSPENDU pour dépassement le 2026-08-20 : la
+        réserve se prend SUR le budget, elle ne s'ajoute pas par-dessus."""
+        from core import api_sports as a
+        assert a.SCAN_BUDGET + a.RESULTS_RESERVE == a.DAILY_BUDGET
+
+    def test_un_scan_a_court_de_budget_laisse_le_settlement_lire(self, monkeypatch):
+        from core import api_sports as a
+        monkeypatch.setattr(a, "_usage_get", lambda sport: a.SCAN_BUDGET)
+        monkeypatch.setattr(a, "_key_for", lambda sport: "k")
+        assert a.fetch_sport("soccer") == [], "le scan doit s'arrêter"
+
+        appels = []
+        class _R:
+            status_code = 200
+            headers: dict = {}
+            def json(self): appels.append(1); return {"response": []}
+        monkeypatch.setattr(a.requests, "get", lambda *x, **k: _R())
+        monkeypatch.setattr(a, "_usage_add", lambda *x: None)
+        a.fetch_results("2026-08-25", "soccer")
+        assert appels, "le settlement doit encore pouvoir lire dans sa réserve"
+
+    def test_reserve_epuisee_retombe_sur_la_recherche_web(self, monkeypatch):
+        from core import api_sports as a
+        monkeypatch.setattr(a, "_usage_get", lambda sport: a.DAILY_BUDGET)
+        monkeypatch.setattr(a, "_key_for", lambda sport: "k")
+        assert a.fetch_results("2026-08-25", "soccer") == []

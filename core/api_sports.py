@@ -106,6 +106,22 @@ QUOTA_GUARD    = 8      # requêtes restantes en dessous desquelles on rend la m
 # source reste utilisable.
 DAILY_BUDGET = int(os.environ.get("API_SPORTS_DAILY_BUDGET", "80"))
 
+# ── Réserve du SETTLEMENT, tenue EN NÉGATIF (2026-08-26) ──────────────
+# Mesuré le jour même : le premier audit à utiliser api-sports pour les scores
+# s'est heurté à « budget journalier atteint (80/80) » — les scans avaient tout
+# consommé avant lui. Zéro settlement, 55 signaux condamnés.
+#
+# Même panne que le cloisonnement Groq du 2026-08-02, sur une autre ressource,
+# et même remède : les SCANS sont amputés, la réserve n'est jamais partagée.
+# Un scan de plus vaut moins qu'un résultat de moins — un signal sans score
+# sort du ledger en `expired` et n'apprend rien à personne.
+#
+# Le total reste sous DAILY_BUDGET : le plan fait 100/jour, mais le compte de
+# ce projet a déjà été SUSPENDU pour dépassement (2026-08-20). On ne mange pas
+# la marge de sûreté, on la partage autrement.
+RESULTS_RESERVE = int(os.environ.get("API_SPORTS_RESULTS_RESERVE", "16"))
+SCAN_BUDGET = max(1, DAILY_BUDGET - RESULTS_RESERVE)
+
 # Reconnaissance par NOM (insensible à la casse) et non par id numérique :
 # les ids de bookmakers de la doc n'ont pas pu être vérifiés, et un id faux
 # renverrait silencieusement zéro prix sharp.
@@ -247,10 +263,11 @@ def fetch_sport(sport: str, api_key: str | None = None, hours_ahead: int = 24) -
         return []
 
     spent = _usage_get(sport)
-    if spent >= DAILY_BUDGET:
-        log.warning("api-sports[%s]: budget journalier atteint (%d/%d) — cycle ignoré "
-                    "(le plan gratuit fait 100 req/jour et un dépassement soutenu "
-                    "fait suspendre le compte)", sport, spent, DAILY_BUDGET)
+    if spent >= SCAN_BUDGET:
+        log.warning("api-sports[%s]: budget de SCAN atteint (%d/%d) — cycle ignoré. "
+                    "Les %d requêtes restantes sont la réserve du settlement : un scan "
+                    "de plus vaut moins qu'un résultat de moins.",
+                    sport, spent, SCAN_BUDGET, RESULTS_RESERVE)
         return []
 
     base    = f"https://{prov['host']}"
@@ -278,7 +295,9 @@ def fetch_sport(sport: str, api_key: str | None = None, hours_ahead: int = 24) -
         if r.status_code == 429:
             # Quota atteint côté API : on cale le compteur local au plafond
             # pour ne pas retenter 40 fois dans la journée.
-            _usage_add(sport, max(used, DAILY_BUDGET))
+            # On cale au budget de SCAN, pas au plafond total : un 429 pendant
+            # un scan ne doit pas emporter la réserve du settlement avec lui.
+            _usage_add(sport, max(used, SCAN_BUDGET))
             log.warning("api-sports[%s]: HTTP 429 — quota journalier épuisé", sport)
             return []
         if r.status_code != 200:
@@ -498,7 +517,8 @@ def fetch_results(jour: str, sport: str = "soccer", api_key: str | None = None) 
         return []
     spent = _usage_get(sport)
     if spent >= DAILY_BUDGET:
-        log.warning("api-sports[%s] résultats : budget journalier atteint (%d/%d)",
+        log.warning("api-sports[%s] résultats : plafond TOTAL atteint (%d/%d) — même la "
+                    "réserve du settlement est épuisée ; repli sur la recherche web",
                     sport, spent, DAILY_BUDGET)
         return []
 

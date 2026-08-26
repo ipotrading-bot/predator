@@ -253,6 +253,14 @@ Tout le calcul tourne en crons GitHub Actions ; le dashboard est en lecture seul
   ⚠️ Les clés `API_*` doivent être dans le pool `settlement` de `ci_env.py`,
   sinon le chemin est INERTE sans erreur. Gardien :
   `tests/test_ci_env.py::test_le_settlement_porte_les_cles_de_resultats`.
+  ⚠️ RÉSERVE DE BUDGET TENUE EN NÉGATIF (`SCAN_BUDGET = DAILY_BUDGET −
+  RESULTS_RESERVE`, 64/16 sur 80). Au premier essai, l'audit s'est heurté à
+  « budget journalier atteint (80/80) » : les scans avaient tout consommé.
+  Les SCANS sont donc amputés, jamais la réserve — un scan de plus vaut
+  moins qu'un résultat de moins. Le total reste sous 80 : le plan fait 100
+  mais le compte a déjà été SUSPENDU pour dépassement le 2026-08-20, on ne
+  mange pas la marge. Un 429 pendant un scan cale le compteur à SCAN_BUDGET
+  et non au plafond, sinon il emporterait la réserve.
 - UN AUDIT STÉRILE ALERTE (2026-08-26). « 0 settled » sortait en `log.info`,
   run vert, aucune alerte : la régression du 24 août a vécu deux jours sans
   être vue. `_signaler_audit_sterile` envoie un Telegram ET pose
