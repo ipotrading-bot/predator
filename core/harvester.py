@@ -328,7 +328,25 @@ def _fetch_multi_book(sport_id: int) -> list:
                 sources.add(book)
                 existing["_soft_source"] = "+".join(sorted(sources))
 
+    # Marchés de prédiction (Kalshi/Polymarket) — rôle CONSENSUS, jamais sharp.
+    # Ils ne modifient ni un prix ni un signal : ils confrontent le slate à un
+    # avis qui ne recopie aucun bookmaker, et crient quand un « edge » ressemble
+    # à un prix périmé. Best-effort, jamais bloquant.
+    _measure_consensus(sport_id, merged)
+
     return merged
+
+
+def _measure_consensus(sport_id: int, merged: list) -> None:
+    """Confronte le slate aux marchés de prédiction — mesure seule.
+
+    Import PARESSEUX et jamais bloquant, comme `_fetch_from_odds500`.
+    """
+    try:
+        from core.free_sources import measure_slate_consensus
+        measure_slate_consensus(sport_id, merged)
+    except Exception as e:
+        log.warning("consensus: %s — ignoré ce cycle", e)
 
 
 def _fetch_from_odds500(sport_id: int, trusted: list) -> list[dict]:

@@ -64,7 +64,7 @@ import time
 import urllib.request
 from datetime import datetime, timedelta, timezone
 
-from core import daily_quota
+from core import daily_quota, net
 from core.source_adapter import Fixture, SourceSpec
 
 log = logging.getLogger("PREDATOR.sevenm")
@@ -92,11 +92,21 @@ SPEC = SourceSpec(
 
 def _get(url: str) -> str | None:
     try:
-        req = urllib.request.Request(url, headers=_HEADERS)
+        real_url, real_headers = net.prepare("sevenm", url, _HEADERS)
+        req = urllib.request.Request(real_url, headers=real_headers)
+        # Proxy optionnel — cf. core/net.py. 7M n'a JAMAIS ete appele depuis un
+        # runner (0 ligne de log au 2026-08-26) : sa joignabilite reelle depuis
+        # Azure est INCONNUE, pas bonne. Si elle s'avere bloquee comme 500.com,
+        # SEVENM_PROXY/FREE_SOURCES_PROXY suffit, sans redeploiement.
+        opener = net.opener_for("sevenm")
+        if opener is not None:
+            with opener.open(req, timeout=TIMEOUT) as r:
+                return r.read().decode("utf-8", "replace")
         with urllib.request.urlopen(req, timeout=TIMEOUT) as r:
             return r.read().decode("utf-8", "replace")
     except Exception as e:
-        log.warning("sevenm: %s — %s", url.split("/")[2], e)
+        log.warning("sevenm: %s — %s", url.split("/")[2],
+                    net.describe_failure("sevenm", e))
         return None
 
 
@@ -156,13 +166,22 @@ def fetch_fixture(gid: str) -> Fixture | None:
 
 
 def fetch_fixtures(hours_ahead: int = 36, max_matches: int | None = None,
-                   match_ids: list | None = None, offset: int = 0) -> list:
+                   match_ids: list | None = None, offset: int = 0,
+                   past_out: list | None = None) -> list:
     """Calendrier anglais borné par le budget journalier.
 
     Rend [] sur toute panne — source best-effort. Les matchs hors fenêtre sont
     ignorés APRÈS l'appel (le sitemap ne porte pas les dates), ce qui est le
     coût du choix « pas de flux en masse ». Le budget est dimensionné pour
     l'absorber : ces appels servent un dictionnaire, pas un scan.
+
+    `past_out` — si une liste est fournie, les identifiants dont le coup
+    d'envoi est DÉJÀ PASSÉ y sont déposés. C'est ce qui permet à l'appelant de
+    ne plus jamais les repayer : un match joué ne redeviendra pas à venir.
+    Mesuré le 2026-08-26 sur 30 identifiants de tête : 0 échec de requête,
+    **27 matchs déjà joués**, 3 seulement dans la fenêtre. Le sitemap n'est
+    pas trié par coup d'envoi et traîne plusieurs jours de passé ; sans cette
+    mémoire, 90 % du budget finance des matchs terminés, run après run.
 
     ⚠️ `offset` N'EST PAS COSMÉTIQUE. Le sitemap compte ~936 identifiants et
     n'est PAS trié par intérêt : ses premières entrées sont des coupes
@@ -202,10 +221,18 @@ def fetch_fixtures(hours_ahead: int = 36, max_matches: int | None = None,
         if i:
             time.sleep(REQUEST_DELAY)
         fx = fetch_fixture(gid)
-        if fx and fx.kickoff_utc and now - timedelta(hours=3) < fx.kickoff_utc <= until:
+        if not (fx and fx.kickoff_utc):
+            continue
+        if fx.kickoff_utc <= now - timedelta(hours=3):
+            # Match joué : définitif, il ne repassera jamais dans la fenêtre.
+            if past_out is not None:
+                past_out.append(str(gid))
+            continue
+        if fx.kickoff_utc <= until:
             out.append(fx)
-    log.info("sevenm: %d fixtures anglaises dans la fenêtre | %d req aujourd'hui",
-             len(out), daily_quota.spent(QUOTA_BUCKET))
+    log.info("sevenm: %d fixtures anglaises dans la fenêtre | %d déjà joué(s) "
+             "mémorisé(s) | %d req aujourd'hui",
+             len(out), len(past_out or []), daily_quota.spent(QUOTA_BUCKET))
     return out
 
 

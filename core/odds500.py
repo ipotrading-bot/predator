@@ -119,7 +119,7 @@ import time
 import urllib.request
 from datetime import datetime, timedelta, timezone
 
-from core import daily_quota
+from core import daily_quota, net
 from core.source_adapter import (Fixture, SourceSpec, novig_probs, vig_pct)
 
 log = logging.getLogger("PREDATOR.odds500")
@@ -188,11 +188,24 @@ BOOK_LABELS = {3: "bet365", 5: "澳门"}
 def _get(url: str) -> str | None:
     """GET best-effort, décodé depuis le GB2312/GB18030 du site."""
     try:
-        req = urllib.request.Request(url, headers=_HEADERS)
-        with urllib.request.urlopen(req, timeout=TIMEOUT) as r:
-            raw = r.read()
+        # Relais optionnel (Cloudflare Worker) : reecrit l'URL, inchangee
+        # si aucun relais n'est configure. Voir core/net.py.
+        real_url, real_headers = net.prepare("odds500", url, _HEADERS)
+        req = urllib.request.Request(real_url, headers=real_headers)
+        # Proxy optionnel : 500.com refuse les plages d'IP des runners GitHub
+        # (mesuré le 2026-08-26 — 200 depuis un poste, Connection refused
+        # depuis Azure). Sans ODDS500_PROXY/FREE_SOURCES_PROXY, `opener` vaut
+        # None et le comportement est strictement celui d'avant.
+        opener = net.opener_for("odds500")
+        if opener is not None:
+            with opener.open(req, timeout=TIMEOUT) as r:
+                raw = r.read()
+        else:
+            with urllib.request.urlopen(req, timeout=TIMEOUT) as r:
+                raw = r.read()
     except Exception as e:
-        log.warning("odds500: %s — %s", url.rsplit("/", 1)[-1] or url, e)
+        log.warning("odds500: %s — %s", url.rsplit("/", 1)[-1] or url,
+                    net.describe_failure("odds500", e))
         return None
     # gb18030 est un sur-ensemble de gb2312 : il décode aussi les caractères
     # rares (noms d'équipes sud-américains translittérés) que gb2312 refuse.

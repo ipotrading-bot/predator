@@ -215,6 +215,23 @@ jobs:
           ODDS_API_KEY:       ${{ secrets.ODDS_API_KEY }}
           ODDS_API_KEYS:      ${{ secrets.ODDS_API_KEYS }}
           API_FOOTBALL_KEY:   ${{ secrets.API_FOOTBALL_KEY }}
+          # Proxy des sources filtrees par IP (core/net.py). odds.500.com
+          # refuse les plages d'IP des runners GitHub : HTTP 200 depuis un
+          # poste de dev, Connection refused ici (mesure du 2026-08-26).
+          # Sans ces trois lignes, une URL de proxy posee en secret
+          # n'atteindrait JAMAIS le code — c'est le maillon qui manquait.
+          # Vides = comportement strictement inchange, aucun proxy impose.
+          FREE_SOURCES_PROXY: ${{ secrets.FREE_SOURCES_PROXY }}
+          ODDS500_PROXY:      ${{ secrets.ODDS500_PROXY }}
+          SEVENM_PROXY:       ${{ secrets.SEVENM_PROXY }}
+          # Relais Cloudflare Worker (scripts/cloudflare_relay_worker.js).
+          # Alternative au proxy pour les memes sources filtrees par IP :
+          # le Worker refait la requete depuis SON adresse. Le jeton n'est
+          # pas decoratif — sans lui le Worker serait un proxy ouvert.
+          FREE_SOURCES_RELAY:       ${{ secrets.FREE_SOURCES_RELAY }}
+          FREE_SOURCES_RELAY_TOKEN: ${{ secrets.FREE_SOURCES_RELAY_TOKEN }}
+          ODDS500_RELAY:            ${{ secrets.ODDS500_RELAY }}
+          SEVENM_RELAY:             ${{ secrets.SEVENM_RELAY }}
           GROQ_API_KEY:       ${{ secrets.GROQ_API_KEY }}
           GROQ_API_KEY_2:     ${{ secrets.GROQ_API_KEY_2 }}
           # GROQ_API_KEY_3 volontairement absent : c'est la clé réservée au

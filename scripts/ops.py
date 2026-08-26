@@ -409,6 +409,39 @@ def sources():
         except Exception as e:
             print(f"  {book:<8} injoignable ({type(e).__name__})")
 
+    # Sources gratuites Asie + marchés de prédiction. Elles manquaient à cette
+    # sonde alors que ce sont précisément celles qui meurent en silence : c'est
+    # ainsi qu'odds500 est restée injoignable trois jours sans que la commande
+    # censée répondre « qu'est-ce qui marche, là, maintenant » le dise.
+    print("── Sources gratuites Asie (mission 3) ──")
+    from core import net                                             # noqa: E402
+    for label, mod in (("odds500", "core.odds500"), ("sevenm", "core.sevenm")):
+        voie = ("relais Cloudflare" if net.relay_for(label)
+                else "proxy" if net.proxy_for(label) else "")
+        try:
+            probe = __import__(mod, fromlist=["probe"]).probe
+            ok, detail = probe()
+            print(f"  {label:<9} {'OK' if ok else 'KO'} — {detail}"
+                  f"{f'  [via {voie}]' if voie else '  [direct]'}")
+        except Exception as e:
+            print(f"  {label:<9} ERREUR {type(e).__name__}: {e}")
+    print("  (injoignable ici ≠ injoignable partout : ces hôtes filtrent par IP,")
+    print("   et depuis un poste de dev ça passe DÉJÀ en direct — seul un run")
+    print("   GitHub Actions tranche. Relais : FREE_SOURCES_RELAY + _TOKEN,")
+    print("   voir scripts/cloudflare_relay_worker.js. Proxy : FREE_SOURCES_PROXY.)")
+
+    print("── Consensus · Kalshi & Polymarket (jamais sharp, arbitre) ──")
+    from core.prediction_markets import probe as pm_probe             # noqa: E402
+    from core.prediction_markets import fetch_consensus               # noqa: E402
+    ok, detail = pm_probe()
+    print(f"  joignabilité : {'OK' if ok else 'KO'} — {detail}")
+    if ok:
+        for league in ("epl", "ucl", "nfl", "nba"):
+            try:
+                print(f"    {league:<4} {len(fetch_consensus(league)):>3} marché(s) coté(s)")
+            except Exception as e:
+                print(f"    {league:<4} ERREUR {type(e).__name__}")
+
     print("── Tier 3 · recherche web (Groq/Tavily) ──")
     print(f"  Groq   : {'clé présente' if ai_available() else 'indisponible'}")
     print(f"  Tavily : {'clé présente' if os.environ.get('TAVILY_API_KEY') else 'absente'}")

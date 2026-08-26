@@ -6,7 +6,7 @@ Tout le calcul tourne en crons GitHub Actions ; le dashboard est en lecture seul
 
 ## Commandes
 
-- Tests : `python -m pytest tests/ -q` (~45 s, 1055 tests, doit rester à 0 échec)
+- Tests : `python -m pytest tests/ -q` (~45 s, 1075 tests, doit rester à 0 échec)
 - Carte des invariants et de leurs gardiens : `AUDIT.md` (à lire avant
   d'ajouter un sport, un fournisseur IA, une route ou un workflow)
 - Lint : `python -m pyflakes $(git ls-files '*.py')` (actuellement propre)
@@ -54,10 +54,31 @@ Tout le calcul tourne en crons GitHub Actions ; le dashboard est en lecture seul
 - Secrets : `core/secret_store.py` (table Supabase `app_secrets`) bat `os.environ` ;
   une valeur périmée dans la table gagne quand même.
 - Sources de cotes : la règle est « authentifié par clé = joignable, sinon filtré
-  par IP depuis les runners » (LineFeed/ESPN/SofaScore sont morts). Sharp =
-  Matchbook (sans clé) + OddsAPI ; soft = api-sports. `ops.py sources` les sonde.
-- OddsAPI = POOL de clés (`ODDS_API_KEYS`, bascule auto sur 401/422) ; une seule
-  clé = dix jours sans signal quand elle meurt (août 2026). `rotate_odds_key.py --add`.
+  par IP depuis les runners » (LineFeed/ESPN/SofaScore sont morts ; 1xbet rend
+  203, 22bet 404 — le harvest soft direct ne ramène plus rien). `ops.py sources`
+  les sonde. Depuis l'obsolescence d'OddsAPI, les seules sources qui portent
+  RÉELLEMENT des signaux sont api-sports (foot : ~36 matchs, 100 % avec sharp
+  Pinnacle) et titan007 (~21-35 matchs, ~19-31 sharp) ; odds-api.io fournit du
+  SOFT PUR (100-150 matchs, ZÉRO sharp — de la donnée, pas de l'edge) ;
+  Matchbook fournit du SHARP PUR gratuit et illimité (141-202 marchés) mais
+  seuls ~6 % s'apparient à un match du slate soft, d'où 0 signal. Mesuré sur
+  10 runs du 2026-08-23 au 26. Corollaire : 100 % des signaux sont du FOOTBALL.
+- ODDSAPI EST OBSOLÈTE (décision opérateur 2026-08-26) : `ODDS_API_ENABLED`
+  (`run_engine.py`) vaut 0 par défaut, le Tier 1 ne s'exécute plus, aucune
+  alerte de pool ne part (un pool mort est l'état NOMINAL, pas une panne).
+  Réactivation : `ODDS_API=1`. Le module `core/odds_api.py` RESTE — il n'est
+  pas qu'une source, ses `SPORT_KEYS` sont le vocabulaire écrit dans
+  `signals.sport` et relu par `api/index.py` (invariant des sport-keys,
+  AUDIT.md §2). Ce que l'obsolescence tue, en clair : tennis, hockey,
+  MMA/boxe, NFL/NCAAF, LdC/UEL, Euroleague (aucune source gratuite ne les
+  price), et la capture closing-line « en stop » sur le payload payant —
+  seul `run_closing_line.py` la fait encore, donc le CLV réel se raréfie
+  alors que `learning_layer` en fait un critère de premier rang. La garde
+  `[ -z "$ODDS_API_KEY" ] && exit 1` a été retirée d'engine/golden_hour/
+  deep_scan : elle échouait FERMÉ et aurait tué tous les scans le jour où le
+  secret est retiré. La sortie anticipée de GOLDEN_HOUR supposait un Tier 1
+  vivant : sans elle, golden_hour.yml était un no-op horaire permanent.
+  Gardien : `tests/test_oddsapi_obsolete.py`.
 - Périmètre sports (2026-08-22) : eSports/tennis de table/volley/handball RETIRÉS
   (`RETIRED_SPORTS`, garde dans `_emit`, données historiques conservées) ; MMA/boxe/NFL/
   LdC/UEL/Euroleague sur flux OddsAPI réel (pré-vol 0 crédit, `SEASON_OPENS` pour la NFL).
@@ -81,9 +102,67 @@ Tout le calcul tourne en crons GitHub Actions ; le dashboard est en lecture seul
   OMBRE → rend [] tant qu'il n'a pas 100 matchs appariés à <2 pts de divergence :
   zéro signal au premier déploiement, c'est voulu. Coupe-circuit `FREE_SOURCES=0`.
   Un match dont une équipe ne se résout pas est ÉCARTÉ, jamais émis en chinois.
-  Curseur `meta.sevenm_sitemap_cursor` OBLIGATOIRE : le sitemap 7M (936 ids)
-  commence par des coupes mineures sans recoupement — sans curseur, 0 alias
-  appris à chaque run et branchement inerte en silence (constaté en live).
+  Curseur `meta.sevenm_sitemap_cursor` OBLIGATOIRE : le sitemap 7M (435 ids
+  au 2026-08-26, pas 936) commence par des coupes mineures sans recoupement —
+  sans curseur, 0 alias appris à chaque run et branchement inerte en silence.
+  Le curseur NE SUFFIT PAS : mesuré le 2026-08-26 sur 30 ids de tête, 0 échec
+  de requête mais **27 matchs DÉJÀ JOUÉS** et 3 utiles seulement (le sitemap
+  n'est pas trié par coup d'envoi et traîne plusieurs jours de passé). D'où
+  `meta.sevenm_past_gids` : un match joué ne redevient jamais à venir, on ne
+  le repaie donc plus jamais. Rendement mesuré 10 % → 30 % dès le 2e run, et
+  croissant. La mémoire est refermée sur le sitemap courant à chaque écriture,
+  sinon elle gonfle sans fin.
+- ODDS500 N'EST PAS EN PANNE, ELLE EST FILTRÉE PAR IP (2026-08-26) : HTTP 200
+  et 15 fixtures depuis un poste de dev, `Connection refused` depuis les
+  runners GitHub. Le code, le parseur et le User-Agent vont bien — aucune
+  correction de code ne lève un blocage d'IP. Seule issue : `core/net.py`
+  (`FREE_SOURCES_PROXY`, ou `ODDS500_PROXY`/`SEVENM_PROXY` par source). Sans
+  variable, le module est INERTE et rien ne change. Plomberie COMPLÈTE au
+  2026-08-26 : lecture par `secret_store` (donc `app_secrets` AVANT l'env —
+  URL rotative sans redéploiement), les 3 variables sont transmises par
+  engine/golden_hour/deep_scan/guerrilla, documentées dans `.env.example`,
+  et `ops.py sources` affiche `[via proxy]`. ⚠️ `proxy_for` MÉMORISE sa
+  résolution pour tout le processus : `get_secret` ne met pas les valeurs
+  ABSENTES en cache, et l'absence de proxy étant le cas nominal, chaque
+  requête HTTP d'odds500 aurait relu Supabase. `net.reset()` pour les tests.
+  Chemin proxy VÉRIFIÉ de bout en bout : proxy vivant → 99 420 caractères
+  et 15 fixtures ; proxy mort → échec (donc rien ne le contourne) ; sans
+  proxy → succès direct. ⚠️ Un test depuis un poste de dev ne prouve RIEN
+  sur les runners, où ça marche déjà sans proxy — seul un run GitHub tranche.
+  VOIE RETENUE (décision opérateur 2026-08-26) : RELAIS Cloudflare Worker,
+  `scripts/cloudflare_relay_worker.js`. Un Worker ne parle pas CONNECT — ce
+  sont donc DEUX mécanismes distincts dans `net.py`, pas deux réglages du
+  même : `prepare()` réécrit l'URL (relais), `opener_for()` tunnelise
+  (proxy). Le relais gagne si les deux sont posés. Variables :
+  `FREE_SOURCES_RELAY` + `FREE_SOURCES_RELAY_TOKEN` (et `ODDS500_RELAY` /
+  `SEVENM_RELAY`), câblées dans les 4 workflows de scan.
+  DEUX GARDES NON NÉGOCIABLES côté Worker, sans quoi c'est un PROXY OUVERT
+  que le premier venu utilisera sur ton quota : jeton partagé (comparé en
+  temps constant) ET liste blanche d'hôtes. Gardées par
+  `tests/test_free_sources_wiring.py::TestModeRelais`.
+  Le Worker doit rendre `upstream.body` (octets bruts) et JAMAIS `.text()` :
+  500.com sert du GB18030, un passage par le texte rendrait tous les noms
+  chinois en mojibake — panne silencieuse ressemblant à un parseur cassé.
+  Chemin relais VÉRIFIÉ de bout en bout contre un serveur local conforme :
+  15 fixtures, `大田市民 vs 蔚山现代` intact ; jeton faux → 403 ; hôte hors
+  liste avec jeton valide → 403 ; 7M → 435 ids. Il MANQUE le déploiement du
+  Worker et les deux secrets : rien ne change tant qu'ils n'existent pas.
+  ⚠️ NON VÉRIFIÉ, ET NON VÉRIFIABLE D'ICI : que 500.com accepte les IP de
+  sortie de Cloudflare. Un 502 du Worker = l'edge est bloqué aussi, il
+  faudra alors un proxy à IP dédiée. Corollaire : tant qu'aucun
+  proxy n'est fourni, la chaîne odds500 → 7M → `team_aliases` reste morte en
+  prod, et 7M avec elle (l'appariement a besoin du côté chinois ; titan007 ne
+  peut pas le remplacer, il rend déjà des noms anglais). La joignabilité de 7M
+  depuis un runner est INCONNUE, pas bonne : il n'a jamais été appelé.
+- Kalshi/Polymarket : BRANCHÉS le 2026-08-26 (`free_sources.measure_slate_consensus`,
+  appelé par `harvester._fetch_multi_book`). Ils étaient importés NULLE PART
+  hors de leurs tests depuis le 2026-08-22 — capacité morte en silence. Rôle
+  `consensus` : ils MESURENT et n'émettent jamais, ne repricent rien ; ils
+  crient quand un prix du slate diverge d'un marché qui ne recopie aucun
+  bookmaker (un « edge » qui est en fait un prix périmé). Couverture honnête :
+  EPL/UCL/NFL/NBA seulement, et sur 70 fixtures EPL vivantes, **3** portent
+  des cotes exploitables. Le recoupement avec un slate fait de ligues mineures
+  est donc structurellement faible — c'est un garde-fou, pas un gisement.
 - Pièges qui tuent une source en silence : User-Agent avec un accent → urllib encode
   en latin-1 → 403 Cloudflare (Polymarket) ; Kalshi rend `yes_bid`/`volume` à `null`
   et met les prix dans les champs `*_dollars` en chaîne ; un 1X2 amputé d'une patte
@@ -100,7 +179,24 @@ Tout le calcul tourne en crons GitHub Actions ; le dashboard est en lecture seul
   NE JAMAIS coder un nom de modèle en dur hors du registre : le paysage gratuit
   churne chaque mois. SEUL mort prouvé : GitHub Models (410, corps nommant le
   retrait) ; aussi mort : `meta-llama/llama-3.3-70b-instruct:free` (retiré du
-  catalogue :free OpenRouter — le repli était mort en silence).
+  catalogue :free OpenRouter — le repli était mort en silence) ; et depuis le
+  2026-08-26 `llama-3.3-70b-versatile` + `llama-3.1-8b-instant`, DISPARUS du
+  catalogue Groq (14 modèles, plus aucun llama de génération). Groq tourne
+  désormais sur `qwen/qwen3.8-27b` — le SEUL instruct du nouveau catalogue :
+  les `openai/gpt-oss-*` sont des modèles de RAISONNEMENT qui rendent un
+  contenu VIDE sous les plafonds serrés du pipeline (max_tokens=80 pour un
+  alias), ils restent en repli pour les appels à 2048. Corollaire : le palier
+  `tier` de `ai_complete` ne réordonne PLUS les modèles (il ne choisit que la
+  lane du repli) — inverser remettrait un modèle de raisonnement en tête.
+  ⚠️ Cette panne-là a coûté cher parce que `ai_search.py` portait TROIS copies
+  à la main des modèles Groq et appelait Groq EN DIRECT : le routeur écartait
+  Groq proprement pendant que le vrai chemin d'appel tapait un modèle mort en
+  404, avec backoff, jusqu'au timeout global de 540 s qui tuait le Deep Scan
+  du matin. Les listes sont maintenant DÉRIVÉES (`ai_search._groq_models`) et
+  gardées par `tests/test_ai_router.py::TestAucunModeleEnDurHorsDuRegistre`,
+  qui refuse tout littéral de modèle du registre ailleurs que dans
+  `ai_router.py` (vérifié sur l'AST : un commentaire a le droit de nommer un
+  modèle mort pour raconter pourquoi il l'est).
   ⚠️ Cerebras avait été retiré À TORT sur un 403 SANS CLÉ : un 401/403 sans clé
   ne prouve JAMAIS qu'un palier a fermé, il faut une clé INVALIDE pour trancher
   (Cerebras rend alors 401 wrong_api_key). Rétabli au registre.

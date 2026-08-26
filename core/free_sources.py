@@ -64,6 +64,44 @@ ENABLED = os.environ.get("FREE_SOURCES", "1") == "1"
 # un alias appris ne périme jamais, ce balayage n'a lieu qu'une fois.
 _CURSOR_KEY = "sevenm_sitemap_cursor"
 
+# Identifiants 7M dont le match est DÉJÀ JOUÉ — mémorisés d'un run à l'autre.
+#
+# POURQUOI — mesuré le 2026-08-26 sur les 30 identifiants de tête du sitemap :
+# 0 échec de requête, **27 matchs terminés**, 3 seulement dans la fenêtre. Le
+# sitemap n'est pas trié par coup d'envoi et traîne plusieurs jours de passé,
+# donc le curseur seul faisait repayer les mêmes matchs joués à chaque
+# passage : 90 % du budget pour rien. Un match joué ne redevient jamais à
+# venir — c'est la seule chose qu'on puisse mémoriser sans risque de péremption.
+#
+# La liste est REFERMÉE sur le sitemap courant à chaque lecture : 7M retire ses
+# vieux matchs, donc l'ensemble reste borné (~435 identifiants) au lieu de
+# croître indéfiniment dans `meta`.
+_PAST_KEY = "sevenm_past_gids"
+
+
+def _past_get() -> set:
+    try:
+        from core.db import get_db
+        row = (get_db(write=True).table("meta").select("value")
+               .eq("key", _PAST_KEY).maybe_single().execute())
+        raw = (row.data or {}).get("value") if row and row.data else ""
+        return {g for g in str(raw or "").split(",") if g}
+    except Exception as e:
+        log.debug("free_sources: mémoire 7M illisible (%s)", e)
+        return set()
+
+
+def _past_set(gids: set) -> None:
+    try:
+        from datetime import datetime, timezone
+        from core.db import get_db
+        get_db(write=True).table("meta").upsert(
+            {"key": _PAST_KEY, "value": ",".join(sorted(gids)),
+             "updated_at": datetime.now(timezone.utc).isoformat()},
+            on_conflict="key").execute()
+    except Exception as e:
+        log.debug("free_sources: mémoire 7M non persistée (%s)", e)
+
 
 def _cursor_get() -> int:
     try:
@@ -122,8 +160,38 @@ def learn_aliases(cn_fixtures: list, budget: int | None = None) -> dict:
              len(inconnus))
     cap = budget or SEVENM_PER_RUN
     cursor = _cursor_get()
+    known_past = _past_get()
+    fresh_past: list = []
     try:
-        en_fixtures = sevenm.fetch_fixtures(max_matches=cap, offset=cursor)
+        # Les matchs déjà joués sont retirés AVANT de dépenser la moindre
+        # requête : c'est tout l'intérêt de les avoir mémorisés.
+        sitemap = sevenm.fetch_match_ids()
+        if not sitemap:
+            # Sitemap INJOIGNABLE ≠ sitemap entièrement joué. Court-circuiter
+            # ici sauterait `_cursor_set` plus bas et figerait le curseur à
+            # jamais — précisément la panne « 0 alias appris à chaque run,
+            # branchement inerte en silence » que TestCurseurDeBalayage garde
+            # depuis le 2026-08-22. On retombe donc sur le chemin d'origine :
+            # `fetch_fixtures` va chercher les identifiants lui-même.
+            log.info("free_sources: sitemap 7M illisible — balayage par offset "
+                     "(comportement d'origine)")
+            en_fixtures = sevenm.fetch_fixtures(max_matches=cap, offset=cursor,
+                                                past_out=fresh_past)
+        else:
+            ids = [g for g in sitemap if g not in known_past]
+            if not ids:
+                # Là, en revanche, le sitemap a bien été LU et tout est joué :
+                # il n'y a rien à balayer. Le curseur repart à 0 pour que le
+                # prochain renouvellement du sitemap reprenne au début plutôt
+                # que de pointer dans le vide.
+                log.info("free_sources: sitemap 7M entièrement balayé (%d déjà joués)",
+                         len(known_past))
+                _cursor_set(0)
+                return {"appris": 0, "confirmés": 0, "contredits": 0}
+            log.info("free_sources: %d identifiants 7M à interroger (%d matchs joués "
+                     "ignorés d'emblée)", len(ids), len(known_past))
+            en_fixtures = sevenm.fetch_fixtures(max_matches=cap, offset=cursor,
+                                                match_ids=ids, past_out=fresh_past)
     except Exception as e:
         log.warning("free_sources: 7M indisponible (%s) — dictionnaire inchangé", e)
         return {"appris": 0, "confirmés": 0, "contredits": 0}
@@ -131,6 +199,18 @@ def learn_aliases(cn_fixtures: list, budget: int | None = None) -> dict:
     # une tranche du sitemap ne recoupe pas le slate qu'il faut passer à la
     # suivante, pas la réinterroger indéfiniment.
     _cursor_set(cursor + cap)
+    if fresh_past:
+        # Refermé sur le sitemap COURANT (pas sur `ids`, dont les joués ont
+        # déjà été retirés — s'en servir ici effacerait la mémoire à chaque
+        # run). 7M retire ses vieux matchs du sitemap : l'ensemble reste donc
+        # borné à sa taille (~435) au lieu de gonfler indéfiniment.
+        #
+        # `sitemap` VIDE veut dire ILLISIBLE, pas « plus aucun match » : s'en
+        # servir comme filtre viderait la mémoire d'un coup et ferait repayer
+        # les ~435 matchs joués au run suivant. On ne referme que sur un
+        # sitemap réellement lu ; sinon on se contente d'ajouter.
+        appris = known_past | set(fresh_past)
+        _past_set({g for g in appris if g in set(sitemap)} if sitemap else appris)
     if not en_fixtures:
         return {"appris": 0, "confirmés": 0, "contredits": 0}
 
@@ -196,6 +276,82 @@ def measure_against(matches: list, trusted: list, card: dict) -> dict:
             log.warning("free_sources: SUSPECT_DATA sur %s — %.2f pts d'écart "
                         "avec la source de confiance", a.match_id, worst)
     return card
+
+
+# ── Marchés de prédiction : un avis INDÉPENDANT de tout bookmaker ───────
+#
+# Kalshi et Polymarket ne recopient personne : c'est de l'argent réel posé par
+# des gens qui n'ont pas lu la même ligne. C'est ce qui en fait un arbitre
+# utile quand deux chemins « Pinnacle » divergent — l'un des deux est périmé,
+# et deux books ne le diront jamais.
+#
+# RÔLE `consensus`, JAMAIS SHARP : ils MESURENT, ils n'émettent aucun signal
+# et ne modifient aucun prix. Le module existait depuis le 2026-08-22 et
+# n'était importé nulle part hors de ses tests (capacité morte en silence,
+# motif « listes qui divergent » de CLAUDE.md) — c'est ce branchement-ci.
+#
+# COUVERTURE HONNÊTE : Kalshi et Polymarket ne cotent que 4 compétitions
+# (EPL, UCL, NFL, NBA). Le slate de Predator étant surtout composé de ligues
+# mineures, le recoupement est structurellement FAIBLE. Mesuré vivant le
+# 2026-08-26 : kalshi epl=18 ucl=4, polymarket epl=52 ucl=30.
+_CONSENSUS_LEAGUES = {SOCCER_SPORT_ID: ("epl", "ucl")}
+
+
+def consensus_fixtures(sport_id: int) -> list:
+    """Fixtures des marchés de prédiction pour ce sport. Best-effort."""
+    from core import prediction_markets
+    out = []
+    for league in _CONSENSUS_LEAGUES.get(sport_id, ()):
+        try:
+            out.extend(prediction_markets.fetch_consensus(league))
+        except Exception as e:
+            log.warning("free_sources: marchés de prédiction (%s) — %s", league, e)
+    return out
+
+
+def measure_slate_consensus(sport_id: int, matches: list) -> int:
+    """Confronte le slate aux marchés de prédiction. Rend le nb de paires.
+
+    Ne modifie RIEN : aucun prix, aucun signal. Elle alimente le scorecard
+    `prediction_markets` et crie quand un prix du slate s'écarte d'un marché
+    indépendant — c'est-à-dire quand un « edge » est probablement un prix
+    périmé plutôt qu'une occasion.
+    """
+    if not matches or sport_id not in _CONSENSUS_LEAGUES:
+        return 0
+    card = load_scorecard("prediction_markets")
+    try:
+        right = consensus_fixtures(sport_id)
+    except Exception as e:
+        log.warning("free_sources: consensus indisponible (%s)", e)
+        save_scorecard(record_observation(card, errors=1))
+        return 0
+    if not right:
+        log.info("free_sources: marchés de prédiction — 0 marché coté")
+        return 0
+
+    left = [f for f in (_as_fixture(m, "slate") for m in matches) if f]
+    pairs = pair_fixtures(left, right)
+    if not pairs:
+        log.info("free_sources: marchés de prédiction — %d marchés cotés, "
+                 "0 appariés au slate (ils ne couvrent qu'EPL/UCL/NFL/NBA)",
+                 len(right))
+        return 0
+
+    suspects = 0
+    for a, b, _ev in pairs:
+        ok, worst, _detail = cross_check({"slate": a.odds, "consensus": b.odds})
+        card = record_observation(card, divergence_pts_value=worst if worst >= 0 else None,
+                                  matched=1)
+        if not ok:
+            suspects += 1
+            log.warning("free_sources: CONSENSUS DIVERGENT sur %s — %.2f pts "
+                        "d'écart avec un marché indépendant (prix périmé ?)",
+                        a.match_id, worst)
+    save_scorecard(card)
+    log.info("free_sources: marchés de prédiction — %d/%d apparié(s), %d divergent(s)",
+             len(pairs), len(right), suspects)
+    return len(pairs)
 
 
 def fetch_odds500(sport_id: int, trusted: list | None = None) -> list:
