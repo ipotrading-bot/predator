@@ -9,8 +9,12 @@
 > non vérifiée est marquée comme telle. Un document d'audit qui affirme sans
 > preuve fait exactement le dégât qu'il prétend éviter.
 
-Dernière passe : **2026-08-22**. État à la clôture : **1055 tests, 0 échec**,
-pyflakes propre, les 6 pages du dashboard rendent (smoke test local).
+Dernière passe : **2026-08-26** (refonte CI + closing line d'exchange). État à
+la clôture : **977 tests, 0 échec**, pyflakes propre, les pages du dashboard
+rendent (smoke test local). Le compte de tests a BAISSÉ depuis le 2026-08-22
+(1055 → 977) : la vérification par regex du câblage des secrets, paramétrée sur
+13 workflows, a été remplacée par des tests sur la fonction qui calcule ce
+câblage. Moins de cas, même invariant, gardé plus près de sa source.
 
 ---
 
@@ -22,7 +26,7 @@ ne soit levée.
 
 | Liste | A divergé de | Conséquence mesurée |
 |---|---|---|
-| Clés IA dans les 7 workflows | `PRODUCTION_SAFE` | OVH et SiliconFlow inatteignables : 2 fournisseurs sur 9 morts en production |
+| Clés IA dans les 7 workflows | `PRODUCTION_SAFE` | OVH et SiliconFlow inatteignables : 2 fournisseurs sur 9 morts en production. **Récidive constatée le 2026-08-26** : 18 fournisseurs au registre, 15 câblés — CEREBRAS/CHUTES/SAMBANOVA/ZHIPU absents de tout workflow. Supprimé à la racine : les workflows ne listent plus aucun secret (`scripts/ci_env.py`, pools DÉRIVÉS du registre). |
 | `_AI_SECRETS` dans `scripts/ops.py` | `REGISTRY` | `secrets-push` sautait `OVH_AI_API_KEY` en silence |
 | Tables sport→emoji dans `index.html` | `api/index.py` | 3 sports actifs affichés « 🎯 rugbyleague » |
 | 6 pieds de page + `/api/health` | (aucune source) | 6 numéros de version différents sur 6 onglets |
@@ -46,16 +50,24 @@ C'est le tableau à consulter avant de toucher à quoi que ce soit.
 
 | Invariant | Gardien |
 |---|---|
-| Tout fournisseur `PRODUCTION_SAFE` est câblé dans **tout** workflow qui fait de l'IA | `tests/test_workflow_secrets.py::test_tout_fournisseur_de_production_est_cable` |
-| Les workflows IA ne divergent pas entre eux | `…::test_les_workflows_ia_ne_divergent_pas_entre_eux` |
+| Tout fournisseur `PRODUCTION_SAFE` atteint les pools `scan`/`closing`/`settlement` | `tests/test_ci_env.py::test_tout_fournisseur_de_production_atteint_les_pools_ia` |
+| Aucun workflow ne liste un secret à la main (hors `VERCEL_*` du deploy) | `…::test_aucun_workflow_ne_liste_un_secret_a_la_main` |
+| Tout job exposant `SECRETS_JSON` passe par un pool valide | `…::test_chaque_job_a_secrets_passe_par_un_pool` |
+| La liste des clés IA est DÉRIVÉE du registre, comme celle d'`ops.py` | `…::test_liste_ia_derivee_du_registre_comme_ops_py` |
 | `CLOUDFLARE_API_TOKEN` ne va jamais sans `CLOUDFLARE_ACCOUNT_ID` | `…::test_cloudflare_a_son_identifiant_de_compte` |
-| Aucune clé d'API inconnue du registre (attrape la faute de frappe) | `…::test_aucune_cle_ia_inconnue_du_registre` |
+| `GROQ_API_KEY_3` n'atteint QUE le settlement, sous le nom `GROQ_API_KEY` | `…::test_settlement_voit_groq_3_sous_le_nom_groq_et_rien_dautre` |
+| REPRICE ne voit aucune clé payante ; `readonly` aucun jeton d'écriture | `…::test_reprice_ne_voit_aucune_cle_payante`, `…::test_readonly_ne_detient_aucun_jeton_decriture` |
+| Le pool `scan` porte les relais des sources filtrées par IP | `…::test_le_pool_scan_porte_les_relais_des_sources_filtrees_par_ip` |
+| Le préflight refuse une `SUPABASE_SERVICE_KEY` qui n'est pas `service_role` | `…::test_preflight_refuse_une_cle_qui_nest_pas_service_role` |
+| `ODDS_API_KEY` n'est PLUS requise (la garde échouait fermé) | `…::test_preflight_odds_api_key_nest_plus_requise` |
+| Chaque cron de `scan.yml` a sa ligne dans `CRON_MODES` | `…::test_la_table_cron_mode_est_exactement_les_crons_de_scan_yml` |
+| `closing_line.yml` ne tire jamais plus vite que `CLOSING_LINE_REFRESH_MIN` | `…::test_closing_line_cadence_alignee_sur_refresh_min` |
 | `ops.py::_AI_SECRETS` couvre tout le registre | `…::test_secrets_push_couvre_tout_le_registre` |
 | `secrets-push` n'emporte **pas** les clés d'opérateur vers les runners | `…::test_secrets_push_nemporte_pas_les_cles_operateur` |
 | `.env.example` documente tout credential réellement lu | `…::test_env_example_documente_les_credentials_reellement_lus` |
 | Tout fournisseur du registre est documenté dans `.env.example` | `…::test_tout_fournisseur_du_registre_est_documente…` |
 | Chaque job GitHub a une borne de durée | `…::test_chaque_job_a_une_borne_de_duree` |
-| Une seule version de Python dans tout le dépôt | `…::test_une_seule_version_de_python` |
+| Les runners déclarent Python une seule fois, dans l'action composite | `…::test_la_version_de_python_des_runners_est_declaree_une_seule_fois` |
 | Tout sport actif a emoji + libellé + libellé court + ordre | `tests/test_dashboard_sports.py::test_tout_sport_actif_est_couvert` |
 | Les sports retirés gardent leur emoji (lignes historiques) | `…::test_les_sports_retires_gardent_leur_emoji` |
 | `index.html` ne redéfinit pas les tables sport en dur | `…::TestPasDeTableDupliquee` |
@@ -75,6 +87,11 @@ C'est le tableau à consulter avant de toucher à quoi que ce soit.
 | `.python-version` reste sur la version de **Vercel** (3.12), jamais « alignée » sur les workflows | `tests/test_workflow_secrets.py::test_python_version_appartient_a_vercel` |
 | `vercel.json` et `.python-version` annoncent la même version | `…::test_vercel_json_annonce_la_meme_version_que_python_version` |
 | Les workflows sont d'accord entre eux sur Python 3.11 | `…::test_les_workflows_partagent_une_seule_version_de_python` |
+| Vercel ne déploie pas AUSSI depuis Git (sinon le `needs: test` est décoratif) | `…::test_vercel_ne_deploie_pas_aussi_depuis_git` |
+| `deploy` est le seul job à porter un `environment:` | `…::test_le_deploiement_est_le_seul_job_a_porter_un_environnement` |
+| La closing line d'exchange lit le prix de l'EXCHANGE, jamais le prix d'entrée | `tests/test_closing_line_exchange.py::test_le_prix_capture_est_celui_de_lexchange_pas_le_pinnacle_dentree` |
+| Football sans prix de nul : refus, jamais de repli sur le moneyline | `…::test_football_sans_prix_de_nul_est_refuse` |
+| Un prix de clôture exact n'est pas ré-estimé par l'oracle avant 90 min | `…::test_needs_refresh_protege_un_prix_exchange_recent` |
 
 L'**invariant des sport-keys** (4 fichiers : `core/odds_api.py`,
 `core/learning_layer.py`, `api/index.py`) est décrit
