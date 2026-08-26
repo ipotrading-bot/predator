@@ -183,7 +183,25 @@ REGISTRY: tuple = (
     Provider(
         name="groq", base_url="https://api.groq.com/openai/v1",
         env_key="GROQ_API_KEY",
-        models=("llama-3.3-70b-versatile", "llama-3.1-8b-instant"),
+        # Ordre établi par INFÉRENCE RÉELLE le 2026-08-26, aux plafonds SERRÉS
+        # de ce pipeline (max_tokens=80 pour un alias, 300 pour l'oracle) —
+        # même règle que Gemini et OpenRouter ci-dessous : les instruct
+        # d'abord, jamais un modèle de raisonnement en tête.
+        #
+        # CE JOUR-LÀ, `llama-3.3-70b-versatile` ET `llama-3.1-8b-instant` ont
+        # disparu du catalogue Groq (14 modèles, aucun llama de génération) :
+        # le routeur écartait donc Groq à chaque run — « AUCUNE préférence au
+        # catalogue » — et le pipeline perdait ses lanes FILTER/ANALYZE/
+        # SETTLEMENT/SEARCH_READ sans que rien ne soit cassé.
+        #
+        # Mesuré sur « traduis 曼城 », max_tokens=16 puis 80 :
+        #   qwen/qwen3.8-27b     → « Manchester City » aux DEUX plafonds ✅
+        #   qwen/qwen3.6-27b     → crache un bloc <think>, finish=length ❌
+        #   openai/gpt-oss-20b   → contenu VIDE aux deux plafonds       ❌
+        #   openai/gpt-oss-120b  → vide à 16, correct seulement dès ~200 ❌
+        # Les gpt-oss restent en repli : ils sont sains, mais seulement pour
+        # les appels qui laissent de la marge (settlement à 2048).
+        models=("qwen/qwen3.8-27b", "openai/gpt-oss-120b", "openai/gpt-oss-20b"),
         lanes=(FILTER, ANALYZE, SETTLEMENT, SEARCH_READ),
         # 160 et non 400 : la vraie contrainte de Groq n'est pas un nombre de
         # requetes mais 100 000 TOKENS PAR JOUR, comptes PAR ORGANISATION (une

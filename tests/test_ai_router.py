@@ -687,3 +687,61 @@ class TestCalibration24h:
         groq = R.by_name("groq")
         assert groq.daily_tokens == 100_000
         assert groq.daily_requests <= groq.daily_tokens // 600
+
+
+class TestAucunModeleEnDurHorsDuRegistre:
+    """Gardien de la panne « listes qui divergent » (CLAUDE.md).
+
+    Le 2026-08-26, `llama-3.3-70b-versatile` et `llama-3.1-8b-instant` ont
+    disparu du catalogue Groq. `core/ai_router.py` a fait son travail — il a
+    écarté Groq avec un log explicite. Mais `core/ai_search.py` portait TROIS
+    copies de ces noms (`_TIER_MODELS`, `_EXTRACT_MODELS`, `_ALL_MODELS`) et
+    appelait Groq EN DIRECT, sans passer par le routeur : 404 en boucle,
+    backoff, puis le timeout global de 540 s qui tuait le Deep Scan du matin.
+
+    Le gardien du registre existait déjà ; ce qui manquait, c'est qu'il
+    s'applique au VRAI chemin d'appel. D'où ces deux tests.
+    """
+
+    def test_ai_search_derive_ses_modeles_du_registre(self):
+        """Aucune des trois listes n'est recopiée : toutes viennent d'ici."""
+        from core import ai_search
+
+        attendus = list(R.by_name("groq").models)
+        assert ai_search._groq_models() == attendus
+        assert ai_search._all_models() == [ai_search._SEARCH_MODEL] + attendus
+        # Le palier ne réordonne plus : inverser mettrait un modèle de
+        # RAISONNEMENT en tête, qui rend un contenu vide sous max_tokens=80
+        # (mesuré le 2026-08-26) — l'estimateur et les alias échoueraient
+        # en silence.
+        for tier in ("light", "heavy", "inconnu"):
+            assert ai_search._tier_models(tier) == attendus, tier
+
+    def test_aucun_nom_de_modele_code_en_dur_ailleurs(self):
+        """« NE JAMAIS coder un nom de modèle en dur hors du registre. »
+
+        Vérifié sur les LITTÉRAUX (via l'AST), pas sur le texte : les
+        commentaires ont le droit de nommer un modèle mort pour raconter
+        pourquoi il l'est.
+        """
+        import ast
+        import glob
+        import io
+        import os
+
+        ids = {m for p in R.REGISTRY for m in p.models}
+        racine = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+        coupables = {}
+        for motif in ("core/*.py", "*.py", "scripts/*.py"):
+            for f in sorted(glob.glob(os.path.join(racine, motif))):
+                if os.path.basename(f) == "ai_router.py":
+                    continue
+                arbre = ast.parse(io.open(f, encoding="utf-8").read(), filename=f)
+                litteraux = {n.value for n in ast.walk(arbre)
+                             if isinstance(n, ast.Constant)
+                             and isinstance(n.value, str)}
+                if ids & litteraux:
+                    coupables[os.path.relpath(f, racine)] = sorted(ids & litteraux)
+        assert not coupables, (
+            "modèle(s) du registre recopié(s) en dur — dérive la liste ou "
+            f"passe par le routeur : {coupables}")

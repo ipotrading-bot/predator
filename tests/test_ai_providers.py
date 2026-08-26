@@ -117,7 +117,19 @@ class TestConsumptionReduction:
         b = ai_search._cache_key("find the score", ["q2", "q1"])
         assert a == b and a.startswith("ai_cache_")
 
-    def test_light_tier_tries_the_small_model_first(self, monkeypatch):
+    def test_both_tiers_follow_registry_order(self, monkeypatch):
+        """Les DEUX paliers suivent l'ordre du registre — plus d'inversion.
+
+        Avant le 2026-08-26, « light » mettait le petit modèle devant le gros
+        pour filtrer vite et pas cher. Le catalogue Groq d'alors offrait deux
+        modèles INSTRUCT, l'inversion était sans risque. Il n'en offre plus
+        qu'un : les suivants sont des modèles de RAISONNEMENT, qui rendent un
+        contenu VIDE sous les plafonds serrés du filtrage (max_tokens=80,
+        mesuré). Inverser l'ordre pour « light » ferait donc échouer EN
+        SILENCE l'estimateur et le dictionnaire d'alias — ses deux appelants.
+
+        `tier` reste utile : il choisit la lane du repli (`_TIER_LANE`).
+        """
         monkeypatch.setattr(ai_search, "_cache_get", lambda k: None)
         monkeypatch.setattr(ai_search, "_cache_put", lambda k, t: None)
         order = []
@@ -127,7 +139,8 @@ class TestConsumptionReduction:
         monkeypatch.setattr(ai_search, "_groq_post", groq_post)
         ai_search.ai_complete("q", tier="light")
         ai_search.ai_complete("q", tier="heavy")
-        assert order == ["llama-3.1-8b-instant", "llama-3.3-70b-versatile"]
+        tete = ai_router.by_name("groq").models[0]
+        assert order == [tete, tete]
 
     def test_estimator_uses_the_light_tier(self):
         import inspect

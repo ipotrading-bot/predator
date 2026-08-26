@@ -240,17 +240,25 @@ class TestAiSearchFallbackChain:
         assert second is None
         assert len(calls) == n   # zero new HTTP calls once dead
 
-    def test_70b_daily_quota_does_not_kill_8b_instant(self, monkeypatch):
+    def test_le_TPD_de_la_tete_de_liste_ne_tue_pas_le_modele_suivant(self, monkeypatch):
         """Régression 2026-07-22 — le TPD est PAR MODÈLE.
 
-        groq/compound-mini consomme le quota de llama-3.3-70b-versatile.
-        Quand ce pool est vide, llama-3.1-8b-instant a encore le sien : le
+        groq/compound-mini consomme le quota du modèle de génération en tête
+        du registre. Quand ce pool est vide, le SUIVANT a encore le sien : le
         settlement doit continuer à tourner, sinon ai_learning_ledger ne
         reçoit plus rien et /performance reste figé toute la journée.
+
+        Noms DÉRIVÉS du registre (2026-08-26) : ce test codait en dur
+        `llama-3.3-70b-versatile` / `llama-3.1-8b-instant`, disparus du
+        catalogue Groq — il vérifiait donc une mécanique sur des modèles que
+        le pipeline n'appelle plus.
         """
+        from core import ai_router
+        tete, suivant = ai_router.by_name("groq").models[:2]
+
         models_called = []
-        tpd_70b = ('{"error":{"message":"Rate limit reached for model '
-                   '`llama-3.3-70b-versatile` ... tokens per day (TPD)"}}')
+        tpd_tete = ('{"error":{"message":"Rate limit reached for model '
+                    '`' + tete + '` ... tokens per day (TPD)"}}')
 
         def fake_post(url, json=None, headers=None, timeout=None):
             if "tavily.com" in url:
@@ -258,21 +266,21 @@ class TestAiSearchFallbackChain:
                     {"title": "T", "url": "u", "content": "Final score 3-1"}]})
             model = json["model"]
             models_called.append(model)
-            if model in ("groq/compound-mini", "llama-3.3-70b-versatile"):
-                return _FakeResponse(429, text=tpd_70b)
+            if model in ("groq/compound-mini", tete):
+                return _FakeResponse(429, text=tpd_tete)
             return _FakeResponse(200, _groq_body('{"completed":true,"home_score":3,"away_score":1}'))
 
         monkeypatch.setattr(ai_search.requests, "post", fake_post)
         text = ai_search.ai_search_complete("prompt", ["query"], label="test")
 
         assert text == '{"completed":true,"home_score":3,"away_score":1}'
-        assert "llama-3.1-8b-instant" in models_called
+        assert suivant in models_called
         assert not ai_search.ai_dead()          # un modèle répond encore
-        # compound-mini ET le 70b nommé dans le corps d'erreur sont morts :
-        # un appel suivant ne doit plus les retenter.
+        # compound-mini ET la tête de liste, nommée dans le corps d'erreur,
+        # sont morts : un appel suivant ne doit plus les retenter.
         models_called.clear()
         ai_search.ai_search_complete("prompt2", ["query2"], label="test")
-        assert models_called == ["llama-3.1-8b-instant"]
+        assert models_called == [suivant]
 
     def test_tavily_run_budget_respected(self, monkeypatch):
         monkeypatch.setattr(ai_search, "_TAVILY_RUN_BUDGET", 1)

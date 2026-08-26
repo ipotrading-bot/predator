@@ -15,10 +15,11 @@ Remplacement en 2 étages, même contrat que les anciens call sites Gemini
      INTÉGRÉE (vérifié live 2026-07-21 : retourne de vrais résultats
      UFC datés). Gratuit, ne consomme aucun crédit Tavily.
   2. Fallback : recherche Tavily (1 000 crédits/mois gratuits) +
-     extraction llama-3.3-70b-versatile.
+     extraction par le modèle de génération Groq en tête du registre.
 
-Les appels SANS recherche (estimateur Tier 3) vont directement sur
-llama-3.3-70b-versatile → llama-3.1-8b-instant.
+Les appels SANS recherche (estimateur Tier 3) vont directement sur les
+modèles de génération Groq, DANS L'ORDRE DU REGISTRE — ce module n'en
+code plus aucun en dur (cf. `_groq_models`, corrigé le 2026-08-26).
 
 Env requis : GROQ_API_KEY (gsk_...) ; optionnel : TAVILY_API_KEY (tvly-...)
 pour le fallback, et GROQ_API_KEY_2 / GROQ_API_KEY_3 pour la rotation quand
@@ -69,21 +70,53 @@ log = logging.getLogger("PREDATOR.ai_search")
 # cache, on appelle (même dégradation que daily_quota).
 AI_CACHE_TTL_MIN = int(os.environ.get("AI_CACHE_TTL_MIN", "30"))
 
-# Paliers de modèles : le « léger » filtre vite et pas cher (estimateur Tier 3,
-# pré-filtrage), le « lourd » est réservé aux candidats qui ont passé le
-# premier filtre et au settlement (exactitude). Déjà la philosophie Groq ;
-# rendue explicite par le paramètre `tier` de ai_complete().
-_TIER_MODELS = {
-    "heavy": ["llama-3.3-70b-versatile", "llama-3.1-8b-instant"],
-    "light": ["llama-3.1-8b-instant", "llama-3.3-70b-versatile"],
-}
+# ── Les modèles Groq se DÉRIVENT du registre, ils ne se recopient pas ──
+#
+# Ce fichier en portait TROIS copies à la main (`_TIER_MODELS`,
+# `_EXTRACT_MODELS`, `_ALL_MODELS`). Le 2026-08-26, `llama-3.3-70b-versatile`
+# et `llama-3.1-8b-instant` ont disparu du catalogue Groq : `core/ai_router.py`
+# a écarté Groq proprement, avec un log — mais ces trois copies, elles,
+# appelaient le modèle mort EN DIRECT, sans passer par le routeur. Résultat :
+# des 404 en boucle, retries et backoff, jusqu'au timeout global de 540 s qui
+# tuait le Deep Scan du matin (runs 32936332791 et 32814980496).
+#
+# C'est la panne « listes qui divergent » de CLAUDE.md, dans sa forme la plus
+# coûteuse : le gardien du registre faisait son travail pendant que le vrai
+# chemin d'appel l'ignorait. Une liste qui existe déjà ailleurs se dérive.
+#
+# Import PARESSEUX : `core/ai_router.py` importe ce module (le cache de
+# `route()`), un import de module à module créerait un cycle.
+def _groq_models() -> list:
+    """Préférences Groq, dans l'ordre du registre (source unique de vérité)."""
+    from core import ai_router
+    p = ai_router.by_name("groq")
+    return list(p.models) if p else []
+
+
+def _tier_models(tier: str) -> list:
+    """Modèles Groq à essayer pour ce palier.
+
+    Le palier ne réordonne PLUS la liste. Historiquement « light » mettait le
+    petit modèle (8b) devant le gros (70b) pour filtrer vite et pas cher. Le
+    catalogue Groq du 2026-08-26 ne le permet plus : le seul modèle qui rende
+    quelque chose sous les plafonds serrés du filtrage (max_tokens=80) est la
+    tête de liste du registre — les gpt-oss, modèles de raisonnement, rendent
+    un contenu VIDE tant qu'on ne leur laisse pas ~200 tokens. Inverser
+    l'ordre pour « light » ferait donc échouer silencieusement l'estimateur et
+    le dictionnaire d'alias, qui sont précisément ses deux appelants.
+    `tier` garde tout son sens ailleurs : il choisit la LANE du repli
+    (cf. `_TIER_LANE`).
+    """
+    return _groq_models()
+
 
 GROQ_URL   = "https://api.groq.com/openai/v1/chat/completions"
 TAVILY_URL = "https://api.tavily.com/search"
 
-# Vérifiés live sur ce compte le 2026-07-21 (GET /models) :
-_SEARCH_MODEL   = "groq/compound-mini"     # recherche web intégrée
-_EXTRACT_MODELS = ["llama-3.3-70b-versatile", "llama-3.1-8b-instant"]
+# Toujours présent au catalogue Groq — revérifié par GET /models le 2026-08-26,
+# et par une inférence réelle le même jour (il a répondu, 511 tokens : sa
+# recherche web coûte cher, d'où la réserve settlement).
+_SEARCH_MODEL = "groq/compound-mini"       # recherche web intégrée
 
 # Budget Tavily par process — protège le quota mensuel (1 000 crédits)
 # contre un run pathologique. Chaque search basic = 1 crédit.
@@ -110,11 +143,20 @@ _tavily_used = 0
 # clé 1 = org_01kqe4e69de36sapwgbr3sg3d7, clé 2 = org_01kz1yaaskehrtw18nr3knbvty.
 #
 # Note : groq/compound-mini n'a pas de quota propre — il consomme celui du
-# modèle qui l'exécute (llama-3.3-70b-versatile). Quand le corps d'erreur
-# nomme un autre modèle que celui demandé, les DEUX sont marqués morts.
+# modèle de génération qui l'exécute (la tête de liste du registre). Quand le
+# corps d'erreur nomme un autre modèle que celui demandé, les DEUX sont
+# marqués morts.
 _groq_dead_models: dict[int, set] = {}
 
-_ALL_MODELS = ["groq/compound-mini", "llama-3.3-70b-versatile", "llama-3.1-8b-instant"]
+
+def _all_models() -> list:
+    """Tout ce que ce module peut demander à Groq — recherche + génération.
+
+    Dérivé du registre (cf. `_groq_models`) : c'est la liste que consultent
+    `ai_dead()` et `_mark_dead()`, et une copie périmée ici ferait conclure
+    « tout est mort » sur des modèles qui n'existent plus, ou l'inverse.
+    """
+    return [_SEARCH_MODEL] + _groq_models()
 
 # Le TPD Groq (100k tokens/jour) est compté PAR ORGANISATION : la seule façon
 # d'élargir la réserve en gratuit est d'ajouter une clé d'un AUTRE compte.
@@ -164,7 +206,7 @@ def ai_dead() -> bool:
         # à core/audit_engine.py sur une simple absence de secret.
         return False
     return all(
-        all(m in _dead(i) for m in _ALL_MODELS)
+        all(m in _dead(i) for m in _all_models())
         for i in range(len(keys))
     )
 
@@ -173,7 +215,7 @@ def _mark_dead(key_idx: int, model: str, body: str) -> None:
     """Marque `model` mort sur CETTE clé + tout modèle connu nommé dans l'erreur."""
     dead = _dead(key_idx)
     dead.add(model)
-    for known in _ALL_MODELS:
+    for known in _all_models():
         if known in body:
             dead.add(known)
 
@@ -449,7 +491,7 @@ def ai_complete(prompt: str, label: str = "AI",
     text = _fallback_post(messages, max_tokens, temperature, timeout, label,
                           lane or _TIER_LANE.get(tier, "analyze"))
     if not text:
-        for model in _TIER_MODELS.get(tier, _EXTRACT_MODELS):
+        for model in _tier_models(tier):
             text = _groq_post(model, messages, max_tokens, temperature, timeout, label)
             if text:
                 break
@@ -503,7 +545,7 @@ def ai_search_complete(prompt: str, queries: list[str], label: str = "AI",
         f"{context}\n\n---\n\n{prompt}"
     )
     messages = [{"role": "user", "content": grounded}]
-    for model in _EXTRACT_MODELS:
+    for model in _groq_models():
         text = _groq_post(model, messages, max_tokens, temperature, timeout, label)
         if text:
             _cache_put(ck, text)
