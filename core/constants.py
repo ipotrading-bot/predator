@@ -112,8 +112,15 @@ CLOSING_LINE_BUDGET      = 30   # Max oracle (web search) calls per closing-line
 CLOSING_LINE_COLS = frozenset({"closing_pinnacle_price", "clv_pct_real",
                                "closing_captured_at", "closing_source"})
 # Values of signals.closing_source — which feed produced the stored price.
-CLOSING_SRC_ODDSAPI = "oddsapi"   # exact, per-market, from the scan feed
-CLOSING_SRC_ORACLE  = "oracle"    # web-search estimate, h2h/DNB favourite only
+CLOSING_SRC_ODDSAPI  = "oddsapi"    # exact, per-market, from the scan feed
+CLOSING_SRC_ORACLE   = "oracle"     # web-search estimate, h2h/DNB favourite only
+# Ajouté le 2026-08-26. OddsAPI étant obsolète, la voie `oddsapi` est morte et
+# seul l'oracle restait — h2h favori, sur le budget Groq des scans. Les prix
+# sharp Matchbook sont déjà chargés à chaque scan (fetch_matchbook_prices) et
+# n'étaient utilisés que pour l'edge : les lire aussi pour la clôture donne un
+# prix EXACT, gratuit et horaire. `signals.closing_source` est un `text` sans
+# contrainte (sql/migrate_v9_12_closing_source.sql) : aucune migration.
+CLOSING_SRC_EXCHANGE = "exchange"   # prix d'exchange réel (Matchbook/Betfair), h2h
 
 # Fractional Kelly par sport — uniquement les 6 sport-types actifs sélectionnés
 # (à ne pas confondre avec les 19 SPORT_KEYS d'odds_api.py, plus fins : plusieurs

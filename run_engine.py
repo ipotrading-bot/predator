@@ -20,8 +20,11 @@ from dotenv import load_dotenv
 from core.db import get_db, MissingCredentialsError, log_to_ledger as _log_to_ledger
 from core.harvester import fetch_matches, fetch_pinnacle_prices, fetch_estimated_prices, fetch_betfair_prices
 from core.ai_search import ai_dead as gemini_quota_dead
-from core.closing_line import capture_from_scan
+from core.closing_line import capture_from_exchange, capture_from_scan
 from core.matchbook import fetch_matchbook_prices
+# Appariement slate ↔ exchange : déplacé dans core/ le 2026-08-26 pour que
+# core/closing_line.py puisse s'en servir sans importer la racine.
+from core.exchange_match import lookup_exchange as _lookup_exchange
 from core.api_sports import fetch_all as _api_sports_all
 from core.odds_api_io import fetch_all as _odds_api_io_all
 from core.titan007 import fetch_matches as _titan007_fetch
@@ -716,57 +719,6 @@ def _alert_oddsapi_pool_if_dead(sb) -> None:
                     f"(plusieurs clés = bascule automatique, plus de scan perdu)")
 
 
-def _lookup_exchange(m: dict, prices: dict) -> dict | None:
-    """Retrouve un match dans les prix d'exchange, malgré les noms.
-
-    Le rapprochement par clé EXACTE ne marche pratiquement jamais entre deux
-    fournisseurs : mesuré le 2026-08-20 sur 13 matchs odds-api.io contre 53
-    marchés Matchbook, la clé exacte en appariait **0**, le rapprochement
-    flou **8**. « Cde Juventud Italiana » contre « Club Juventud Italiana »,
-    « CSD Macara » contre « Deportivo Macara »… C'est ce seul détail qui
-    tenait le pipeline à zéro signal malgré deux sources en bon état.
-
-    Ordre : clé exacte, clé exacte inversée, puis `strict_team_match` (le
-    rapprochement déjà utilisé partout dans ce projet). En flou, on n'accepte
-    qu'un candidat UNIQUE : deux prétendants signifient qu'on ne sait pas
-    lequel est le bon, et poser le mauvais prix sharp donnerait un edge faux
-    sans rien casser de visible.
-    """
-    h = m.get("home", "").strip()
-    a = m.get("away", "").strip()
-    if not h or not a:
-        return None
-    hl, al = h.lower(), a.lower()
-
-    hit = prices.get(f"{hl}_{al}")
-    if hit:
-        return hit
-    hit = prices.get(f"{al}_{hl}")
-    if hit:
-        return _flip_exchange_prices(hit)
-
-    forward, reverse = [], []
-    for row in prices.values():
-        rh, ra = str(row.get("home", "")).strip(), str(row.get("away", "")).strip()
-        # `strict_team_match` renvoie True dès qu'un nom est VIDE (voir
-        # core/paim_engine.py) : sans ce garde, une ligne de prix sans
-        # home/away s'apparierait à n'importe quel match. Le seuil de
-        # longueur écarte de même les fragments trop courts, qu'un simple
-        # test d'inclusion ferait matcher avec tout ("a" est dans
-        # "barcelona").
-        if len(rh) < 3 or len(ra) < 3 or len(h) < 3 or len(a) < 3:
-            continue
-        if strict_team_match(h, rh) and strict_team_match(a, ra):
-            forward.append(row)
-        elif strict_team_match(h, ra) and strict_team_match(a, rh):
-            reverse.append(row)
-    if len(forward) == 1 and not reverse:
-        return forward[0]
-    if len(reverse) == 1 and not forward:
-        return _flip_exchange_prices(reverse[0])
-    return None
-
-
 def _enrich_from_exchange(items: list, prices: dict, log) -> int:
     """Pose un vrai prix d'exchange sur les matchs qui n'en ont pas.
 
@@ -810,27 +762,6 @@ def _enrich_from_exchange(items: list, prices: dict, log) -> int:
     if enriched:
         log.info("💹 Exchange: %d matchs enrichis (prix sharp réel)", enriched)
     return enriched
-
-
-def _flip_exchange_prices(row: dict) -> dict:
-    """Retourne les prix d'exchange d'un match trouvé dans l'autre sens.
-
-    L'exchange peut nommer le match « B vs A » là où la source soft dit
-    « A vs B ». Inverser 1 et 2 ne suffit pas : le handicap porte le SIGNE de
-    l'équipe qui le concède, donc il s'inverse aussi. Un handicap laissé tel
-    quel donnerait un edge calculé contre la mauvaise ligne — faux, et
-    silencieux. Les totals, eux, sont symétriques et se recopient.
-    """
-    out = {"1": row["2"], "X": row.get("X", 0.0), "2": row["1"],
-           "_source": row.get("_source", "betfair")}
-    if row.get("totals"):
-        out["totals"] = row["totals"]
-    sp = row.get("spreads")
-    if sp:
-        out["spreads"] = {"home": sp["away"], "away": sp["home"],
-                          "point": sp.get("away_point", -sp["point"]),
-                          "away_point": sp["point"]}
-    return out
 
 
 def _heartbeat(sb, scan_time: datetime, matches: int, signals: int):
@@ -2037,6 +1968,25 @@ def run():
         if _enrich_from_exchange(matches, betfair_prices, log) and \
                 sharp_source in ("AI/Estimateur", "Aucune"):
             sharp_source = "Exchange+AI"
+
+        # ── Closing line — free ride on the sharp prices we just loaded ────
+        # Depuis l'obsolescence d'OddsAPI (2026-08-26) la voie gratuite et
+        # exacte de capture_from_scan est morte : il ne restait que l'oracle
+        # web-search, h2h favori, sur le budget Groq des scans. Ces prix
+        # d'exchange sont déjà là, à chaque scan et REPRICE compris — c'est le
+        # tick horaire, celui qui compte.
+        #
+        # On passe le dict de prix BRUT, pas `matches` enrichis : voir la
+        # docstring de capture_from_exchange. _enrich_from_exchange n'écrase
+        # `odds_pinnacle` que sur les matchs SANS prix sharp, or api-sports
+        # sert Pinnacle sur 100 % de ses matchs foot — lire le match enrichi
+        # stockerait le prix d'ENTRÉE comme prix de clôture, avec un CLV
+        # nul, une exécution verte et aucune trace.
+        if sb:
+            try:
+                capture_from_exchange(sb, matches, betfair_prices, now)
+            except Exception as e:
+                log.warning("Closing-line exchange: %s", e)
     else:
         log.info("💹 Exchange: 0 marché sharp (Betfair absent/refusé, Matchbook vide ou géobloqué)")
 

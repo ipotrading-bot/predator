@@ -47,7 +47,8 @@ import re
 from datetime import datetime, timedelta, timezone
 
 from core.constants import (CLOSING_LINE_COLS, CLOSING_LINE_WINDOW_MIN,
-                            CLOSING_SRC_ODDSAPI)
+                            CLOSING_SRC_EXCHANGE, CLOSING_SRC_ODDSAPI)
+from core.exchange_match import lookup_exchange
 from core.db import update_signal_fields
 from core.math_engine import calc_dnb
 from core.paim_engine import calculate_consensus_price, resolve_selection_side
@@ -118,6 +119,140 @@ def _sources_for(event: dict, prefix: str, side_key: str) -> dict:
         if price > 1.01:
             out[src] = price
     return out
+
+
+def capture_from_exchange(sb, matches: list[dict], exchange_prices: dict,
+                          now: datetime | None = None,
+                          window_min: int = CLOSING_LINE_WINDOW_MIN) -> int:
+    """Price active h2h signals off the exchange prices this scan already
+    downloaded. Returns the number of signals updated.
+
+    WHY. capture_from_scan() above rides the OddsAPI payload — dead since
+    2026-08-26 (ODDS_API_ENABLED defaults to 0), so the only remaining path
+    was audit_engine's web-search oracle: h2h favourite only, on the scans'
+    own Groq budget. Meanwhile every scan, REPRICE included, already fetches
+    sharp Matchbook prices for the edge computation and throws them away for
+    closing purposes. This is a free, exact, hourly closing price.
+
+    ⚠️ IT TAKES THE RAW PRICE DICT, NOT THE ENRICHED MATCHES, AND THAT IS THE
+    WHOLE POINT. run_engine._enrich_from_exchange only overwrites
+    `odds_pinnacle` on matches that have NO sharp price:
+
+        if pin["1"] > 1.01 and pin["2"] > 1.01 and not m["_estimated"]: continue
+
+    api-sports serves Pinnacle on 100% of its football fixtures, and 100% of
+    this repo's signals are football — so on precisely the matches that carry
+    signals, `odds_pinnacle` is still the api-sports Pinnacle and `_exchange`
+    is never set. Reading the enriched match would therefore store the ENTRY
+    price as the closing price: clv_pct_real ≈ 0 on every row, a green run,
+    and a silent lie. We look the market up ourselves instead.
+
+    h2h ONLY. Matchbook's totals/spreads do reach `_enrich_from_exchange`, but
+    only as a fallback when the soft feed had none, and _line_market_close
+    needs the same LINE we bet — which the exchange payload does not carry per
+    signal. Grading those would compare two different bets; the oracle path's
+    refusal (see _line_market_close) applies here too.
+    """
+    if not sb or not matches or not exchange_prices:
+        return 0
+    now = now or datetime.now(timezone.utc)
+    horizon = now + timedelta(minutes=window_min)
+
+    # `kickoff >= now` is load-bearing, same as capture_from_scan: once the
+    # match has started the exchange quotes an in-play price.
+    in_window: dict[str, tuple] = {}
+    for m in matches:
+        kickoff = _parse_time(m.get("commence_time"))
+        if not kickoff or not (now <= kickoff <= horizon):
+            continue
+        mid = str(m.get("id") or "")
+        if not mid:
+            continue
+        row = lookup_exchange(m, exchange_prices)
+        if not (row and float(row.get("1") or 0) > 1.01 and float(row.get("2") or 0) > 1.01):
+            continue
+        in_window[mid] = (m, row, kickoff)
+    if not in_window:
+        return 0
+
+    signals = _fetch_signals(sb, list(in_window))
+    if not signals:
+        return 0
+
+    captured = 0
+    for sig in signals:
+        if (sig.get("market_key") or "") != "h2h":
+            continue
+        entry = in_window.get(str(sig.get("match_id") or ""))
+        if not entry:
+            continue
+        match, row, kickoff = entry
+        try:
+            price = _exchange_h2h_close(sig, match, row)
+        except Exception as e:                          # never let one odd
+            log.warning("exchange close [%s]: %s", sig.get("match"), e)   # payload kill the scan
+            continue
+        if not price:
+            continue
+
+        xbet_odd = float(sig.get("xbet_odd") or 0.0)
+        if xbet_odd <= 1.01:
+            continue
+        clv_real = round((xbet_odd / price - 1) * 100, 2)
+
+        ok = update_signal_fields(sb, sig["id"], {
+            "closing_pinnacle_price": round(float(price), 4),
+            "clv_pct_real":           clv_real,
+            "closing_captured_at":    now.isoformat(),
+            "closing_source":         CLOSING_SRC_EXCHANGE,
+        }, optional_cols=frozenset(CLOSING_LINE_COLS))
+        if ok:
+            captured += 1
+            log.info("CLOSING LINE | %s | h2h %s | bet %.3f -> close %.3f | CLV_real %+.2f%% "
+                     "| T-%s | %s", sig.get("match"), sig.get("selection_name"),
+                     xbet_odd, price, clv_real, _lead_time(kickoff, now),
+                     row.get("_source", "exchange"))
+        else:
+            log.error("Failed to persist exchange closing line for signal %s", sig.get("id"))
+
+    if captured:
+        log.info("📉 Closing line (exchange): %d signal(s) priced — 0 extra request", captured)
+    return captured
+
+
+def _exchange_h2h_close(sig: dict, match: dict, row: dict) -> float | None:
+    """Closing price of the side this h2h signal backs, from an exchange row.
+
+    Same contract as _h2h_close: resolve our selection against the match's own
+    team names, then re-derive the price the way _process_h2h did at ENTRY —
+    DNB for football, raw ML otherwise. An exchange row carries a single book,
+    so there is no consensus to compute; the price IS the reference.
+
+    ⚠️ FOOTBALL WITHOUT A DRAW PRICE IS REFUSED, NOT DOWNGRADED. Matchbook
+    quotes 1/X/2 (core/matchbook.py, one_x_two market) but the enrichment path
+    tolerates X = 0.0, and calc_dnb returns 0.0 on a missing draw. Falling back
+    to the raw moneyline would compare a DNB entry price against an ML close —
+    a wrong CLV, silently, on the sport that carries every signal we have.
+    """
+    side = resolve_selection_side(sig.get("selection_name") or "",
+                                  match.get("home", ""), match.get("away", ""))
+    if side is None:
+        log.info("CLOSE SKIP | %s h2h — selection '%s' resolves to neither side",
+                 sig.get("match"), sig.get("selection_name"))
+        return None
+
+    ours, theirs = ("1", "2") if side else ("2", "1")
+    sport = (sig.get("sport") or match.get("sport") or "").lower()
+    if sport == "soccer":
+        draw = float(row.get("X") or 0.0)
+        if draw <= 1.01:
+            log.info("CLOSE SKIP | %s h2h — exchange sans prix de nul, un DNB ne peut "
+                     "pas se comparer à un moneyline", sig.get("match"))
+            return None
+        price = calc_dnb(float(row.get(ours) or 0.0), float(row.get(theirs) or 0.0), draw)
+    else:
+        price = float(row.get(ours) or 0.0)
+    return price if price > 1.01 else None
 
 
 def _h2h_close(sig: dict, event: dict, sport: str) -> float | None:

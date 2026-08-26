@@ -32,8 +32,8 @@ from core.ai_search import (ai_available, ai_dead as gemini_quota_dead,
 # live in core/constants.py so the two paths can never drift apart.
 from core.constants import (CLOSING_LINE_BUDGET, CLOSING_LINE_COLS,
                             CLOSING_LINE_REFRESH_MIN, CLOSING_LINE_TIGHTEN_MIN,
-                            CLOSING_LINE_WINDOW_MIN, CLOSING_SRC_ODDSAPI,
-                            CLOSING_SRC_ORACLE)
+                            CLOSING_LINE_WINDOW_MIN, CLOSING_SRC_EXCHANGE,
+                            CLOSING_SRC_ODDSAPI, CLOSING_SRC_ORACLE)
 from core.learning_layer import compute_and_save as _learn
 from core.oracle import get_pinnacle_price
 from core.paim_engine import resolve_selection_side
@@ -289,8 +289,9 @@ def _needs_refresh(sig: dict, now: datetime) -> bool:
     buys no accuracy — the line has not converged yet — and this job shares
     its web-search quota with the audit.
 
-    A price already captured by core/closing_line.py off the OddsAPI scan
-    feed outranks anything this oracle can produce — it is the real Pinnacle
+    A price already captured by core/closing_line.py — off the OddsAPI scan
+    feed, or off the exchange prices every scan already downloads —
+    outranks anything this oracle can produce — it is the real Pinnacle
     number for the exact side, not a web-search estimate of the favourite —
     so it is only overwritten once it has gone properly stale
     (CLOSING_LINE_TIGHTEN_MIN rather than CLOSING_LINE_REFRESH_MIN). That
@@ -308,8 +309,12 @@ def _needs_refresh(sig: dict, now: datetime) -> bool:
         return True
     if taken.tzinfo is None:
         taken = taken.replace(tzinfo=timezone.utc)
-    from_scan = sig.get("closing_source") == CLOSING_SRC_ODDSAPI
-    hold_min = CLOSING_LINE_TIGHTEN_MIN if from_scan else CLOSING_LINE_REFRESH_MIN
+    # Un prix EXACT — payload OddsAPI, ou prix d'exchange réel — surclasse
+    # tout ce que cet oracle peut produire (le vrai nombre pour le côté exact,
+    # contre une estimation web du favori) : il n'est écrasé qu'une fois
+    # proprement périmé, et le budget de recherche va ailleurs.
+    exact = sig.get("closing_source") in (CLOSING_SRC_ODDSAPI, CLOSING_SRC_EXCHANGE)
+    hold_min = CLOSING_LINE_TIGHTEN_MIN if exact else CLOSING_LINE_REFRESH_MIN
     if (now - taken) < timedelta(minutes=hold_min):
         return False
     try:
@@ -487,7 +492,8 @@ def run_closing_lines():
     if missed:
         log.warning("CLOSING LINE — %d active h2h signal(s) passed kickoff with no "
                     "closing price: the schedule is firing too rarely for a %d-min "
-                    "window. Check .github/workflows/closing_line.yml cadence.",
+                    "window. Check the closing_line.yml cadence and the post-scan "
+                    "pass in scan.yml.",
                     missed, CLOSING_LINE_WINDOW_MIN)
     log.info("━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━")
 

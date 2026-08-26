@@ -14,6 +14,9 @@ Contrat :
 from datetime import datetime, timedelta, timezone
 
 import run_engine as eng
+# Appariement slate ↔ exchange : sorti de run_engine.py le 2026-08-26 pour
+# que core/closing_line.py puisse l'utiliser sans importer la racine.
+from core import exchange_match
 
 
 class _Q:
@@ -119,7 +122,7 @@ def test_breaker_still_queries_api_sports(monkeypatch):
 def test_flipping_an_exchange_row_swaps_sides_and_the_handicap_sign():
     """L'exchange peut nommer le match dans l'autre sens. Inverser 1 et 2
     sans inverser le handicap comparerait l'edge à la mauvaise ligne."""
-    flipped = eng._flip_exchange_prices({
+    flipped = exchange_match.flip_exchange_prices({
         "1": 1.50, "X": 4.20, "2": 6.00, "_source": "matchbook",
         "totals": {"over": 1.90, "under": 1.98, "point": 2.5},
         "spreads": {"home": 1.86, "away": 2.17, "point": -1.5, "away_point": 1.5},
@@ -133,7 +136,7 @@ def test_flipping_an_exchange_row_swaps_sides_and_the_handicap_sign():
 
 
 def test_flipping_without_side_markets_is_harmless():
-    flipped = eng._flip_exchange_prices({"1": 2.0, "X": 3.3, "2": 3.6})
+    flipped = exchange_match.flip_exchange_prices({"1": 2.0, "X": 3.3, "2": 3.6})
     assert (flipped["1"], flipped["2"]) == (3.6, 2.0)
     assert "totals" not in flipped and "spreads" not in flipped
 
@@ -216,7 +219,7 @@ _PRICES = {
 
 def test_exact_key_still_wins():
     m = {"home": "Club Juventud Italiana", "away": "Delfin SC"}
-    assert eng._lookup_exchange(m, _PRICES)["1"] == 5.50
+    assert exchange_match.lookup_exchange(m, _PRICES)["1"] == 5.50
 
 
 def test_fuzzy_match_across_providers():
@@ -224,13 +227,13 @@ def test_fuzzy_match_across_providers():
     le flou 8. C'est ce seul écart de nommage qui tenait le pipeline à zéro
     signal alors que les deux sources fonctionnaient."""
     m = {"home": "Cde Juventud Italiana", "away": "Delfin SC"}
-    hit = eng._lookup_exchange(m, _PRICES)
+    hit = exchange_match.lookup_exchange(m, _PRICES)
     assert hit is not None and hit["1"] == 5.50
 
 
 def test_fuzzy_match_reversed_flips_the_prices():
     m = {"home": "Delfin SC", "away": "Cde Juventud Italiana"}
-    hit = eng._lookup_exchange(m, _PRICES)
+    hit = exchange_match.lookup_exchange(m, _PRICES)
     assert hit["1"] == 1.62 and hit["2"] == 5.50
 
 
@@ -242,16 +245,16 @@ def test_ambiguous_fuzzy_match_is_refused():
         "home": "Juventud Italiana FC", "away": "Delfin SC",
         "1": 5.90, "X": 4.00, "2": 1.60}
     m = {"home": "Cde Juventud Italiana", "away": "Delfin SC"}
-    assert eng._lookup_exchange(m, prices) is None
+    assert exchange_match.lookup_exchange(m, prices) is None
 
 
 def test_unrelated_match_finds_nothing():
     m = {"home": "Arsenal", "away": "Chelsea"}
-    assert eng._lookup_exchange(m, _PRICES) is None
+    assert exchange_match.lookup_exchange(m, _PRICES) is None
 
 
 def test_missing_team_names_are_refused():
-    assert eng._lookup_exchange({"home": "", "away": "Delfin SC"}, _PRICES) is None
+    assert exchange_match.lookup_exchange({"home": "", "away": "Delfin SC"}, _PRICES) is None
 
 
 def test_price_row_without_team_names_never_matches():
@@ -259,9 +262,9 @@ def test_price_row_without_team_names_never_matches():
     ligne de prix incomplète s'apparierait à tous les matchs du scan."""
     prices = {"x_y": {"1": 2.0, "X": 3.0, "2": 4.0}}          # ni home ni away
     m = {"home": "Club Juventud Italiana", "away": "Delfin SC"}
-    assert eng._lookup_exchange(m, prices) is None
+    assert exchange_match.lookup_exchange(m, prices) is None
 
 
 def test_very_short_names_are_not_fuzzy_matched():
     prices = {"a_b": {"home": "A", "away": "B", "1": 2.0, "X": 3.0, "2": 4.0}}
-    assert eng._lookup_exchange({"home": "Barcelona", "away": "Real Madrid"}, prices) is None
+    assert exchange_match.lookup_exchange({"home": "Barcelona", "away": "Real Madrid"}, prices) is None
