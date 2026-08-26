@@ -60,8 +60,22 @@ Tout le calcul tourne en crons GitHub Actions ; le dashboard est en lecture seul
   RÉELLEMENT des signaux sont api-sports (foot : ~36 matchs, 100 % avec sharp
   Pinnacle) et titan007 (~21-35 matchs, ~19-31 sharp) ; odds-api.io fournit du
   SOFT PUR (100-150 matchs, ZÉRO sharp — de la donnée, pas de l'edge) ;
-  Matchbook fournit du SHARP PUR gratuit et illimité (141-202 marchés) mais
-  seuls ~6 % s'apparient à un match du slate soft, d'où 0 signal. Mesuré sur
+  Matchbook fournit du SHARP PUR gratuit et illimité (141-202 marchés) et
+  produit pourtant 0 signal. ⚠️ CE N'EST NI UN PROBLÈME DE COUVERTURE NI DE
+  NOMS — l'hypothèse « seuls ~6 % s'apparient » était FAUSSE, vérifiée en
+  direct le 2026-08-26 : Matchbook cote bien les ligues du slate (7 matchs
+  d'OBOS-ligaen, 3 d'Argentine B ce jour-là), et les 4 signaux du run de
+  09:47 (Moss, Stabæk, Acassuso, Liniers) avaient TOUS leur marché
+  Matchbook ; `strict_team_match` les apparie correctement, diacritiques
+  norvégiennes comprises. La vraie cause est `_enrich_from_exchange`
+  (`run_engine.py`) : `if pin["1"] > 1.01 and pin["2"] > 1.01: continue` —
+  Matchbook n'est consulté que sur les matchs SANS prix sharp. api-sports
+  livrant Pinnacle sur 100 % de ses matchs foot, il est écarté précisément
+  sur ceux qui portent les signaux. Il est câblé en BOUCHE-TROU, pas en
+  CONTRE-EXPERTISE. Le gisement est là : un 2e avis sharp indépendant
+  détecterait le Pinnacle PÉRIMÉ, qui est la fabrique à faux edge — et sa
+  couverture du slate est sans commune mesure avec celle de
+  Kalshi/Polymarket (3 fixtures exploitables sur 70). Mesuré sur
   10 runs du 2026-08-23 au 26. Corollaire : 100 % des signaux sont du FOOTBALL.
 - ODDSAPI EST OBSOLÈTE (décision opérateur 2026-08-26) : `ODDS_API_ENABLED`
   (`run_engine.py`) vaut 0 par défaut, le Tier 1 ne s'exécute plus, aucune
