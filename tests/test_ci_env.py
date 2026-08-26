@@ -282,6 +282,23 @@ def test_aucun_secret_nommé_hors_dun_bloc_genere(wf):
 
 
 @pytest.mark.parametrize("wf", WORKFLOWS, ids=lambda p: p.name)
+def test_aucun_workflow_nutilise_le_contexte_inputs_nu(wf):
+    """`inputs.x` n'existe qu'en workflow_dispatch/workflow_call.
+
+    Un `if:` de job est évalué AVANT la création des jobs : une référence
+    irrésolvable n'y donne pas un job rouge, elle donne un workflow qui
+    n'existe pas. `github.event.inputs.*` est un simple accès au payload —
+    nul hors dispatch, identique pendant un dispatch.
+
+    (Ce n'était PAS la cause de la panne du 2026-08-26 — c'était
+    `toJSON(secrets)`, cf. le test suivant. Mais la forme nue reste un piège,
+    et cette garde ne coûte rien.)"""
+    fautifs = [l.strip()[:80] for l in wf.read_text(encoding="utf-8").splitlines()
+               if re.search(r"(?<!event\.)\binputs\.[a-z_]+", l.split("#", 1)[0])]
+    assert not fautifs, (f"{wf.name} utilise le contexte `inputs` nu : {fautifs} — "
+                          "écrire `github.event.inputs.…`")
+
+@pytest.mark.parametrize("wf", WORKFLOWS, ids=lambda p: p.name)
 def test_aucun_workflow_ne_fabrique_un_dump_de_secrets(wf):
     """`toJSON(secrets)` fait refuser le workflow par GitHub — et à raison.
     Ne jamais chercher à contourner cette détection : ce serait évader un

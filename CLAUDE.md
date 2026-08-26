@@ -62,20 +62,32 @@ Tout le calcul tourne en crons GitHub Actions ; le dashboard est en lecture seul
   été validés par une inférence réelle : la clé n'est pas disponible en dev.
   Premier geste après déploiement : `python scripts/ops.py ai`.
   Gardien : `tests/test_ai_router.py::TestLanes`.
-- LES WORKFLOWS NE LISTENT AUCUN SECRET (refonte 2026-08-26). 13 workflows et
-  339 `${{ secrets.X }}` sont devenus 6 workflows et 3 (les VERCEL_* du job de
-  déploiement, qui vivent dans l'environnement GitHub `production` pour ne
-  figurer dans le `toJSON(secrets)` d'aucun autre job). Chaque job expose
-  `SECRETS_JSON: ${{ toJSON(secrets) }}` UNE fois et passe par
-  `scripts/ci_env.py --pool <nom>`, qui ne laisse atteindre le process que les
-  clés de son pool — liste CALCULÉE depuis `core.ai_router.REGISTRY`, jamais
-  recopiée. Le registre portait 18 fournisseurs quand les workflows n'en
-  câblaient que 15 : la divergence était déjà là. ⚠️ Ne JAMAIS remettre un
-  `X: ${{ secrets.X }}` dans un YAML, ni un `echo` de debug dans ces steps (le
-  masquage de GitHub reconnaît mal une valeur multi-lignes ré-encodée par
-  toJSON — le PEM de BETFAIR_CERT). Les 4 scans sont fusionnés dans `scan.yml`,
-  le mode vient du cron qui a tiré (`scripts/ci_scan_mode.py::CRON_MODES` — un
-  cron ajouté sans sa ligne fait échouer le run ET le test).
+- LES BLOCS DE SECRETS DES WORKFLOWS SONT GÉNÉRÉS, JAMAIS ÉCRITS À LA MAIN
+  (2026-08-26). `python scripts/ci_env.py --write` les régénère depuis les
+  pools de `scripts/ci_env.py`, eux-mêmes DÉRIVÉS de `core.ai_router.REGISTRY` ;
+  `tests/test_ci_env.py` compare chaque bloc à sa source à chaque exécution.
+  Les blocs sont posés par STEP, pas par job : c'est ce qui garantit que le
+  step REPRICE ne reçoit aucune clé payante — garantie lisible dans le YAML.
+  Le registre portait 18 fournisseurs quand les workflows n'en câblaient que
+  15 : la divergence était déjà là.
+  ⛔ NE JAMAIS ÉCRIRE `${{ toJSON(secrets) }}` DANS UN WORKFLOW. La première
+  version de cette refonte exposait tout d'un coup et filtrait à l'exécution.
+  GitHub REFUSE de faire tourner un tel workflow : « GitHub detected that this
+  workflow file may be malicious. It will not run until someone with write
+  access approves it. » — conclusion `action_required`, ZÉRO job créé, aucun
+  log, aucune annotation, sur TOUT événement. CINQ des six workflows sont
+  restés muets ainsi (scan, closing line, audit, rapports, outils) ; seul
+  `ci.yml`, dépourvu de l'expression, tournait. Le message n'apparaît QUE sur
+  la page HTML du run — ni l'API des runs, ni les jobs, ni les check-runs ne le
+  disent. Et la détection a RAISON : ce dump était lisible par chaque step du
+  job, `actions/checkout` et `pip install` compris. Ne pas chercher à
+  contourner : ce serait évader un contrôle de sécurité pour rétablir une
+  pratique dangereuse.
+  ⚠️ Ne jamais utiliser le contexte `inputs` nu dans un `if:` de job non plus
+  (`github.event.inputs.*`) : il n'existe qu'en workflow_dispatch.
+  Les 4 scans sont fusionnés dans `scan.yml`, le mode vient du cron qui a tiré
+  (`scripts/ci_scan_mode.py::CRON_MODES` — un cron ajouté sans sa ligne fait
+  échouer le run ET le test).
   Gardiens : `tests/test_ci_env.py`, `tests/test_workflow_secrets.py`.
 - LE VERROU `predator-signals-write` NE CONTIENT PLUS `closing_line.yml`, et la
   raison courante (« aucune ligne en commun ») est FAUSSE : `purge_rules`

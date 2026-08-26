@@ -51,12 +51,15 @@ C'est le tableau à consulter avant de toucher à quoi que ce soit.
 | Invariant | Gardien |
 |---|---|
 | Tout fournisseur `PRODUCTION_SAFE` atteint les pools `scan`/`closing`/`settlement` | `tests/test_ci_env.py::test_tout_fournisseur_de_production_atteint_les_pools_ia` |
-| Aucun workflow ne liste un secret à la main (hors `VERCEL_*` du deploy) | `…::test_aucun_workflow_ne_liste_un_secret_a_la_main` |
-| Tout job exposant `SECRETS_JSON` passe par un pool valide | `…::test_chaque_job_a_secrets_passe_par_un_pool` |
+| Chaque bloc de secrets d'un workflow est conforme à son pool | `…::test_chaque_bloc_genere_est_conforme_a_son_pool` |
+| Aucun secret nommé hors d'un bloc généré | `…::test_aucun_secret_nommé_hors_dun_bloc_genere` |
+| Aucun workflow ne fabrique un dump de secrets (GitHub le refuserait) | `…::test_aucun_workflow_ne_fabrique_un_dump_de_secrets` |
+| Aucun `if:` de job n'utilise le contexte `inputs` nu | `…::test_aucun_workflow_nutilise_le_contexte_inputs_nu` |
 | La liste des clés IA est DÉRIVÉE du registre, comme celle d'`ops.py` | `…::test_liste_ia_derivee_du_registre_comme_ops_py` |
 | `CLOUDFLARE_API_TOKEN` ne va jamais sans `CLOUDFLARE_ACCOUNT_ID` | `…::test_cloudflare_a_son_identifiant_de_compte` |
 | `GROQ_API_KEY_3` n'atteint QUE le settlement, sous le nom `GROQ_API_KEY` | `…::test_settlement_voit_groq_3_sous_le_nom_groq_et_rien_dautre` |
-| REPRICE ne voit aucune clé payante ; `readonly` aucun jeton d'écriture | `…::test_reprice_ne_voit_aucune_cle_payante`, `…::test_readonly_ne_detient_aucun_jeton_decriture` |
+| Le step REPRICE ne reçoit aucune clé payante (lisible dans le YAML) | `…::test_le_step_reprice_ne_peut_mecaniquement_rien_depenser` |
+| `readonly` ne détient aucun jeton d'écriture | `…::test_readonly_ne_detient_aucun_jeton_decriture` |
 | Le pool `scan` porte les relais des sources filtrées par IP | `…::test_le_pool_scan_porte_les_relais_des_sources_filtrees_par_ip` |
 | Le préflight refuse une `SUPABASE_SERVICE_KEY` qui n'est pas `service_role` | `…::test_preflight_refuse_une_cle_qui_nest_pas_service_role` |
 | `ODDS_API_KEY` n'est PLUS requise (la garde échouait fermé) | `…::test_preflight_odds_api_key_nest_plus_requise` |

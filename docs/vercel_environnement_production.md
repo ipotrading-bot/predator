@@ -1,88 +1,69 @@
 # Vercel — déploiement gated et secrets d'environnement
 
-> Rédigé le 2026-08-26 (chantier C de la refonte CI). Les commandes `gh secret`
-> sont à exécuter **par l'opérateur** : le token de session est un token d'App
-> sans le scope `secrets` (`gh secret list` → `HTTP 403: Resource not
-> accessible by integration`).
+> **FAIT le 2026-08-26.** Ce document enregistre ce qui a été exécuté et
+> vérifié, pas une procédure à suivre. Les trois secrets `VERCEL_*` ne sont
+> plus au niveau du dépôt.
 
-## Ce qui a été changé dans le dépôt
+## Ce qui a été fait
 
-`vercel.json` désactive le déploiement Git automatique de `main` :
+1. **`vercel.json` désactive le déploiement Git de `main`** :
+   `"git": {"deploymentEnabled": {"main": false}}`.
+2. **Les trois secrets vivent dans l'environnement GitHub `Production`** —
+   posés par API (chiffrement libsodium contre la clé publique de
+   l'environnement), puis **supprimés du niveau dépôt** (HTTP 204 sur les
+   trois). Vérifié après coup : `VERCEL_*` restants au niveau dépôt = `[]`,
+   environnement `Production` = `['VERCEL_ORG_ID', 'VERCEL_PROJECT_ID',
+   'VERCEL_TOKEN']`.
+3. **Valeurs** : le token vient du `.env` de l'opérateur ; `VERCEL_ORG_ID`
+   (`accountId`) et `VERCEL_PROJECT_ID` (`id`) ont été **dérivés de l'API
+   Vercel** pour ce projet — pas recopiés, donc pas de risque de faute de
+   frappe.
+4. **Ordre de bascule** : les secrets d'environnement priment sur ceux du
+   dépôt, donc le déploiement suivant les a mis à l'épreuve avant toute
+   suppression. `deploy` vert sur `e1bfd47`, un seul déploiement (`source:
+   cli`), `/api/health` → `db_configured: true`.
 
-```json
-"git": { "deploymentEnabled": { "main": false } }
-```
+Le dépôt avait déjà un environnement nommé **`Production`** (créé par
+l'intégration Vercel le 2026-05-03). Les noms d'environnement GitHub sont
+uniques **sans distinction de casse** : le `environment: production` de
+`ci.yml` s'y rattache, et aucun treizième environnement n'a été créé (total
+inchangé : 12).
 
-**Pourquoi c'est le cœur du chantier, pas une finition.** Mesuré via l'API
-Vercel le 2026-08-26, chaque commit touchant `api/`, `templates/` ou `core/`
-était déployé **deux fois**, en course :
+## Pourquoi c'était le cœur du chantier
+
+Mesuré via l'API Vercel avant le changement : chaque commit touchant `api/`,
+`templates/` ou `core/` était déployé **deux fois**, en course — une fois par
+l'intégration Git, une fois par le CLI de `deploy.yml`.
 
 | source | état | commit |
 |--------|------|--------|
-| `git`  | READY | 482ab2a |
 | `cli`  | READY | 249ac32 |
 | `git`  | READY | 249ac32 |
 | `cli`  | READY | 3d639b4 |
 | `git`  | READY | 3d639b4 |
 
-La voie `git` ne connaît pas la suite de tests. Tant qu'elle est active, le
-`needs: test` de `ci.yml` a l'apparence d'un gate sans en être un : une
-régression part en production pendant que les tests tournent encore.
-Gardé par `tests/test_workflow_secrets.py::test_vercel_ne_deploie_pas_aussi_depuis_git`.
+La voie Git ne connaît pas la suite de tests. Tant qu'elle était active, le
+`needs: test` de `ci.yml` avait l'apparence d'un gate sans en être un.
 
-## Ce qui reste à faire, dans cet ordre
+**Le gate a été prouvé sur un cas réel** : `c6cc762`, dont la CI était rouge,
+n'a été déployé ni par le CLI ni par Git. Avant ce chantier, la voie Git
+l'aurait mis en production sans attendre.
 
-L'ordre compte, et il est sûr : un job portant `environment: production` voit
-les secrets **de l'environnement ET du dépôt** (l'environnement surcharge).
-Rien ne casse entre l'étape 1 et l'étape 3.
-
-### 1. Merger cette branche
-
-Le déploiement continue de fonctionner avec les `VERCEL_*` actuels, au niveau
-du dépôt. GitHub crée l'environnement `production` tout seul au premier run du
-job `deploy`.
-
-⚠️ **Le dépôt a déjà 12 environnements**, dont un nommé `Production`
-(majuscule, créé par l'intégration Vercel le 2026-05-03) et onze
-`Production – predator*`. Les noms d'environnement GitHub sont uniques
-**sans distinction de casse** : `environment: production` se rattachera à
-`Production`. C'est voulu — inutile d'en créer un treizième.
-
-### 2. Poser les trois secrets dans l'environnement
-
-Les valeurs sont dans votre `.env` local (jamais lues ici).
-
-```bash
-gh secret set VERCEL_TOKEN      --env production
-gh secret set VERCEL_ORG_ID     --env production
-gh secret set VERCEL_PROJECT_ID --env production
-```
-
-Si `gh` refuse (`Resource not accessible by integration`), le chemin UI est :
-**Settings → Environments → Production → Environment secrets → Add secret**.
-
-### 3. Vérifier un déploiement vert, PUIS retirer les secrets du dépôt
-
-C'est cette étape qui produit le bénéfice : tant que les `VERCEL_*` sont au
-niveau du dépôt, ils sont dans le `toJSON(secrets)` de **tous** les workflows —
-donc dans la portée de chaque step de chaque scan, actions tierces comprises.
-`scripts/ci_env.py` les filtre avant de lancer le process, mais il ne peut rien
-contre ce qui lit `SECRETS_JSON` directement.
-
-```bash
-python scripts/ops.py vercel deployments | head -3   # READY, source cli, pas ERROR
-curl -s https://<domaine>/api/health                  # version attendue
-# seulement alors :
-gh secret delete VERCEL_TOKEN
-gh secret delete VERCEL_ORG_ID
-gh secret delete VERCEL_PROJECT_ID
-```
+Gardiens : `tests/test_workflow_secrets.py::test_vercel_ne_deploie_pas_aussi_depuis_git`
+et `::test_le_deploiement_est_le_seul_job_a_porter_un_environnement`.
 
 ## Effet de bord assumé
 
 Un push purement documentaire ne redéploie plus. Avant, la voie Git déployait
-*tout* push sur `main` (c'est ce qu'on voit sur 482ab2a, un commit de docs seul).
-Désormais seul `ci.yml` déploie, sur ses `paths` : `**.py`, `api/**`,
-`templates/**`, `requirements.txt`, `vercel.json`. Un commit qui ne touche
-aucun de ces chemins ne change rien au site — c'est le comportement correct,
-mais ce n'est plus le précédent.
+*tout* push sur `main`. Désormais seul `ci.yml` déploie, sur ses `paths` :
+`**.py`, `api/**`, `templates/**`, `requirements.txt`, `vercel.json`,
+`.github/**`. Un commit qui ne touche aucun de ces chemins ne change rien au
+site — c'est correct, mais ce n'est plus le comportement précédent.
+
+## Ce qu'il reste à faire (opérateur)
+
+**Révoquer le PAT** utilisé pour cette bascule : il a transité par une
+conversation, il doit être considéré comme compromis.
+https://github.com/settings/tokens → révoquer. Il n'est plus nécessaire à rien :
+aucun workflow ne le lit, et `GITHUB_PAT` dans `.env` ne sert qu'aux gestes
+manuels depuis un poste de dev.
