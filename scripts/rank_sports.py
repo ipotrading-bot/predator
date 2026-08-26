@@ -13,7 +13,8 @@ donc elle pénalise automatiquement les petits échantillons — c'est exactemen
 le critère qu'on veut pour arbitrer une ressource rare. core/learning_layer.py
 la calcule déjà (`_sport_stats`), on la réutilise telle quelle.
 
-Lancé par .github/workflows/rank_sports.yml (secrets Supabase en lecture).
+Lancé par .github/workflows/reports.yml, job `hebdo` (pool `readonly` :
+clé anon, jamais SUPABASE_SERVICE_KEY).
 """
 import logging
 import os

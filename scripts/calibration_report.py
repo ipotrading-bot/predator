@@ -25,7 +25,8 @@ Deux découpages, parce qu'ils répondent à deux questions différentes :
   1,45. C'est la seule vue qui répond directement à « quels favoris, à quelles
   cotes ».
 
-Lancé par .github/workflows/rank_sports.yml (secrets Supabase en lecture).
+Lancé par .github/workflows/reports.yml, job `hebdo` (pool `readonly` :
+clé anon, jamais SUPABASE_SERVICE_KEY).
 """
 import logging
 import os

@@ -51,7 +51,7 @@ import core.risk_manager as _risk_manager
 load_dotenv()
 
 # ── Deep-scan mode (DEEP_SCAN=1) ─────────────────────────────────────
-# Triggered by .github/workflows/deep_scan.yml or manually.
+# Triggered by .github/workflows/scan.yml (mode `deep`) or manually.
 # Lifts per-sport quotas + scans 48h ahead with up to 100 events.
 DEEP_SCAN    = os.environ.get("DEEP_SCAN",    "0") == "1"
 GOLDEN_HOUR  = os.environ.get("GOLDEN_HOUR", "0") == "1"
@@ -191,10 +191,11 @@ _ODDS_CEILINGS: dict[str, float] = {}
 MAX_MATCHES = 100 if DEEP_SCAN else 50
 
 # ── TTL des caches sports-hors-OddsAPI (heures) ──────────────────────
-# Défauts calés sur le partage de TPD Groq avec golden_hour.yml/le settlement.
+# Défauts calés sur le partage de TPD Groq avec le tick golden/le settlement.
 # Ils sont surdimensionnés pour le table tennis : le slate ITTF tourne toutes
 # les 30-60 min, donc à 4h de TTL un scan sur deux ne voyait qu'une carte déjà
-# jouée. guerrilla.yml, qui a son propre budget, les raccourcit par l'env.
+# jouée. Le mode `guerrilla`, qui a son propre budget, les raccourcit par
+# l'env (scripts/ci_scan_mode.py::MODE_ENV).
 # TTL d'un résultat VIDE. eSports et sports alternatifs n'ont pas de feed
 # Melbet dans ce flux : si la recherche rend zéro (clé Groq morte, par ex.),
 # le vide reste en cache et le sport est muet jusqu'à expiration.
@@ -1996,7 +1997,7 @@ def run():
     # et les prix estimés ont moins de valeur que le vrai mouvement Pinnacle.
     #
     # ⚠️ CETTE SORTIE SUPPOSE UN TIER 1 VIVANT. OddsAPI obsolète (2026-08-26),
-    # `matches` est TOUJOURS vide ici — la garde ferait de golden_hour.yml un
+    # `matches` est TOUJOURS vide ici — la garde ferait du tick golden un
     # no-op permanent, une fois par heure, pour toujours. C'était déjà le cas
     # en prod avant la décision (run 32965494280, 11:52 : « 0 events dans
     # T-2h → exit rapide » alors que les sources gratuites, elles, avaient de

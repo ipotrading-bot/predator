@@ -28,6 +28,8 @@ Tout le calcul tourne en crons GitHub Actions ; le dashboard est en lecture seul
   (180 min mini entre deux scans payants d'une ligue hors fenêtre, réserve de crédits ;
   fenêtres favorables et closing line jamais espacées ; chaque ligue sautée est loggée)
 - `api/index.py` + `templates/*.html` — dashboard Flask
+- `scripts/ci_env.py` — quels secrets atteignent quel job (pools dérivés du
+  registre IA) ; `scripts/ci_scan_mode.py` — quel cron donne quel mode de scan
 
 ## Conventions
 
@@ -60,6 +62,30 @@ Tout le calcul tourne en crons GitHub Actions ; le dashboard est en lecture seul
   été validés par une inférence réelle : la clé n'est pas disponible en dev.
   Premier geste après déploiement : `python scripts/ops.py ai`.
   Gardien : `tests/test_ai_router.py::TestLanes`.
+- LES WORKFLOWS NE LISTENT AUCUN SECRET (refonte 2026-08-26). 13 workflows et
+  339 `${{ secrets.X }}` sont devenus 6 workflows et 3 (les VERCEL_* du job de
+  déploiement, qui vivent dans l'environnement GitHub `production` pour ne
+  figurer dans le `toJSON(secrets)` d'aucun autre job). Chaque job expose
+  `SECRETS_JSON: ${{ toJSON(secrets) }}` UNE fois et passe par
+  `scripts/ci_env.py --pool <nom>`, qui ne laisse atteindre le process que les
+  clés de son pool — liste CALCULÉE depuis `core.ai_router.REGISTRY`, jamais
+  recopiée. Le registre portait 18 fournisseurs quand les workflows n'en
+  câblaient que 15 : la divergence était déjà là. ⚠️ Ne JAMAIS remettre un
+  `X: ${{ secrets.X }}` dans un YAML, ni un `echo` de debug dans ces steps (le
+  masquage de GitHub reconnaît mal une valeur multi-lignes ré-encodée par
+  toJSON — le PEM de BETFAIR_CERT). Les 4 scans sont fusionnés dans `scan.yml`,
+  le mode vient du cron qui a tiré (`scripts/ci_scan_mode.py::CRON_MODES` — un
+  cron ajouté sans sa ligne fait échouer le run ET le test).
+  Gardiens : `tests/test_ci_env.py`, `tests/test_workflow_secrets.py`.
+- LE VERROU `predator-signals-write` NE CONTIENT PLUS `closing_line.yml`, et la
+  raison courante (« aucune ligne en commun ») est FAUSSE : `purge_rules`
+  (`_purge_old_signals`) supprime des lignes actives sur des critères de
+  qualité SANS filtre sur `match_time`, donc à coup d'envoi futur. Ce qui tient :
+  le settlement, lui, ne peut pas les toucher (`match_time` de part et d'autre
+  de `now`), et la purge ne peut que SUPPRIMER — Postgres sérialise déjà cette
+  course ligne par ligne. Au pire une écriture est perdue sur une ligne
+  condamnée. Le verrou n'achetait pas de correction, il achetait de l'attente
+  derrière un deep scan de 25 min.
 - Secrets : `core/secret_store.py` (table Supabase `app_secrets`) bat `os.environ` ;
   une valeur périmée dans la table gagne quand même.
 - Sources de cotes : la règle est « authentifié par clé = joignable, sinon filtré
@@ -97,10 +123,10 @@ Tout le calcul tourne en crons GitHub Actions ; le dashboard est en lecture seul
   price), et la capture closing-line « en stop » sur le payload payant —
   seul `run_closing_line.py` la fait encore, donc le CLV réel se raréfie
   alors que `learning_layer` en fait un critère de premier rang. La garde
-  `[ -z "$ODDS_API_KEY" ] && exit 1` a été retirée d'engine/golden_hour/
-  deep_scan : elle échouait FERMÉ et aurait tué tous les scans le jour où le
-  secret est retiré. La sortie anticipée de GOLDEN_HOUR supposait un Tier 1
-  vivant : sans elle, golden_hour.yml était un no-op horaire permanent.
+  `[ -z "$ODDS_API_KEY" ] && exit 1` a été retirée des scans (fusionnés dans
+  `scan.yml` le 2026-08-26) : elle échouait FERMÉ et aurait tué tous les scans
+  le jour où le secret est retiré. La sortie anticipée de GOLDEN_HOUR supposait
+  un Tier 1 vivant : sans elle, le tick golden était un no-op horaire permanent.
   Gardien : `tests/test_oddsapi_obsolete.py`.
 - Périmètre sports (2026-08-22) : eSports/tennis de table/volley/handball RETIRÉS
   (`RETIRED_SPORTS`, garde dans `_emit`, données historiques conservées) ; MMA/boxe/NFL/
@@ -197,6 +223,25 @@ Tout le calcul tourne en crons GitHub Actions ; le dashboard est en lecture seul
   (Fly.io/Render région EU), proxy à IP dédiée, ou runner auto-hébergé en
   Europe. Tant que ce n'est pas fait, odds500 → 7M → `team_aliases` reste
   INERTE (12 lignes) : ne pas chercher un bug de code, il n'y en a pas.
+- CLOSING LINE : `capture_from_scan` (payload OddsAPI) est MORTE avec OddsAPI —
+  elle vit dans une branche que `ODDS_API_ENABLED=0` ne franchit plus.
+  `capture_from_exchange` (2026-08-26) la remplace sur les prix Matchbook que
+  chaque scan charge déjà, REPRICE compris → `closing_source='exchange'`.
+  ⚠️ ELLE PREND LE DICT DE PRIX BRUT, PAS LES MATCHS ENRICHIS, et c'est tout
+  l'enjeu : `_enrich_from_exchange` n'écrase `odds_pinnacle` que sur les matchs
+  SANS prix sharp, or api-sports sert Pinnacle sur 100 % de ses matchs foot et
+  100 % des signaux sont du foot. Lire le match enrichi stockerait le prix
+  d'ENTRÉE comme prix de clôture : CLV nul partout, exécution verte, aucune
+  trace. Football sans prix de nul = REFUS (jamais de repli sur le moneyline :
+  comparer une entrée DNB à une clôture ML donne un CLV faux et silencieux).
+  Gardien : `tests/test_closing_line_exchange.py`.
+- `strict_team_match` NE NORMALISE PAS la ligature « æ » : « Stabaek » et
+  « Stabæk » ne s'apparient que par le RATIO de similarité (0,857 ≥ 0,60), pas
+  par `_normalize_team`. Le ratio tombe à 0,476 dès qu'un côté porte un suffixe
+  de club (« Stabæk Fotball ») et l'appariement échoue — mesuré le 2026-08-26.
+  Le contrat est le REFUS silencieux, pas un prix posé au hasard. Élargir la
+  normalisation toucherait l'appariement de TOUT le pipeline (edge compris) et
+  ne se décide pas au détour d'un correctif.
 - Kalshi/Polymarket : BRANCHÉS le 2026-08-26 (`free_sources.measure_slate_consensus`,
   appelé par `harvester._fetch_multi_book`). Ils étaient importés NULLE PART
   hors de leurs tests depuis le 2026-08-22 — capacité morte en silence. Rôle
@@ -288,8 +333,9 @@ Tout le calcul tourne en crons GitHub Actions ; le dashboard est en lecture seul
 - DEUX interpréteurs, subis et non choisis : `.python-version` + `vercel.json`
   = **3.12** (l'image de build Vercel n'embarque PAS 3.11 — l'y « aligner »
   casse le déploiement et laisse la prod sur le commit précédent, vécu le
-  2026-08-22) ; les 14 workflows et le dev local = **3.11**. Gardé par
-  `tests/test_workflow_secrets.py`.
+  2026-08-22) ; les 6 workflows, l'action `.github/actions/setup` (qui porte
+  désormais l'unique `setup-python` du dépôt) et le dev local = **3.11**.
+  Gardé par `tests/test_workflow_secrets.py`.
 - Une suite verte ne prouve RIEN sur le déploiement : aucun test ne déploie.
   Après toute retouche de `vercel.json`, `.python-version`, `requirements.txt`
   ou `api/index.py` : `python scripts/ops.py vercel deployments | head -3`

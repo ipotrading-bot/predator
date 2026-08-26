@@ -78,7 +78,7 @@ mauvais endroit.
 
 Pas de build, pas de bundler : Jinja + CSS + JavaScript inline. Le dashboard
 n'écrit qu'une chose, une demande de scan dans `meta` (`/api/scan`, cooldown
-de 120 s), ramassée par `golden_hour.yml` au passage suivant.
+de 120 s), ramassée par `scan.yml` au tick suivant (36/jour, donc ≤ ~1 h).
 
 ### 🧠 Couche IA
 
@@ -199,7 +199,7 @@ budget crédits avant/après, carte des crons, boucle de calibration) est docume
 | Endpoint | Method | Description |
 |----------|--------|-------------|
 | `/api/signals` | GET | Signaux actifs **encore jouables** — coup d'envoi non passé (`?all=1` pour la liste brute, diagnostic) |
-| `/api/scan` | POST | Demander un scan PAIM — pose le flag `meta.scan_request`, ramassé par `golden_hour.yml` (≤ 30 min) |
+| `/api/scan` | POST | Demander un scan PAIM — pose le flag `meta.scan_request`, ramassé par `scan.yml` à chaque tick (≤ ~1 h) |
 | `/api/audit/run` | POST | Déclencher `audit.yml` — **jeton d'admin requis** (`X-Predator-Token`), voir ci-dessous |
 | `/api/health` | GET | Santé du **dashboard** (aucun appel à Supabase — reste utilisable base injoignable) |
 

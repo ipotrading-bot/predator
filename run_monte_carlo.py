@@ -1,6 +1,6 @@
 """
 run_monte_carlo.py — PREDATOR PAIM v9.5 — Bankroll growth simulator entry point.
-Manual/on-demand only (.github/workflows/monte_carlo.yml, workflow_dispatch) —
+Manual/on-demand only (.github/workflows/tools.yml, input `monte_carlo`) —
 a decision aid to run before any withdrawal, not a scheduled job. Bootstraps
 from real ai_learning_ledger outcomes; refuses to run on too small a sample
 rather than report a distribution built on noise.

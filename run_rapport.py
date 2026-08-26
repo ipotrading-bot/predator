@@ -1,6 +1,7 @@
 """
 run_rapport.py — PREDATOR PAIM v8.5 — Rapport Telegram 06:05 & 18:05 UTC
-Triggered by .github/workflows/rapport.yml after each main scan window.
+Triggered by .github/workflows/reports.yml (job `rapport`) after each main
+scan window.
 
 Envoie un récapitulatif des signaux actifs, un bloc par pari :
   - Événement, favori (h2h uniquement), sélection, cote, heure du match, valeur
@@ -52,7 +53,8 @@ ELITE_EDGE     = _ELITE_EDGE
 SCAN_STALE_H   = 2      # Alerte si aucun scan depuis X heures
 
 # Fenêtre de signaux couverte par un rapport. Doit rester ALIGNÉE sur le cron
-# de rapport.yml (toutes les 2h depuis le 2026-08-06) : à 6h, chaque signal
+# du job `rapport` de reports.yml (toutes les 2h depuis le 2026-08-06) : à
+# 6h, chaque signal
 # était réenvoyé par trois rapports consécutifs et l'opérateur ne pouvait plus
 # distinguer une nouvelle occasion d'un rappel. Si le cron change, changer ici.
 REPORT_WINDOW_H = 2

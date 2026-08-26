@@ -17,7 +17,8 @@ TROIS RÈGLES, toutes loggées (aucun scan utile supprimé en silence) :
    existait déjà) ;
 2. hors fenêtre favorable, jamais deux scans payants de la MÊME ligue à
    moins de BACKGROUND_MIN_INTERVAL_MIN (180 min) d'intervalle. Pourquoi
-   180 : c'est la cadence d'engine.yml depuis le 2026-08-22 — un tick golden
+   180 : c'est la cadence du mode `standard` de scan.yml depuis le
+   2026-08-22 (8 ticks sur les fenêtres favorables) — un tick golden
    hour (horaire, fenêtre 2h) entre deux scans engine ne repaie donc plus
    une ligue au repos ; dans une fenêtre favorable il la repaie, et c'est
    voulu (c'est là que la ligne bouge) ;

@@ -10,7 +10,7 @@ La définition opérationnelle de « s'approcher de la perfection » : CLV réel
   - verdict promotion/rétrogradation (meta sport_verdict_*, posé par la
     couche d'apprentissage à chaque audit — jamais appliqué automatiquement).
 Lecture seule sur Supabase (clé anon), envoi Telegram si configuré.
-Lancé par .github/workflows/rank_sports.yml (hebdo, lundi 07:00 UTC).
+Lancé par .github/workflows/reports.yml, job `hebdo` (lundi 07:00 UTC).
 """
 import logging
 import os

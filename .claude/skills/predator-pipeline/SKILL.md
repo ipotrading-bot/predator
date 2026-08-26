@@ -6,7 +6,7 @@ description: Reference map of the PREDATOR PAIM data pipeline (odds ingestion �
 # PREDATOR pipeline map
 
 This project has no automated migration runner, and its test suite (`tests/`,
-run by `tests.yml` on every push) covers the maths and parsing logic but cannot
+run by `ci.yml` on every push, which now gates the Vercel deploy) covers the maths and parsing logic but cannot
 see live data or cron behaviour — to catch a *pipeline* break you still have to
 trace the flow by hand. This skill is that trace, pre-done.
 
@@ -227,10 +227,12 @@ redeploy). Le widget et le moteur voient donc la même clé.
 
 Deux corollaires qui restent vrais :
 - une valeur PÉRIMÉE dans `app_secrets` bat un `os.environ` correct ;
-- le secret GitHub `ODDS_API_KEY` doit rester NON VIDE même s'il est périmé —
-  `engine.yml`/`golden_hour.yml` ont un préflight `[ -z "$ODDS_API_KEY" ] && exit 1`
-  qui ferait échouer le job avant tout scan. Ne pas « faire le ménage » en le
-  supprimant.
+- ~~le secret GitHub `ODDS_API_KEY` doit rester NON VIDE~~ **PÉRIMÉ.** Cette
+  garde échouait FERMÉ : elle aurait tué tous les scans le jour du retrait du
+  secret. Elle a été supprimée avec l'obsolescence d'OddsAPI (2026-08-26), et
+  le préflight actuel (`scripts/ci_env.py`) ne l'exige plus — c'est même un
+  test explicite
+  (`tests/test_ci_env.py::test_preflight_odds_api_key_nest_plus_requise`).
 
 Les logs de scan (`x-requests-used` / `x-requests-remaining`) restent la mesure
 la plus fiable de la consommation réelle.
@@ -284,7 +286,7 @@ Détail complet : `reports/refonte_scope_2026-08.md`. Ce qu'il faut savoir pour 
 
 ## Le mode REPRICE (2026-08-22) — l'odds screen gratuit
 
-`REPRICE=1` (2e step de `golden_hour.yml`, chaque heure) relit le slate soft
+`REPRICE=1` (step accroché au tick `golden` de `scan.yml`, chaque heure) relit le slate soft
 photographié par les scans complets dans `meta.cache_soft_slate` (TTL 4h,
 `CACHE_SOFT_SLATE_TTL_H`) et le recompare à un prix sharp **Matchbook
 frais** — gratuit, sans clé, 700 req/min. Émission NON fantôme. Invariants
@@ -355,7 +357,8 @@ couche de mise, publiés quand même). Depuis :
   automatically — they must be pasted into the Supabase SQL Editor by a human with
   DB access. Check `sql/` for the latest unapplied migration before assuming a
   column exists.
-- **`backfill_ledger.py`** (workflow: `.github/workflows/backfill.yml`) is
+- **`backfill_ledger.py`** (workflow: `.github/workflows/tools.yml`, input
+  `backfill_ledger`) is
   `workflow_dispatch`-only, idempotent, one-shot. It re-populates
   `ai_learning_ledger` from historical terminal-status `signals` rows. Needed after
   any period where step 3's purge bug (or similar) silently dropped rows.
@@ -368,17 +371,24 @@ couche de mise, publiés quand même). Depuis :
 
 ## Cron cadence (GitHub Actions, `.github/workflows/`)
 
-| Workflow | Cadence | Purpose |
+| Workflow (mode) | Cadence | Purpose |
 |---|---|---|
-| `golden_hour.yml` | horaire (H+25) | DEUX exécutions par tick depuis le 2026-08-22 : (1) scan de mouvement de ligne à T-120min, purge à chaque run, vérifie aussi `meta.scan_request` ; (2) step **REPRICE** (voir section dédiée) — gratuit, non fantôme. **Ses signaux partent en FANTÔME depuis le 2026-08-06** (`SHADOW_GOLDEN_HOUR`) : persistés et réglés, jamais recommandés — mesuré à 39% de réussite pour 54,5% requis, p=0,007. Ne PAS ajouter de poller dédié pour compenser la latence du bouton Scan — c'est l'erreur du 2026-07-07. |
-| `engine.yml` | **8x/jour sur les FENÊTRES FAVORABLES** (02/06/09/12/17/19/21/23 UTC) depuis le 2026-08-22 (était 12x/2h uniforme) | scan complet, fenêtre **24h**. Placement = `core/scan_windows.py` ; cadence dimensionnée sur le budget des sources gratuites — voir « L'arbitrage de cadence » |
-| `deep_scan.yml` | **2x/jour (05:33, 17:33)** depuis le 2026-08-22 (était 4) | **fenêtre 24h elle aussi** — `HOURS_AHEAD: "24"` explicite. Le workflow s'appelait « Deep Scan 48h » alors qu'il faisait déjà 24h : renommé « Deep Scan 24h » le 2026-08-06. Ce qui reste « deep » = `MAX_MATCHES=100` et `_QUOTA_DEEP`, pas l'horizon. |
-| `audit.yml` | toutes les 6h | settlement + CLV + couche d'apprentissage |
-| `rapport.yml` | **toutes les 2h (H+35)** | rapport Telegram — était 07:05 & 18:05 jusqu'au 2026-08-06. `run_rapport.py:REPORT_WINDOW_H` (2h) doit rester égal à l'intervalle du cron, sinon un même signal repart dans plusieurs rapports. |
-| `closing_line.yml` | horaire (H+00) | capture de la ligne de clôture |
-| `guerrilla.yml` | **2x/jour (09:47, 21:47)** depuis le 2026-08-22 (était toutes les 2h) | scan sans OddsAPI (1XBet direct + recherche web) — c'est lui, pas un bouton, qui consomme le TPD Groq quand les sources sont mortes ; le coupe-circuit `harvest_empty_at` le neutralise 3h après un Tier 2 vide |
-| `backfill.yml` | manuel | réparation one-shot de `ai_learning_ledger` |
-| `rank_sports.yml` | **hebdo, lundi 07:00 UTC** (était manuel) | classement des sports + `calibration_report.py` + **rapport hebdo de vérité** (`scripts/weekly_report.py` : CLV réel, Brier, ROI net taxe, SUSPECT, verdicts promotion/retrait) |
+| `scan.yml` — `golden` | horaire (H+25), 24/j | scan de mouvement de ligne à T-120min, purge à chaque run, lit `meta.scan_request`. **Ses signaux partent en FANTÔME depuis le 2026-08-06** (`SHADOW_GOLDEN_HOUR`) : persistés et réglés, jamais recommandés — 39% de réussite pour 54,5% requis, p=0,007. Porte aussi le step **REPRICE** (section dédiée) — gratuit, non fantôme, avec un pool de secrets qui ne contient aucune clé payante. Ne PAS ajouter de poller dédié pour compenser la latence du bouton Scan — c'est l'erreur du 2026-07-07. |
+| `scan.yml` — `standard` | **8x/jour sur les FENÊTRES FAVORABLES** (02/06/09/12/17/19/21/23 UTC) depuis le 2026-08-22 (était 12x/2h uniforme) | scan complet, fenêtre **24h**. Placement = `core/scan_windows.py` ; cadence dimensionnée sur le budget des sources gratuites — voir « L'arbitrage de cadence » |
+| `scan.yml` — `deep` | **2x/jour (05:33, 17:33)** depuis le 2026-08-22 (était 4) | **fenêtre 24h elle aussi** — `HOURS_AHEAD: "24"` explicite. Ce qui reste « deep » = `MAX_MATCHES=100` et `_QUOTA_DEEP`, pas l'horizon. |
+| `scan.yml` — `guerrilla` | **2x/jour (09:47, 21:47)** depuis le 2026-08-22 (était toutes les 2h) | scan sans OddsAPI (sources gratuites + recherche web renforcée, horizon 48h venu du CODE et non d'une variable) — c'est lui, pas un bouton, qui consomme le TPD Groq quand les sources sont mortes ; le coupe-circuit `harvest_empty_at` le neutralise 3h après un Tier 2 vide |
+| `scan.yml` — passe closing line | **à la fin de chaque tick** (36/j) | `run_closing_line.py`, `continue-on-error` : une passe ratée n'annule pas le scan déjà persisté |
+| `audit.yml` | toutes les 6h | settlement + CLV + couche d'apprentissage. **Ne pas renommer ce fichier** : `api/index.py` le déclenche par son nom. |
+| `closing_line.yml` | **3 ticks/h (H+14/34/54)** depuis le 2026-08-26 (était `4-59/10`, 144/j) | capture de la ligne de clôture, cadence alignée sur `CLOSING_LINE_REFRESH_MIN`. **Hors du verrou d'écriture** — voir CLAUDE.md pour la justification exacte, la version courte (« aucune ligne en commun ») étant fausse. |
+| `reports.yml` — `rapport` | **toutes les 2h (H+35)** | rapport Telegram. `run_rapport.py:REPORT_WINDOW_H` (2h) doit rester égal à l'intervalle du cron, sinon un même signal repart dans plusieurs rapports. |
+| `reports.yml` — `hebdo` | **lundi 07:00 UTC** | classement des sports + `calibration_report.py` + **rapport hebdo de vérité** (`scripts/weekly_report.py` : CLV réel, Brier, ROI net taxe, SUSPECT, verdicts promotion/retrait) |
+| `tools.yml` | manuel uniquement | `monte_carlo` et `backfill_ledger` (réparation one-shot de `ai_learning_ledger`) |
+| `ci.yml` | sur push/PR | tests + lint, **puis** déploiement Vercel — le gate n'est réel que parce que `vercel.json` désactive le déploiement Git |
+
+Total : **124 déclenchements planifiés/jour** (contre 196 avant le 2026-08-26).
+Le mode d'un tick de `scan.yml` est déduit du cron qui a tiré
+(`scripts/ci_scan_mode.py::CRON_MODES`) : un cron ajouté sans sa ligne fait
+échouer le run ET le test.
 
 When a fix touches purge, audit, or learning-layer logic, sanity-check it against
 this cadence table — anything that runs more often than `audit.yml` (6h) can race
@@ -387,15 +397,16 @@ ahead of settlement if it isn't carefully scoped to `status='active'`.
 **2026-07-07 incident**: `on_demand.yml` used to poll `meta.scan_request` on its
 own `*/5 * * * *` schedule (288 triggers/day, ~81% of every scheduled trigger in
 the repo combined). GitHub Actions silently delays/drops scheduled runs under
-that kind of load — `golden_hour.yml`, despite being declared `*/30`, was
+that kind of load — le tick golden (alors `golden_hour.yml`), despite being declared `*/30`, was
 actually landing 1–4.5h apart, leaving the dashboard's "Dernier scan" hours
 stale. Fix: the schedule was removed from `on_demand.yml`, and its
-`meta.scan_request` check was folded into a step at the top of
-`golden_hour.yml` (free — it rides golden_hour's existing 30-min cadence
-instead of its own separate schedule). `on_demand.yml` itself was deleted
-outright on 2026-07-07 — once golden_hour.yml absorbed the check, the file
+`meta.scan_request` check was folded into a step at the top of the golden
+scan (free — it rides its existing cadence instead of its own separate
+schedule ; depuis le 2026-08-26 ce step est `scripts/ci_scan_mode.py`, lu à
+chacun des 36 ticks de `scan.yml`). `on_demand.yml` itself was deleted
+outright on 2026-07-07 — once the golden scan absorbed the check, the file
 was pure dead weight (a `workflow_dispatch`-only duplicate of logic that now
-lives in golden_hour.yml) and it additionally never passed
+lives in the scan workflow) and it additionally never passed
 `SUPABASE_SERVICE_KEY` to `run_engine.py`, so any manual trigger of it was
 guaranteed to fail every write via RLS regardless of secret correctness. When
 `scan_request` is pending, golden_hour runs `run_engine.py` with

@@ -854,7 +854,10 @@ def health():
 # devient invisible mais pas muette — voir l'incident du 10→20 août 2026.)
 
 
-_SCAN_REQUEST_COOLDOWN_S = 120  # golden_hour.yml picks this up on its next run (every 30 min)
+# scan.yml lit ce flag à CHAQUE tick (36/jour) depuis la refonte du
+# 2026-08-26, contre 24 auparavant : la latence tombe sous l'heure. Un tick
+# `golden` est promu en scan complet ; les autres modes en sont déjà un.
+_SCAN_REQUEST_COOLDOWN_S = 120
 
 
 @app.route("/api/scan", methods=["POST"])
