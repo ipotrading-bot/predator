@@ -153,39 +153,49 @@ nav:not(.bnav) {
 @media (max-width: 639px) { .fab-scan { display: flex; } }
 
 /* ── Bottom nav (mobile) ───────────────────────── */
+/* Refonte 2026-08-26 (demande operateur : « icones plus grandes, plus
+   modernes, visibles »). Icones 26px au lieu de 20, barre 64px au lieu de
+   56, libelle 11px au lieu de 9. L'entree active porte une PASTILLE : un
+   simple changement de couleur ne se voyait pas d'un coup d'oeil sur un
+   ecran de telephone en plein soleil. Trois entrees depuis la suppression
+   de Wiz (Accueil, Sys, Perf) : /ledger et /audit restent MASQUES
+   (decision operateur 2026-08-22), toujours servis, jamais lies. */
 .bnav {
   position: fixed; bottom: 0; left: 0; right: 0; z-index: 60;
-  background: rgba(3,3,5,.96);
-  backdrop-filter: blur(20px) saturate(160%);
-  -webkit-backdrop-filter: blur(20px) saturate(160%);
+  background: rgba(3,3,5,.94);
+  backdrop-filter: blur(24px) saturate(180%);
+  -webkit-backdrop-filter: blur(24px) saturate(180%);
   border-top: 1px solid var(--bd);
   display: flex;
-  height: calc(56px + var(--sbot));
-  padding-bottom: var(--sbot);
+  height: calc(64px + var(--sbot));
+  padding: 6px 8px var(--sbot);
+  gap: 6px;
 }
 .bnav a {
   flex: 1; display: flex; flex-direction: column;
-  align-items: center; justify-content: center; gap: 4px;
+  align-items: center; justify-content: center; gap: 5px;
   text-decoration: none; color: var(--t2);
-  font-size: 9px; font-weight: 500;
-  /* 4 entrees : Accueil, Sys, Wiz, Perf. /ledger et /audit ont ete
-     MASQUES du menu le 2026-08-22 sur decision operateur — les deux pages
-     restent servies, elles ne sont simplement plus liees.
-     A 320px de large cela fait 80px par entree, large pour « Accueil » a
-     9px ; on interdit quand meme le retour a la ligne, qui decalerait les
-     icones les unes par rapport aux autres si un libelle s'allongeait. */
+  font-size: 11px; font-weight: 600; letter-spacing: .3px;
   white-space: nowrap; min-width: 0;
-  transition: color .12s;
+  border-radius: 14px;
+  transition: color .15s, background .15s, transform .1s;
 }
-.bnav a.on { color: var(--green); }
+.bnav a:active { transform: scale(.94); }
+.bnav a.on {
+  color: var(--green);
+  background: rgba(0,232,127,.10);
+  box-shadow: inset 0 0 0 1px rgba(0,232,127,.22);
+}
 .bnav svg {
-  width: 20px; height: 20px; stroke: currentColor; fill: none;
-  stroke-width: 1.5; stroke-linecap: round; stroke-linejoin: round;
+  width: 26px; height: 26px; stroke: currentColor; fill: none;
+  stroke-width: 2; stroke-linecap: round; stroke-linejoin: round;
+  transition: transform .15s;
 }
+.bnav a.on svg { transform: translateY(-1px); filter: drop-shadow(0 0 6px rgba(0,232,127,.45)); }
 
 /* ── Layout ────────────────────────────────────── */
 .wrap {
-  padding: 14px 12px calc(72px + var(--sbot));
+  padding: 14px 12px calc(84px + var(--sbot));
   max-width: 820px; margin: 0 auto;
 }
 @media (min-width: 640px) {

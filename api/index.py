@@ -51,7 +51,11 @@ app = Flask(__name__, template_folder=_template_dir, static_folder=_static_dir, 
 # endroits : « 8.8 » dans le health-check, et v8.5/v8.6/v8.8/v9.4/v10.0/v1.0
 # dans les six pieds de page. Un numéro de version qui ment fait chercher un
 # bug dans le mauvais déploiement.
-DASHBOARD_VERSION = "10.4"
+# 10.5 (2026-08-26) : barre de navigation mobile refondue (icones 26px,
+# pastille active), /performance allegee, Wiz supprime. Le numero sert
+# aussi de cache-busting au CSS (`?v=`) : sans bump, un telephone qui a
+# deja predator.css en cache ne verrait AUCUN changement de style.
+DASHBOARD_VERSION = "10.5"
 
 
 @app.context_processor

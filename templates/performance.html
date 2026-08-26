@@ -16,7 +16,7 @@
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
 <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&family=JetBrains+Mono:wght@400;500;700&display=swap" rel="stylesheet">
-<link rel="stylesheet" href="/static/css/predator.css">
+<link rel="stylesheet" href="/static/css/predator.css?v={{ version }}">
 <style>
 .wrap { max-width: none; padding: 0 0 calc(72px + var(--sbot)); }
 @media (min-width: 640px) { .wrap { padding-bottom: 52px; } }
@@ -27,9 +27,10 @@
   background: var(--bg1); border: 1px solid var(--bd); border-radius: var(--r);
 }
 @media (min-width: 640px) { .wr-hero { margin: 22px 24px 0; } }
-.wr-hero-v { font-size: 52px; font-weight: 800; line-height: 1; font-family: var(--font-data); }
-.wr-hero-l { font-size: 11px; font-weight: 700; letter-spacing: 1px; color: var(--t2); margin-top: 8px; }
-.wr-hero-s { font-size: 11px; color: var(--t3); margin-top: 6px; font-family: var(--font-data); }
+.wr-hero-v { font-size: 64px; font-weight: 800; line-height: 1; font-family: var(--font-data); letter-spacing: -1px; }
+.wr-hero-l { font-size: 12px; font-weight: 700; letter-spacing: 1.5px; color: var(--t2); margin-top: 10px; }
+.wr-hero-s { font-size: 14px; color: var(--t1); margin-top: 8px; font-family: var(--font-data); font-weight: 600; }
+.wr-verdict { display: inline-block; margin-top: 12px; padding: 5px 14px; border-radius: 100px; font-size: 12px; font-weight: 700; letter-spacing: .3px; }
 
 .perf-kpis {
   display: flex; overflow-x: auto; scrollbar-width: none;
@@ -42,9 +43,8 @@
   padding: 18px 20px; border-right: 1px solid var(--bd); text-align: center;
 }
 .pk:last-child { border-right: none; }
-.pk-v { font-size: 26px; font-weight: 800; line-height: 1; font-family: var(--font-data); }
-.pk-l { font-size: 9px; color: var(--t2); text-transform: uppercase; letter-spacing: .5px; margin-top: 6px; line-height: 1.5; }
-.pk-s { font-size: 9px; color: var(--t3); margin-top: 3px; font-family: var(--font-data); }
+.pk-v { font-size: 34px; font-weight: 800; line-height: 1; font-family: var(--font-data); }
+.pk-l { font-size: 10px; color: var(--t2); text-transform: uppercase; letter-spacing: .8px; margin-top: 8px; line-height: 1.5; font-weight: 600; }
 @media (min-width: 640px) { .perf-kpis { overflow-x: visible; } .pk { flex: 1; min-width: 0; } }
 
 .sec-hdr {
@@ -79,7 +79,8 @@
 .tbl-outer { padding: 0 16px 24px; overflow-x: auto; -webkit-overflow-scrolling: touch; }
 @media (min-width: 640px) { .tbl-outer { padding: 0 24px 28px; } }
 
-.perf-table { width: 100%; border-collapse: collapse; min-width: 680px; }
+.perf-table { width: 100%; border-collapse: collapse; }
+.perf-table.wide { min-width: 680px; }
 .perf-table thead th {
   font-size: 9px; font-weight: 600; letter-spacing: .8px;
   text-transform: uppercase; color: var(--t2);
@@ -89,7 +90,7 @@
 .perf-table tbody tr { border-bottom: 1px solid var(--bd); transition: background .1s; }
 .perf-table tbody tr:last-child { border-bottom: none; }
 .perf-table tbody tr:hover { background: var(--bg2); }
-.perf-table td { padding: 9px 12px; vertical-align: middle; font-size: 11px; }
+.perf-table td { padding: 12px 12px; vertical-align: middle; font-size: 13px; }
 
 .oc-win  { display:inline-block; padding:2px 9px; border-radius:100px; font-size:9px; font-weight:700; background:rgba(0,232,127,.08);  color:var(--green);  border:1px solid rgba(0,232,127,.2); }
 .oc-loss { display:inline-block; padding:2px 9px; border-radius:100px; font-size:9px; font-weight:700; background:rgba(251,78,110,.08); color:var(--red);    border:1px solid rgba(251,78,110,.2); }
@@ -118,7 +119,7 @@
   <div class="page-hdr">
     <div class="page-title">&#9660; PERFORMANCE</div>
     <div class="page-sub">
-      Résultats réels depuis <b>août 2026</b> &middot; mis à jour toutes les 6 h
+      depuis <b>août 2026</b>
     </div>
   </div>
 
@@ -136,24 +137,21 @@
     <div class="wr-hero-s">
       {{ global_s.wins }} gagnés &middot; {{ global_s.losses }} perdus
     </div>
-    <div class="wr-hero-s" style="margin-top:6px">
-      {% if global_s.above_breakeven %}
-        <span style="color:var(--green)">&#10003; Rentable</span>
-        <span style="color:var(--t3)">— confirmé sur {{ global_s.wins + global_s.losses }} paris</span>
-      {% elif global_s.p_breakeven is not none %}
-        <span style="color:var(--yellow)">À confirmer</span>
-        <span style="color:var(--t3)">— il faut {{ "%.0f"|format(global_s.p_breakeven) }}% de réussite pour être rentable, et {{ global_s.wins + global_s.losses }} paris ne suffisent pas encore à le prouver</span>
-      {% else %}
-        <span style="color:var(--t3)">Pas assez de paris réglés pour conclure</span>
-      {% endif %}
-    </div>
+    {# Verdict en une pastille. La regle « jamais un taux nu » tient : le
+       seuil rentable apres taxe reste affiche, en cinq mots. #}
+    {% if global_s.above_breakeven %}
+    <div class="wr-verdict" style="color:var(--green);background:rgba(0,232,127,.10)">&#10003; RENTABLE</div>
+    {% elif global_s.p_breakeven is not none %}
+    <div class="wr-verdict" style="color:var(--yellow);background:rgba(255,200,0,.10)">À CONFIRMER &middot; seuil {{ "%.0f"|format(global_s.p_breakeven) }}%</div>
+    {% else %}
+    <div class="wr-verdict" style="color:var(--t3);background:var(--bg2)">PAS ASSEZ DE PARIS</div>
+    {% endif %}
   </div>
 
   <div class="perf-kpis">
     <div class="pk">
       <div class="pk-v" style="color:var(--t1)">{{ global_s.settled }}</div>
       <div class="pk-l">Paris<br>réglés</div>
-      <div class="pk-s">sur {{ global_s.total }} signaux</div>
     </div>
     <div class="pk">
       {# CLV = valeur contre la ligne de clôture, le juge de paix du projet.
@@ -164,11 +162,9 @@
       {% if global_s.clv_is_real and global_s.avg_clv is not none %}
       <div class="pk-v" style="color:{{ 'var(--green)' if global_s.avg_clv >= 0 else 'var(--red)' }}">{{ "%+.2f"|format(global_s.avg_clv) }}%</div>
       <div class="pk-l">CLV<br>moyen</div>
-      <div class="pk-s">battre la ligne de clôture</div>
       {% elif global_s.avg_edge is not none %}
       <div class="pk-v" style="color:var(--t2)">{{ "%+.2f"|format(global_s.avg_edge) }}%</div>
       <div class="pk-l">Edge<br>à l'entrée</div>
-      <div class="pk-s">CLV pas encore mesuré</div>
       {% else %}
       <div class="pk-v" style="color:var(--t3)">&mdash;</div>
       <div class="pk-l">CLV<br>moyen</div>
@@ -181,18 +177,14 @@
   <div class="tbl-outer">
     <table class="perf-table">
       <thead>
-        <tr><th>Sport</th><th>Paris</th><th>Réussite</th><th>Verdict</th></tr>
+        <tr><th>Sport</th><th>Paris</th><th>Réussite</th></tr>
       </thead>
       <tbody>
         {% for sport, sp in global_s.by_sport.items() %}
         <tr>
           <td>{{ sport_emoji.get(sport, '🎯') }} {{ sport_label.get(sport, sport) }}</td>
           <td style="font-family:var(--font-data)">{{ sp.n }}</td>
-          <td style="font-weight:700;font-family:var(--font-data)">{{ "%.1f"|format(sp.win_rate) }}%</td>
-          <td>
-            {% if sp.above_breakeven %}<span class="oc-win">&#10003; rentable</span>
-            {% else %}<span class="oc-exp">à confirmer</span>{% endif %}
-          </td>
+          <td style="font-weight:800;font-family:var(--font-data);font-size:15px;color:{{ 'var(--green)' if sp.above_breakeven else 'var(--t1)' }}">{{ "%.1f"|format(sp.win_rate) }}%</td>
         </tr>
         {% endfor %}
       </tbody>
@@ -203,9 +195,9 @@
   {% if history %}
   <div class="sec-hdr">&#9632; HISTORIQUE <em>{{ history|length }} paris réglés</em></div>
   <div class="tbl-outer">
-    <table class="perf-table">
+    <table class="perf-table wide">
       <thead>
-        <tr><th>Sport</th><th>Match</th><th>Pronostic</th><th>Côte</th><th>Résultat</th><th>Date</th></tr>
+        <tr><th>Sport</th><th>Match</th><th>Pronostic</th><th>Cote</th><th>Résultat</th><th>Date</th></tr>
       </thead>
       <tbody>
         {% for r in history %}
