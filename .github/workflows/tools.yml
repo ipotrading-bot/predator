@@ -22,14 +22,16 @@ jobs:
     if: github.event.inputs.tool == 'monte_carlo'
     runs-on: ubuntu-latest
     timeout-minutes: 5
-    env:
-      SECRETS_JSON: ${{ toJSON(secrets) }}
     steps:
       - uses: actions/checkout@v4
       - uses: ./.github/actions/setup
         with:
           pool: readonly
+        env:
+          SECRETS_JSON: ${{ toJSON(secrets) }}
       - name: Simulation Monte Carlo
+        env:
+          SECRETS_JSON: ${{ toJSON(secrets) }}
         run: python scripts/ci_env.py --pool readonly -- python run_monte_carlo.py
 
   backfill_ledger:
@@ -39,12 +41,14 @@ jobs:
     concurrency:
       group: predator-signals-write
       cancel-in-progress: false
-    env:
-      SECRETS_JSON: ${{ toJSON(secrets) }}
     steps:
       - uses: actions/checkout@v4
       - uses: ./.github/actions/setup
         with:
           pool: backfill
+        env:
+          SECRETS_JSON: ${{ toJSON(secrets) }}
       - name: Backfill du ledger
+        env:
+          SECRETS_JSON: ${{ toJSON(secrets) }}
         run: python scripts/ci_env.py --pool backfill -- python backfill_ledger.py
