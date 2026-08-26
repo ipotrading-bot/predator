@@ -159,10 +159,49 @@ def test_preflight_accepte_les_deux_formats_service_role():
     assert not _erreurs("scan", _secrets(SUPABASE_SERVICE_KEY=_jwt("service_role")))
 
 
-def test_preflight_settlement_exige_groq_3_distincte():
-    s = _secrets(); del s["GROQ_API_KEY_3"]
-    assert any("GROQ_API_KEY_3" in e for e in _erreurs("settlement", s))
-    assert any("identique" in e for e in _erreurs("settlement", _secrets(GROQ_API_KEY_3="g1")))
+def test_le_preflight_sexprime_en_noms_denv_et_non_de_secrets():
+    """Le bloc généré du settlement pose la VALEUR du secret GROQ_API_KEY_3
+    sous le NOM GROQ_API_KEY : le nom GROQ_API_KEY_3 n'existe nulle part dans
+    l'environnement du job. Exiger l'ancien nom faisait échouer l'audit sur un
+    secret pourtant présent (run 33008750419, 2026-08-26) — le préflight
+    réclamait une variable que sa propre conception avait fait disparaître."""
+    env = ci_env.env_for("settlement", _secrets())
+    assert "GROQ_API_KEY_3" not in env and env["GROQ_API_KEY"] == "g3"
+    assert not _erreurs("settlement", env), "un environnement sain ne doit rien lever"
+    assert all(k in env for k in ci_env.POOLS["settlement"]["required"]), \
+        "un `required` doit être un nom d'ENV, sinon il est inatteignable"
+
+
+def test_toute_exigence_de_pool_est_un_nom_denv_atteignable():
+    """Généralisation : ce piège doit être impossible sur TOUS les pools."""
+    for pool in ci_env.POOLS:
+        env = ci_env.env_for(pool, _secrets())
+        manquants = [k for k in ci_env.POOLS[pool]["required"] if k not in env]
+        assert not manquants, f"pool {pool} exige {manquants}, absent(s) de son propre env"
+
+
+def test_le_cloisonnement_groq_se_verifie_par_empreinte_entre_jobs():
+    """Depuis que chaque step ne reçoit que son pool, AUCUN process ne voit à
+    la fois la clé des scans et celle du settlement — la comparaison directe
+    est devenue impossible, et c'est le but. Le préflight publie donc une
+    empreinte irréversible : deux jobs qui affichent la même partagent une
+    organisation Groq, donc un quota, donc le cloisonnement est fictif
+    (panne du 2026-08-02).
+
+    Une empreinte n'est pas un secret : 8 hex d'un SHA-256, irréversibles."""
+    import hashlib
+    for pool, cle in (("scan", "g1"), ("settlement", "g3")):
+        env = ci_env.env_for(pool, _secrets())
+        msgs = [m for lvl, m in ci_env.check(pool, env) if lvl == "notice" and "Empreinte" in m]
+        assert msgs, f"le pool {pool} ne publie pas d'empreinte Groq"
+        assert hashlib.sha256(cle.encode()).hexdigest()[:8] in msgs[0]
+        assert cle not in msgs[0], "l'empreinte ne doit jamais contenir la clé"
+
+    scan_emp = [m for lvl, m in ci_env.check("scan", ci_env.env_for("scan", _secrets()))
+                if "Empreinte" in m][0]
+    set_emp = [m for lvl, m in ci_env.check("settlement", ci_env.env_for("settlement", _secrets()))
+               if "Empreinte" in m][0]
+    assert scan_emp != set_emp, "des clés distinctes doivent donner des empreintes distinctes"
 
 
 def test_preflight_odds_api_key_nest_plus_requise():

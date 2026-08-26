@@ -61,6 +61,7 @@ from __future__ import annotations
 
 import argparse
 import base64
+import hashlib
 import json
 import os
 import sys
@@ -131,15 +132,21 @@ POOLS: dict[str, dict] = {
     "scan": dict(
         passthrough=_uniq(SUPABASE_RW, TELEGRAM, ODDS_SOURCES, BETFAIR, RELAYS,
                           GROQ_SCAN, SEARCH, AI_FULL),
-        required=SUPABASE_RW, service_role=True, warn_missing=FALLBACK_SOURCES),
+        required=SUPABASE_RW, service_role=True, warn_missing=FALLBACK_SOURCES,
+        groq_pool=True, groq_fingerprint=True),
     "closing": dict(
         passthrough=_uniq(SUPABASE_RW, GROQ_SCAN, SEARCH, AI_FULL),
         required=SUPABASE_RW, service_role=True),
     "settlement": dict(
         passthrough=_uniq(SUPABASE_RW, TELEGRAM, SEARCH, AI_NO_GROQ),
         rename={"GROQ_API_KEY": GROQ_SETTLEMENT_SOURCE},
-        required=SUPABASE_RW + (GROQ_SETTLEMENT_SOURCE,), service_role=True,
-        groq_isolation=True, warn_missing=SEARCH),
+        # ⚠️ EN NOMS D'ENV, PAS DE SECRETS. Le bloc généré pose la valeur du
+        # secret GROQ_API_KEY_3 sous le nom GROQ_API_KEY ; le nom
+        # GROQ_API_KEY_3 n'existe nulle part dans l'environnement du job.
+        # Exiger l'ancien nom faisait échouer l'audit sur un secret pourtant
+        # présent — vécu le 2026-08-26, run 33008750419.
+        required=SUPABASE_RW + ("GROQ_API_KEY",), service_role=True,
+        groq_fingerprint=True, warn_missing=SEARCH),
     "reprice": dict(
         passthrough=_uniq(SUPABASE_RW, TELEGRAM),
         required=SUPABASE_RW, service_role=True),
@@ -269,15 +276,25 @@ def check(pool: str, secrets: dict) -> list[tuple[str, str]]:
                                  "(42501). Correctif : Supabase → Project Settings → API Keys → copier "
                                  "la clé 'service_role' dans ce secret GitHub."))
 
-    if spec.get("groq_isolation"):
-        settle = secrets.get(GROQ_SETTLEMENT_SOURCE, "")
-        for k in GROQ_SCAN:
-            if secrets.get(k) and secrets[k] == settle:
-                out.append(("error", f"{GROQ_SETTLEMENT_SOURCE} est identique à {k} — même organisation "
-                                     "Groq, même quota journalier : le cloisonnement est fictif. "
-                                     "Créer la clé sur un AUTRE compte console.groq.com."))
-        if not secrets.get("GROQ_API_KEY"):
-            out.append(("warning", "GROQ_API_KEY non définie — les scans n'ont plus de clé Groq."))
+    if spec.get("groq_fingerprint"):
+        # LE CLOISONNEMENT NE PEUT PLUS SE VÉRIFIER DANS UN SEUL JOB, et c'est
+        # voulu : depuis que chaque step ne reçoit que son pool, aucun process
+        # ne voit à la fois la clé des scans et celle du settlement. On publie
+        # donc une empreinte irréversible (8 hex d'un SHA-256) : si celle du
+        # pool `scan` et celle du pool `settlement` coïncident dans les logs,
+        # c'est la MÊME organisation Groq, donc le même quota journalier, donc
+        # un cloisonnement fictif — la panne du 2026-08-02 (les scans, 10x plus
+        # nombreux, vidaient le TPD avant qu'un seul WIN/LOSS soit écrit).
+        cle = secrets.get("GROQ_API_KEY", "")
+        if cle:
+            out.append(("notice", f"Empreinte GROQ_API_KEY (pool {pool}) : "
+                                  f"{hashlib.sha256(cle.encode()).hexdigest()[:8]} — elle doit "
+                                  "DIFFÉRER de celle du pool settlement/scan, sinon les deux "
+                                  "partagent une organisation Groq et le cloisonnement est fictif."))
+        else:
+            out.append(("warning", f"GROQ_API_KEY absente du pool {pool}."))
+
+    if spec.get("groq_pool"):
         if not secrets.get("GROQ_API_KEY_2"):
             out.append(("warning", "GROQ_API_KEY_2 non définie — les scans tournent sur une seule "
                                    "organisation Groq (100k TPD)."))
