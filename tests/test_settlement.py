@@ -328,6 +328,41 @@ class TestAiSearchFallbackChain:
         # fuiterait sur les tests suivants.
         monkeypatch.setattr(ai_search, "_tavily_plan_dead", False)
 
+    def test_un_429_minute_groq_ne_dort_plus_dans_le_moteur(self, monkeypatch):
+        """Régression 2026-08-26 (run Guerrilla 32990495899) — une 4e org Groq,
+        neuve, répondait à la limite par MINUTE ; l'ancien code dormait 20 s
+        puis 40 s à chaque 429-minute, pour chaque recherche Oracle, jusqu'au
+        timeout global de 540 s : exit 1, ZÉRO signal persisté. Une clé
+        vivante mais bridée faisait pire qu'une clé morte.
+
+        Trois propriétés : (1) aucun sleep ; (2) la clé suivante est essayée
+        tout de suite ; (3) un appel ultérieur, pendant le cooldown, ne
+        retente pas la clé bridée — mais ne la considère pas morte pour
+        autant (ai_dead reste faux : un débit par minute se repasse)."""
+        monkeypatch.setenv("GROQ_API_KEY", "k1")
+        monkeypatch.setenv("GROQ_API_KEY_2", "k2")
+        monkeypatch.setattr(ai_search, "_groq_dead_models", {})
+        monkeypatch.setattr(ai_search, "_groq_cooldown_until", {})
+        monkeypatch.setattr(ai_search.time, "sleep",
+                            lambda s: (_ for _ in ()).throw(AssertionError(f"sleep({s}) dans le moteur")))
+        keys_seen = []
+
+        def fake_post(url, json=None, headers=None, timeout=None):
+            keys_seen.append(headers["Authorization"][-2:])
+            if headers["Authorization"].endswith("k1"):
+                return _FakeResponse(429, text='{"error":{"message":"Rate limit reached ... '
+                                                'Please try again in 27.5s"}}')
+            return _FakeResponse(200, _groq_body("OK"))
+
+        monkeypatch.setattr(ai_search.requests, "post", fake_post)
+        assert ai_search._groq_post("m", [], 16, 0.0, 5, "t") == "OK"
+        assert keys_seen == ["k1", "k2"], keys_seen           # (1) et (2)
+        keys_seen.clear()
+        assert ai_search._groq_post("m", [], 16, 0.0, 5, "t") == "OK"
+        assert keys_seen == ["k2"], "la clé en cooldown a été retentée"   # (3)
+        assert not ai_search.ai_dead()
+        assert ai_search._retry_after_s(_FakeResponse(429, text="try again in 1m2.5s")) == 62.5
+
     def test_un_429_ne_condamne_pas_tavily(self, monkeypatch):
         """Un 429 est un débit PAR MINUTE : il se repasse. Le verrouiller
         ferait perdre le reste du run pour une limite de quelques secondes."""

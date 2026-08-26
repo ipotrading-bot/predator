@@ -164,6 +164,45 @@ _tavily_plan_dead = False
 # marqués morts.
 _groq_dead_models: dict[int, set] = {}
 
+# Rate-limit MINUTE — cooldown PAR CLÉ, sans jamais dormir dans le moteur.
+#
+# Mesuré le 2026-08-26 (run Guerrilla 32990495899) : une 4e organisation
+# Groq, neuve, a été ajoutée. Elle répondait — mais à la limite par minute
+# du palier gratuit, et l'ancien code s'endormait 20 s puis 40 s à CHAQUE
+# 429-minute, pour chaque recherche Oracle. Les attentes se sont empilées
+# jusqu'au timeout global de 540 s : exit 1, ZÉRO signal persisté. Le run
+# d'avant, avec trois clés mortes, abandonnait vite et en émettait 12.
+# Une clé vivante mais bridée faisait donc PIRE qu'une clé morte.
+#
+# Désormais un 429-minute met la clé en cooldown (durée lue dans la réponse
+# Groq, bornée) et rend la main TOUT DE SUITE : `_groq_post` passe à la clé
+# suivante, et les appels ultérieurs du même run retrouvent la clé une fois
+# le délai passé. Le moteur ne dort plus ; c'est le run qui avance.
+# Seule exception : un délai annoncé ≤ 3 s se paie sur place.
+_groq_cooldown_until: dict[int, float] = {}
+_COOLDOWN_MIN_S = 5.0
+_COOLDOWN_MAX_S = 60.0
+_COOLDOWN_INLINE_S = 3.0        # en dessous, on attend sur place
+
+
+def _cooling(key_idx: int) -> bool:
+    return time.monotonic() < _groq_cooldown_until.get(key_idx, 0.0)
+
+
+def _retry_after_s(r) -> float:
+    """Délai demandé par Groq, en secondes. En-tête Retry-After d'abord,
+    sinon le « try again in 12.3s » du corps ; défaut 20 s si rien."""
+    try:
+        h = r.headers.get("retry-after") if getattr(r, "headers", None) else None
+        if h:
+            return float(h)
+    except (TypeError, ValueError):
+        pass
+    m = re.search(r"try again in\s*(?:(\d+)m)?\s*([\d.]+)s", r.text or "", re.I)
+    if m:
+        return float(m.group(1) or 0) * 60 + float(m.group(2))
+    return 20.0
+
 
 def _all_models() -> list:
     """Tout ce que ce module peut demander à Groq — recherche + génération.
@@ -281,7 +320,7 @@ def _groq_post(model: str, messages: list, max_tokens: int,
         return None
 
     for idx, api_key in enumerate(keys):
-        if model in _dead(idx):
+        if model in _dead(idx) or _cooling(idx):
             continue
         text, rotate = _groq_post_one(idx, api_key, model, messages,
                                       max_tokens, temperature, timeout, label)
@@ -330,11 +369,17 @@ def _groq_post_one(key_idx: int, api_key: str, model: str, messages: list,
                              "modèles morts=%s | %s",
                              label, model, key_idx + 1, sorted(_dead(key_idx)), body)
                 return None, True
-            wait = 20 if attempt == 0 else 40
-            log.warning("%s[%s]: rate limit minute (clé #%d) — attente %ds",
-                        label, model, key_idx + 1, wait)
-            time.sleep(wait)
-            continue
+            wait = _retry_after_s(r)
+            if wait <= _COOLDOWN_INLINE_S:
+                log.info("%s[%s]: rate limit minute (clé #%d) — %.1fs, on attend sur place",
+                         label, model, key_idx + 1, wait)
+                time.sleep(wait)
+                continue
+            wait = min(max(wait, _COOLDOWN_MIN_S), _COOLDOWN_MAX_S)
+            _groq_cooldown_until[key_idx] = time.monotonic() + wait
+            log.warning("%s[%s]: rate limit minute (clé #%d) — cooldown %.0fs, "
+                        "clé suivante sans attendre", label, model, key_idx + 1, wait)
+            return None, True
 
         if r.status_code == 413:
             # "Request Entity Too Large" — le modèle agentique compound-mini

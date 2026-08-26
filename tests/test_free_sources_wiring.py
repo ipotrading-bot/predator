@@ -79,6 +79,46 @@ class TestPorteDeSortieProxy:
         assert "malgré le proxy" in msg
 
 
+class TestDiagnostic403Relais:
+    """Un 403 en mode relais a deux causes qui n'appellent pas la même action.
+
+    Le Worker pose `X-Relay-By` sur ce qu'il a relayé ; ses propres refus ne
+    le portent pas. Mesuré le 2026-08-26 : même jeton, 200 depuis un poste de
+    dev (colo LHR), 403 depuis les runners GitHub — sans ce diagnostic, on
+    accuse le jeton alors que c'est l'amont qui refuse l'edge."""
+
+    @staticmethod
+    def _http403(headers: dict):
+        import email.message
+        import io as _io
+        import urllib.error
+        h = email.message.Message()
+        for k, v in headers.items():
+            h[k] = v
+        return urllib.error.HTTPError("https://x/?u=y", 403, "Forbidden", h, _io.BytesIO(b"forbidden"))
+
+    def test_403_relaye_accuse_l_amont_et_nomme_le_colo(self, monkeypatch):
+        monkeypatch.setenv("FREE_SOURCES_RELAY", "https://r.example")
+        net.reset()
+        msg = net.describe_failure("odds500", self._http403({"X-Relay-By": "predator", "cf-ray": "a314-IAD"}))
+        assert "AMONT" in msg and "IAD" in msg and "jeton" in msg
+
+    def test_403_du_worker_accuse_le_jeton(self, monkeypatch):
+        monkeypatch.setenv("FREE_SOURCES_RELAY", "https://r.example")
+        net.reset()
+        msg = net.describe_failure("odds500", self._http403({"cf-ray": "a314-LHR"}))
+        assert "RELAIS lui-même" in msg and "LHR" in msg and "RELAY_TOKEN" in msg
+
+    def test_sans_relais_un_403_reste_un_403_ordinaire(self, monkeypatch):
+        # `_secret` lit secret_store puis l'environnement (et un .env local
+        # peut porter FREE_SOURCES_RELAY) : on coupe la résolution à la
+        # source, pas seulement les variables.
+        monkeypatch.setattr(net, "_secret", lambda name: "")
+        net.reset()
+        msg = net.describe_failure("odds500", self._http403({}))
+        assert "AMONT" not in msg and "RELAIS" not in msg
+
+
 class TestModeRelais:
     """Le relais (Cloudflare Worker) réécrit l'URL ; le proxy, lui, tunnelise.
 

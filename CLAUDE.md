@@ -6,7 +6,7 @@ Tout le calcul tourne en crons GitHub Actions ; le dashboard est en lecture seul
 
 ## Commandes
 
-- Tests : `python -m pytest tests/ -q` (~45 s, 941 tests, doit rester à 0 échec)
+- Tests : `python -m pytest tests/ -q` (~45 s, 945 tests, doit rester à 0 échec)
 - Carte des invariants et de leurs gardiens : `AUDIT.md` (à lire avant
   d'ajouter un sport, un fournisseur IA, une route ou un workflow)
 - Lint : `python -m pyflakes $(git ls-files '*.py')` (actuellement propre)
@@ -184,8 +184,16 @@ Tout le calcul tourne en crons GitHub Actions ; le dashboard est en lecture seul
   chercher. Encodage vérifié à travers le relais : 518 noms chinois, ZÉRO
   mojibake. 7M a été joint pour la PREMIÈRE fois (435 ids) — sa joignabilité
   n'est plus inconnue. `ops.py sources` affiche `[via relais Cloudflare]` sur
-  les deux. Reste le seul juge qui compte : un run GitHub Actions (un poste de
-  dev joint déjà 500.com en direct, il ne prouve rien).
+  les deux. PREMIER RUN DEPUIS UN RUNNER (Guerrilla 16:15 et 16:48) : le
+  relais est ATTEINT mais odds500 rend 403 — y compris après rotation du
+  jeton des deux côtés, donc CE N'EST PAS LE JETON. Hypothèse la plus
+  probable : 500.com accepte l'edge Cloudflare de LONDRES (LHR, d'où le
+  poste de dev a testé) mais refuse les colos US par lesquels passent les
+  runners GitHub. `net.describe_failure` distingue désormais un 403 du
+  Worker (jeton/hôte, pas de `X-Relay-By`) d'un 403 de l'AMONT relayé, et
+  nomme le colo (`cf-ray`) — c'est le prochain run qui tranchera. Si c'est
+  l'amont : aucun réglage de jeton n'y changera rien, il faudra une sortie
+  hors des colos US (proxy à IP dédiée, ou Worker appelé depuis l'Europe).
 - Kalshi/Polymarket : BRANCHÉS le 2026-08-26 (`free_sources.measure_slate_consensus`,
   appelé par `harvester._fetch_multi_book`). Ils étaient importés NULLE PART
   hors de leurs tests depuis le 2026-08-22 — capacité morte en silence. Rôle
@@ -229,6 +237,15 @@ Tout le calcul tourne en crons GitHub Actions ; le dashboard est en lecture seul
   qui refuse tout littéral de modèle du registre ailleurs que dans
   `ai_router.py` (vérifié sur l'AST : un commentaire a le droit de nommer un
   modèle mort pour raconter pourquoi il l'est).
+  ⚠️ JAMAIS DORMIR DANS LE MOTEUR SUR UN 429-MINUTE GROQ (2026-08-26, run
+  Guerrilla 32990495899) : une 4e org neuve (`GROQ_API_KEY_5`) répondait à la
+  limite par minute, l'ancien backoff dormait 20 s puis 40 s à chaque
+  recherche Oracle, jusqu'au timeout global de 540 s — exit 1, ZÉRO signal,
+  là où trois clés MORTES en émettaient 12. Une clé vivante mais bridée
+  faisait pire qu'une clé morte. Désormais `_groq_cooldown_until` : la clé
+  passe en cooldown (délai lu dans la réponse, borné 5-60 s) et la main est
+  rendue tout de suite ; gardé par
+  `tests/test_settlement.py::test_un_429_minute_groq_ne_dort_plus_dans_le_moteur`.
   ⚠️ Cerebras avait été retiré À TORT sur un 403 SANS CLÉ : un 401/403 sans clé
   ne prouve JAMAIS qu'un palier a fermé, il faut une clé INVALIDE pour trancher
   (Cerebras rend alors 401 wrong_api_key). Rétabli au registre.

@@ -29,6 +29,7 @@ depuis Azure est INCONNUE, pas « bonne ».
 import logging
 import os
 import urllib.parse
+import urllib.error
 import urllib.request
 
 log = logging.getLogger("PREDATOR.net")
@@ -162,6 +163,25 @@ def describe_failure(source: str, exc: Exception) -> str:
     les deux, c'est ce qui a laissé odds500 muette trois jours sans que la
     cause soit nommée.
     """
+    # 403 EN MODE RELAIS : deux causes qui n'appellent pas la même action, et
+    # que le seul code HTTP ne distingue pas. Le Worker pose `X-Relay-By` sur
+    # toute réponse qu'il a RELAYÉE ; ses propres refus (jeton, hôte) ne le
+    # portent pas. Et `cf-ray` nomme le colo Cloudflare qui a exécuté le
+    # Worker — donc l'IP de sortie vue par l'amont. Mesuré le 2026-08-26 :
+    # 200 via le relais depuis un poste de dev (colo LHR), 403 depuis les
+    # runners GitHub (colos US) avec le MÊME jeton — la piste géographique
+    # ne se voit qu'avec ce colo dans le log.
+    if isinstance(exc, urllib.error.HTTPError) and exc.code == 403 and relay_for(source):
+        hdrs = exc.headers or {}
+        ray = str(hdrs.get("cf-ray") or "")
+        colo = ray.rsplit("-", 1)[-1] if "-" in ray else "?"
+        if hdrs.get("X-Relay-By"):
+            return (f"{source}: 403 de l'AMONT via le relais (colo Cloudflare {colo}) "
+                    f"— le site refuse l'IP de sortie de cet edge ; ni le jeton ni "
+                    f"le code ne sont en cause")
+        return (f"{source}: 403 du RELAIS lui-même (colo {colo}) — jeton "
+                f"{source.upper()}_RELAY_TOKEN/{_RELAY_TOKEN_ENV} désaccordé avec le "
+                f"Worker, ou hôte hors liste blanche")
     txt = str(exc)
     refus = ("Connection refused" in txt or "timed out" in txt
              or "Temporary failure in name resolution" in txt
