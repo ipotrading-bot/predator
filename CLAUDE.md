@@ -46,9 +46,10 @@ Tout le calcul tourne en crons GitHub Actions ; le dashboard est en lecture seul
 - WIZ A ÉTÉ SUPPRIMÉ le 2026-08-26 (page, moteur, workflow, tests, lane du
   routeur) — décision opérateur : « la page wiz ne me sert pas ». Ne pas le
   réintroduire par inadvertance en recréant `/wiz` ou `core/wiz_*`. La table
-  `wiz_analysis` est CONSERVÉE en base : plus aucun code ne la lit, et
-  `sql/migrate_v10_6_drop_wiz.sql` propose son archivage — NON APPLIQUÉ,
-  volontairement (archiver, jamais supprimer sèchement).
+  `wiz_analysis` a été SUPPRIMÉE de la base le 2026-08-26 (DROP, 748 lignes,
+  décision opérateur explicite après présentation de l'option d'archivage —
+  `sql/migrate_v10_6_drop_wiz.sql`, appliquée). Il n'existe AUCUNE archive :
+  ne pas chercher `wiz_analysis_archive`, elle n'a jamais existé.
   Conséquence directe : MISTRAL EST ENTRÉ AU REGISTRE IA. Il en était exclu
   parce qu'il était le fournisseur unique de Wiz (domaine de panne isolé) ;
   son quota sert désormais la RECHERCHE DE SIGNAUX, lanes `filter`/`analyze`

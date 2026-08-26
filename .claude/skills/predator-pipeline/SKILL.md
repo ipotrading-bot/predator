@@ -48,8 +48,8 @@ trace the flow by hand. This skill is that trace, pre-done.
 (`run_wiz.py`, `core/wiz_*`), son workflow `wiz.yml`, ses tests et la lane
 `WIZ` du routeur n'existent plus (décision opérateur : « la page wiz ne me
 sert pas »). Ne pas les rechercher, ne pas les recréer. La table
-`wiz_analysis` reste en base mais plus aucun code ne la lit —
-`sql/migrate_v10_6_drop_wiz.sql` propose son archivage, NON APPLIQUÉ.
+`wiz_analysis` a été SUPPRIMÉE de la base le 2026-08-26 (DROP définitif,
+`sql/migrate_v10_6_drop_wiz.sql` appliquée — aucune archive n'existe).
 Conséquence à connaître pour tout diagnostic IA : **Mistral n'est plus hors
 registre**, c'est un fournisseur ordinaire de `core/ai_router.py` sur les
 lanes `filter`/`analyze` (recherche de signaux). Il n'a jamais été validé par

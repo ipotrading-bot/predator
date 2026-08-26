@@ -7,7 +7,14 @@
 -- SUPPRIMÉS sur décision opérateur — « la page wiz ne me sert pas ». Plus
 -- aucune ligne de code ne lit ni n'écrit `wiz_analysis`.
 --
--- ⚠️  CETTE MIGRATION N'EST PAS APPLIQUÉE, ET C'EST VOLONTAIRE.
+-- ✅ APPLIQUÉE le 2026-08-26 (~16:10 UTC) — OPTION B, DROP DÉFINITIF.
+-- Décision opérateur explicite (« Supprimer la table wiz »), prise APRÈS que
+-- l'option d'archivage lui a été présentée deux fois. La table portait
+-- 748 lignes (2026-07-23 → 2026-08-26 15:03) ; aucune n'a été exportée.
+-- Vérifié après coup : `wiz_analysis` absente d'information_schema.tables.
+--
+-- Le texte ci-dessous est conservé tel qu'écrit AVANT l'application, comme
+-- trace du raisonnement et des deux options qui se présentaient.
 --
 -- Le code n'a plus besoin de la table : la laisser en base ne casse rien, ne
 -- coûte presque rien, et ne ralentit aucune requête (personne ne l'interroge).
