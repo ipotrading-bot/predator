@@ -19,7 +19,7 @@ env:
 
 jobs:
   monte_carlo:
-    if: inputs.tool == 'monte_carlo'
+    if: github.event.inputs.tool == 'monte_carlo'
     runs-on: ubuntu-latest
     timeout-minutes: 5
     env:
@@ -33,7 +33,7 @@ jobs:
         run: python scripts/ci_env.py --pool readonly -- python run_monte_carlo.py
 
   backfill_ledger:
-    if: inputs.tool == 'backfill_ledger'
+    if: github.event.inputs.tool == 'backfill_ledger'
     runs-on: ubuntu-latest
     timeout-minutes: 10
     concurrency:

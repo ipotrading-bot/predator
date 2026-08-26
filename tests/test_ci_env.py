@@ -252,6 +252,32 @@ def test_aucun_workflow_ne_liste_un_secret_a_la_main(wf):
 
 
 @pytest.mark.parametrize("wf", WORKFLOWS, ids=lambda p: p.name)
+def test_aucun_workflow_nutilise_le_contexte_inputs_nu(wf):
+    """`inputs.x` n'existe que pendant un workflow_dispatch/workflow_call.
+
+    Vécu le 2026-08-26 sur reports.yml : ses `if:` de job écrivaient
+    `inputs.report == 'rapport'`. Sur un `push`, le run était créé puis se
+    terminait INSTANTANÉMENT en `action_required`, avec ZÉRO job, sans message
+    d'erreur, sans log consultable et sans annotation. Reproduit deux fois. Un
+    `if:` de job est évalué AVANT la création des jobs : une référence qu'il ne
+    peut pas résoudre ne donne pas un job rouge, elle donne un workflow qui
+    n'existe pas — le mode de panne le plus coûteux de ce dépôt, celui qui ne
+    lève rien.
+
+    `github.event.inputs.*` est un simple accès au payload de l'événement :
+    nul hors dispatch, identique pendant un dispatch. Il n'y a aucune raison
+    d'utiliser la forme nue ici."""
+    texte = wf.read_text(encoding="utf-8")
+    fautifs = []
+    for ligne in texte.splitlines():
+        nu = ligne.split("#", 1)[0]
+        if re.search(r"(?<!event\.)\binputs\.[a-z_]+", nu):
+            fautifs.append(ligne.strip()[:80])
+    assert not fautifs, (f"{wf.name} utilise le contexte `inputs` nu : {fautifs} — "
+                          "écrire `github.event.inputs.…`")
+
+
+@pytest.mark.parametrize("wf", WORKFLOWS, ids=lambda p: p.name)
 def test_chaque_job_a_secrets_passe_par_un_pool(wf):
     doc = yaml.safe_load(wf.read_text(encoding="utf-8"))
     for nom, job in (doc.get("jobs") or {}).items():

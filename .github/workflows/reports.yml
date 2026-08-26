@@ -8,6 +8,16 @@ name: Predator Reports
 #   hebdo   → lundi 07:00 UTC, après l'audit de 06:00 : classement des sports,
 #             calibration par bande, rapport de vérité (CLV, Brier, ROI, verdicts).
 
+# ⚠️ LES CONDITIONS DE JOB N'UTILISENT PAS LE CONTEXTE `inputs` (2026-08-26).
+# La première version écrivait `inputs.report == 'rapport'`. Sur un événement
+# `push`, ce contexte n'existe pas — le run était créé puis se terminait
+# INSTANTANÉMENT en `action_required` avec ZÉRO job, sans message d'erreur ni
+# log consultable. Reproduit deux fois. Un `if:` de job est évalué AVANT la
+# création des jobs : une référence qu'il ne peut pas résoudre ne produit pas
+# un job rouge, elle produit un workflow qui n'existe pas.
+# `github.event.inputs.*` est un simple accès au payload : nul hors dispatch,
+# identique pendant un dispatch. Gardé par tests/test_ci_env.py.
+
 on:
   schedule:
     - cron: '35 */2 * * *'   # rapport
@@ -26,6 +36,10 @@ on:
       - 'scripts/rank_sports.py'
       - 'scripts/calibration_report.py'
       - 'scripts/weekly_report.py'
+      # Ce workflow se surveille lui-même, comme le faisait rank_sports.yml :
+      # sans cette ligne, une retouche de ses conditions ne pouvait être
+      # vérifiée que par un cron, des heures plus tard.
+      - '.github/workflows/reports.yml'
 
 env:
   FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: true
@@ -34,7 +48,7 @@ jobs:
   rapport:
     if: >-
       github.event.schedule == '35 */2 * * *' ||
-      (github.event_name == 'workflow_dispatch' && inputs.report == 'rapport')
+      (github.event_name == 'workflow_dispatch' && github.event.inputs.report == 'rapport')
     runs-on: ubuntu-latest
     timeout-minutes: 10
     env:
@@ -51,7 +65,7 @@ jobs:
     if: >-
       github.event.schedule == '0 7 * * 1' ||
       github.event_name == 'push' ||
-      (github.event_name == 'workflow_dispatch' && inputs.report == 'hebdo')
+      (github.event_name == 'workflow_dispatch' && github.event.inputs.report == 'hebdo')
     runs-on: ubuntu-latest
     timeout-minutes: 10
     env:

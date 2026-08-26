@@ -89,8 +89,8 @@ jobs:
         id: mode
         env:
           SCHEDULE:    ${{ github.event.schedule }}
-          INPUT_MODE:  ${{ inputs.mode }}
-          INPUT_HOURS: ${{ inputs.hours_ahead }}
+          INPUT_MODE:  ${{ github.event.inputs.mode }}
+          INPUT_HOURS: ${{ github.event.inputs.hours_ahead }}
         run: python scripts/ci_env.py --pool scan -- python scripts/ci_scan_mode.py
 
       - name: Scan (${{ steps.mode.outputs.mode }})
