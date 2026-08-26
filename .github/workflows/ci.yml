@@ -15,15 +15,22 @@ name: CI
 
 on:
   push:
-    paths:
+    paths: &chemins_testes
       - '**.py'
       - 'api/**'
       - 'templates/**'
       - 'requirements.txt'
       - 'vercel.json'
+      # La CI se teste elle-même : tests/test_ci_env lit scan.yml pour
+      # vérifier que chaque cron a sa ligne dans CRON_MODES, et
+      # tests/test_workflow_secrets lit workflows ET actions. Sans ce
+      # chemin, les fichiers gardés changeaient sans réveiller leur gardien —
+      # un cron ajouté seul serait passé jusqu'au premier run rouge. Vécu le
+      # 2026-08-26 : le correctif de .github/actions/setup n'a déclenché
+      # aucun run.
+      - '.github/**'
   pull_request:
-    paths:
-      - '**.py'
+    paths: *chemins_testes
   workflow_dispatch:
 
 env:

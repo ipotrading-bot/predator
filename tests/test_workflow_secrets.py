@@ -34,6 +34,23 @@ def test_chaque_job_a_une_borne_de_duree(wf):
     assert not sans, f"{wf.name}: jobs sans timeout-minutes : {sans}"
 
 
+def test_la_ci_se_declenche_sur_ses_propres_fichiers():
+    """Les tests de ce dépôt LISENT `.github/` : test_ci_env.py compare les
+    crons de scan.yml à CRON_MODES, celui-ci parcourt workflows et actions.
+    Si `ci.yml` ne se déclenche pas sur `.github/**`, ces gardiens dorment
+    précisément quand le fichier gardé change — un cron ajouté sans sa ligne
+    passerait jusqu'au premier run rouge en production.
+
+    Mesuré le 2026-08-26 : un correctif de `.github/actions/setup/action.yml`
+    n'a déclenché aucun run."""
+    doc = yaml.safe_load((WF_DIR / "ci.yml").read_text(encoding="utf-8"))
+    on = doc.get("on") or doc.get(True)
+    for evenement in ("push", "pull_request"):
+        chemins = (on.get(evenement) or {}).get("paths") or []
+        assert any(c.startswith(".github") for c in chemins), (
+            f"ci.yml n'écoute pas .github/** sur `{evenement}` — les tests qui "
+            "gardent les workflows ne tourneraient pas quand ils changent")
+
 # Le dépôt vit sur DEUX interpréteurs, et c'est SUBI, pas choisi :
 #
 #   - les crons GitHub Actions et le développement local  → Python 3.11
