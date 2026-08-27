@@ -138,6 +138,10 @@ C'est le tableau à consulter avant de toucher à quoi que ce soit.
 | Un résultat réel remplace une absence de résultat, jamais l'inverse | `…::test_un_resultat_reel_remplace_une_absence_de_resultat` |
 | Deux signaux sur la même affiche coexistent au ledger | `…::test_deux_signaux_distincts_sur_la_meme_affiche_coexistent` |
 | La reconnaissance d'une violation d'unicité est DÉRIVÉE, pas recopiée | `tests/test_save_preserving.py::…::test_la_reconnaissance_est_derivee_pas_recopiee` |
+| Le disjoncteur filtre WIN/LOSS CÔTÉ SQL (sinon fenêtre réelle = 1/20) | `tests/test_risk_manager.py::TestB4LaFenetreEstReelle` |
+| Le filtre part dans la requête, pas après coup | `…::test_le_filtre_est_demande_a_la_base_pas_applique_apres_coup` |
+| Un gain sans cote est ÉCARTÉ, jamais valorisé à 2.0 | `…::TestB4UneCoteManquanteNestPasInventee` |
+| Une perte sans cote est CONSERVÉE (l'écarter embellirait le portefeuille) | `…::test_une_perte_sans_cote_est_CONSERVEE` |
 
 L'**invariant des sport-keys** (4 fichiers : `core/odds_api.py`,
 `core/learning_layer.py`, `api/index.py`) est décrit

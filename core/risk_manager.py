@@ -146,13 +146,46 @@ def rolling_drawdown(ledger_rows: list[dict]) -> float:
     2 decisive rows (nothing to draw down from).
 
     La courbe d'équité est NETTE DE TAXE depuis le 2026-08-27
-    (`core.constants.net_b`). Elle créditait auparavant le gain BRUT : un
+    (`core.constants.net_b`, A2). Elle créditait auparavant le gain BRUT : un
     disjoncteur qui surestime chaque gain et compte chaque perte en entier
     sous-estime le drawdown réel, et se déclenche donc trop tard —
     exactement quand il devrait être le plus utile. Les pertes, elles, ne
     sont pas taxées : la retenue ne frappe que le gain net d'un pari gagnant.
+
+    ⚠️ UNE COTE MANQUANTE N'EST PLUS REMPLACÉE PAR 2.0 (B4, 2026-08-27). Ce
+    défaut inventait un gain : à cote réelle 1,20, créditer 2.00 multipliait le
+    profit par cinq et faisait remonter la courbe d'un pari qui n'avait presque
+    rien rapporté. Un disjoncteur nourri de gains fictifs ne se déclenche
+    jamais.
+    Le traitement est ASYMÉTRIQUE, et c'est voulu :
+      · un WIN sans cote exploitable est ÉCARTÉ — on ne peut pas valoriser son
+        gain, et l'écarter fait paraître le drawdown PIRE, donc déclenche plus
+        tôt : c'est le sens sûr pour un organe de sécurité ;
+      · une LOSS sans cote est CONSERVÉE — elle vaut −mise, la cote n'y change
+        rien. L'écarter retirerait des pertes de l'échantillon et ferait
+        paraître le portefeuille plus sain qu'il n'est, exactement l'erreur
+        qu'on corrige.
+    Mesuré le 2026-08-27 : 0 ligne sans cote sur 315. C'est un filet.
     """
-    decisive = [r for r in ledger_rows if r.get("outcome") in ("WIN", "LOSS") and r.get("kelly_pct")]
+    decisive = [r for r in ledger_rows
+                if r.get("outcome") in ("WIN", "LOSS") and r.get("kelly_pct")]
+    valorisables, ecartes = [], 0
+    for r in decisive:
+        if r["outcome"] == "LOSS":
+            valorisables.append(r)
+            continue
+        try:
+            cote = float(r.get("odds") or 0)
+        except (TypeError, ValueError):
+            cote = 0.0
+        if cote > 1.01:
+            valorisables.append(r)
+        else:
+            ecartes += 1
+    if ecartes:
+        log.warning("rolling_drawdown: %d gain(s) sans cote exploitable écarté(s) "
+                    "— jamais remplacés par une cote inventée", ecartes)
+    decisive = valorisables
     if len(decisive) < 2:
         return 0.0
 
@@ -164,7 +197,7 @@ def rolling_drawdown(ledger_rows: list[dict]) -> float:
     for r in ordered:
         stake = r["kelly_pct"]
         if r["outcome"] == "WIN":
-            equity += stake * net_b(r.get("odds") or 2.0)
+            equity += stake * net_b(float(r["odds"]))
         else:
             equity -= stake
         curve.append(equity)
@@ -192,8 +225,17 @@ def check_circuit_breaker(sb, window_n: int = DRAWDOWN_WINDOW_N,
     if is_emission_paused(sb):
         return True
     try:
+        # FILTRE CÔTÉ SQL (B4, 2026-08-27). La requête tirait les `window_n`
+        # dernières lignes TOUS STATUTS confondus, puis filtrait en Python sur
+        # WIN/LOSS. Or le ledger est majoritairement fait d'`expired` : mesuré
+        # ce jour-là, les 20 dernières lignes ne contenaient qu'UNE SEULE
+        # ligne décisive. `rolling_drawdown` rendant 0.0 sous deux lignes, le
+        # disjoncteur ne pouvait PAS se déclencher — il était inerte, en vert,
+        # depuis que les expirations dominent. Avec le filtre : 20 lignes sur
+        # 20 exploitables, drawdown mesuré 1,7 %.
         res = (sb.table("ai_learning_ledger")
                .select("outcome, kelly_pct, odds, created_at")
+               .in_("outcome", ["WIN", "LOSS"])
                .order("created_at", desc=True)
                .limit(window_n)
                .execute())
@@ -201,6 +243,9 @@ def check_circuit_breaker(sb, window_n: int = DRAWDOWN_WINDOW_N,
     except Exception as e:
         log.error("check_circuit_breaker: %s — not pausing on a read error alone", e)
         return False
+    if len(rows) < window_n:
+        log.info("check_circuit_breaker: %d résultats décisifs seulement sur %d "
+                 "demandés — la fenêtre est plus courte que prévu", len(rows), window_n)
 
     dd = rolling_drawdown(rows)
     if dd > limit_pct:
@@ -256,9 +301,14 @@ def check_circuit_breaker_by_sport(sb, sport: str, window_n: int = DRAWDOWN_WIND
     if is_sport_emission_paused(sb, sport):
         return True
     try:
+        # Même filtre CÔTÉ SQL que le disjoncteur global — voir sa docstring
+        # pour la mesure. Un sport dont les dernières lignes sont surtout des
+        # expirations aurait une fenêtre encore plus courte que la fenêtre
+        # globale, donc un disjoncteur encore plus sûrement inerte.
         res = (sb.table("ai_learning_ledger")
                .select("outcome, kelly_pct, odds, created_at")
                .eq("sport", sport)
+               .in_("outcome", ["WIN", "LOSS"])
                .order("created_at", desc=True)
                .limit(window_n)
                .execute())
