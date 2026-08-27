@@ -767,12 +767,35 @@ def _admin_autorise() -> bool:
 
     Comparaison à temps constant : `==` sur une chaîne s'arrête au premier
     octet différent, ce qui laisse mesurer le préfixe correct.
+
+    ⚠️ EN-TÊTE `X-Predator-Token` UNIQUEMENT — le jeton en QUERY STRING
+    (`?token=…`) a été retiré le 2026-08-27 (C1). Il avait été admis « pour
+    un curl d'opérateur », documenté comme moins sûr, et accepté quand même.
+    Ce que « moins sûr » recouvre vraiment :
+
+      · une URL n'est pas un canal privé. Elle est écrite en clair dans les
+        logs d'accès de Vercel, dans les logs du proxy, dans l'historique du
+        shell, dans le `Referer` envoyé à tout tiers, et dans l'historique du
+        navigateur si elle y est collée une fois ;
+      · ces journaux survivent au jeton : une rotation ne les efface pas ;
+      · un en-tête, lui, n'apparaît dans aucun de ces endroits par défaut.
+
+    Le retrait ne casse rien, vérifié avant : AUCUN appelant du dépôt
+    n'utilisait la query string. README.md et AUDIT.md documentent déjà la
+    forme avec en-tête, et aucune page du dashboard n'appelle cette route.
+    Le seul usage était un test, qui exige désormais le refus.
     """
     attendu = os.environ.get(ADMIN_TOKEN_ENV, "")
     if not attendu:
         return False
-    fourni = (request.headers.get("X-Predator-Token")
-              or request.args.get("token") or "")
+    if request.args.get("token"):
+        # Refus BRUYANT côté serveur, muet côté client : l'appelant reçoit le
+        # même 401 que n'importe quel refus, mais l'opérateur qui lit les logs
+        # comprend pourquoi son ancien `curl` ne passe plus.
+        log.warning("jeton d'admin fourni en query string — REFUSÉ : une URL "
+                    "est journalisée par Vercel, le proxy, le shell et le "
+                    "navigateur. Utiliser l'en-tête X-Predator-Token.")
+    fourni = request.headers.get("X-Predator-Token") or ""
     return hmac.compare_digest(fourni, attendu)
 
 

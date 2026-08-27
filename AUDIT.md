@@ -151,6 +151,9 @@ C'est le tableau à consulter avant de toucher à quoi que ce soit.
 | /performance affiche le taux de résolution (biais de survie) | `tests/test_mission2_dashboard_quota.py::TestTauxDeResolution` |
 | Un PUSH compte comme RÉSOLU, `active`/`closed` ne comptent nulle part | `…::test_un_push_compte_comme_resolu`, `…::test_active_et_closed_nentrent_nulle_part` |
 | La formule du taux de résolution n'existe qu'une fois (AST) | `…::test_la_formule_nest_pas_recopiee_ailleurs` |
+| Le jeton d'admin ne passe QUE par l'en-tête, jamais en query string | `tests/test_api_admin_auth.py::…::test_le_jeton_en_query_string_est_REFUSE` |
+| Une query string ne sert pas de repli sur un en-tête erroné | `…::test_la_query_string_ne_sert_pas_de_repli_sur_en_tete_errone` |
+| Le refus par query string est journalisé SANS recopier le jeton | `…::test_le_jeton_nest_jamais_recopie_dans_le_log` |
 
 L'**invariant des sport-keys** (4 fichiers : `core/odds_api.py`,
 `core/learning_layer.py`, `api/index.py`) est décrit

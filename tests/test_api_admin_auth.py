@@ -77,12 +77,61 @@ class TestAuditRun:
         r = client.post("/api/audit/run", headers={"X-Predator-Token": JETON})
         assert r.status_code == 503
 
-    def test_le_jeton_passe_aussi_en_parametre(self, client, monkeypatch):
-        """Pour un `curl` d'opérateur sans en-tête. Documenté comme moins
-        sûr (l'URL se retrouve dans les logs), mais accepté."""
+    def test_le_jeton_en_query_string_est_REFUSE(self, client, monkeypatch):
+        """C1 (2026-08-27) — le jeton en `?token=` était accepté « pour un
+        curl d'opérateur », documenté comme moins sûr, et accepté quand même.
+
+        Ce que « moins sûr » recouvrait : une URL est écrite en clair dans les
+        logs d'accès de Vercel, ceux du proxy, l'historique du shell, l'en-tête
+        `Referer` envoyé à tout tiers, et l'historique du navigateur. Ces
+        journaux SURVIVENT au jeton — une rotation ne les efface pas. Un
+        en-tête n'apparaît dans aucun de ces endroits.
+
+        Le BON jeton, par le MAUVAIS canal, doit être refusé : c'est le canal
+        qui est condamné, pas la valeur.
+        """
         monkeypatch.setenv(ADMIN_TOKEN_ENV, JETON)
         monkeypatch.delenv("GITHUB_PAT", raising=False)
-        assert client.post(f"/api/audit/run?token={JETON}").status_code == 503
+        assert client.post(f"/api/audit/run?token={JETON}").status_code == 401
+
+    def test_len_tete_reste_le_seul_canal_accepte(self, client, monkeypatch):
+        """Témoin : sans lui, le test ci-dessus passerait même si la route
+        refusait TOUT."""
+        monkeypatch.setenv(ADMIN_TOKEN_ENV, JETON)
+        monkeypatch.delenv("GITHUB_PAT", raising=False)
+        r = client.post(f"/api/audit/run?token={JETON}",
+                        headers={"X-Predator-Token": JETON})
+        assert r.status_code == 503, \
+            "une query string parasite ne doit pas invalider un en-tête correct"
+
+    def test_la_query_string_ne_sert_pas_de_repli_sur_en_tete_errone(self, client,
+                                                                    monkeypatch):
+        """Le piège du `or` : `en_tete or query` faisait retomber sur la query
+        string dès que l'en-tête était vide OU faux."""
+        monkeypatch.setenv(ADMIN_TOKEN_ENV, JETON)
+        r = client.post(f"/api/audit/run?token={JETON}",
+                        headers={"X-Predator-Token": "faux"})
+        assert r.status_code == 401
+
+    def test_le_refus_par_query_string_est_journalise(self, client, monkeypatch,
+                                                      caplog):
+        """Muet côté client, BRUYANT côté serveur : l'opérateur dont le vieux
+        `curl` ne passe plus doit comprendre pourquoi en lisant les logs."""
+        import logging
+        monkeypatch.setenv(ADMIN_TOKEN_ENV, JETON)
+        with caplog.at_level(logging.WARNING):
+            client.post(f"/api/audit/run?token={JETON}")
+        assert any("query string" in r.getMessage() for r in caplog.records)
+
+    def test_le_jeton_nest_jamais_recopie_dans_le_log(self, client, monkeypatch,
+                                                      caplog):
+        """Journaliser le refus ne doit pas journaliser le secret — sinon on
+        déplace la fuite au lieu de la fermer."""
+        import logging
+        monkeypatch.setenv(ADMIN_TOKEN_ENV, JETON)
+        with caplog.at_level(logging.WARNING):
+            client.post(f"/api/audit/run?token={JETON}")
+        assert all(JETON not in r.getMessage() for r in caplog.records)
 
     def test_get_reste_interdit(self, client, monkeypatch):
         monkeypatch.setenv(ADMIN_TOKEN_ENV, JETON)

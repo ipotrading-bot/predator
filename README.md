@@ -224,6 +224,14 @@ curl -X POST https://<déploiement>/api/audit/run \
      -H "X-Predator-Token: $DASHBOARD_ADMIN_TOKEN"
 ```
 
+**Le jeton passe UNIQUEMENT par l'en-tête.** La forme `?token=…`, admise
+jusqu'au 2026-08-27 « pour un curl d'opérateur », est désormais **refusée
+même avec le bon jeton** : une URL est écrite en clair dans les logs d'accès
+Vercel, ceux du proxy, l'historique du shell, l'en-tête `Referer` envoyé à
+tout tiers et l'historique du navigateur — et ces journaux survivent au
+jeton, une rotation ne les efface pas. Un `curl` qui l'utilisait encore
+recevra un 401 ; le log du déploiement en donne la raison.
+
 Les chemins normaux restent le cron de `audit.yml` (toutes les 6 h) et le
 `workflow_dispatch` depuis l'interface GitHub ; cette route n'est qu'un
 raccourci d'opérateur.
