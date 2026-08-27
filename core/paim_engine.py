@@ -144,14 +144,28 @@ MIN_EDGE = 1.2   # % — floor (lowered for visibility — see all movements)
 
 # ── Sharp Quartet Consensus Engine v7.8 ──────────────────────────────
 
+# `exchange` ajouté le 2026-08-27 (A5). Jusque-là le consensus n'avait, en
+# pratique, qu'UNE SEULE source active : `circa` et `cris` ne sont posés que
+# par `core/odds_api.py`, obsolète depuis le 2026-08-26, et `isn` n'est écrit
+# nulle part dans le dépôt. `calculate_consensus_price` recevait donc
+# `{"pinnacle": prix}` et rendait ce prix inchangé — un « consensus » d'un seul
+# avis. L'exchange lui redonne un sens.
+#
+# Le poids importe moins qu'il n'y paraît, et c'est voulu : l'exchange n'entre
+# au consensus QUE s'il s'accorde avec Pinnacle à moins de
+# `constants.EXCHANGE_DIVERGENCE_PTS` près (run_engine._enrich_from_exchange
+# refuse le signal au-delà). Son influence est donc bornée par construction.
+# 0.25 le place sous Pinnacle partout : un carnet d'exchange est un prix réel,
+# mais sa profondeur varie d'un match à l'autre là où celle de Pinnacle non.
 _CONSENSUS_WEIGHTS: dict[str, dict[str, float]] = {
-    "basketball": {"pinnacle": 0.30, "circa": 0.50, "cris": 0.10, "isn": 0.10},
-    "euroleague_basketball": {"pinnacle": 0.30, "circa": 0.50, "cris": 0.10, "isn": 0.10},  # mêmes mécaniques
-    "baseball":   {"pinnacle": 0.30, "circa": 0.50, "cris": 0.10, "isn": 0.10},
-    "soccer":     {"pinnacle": 0.40, "circa": 0.10, "cris": 0.20, "isn": 0.30},
-    "tennis":     {"pinnacle": 0.60, "circa": 0.05, "cris": 0.25, "isn": 0.10},
+    "basketball": {"pinnacle": 0.30, "circa": 0.50, "cris": 0.10, "isn": 0.10, "exchange": 0.25},
+    "euroleague_basketball": {"pinnacle": 0.30, "circa": 0.50, "cris": 0.10, "isn": 0.10, "exchange": 0.25},  # mêmes mécaniques
+    "baseball":   {"pinnacle": 0.30, "circa": 0.50, "cris": 0.10, "isn": 0.10, "exchange": 0.25},
+    "soccer":     {"pinnacle": 0.40, "circa": 0.10, "cris": 0.20, "isn": 0.30, "exchange": 0.25},
+    "tennis":     {"pinnacle": 0.60, "circa": 0.05, "cris": 0.25, "isn": 0.10, "exchange": 0.25},
 }
-_DEFAULT_WEIGHTS   = {"pinnacle": 0.50, "circa": 0.20, "cris": 0.20, "isn": 0.10}
+_DEFAULT_WEIGHTS   = {"pinnacle": 0.50, "circa": 0.20, "cris": 0.20, "isn": 0.10, "exchange": 0.25}
+_CONSENSUS_SOURCES = ("pinnacle", "circa", "cris", "isn", "exchange")
 # CV = STD / mean — scale-invariant divergence measure.
 # STD absolue de 0.02 sur cote 1.10 = +1.8% écart (énorme),
 # même 0.02 sur cote 3.50 = +0.6% (normal). CV corrige ce biais.
@@ -164,7 +178,7 @@ def calculate_consensus_price(
 ) -> tuple[float, dict, bool, int]:
     """
     Weighted consensus fair price from up to 4 sharp sources.
-    prices_by_source: {"pinnacle": 2.05, "circa": 2.10, "cris": 0.0, "isn": 2.07}
+    prices_by_source: {"pinnacle": 2.05, "exchange": 2.07, "circa": 0.0, …}
     Returns (consensus_price, sources_found, is_volatile, consensus_score).
     consensus_score: 0-100 — 100 = perfect agreement, 0 = at CV limit.
 
@@ -176,7 +190,7 @@ def calculate_consensus_price(
     sources_found: dict[str, bool] = {}
     active: dict[str, float] = {}
 
-    for src in ("pinnacle", "circa", "cris", "isn"):
+    for src in _CONSENSUS_SOURCES:
         price = prices_by_source.get(src, 0.0)
         ok = isinstance(price, (int, float)) and float(price) > 1.01
         sources_found[src] = ok
@@ -186,13 +200,35 @@ def calculate_consensus_price(
     if not active:
         return 0.0, sources_found, False, 0
 
-    vals = list(active.values())
+    # ── Contrôle de divergence — l'exchange en est EXCLU (A5, 2026-08-27) ──
+    # `_DIVERGENCE_CV_LIMIT` a été calibré quand le consensus opposait des
+    # BOOKMAKERS entre eux (Pinnacle, Circa, Cris), qui cotent à quelques
+    # millièmes près. Un prix milieu d'EXCHANGE est structurellement plus
+    # dispersé : sa profondeur varie d'un match à l'autre.
+    #
+    # Mesuré le 2026-08-27 : opposer Pinnacle à Matchbook fait dépasser la
+    # limite dès **0,46 point de probabilité** d'écart — c'est-à-dire sur
+    # PRESQUE TOUS les matchs. Laisser le CV juger cette paire rendrait la
+    # contre-expertise inopérante : tout ce qu'elle accepte serait aussitôt
+    # rejeté en VOLATILE, et pour un motif qui nomme mal la cause.
+    #
+    # La divergence de l'exchange est donc jugée EN AMONT, en POINTS de
+    # probabilité, par `run_engine._enrich_from_exchange`
+    # (`constants.EXCHANGE_DIVERGENCE_PTS`) — l'unité que ce dépôt impose déjà
+    # partout ailleurs (`core/source_adapter.py` : « divergence en POINTS de
+    # probabilité, pas en % relatif — un seuil relatif crie au loup sur tout
+    # outsider »). Un prix d'exchange qui arrive ici a DÉJÀ passé ce contrôle.
+    # Le re-juger dans une seconde unité ne l'améliore pas, il l'annule.
+    #
+    # Il reste PLEINEMENT compté dans la moyenne pondérée ci-dessous : il est
+    # exclu du juge, pas du vote.
+    juges = [v for src, v in active.items() if src != "exchange"]
 
     consensus_score = 100
-    if len(vals) >= 2:
-        mean = sum(vals) / len(vals)
+    if len(juges) >= 2:
+        mean = sum(juges) / len(juges)
         # Sample STD (Bessel correction)
-        std  = (sum((v - mean) ** 2 for v in vals) / (len(vals) - 1)) ** 0.5
+        std  = (sum((v - mean) ** 2 for v in juges) / (len(juges) - 1)) ** 0.5
         cv   = std / mean if mean > 0 else 0.0   # Coefficient of Variation
         if cv > _DIVERGENCE_CV_LIMIT:
             return 0.0, sources_found, True, 0

@@ -28,7 +28,7 @@ from core.exchange_match import lookup_exchange as _lookup_exchange
 from core.api_sports import fetch_all as _api_sports_all
 from core.odds_api_io import fetch_all as _odds_api_io_all
 from core.titan007 import fetch_matches as _titan007_fetch
-from core.math_engine import (to_binary, devig_bounds, is_round_number_line,
+from core.math_engine import (to_binary, devig_bounds, is_round_number_line, devig as _devig,
                               dnb_leg_split as _dnb_leg_split,
                               executable_price as _executable_price)
 from core.tax_engine import optimal_stake_fraction as _optimal_stake_fraction
@@ -46,7 +46,7 @@ from core.paim_engine import (
     market_label, SHARP_PROB_BY_MARKET, calculate_consensus_price,
     correlation_group as _correlation_group, resolve_selection_side,
 )
-from core.constants import ELITE_EDGE as _ELITE_EDGE, SOCCER_ELITE_EDGE as _SOCCER_ELITE_EDGE, BASKETBALL_ELITE_EDGE as _BASKETBALL_ELITE_EDGE, risk_flag as _risk_flag, SUSPECT_EDGE as _SUSPECT_EDGE, KELLY_FRACTION as _KELLY_FRACTION, AH0_VALUE_THRESHOLD as _AH0_VALUE_THRESHOLD, PURGE_EDGE_FLOOR as _PURGE_EDGE_FLOOR, MLB_LINEUP_WINDOW_H as _MLB_LINEUP_WINDOW_H, PUSH_PROB_ROUND_LINE as _PUSH_PROB_ROUND_LINE, TAX_RATE as _TAX_RATE, BANKROLL_REF as _BANKROLL_REF, EV_EDGE_FLOOR as _EV_EDGE_FLOOR, RETIRED_SPORTS as _RETIRED_SPORTS
+from core.constants import ELITE_EDGE as _ELITE_EDGE, SOCCER_ELITE_EDGE as _SOCCER_ELITE_EDGE, BASKETBALL_ELITE_EDGE as _BASKETBALL_ELITE_EDGE, risk_flag as _risk_flag, SUSPECT_EDGE as _SUSPECT_EDGE, KELLY_FRACTION as _KELLY_FRACTION, AH0_VALUE_THRESHOLD as _AH0_VALUE_THRESHOLD, PURGE_EDGE_FLOOR as _PURGE_EDGE_FLOOR, MLB_LINEUP_WINDOW_H as _MLB_LINEUP_WINDOW_H, PUSH_PROB_ROUND_LINE as _PUSH_PROB_ROUND_LINE, TAX_RATE as _TAX_RATE, BANKROLL_REF as _BANKROLL_REF, EV_EDGE_FLOOR as _EV_EDGE_FLOOR, RETIRED_SPORTS as _RETIRED_SPORTS, EXCHANGE_DIVERGENCE_PTS as _EXCHANGE_DIVERGENCE_DEFAULT
 from core.tax_engine import suggest_system as _suggest_system, is_combo_tax_viable as _is_combo_tax_viable
 import core.risk_manager as _risk_manager
 
@@ -217,6 +217,13 @@ _MATCHBOOK_OFF = os.environ.get("MATCHBOOK_OFF", "") == "1"
 # gouverne, plutôt qu'en dur ici — voir sa docstring pour le raisonnement et
 # pour les deux chemins que ce réglage NE couvre pas.
 _MAX_ORACLE = int(os.environ.get("MAX_ORACLE", str(_MAX_ORACLE_DEFAULT)))
+
+# Divergence tolérée entre DEUX avis sharp indépendants (Pinnacle et
+# l'exchange), en POINTS de probabilité. Au-delà, le match entier est refusé :
+# voir `core.constants.EXCHANGE_DIVERGENCE_PTS` pour la mesure qui la fonde et
+# pour ce qu'elle ne couvre pas encore.
+_EXCHANGE_DIVERGENCE_PTS = float(
+    os.environ.get("EXCHANGE_DIVERGENCE_PTS", str(_EXCHANGE_DIVERGENCE_DEFAULT)))
 
 # Sports absents du plan OddsAPI : la recherche web est leur SEULE source de
 # prix sharp. Le budget oracle doit leur revenir en premier — il se dépensait
@@ -734,8 +741,66 @@ def _alert_oddsapi_pool_if_dead(sb) -> None:
                     f"(plusieurs clés = bascule automatique, plus de scan perdu)")
 
 
+def _prob_home(block: dict) -> float:
+    """Probabilité DÉVIGORISÉE du côté domicile pour un carnet 1X2 (ou 1-2).
+
+    Sert à comparer deux sources sharp entre elles, et rien d'autre : côté
+    sharp, dévigoriser est exactement ce qu'on cherche à faire (estimer une
+    probabilité), à l'inverse du côté soft — voir `core.math_engine`.
+    Rend 0.0 sur carnet inexploitable.
+    """
+    o1 = float(block.get("1") or 0)
+    o2 = float(block.get("2") or 0)
+    ox = float(block.get("X") or 0)
+    if o1 <= 1.01 or o2 <= 1.01:
+        return 0.0
+    probs = _devig([o1, ox, o2]) if ox > 1.01 else _devig([o1, o2])
+    return probs[0] if probs else 0.0
+
+
+def _sharp_divergence_pts(a: dict, b: dict) -> float | None:
+    """Écart entre deux carnets SHARP, en POINTS de probabilité.
+
+    En points et non en pourcentage relatif : un seuil relatif crie au loup
+    sur tout outsider (0,02 → 0,03 est +50 % relatif mais 1 point réel) et
+    reste muet sur les favoris, où le point de probabilité coûte le plus cher.
+    C'est la même leçon que `core/source_adapter.py`.
+
+    Rend None quand la comparaison n'est pas possible — auquel cas on ne juge
+    PAS : une source illisible n'est pas une source en désaccord.
+    """
+    pa, pb = _prob_home(a), _prob_home(b)
+    if pa <= 0.0 or pb <= 0.0:
+        return None
+    return round(abs(pa - pb) * 100, 3)
+
+
 def _enrich_from_exchange(items: list, prices: dict, log) -> int:
-    """Pose un vrai prix d'exchange sur les matchs qui n'en ont pas.
+    """Confronte l'exchange au prix sharp, et le pose quand il n'y en a pas.
+
+    DEUX RÔLES, et c'est le changement du 2026-08-27 (A5).
+
+    1. CONTRE-EXPERTISE — le rôle qui compte. Jusqu'ici cette fonction faisait
+       `continue` dès qu'un prix sharp existait : Matchbook n'était consulté
+       que sur les matchs SANS Pinnacle. Or api-sports sert Pinnacle sur 100 %
+       de ses matchs foot, et 100 % des signaux sont du foot — l'exchange
+       était donc écarté PRÉCISÉMENT sur les matchs qui portent les signaux.
+       Câblé en bouche-trou, il ne pouvait pas faire le seul travail qui
+       compte : repérer un Pinnacle PÉRIMÉ, qui est la fabrique à faux edge.
+       Un prix sharp périmé produit un edge qui n'existe pas, et rien en aval
+       ne peut le distinguer d'un vrai.
+       Désormais, quand les DEUX prix existent :
+         · divergence > `_EXCHANGE_DIVERGENCE_PTS` points de probabilité → on
+           REFUSE le match entier (`_sharp_conflict`). Deux avis sharp
+           indépendants qui se contredisent ne peuvent pas être tous les deux
+           à jour ; on ne choisit pas lequel croire, le désaccord EST
+           l'information ;
+         · sinon → l'exchange entre au CONSENSUS (`odds_exchange`) sans jamais
+           écraser Pinnacle, qui reste la référence.
+
+    2. BOUCHE-TROU — inchangé. Sans prix sharp (ou avec un prix seulement
+       ESTIMÉ par l'IA), l'exchange le pose : c'est ce qui rend un edge
+       calculable sur les matchs d'odds-api.io.
 
     Appelée DEUX fois par scan, et c'est le point important : une seule fois
     ne suffit pas. Le Tier 1.5 s'exécute avant le Tier 2, donc les matchs
@@ -748,16 +813,50 @@ def _enrich_from_exchange(items: list, prices: dict, log) -> int:
     servi par l'exchange est un match de moins à faire chercher sur le web,
     donc du quota Groq économisé pour le settlement.
 
-    Renvoie le nombre de matchs enrichis.
+    ⚠️ N'écrit toujours RIEN dans le prix de clôture : `capture_from_exchange`
+    reçoit le dict de prix BRUT, jamais ces matchs enrichis (voir sa
+    docstring). Le rôle 1 renforce cet invariant plutôt que de l'affaiblir —
+    il n'écrase jamais `odds_pinnacle`.
+
+    Renvoie le nombre de matchs ENRICHIS (rôle 2). Les contre-expertises ne
+    sont pas comptées : elles ne posent aucun prix.
     """
     enriched = 0
     for m in items:
-        pin = m.get("odds_pinnacle") or {}
-        if pin.get("1", 0) > 1.01 and pin.get("2", 0) > 1.01 and not m.get("_estimated"):
-            continue
         bf = _lookup_exchange(m, prices)
         if not (bf and bf.get("1", 0) > 1.01 and bf.get("2", 0) > 1.01):
             continue
+
+        pin = m.get("odds_pinnacle") or {}
+        a_un_sharp = (pin.get("1", 0) > 1.01 and pin.get("2", 0) > 1.01
+                      and not m.get("_estimated"))
+
+        # ── Rôle 1 : contre-expertise ────────────────────────────────────
+        if a_un_sharp:
+            ecart = _sharp_divergence_pts(pin, bf)
+            if ecart is None:
+                continue          # incomparable : on ne juge pas
+            if ecart > _EXCHANGE_DIVERGENCE_PTS:
+                m["_sharp_conflict"] = {
+                    "pts": ecart, "limite": _EXCHANGE_DIVERGENCE_PTS,
+                    "source": bf.get("_source", "exchange"),
+                }
+                log.warning("CONFLIT SHARP | %s — Pinnacle et %s divergent de "
+                            "%.2f pts de probabilité (> %.2f) — match REFUSÉ, "
+                            "l'un des deux prix est périmé",
+                            m.get("match", "?"), bf.get("_source", "exchange"),
+                            ecart, _EXCHANGE_DIVERGENCE_PTS)
+                continue
+            m["odds_exchange"] = {"1": bf["1"], "X": bf.get("X", 0.0), "2": bf["2"]}
+            # Loggé À CHAQUE comparaison, pas seulement aux refus : le seuil
+            # a été posé sur 5 paires liquides et sa vraie distribution ne
+            # peut venir que de la production (voir constants).
+            log.info("CONTRE-EXP | %s — %s d'accord avec Pinnacle à %.2f pt "
+                     "près, entre au consensus",
+                     m.get("match", "?"), bf.get("_source", "exchange"), ecart)
+            continue
+
+        # ── Rôle 2 : bouche-trou ─────────────────────────────────────────
         src = bf.get("_source", "betfair")
         m["odds_pinnacle"] = {"1": bf["1"], "X": bf.get("X", 0.0), "2": bf["2"]}
         m["_exchange"] = src
@@ -1227,7 +1326,11 @@ def _process_h2h(m, name, sport, league, home, away, emoji, signals, sb, now, lo
             # Weighted Power devig: build source prices for BOTH sides
             source_prices_fav = {"pinnacle": pin_price}
             source_prices_opp = {"pinnacle": dnb_other}
-            for src_key, src_name in (("odds_circa", "circa"), ("odds_cris", "cris")):
+            # `odds_exchange` est posé par _enrich_from_exchange UNIQUEMENT
+            # quand l'exchange s'accorde avec Pinnacle : sa contribution est
+            # donc bornée par EXCHANGE_DIVERGENCE_PTS, par construction.
+            for src_key, src_name in (("odds_circa", "circa"), ("odds_cris", "cris"),
+                                      ("odds_exchange", "exchange")):
                 so = m.get(src_key) or {}
                 s_fav  = float(so.get(fav_key, 0) or 0)
                 s_opp  = float(so.get(opp_key, 0) or 0)
@@ -1256,7 +1359,8 @@ def _process_h2h(m, name, sport, league, home, away, emoji, signals, sb, now, lo
             # Weighted Power devig: build source prices for BOTH sides
             source_prices_fav = {"pinnacle": pin_price}
             source_prices_opp = {"pinnacle": opp_price}
-            for src_key, src_name in (("odds_circa", "circa"), ("odds_cris", "cris")):
+            for src_key, src_name in (("odds_circa", "circa"), ("odds_cris", "cris"),
+                                      ("odds_exchange", "exchange")):
                 so = m.get(src_key) or {}
                 sp_f = float(so.get(fav_key, 0) or 0)
                 sp_o = float(so.get(opp_key, 0) or 0)
@@ -2327,6 +2431,19 @@ def run():
 
     for m in matches:
         try:
+            # Contre-expertise d'exchange (A5) : deux avis sharp indépendants
+            # en désaccord ne peuvent pas être tous les deux à jour. Le refus
+            # porte sur le MATCH ENTIER, pas sur un marché : c'est le prix de
+            # référence qui est suspect, donc h2h, totals et spreads le sont
+            # tous les trois. Filtrer ici plutôt que dans chaque _process_*
+            # garantit qu'aucun marché futur ne puisse s'y soustraire.
+            conflit = m.get("_sharp_conflict")
+            if conflit:
+                log.info("SKIP    | %s — conflit sharp %.2f pts > %.2f, aucun "
+                         "marché évalué", m.get("match", "?"),
+                         conflit["pts"], conflit["limite"])
+                continue
+
             name     = m["match"]
             sport    = m.get("sport", "soccer")
             league   = m.get("league", "")

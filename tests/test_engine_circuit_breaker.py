@@ -168,10 +168,20 @@ def test_exchange_fills_a_match_that_has_no_sharp_price():
 
 
 def test_a_real_sharp_price_is_never_overwritten():
+    """Pinnacle reste la RÉFÉRENCE : l'exchange ne l'écrase jamais.
+
+    Depuis A5 le match n'est plus sauté pour autant — l'exchange le
+    CONTRE-EXPERTISE et, s'il est d'accord (ici 0,89 pt d'écart), entre au
+    consensus sous `odds_exchange`. Le compteur d'enrichissement reste à 0 :
+    aucun prix n'a été posé. L'invariant de `capture_from_exchange` tient
+    donc toujours — voir tests/test_closing_line_exchange.py.
+    """
     m = {"match": "Barcelona vs Real Madrid", "home": "Barcelona", "away": "Real Madrid",
          "odds_pinnacle": {"1": 2.05, "X": 3.50, "2": 3.55}}
     assert eng._enrich_from_exchange([m], _MB, _Log()) == 0
-    assert m["odds_pinnacle"]["1"] == 2.05
+    assert m["odds_pinnacle"] == {"1": 2.05, "X": 3.50, "2": 3.55}
+    assert m["odds_exchange"] == {"1": 2.10, "X": 3.60, "2": 3.40}
+    assert "_sharp_conflict" not in m
 
 
 def test_an_ai_estimated_price_is_replaced():

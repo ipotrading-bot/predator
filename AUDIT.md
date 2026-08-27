@@ -117,6 +117,13 @@ C'est le tableau à consulter avant de toucher à quoi que ce soit.
 | Aucun mode de scan ne rétablit `MAX_ORACLE` | `…::TestAucunModeNeLeRetablit` |
 | L'appel à l'oracle reste gardé par son budget (vérifié sur l'AST) | `…::TestLappelResteGardeParLeBudget` |
 | Le code de l'oracle reste VIVANT, débranché et non supprimé | `…::TestLeCodeResteVivant` |
+| L'exchange est confronté à Pinnacle même quand celui-ci existe | `tests/test_contre_expertise_exchange.py::TestLaContreExpertiseARemplaceLeContinue` |
+| Deux avis sharp trop divergents REFUSENT le match entier | `…::TestLeRefusPorteSurLeMatchEntier` |
+| La divergence sharp se mesure en POINTS de probabilité | `…::TestLaDivergenceSeMesureEnPointsDeProbabilite` |
+| Un carnet illisible ne vaut pas un carnet en désaccord | `…::test_un_carnet_illisible_ne_juge_pas` |
+| L'exchange entre au consensus sans jamais écraser Pinnacle | `…::test_pinnacle_reste_la_reference_et_nest_jamais_ecrase` |
+| L'exchange est exclu du juge de divergence CV, pas du vote | `…::test_lexchange_est_exclu_du_juge_pas_du_vote` |
+| Le garde VOLATILE mord toujours entre bookmakers | `…::test_le_garde_volatile_mord_toujours_entre_bookmakers` |
 
 L'**invariant des sport-keys** (4 fichiers : `core/odds_api.py`,
 `core/learning_layer.py`, `api/index.py`) est décrit

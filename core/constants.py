@@ -131,6 +131,39 @@ PUSH_PROB_ROUND_LINE = 0.10    # 10% — conservative MLB/baseball estimate
 # ERA, recent form, and matchup are not priced in until lineup is locked.
 MLB_LINEUP_WINDOW_H  = 6       # Hours — discard MLB totals signals beyond this
 
+# ── Contre-expertise d'exchange (2026-08-27) ──────────────────────────
+# Matchbook cessait d'être consulté dès qu'un prix Pinnacle existait
+# (`run_engine._enrich_from_exchange` faisait `continue`). Or api-sports sert
+# Pinnacle sur 100 % de ses matchs foot : l'exchange était donc écarté
+# PRÉCISÉMENT sur les matchs qui portent les signaux. Câblé en bouche-trou, il
+# ne pouvait pas jouer le rôle qui compte — détecter un Pinnacle PÉRIMÉ, qui
+# est la fabrique à faux edge.
+#
+# Deux avis sharp INDÉPENDANTS qui divergent de plus de ce nombre de POINTS de
+# probabilité ne peuvent pas être tous les deux à jour. On refuse alors le
+# signal plutôt que de choisir : le désaccord est en soi l'information.
+#
+# LA VALEUR EST PROVISOIRE, et il faut le savoir avant de s'y fier. Mesurée le
+# 2026-08-27 sur les seules paires Pinnacle × Matchbook appariables du jour :
+#   n = 5 | médiane 0,23 pt | p90 0,87 pt | max 0,87 pt
+# Cinq paires, TOUTES sur des marchés liquides (Barcelona, Celta Vigo,
+# Estudiantes…). La divergence sur les marchés ILLIQUIDES — OBOS-ligaen,
+# Argentine B, c'est-à-dire l'essentiel du slate réel — n'est PAS mesurée : le
+# prix milieu d'un carnet creux s'écarte mécaniquement plus, sans qu'aucun des
+# deux books ne soit périmé. 2,0 points laisse donc de la marge à cette
+# illiquidité tout en restant à plus du double du bruit observé.
+#
+# C'est pourquoi `_enrich_from_exchange` logge CHAQUE comparaison, pas
+# seulement les refus : c'est ce journal qui donnera à A6 la distribution
+# réelle, celle qu'aucune mesure ponctuelle ne pouvait fournir.
+#
+# ⚠️ Ce garde recoupe `paim_engine._DIVERGENCE_CV_LIMIT` (1,2 % de CV), qui
+# rejetterait les mêmes carnets sous l'étiquette VOLATILE — soit ~0,7 à 1,2
+# point de probabilité selon le prix. Les deux mesurent la même chose dans
+# deux unités. Celui-ci s'applique en AMONT et nomme la vraie cause ; A6
+# devrait les unifier plutôt que de les laisser cohabiter.
+EXCHANGE_DIVERGENCE_PTS = 2.0   # points de probabilité
+
 # ── Closing-line capture ──────────────────────────────────────────────
 # Shared by core/closing_line.py (free capture from the OddsAPI scan feed,
 # every market) and core/audit_engine.py (web-search oracle fallback, h2h
