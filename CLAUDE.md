@@ -6,14 +6,21 @@ Tout le calcul tourne en crons GitHub Actions ; le dashboard est en lecture seul
 
 ## Commandes
 
-- Tests : `python -m pytest tests/ -q` (~45 s, 945 tests, doit rester à 0 échec)
+- Tests : `python -m pytest tests/ -q` (~40 s, doit rester à 0 échec). Le
+  NOMBRE de tests n'est pas écrit ici : il change à chaque phase, et un
+  compte périmé dans un fichier de consignes est exactement le genre de
+  contradiction que D4 a nettoyé. L'invariant est « zéro échec ».
 - Carte des invariants et de leurs gardiens : `AUDIT.md` (à lire avant
   d'ajouter un sport, un fournisseur IA, une route ou un workflow)
 - Lint : `python -m pyflakes $(git ls-files '*.py')` (actuellement propre)
 - Dashboard local : skill `predator-dashboard-check` (mode démo sans credentials)
 - Piloter Supabase/Vercel : `python scripts/ops.py doctor|status|supabase …|vercel …`
   (credentials dans `.env`, gitignoré ; CLIs `supabase`/`vercel` aussi installables)
-- Pas de build. Déploiement dashboard = push sur main (Vercel auto).
+- Pas de build. Le dashboard N'EST PAS déployé par le push : le déploiement
+  Git de Vercel est DÉSACTIVÉ (`vercel.json`, `git.deploymentEnabled.main:
+  false`) et c'est le job `deploy` de `ci.yml` qui pousse en CLI, APRÈS une
+  suite verte. Sans cette désactivation le `needs: test` ne protégerait
+  rien — chaque commit partait deux fois, voie Git et voie CLI, en course.
 
 ## Architecture (fichiers clés)
 
@@ -33,7 +40,9 @@ Tout le calcul tourne en crons GitHub Actions ; le dashboard est en lecture seul
 
 ## Conventions
 
-- Python 3.11, français dans les docstrings/commentaires, conventional commits.
+- Python 3.11 en dev et en CI, mais le code doit rester compatible 3.12 :
+  c'est l'interpréteur du build Vercel (voir « deux interpréteurs » plus
+  bas). Français dans les docstrings/commentaires, conventional commits.
 - Les erreurs réseau/API ne crashent jamais : retour `[]` + log, comportement documenté.
 - Chaque changement de schéma = nouveau `sql/migrate_vX_Y.sql`, appliqué À LA MAIN
   dans le SQL Editor Supabase (aucun runner de migration).

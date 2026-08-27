@@ -18,7 +18,7 @@
 ```
    SOURCES DE COTES                       COUCHE IA (core/ai_router.py)
    ───────────────────                    ──────────────────────────────
-   OddsAPI      (sharp, pool de clés)     Registre de 17 fournisseurs
+   OddsAPI      (OBSOLÈTE, cf. plus bas)  Registre de 18 fournisseurs
    Matchbook    (sharp, sans clé)         Lanes : FILTER / ANALYZE /
    api-sports   (soft)                            TRANSLATE_CJK /
    odds.500.com (gratuit, mode ombre)             SEARCH_READ /
@@ -83,7 +83,7 @@ de 120 s), ramassée par `scan.yml` au tick suivant (36/jour, donc ≤ ~1 h).
 ### 🧠 Couche IA
 
 - **Routeur multi-fournisseurs** ([`core/ai_router.py`](core/ai_router.py)) —
-  registre de 17 fournisseurs, dont 9 utilisables en production (les autres
+  registre de 18 fournisseurs, dont 10 utilisables en production (les autres
   portent un `terms_flag` : usage non commercial, évaluation, ou palier
   gratuit fermé). Aucun nom de modèle n'est codé en dur : chaque lane déclare
   une liste de préférences et le routeur retient le premier modèle qui existe
@@ -160,7 +160,7 @@ http://localhost:5000
 
 | Variable | Description | Requis |
 |----------|-------------|--------|
-| `ODDS_API_KEYS` / `ODDS_API_KEY` | Pool de clés The-Odds API (rotation auto ; source de vérité : `app_secrets`) | ✅ |
+| `ODDS_API_KEYS` / `ODDS_API_KEY` | Pool de clés The-Odds API. **OBSOLÈTE depuis le 2026-08-26** : `ODDS_API_ENABLED` vaut 0, le Tier 1 ne s'exécute plus. Réactivation par `ODDS_API=1` | ❌ |
 | `SUPABASE_URL` / `SUPABASE_KEY` / `SUPABASE_SERVICE_KEY` | Supabase (anon pour lire, service_role pour écrire) | ✅ |
 | `TELEGRAM_BOT_TOKEN` / `TELEGRAM_CHAT_ID` | Notifications Telegram | ✅ |
 | `GROQ_API_KEY` / `TAVILY_API_KEY` | Recherche web (settlement + prix Pinnacle de repli) | ❌ |
@@ -323,7 +323,7 @@ predator/
 │   ├── stats_utils.py       # Brier, Wilson, bucketisation
 │   ├── perf_view.py         # Filtrage des lignes de /performance
 │   │  ── Couche IA ───────────────────────────────────────────────────
-│   ├── ai_router.py         # Registre 17 fournisseurs, lanes, disjoncteur, budgets
+│   ├── ai_router.py         # Registre 18 fournisseurs, lanes, disjoncteur, budgets
 │   ├── ai_search.py         # Recherche web (délègue au routeur) + pool de clés Groq
 │   ├── daily_quota.py       # Comptage des budgets journaliers
 │   │  ── Infrastructure ──────────────────────────────────────────────
@@ -332,7 +332,7 @@ predator/
 ├── templates/               # index / ledger / audit / performance / system
 ├── sql/                     # Migrations Supabase — À APPLIQUER À LA MAIN
 ├── tests/                   # pytest — voir AUDIT.md pour la carte des invariants testés
-├── .github/workflows/       # 14 workflows — tout le calcul tourne ici
+├── .github/workflows/       # 6 workflows — tout le calcul tourne ici
 ├── run_engine.py            # Scan complet : collecte, purge, émission
 ├── run_audit.py             # Settlement + CLV
 ├── run_closing_line.py      # Capture des lignes de clôture
@@ -346,7 +346,7 @@ predator/
 │   ├── rotate_odds_key.py   # Gestion du pool de clés OddsAPI
 │   └── …                    # rank_sports, calibration_report, edge_frequency_audit
 ├── requirements.txt
-├── .python-version          # 3.11 — doit rester aligné avec vercel.json et les workflows
+├── .python-version          # 3.12 — APPARTIENT À VERCEL, ne PAS aligner sur les workflows
 └── vercel.json              # Déploiement Vercel (importe api.index:app)
 ```
 
@@ -354,14 +354,43 @@ Les automatisations (scans, audit, rapport, backfill) sont pilotées par les wor
 
 ---
 
-## 🎯 Système 7/9
+## 🎯 Résultats réels
 
-Le cœur du système PAIM :
+> ⚠️ Cette section annonçait un « Système 7/9 » : *9 signaux par cycle de 8 h,
+> 7 wins minimum, 90,2 % de réussite historique, +100 % de ROI mensuel*.
+> **Aucun de ces quatre chiffres n'était vrai, et le mécanisme lui-même
+> n'existe nulle part dans le code** — `7/9`, `MIN_WINS`, « 9 signaux » : zéro
+> occurrence. Il n'y a ni cycle de 8 h, ni quota de 9 signaux, ni seuil de
+> 7 wins. Le portefeuille est équilibré par quota de sport
+> ([`core/paim_engine.py`](core/paim_engine.py)) et la mise par Kelly
+> fractionnaire fiscalisé, pas par un compte de paris gagnants.
 
-1. **9 signaux** sélectionnés par cycle (8h)
-2. **7 wins minimum** requis pour profitabilité
-3. **Win rate historique** : 90.2%
-4. **ROI mensuel moyen** : +100%
+Mesuré en base le 2026-08-27 sur `ai_learning_ledger` (327 lignes, dont
+**114 réglées** en WIN/LOSS — les 182 `expired` ne sont pas des résultats) :
+
+| | annoncé | mesuré |
+|---|---|---|
+| Taux de réussite | 90,2 % | **56,1 %** (64 W / 50 L) |
+| ROI | +100 % / mois | **−10,3 %**, pondéré Kelly et net de taxe |
+
+Et le taux nu ne suffit pas à conclure, dans un sens comme dans l'autre :
+
+- intervalle de Wilson à 95 % : **[47,0 % ; 64,9 %]** ;
+- à la cote moyenne de 1,739, il faut **62,8 %** pour être rentable après la
+  taxe de 20 % sur le gain net ;
+- la borne basse (47,0 %) est sous le point mort : **le système n'est pas
+  prouvé rentable**. Il n'est pas prouvé perdant non plus — 114 paris ne
+  tranchent pas.
+
+⚠️ Ces lignes viennent de l'ANCIEN moteur. Les phases A1 et A6 (2026-08-27)
+ont corrigé le prix retenu (exécutable, non dévigorisé) et la ligne comparée
+(même handicap des deux côtés) ; depuis, le football n'émet plus aucun signal
+positif. Une recalibration demande des lignes réglées POSTÉRIEURES à ces
+corrections — voir `CLAUDE.md`. Ne pas recalculer un seuil sur ce ledger : il
+décrit une distribution que le moteur ne produit plus.
+
+Reproduire ces chiffres : `python scripts/replay_ledger_executable.py`
+(lecture seule).
 
 ### Kelly Criterion
 
@@ -434,20 +463,31 @@ réellement mesuré, et où :
 ## 📊 Technologies
 
 ### Backend
-- **Python 3.11** — version unique du dépôt (`.python-version`, `vercel.json`,
-  les 14 workflows). Aucun build.
+- **Deux interpréteurs, subis et non choisis.** `.python-version` et
+  `vercel.json` disent **3.12** ; les 6 workflows, l'action
+  `.github/actions/setup` et le dev local disent **3.11**. Ce n'est pas une
+  dérive à corriger : l'image de build Vercel n'embarque pas 3.11, et
+  « aligner » `.python-version` sur 3.11 casse le déploiement et laisse la
+  production sur le commit précédent — vécu le 2026-08-22. Le code doit
+  rester compatible avec les deux. Gardé par
+  `tests/test_workflow_secrets.py`. Aucun build.
 - **Flask + Jinja** — dashboard, servi en serverless sur Vercel
 - **Supabase** (PostgreSQL) — seul état persistant
-- **Routeur IA maison** ([`core/ai_router.py`](core/ai_router.py)) — 17
-  fournisseurs enregistrés, 9 utilisables en production ; aucun modèle codé
+- **Routeur IA maison** ([`core/ai_router.py`](core/ai_router.py)) — 18
+  fournisseurs enregistrés, 10 utilisables en production ; aucun modèle codé
   en dur. Mistral est au registre depuis la suppression de Wiz (2026-08-26).
 
 ### Frontend
 - **Aucun framework, aucun bundler** — Jinja, CSS écrit à la main
   ([`api/static/css/predator.css`](api/static/css/predator.css)), JavaScript
   inline. Pas de `node_modules`, pas d'étape de build.
-- **Tailwind via CDN** — uniquement sur `/system`, qui est écrite en JSX
-  compilé dans le navigateur. Les cinq autres pages n'en dépendent pas.
+- **Tailwind servi par le dépôt** — uniquement sur `/system`, écrite en JSX
+  compilé dans le navigateur. Le bundle est vendorisé
+  (`api/static/js/tailwind-3.4.17.min.js`) : `cdn.tailwindcss.com` ne
+  publie aucun en-tête CORS, donc l'intégrité SRI y est impossible et la
+  seule fermeture est de ne pas l'appeler. React, React-DOM et Babel
+  restent distants mais épinglés, avec `integrity` ET `crossorigin`.
+  Les quatre autres pages n'en dépendent pas.
 
 > « Chart.js — Graphiques financiers » figurait ici : le dépôt ne contient
 > aucune bibliothèque de graphiques. « BetterStack — Log monitoring » aussi :
@@ -455,8 +495,16 @@ réellement mesuré, et où :
 > conservées dans `.env.example` avec une mention *UNUSED* explicite).
 
 ### DevOps
-- **GitHub Actions** — 14 workflows ; tout le calcul y tourne
-- **Vercel** — déploiement du dashboard sur push vers `main`
+- **GitHub Actions** — 6 workflows (`scan`, `audit`, `closing_line`,
+  `reports`, `tools`, `ci`) ; tout le calcul y tourne. Les quatre anciens
+  workflows de scan ont fusionné dans `scan.yml` le 2026-08-26 — le mode
+  vient du cron qui a tiré ([`scripts/ci_scan_mode.py`](scripts/ci_scan_mode.py)).
+- **Vercel** — le dashboard N'EST PAS déployé par le push lui-même : le
+  déploiement Git est désactivé dans `vercel.json`
+  (`git.deploymentEnabled.main: false`) et c'est le job `deploy` de `ci.yml`
+  qui pousse, en CLI, APRÈS une suite verte. Sans cette désactivation le
+  `needs: test` ne protégerait rien : chaque commit partait deux fois, par
+  la voie Git et par la CLI, en course.
 - **pytest** — la suite doit rester à 0 échec ; **pyflakes** propre
 
 ---

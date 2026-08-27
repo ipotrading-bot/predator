@@ -377,7 +377,7 @@ trois tests qui disent la règle réelle :
 
 | Lecteur | Version | Fichier |
 |---|---|---|
-| Runners GitHub + dev local | 3.11 | les 14 `.github/workflows/*.yml` |
+| Runners GitHub + dev local | 3.11 | `.github/actions/setup` — l'UNIQUE `setup-python` du dépôt depuis la refonte du 2026-08-26 ; les 6 workflows passent par elle |
 | Build Vercel | 3.12 | `.python-version`, `vercel.json` |
 
 Le code doit rester compatible avec les deux.
