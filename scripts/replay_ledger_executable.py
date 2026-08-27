@@ -120,8 +120,9 @@ import json
 import logging
 import statistics
 
-from core.constants import EV_EDGE_FLOOR, TAX_RATE
+from core.constants import EV_EDGE_FLOOR, TAX_RATE, roi_net_of_tax
 from core.math_engine import calc_dnb
+from core.stats_utils import p_breakeven, wilson_ci
 from core.paim_engine import MIN_EDGE
 
 log = logging.getLogger("PREDATOR.replay_ledger_executable")
@@ -409,6 +410,118 @@ def measure_haircut(raw_1x2: list[dict]) -> dict:
             "mean": round(statistics.mean(hs), 4)}
 
 
+# ── A6 — calibration par bandes d'EV RECALCULÉE ──────────────────────────
+
+# Bornes des bandes, dans la NOUVELLE unité (EV au prix exécutable). Volontai-
+# rement régulières : choisir des bornes qui font qualifier une bande, c'est
+# fabriquer le résultat qu'on prétend mesurer.
+CALIB_BORNES = [-1e9, -7.5, -5.0, -2.5, 0.0, 2.5, 5.0, 7.5, 10.0, 1e9]
+
+# Taille minimale d'une bande pour qu'un verdict soit prononcé. Reprise de
+# `core.learning_layer._MIN_SAMPLES` : le dépôt refuse déjà de conclure sous
+# 30 réglés, et A6 n'a aucune raison d'être plus permissif que la couche
+# d'apprentissage qu'il calibre.
+CALIB_MIN_N = 30
+
+
+def calibration_bands(records: list[dict], bornes: list[float] | None = None,
+                      min_n: int = CALIB_MIN_N) -> list[dict]:
+    """
+    Par bande d'EV RECALCULÉE : ce qu'un seuil placé là aurait produit.
+
+    Une bande QUALIFIE quand les trois conditions tiennent ensemble :
+      · n >= `min_n` réglés (WIN/LOSS) — sous ce seuil on ne conclut pas ;
+      · ROI réalisé NET DE TAXE strictement positif ;
+      · borne BASSE de Wilson au-dessus du point mort net de taxe, calculé à
+        la cote EXÉCUTABLE moyenne de la bande.
+
+    Les trois sont nécessaires et aucune ne remplace les autres : un ROI
+    positif sur 12 paris ne prouve rien, et un taux de réussite au-dessus du
+    point mort sans borne de Wilson qui suive est du bruit qu'on a eu la
+    chance de voir dans le bon sens.
+    """
+    bornes = bornes or CALIB_BORNES
+    out = []
+    for lo, hi in zip(bornes[:-1], bornes[1:]):
+        dans = [r for r in records if lo <= r["edge_replay"] < hi]
+        dec = [r for r in dans if r["outcome"] in ("WIN", "LOSS")]
+        n = len(dec)
+        wins = sum(1 for r in dec if r["outcome"] == "WIN")
+        cotes = [r["exec_odds"] for r in dec if r["exec_odds"] > 1.01]
+        avg_odds = sum(cotes) / len(cotes) if cotes else None
+        # ROI au prix EXÉCUTABLE : `roi_net_of_tax` lit la clé `odds`, on lui
+        # présente donc la cote jouable sous ce nom.
+        roi_net = roi_net_of_tax(
+            [{"outcome": r["outcome"], "odds": r["exec_odds"],
+              "kelly_pct": r["kelly_pct"] or 1.0} for r in dec], TAX_RATE)
+        lo_w, hi_w = wilson_ci(wins, n) if n else (None, None)
+        be = p_breakeven(avg_odds, TAX_RATE) if avg_odds else None
+        qualifie = bool(
+            n >= min_n and roi_net is not None and roi_net > 0
+            and lo_w is not None and be is not None and lo_w > be)
+        out.append({
+            "plancher": lo, "plafond": hi,
+            "n_total": len(dans), "n": n, "wins": wins,
+            "hit_rate": wins / n if n else None,
+            "avg_odds": avg_odds,
+            "roi_net": roi_net,
+            "wilson_lower": lo_w, "wilson_upper": hi_w,
+            "p_breakeven": be,
+            "qualifie": qualifie,
+            # Une bande est PROUVÉE PERDANTE quand sa borne HAUTE reste sous
+            # le point mort : ce n'est plus « pas prouvé rentable », c'est
+            # prouvé non rentable. C'est ce qui fonde un plafond.
+            "prouvee_perdante": bool(
+                n >= min_n and hi_w is not None and be is not None and hi_w < be),
+        })
+    return out
+
+
+def seuil_propose(bandes: list[dict]) -> float | None:
+    """Plancher de la bande QUALIFIANTE la plus basse, ou None si aucune.
+
+    None est un RÉSULTAT, pas un échec de la mesure : il dit qu'aucun niveau
+    d'EV, sur ces données, ne se montre rentable de façon prouvée. Inventer
+    une valeur pour que le moteur émette reviendrait à recalibrer jusqu'à
+    retrouver l'ensemble de paris perdants sous une autre étiquette.
+    """
+    for b in bandes:
+        if b["qualifie"]:
+            return b["plancher"]
+    return None
+
+
+def suspect_edge_propose(records: list[dict], q: float = 0.99) -> float | None:
+    """SUSPECT_EDGE = percentile haut de la NOUVELLE distribution d'EV.
+
+    Détecteur d'erreur de DONNÉES, pas de seuil de rentabilité : au-delà, un
+    edge signale un prix mal apparié bien plus souvent qu'une inefficience.
+    L'exprimer en percentile plutôt qu'en valeur fixe le rend insensible aux
+    changements d'unité — c'est précisément ce qui a manqué le 2026-08-22,
+    quand l'edge a changé d'échelle sans que le garde suive.
+    """
+    vals = [r["edge_replay"] for r in records]
+    return round(_pct(vals, q), 2) if vals else None
+
+
+def plafonds_par_sport(records: list[dict], min_n: int = CALIB_MIN_N) -> dict:
+    """Plafond d'EV par sport : plancher de la bande PROUVÉE PERDANTE la plus
+    basse au-dessus de la bande qualifiante. Rend {} quand rien n'est prouvé —
+    le constat « le football au-dessus de 6 % perd » appartient à l'ANCIENNE
+    unité et ne se convertit pas, il se re-mesure."""
+    out = {}
+    for sport in sorted({r["sport"] for r in records}):
+        srec = [r for r in records if r["sport"] == sport]
+        bandes = calibration_bands(srec, min_n=min_n)
+        perdantes = [b for b in bandes if b["prouvee_perdante"] and b["plancher"] > 0]
+        if perdantes:
+            out[sport] = {"plafond": perdantes[0]["plancher"],
+                          "n": perdantes[0]["n"],
+                          "hit_rate": perdantes[0]["hit_rate"],
+                          "requis": perdantes[0]["p_breakeven"]}
+    return out
+
+
 # ── Rejeu complet ────────────────────────────────────────────────────────
 
 def replay(rows: list[dict], haircut: float = HAIRCUT_DEFAULT,
@@ -451,7 +564,15 @@ def replay(rows: list[dict], haircut: float = HAIRCUT_DEFAULT,
             "encore_au_dessus_de_min_edge": sum(1 for r in brec if r["edge_replay"] >= min_edge),
         }
 
+    bandes = calibration_bands(records)
     return {
+        "calibration": {
+            "bandes": bandes,
+            "seuil_propose": seuil_propose(bandes),
+            "suspect_edge_p99": suspect_edge_propose(records),
+            "plafonds_par_sport": plafonds_par_sport(records),
+            "min_n": CALIB_MIN_N,
+        },
         "parametres": {
             "haircut": haircut, "min_edge": min_edge, "ev_edge_floor": ev_floor,
             "tax_rate_depot": TAX_RATE, "tax_rate_reel": TAX_REAL,
@@ -651,6 +772,54 @@ def render(rep: dict, sig_resolution: dict | None = None,
                      f"{roi_txt:>15} {row['survivants_min_edge']:>11} "
                      f"{row['survivants_ev_floor']:>11}")
         L.append("")
+
+    c = rep["calibration"]
+    L.append("── A6 — CALIBRATION PAR BANDE D'EV RECALCULÉE ──────────────────────")
+    L.append(f"  Une bande QUALIFIE si : n >= {c['min_n']} réglés, ROI net > 0, "
+             f"et Wilson- > point mort.")
+    L.append("")
+    L.append(f"  {'bande EV':>16} {'n':>4} {'réussite':>9} {'Wilson-':>9} "
+             f"{'requis':>8} {'cote moy':>9} {'ROI net':>9}  verdict")
+    for b in c["bandes"]:
+        if not b["n_total"]:
+            continue
+        lo = "-inf" if b["plancher"] <= -1e8 else f"{b['plancher']:+.1f}"
+        hi = "+inf" if b["plafond"] >= 1e8 else f"{b['plafond']:+.1f}"
+        hr = "—" if b["hit_rate"] is None else f"{b['hit_rate'] * 100:.1f}%"
+        wl = "—" if b["wilson_lower"] is None else f"{b['wilson_lower'] * 100:.1f}%"
+        be = "—" if b["p_breakeven"] is None else f"{b['p_breakeven'] * 100:.1f}%"
+        ao = "—" if b["avg_odds"] is None else f"{b['avg_odds']:.2f}"
+        ro = "—" if b["roi_net"] is None else f"{b['roi_net'] * 100:+.1f}%"
+        if b["qualifie"]:
+            verdict = "QUALIFIE"
+        elif b["prouvee_perdante"]:
+            verdict = "prouvée perdante"
+        elif b["n"] < c["min_n"]:
+            verdict = f"n<{c['min_n']} — on ne conclut pas"
+        else:
+            verdict = "non prouvée rentable"
+        L.append(f"  {lo + ' → ' + hi:>16} {b['n']:>4} {hr:>9} {wl:>9} "
+                 f"{be:>8} {ao:>9} {ro:>9}  {verdict}")
+    L.append("")
+    seuil = c["seuil_propose"]
+    if seuil is None:
+        L.append("  ⛔ AUCUNE BANDE NE QUALIFIE.")
+        L.append("     Ce n'est pas un échec de mesure : sur ces données, aucun")
+        L.append("     niveau d'EV ne se montre rentable de façon prouvée.")
+    else:
+        L.append(f"  ✅ Bande qualifiante la plus basse → seuil = {seuil:+.1f}%")
+    L.append(f"  SUSPECT_EDGE (p99 de la nouvelle distribution) : "
+             f"{c['suspect_edge_p99']:+.2f}%")
+    pl = c["plafonds_par_sport"]
+    if pl:
+        for sport, d in pl.items():
+            L.append(f"  plafond {sport} : {d['plafond']:+.1f}% "
+                     f"(bande prouvée perdante : {d['hit_rate'] * 100:.1f}% "
+                     f"pour {d['requis'] * 100:.1f}% requis, n={d['n']})")
+    else:
+        L.append("  plafonds par sport : aucune bande PROUVÉE perdante — "
+                 "rien à poser")
+    L.append("")
 
     L.append("=" * 78)
     L.append("AUCUNE ÉCRITURE EN BASE. Aucun seuil modifié.")

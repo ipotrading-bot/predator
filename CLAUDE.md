@@ -410,5 +410,46 @@ Tout le calcul tourne en crons GitHub Actions ; le dashboard est en lecture seul
   taxe sont désormais rendus en une phrase française (« il faut 57 % pour
   être rentable, et 85 paris ne suffisent pas à le prouver »). Ne pas
   supprimer cette ligne en croyant simplifier : c'est une garde de sûreté.
+- A6 — LA CALIBRATION N'A PAS PU AVOIR LIEU, ET C'EST LE RÉSULTAT (2026-08-27).
+  Méthode imposée : bucketiser les lignes RÉGLÉES par EV recalculée au prix
+  exécutable, retenir la bande la plus basse où le ROI réalisé NET DE TAXE est
+  positif ET dont la borne basse de Wilson dépasse le point mort, avec n ≥ 30.
+  **AUCUNE BANDE NE QUALIFIE.** Sur 114 réglés (WIN/LOSS), une seule bande
+  atteint n ≥ 30 — la plus basse (EV < −7,5 %, n=37) — et elle est PROUVÉE
+  PERDANTE : 40,5 % de réussite pour 70,9 % requis, ROI net −37,3 %. Les huit
+  autres bandes ont n entre 1 et 20 : ni prouvées rentables, ni prouvées
+  perdantes. On ne conclut pas, et on n'invente pas un seuil pour que le
+  moteur émette.
+  Le football au prix exécutable, mesuré : h2h **p95 = −4,70 %, max = +0,00 %**
+  — pas une seule ligne n'atteint le plancher actuel de 1,5 %, donc l'émission
+  h2h est DÉJÀ nulle depuis A1, sans toucher à un seul seuil. Ce qui émet
+  encore, c'est le football totals/spreads : 54 lignes sur 54 passent 1,5 %
+  (leur cote soft est brute, A1 ne les touche pas), pour un ROI net mesuré de
+  **−11,2 %** sur les 19 réglés.
+  ⛔ SEUILS PROPOSÉS, NON APPLIQUÉS — ils demandent un arbitrage. MIN_EDGE et
+  EV_EDGE_FLOOR à 14,5 % (au-dessus du max football observé, +14,22 %) et
+  SUSPECT_EDGE à 12,5 % (p99 de la nouvelle distribution, exprimé en
+  percentile pour qu'un futur changement d'unité ne le laisse pas sur place).
+  Leur conséquence est ARITHMÉTIQUE et il faut la voir avant de les poser : un
+  plancher à 14,5 au-dessus d'un plafond de suspicion à 12,5 rend la fenêtre
+  d'émission h2h VIDE par construction, pour tout sport majeur. Il n'existe
+  aucune valeur d'edge qui passe les deux gardes. Essayé le 2026-08-27 : 19
+  tests tombent, et 7 d'entre eux ne peuvent pas être réécrits honnêtement —
+  il faudrait un edge que le moteur signale lui-même comme erreur de données.
+  C'est la vraie conclusion de la phase A : après correction du prix, de la
+  taxe et du point mort, **il ne reste aucun écart entre « assez rentable pour
+  parier » et « si élevé que c'est probablement une erreur de données »**.
+  ⚠️ Et le piège de la sortie : suspendre l'émission suspend aussi la collecte.
+  Une seule bande atteint n ≥ 30 aujourd'hui ; à volume nul, aucune n'y
+  arrivera jamais. Décider entre « on s'arrête » et « on paie une perte connue
+  pour acquérir la mesure » est une décision d'opérateur, pas de calibration.
+  `_EDGE_CEILINGS` : rien à poser. Aucune bande n'est prouvée perdante
+  AU-DESSUS de zéro, par sport. Vérifié en base le même jour : `meta` ne porte
+  aucune clé de plafond, ils étaient déjà vides en production. Le constat
+  « soccer au-dessus de 6 % perd » appartient à l'ANCIENNE unité et ne se
+  convertit pas — il se re-mesure.
+  Outil : `python scripts/replay_ledger_executable.py` (lecture seule) rend la
+  table des bandes, le seuil proposé, le p99 et les plafonds par sport.
+  Gardien de la méthode : `tests/test_replay_ledger_executable.py::TestCalibrationA6`.
 - Sub-agent `predator-diagnostician` pour tout audit pipeline/santé (isole les
   gros logs hors de la conversation principale).

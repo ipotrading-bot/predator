@@ -14,6 +14,9 @@ import pytest
 from core.constants import TAX_RATE
 from scripts.replay_ledger_executable import (
     EDGE_UNIT_TOL,
+    calibration_bands,
+    seuil_propose,
+    suspect_edge_propose,
     HAIRCUT_DEFAULT,
     edge_of,
     executable_odd,
@@ -289,3 +292,69 @@ class TestSurvivantsEtSensibilite:
         p = replay(self.LIGNES, haircut=0.90)["parametres"]
         assert p["tax_rate_reel"] == 0.20
         assert p["tax_rate_depot"] == pytest.approx(TAX_RATE)
+
+
+class TestCalibrationA6:
+    """La méthode de calibration imposée en A6 : bucketiser les réglés par EV
+    recalculée, et ne retenir une bande que si les TROIS conditions tiennent —
+    n >= 30, ROI net positif, borne basse de Wilson au-dessus du point mort.
+
+    Ce qui est gardé ici est la RIGUEUR de la règle, pas son résultat : une
+    bande qui qualifierait sur deux conditions sur trois recréerait exactement
+    l'ensemble de paris perdants qu'on vient de démonter.
+    """
+
+    def _bande(self, n, wins, odds=2.50, edge=3.0):
+        rows = []
+        for i in range(n):
+            rows.append(_ligne(outcome="WIN" if i < wins else "LOSS",
+                               odds=odds, sharp_prob=(1 + edge / 100) / odds,
+                               initial_edge=edge))
+        return [normalize(r, 1.0) for r in rows]
+
+    def test_un_echantillon_trop_petit_ne_qualifie_jamais(self):
+        # 100 % de réussite sur 10 paris ne prouve rien — et c'est
+        # exactement le lot qui a l'air le plus tentant.
+        recs = self._bande(n=10, wins=10)
+        b = [x for x in calibration_bands(recs) if x["n"]]
+        assert b and all(not x["qualifie"] for x in b)
+        assert seuil_propose(calibration_bands(recs)) is None
+
+    def test_un_roi_positif_ne_suffit_pas_sans_wilson(self):
+        # 60 % à cote 2.50 : ROI net positif, mais la borne basse de Wilson
+        # sur 30 tirages reste sous le point mort → on ne conclut pas.
+        recs = self._bande(n=30, wins=18)
+        b = next(x for x in calibration_bands(recs) if x["n"] == 30)
+        assert b["roi_net"] > 0
+        assert b["wilson_lower"] <= b["p_breakeven"] or not b["qualifie"]
+
+    def test_les_trois_conditions_ensemble_font_qualifier(self):
+        # 85 % sur 100 paris à cote 2.50 : n suffisant, ROI franchement
+        # positif, Wilson- très au-dessus du point mort (45,5 %).
+        recs = self._bande(n=100, wins=85)
+        bandes = calibration_bands(recs)
+        b = next(x for x in bandes if x["n"] == 100)
+        assert b["n"] >= 30 and b["roi_net"] > 0
+        assert b["wilson_lower"] > b["p_breakeven"]
+        assert b["qualifie"] is True
+        assert seuil_propose(bandes) == b["plancher"]
+
+    def test_aucune_bande_qualifiante_rend_none_pas_zero(self):
+        # None dit « rien n'est prouvé » ; 0.0 se lirait « seuil à zéro »,
+        # c'est-à-dire « émets tout ».
+        assert seuil_propose(calibration_bands([])) is None
+
+    def test_une_bande_prouvee_perdante_est_distinguee_dune_bande_incertaine(self):
+        # Wilson HAUTE sous le point mort = prouvé non rentable, ce qui n'est
+        # pas la même chose que « pas prouvé rentable ».
+        perdante = self._bande(n=60, wins=12, odds=1.50)   # 20 % pour ~64 % requis
+        b = next(x for x in calibration_bands(perdante) if x["n"] == 60)
+        assert b["prouvee_perdante"] is True and b["qualifie"] is False
+
+    def test_le_seuil_de_suspicion_est_un_percentile_pas_une_valeur_fixe(self):
+        # Exprimé en percentile, il suit automatiquement un changement
+        # d'unité — c'est ce qui a manqué le 2026-08-22.
+        recs = self._bande(n=100, wins=50, edge=3.0)
+        p99 = suspect_edge_propose(recs)
+        assert p99 is not None
+        assert suspect_edge_propose(recs, q=0.50) <= p99
