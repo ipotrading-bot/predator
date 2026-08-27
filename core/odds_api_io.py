@@ -140,23 +140,44 @@ def _is_sharp(book: str) -> bool:
     return any(s in low for s in SHARP_NAMES)
 
 
-def _pick_main_line(lines: list, a_key: str, b_key: str) -> dict | None:
-    """La ligne PRINCIPALE parmi plusieurs handicaps/totaux : celle dont les
-    deux prix sont les plus proches.
+def echelle(lines: list, a_key: str, b_key: str) -> list[dict]:
+    """TOUTES les lignes cotées des deux côtés, la plus équilibrée en tête.
 
-    Le book en publie une douzaine (hdp -3.75 à +3.75) ; prendre la première
-    reviendrait à retenir une ligne extrême cotée 1.01/8.60, hors marché et
-    sans rapport avec la ligne que le moteur compare au sharp.
+    POURQUOI L'ÉCHELLE ENTIÈRE, ET PLUS SEULEMENT LA LIGNE PRINCIPALE
+    ----------------------------------------------------------------
+    Le book publie une douzaine de handicaps (hdp -3.75 à +3.75) et autant de
+    totaux. Ce module n'en gardait qu'UN : celui dont les deux prix sont les
+    plus proches — bonne heuristique pour désigner la ligne de référence du
+    marché, mais elle s'applique ICI, sans rien savoir de ce que cote le book
+    sharp en face. `core/matchbook.py` faisait exactement la même chose de son
+    côté. Les deux sources choisissaient donc leur ligne principale
+    SÉPARÉMENT, puis `run_engine._meme_ligne` refusait la paire dès que les
+    deux choix différaient — ce qu'il DOIT faire (deux handicaps différents
+    sont deux paris différents, cf. A6), mais sur une divergence que personne
+    n'avait besoin de subir : le book cote aussi la ligne du sharp, on venait
+    juste de la jeter.
+
+    Mesuré le 2026-08-27 sur les matchs communs aux deux sources : 1 total sur
+    2 et 0 spread sur 2 survivaient à cette comparaison.
+
+    La ligne principale reste `echelle(...)[0]` — même heuristique, même
+    résultat qu'avant quand aucun alignement n'est nécessaire. Ce qui change,
+    c'est que le reste de l'échelle n'est plus perdu, et que
+    `run_engine._aligner_sur_meme_ligne` peut y retrouver la ligne que le
+    sharp cote vraiment.
     """
-    best, best_gap = None, None
+    out: list[dict] = []
     for row in lines or []:
         a, b = _odd(row.get(a_key)), _odd(row.get(b_key))
         if not a or not b:
             continue
-        gap = abs(a - b)
-        if best_gap is None or gap < best_gap:
-            best, best_gap = row, gap
-    return best
+        try:
+            point = float(row.get("hdp"))
+        except (TypeError, ValueError):
+            continue
+        out.append({a_key: a, b_key: b, "point": point})
+    out.sort(key=lambda r: abs(r[a_key] - r[b_key]))
+    return out
 
 
 def _markets(entries: list, draw: bool) -> dict:
@@ -172,24 +193,54 @@ def _markets(entries: list, draw: bool) -> dict:
             if o1 and o2:
                 out["h2h"] = {"1": o1, "X": _odd(r.get("draw")) if draw else 0.0, "2": o2}
         elif name == "spread":
-            r = _pick_main_line(rows, "home", "away")
-            if r is not None:
-                try:
-                    point = float(r.get("hdp"))
-                except (TypeError, ValueError):
-                    continue
-                out["spreads"] = {"home": _odd(r.get("home")), "away": _odd(r.get("away")),
-                                  "point": point, "away_point": -point}
+            ech = echelle(rows, "home", "away")
+            if ech:
+                out["spreads"] = {**ech[0], "away_point": -ech[0]["point"],
+                                  "ladder": [{**r, "away_point": -r["point"]} for r in ech]}
         elif name == "totals":
-            r = _pick_main_line(rows, "over", "under")
-            if r is not None:
-                try:
-                    point = float(r.get("hdp"))
-                except (TypeError, ValueError):
-                    continue
-                out["totals"] = {"over": _odd(r.get("over")), "under": _odd(r.get("under")),
-                                 "point": point}
+            ech = echelle(rows, "over", "under")
+            if ech:
+                out["totals"] = {**ech[0], "ladder": ech}
     return out
+
+
+def _line_shopping(soft: dict, autre: dict) -> None:
+    """Meilleur prix par ISSUE entre deux books soft — 1X2, mais aussi
+    handicaps et totaux, LIGNE PAR LIGNE.
+
+    Le second book ne servait qu'au 1X2 : ses handicaps et ses totaux étaient
+    jetés, et si le PREMIER book n'en cotait aucun, le match repartait sans
+    spread ni total du tout. Or le plan gratuit d'odds-api.io autorise DEUX
+    books simultanés (message d'erreur de l'API, relevé le 2026-08-27) : la
+    moitié de la couverture soft disponible se perdait ici.
+
+    Le prix se compare toujours À LIGNE ÉGALE. Retenir le meilleur prix
+    toutes lignes confondues reviendrait à choisir un AUTRE pari parce qu'il
+    est mieux payé — l'artefact exact qu'A6 a supprimé (voir
+    `run_engine._meme_ligne`).
+    """
+    for k in ("1", "X", "2"):
+        if autre.get("h2h", {}).get(k, 0) > soft.get("h2h", {}).get(k, 0):
+            soft.setdefault("h2h", {})[k] = autre["h2h"][k]
+
+    for marche, cotes in (("spreads", ("home", "away")), ("totals", ("over", "under"))):
+        if not autre.get(marche):
+            continue
+        if not soft.get(marche):
+            soft[marche] = autre[marche]
+            continue
+        par_ligne = {r["point"]: dict(r) for r in soft[marche].get("ladder", [])}
+        for r in autre[marche].get("ladder", []):
+            cible = par_ligne.get(r["point"])
+            if cible is None:
+                par_ligne[r["point"]] = dict(r)
+                continue
+            for c in cotes:
+                if r.get(c, 0) > cible.get(c, 0):
+                    cible[c] = r[c]
+        ladder = sorted(par_ligne.values(),
+                        key=lambda r: abs(r[cotes[0]] - r[cotes[1]]))
+        soft[marche] = {**ladder[0], "ladder": ladder}
 
 
 def _to_match(ev: dict, sport: str, sport_id: int, draw: bool) -> dict | None:
@@ -209,10 +260,7 @@ def _to_match(ev: dict, sport: str, sport_id: int, draw: bool) -> dict | None:
         elif not soft:
             soft = parsed
         else:
-            # Line shopping : meilleur prix par issue entre books soft.
-            for k in ("1", "X", "2"):
-                if parsed.get("h2h", {}).get(k, 0) > soft.get("h2h", {}).get(k, 0):
-                    soft.setdefault("h2h", {})[k] = parsed["h2h"][k]
+            _line_shopping(soft, parsed)
     base = soft or sharp
     if not base.get("h2h"):
         return None

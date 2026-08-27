@@ -265,6 +265,20 @@ class TestTrimSoftSlate:
         assert "odds_pinnacle" not in rows[2]  # un prix estimé ne se fige pas
 
 
+
+    def test_l_echelle_est_bornee_dans_le_cache(self):
+        """REPRICE a besoin de l'échelle pour retrouver la ligne du Matchbook
+        frais — mais `_trim_soft_slate` existe pour borner le blob TEXT de
+        meta. On garde les lignes les plus équilibrées, en tête."""
+        ech = [{"over": 1.9 + i / 100, "under": 1.9, "point": 2.5 + i}
+               for i in range(20)]
+        m = {"match": "A vs B", "odds_1xbet": {"1": 2.0, "X": 3.3, "2": 3.6},
+             "totals_1xbet": {**ech[0], "ladder": ech}}
+        (row,) = eng._trim_soft_slate([m])
+        assert len(row["totals_1xbet"]["ladder"]) == eng._SLATE_LADDER_MAX
+        assert row["totals_1xbet"]["ladder"] == ech[:eng._SLATE_LADDER_MAX]
+        assert row["totals_1xbet"]["point"] == 2.5      # la principale survit
+
 def test_full_scan_writes_trimmed_slate(reprice_env, monkeypatch):
     """Un scan NON-reprice photographie le slate pour le tick suivant."""
     sb, _t, _mb = reprice_env

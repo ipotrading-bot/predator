@@ -206,19 +206,28 @@ def _line_point(market: dict, runner_name: str) -> float | None:
         return None
 
 
-def _main_line(candidates: list) -> dict | None:
-    """Parmi plusieurs lignes, celle dont les deux prix sont les plus proches.
+def _echelle(candidates: list) -> list[dict]:
+    """Toutes les lignes cotées, la plus équilibrée en tête.
 
     Un exchange cote une douzaine de lignes ; les extrêmes (1.01 contre 8.60)
-    sont sans rapport avec la ligne de référence du marché. Même heuristique
-    que core/odds_api_io.py, pour que les deux sources retiennent la même.
+    sont sans rapport avec la ligne de référence du marché — d'où le tri par
+    écart de prix, la même heuristique que `core/odds_api_io.echelle`.
+
+    Mais « la même heuristique des deux côtés » ne donne PAS la même ligne :
+    chaque source l'applique à SON carnet, et le book soft n'a aucune raison
+    d'équilibrer sa cote sur le même handicap que l'exchange. Les deux
+    retenaient donc des lignes différentes, et `run_engine._meme_ligne`
+    refusait la paire — à raison, mais pour rien : la ligne du sharp était
+    cotée chez le soft aussi, on venait de la jeter. On garde donc l'échelle
+    entière, et `run_engine._aligner_sur_meme_ligne` y retrouve la ligne
+    commune. La ligne principale reste `_echelle(...)[0]`, inchangée.
     """
-    best, best_gap = None, None
-    for c in candidates:
-        gap = abs(c["_a"] - c["_b"])
-        if best_gap is None or gap < best_gap:
-            best, best_gap = c, gap
-    return best
+    return sorted(candidates, key=lambda c: abs(c["_a"] - c["_b"]))
+
+
+def _sans_prive(row: dict) -> dict:
+    """La ligne, débarrassée des champs de travail `_a`/`_b`."""
+    return {k: v for k, v in row.items() if not k.startswith("_")}
 
 
 def _totals_odds(event: dict) -> dict | None:
@@ -243,8 +252,8 @@ def _totals_odds(event: dict) -> dict | None:
         if over and under and point is not None:
             cands.append({"over": over, "under": under, "point": abs(point),
                           "_a": over, "_b": under})
-    best = _main_line(cands)
-    return {k: v for k, v in best.items() if not k.startswith("_")} if best else None
+    ech = [_sans_prive(c) for c in _echelle(cands)]
+    return {**ech[0], "ladder": ech} if ech else None
 
 
 def _handicap_odds(event: dict, home: str, away: str) -> dict | None:
@@ -276,8 +285,8 @@ def _handicap_odds(event: dict, home: str, away: str) -> dict | None:
             row.setdefault("away_point", -row["point"])
             row["_a"], row["_b"] = row["home"], row["away"]
             cands.append(row)
-    best = _main_line(cands)
-    return {k: v for k, v in best.items() if not k.startswith("_")} if best else None
+    ech = [_sans_prive(c) for c in _echelle(cands)]
+    return {**ech[0], "ladder": ech} if ech else None
 
 
 def fetch_matchbook_prices(sports: list | None = None, hours_ahead: int = 24) -> dict:

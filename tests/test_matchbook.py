@@ -268,7 +268,33 @@ def test_totals_main_line_is_the_balanced_one(monkeypatch):
     ])
     _wire(monkeypatch, [ev])
     (row,) = mb.fetch_matchbook_prices(sports=["soccer"]).values()
-    assert row["totals"] == {"over": 1.90, "under": 1.98, "point": 2.5}
+    principale = {k: v for k, v in row["totals"].items() if k != "ladder"}
+    assert principale == {"over": 1.90, "under": 1.98, "point": 2.5}
+    # La 5.5 n'entre PAS dans l'échelle : sa fourchette back/lay (14.0 → 16.0)
+    # dépasse MAX_SPREAD_RATIO, `_mid` la refuse en amont. L'échelle hérite de
+    # tous les filtres de liquidité, elle ne les contourne pas.
+    assert [t["point"] for t in row["totals"]["ladder"]] == [2.5]
+
+
+def test_l_echelle_garde_toutes_les_lignes_liquides(monkeypatch):
+    """Une seule ligne retenue par source, et deux sources ne tombent jamais
+    d'accord : c'est ce qui laissait `run_engine._meme_ligne` refuser des
+    paires que les deux books cotaient pourtant. L'échelle existe pour ça —
+    la principale reste en tête, le reste n'est plus perdu."""
+    ev = _rich_event("Tacuary vs Libertad", [_ML,
+        _market("total", 2.5, [("OVER 2.5", 1.87, 1.93), ("UNDER 2.5", 1.95, 2.01)]),
+        _market("total", 3.5, [("OVER 3.5", 2.90, 3.00), ("UNDER 3.5", 1.40, 1.44)]),
+        _market("handicap", 0.5, [("Tacuary -0.5", 1.98, 2.04), ("Libertad +0.5", 1.86, 1.92)]),
+        _market("handicap", 1.5, [("Tacuary -1.5", 3.30, 3.40), ("Libertad +1.5", 1.33, 1.37)]),
+    ])
+    _wire(monkeypatch, [ev])
+    (row,) = mb.fetch_matchbook_prices(sports=["soccer"]).values()
+    assert [t["point"] for t in row["totals"]["ladder"]] == [2.5, 3.5]
+    assert row["totals"]["point"] == 2.5
+    # Le handicap garde son SIGNE ligne par ligne — une échelle non signée
+    # rendrait +0.5 et -0.5 indistinguables, l'erreur qu'A6 a coûté cher.
+    assert [h["point"] for h in row["spreads"]["ladder"]] == [-0.5, -1.5]
+    assert [h["away_point"] for h in row["spreads"]["ladder"]] == [0.5, 1.5]
 
 
 def test_handicap_sign_follows_the_runner_not_the_market(monkeypatch):

@@ -617,6 +617,16 @@ _SLATE_KEYS = ("id", "match", "home", "away", "league", "sport", "sport_id",
                "commence_time", "odds_1xbet", "totals_1xbet", "spreads_1xbet",
                "_soft_source")
 
+# Le book publie une douzaine de handicaps et autant de totaux, et REPRICE a
+# besoin de cette échelle : c'est elle qui permet de retrouver la ligne du
+# Matchbook FRAIS dans le slate soft en cache (`_aligner_sur_meme_ligne`).
+# Mais `_trim_soft_slate` existe pour BORNER le blob TEXT de meta, et une
+# échelle entière × deux marchés × soixante matchs l'y ferait entrer par la
+# fenêtre. On garde les lignes les plus ÉQUILIBRÉES, qui sont en tête : la
+# ligne de référence d'un book sharp en fait toujours partie, les extrêmes
+# (1.01 contre 8.60) ne sont la principale de personne.
+_SLATE_LADDER_MAX = 8
+
 
 def _trim_soft_slate(matches: list) -> list:
     """Slate soft minimal pour REPRICE — borne la taille du blob TEXT de meta.
@@ -634,6 +644,9 @@ def _trim_soft_slate(matches: list) -> list:
         if not m.get("odds_1xbet"):
             continue                    # sans prix soft, rien à repricer
         row = {k: m[k] for k in _SLATE_KEYS if m.get(k) is not None}
+        for cle in ("totals_1xbet", "spreads_1xbet"):
+            if row.get(cle, {}).get("ladder"):
+                row[cle] = {**row[cle], "ladder": row[cle]["ladder"][:_SLATE_LADDER_MAX]}
         pin = m.get("odds_pinnacle")
         if pin and not m.get("_estimated") and not m.get("_exchange"):
             row["odds_pinnacle"] = pin
@@ -863,6 +876,42 @@ def _sharp_divergence_pts(a: dict, b: dict) -> float | None:
     return round(abs(pa - pb) * 100, 3)
 
 
+def _poser_lignes_sharp(m: dict, bf: dict, log) -> None:
+    """Pose les totals/handicaps de l'exchange sur le match, s'ils manquent.
+
+    POURQUOI CE GESTE MANQUAIT À LA CONTRE-EXPERTISE (2026-08-27)
+    ------------------------------------------------------------
+    Ces deux affectations vivaient dans le seul rôle BOUCHE-TROU de
+    `_enrich_from_exchange`. Conséquence : dès qu'un match avait DÉJÀ un prix
+    sharp 1X2 — ce que servent titan007 et la recherche web sur la quasi-
+    totalité du foot — l'enrichissement partait en contre-expertise, et les
+    totals/handicaps de l'exchange étaient jetés au passage.
+
+    Or aucune autre source ne les cote : titan007 ne rend que du 1X2, et le
+    plan gratuit d'odds-api.io ne sert AUCUN book sharp (« sharp or exchange
+    books are only available on our paid plans », relevé le 2026-08-27).
+    `totals_pinnacle` et `spreads_pinnacle` restaient donc vides, la garde
+    d'entrée de `run()` (« les deux côtés ou rien ») n'était jamais franchie,
+    et `_process_totals`/`_process_spreads` n'étaient JAMAIS APPELÉS. Deux
+    marchés sur trois étaient morts, en silence.
+
+    Symptôme qui aurait dû alerter : le run du 2026-08-27 19:20 ne porte pas
+    un seul `LINESKIP` — alors que Matchbook cotait ce jour-là 55 totals et
+    40 handicaps. Une garde qui ne refuse jamais rien, ici, n'était pas
+    franchie : elle n'était pas ATTEINTE.
+
+    N'écrase jamais un prix sharp déjà posé par une autre source.
+    """
+    poses = []
+    for cle, cible in (("totals", "totals_pinnacle"), ("spreads", "spreads_pinnacle")):
+        if bf.get(cle) and not m.get(cible):
+            m[cible] = bf[cle]
+            poses.append(cle)
+    if poses:
+        log.info("LIGNES  | %s — %s pose %s (seule référence sharp sur ces marchés)",
+                 m.get("match", "?"), bf.get("_source", "exchange"), " + ".join(poses))
+
+
 def _enrich_from_exchange(items: list, prices: dict, log) -> int:
     """Confronte l'exchange au prix sharp, et le pose quand il n'y en a pas.
 
@@ -942,6 +991,11 @@ def _enrich_from_exchange(items: list, prices: dict, log) -> int:
             log.info("CONTRE-EXP | %s — %s d'accord avec Pinnacle à %.2f pt "
                      "près, entre au consensus",
                      m.get("match", "?"), bf.get("_source", "exchange"), ecart)
+            # L'exchange vient d'être reconnu D'ACCORD avec Pinnacle : son
+            # carnet n'est pas périmé, et ses totals/handicaps sont la seule
+            # référence sharp qui existe pour ces marchés — voir
+            # `_poser_lignes_sharp`.
+            _poser_lignes_sharp(m, bf, log)
             continue
 
         # ── Rôle 2 : bouche-trou ─────────────────────────────────────────
@@ -950,14 +1004,7 @@ def _enrich_from_exchange(items: list, prices: dict, log) -> int:
         m["_exchange"] = src
         m["_betfair"] = True              # conservé : lu en aval/tests
         m.pop("_estimated", None)
-        # L'exchange cote aussi totals et handicaps — bien plus nombreux que
-        # ses 1X2. Le moteur traite ces marchés dès qu'il a les DEUX côtés :
-        # le soft vient d'odds-api.io, le sharp d'ici. Le garde LINESKIP de
-        # _process_totals/_process_spreads écarte les lignes divergentes.
-        if bf.get("totals") and not m.get("totals_pinnacle"):
-            m["totals_pinnacle"] = bf["totals"]
-        if bf.get("spreads") and not m.get("spreads_pinnacle"):
-            m["spreads_pinnacle"] = bf["spreads"]
+        _poser_lignes_sharp(m, bf, log)
         enriched += 1
         log.info("💹 %s enrichi — %s (%.2f / %.2f)%s", src, m["match"], bf["1"], bf["2"],
                  "".join(f" +{k}" for k in ("totals", "spreads") if bf.get(k)))
@@ -1516,6 +1563,64 @@ def _keep_best_side(sides: list, log, emoji, name) -> list:
     return [best]
 
 
+def _aligner_sur_meme_ligne(soft: dict, sharp: dict, marche: str, nom: str,
+                            emoji: str, log) -> tuple[dict, dict]:
+    """Fait coter la MÊME ligne aux deux books, quand ils l'ont tous les deux.
+
+    LE PROBLÈME QUE ÇA RÉSOUT — ET CE QUE ÇA NE RÉSOUT PAS
+    ------------------------------------------------------
+    `_meme_ligne` refuse une paire de lignes différentes, et il a raison :
+    deux handicaps différents sont deux paris différents (A6). Mais la
+    divergence qu'il constatait était en grande partie FABRIQUÉE en amont.
+    Chaque source cote une douzaine de lignes ; `core/odds_api_io.py` et
+    `core/matchbook.py` n'en gardaient qu'une, « la plus équilibrée », chacune
+    calculée sur SON carnet. Rien n'oblige un book soft à équilibrer sa cote
+    sur le même handicap qu'un exchange — les deux choix tombaient donc
+    souvent à côté l'un de l'autre, et la paire était refusée alors que la
+    ligne du sharp était cotée chez le soft aussi : on venait juste de la
+    jeter.
+
+    Mesuré le 2026-08-27 sur les matchs communs aux deux sources : 1 total sur
+    2, et 0 spread sur 2, survivaient à la comparaison.
+
+    Cette fonction ne relâche AUCUNE garde : elle choisit dans les deux
+    échelles une ligne RÉELLEMENT commune, puis laisse `_meme_ligne` trancher
+    comme avant. Sans ligne commune, elle rend la paire telle quelle et le
+    refus a lieu.
+
+    QUELLE LIGNE COMMUNE. Celle du sharp d'abord, sinon la plus proche. JAMAIS
+    celle qui donnerait le plus gros edge : parcourir une échelle en retenant
+    la ligne la mieux payée, c'est retenir l'erreur de cote la plus grosse —
+    la queue positive qu'A6 a précisément identifiée comme un artefact.
+    """
+    try:
+        p_soft, p_sharp = float(soft.get("point")), float(sharp.get("point"))
+    except (TypeError, ValueError):
+        return soft, sharp          # ligne absente/illisible : `_meme_ligne` refusera
+    if p_soft == p_sharp:
+        return soft, sharp
+
+    def _echelle(d: dict) -> dict:
+        out = {}
+        for r in d.get("ladder") or []:
+            try:
+                out[float(r["point"])] = r
+            except (TypeError, ValueError, KeyError):
+                continue
+        return out
+
+    ech_soft, ech_sharp = _echelle(soft), _echelle(sharp)
+    communes = set(ech_soft) & set(ech_sharp)
+    if not communes:
+        return soft, sharp
+
+    cible = min(communes, key=lambda p: (abs(p - p_sharp), abs(p - p_soft), abs(p)))
+    log.info("ALIGNE  | %s %s %s — soft %+.2f / sharp %+.2f : les deux cotent "
+             "%+.2f, comparaison sur cette ligne",
+             emoji, nom, marche, p_soft, p_sharp, cible)
+    return {**soft, **ech_soft[cible]}, {**sharp, **ech_sharp[cible]}
+
+
 def _meme_ligne(soft: dict, sharp: dict, marche: str, nom: str, emoji: str,
                 log) -> float | None:
     """La ligne du book SOFT et celle du SHARP sont-elles la MÊME ?
@@ -1584,7 +1689,9 @@ def _process_totals(m, name, sport, league, emoji, signals, sb, now, log, min_ed
     xt = m["totals_1xbet"]
     pt = m["totals_pinnacle"]
 
-    # Les deux books doivent coter LE MÊME total — voir `_meme_ligne`.
+    # Les deux books doivent coter LE MÊME total — voir `_meme_ligne`. On
+    # cherche d'abord la ligne commune dans leurs échelles respectives.
+    xt, pt = _aligner_sur_meme_ligne(xt, pt, "totals", name, emoji, log)
     point = _meme_ligne(xt, pt, "totals", name, emoji, log)
     if point is None:
         return
@@ -1662,6 +1769,7 @@ def _process_spreads(m, name, sport, league, home, away, emoji, signals, sb, now
     # `_meme_ligne`. Le libellé du signal reprend cette ligne unique : quand
     # les deux divergeaient, l'ancien code étiquetait le pari avec la ligne
     # SHARP tout en misant au prix de la ligne SOFT.
+    xs, ps = _aligner_sur_meme_ligne(xs, ps, "spreads", name, emoji, log)
     home_point = _meme_ligne(xs, ps, "spreads", name, emoji, log)
     if home_point is None:
         return

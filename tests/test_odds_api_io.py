@@ -138,8 +138,16 @@ def test_markets_map_to_engine_shapes(monkeypatch):
     (m,) = oai.fetch_sport("soccer", api_key="k")
     assert m["odds_1xbet"] == {"1": 1.34, "X": 4.8, "2": 10.0}
     # ligne principale = prix les plus proches, pas la première publiée
-    assert m["spreads_1xbet"] == {"home": 1.88, "away": 1.92, "point": -1.25, "away_point": 1.25}
-    assert m["totals_1xbet"] == {"over": 1.89, "under": 1.91, "point": 2.25}
+    principale = lambda d: {k: v for k, v in d.items() if k != "ladder"}
+    assert principale(m["spreads_1xbet"]) == {"home": 1.88, "away": 1.92,
+                                              "point": -1.25, "away_point": 1.25}
+    assert principale(m["totals_1xbet"]) == {"over": 1.89, "under": 1.91, "point": 2.25}
+    # L'échelle garde TOUTES les lignes cotées, la principale en tête —
+    # sans elle, deux sources qui choisissent chacune la leur ne se
+    # rencontrent jamais (voir run_engine._aligner_sur_meme_ligne).
+    assert [r["point"] for r in m["spreads_1xbet"]["ladder"]] == [-1.25, -1.5, -1.0]
+    assert [r["away_point"] for r in m["spreads_1xbet"]["ladder"]] == [1.25, 1.5, 1.0]
+    assert [r["point"] for r in m["totals_1xbet"]["ladder"]] == [2.25, 5.5]
     assert m["sport"] == "soccer" and m["sport_id"] == 1
     assert m["commence_time"] == "2030-01-01T18:00:00Z"
 

@@ -38,10 +38,22 @@ def flip_exchange_prices(row: dict) -> dict:
         out["totals"] = row["totals"]
     sp = row.get("spreads")
     if sp:
-        out["spreads"] = {"home": sp["away"], "away": sp["home"],
-                          "point": sp.get("away_point", -sp["point"]),
-                          "away_point": sp["point"]}
+        out["spreads"] = _retourner_spread(sp)
+        # L'échelle se retourne ligne par ligne : la laisser telle quelle
+        # rendrait à `_aligner_sur_meme_ligne` des handicaps du point de vue
+        # de l'AUTRE équipe — le signe faux que cette fonction existe pour
+        # éviter, réintroduit un cran plus bas.
+        if sp.get("ladder"):
+            out["spreads"]["ladder"] = [_retourner_spread(r) for r in sp["ladder"]]
     return out
+
+
+def _retourner_spread(sp: dict) -> dict:
+    """Un handicap vu de l'autre équipe : les côtés s'échangent, le signe de
+    la ligne s'inverse."""
+    return {"home": sp["away"], "away": sp["home"],
+            "point": sp.get("away_point", -sp["point"]),
+            "away_point": sp["point"]}
 
 
 

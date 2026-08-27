@@ -184,6 +184,45 @@ def test_a_real_sharp_price_is_never_overwritten():
     assert "_sharp_conflict" not in m
 
 
+def test_la_contre_expertise_pose_AUSSI_totals_et_handicaps():
+    """Le trou qui tuait deux marchés sur trois (2026-08-27).
+
+    Ces lignes n'étaient posées que dans le rôle BOUCHE-TROU. Dès qu'un match
+    avait déjà un prix sharp 1X2 — titan007 et la recherche web en servent sur
+    la quasi-totalité du foot — l'exchange partait en contre-expertise et ses
+    totals/handicaps étaient jetés. Aucune autre source ne les cote : le plan
+    gratuit d'odds-api.io ne sert aucun book sharp. `_process_totals` et
+    `_process_spreads` n'étaient donc JAMAIS appelés, faute des deux côtés.
+    Symptôme : le run 19:20 de ce jour-là ne porte pas un seul LINESKIP, alors
+    que Matchbook cotait 55 totals et 40 handicaps.
+    """
+    m = {"match": "Barcelona vs Real Madrid", "home": "Barcelona", "away": "Real Madrid",
+         "odds_pinnacle": {"1": 2.05, "X": 3.50, "2": 3.55},
+         "totals_1xbet": {"over": 1.95, "under": 1.90, "point": 2.5}}
+    assert eng._enrich_from_exchange([m], _MB, _Log()) == 0   # aucun 1X2 posé
+    assert m["odds_pinnacle"] == {"1": 2.05, "X": 3.50, "2": 3.55}
+    assert m["totals_pinnacle"]["point"] == 2.5
+    assert m["spreads_pinnacle"]["point"] == -1.5
+
+
+def test_un_conflit_sharp_ne_pose_AUCUNE_ligne():
+    """Les deux avis sharp se contredisent : l'un des deux carnets est périmé.
+    On ne sait pas lequel — donc on n'en tire ni 1X2, ni total, ni handicap."""
+    m = {"match": "Barcelona vs Real Madrid", "home": "Barcelona", "away": "Real Madrid",
+         "odds_pinnacle": {"1": 1.40, "X": 5.00, "2": 8.00}}
+    assert eng._enrich_from_exchange([m], _MB, _Log()) == 0
+    assert m["_sharp_conflict"]["pts"] > 0
+    assert "totals_pinnacle" not in m and "spreads_pinnacle" not in m
+
+
+def test_une_ligne_sharp_deja_posee_n_est_jamais_ecrasee():
+    m = {"match": "Barcelona vs Real Madrid", "home": "Barcelona", "away": "Real Madrid",
+         "odds_pinnacle": {"1": 2.05, "X": 3.50, "2": 3.55},
+         "totals_pinnacle": {"over": 1.80, "under": 2.05, "point": 3.5}}
+    eng._enrich_from_exchange([m], _MB, _Log())
+    assert m["totals_pinnacle"]["point"] == 3.5
+
+
 def test_an_ai_estimated_price_is_replaced():
     m = {"match": "Barcelona vs Real Madrid", "home": "Barcelona", "away": "Real Madrid",
          "odds_pinnacle": {"1": 2.00, "X": 3.30, "2": 3.80}, "_estimated": True}

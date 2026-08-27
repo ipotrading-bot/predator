@@ -361,6 +361,77 @@ class TestMemeLigne:
             assert "abs(abs(" not in src, f"{fonction.__name__} recompare à la main"
 
 
+class TestAlignerSurMemeLigne:
+    """L'alignement rend comparables des paires que la garde refusait — sans
+    jamais relâcher la garde elle-même.
+
+    Chaque source ne retenait qu'UNE ligne, « la plus équilibrée », calculée
+    sur son propre carnet. Rien n'oblige un book soft à équilibrer sa cote sur
+    le même handicap qu'un exchange : les deux choix tombaient à côté l'un de
+    l'autre et `_meme_ligne` refusait — à raison, mais sur une divergence
+    fabriquée en amont, alors que la ligne du sharp était cotée chez le soft
+    aussi. Mesuré le 2026-08-27 : 1 total sur 2 et 0 spread sur 2 passaient.
+    """
+
+    @staticmethod
+    def _aligner(soft, sharp, marche="spreads"):
+        return run_engine._aligner_sur_meme_ligne(soft, sharp, marche,
+                                                  "A vs B", "⚽", log)
+
+    def test_la_ligne_du_sharp_est_reprise_chez_le_soft(self):
+        soft = {"home": 2.05, "away": 1.85, "point": -0.75,
+                "ladder": [{"home": 2.05, "away": 1.85, "point": -0.75, "away_point": 0.75},
+                           {"home": 2.30, "away": 1.68, "point": -1.0,  "away_point": 1.0}]}
+        sharp = {"home": 1.90, "away": 1.95, "point": -1.0,
+                 "ladder": [{"home": 1.90, "away": 1.95, "point": -1.0, "away_point": 1.0}]}
+        s2, p2 = self._aligner(soft, sharp)
+        assert run_engine._meme_ligne(s2, p2, "spreads", "A vs B", "⚽", log) == -1.0
+        assert (s2["home"], s2["away"]) == (2.30, 1.68)   # le PRIX suit la ligne
+        assert s2["away_point"] == 1.0
+
+    def test_sans_ligne_commune_la_garde_refuse_toujours(self):
+        soft = {"point": -0.75, "ladder": [{"home": 2.05, "away": 1.85, "point": -0.75}]}
+        sharp = {"point": -1.5, "ladder": [{"home": 1.90, "away": 1.95, "point": -1.5}]}
+        s2, p2 = self._aligner(soft, sharp)
+        assert (s2["point"], p2["point"]) == (-0.75, -1.5)
+        assert run_engine._meme_ligne(s2, p2, "spreads", "A vs B", "⚽", log) is None
+
+    def test_sans_echelle_rien_ne_change(self):
+        """Une source qui ne publie pas son carnet n'est pas pénalisée — elle
+        est simplement dans l'état d'avant."""
+        soft, sharp = {"point": 0.0}, {"point": -1.0}
+        s2, p2 = self._aligner(soft, sharp)
+        assert (s2, p2) == (soft, sharp)
+
+    def test_on_ne_choisit_JAMAIS_la_ligne_la_mieux_payee(self):
+        """Parcourir une échelle en retenant la ligne au plus gros edge, c'est
+        retenir la plus grosse erreur de cote — la queue positive qu'A6 a
+        identifiée comme un artefact. On vise la ligne du SHARP."""
+        soft = {"home": 2.00, "away": 1.90, "point": -0.5,
+                "ladder": [{"home": 2.00, "away": 1.90, "point": -0.5},
+                           {"home": 1.95, "away": 1.95, "point": -1.0},
+                           {"home": 9.00, "away": 1.05, "point": -3.0}]}
+        sharp = {"home": 1.90, "away": 1.95, "point": -1.0,
+                 "ladder": [{"home": 1.90, "away": 1.95, "point": -1.0},
+                            {"home": 5.20, "away": 1.15, "point": -3.0}]}
+        s2, p2 = self._aligner(soft, sharp)
+        assert s2["point"] == -1.0 and p2["point"] == -1.0   # pas la -3.0, mieux payée
+
+    def test_le_signe_n_est_pas_perdu_dans_l_echelle(self):
+        """+0.5 et -0.5 sont les handicaps OPPOSÉS. Une échelle qui les
+        confond réintroduit le troisième défaut d'A6, un cran plus bas."""
+        soft = {"point": 0.5, "ladder": [{"home": 1.70, "away": 2.25, "point": 0.5}]}
+        sharp = {"point": -0.5, "ladder": [{"home": 2.20, "away": 1.72, "point": -0.5}]}
+        s2, p2 = self._aligner(soft, sharp)
+        assert run_engine._meme_ligne(s2, p2, "spreads", "A vs B", "⚽", log) is None
+
+    def test_les_deux_marches_passent_par_l_alignement(self):
+        import inspect
+        for fonction in (run_engine._process_totals, run_engine._process_spreads):
+            src = inspect.getsource(fonction)
+            assert "_aligner_sur_meme_ligne(" in src, fonction.__name__
+
+
 class TestUnSpreadNemetPlusSurUneLigneDifferente:
     """Bout en bout : le marché entier est refusé, pas seulement un côté."""
 

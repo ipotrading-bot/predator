@@ -89,6 +89,79 @@ nul, aucune bande n'atteindra jamais n ≥ 30.
 Gardien : `tests/test_prix_executable.py::TestMemeLigne` (les trois défauts,
 nommés un par un) et `::TestUnSpreadNemetPlusSurUneLigneDifferente`.
 
+### Deux carnets tronqués, ce n'est pas un désaccord de marché (2026-08-27)
+
+A6 a posé la bonne règle — on ne compare que la MÊME ligne, signe compris — et
+l'émission totals/spreads est tombée à zéro derrière. On a d'abord lu ça comme
+le résultat sain de la correction. C'était vrai à moitié : la moitié de la
+divergence que `_meme_ligne` refusait était FABRIQUÉE trois fichiers plus haut.
+
+Chaque source cote une douzaine de lignes. `core/odds_api_io.py` et
+`core/matchbook.py` n'en gardaient qu'UNE — « la plus équilibrée en prix » —
+chacune calculée sur SON carnet, sans rien savoir de l'autre. Rien n'oblige un
+book soft à équilibrer sa cote sur le handicap où l'exchange équilibre la
+sienne : les deux choix tombaient à côté l'un de l'autre, et la paire était
+refusée alors que la ligne du sharp était cotée chez le soft aussi. On venait
+juste de la jeter.
+
+MESURÉ le 2026-08-27 sur les matchs communs à odds-api.io et Matchbook —
+échantillon mince, parce que le recouvrement des deux slates l'est (voir
+« odds-api.io : le plan autorise DEUX books ») :
+
+    AVANT  (19:5x, 11 matchs soft, 2 appariés)  totals 1 sur 2   spreads 0 sur 2
+    APRÈS  (20:05,  6 matchs soft, 2 appariés)  totals 2 sur 2   spreads 2 sur 2
+
+Et en amont de la garde, ce qui ATTEINT le moteur passe de 0 total et
+0 spread — pas un seul, tout le run du 19:20 — à 2 et 2 sur ce même
+échantillon. Le premier chiffre est le vrai sujet : la garde n'était pas
+franchie, elle n'était pas atteinte.
+
+Les deux sources gardent désormais leur échelle entière (`ladder`), et
+`run_engine._aligner_sur_meme_ligne` y cherche la ligne réellement commune
+avant que `_meme_ligne` ne tranche. **Aucune garde n'est relâchée** : la règle
+reste l'égalité exacte, `_meme_ligne` reste seul juge, et sans ligne commune le
+refus a lieu comme avant. Aucun seuil n'est touché.
+⛔ Ce qui est choisi parmi les lignes communes : celle du sharp, sinon la plus
+proche. JAMAIS la mieux payée — parcourir une échelle en retenant la ligne au
+plus gros edge, c'est retenir la plus grosse erreur de cote, exactement la
+queue positive qu'A6 a identifiée comme un artefact. Le sharp désigne la
+ligne, le soft ne fournit que son prix dessus.
+⚠️ Et `core/exchange_match._retourner_spread` s'applique à CHAQUE barreau : un
+seul barreau laissé dans l'ancien sens ferait croire à l'alignement qu'il a
+trouvé la ligne commune, sur le handicap OPPOSÉ — le défaut n° 3 d'A6 rentrant
+par la porte de derrière.
+
+### Le second book soft ne servait qu'au 1X2 (2026-08-27)
+
+Troisième défaut du même jour, dans `core/odds_api_io._to_match` : le line
+shopping entre books soft ne portait que sur `("1","X","2")`. Les handicaps et
+totaux du second book étaient jetés, et si le PREMIER n'en cotait aucun, le
+match repartait sans spread ni total du tout. Le plan gratuit autorise deux
+books (voir la section sur les sources) : la moitié de la couverture soft
+disponible se perdait là.
+`_line_shopping` compare désormais les trois marchés — mais À LIGNE ÉGALE,
+barreau par barreau. Retenir le meilleur prix toutes lignes confondues
+reviendrait à choisir un AUTRE pari parce qu'il est mieux payé : l'artefact
+exact qu'A6 a supprimé.
+
+### La contre-expertise jetait les totals/spreads du sharp (2026-08-27)
+
+`_enrich_from_exchange` a deux rôles. En BOUCHE-TROU (match sans prix sharp) il
+posait `totals_pinnacle`/`spreads_pinnacle` depuis l'exchange. En
+CONTRE-EXPERTISE (match qui a déjà un h2h sharp) il faisait `continue` juste
+avant — donc dès qu'un match avait un Pinnacle h2h, ses totals et handicaps
+repartaient SANS référence sharp, et `_process_totals`/`_process_spreads`
+n'étaient jamais appelés faute des deux côtés.
+Symptôme qui aurait dû alerter : sur le scan du 2026-08-27 19:20, **zéro**
+ligne `LINESKIP` dans tout le log — pas un refus, parce que pas une seule
+évaluation. Le même run avait chargé 18 marchés Matchbook, puis 105 au reprice
+suivant dont 64 totals et 51 handicaps : tous jetés.
+Matchbook est la SEULE source de totals/spreads sharp du stack (titan007 ne
+sert que du h2h, odds-api.io ne sert aucun book sharp sur le plan gratuit).
+Les deux rôles passent maintenant par `_poser_lignes_sharp`, et le compte est
+loggé — un enrichissement qu'on ne voit pas dans les logs est un
+enrichissement qu'on croira acquis le jour où il retombera à zéro.
+
 ### A6 — la calibration n'a pas pu avoir lieu, et c'est le résultat (2026-08-27)
 
 LA CALIBRATION N'A PAS PU AVOIR LIEU, ET C'EST LE RÉSULTAT (2026-08-27).
@@ -208,6 +281,38 @@ alors que `learning_layer` en fait un critère de premier rang. La garde
 le jour où le secret est retiré. La sortie anticipée de GOLDEN_HOUR supposait
 un Tier 1 vivant : sans elle, le tick golden était un no-op horaire permanent.
 Gardien : `tests/test_oddsapi_obsolete.py`.
+
+### odds-api.io : le plan autorise DEUX books, un seul est sélectionné (2026-08-27)
+
+Le côté SOFT est le goulot de tout le pipeline, et il tenait ce jour-là sur
+un unique book. Relevé en interrogeant l'API :
+
+- `/v3/odds/multi` **exige** le paramètre `bookmakers` (HTTP 400 sans lui) ;
+- avec `bookmakers=1xbet`, **4 événements sur 10** reviennent sans aucune
+  cote — 1xbet ne price ni le NCAA ni les équipes réserves ;
+- demander un book de plus : `403 — « You're allowed max 2 bookmakers.
+  Allowed: 1xbet »`. **Le plan en autorise deux. Un seul est pris.**
+- demander un exchange : `403 — « sharp or exchange books are only available
+  on our paid plans »`. Aucun prix sharp ne viendra donc jamais de cette
+  source sur le plan gratuit ; c'est Matchbook qui le porte, et lui seul.
+
+Conséquence mesurable : le slate soft d'odds-api.io est peuplé de rencontres
+que Matchbook ne cote pas (réserves sud-américaines, NCAA, championnats
+islandais) tandis que Matchbook cote Bayern–Stuttgart, Lille–PSG,
+Crystal Palace–City — sans prix soft en face. **2 matchs appariés sur 11.**
+Le moteur ne peut pas calculer un edge sur un match dont il n'a qu'un côté.
+
+Le second slot est donc le levier le plus lourd du pipeline, et il est
+GRATUIT. Le code n'a rien à changer pour en profiter : `selected_bookmakers()`
+lit `/v3/bookmakers/selected` à l'exécution (`ODDS_API_IO_BOOKMAKERS` force la
+liste si besoin). Ce qui a été corrigé côté code, c'est que le second book
+serve à TOUS les marchés et non au seul 1X2 — voir `_line_shopping`.
+
+⚠️ Le choix du second book n'est pas neutre : MelBet est de la même famille
+que 1xbet (mêmes lignes, aucune diversification). Un book à large couverture
+et à lignes indépendantes ajoute des matchs ET un vrai line shopping — un
+meilleur prix exécutable sur le MÊME pari est un edge honnête, pas un
+artefact. Réinitialisation : `PUT /bookmakers/selected/clear`.
 
 ### Périmètre sports (2026-08-22)
 
