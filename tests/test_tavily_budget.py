@@ -91,6 +91,45 @@ class TestBudgetPartage:
         assert ai_search.search_credits_left() <= 1
 
 
+class TestEtage1Groq:
+    """Les DEUX étages mouraient ensemble parce qu'aucun n'était rationné.
+
+    Mesuré le 2026-08-27 : quota Groq à sec dès 18:10 sur les deux
+    organisations (« Used 98522, Requested 3426 »), plan Tavily épuisé au même
+    moment. Résultat : « Pinnacle/Search: 0/25 prices received ».
+    """
+
+    def test_l_etage_1_est_rationne(self, monkeypatch):
+        _quota(monkeypatch, ai_search._GROQ_SEARCH_DAILY)
+        assert ai_search._groq_search_budget_du_jour() == 0
+
+    def test_budget_epuise_ne_veut_pas_dire_abandon(self, monkeypatch):
+        """Tout l'intérêt d'avoir deux étages : l'étage 1 rationné doit
+        TOMBER sur Tavily, pas rendre None."""
+        _quota(monkeypatch, 0)
+        monkeypatch.setattr(ai_search, "_groq_search_budget_du_jour", lambda: 0)
+        monkeypatch.setattr(ai_search, "_cache_get", lambda ck: None)
+        monkeypatch.setattr(ai_search, "_cache_put", lambda ck, t: None)
+
+        def _pas_d_etage_1(*a, **k):
+            raise AssertionError("l'étage 1 a été appelé malgré son budget épuisé")
+
+        monkeypatch.setattr(ai_search, "_groq_post", _pas_d_etage_1)
+        vus = []
+        monkeypatch.setattr(ai_search, "tavily_search",
+                            lambda q, max_results=5: vus.append(q) or [])
+        ai_search.ai_search_complete("prix pinnacle", ["psg lyon"], label="T")
+        assert vus, "l'étage 2 (Tavily) n'a pas été tenté"
+
+    def test_un_scan_ne_touche_pas_la_reserve_de_l_etage_1(self, monkeypatch):
+        _quota(monkeypatch,
+               ai_search._GROQ_SEARCH_DAILY - ai_search._GROQ_SEARCH_RESERVE)
+        monkeypatch.setattr(ai_search, "_priorite_settlement", False)
+        assert ai_search._groq_search_budget_du_jour() == 0
+        monkeypatch.setattr(ai_search, "_priorite_settlement", True)
+        assert ai_search._groq_search_budget_du_jour() > 0
+
+
 class TestReserveDuSettlement:
     """Les SCANS sont amputés, la réserve ne l'est jamais.
 

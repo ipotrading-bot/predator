@@ -178,6 +178,37 @@ def prioriser_settlement() -> None:
     _priorite_settlement = True
 
 
+# ── ÉTAGE 1 : LE QUOTA GROQ SUBISSAIT LA MÊME PANNE ───────────────────
+# Le TPD Groq (100 000 tokens/jour, compté PAR ORGANISATION) n'était borné
+# par rien côté client : chaque run tapait jusqu'à l'échec. Mesuré le
+# 2026-08-27, les DEUX organisations étaient à sec dès 18:10 —
+# « Used 98522, Requested 3426 » — et les scans du soir repartaient sans
+# étage 1 ET sans étage 2, le plan Tavily étant lui aussi épuisé.
+#
+# Un appel compound-mini du lot Pinnacle coûte ~3 400 tokens : environ 29
+# appels par organisation et par jour. Le compteur ci-dessous est en APPELS,
+# pas en tokens — le client ne connaît pas le coût avant de payer, et un
+# compteur qu'on ne peut pas tenir honnêtement ne vaut rien.
+#
+# ⚠️ Budget épuisé ne veut PAS dire abandon : on saute l'étage 1 et on tombe
+# sur l'étage 2 (Tavily), qui a son propre budget. C'est tout l'intérêt
+# d'avoir deux étages, et c'est ce qui manquait — les deux mouraient ensemble
+# parce qu'aucun des deux n'était rationné.
+_GROQ_SEARCH_BUCKET = "groq_search"
+_GROQ_SEARCH_DAILY = int(os.environ.get("GROQ_SEARCH_DAILY_BUDGET", "110"))
+_GROQ_SEARCH_RESERVE = int(os.environ.get("GROQ_SEARCH_RESERVE", "25"))
+_GROQ_SEARCH_CYCLE = int(os.environ.get("GROQ_SEARCH_CYCLE_COST", "8"))
+
+
+def _groq_search_budget_du_jour() -> int:
+    """Appels compound-mini encore ouverts aujourd'hui, tous runs confondus."""
+    plafond = _GROQ_SEARCH_DAILY
+    if not _priorite_settlement:
+        plafond = max(1, plafond - _GROQ_SEARCH_RESERVE)
+    ouvert = daily_quota.paced_allowance(plafond, _GROQ_SEARCH_CYCLE)
+    return max(0, ouvert - daily_quota.spent(_GROQ_SEARCH_BUCKET))
+
+
 def _tavily_budget_du_jour() -> int:
     """Crédits encore ouverts AUJOURD'HUI, tous runs confondus.
 
@@ -671,7 +702,16 @@ def ai_search_complete(prompt: str, queries: list[str], label: str = "AI",
 
     # ── Étage 1 : compound-mini fait sa propre recherche ──────────────
     messages = [{"role": "user", "content": prompt}]
-    text = _groq_post(_SEARCH_MODEL, messages, max_tokens, temperature, timeout, label)
+    if _groq_search_budget_du_jour() <= 0:
+        log.info("%s: budget PARTAGÉ compound-mini épuisé pour aujourd'hui "
+                 "(%d/%d) — étage 1 sauté, on passe à Tavily. Le reste est "
+                 "gardé pour les runs plus tardifs et le settlement.",
+                 label, daily_quota.spent(_GROQ_SEARCH_BUCKET), _GROQ_SEARCH_DAILY)
+        text = None
+    else:
+        daily_quota.add(_GROQ_SEARCH_BUCKET, 1)
+        text = _groq_post(_SEARCH_MODEL, messages, max_tokens, temperature,
+                          timeout, label)
     if text and text.strip():
         _cache_put(ck, text)
         return text
