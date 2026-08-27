@@ -124,6 +124,10 @@ C'est le tableau à consulter avant de toucher à quoi que ce soit.
 | L'exchange entre au consensus sans jamais écraser Pinnacle | `…::test_pinnacle_reste_la_reference_et_nest_jamais_ecrase` |
 | L'exchange est exclu du juge de divergence CV, pas du vote | `…::test_lexchange_est_exclu_du_juge_pas_du_vote` |
 | Le garde VOLATILE mord toujours entre bookmakers | `…::test_le_garde_volatile_mord_toujours_entre_bookmakers` |
+| Aucune ligne de `signals` n'est supprimée pour être réécrite | `tests/test_db.py::TestLeDeleteInsertADisparu` |
+| `core.db` n'expose plus de remplacement de ligne (vérifié sur l'AST) | `…::test_aucun_module_ne_reference_encore_le_remplacement_de_ligne` |
+| Un échec d'écriture ne détruit plus la ligne | `…::test_un_echec_ne_detruit_plus_rien` |
+| La capture de closing line ne supprime jamais de ligne | `tests/test_closing_line.py::test_capture_never_uses_the_delete_then_insert_path` |
 
 L'**invariant des sport-keys** (4 fichiers : `core/odds_api.py`,
 `core/learning_layer.py`, `api/index.py`) est décrit

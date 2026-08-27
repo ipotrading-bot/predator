@@ -262,9 +262,15 @@ class TestRefreshBeatsCronDrift:
         assert audit_engine.CLOSING_LINE_TIGHTEN_MIN <= audit_engine.CLOSING_LINE_WINDOW_MIN
 
     def test_capture_never_uses_the_delete_then_insert_path(self, monkeypatch):
-        # This write repeats every refresh on a live signal. replace_signal_row
-        # deletes before inserting, so a process killed in between loses the
-        # signal outright — and hands it a new id every time it survives.
+        """Cette écriture se répète à chaque rafraîchissement sur un signal
+        encore vivant. Le DELETE+INSERT exposait la ligne à une perte
+        définitive entre les deux ordres, et lui donnait un `id` neuf à chaque
+        fois qu'il survivait.
+
+        Le test montait une sentinelle sur `audit_engine.replace_signal_row`.
+        Depuis B1 (2026-08-27) la fonction n'existe plus nulle part, et le
+        garde est plus fort : c'est l'appel à `.delete()` sur `signals` qui
+        doit être impossible pendant une capture."""
         now = datetime.now(timezone.utc)
         sig = _sig(1, "Ajax vs Feyenoord", 2.00,
                    (now + timedelta(minutes=10)).isoformat())
@@ -272,11 +278,27 @@ class TestRefreshBeatsCronDrift:
         monkeypatch.setattr(audit_engine, "get_pinnacle_price",
                             lambda match, sport, league: (1.80, "Ajax"))
 
-        def _forbidden(*_a, **_k):
-            raise AssertionError("capture_closing_lines must not delete+insert")
+        supprime = []
+        vraie_table = sb.table
 
-        monkeypatch.setattr(audit_engine, "replace_signal_row", _forbidden)
+        def _table_espionnee(nom):
+            t = vraie_table(nom)
+            vrai_delete = getattr(t, "delete", None)
+
+            def _delete(*a, **k):
+                supprime.append(nom)
+                return vrai_delete(*a, **k) if vrai_delete else t
+
+            t.delete = _delete
+            return t
+
+        monkeypatch.setattr(sb, "table", _table_espionnee)
         assert audit_engine.capture_closing_lines(sb) == 1
+        assert supprime == [], \
+            f"la capture a supprimé des lignes : {supprime}"
+
+    def test_le_remplacement_de_ligne_nexiste_plus_dans_audit_engine(self):
+        assert not hasattr(audit_engine, "replace_signal_row")
 
 
 class TestMissedClosingLinesIsVisible:

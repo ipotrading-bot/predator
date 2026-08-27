@@ -22,7 +22,7 @@ from datetime import datetime, timedelta, timezone
 
 from dotenv import load_dotenv
 
-from core.db import (get_db, log_to_ledger, replace_signal_row,
+from core.db import (get_db, log_to_ledger,
                      update_signal_fields, MissingCredentialsError)
 from core.ai_search import (ai_available, ai_dead as gemini_quota_dead,
                             search_credits_left, search_exhausted)
@@ -118,12 +118,19 @@ def fetch_pending(sb) -> list[dict]:
 
 
 def _update_signal(sb, sig: dict, payload: dict) -> bool:
-    """Persist audit result via DELETE + INSERT (RLS blocks UPDATE outright
-    on this table's policies). Returns True on success, False if the signal
-    was lost. Shared with core/settlement.py's settle_signal() — see
-    core/db.py:replace_signal_row for the implementation."""
-    merged = {**sig, **payload}
-    return replace_signal_row(sb, sig["id"], merged, optional_cols=_AUDIT_COLS)
+    """Écrit le résultat d'audit par un UPDATE en place. Rend True si la ligne
+    est à jour.
+
+    C'était un DELETE + INSERT jusqu'au 2026-08-27 (B1), sur la foi d'un « RLS
+    blocks UPDATE outright » qui n'est plus vrai : la policy
+    `service_role_update` existe depuis migrate_v9_3, vérifiée en base. Le
+    détour exposait la ligne à une perte définitive entre les deux ordres et
+    lui donnait un `id` neuf à chaque passage.
+
+    On ne patche QUE `payload` : fusionner `sig` entier renvoyait à la base
+    des colonnes qu'on n'avait pas lues pour les modifier — dont celles de
+    closing line, qu'un autre job peut avoir posées entre-temps."""
+    return update_signal_fields(sb, sig["id"], payload, optional_cols=_AUDIT_COLS)
 
 
 def _past_expiry(sig: dict, now: datetime) -> bool:
@@ -450,10 +457,10 @@ def capture_closing_lines(sb, budget: int = CLOSING_LINE_BUDGET) -> int:
         xbet_odd = sig.get("xbet_odd") or 0.0
         clv_real = round((xbet_odd / price - 1) * 100, 2) if same_side and xbet_odd > 1.01 else None
 
-        # A plain UPDATE, deliberately not replace_signal_row(): this write
-        # now repeats every CLOSING_LINE_REFRESH_MIN on a live signal, and
-        # delete-then-insert would put the row through a window where it does
-        # not exist — plus a new id — on every single refresh.
+        # UPDATE en place — cette écriture se répète tous les
+        # CLOSING_LINE_REFRESH_MIN sur un signal encore vivant. C'est ce
+        # chemin-là qui avait montré le défaut du DELETE+INSERT, supprimé
+        # partout depuis (B1, 2026-08-27).
         ok = update_signal_fields(sb, sig["id"], {
             "closing_pinnacle_price": float(price),
             "clv_pct_real":           clv_real,

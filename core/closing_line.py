@@ -38,7 +38,7 @@ CONTRACT
     bets: nothing is written, and a LINEMOVE line is logged. Quantifying a
     line move as a price delta needs a model this repo doesn't have.
   - Writes go through update_signal_fields() (plain UPDATE). Never
-    replace_signal_row() — this runs repeatedly on a still-live signal and
+    update_signal_fields() — this runs repeatedly on a still-live signal and
     delete-then-insert would expose the row to loss, and hand it a new id,
     on every single refresh.
 """

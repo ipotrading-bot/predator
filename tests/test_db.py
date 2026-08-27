@@ -127,70 +127,119 @@ class _StagedSupabase:
 
 
 class TestOptionalColumnDegradationIsSurgical:
-    """One missing column used to discard every other optional column with it,
-    while still reporting success — the caller counted a write that never
-    landed. Only the columns Postgres actually names may be dropped."""
+    """Une seule colonne manquante emportait toutes les autres colonnes
+    optionnelles avec elle, en rapportant quand même un succès : l'appelant
+    comptait une écriture qui n'avait jamais atterri. Seules les colonnes que
+    Postgres NOMME peuvent être retirées.
 
-    def test_missing_stamp_does_not_discard_price_and_clv(self):
-        from core.db import replace_signal_row
-        sb = _StagedSupabase(missing={"closing_captured_at"})
-        merged = {
-            "id": 7, "match": "A vs B", "xbet_odd": 2.1,
-            "closing_pinnacle_price": 1.80,
-            "clv_pct_real": 16.67,
-            "closing_captured_at": "2026-08-01T12:00:00+00:00",
-        }
-        ok = replace_signal_row(sb, 7, merged, optional_cols=frozenset(
-            {"closing_pinnacle_price", "clv_pct_real", "closing_captured_at"}))
-
-        assert ok is True
-        final = sb.attempts[-1]
-        assert "closing_captured_at" not in final
-        assert final["closing_pinnacle_price"] == 1.80
-        assert final["clv_pct_real"] == 16.67
+    Ces cas portaient sur `replace_signal_row`, supprimée le 2026-08-27 (B1).
+    Le contrat lui survit et appartient à `update_signal_fields`, désormais
+    seul chemin d'écriture sur une ligne existante.
+    """
 
     def test_falls_back_to_stripping_all_when_error_names_nothing(self):
-        from core.db import replace_signal_row
+        from core.db import update_signal_fields
 
-        class _Opaque(_StagedSupabase):
-            def table(self, _name):
+        class _Opaque:
+            def __init__(self):
+                self.attempts = []
+
+            def table(self, _n):
                 outer = self
 
-                class _T(_StagedTable):
-                    def insert(self, payload):
+                class _T:
+                    def update(self, payload):
                         outer.attempts.append(dict(payload))
-                        if "closing_pinnacle_price" in payload:
-                            raise RuntimeError("PGRST204 schema cache miss")
+                        self._payload = payload
                         return self
 
-                return _T(set(), [])
+                    def eq(self, *_a, **_k):
+                        return self
 
-        sb = _Opaque(missing=set())
-        ok = replace_signal_row(sb, 7, {"id": 7, "match": "A vs B",
-                                        "closing_pinnacle_price": 1.8},
-                                optional_cols=frozenset({"closing_pinnacle_price"}))
+                    def execute(self):
+                        # Erreur qui ne NOMME aucune colonne : impossible
+                        # d'être chirurgical, le repli total est alors le
+                        # dernier recours légitime.
+                        if "closing_pinnacle_price" in self._payload:
+                            raise RuntimeError("PGRST204 schema cache miss")
+                        return type("R", (), {"data": []})()
+
+                return _T()
+
+        sb = _Opaque()
+        ok = update_signal_fields(sb, 7, {"match": "A vs B",
+                                          "closing_pinnacle_price": 1.8},
+                                  optional_cols=frozenset({"closing_pinnacle_price"}))
         assert ok is True
         assert "closing_pinnacle_price" not in sb.attempts[-1]
 
-    def test_returns_false_when_nothing_can_be_inserted(self):
-        from core.db import replace_signal_row
+    def test_returns_false_when_nothing_can_be_written(self):
+        from core.db import update_signal_fields
 
-        class _Dead(_StagedSupabase):
-            def table(self, _name):
-                outer = self
+        class _Dead:
+            def table(self, _n):
 
-                class _T(_StagedTable):
-                    def insert(self, payload):
-                        outer.attempts.append(dict(payload))
+                class _T:
+                    def update(self, _payload):
+                        return self
+
+                    def eq(self, *_a, **_k):
+                        return self
+
+                    def execute(self):
                         raise RuntimeError("closing_captured_at missing and table gone")
 
-                return _T(set(), [])
+                return _T()
 
-        sb = _Dead(missing=set())
-        ok = replace_signal_row(sb, 7, {"id": 7, "match": "A vs B",
-                                        "closing_captured_at": "x"},
-                                optional_cols=frozenset({"closing_captured_at"}))
-        assert ok is False
+        assert update_signal_fields(_Dead(), 7, {"match": "A vs B",
+                                                 "closing_captured_at": "x"},
+                                    optional_cols=frozenset({"closing_captured_at"})) is False
+
+    def test_un_echec_ne_detruit_plus_rien(self):
+        """La différence qui fonde B1. `replace_signal_row` SUPPRIMAIT avant
+        d'insérer : un échec laissait le signal détruit, d'où son propre log
+        CRITICAL « SIGNAL %s LOST after delete ». Un UPDATE raté ne touche
+        rien et le tour suivant réessaie."""
+        from core.db import update_signal_fields
+
+        class _Dead:
+            def table(self, _n):
+                raise RuntimeError("db down")
+
+        assert update_signal_fields(_Dead(), 7, {"clv_pct_real": 1.0}) is False
+
+
+class TestLeDeleteInsertADisparu:
+    """B1 — le garde porte sur l'ABSENCE. Tant qu'une fonction de
+    remplacement de ligne existe quelque part, elle finit par être rappelée."""
+
+    def test_core_db_nexpose_plus_de_remplacement_de_ligne(self):
+        import core.db as db
+        assert not hasattr(db, "replace_signal_row")
+
+    def test_aucun_module_ne_reference_encore_le_remplacement_de_ligne(self):
+        """Vérifié sur l'AST et non sur le texte : une docstring a le DROIT de
+        nommer la fonction morte pour raconter pourquoi elle l'est — c'est même
+        souhaitable. Ce qui est interdit, c'est de l'importer ou de l'appeler."""
+        import ast
+        import pathlib
+        racine = pathlib.Path(__file__).resolve().parent.parent
+        coupables = []
+        for f in list(racine.glob("core/*.py")) + list(racine.glob("*.py")):
+            arbre = ast.parse(f.read_text(encoding="utf-8"))
+            for noeud in ast.walk(arbre):
+                if isinstance(noeud, ast.Name) and noeud.id == "replace_signal_row":
+                    coupables.append(f"{f.name}:{noeud.lineno}")
+                elif isinstance(noeud, ast.Attribute) and noeud.attr == "replace_signal_row":
+                    coupables.append(f"{f.name}:{noeud.lineno}")
+                elif isinstance(noeud, (ast.Import, ast.ImportFrom)):
+                    for a in noeud.names:
+                        if a.name == "replace_signal_row":
+                            coupables.append(f"{f.name}:{noeud.lineno} (import)")
+                elif isinstance(noeud, ast.FunctionDef) and noeud.name == "replace_signal_row":
+                    coupables.append(f"{f.name}:{noeud.lineno} (def)")
+        assert coupables == [], coupables
+
 
     def test_ledger_keeps_kelly_when_only_the_stamp_is_missing(self):
         from core.db import log_to_ledger

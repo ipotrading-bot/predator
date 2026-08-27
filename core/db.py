@@ -112,29 +112,42 @@ def get_db(write: bool = False):
     return create_client(url, anon_key)
 
 
-# ── Shared delete+insert helpers (settlement & audit both replace a row in
-#    place — Supabase RLS for the anon key blocks UPDATE outright, and the
-#    service_role key still can't UPDATE a row whose primary key we don't
-#    want to preserve across a status transition, so both go delete+insert) ──
+# ── Écriture sur une ligne existante : UPDATE, et rien d'autre ───────────
+#    `settlement` et `audit_engine` passaient par un DELETE+INSERT justifié
+#    par un « RLS blocks UPDATE outright » devenu faux : la policy
+#    `service_role_update` existe depuis migrate_v9_3. Voir la docstring de
+#    `update_signal_fields` pour ce que ce détour coûtait.
 
 def update_signal_fields(sb, signal_id, fields: dict,
                          optional_cols: frozenset = frozenset()) -> bool:
     """
     Patch `fields` onto signal `signal_id` with a real UPDATE.
 
-    Use this instead of replace_signal_row() for anything that runs
-    repeatedly on a still-live signal. replace_signal_row() is a DELETE
-    followed by an INSERT: the row does not exist in between, so a process
-    killed mid-way (Actions timeout, network drop) loses the signal for good
-    — and because `id` is stripped before re-insert, every call also hands
-    the signal a brand-new id. That is tolerable for a once-per-signal
-    settlement write; it is not tolerable for the closing-line job, which now
-    re-prices the same signal every 20 minutes as kickoff approaches.
+    SEUL CHEMIN D'ÉCRITURE SUR UNE LIGNE EXISTANTE depuis le 2026-08-27 (B1).
+    Il remplace une fonction de DELETE suivi d'INSERT, supprimée ce jour-là,
+    qui portait trois dégâts — dont deux se produisaient à chaque appel
+    RÉUSSI :
 
-    Same surgical degradation as replace_signal_row: on a stale schema, only
-    the columns Postgres actually named are dropped. Unlike that function a
-    failure here is harmless — nothing was deleted, so the worst case is that
-    this round's refresh is skipped and the next run retries.
+      · entre les deux ordres la ligne N'EXISTAIT PAS. Un processus tué au
+        milieu — timeout GitHub Actions, coupure réseau — perdait le signal
+        DÉFINITIVEMENT. Le chemin était si peu théorique qu'il portait son
+        propre log CRITICAL, « SIGNAL %s LOST after delete » ;
+      · `id` étant retiré avant le ré-INSERT, chaque appel donnait au signal
+        un identifiant NEUF. Le `signal_id` déjà recopié dans
+        `ai_learning_ledger` ne désignait alors plus rien ;
+      · il fallait lui passer la ligne ENTIÈRE (`{**sig, **patch}`), donc
+        réécrire des colonnes qu'on n'avait pas lues pour les modifier — au
+        risque d'écraser une capture de closing line posée entre-temps.
+
+    Un UPDATE n'a aucun de ces trois défauts, et la policy RLS
+    `service_role_update` existe depuis `sql/migrate_v9_3_tighten_rls.sql`.
+    Vérifiée EN BASE le 2026-08-27 : un UPDATE sur `signals` passe. Le
+    commentaire « RLS blocks UPDATE outright » qui justifiait le détour était
+    périmé.
+
+    Dégradation chirurgicale sur schéma en retard : seules les colonnes que
+    Postgres NOMME sont retirées. Un échec est ici sans conséquence — rien n'a
+    été supprimé, au pire ce tour est sauté et le suivant réessaie.
     """
     if not fields:
         return True
@@ -162,57 +175,6 @@ def update_signal_fields(sb, signal_id, fields: dict,
             except Exception as e2:
                 e = e2
         log.error("update_signal_fields [%s] failed: %s", signal_id, e)
-        return False
-
-
-def replace_signal_row(sb, signal_id, merged: dict, optional_cols: frozenset = frozenset()) -> bool:
-    """
-    Delete signal `signal_id` and re-insert `merged` (which should already
-    contain the merged old+new fields, with 'id' still present or absent —
-    it is stripped here either way since Supabase rejects an explicit id on
-    insert into a serial/identity column).
-
-    If the insert fails because of an unrecognized column (stale schema —
-    a migration adding `optional_cols` hasn't been applied to this DB yet),
-    retries with those columns stripped. Returns True on success,
-    False if the signal is lost (deleted but never successfully re-inserted
-    — logged at CRITICAL since this is a silent data-loss path).
-
-    The retry strips only the columns Postgres actually named in the error,
-    not the whole optional set. Stripping the set wholesale meant one missing
-    column silently discarded its healthy neighbours: a DB without
-    `closing_captured_at` would drop `closing_pinnacle_price`/`clv_pct_real`
-    too, and still return True — the caller counting a capture that never
-    landed. Only if the error names nothing recognizable do we fall back to
-    stripping everything optional.
-    """
-    payload = dict(merged)
-    payload.pop("id", None)
-    try:
-        sb.table("signals").delete().eq("id", signal_id).execute()
-    except Exception as e:
-        log.error("replace_signal_row delete [%s]: %s", signal_id, e)
-        return False
-    try:
-        sb.table("signals").insert(payload).execute()
-        return True
-    except Exception as e:
-        if not optional_cols:
-            log.critical("SIGNAL %s LOST after delete — insert failed: %s", signal_id, e)
-            return False
-        named = {c for c in optional_cols if c in str(e)}
-        for dropped in ([named] if named else []) + [set(optional_cols)]:
-            if not dropped:
-                continue
-            core = {k: v for k, v in payload.items() if k not in dropped}
-            try:
-                sb.table("signals").insert(core).execute()
-                log.warning("Signal %s re-inserted without %s — apply the pending "
-                            "migration for these columns", signal_id, sorted(dropped))
-                return True
-            except Exception as e2:
-                e = e2
-        log.critical("SIGNAL %s LOST after delete — fallback insert failed: %s", signal_id, e)
         return False
 
 
@@ -250,7 +212,7 @@ def log_to_ledger(sb, sig: dict, clv: float, outcome: str) -> None:
     All of the above require sql/migrate_v9_5_learning_integrity.sql,
     sql/migrate_v9_6_closing_line.sql, and sql/migrate_v9_7_ledger_brier.sql;
     until applied, the insert retries once with those columns stripped
-    (same optional_cols pattern as replace_signal_row)."""
+    (same optional_cols pattern as update_signal_fields)."""
     match_time = sig.get("match_time")
     scanned_at = sig.get("scanned_at")
     ttm = None
@@ -311,7 +273,7 @@ def log_to_ledger(sb, sig: dict, clv: float, outcome: str) -> None:
         # Strip only the columns the error actually names — dropping the whole
         # optional set for one missing column threw away kelly_pct/sharp_prob
         # from rows that could have kept them (same reasoning as
-        # replace_signal_row). Wholesale strip stays as the last resort.
+        # update_signal_fields). Wholesale strip stays as the last resort.
         named = {c for c in _optional if c in str(e)}
         for dropped in ([named] if named else []) + [set(_optional)]:
             try:

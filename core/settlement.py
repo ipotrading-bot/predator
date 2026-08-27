@@ -28,7 +28,7 @@ from datetime import timedelta
 from core.ai_search import ai_available, ai_search_complete
 from core.api_sports import fetch_results
 from core.paim_engine import strict_team_match
-from core.db import log_to_ledger, replace_signal_row
+from core.db import log_to_ledger, update_signal_fields
 from core.paim_engine import resolve_selection_side
 
 log = logging.getLogger("PREDATOR.settlement")
@@ -248,16 +248,23 @@ def settle_signal(sb, sig: dict, now_iso: str) -> bool:
     # real closing-line pipeline (Task 3) lands. Never treat this as CLV.
     entry_edge_pct = round((sig["xbet_odd"] / orig_pin - 1) * 100, 2) if orig_pin > 1.01 else 0.0
 
-    # DELETE + INSERT — RLS blocks UPDATE outright on this table's policies.
-    # Shared with core/audit_engine.py's _update_signal() — see
-    # core/db.py:replace_signal_row for the implementation.
-    merged = {**sig, **{
+    # UPDATE en place. C'était un DELETE + INSERT jusqu'au 2026-08-27, justifié
+    # par un « RLS blocks UPDATE outright » devenu faux — la policy
+    # `service_role_update` existe depuis migrate_v9_3. Le détour perdait le
+    # signal si le processus mourait entre les deux ordres, et lui donnait un
+    # `id` NEUF à chaque règlement, ce qui laissait le `signal_id` déjà
+    # recopié dans `ai_learning_ledger` pointer vers une ligne disparue.
+    # On ne patche QUE les champs qui changent : réécrire `{**sig, **patch}`
+    # renvoyait à la base des colonnes qu'on n'avait aucune raison de toucher,
+    # et pouvait écraser une capture de closing line posée entre-temps.
+    patch = {
         "status":    "settled",
         "clv_pct":   float(entry_edge_pct),
         "closed_at": now_iso,
         "outcome":   outcome,
-    }}
-    if not replace_signal_row(sb, sig["id"], merged, optional_cols=_SETTLEMENT_OPTIONAL):
+    }
+    if not update_signal_fields(sb, sig["id"], patch,
+                                optional_cols=_SETTLEMENT_OPTIONAL):
         return False
     log.info("SETTLED  | %s %d-%d | outcome=%s | entry edge %+.2f%%", match, hs, as_, outcome, entry_edge_pct)
 
