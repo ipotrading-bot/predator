@@ -47,7 +47,8 @@ def scan_env(monkeypatch):
     monkeypatch.setattr(eng, "DEEP_SCAN", False)
     monkeypatch.delenv("BETFAIR_APP_KEY", raising=False)
 
-    monkeypatch.setattr(eng, "_arm_global_timeout", lambda: None)
+    # Contrat D3 : rend le budget armé (journalisé par run()).
+    monkeypatch.setattr(eng, "_arm_global_timeout", lambda mode=None: 900)
     monkeypatch.setattr(eng, "get_db", lambda write=True: sb)
     monkeypatch.setattr(eng, "_purge_old_signals", lambda _sb: None)
     monkeypatch.setattr(eng, "_load_thresholds", lambda _sb: {})

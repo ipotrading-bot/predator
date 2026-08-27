@@ -154,7 +154,9 @@ def cabler_reprice(monkeypatch):
     monkeypatch.setattr(eng, "GUERRILLA", False)
     monkeypatch.delenv("BETFAIR_APP_KEY", raising=False)
 
-    monkeypatch.setattr(eng, "_arm_global_timeout", lambda: None)
+    # Le bouchon honore le nouveau contrat (D3) : la fonction rend le budget
+    # armé, que run() journalise — un None ferait planter le %d du log.
+    monkeypatch.setattr(eng, "_arm_global_timeout", lambda mode=None: 300)
     monkeypatch.setattr(eng, "get_db", lambda write=True: sb)
     monkeypatch.setattr(eng, "_purge_old_signals", lambda _sb: None)
     monkeypatch.setattr(eng, "_load_thresholds", lambda _sb: {})

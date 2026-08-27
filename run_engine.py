@@ -136,23 +136,60 @@ SHADOW_GOLDEN_HOUR = True
 # thread (a test runner, a dashboard route off the request thread, etc),
 # before a single line of run()'s actual logic ever executed. See
 # tests/test_run_engine_import.py.
-from core.constants import GLOBAL_TIMEOUT
+from core.constants import GLOBAL_TIMEOUT, SCAN_TIMEOUTS
+
+_budget_arme = GLOBAL_TIMEOUT      # renseigné par _arm_global_timeout, pour le message
+
 
 def _timeout_handler(signum, frame):
-    log.error("TIMEOUT: Engine exceeded %d seconds — exiting gracefully", GLOBAL_TIMEOUT)
-    raise TimeoutError(f"Global timeout ({GLOBAL_TIMEOUT}s) exceeded")
+    log.error("TIMEOUT: Engine exceeded %d seconds — exiting gracefully", _budget_arme)
+    raise TimeoutError(f"Global timeout ({_budget_arme}s) exceeded")
 
 
-def _arm_global_timeout() -> None:
-    """Best-effort SIGALRM safety net. Silently degrades (logs a warning,
-    engine runs without a hard timeout) instead of crashing on either of
-    signal's two documented failure modes: AttributeError (SIGALRM doesn't
-    exist — Windows) or ValueError (not the main thread)."""
+def _mode_courant() -> str:
+    """La clé de mode, dans l'ORDRE DE PRIORITÉ de `run()`.
+
+    REPRICE prime : si deux drapeaux sont posés ensemble par un dispatch
+    manuel, le mode le plus restrictif l'emporte — même règle qu'en tête de
+    `run()`, et c'est pour cela que cette fonction existe plutôt qu'une
+    seconde chaîne de `if` recopiée à côté. Une règle en double finit toujours
+    par diverger ; c'est la panne la plus fréquente de ce dépôt.
+    """
+    if REPRICE:
+        return "reprice"
+    if GUERRILLA:
+        return "guerrilla"
+    if GOLDEN_HOUR:
+        return "golden"
+    if DEEP_SCAN:
+        return "deep"
+    return "standard"
+
+
+def _arm_global_timeout(mode: str | None = None) -> int:
+    """Filet SIGALRM au mieux, dimensionné sur le MODE (D3).
+
+    Une valeur unique de 540 s servait les cinq modes : neuf fois la médiane
+    d'un tick golden, et moins que la durée normale d'un deep ou d'un
+    guerrilla — 32990495899 est mort dessus en toutes lettres. Voir
+    `core.constants.SCAN_TIMEOUTS` pour les mesures.
+
+    Se dégrade en silence (avertissement, moteur sans borne dure) plutôt que
+    de planter, sur les deux échecs documentés de `signal` : AttributeError
+    (pas de SIGALRM — Windows) ou ValueError (pas le thread principal).
+
+    Rend le budget effectivement armé, pour que l'appelant puisse le
+    journaliser — un filet dont personne ne connaît la taille ne s'explique
+    pas quand il se déclenche.
+    """
+    global _budget_arme
+    _budget_arme = SCAN_TIMEOUTS.get(mode or _mode_courant(), GLOBAL_TIMEOUT)
     try:
         signal.signal(signal.SIGALRM, _timeout_handler)
-        signal.alarm(GLOBAL_TIMEOUT)
+        signal.alarm(_budget_arme)
     except (AttributeError, ValueError) as e:
         log.warning("Global timeout not installed (%s) — running without a hard timeout", e)
+    return _budget_arme
 
 # ── UTC logger ────────────────────────────────────────────────────────
 _fmt = logging.Formatter(
@@ -2039,7 +2076,7 @@ def _segment_min_edge(dyn_thresholds: dict, dyn_segment_thresholds: dict,
 # ── main ─────────────────────────────────────────────────────────────
 
 def run():
-    _arm_global_timeout()
+    budget = _arm_global_timeout()
     now     = datetime.now(timezone.utc)
     session = _market_session(now.hour)
     log.info("━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━")
@@ -2058,7 +2095,8 @@ def run():
         mode = "DEEP 48h"
     else:
         mode = "FAST 72h"
-    log.info("PAIM v8.8 — %s | Multi-Sport + Portfolio Balancer | Session: %s", mode, session)
+    log.info("PAIM v8.8 — %s | Multi-Sport + Portfolio Balancer | Session: %s | "
+             "budget %ds", mode, session, budget)
     _refresh_ai_catalogues()
     log.info("Scan start: %s | max_events=%d | quotas=%s",
              now.strftime("%Y-%m-%d %H:%M:%S UTC"), MAX_MATCHES,

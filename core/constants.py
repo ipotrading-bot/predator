@@ -118,7 +118,47 @@ def roi_net_of_tax(rows: list[dict], tax_rate: float = TAX_RATE) -> float | None
 #  propre rpm. Une constante morte se fait recopier de bonne foi.)
 DELAY_DB_RETRY       = 1.0      # Seconds — Supabase transient error retry
 MAX_DB_RETRIES       = 3        # Attempts — max retries before giving up
-GLOBAL_TIMEOUT       = 540      # Seconds — 9 minutes, safety net for GitHub Actions
+
+# ── Budget de temps du moteur, PAR MODE DE SCAN (D3, 2026-08-27) ──────
+# Une valeur unique de 540 s servait les cinq modes. Elle était à la fois
+# trop courte et trop longue, et les deux se mesurent :
+#
+#   mode        durée observée du job    verdict
+#   golden      médiane 58 s, max 454 s  540 s = 9× la médiane
+#   standard    médiane 389 s, max 591 s frôle le plafond
+#   deep        2 runs, 569 s tous deux  1 échec sur 2
+#   guerrilla   médiane 418 s, max 571 s 1 échec sur 7
+#   reprice     12-15 s (étape)          sans commune mesure
+#
+# L'échec du run Guerrilla 32990495899 est nommé dans son log :
+# « TIMEOUT: Engine exceeded 540 seconds ». Ce n'était pas un moteur pendu,
+# c'était un moteur au travail, coupé net. Et il est coupé AVANT la
+# persistance — celle-ci est la section B, en toute fin de `run()` — donc un
+# dépassement ne perd pas la fin du scan : il perd TOUT le scan. Ce run-là a
+# rendu zéro signal là où des clés MORTES en émettaient douze.
+#
+# À l'autre bout, un budget trop généreux n'est pas gratuit non plus : les
+# scans et l'audit sont sérialisés sur le verrou `predator-signals-write`
+# (cancel-in-progress: false), donc un tick golden pendu neuf minutes fait
+# attendre tout ce qui suit. C'est ce qui interdit de simplement tout mettre
+# à la valeur du mode le plus lent.
+#
+# ⚠️ Ces bornes sont des GARDE-FOUS, pas des durées attendues : pour deep et
+# guerrilla on ne connaît pas la durée naturelle, seulement qu'elle dépasse
+# 570 s puisque c'est là qu'on les a coupés. La marge est donc large, bornée
+# par le `timeout-minutes` du job (30 min) auquel il faut laisser de quoi
+# faire la passe closing line et le REPRICE.
+SCAN_TIMEOUTS = {
+    "reprice":    300,   # aucune source payante, aucune recherche web
+    "golden":     600,   # tick horaire, doit rendre le verrou vite
+    "standard":   900,
+    "deep":      1200,
+    "guerrilla": 1200,   # recherche web renforcée — le mode le plus lent
+}
+# Repli pour un mode inconnu, et valeur historique. Volontairement le budget
+# `standard` : un mode non répertorié n'a aucune raison d'être plus généreux
+# que le cas ordinaire.
+GLOBAL_TIMEOUT = SCAN_TIMEOUTS["standard"]
 DEBUG_MODE           = False    # Will be set from env var PREDATOR_DEBUG
 
 # ── Round-line push penalty (totals on integer lines e.g. 9.0, 8.0) ────
