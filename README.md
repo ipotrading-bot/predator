@@ -236,7 +236,7 @@ Les chemins normaux restent le cron de `audit.yml` (toutes les 6 h) et le
 `workflow_dispatch` depuis l'interface GitHub ; cette route n'est qu'un
 raccourci d'opérateur.
 
-#### Le dashboard n'a plus de clé d'écriture — `SUPABASE_SERVICE_KEY` à retirer
+#### Le dashboard n'a plus de clé d'écriture — `SUPABASE_SERVICE_KEY` RETIRÉE
 
 Depuis le 2026-08-27, `api/index.py` n'écrit plus rien. `/api/scan`, sa seule
 écriture, passe par `demander_scan()` — une fonction Postgres `security
