@@ -247,29 +247,41 @@ Tant que `SUPABASE_SERVICE_KEY` restait posée sur Vercel, une faille de la
 fonction publique donnait les pleins pouvoirs sur `signals`,
 `ai_learning_ledger`, `meta` et `app_secrets`. Elle n'y a plus aucun usage.
 
-**Sur Vercel — Settings → Environment Variables :**
+**FAIT le 2026-08-27.** Le déploiement ne porte plus que ces QUATRE
+variables — la liste exacte de ce que le code lit :
 
-| Variable | Action | Pourquoi |
-|---|---|---|
-| `SUPABASE_SERVICE_KEY` | **SUPPRIMER** (production ET preview) | plus aucun appelant ; c'était la clé qui donnait tout |
-| `SUPABASE_URL` | garder | lecture |
-| `SUPABASE_KEY` | garder | clé anon, lecture seule — l'écriture passe par la fonction |
-| `DASHBOARD_ADMIN_TOKEN` | garder | `/api/audit/run` |
-| `GITHUB_PAT` | garder | `/api/audit/run` déclenche `audit.yml` |
+| Variable | Rôle |
+|---|---|
+| `SUPABASE_URL` | lecture |
+| `SUPABASE_KEY` | clé anon, LECTURE SEULE — l'écriture passe par `demander_scan()` |
+| `DASHBOARD_ADMIN_TOKEN` | `/api/audit/run` |
+| `GITHUB_PAT` | `/api/audit/run` déclenche `audit.yml` |
 
-⚠️ **Dans cet ordre** : appliquer la migration, DÉPLOYER le nouveau code,
-vérifier `/api/scan`, et seulement ensuite retirer la clé. L'inverse casse la
-route entre les deux étapes. Un changement de variable n'agit qu'au
-déploiement suivant — `python scripts/ops.py vercel redeploy` après le retrait.
+Onze variables ont été retirées le même jour, dont `SUPABASE_SERVICE_KEY`.
+Les autres n'avaient JAMAIS servi au dashboard : `GROQ_API_KEY`,
+`GEMINI_API_KEY`, `ODDS_API_KEY`, `NEWS_API_KEY`, `TELEGRAM_BOT_TOKEN`,
+`TELEGRAM_CHAT_ID`, `POSTGRES_URL`, `POSTGRES_PRISMA_URL`,
+`POSTGRES_URL_NON_POOLING`, `POSTGRES_PASSWORD`. Le dashboard n'appelle ni IA,
+ni source de cotes, ni Telegram, ni Postgres en direct — vérifié sur le graphe
+d'import réel : il ne charge que `core.constants`, `core.db`, `core.perf_view`
+et `core.stats_utils`. Un secret posé là où il ne sert pas n'est pas une
+commodité, c'est de l'exposition.
 
-Vérification : `curl -X POST https://<déploiement>/api/scan` doit rendre
-`queued` puis `already_queued`, et `/api/health` rester à `db_configured: true`.
+Ces clés restent intactes là où elles servent (secrets GitHub Actions pour le
+pipeline, `app_secrets` pour les sources) : seule la copie Vercel a disparu.
+`POSTGRES_*` était injecté par l'intégration Vercel↔Supabase et peut y être
+réintroduit par une resynchronisation — à revérifier après toute manipulation
+de l'intégration.
 
-⚠️ Ces variables restent sur le déploiement sans y servir à rien et méritent
-le même examen : `GROQ_API_KEY`, `GEMINI_API_KEY`, `ODDS_API_KEY`,
-`NEWS_API_KEY`, `TELEGRAM_BOT_TOKEN`, `TELEGRAM_CHAT_ID`, `POSTGRES_*`. Le
-dashboard n'appelle ni IA, ni source de cotes, ni Telegram, ni Postgres en
-direct. Hors périmètre de C3, listé parce que la vérification les a trouvées.
+**Si l'opération est à refaire, l'ORDRE compte** : appliquer la migration,
+DÉPLOYER le nouveau code, vérifier `/api/scan`, et seulement ensuite retirer
+la clé. L'inverse casse la route entre les deux étapes. Un changement de
+variable n'agit qu'au déploiement suivant —
+`python scripts/ops.py vercel redeploy`.
+
+Vérifié en production après retrait : `/api/health` à `db_configured: true`,
+les cinq pages en 200, `POST /api/scan` → `queued` (donc la fonction Postgres
+suffit, sans aucune clé d'écriture), `POST /api/audit/run` sans jeton → 401.
 
 ---
 
