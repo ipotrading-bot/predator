@@ -263,6 +263,45 @@ couverture du slate est sans commune mesure avec celle de
 Kalshi/Polymarket (3 fixtures exploitables sur 70). Mesuré sur
 10 runs du 2026-08-23 au 26. Corollaire : 100 % des signaux sont du FOOTBALL.
 
+### Le budget api-sports partait PREMIER ARRIVÉ, PREMIER SERVI (2026-08-27)
+
+Symptôme opérateur : « pauvreté de signaux » le soir, alors que le moteur
+tournait, que la suite était verte et qu'aucun seuil n'avait bougé. La
+tentation était de baisser un plancher d'émission. C'était le mauvais organe :
+ce n'est pas la garde qui refusait, c'est le SLATE SHARP qui s'effondrait.
+
+Mesuré sur les scans du 2026-08-27 — la colonne de droite est le nombre de
+matchs portant un prix sharp à la sortie du Tier 2 :
+
+    14:25  api-sports 14 matchs (14 sharp)      →  39
+    16:39  api-sports 13 matchs (11 sharp)      →  58
+    18:00  api-sports 26 matchs (22 sharp)      →  42
+    19:20  ⛔ budget de SCAN 64/64, cycle ignoré →  28
+    20:00  ⛔ budget de SCAN 71/64, cycle ignoré →  25
+
+api-sports est la seule source qui porte un prix Pinnacle sur ~100 % de ses
+matchs. Un cycle foot coûte 8 requêtes, `SCAN_BUDGET` en autorise 64 : huit
+cycles, pas un de plus. Rien ne disait QUAND les dépenser, donc les premiers
+crons livrés raflaient tout — et la source s'éteignait précisément quand le
+slate européen entre dans la zone jouable 2-24 h. À la cadence horaire du
+cron `golden` (:25), le budget entier partait AVANT 07:00 UTC et le soir
+n'avait pas un seul cycle.
+⚠️ Le motif dominant de rejet n'était PAS un seuil : sur 5 runs, 141 refus
+« Échec prix Sharp » (dont 81 en tennis, structurellement sans source sharp
+depuis l'obsolescence d'OddsAPI), 57 `LINESKIP`, 19 `CONFLIT SHARP` — et
+**zéro** `PLAFOND`, **zéro** `SUSPECT`. Aucune garde d'edge ne refusait quoi
+que ce soit : elles n'étaient pas atteintes, faute de candidats.
+Le budget n'est PAS augmenté — le compte a été SUSPENDU pour dépassement le
+2026-08-20 et la marge de sûreté ne se mange pas. Il est ÉTALÉ :
+`api_sports.scan_allowance()` n'ouvre à chaque heure que la fraction du
+budget correspondant à la journée UTC écoulée, avec un plancher d'un cycle
+pour que le premier scan du jour parte toujours. Aucun horaire n'est codé en
+dur (une fenêtre qui bouge dans `core/scan_windows.py` n'a rien à
+re-déclarer), et `fetch_results` n'est pas concerné : la réserve du
+settlement reste intacte.
+Gardien : `tests/test_api_sports.py::TestRythmeDeDepense` — en particulier
+`test_le_matin_ne_peut_pas_bruler_le_budget_du_soir`.
+
 ### OddsAPI est OBSOLÈTE (décision opérateur 2026-08-26)
 
 (décision opérateur 2026-08-26) : `ODDS_API_ENABLED`

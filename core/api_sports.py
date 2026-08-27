@@ -123,6 +123,45 @@ DAILY_BUDGET = int(os.environ.get("API_SPORTS_DAILY_BUDGET", "80"))
 RESULTS_RESERVE = int(os.environ.get("API_SPORTS_RESULTS_RESERVE", "16"))
 SCAN_BUDGET = max(1, DAILY_BUDGET - RESULTS_RESERVE)
 
+# ── RYTHME DE DÉPENSE SUR LA JOURNÉE (2026-08-27) ─────────────────────
+# La réserve du settlement protège la FIN de la chaîne ; elle ne dit rien de
+# QUAND le budget de scan part. Il partait PREMIER ARRIVÉ, PREMIER SERVI.
+# Le foot coûte 8 requêtes le cycle et SCAN_BUDGET en autorise 8 : les huit
+# crons que GitHub daigne livrer épuisent la source, et ce sont ceux du matin
+# qui gagnent. Mesuré sur les scans du 2026-08-27 :
+#
+#     14:25  api-sports 14 matchs (14 sharp)  → slate sharp Tier 2 = 39
+#     16:39  api-sports 13 matchs (11 sharp)  → slate sharp Tier 2 = 58
+#     18:00  api-sports 26 matchs (22 sharp)  → slate sharp Tier 2 = 42
+#     19:20  budget 64/64, cycle ignoré       → slate sharp Tier 2 = 28
+#     20:00  budget 71/64, cycle ignoré       → slate sharp Tier 2 = 25
+#
+# api-sports est la seule source qui porte un prix Pinnacle sur ~100 % de ses
+# matchs (INCIDENTS.md, « lesquelles portent RÉELLEMENT un signal »). Quand
+# elle s'éteint, la moitié du slate sharp disparaît — et elle s'éteignait
+# précisément quand le slate européen entre dans la zone jouable 2-24 h.
+# Le budget n'est PAS augmenté : le compte a déjà été SUSPENDU pour
+# dépassement le 2026-08-20, la marge de sûreté ne se mange pas. Il est
+# ÉTALÉ. À toute heure, un scan ne peut avoir dépensé que la fraction du
+# budget correspondant à la journée UTC écoulée. Le plancher d'UN cycle
+# garantit que le premier scan du jour part toujours, et le rythme ne
+# s'applique qu'aux SCANS : fetch_results garde sa réserve intacte.
+CYCLE_COST = int(os.environ.get("API_SPORTS_CYCLE_COST", "10"))
+
+
+def scan_allowance(now: datetime | None = None) -> int:
+    """Part de SCAN_BUDGET ouverte à cette heure de la journée UTC.
+
+    Croît linéairement de CYCLE_COST (00:00) à SCAN_BUDGET (24:00). Aucun
+    horaire n'est codé en dur : une fenêtre favorable qui bouge dans
+    core/scan_windows.py n'a rien à re-déclarer ici.
+    """
+    now = now or datetime.now(timezone.utc)
+    start = now.replace(hour=0, minute=0, second=0, microsecond=0)
+    frac = (now - start).total_seconds() / 86400.0
+    frac = min(1.0, max(0.0, frac))
+    return max(CYCLE_COST, min(SCAN_BUDGET, int(SCAN_BUDGET * frac)))
+
 # Reconnaissance par NOM (insensible à la casse) et non par id numérique :
 # les ids de bookmakers de la doc n'ont pas pu être vérifiés, et un id faux
 # renverrait silencieusement zéro prix sharp.
@@ -333,6 +372,17 @@ def fetch_sport(sport: str, api_key: str | None = None, hours_ahead: int = 24) -
                     "Les %d requêtes restantes sont la réserve du settlement : un scan "
                     "de plus vaut moins qu'un résultat de moins.",
                     sport, spent, SCAN_BUDGET, RESULTS_RESERVE)
+        return []
+
+    # Rythme de dépense : ce qui reste au-dessus de l'ouverture de cette heure
+    # appartient aux scans plus tardifs, pas au premier cron qui passe.
+    allowance = scan_allowance()
+    if spent >= allowance:
+        log.info("api-sports[%s]: rythme de dépense — %d/%d dépensées, "
+                 "l'ouverture de cette heure est %d. Le reste est gardé pour "
+                 "les scans du soir : c'est là que le slate européen entre "
+                 "dans la zone jouable, et une source sharp éteinte y coûte "
+                 "la moitié du slate.", sport, spent, SCAN_BUDGET, allowance)
         return []
 
     base    = f"https://{prov['host']}"

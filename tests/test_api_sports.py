@@ -317,6 +317,65 @@ def test_daily_budget_stops_the_cycle_before_any_call(monkeypatch, caplog):
     assert any("budget de SCAN" in r.getMessage() for r in caplog.records)
 
 
+class TestRythmeDeDepense:
+    """Le budget de scan partait PREMIER ARRIVÉ, PREMIER SERVI.
+
+    Mesuré le 2026-08-27 : api-sports s'éteignait à 19:20 (64/64) et le slate
+    sharp de Tier 2 tombait de 42 matchs à 28 puis 25, précisément quand le
+    slate européen entre dans la zone jouable. Le budget n'est pas augmenté
+    (compte SUSPENDU pour dépassement le 2026-08-20) — il est étalé.
+    """
+
+    @staticmethod
+    def _at(h, m=0):
+        return datetime(2026, 8, 27, h, m, tzinfo=timezone.utc)
+
+    def test_l_ouverture_croit_avec_la_journee(self):
+        matin = aps.scan_allowance(self._at(6))
+        soir  = aps.scan_allowance(self._at(20))
+        assert matin < soir, "le matin ne doit pas pouvoir dépenser autant que le soir"
+
+    def test_plancher_un_cycle_le_premier_scan_du_jour_part_toujours(self):
+        assert aps.scan_allowance(self._at(0, 3)) >= aps.CYCLE_COST
+
+    def test_l_ouverture_ne_depasse_jamais_le_budget_de_scan(self):
+        assert aps.scan_allowance(self._at(23, 59)) <= aps.SCAN_BUDGET
+
+    def test_le_matin_ne_peut_pas_bruler_le_budget_du_soir(self, monkeypatch, caplog):
+        """La régression exacte du 2026-08-27 : huit cycles matinaux
+        épuisaient la seule source qui porte un prix sharp sur 100 % de ses
+        matchs, et les scans du soir repartaient sans elle."""
+        touched = []
+        monkeypatch.setattr(aps.requests, "get", lambda *a, **k: touched.append(a))
+        monkeypatch.setattr(aps, "scan_allowance", lambda now=None: aps.CYCLE_COST)
+        # Déjà dépensé plus que l'ouverture de cette heure, mais TRÈS loin du
+        # budget total : l'ancienne garde laissait passer.
+        spent = aps.CYCLE_COST + 1
+        assert spent < aps.SCAN_BUDGET
+        monkeypatch.setattr(aps, "_usage_get", lambda sport: spent)
+        with caplog.at_level(logging.INFO, logger="PREDATOR.api_sports"):
+            assert aps.fetch_sport("soccer", api_key="k") == []
+        assert touched == [], "une requête est partie malgré le rythme de dépense"
+        assert any("rythme de dépense" in r.getMessage() for r in caplog.records)
+
+    def test_sous_l_ouverture_le_cycle_part(self, monkeypatch):
+        """Le rythme freine, il ne ferme pas : sous l'ouverture, on scanne."""
+        day = _when().strftime("%Y-%m-%d")
+        _wire(monkeypatch, [_game(1, "PSG", "Lyon")],
+              {(day, 1): [_odds_row(1, [_bk("Bwin", 1.80, 4.40, 3.60)])]})
+        monkeypatch.setattr(aps, "scan_allowance", lambda now=None: aps.SCAN_BUDGET)
+        monkeypatch.setattr(aps, "_usage_get", lambda sport: 0)
+        monkeypatch.setattr(aps, "_usage_add", lambda sport, n: None)
+        assert aps.fetch_sport("soccer", api_key="k"), "le rythme a fermé un cycle qu'il devait laisser passer"
+
+    def test_la_reserve_du_settlement_ignore_le_rythme(self, monkeypatch):
+        """fetch_results n'est pas un scan : un résultat manquant sort un
+        signal en `expired` et n'apprend rien à personne."""
+        import inspect
+        src = inspect.getsource(aps.fetch_results)
+        assert "scan_allowance" not in src
+
+
 def test_requests_actually_spent_are_counted(monkeypatch):
     day = _when().strftime("%Y-%m-%d")
     sched = [_game(1, "PSG", "Lyon")]
