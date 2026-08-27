@@ -36,6 +36,7 @@ from core.constants import (CLOSING_LINE_BUDGET, CLOSING_LINE_COLS,
                             CLOSING_SRC_ODDSAPI, CLOSING_SRC_ORACLE)
 from core.learning_layer import compute_and_save as _learn
 from core.oracle import get_pinnacle_price
+from core.run_contract import terminer as _terminer_run, verdict_de_fin
 from core.paim_engine import resolve_selection_side
 from core.settlement import settle_signal
 
@@ -629,3 +630,21 @@ def run():
         log.error("Learning layer: %s", e)
 
     log.info("━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━")
+
+    # CONTRAT DE FIN (B5). La troisième condition du contrat — « settlement
+    # éligible ET 0 réglé » — vit ICI et non dans `run_engine.run()`, qui ne
+    # règle rien : le settlement appartient à ce module, appelé par
+    # `run_audit.py`. Le demander au moteur de scan aurait produit un garde
+    # incapable d'observer ce qu'il prétend garder.
+    #
+    # L'alerte Telegram de `_signaler_audit_sterile` existait déjà depuis le
+    # 2026-08-26 ; c'est le CODE DE SORTIE qui manquait. « 0 settled | 52
+    # skipped » est resté vert deux jours entiers, du 24 au 26 août, pendant
+    # que les deux quotas de recherche étaient à terre.
+    #
+    # Le verdict est posé APRÈS la couche d'apprentissage, à dessein : un
+    # audit stérile doit quand même avoir tenté d'apprendre de ce qu'il a, et
+    # sortir avant le priverait de ce tour-là.
+    _terminer_run(verdict_de_fin(settlement_eligible=len(pending),
+                                 settlement_regles=counts["settled"]),
+                  contexte="audit")

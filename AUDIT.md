@@ -142,6 +142,12 @@ C'est le tableau à consulter avant de toucher à quoi que ce soit.
 | Le filtre part dans la requête, pas après coup | `…::test_le_filtre_est_demande_a_la_base_pas_applique_apres_coup` |
 | Un gain sans cote est ÉCARTÉ, jamais valorisé à 2.0 | `…::TestB4UneCoteManquanteNestPasInventee` |
 | Une perte sans cote est CONSERVÉE (l'écarter embellirait le portefeuille) | `…::test_une_perte_sans_cote_est_CONSERVEE` |
+| Un run stérile sort en ÉCHEC, il n'affiche plus une coche verte | `core/run_contract.py` + `tests/test_contrat_de_fin.py` |
+| Zéro signal reste VERT — c'est le résultat attendu depuis A1 | `…::TestZeroNestPasUnEchec` |
+| Les trois conditions sont des CONJONCTIONS, jamais des seuils | `…::TestLesTroisContradictions` |
+| Le contrat est réellement appelé aux trois sorties | `…::TestLeContratEstReellementCable` |
+| Un audit à 0 réglé sur N éligibles sort rouge | `…::TestLauditSterileSortEnEchec` |
+| Un scan qui n'a rien persisté sort rouge | `…::TestLeScanQuiNePersisteRienSortEnEchec` |
 
 L'**invariant des sport-keys** (4 fichiers : `core/odds_api.py`,
 `core/learning_layer.py`, `api/index.py`) est décrit

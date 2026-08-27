@@ -38,6 +38,7 @@ from core.odds_api import fetch_odds, pool_status as _odds_pool_status, pool_cou
 from core.scan_windows import SpendPolicy as _SpendPolicy
 from core.constants import CLOSING_LINE_WINDOW_MIN as _CLOSING_LINE_WINDOW_MIN
 from core.oracle import get_pinnacle_price, MAX_ORACLE_DEFAULT as _MAX_ORACLE_DEFAULT
+from core.run_contract import terminer as _terminer_run, verdict_de_fin
 from core.learning_layer import load_thresholds as _load_thresholds
 from core.learning_layer import load_segment_thresholds as _load_segment_thresholds
 from core.learning_layer import load_sport_ranking as _load_sport_ranking
@@ -2347,6 +2348,14 @@ def run():
             _alert_once(sb, "alert_no_matches", msg)
             if sb:
                 _heartbeat(sb, now, 0, 0)
+            # CONTRAT DE FIN (B5). Zéro match n'est un échec que si des sources
+            # ont RÉPONDU : un créneau réellement creux reste vert. Matchbook
+            # sert de témoin — gratuit, illimité, il rend 141 à 202 marchés
+            # quand le réseau et le pipeline vont bien (CLAUDE.md). Des marchés
+            # chargés et zéro match, c'est nous qui avons perdu la donnée.
+            _terminer_run(verdict_de_fin(
+                sources_joignables=bool(betfair_prices),
+                matches_vus=0), contexte="scan")
             if credentials_failed:
                 raise SystemExit(1)
             return
@@ -2631,6 +2640,15 @@ def run():
     log.info("━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━")
     if sb:
         _heartbeat(sb, now, len(matches), len(signals))
+
+    # CONTRAT DE FIN (B5). `saved_count` ne vaut 0 avec `signals` non vide que
+    # si CHAQUE écriture a échoué — c'est l'incident du 2026-07-07, ~17 h de
+    # « 0/N signals persisted » en vert, chaque écriture refusée une par une
+    # par une RLS 42501. Le message d'erreur existait déjà ; c'est le code de
+    # sortie qui manquait.
+    _terminer_run(verdict_de_fin(signaux_emis=len(signals),
+                                 signaux_persistes=saved_count),
+                  contexte="scan")
 
     if credentials_failed:
         # Telegram already sent above — now fail the job so GitHub Actions

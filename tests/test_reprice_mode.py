@@ -137,9 +137,15 @@ def _sentinel(name):
     return _boom
 
 
-@pytest.fixture
-def reprice_env(monkeypatch):
-    """run() câblé en REPRICE pur : sentinelles sur tout ce qui paie."""
+def cabler_reprice(monkeypatch):
+    """run() câblé en REPRICE pur : sentinelles sur tout ce qui paie.
+
+    Fonction ORDINAIRE, et non fixture, pour qu'un autre fichier de tests
+    puisse la réutiliser sans importer une fixture — un import de fixture
+    oblige à réexporter un nom que le paramètre de test masque ensuite, ce que
+    pyflakes signale à juste titre. La fixture `reprice_env` ci-dessous n'est
+    plus qu'une enveloppe.
+    """
     sb = FakeSB()
     telegrams = []
 
@@ -178,6 +184,11 @@ def reprice_env(monkeypatch):
     monkeypatch.setattr(eng, "fetch_matchbook_prices", _mb_fetch)
 
     return sb, telegrams, mb_calls
+
+
+@pytest.fixture
+def reprice_env(monkeypatch):
+    return cabler_reprice(monkeypatch)
 
 
 def test_reprice_emits_from_cache_without_touching_paid_sources(reprice_env):
