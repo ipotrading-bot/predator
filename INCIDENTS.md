@@ -442,7 +442,7 @@ le repaie donc plus jamais. Rendement mesuré 10 % → 30 % dès le 2e run, et
 croissant. La mémoire est refermée sur le sitemap courant à chaque écriture,
 sinon elle gonfle sans fin.
 
-### odds500 n'est pas en panne, elle est FILTRÉE PAR IP (2026-08-26)
+### odds500 était FILTRÉE PAR IP — ✅ LEVÉ le 2026-08-27 par un proxy UK
 
 HTTP 200
 et 15 fixtures depuis un poste de dev, `Connection refused` depuis les
@@ -504,8 +504,30 @@ serait le Worker (jeton/hôte) ; AVEC, c'est l'amont, et le colo est nommé.
 Conséquence : le relais Cloudflare tel quel NE SUFFIT PAS depuis GitHub
 Actions. Il faut une sortie hors des colos US — relais épinglé en Europe
 (Fly.io/Render région EU), proxy à IP dédiée, ou runner auto-hébergé en
-Europe. Tant que ce n'est pas fait, odds500 → 7M → `team_aliases` reste
-INERTE (12 lignes) : ne pas chercher un bug de code, il n'y en a pas.
+Europe. ✅ RÉSOLU LE 2026-08-27 — proxy Webshare à sortie LONDRES (plan gratuit,
+10 proxys, 1 Go/mois), posé en secret GitHub `FREE_SOURCES_PROXY`. Premier
+run depuis un runner (33120263411) :
+
+    odds500: 15 matchs (15 avec prix sharp réel) / 15 à venir | 16 req
+    sevenm: 854 identifiants au sitemap   ← 7M atteint EN PRODUCTION
+    free_sources: 14 match(s) avec un nom inconnu — interrogation 7M
+
+Le 403 a disparu. odds500 apporte du prix SHARP RÉEL, ce qu'aucune autre
+source gratuite ne fait à ce volume. Vérifié avant de poser le secret :
+`curl --proxy … https://odds.500.com/fenxi/ouzhi-1.shtml` → 200 et
+**58 807 octets**, exactement la taille documentée d'une réponse valide.
+⚠️ Le Smart Placement du relais a été essayé le même soir et NE SUFFIT PAS
+(colo déplacé IAD → SEA, toujours américain, toujours refusé). C'est le
+proxy qui a réglé le blocage, pas lui.
+⛔ ET SANS L'INVERSION DE PRÉCÉDENCE, LE PROXY N'AURAIT RIEN CHANGÉ : le
+relais captait l'URL même quand un proxy était posé. Le log le dit désormais
+en clair : « net[odds500]: proxy configuré — le relais est ignoré ».
+⚠️ CE QUI N'EST PAS ENCORE GAGNÉ, et il ne faut pas le lire comme une panne :
+14 des 15 matchs sont ÉCARTÉS faute d'alias fiable, et odds500 reste en MODE
+OMBRE (1 match mesuré, 0 émis). Les deux se résorbent run après run — le
+dictionnaire `team_aliases` se remplit à chaque interrogation de 7M, et la
+sortie du mode ombre demande 100 matchs appariés à ≤ 2 points. Compter en
+JOURS, pas en runs.
 
 ### Un proxy posé était CAPTÉ par le relais, en silence (2026-08-27)
 
