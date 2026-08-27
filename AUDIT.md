@@ -128,6 +128,11 @@ C'est le tableau à consulter avant de toucher à quoi que ce soit.
 | `core.db` n'expose plus de remplacement de ligne (vérifié sur l'AST) | `…::test_aucun_module_ne_reference_encore_le_remplacement_de_ligne` |
 | Un échec d'écriture ne détruit plus la ligne | `…::test_un_echec_ne_detruit_plus_rien` |
 | La capture de closing line ne supprime jamais de ligne | `tests/test_closing_line.py::test_capture_never_uses_the_delete_then_insert_path` |
+| Un seul signal ACTIF par (match_id, market_key) — garanti par la base | `sql/migrate_v10_7_signals_unique_active.sql` + `tests/test_save_preserving.py::TestB2LaBaseArbitre` |
+| `_save` ne LIT plus avant d'écrire quand la clé est connue | `…::test_aucun_select_prealable_quand_la_cle_est_connue` |
+| Une ligne réglée entre-temps ne fait pas perdre le signal | `…::test_une_ligne_reglee_entre_temps_libere_la_place` |
+| Deux matchs sans identifiant ne s'écrasent pas | `…::test_deux_matchs_sans_identifiant_ne_secrasent_pas` |
+| Une violation d'unicité n'est pas prise pour une panne d'écriture | `…::TestB2ReconnaissanceDeLaViolation` |
 
 L'**invariant des sport-keys** (4 fichiers : `core/odds_api.py`,
 `core/learning_layer.py`, `api/index.py`) est décrit

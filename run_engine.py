@@ -379,23 +379,53 @@ def _refresh_ai_catalogues() -> None:
 _OPTIONAL_COLS = {"selection_name", "kelly_pct", "advice", "sharp_sources", "consensus_score", "correlation_group"}
 
 
-def _save(sb, signal) -> bool:
-    """Select-then-update-or-insert — dédup SANS perte. Rend True si persisté.
+def _is_unique_violation(err: str) -> bool:
+    """Un INSERT refusé parce que la ligne existe déjà (Postgres 23505).
 
-    L'ancien delete-then-insert avait trois effets destructeurs sous re-scan
-    (et le mode REPRICE re-scanne chaque heure) :
-    - il effaçait les CLOSING_LINE_COLS (`clv_pct_real`, `closing_*`) posées
-      par run_closing_line/audit via update_signal_fields — le CLV, notre
-      juge de rentabilité, était détruit par le scan suivant ;
-    - il changeait l'`id` à chaque passage, donc le `signal_id` recopié dans
-      `ai_learning_ledger` n'était jamais stable ;
-    - il remettait `created_at` à la date du dernier scan, faussant toute
-      analyse de time-to-match.
-    Désormais : une ligne ACTIVE existante pour (match_id, market_key) est
-    mise à jour en place (le payload de _emit ne nomme ni id, ni created_at,
-    ni les colonnes de clôture — elles survivent mécaniquement) ; sinon on
-    insère. Le scope status='active' garantit qu'une ligne settled/closed/
-    expired n'est JAMAIS ressuscitée : on insère une ligne neuve à côté.
+    Reconnu sur le CODE d'abord — PostgREST le remonte tel quel — et sur le
+    libellé ensuite, parce que le client peut aplatir l'erreur en chaîne.
+    """
+    bas = err.lower()
+    return ("23505" in err
+            or "duplicate key" in bas
+            or "already exists" in bas
+            or "unique constraint" in bas)
+
+
+def _save(sb, signal) -> bool:
+    """Écrit un signal : INSERT, et sur collision d'unicité, UPDATE ciblé.
+
+    C'ÉTAIT UN SELECT PUIS UN UPDATE-OU-INSERT (jusqu'au 2026-08-27, B2).
+    Entre la lecture et l'écriture, rien ne tenait : deux runs qui se
+    chevauchent — et ils se chevauchent, le scan standard et le tick golden
+    partagent des ligues — lisaient tous les deux « aucune ligne », puis
+    inséraient tous les deux. Le dashboard affichait le même pari deux fois,
+    `_portfolio_balance` le comptait deux fois dans son quota par sport, et
+    `risk_manager` doublait son exposition sans le savoir. Aucune erreur
+    n'était levée : le doublon était parfaitement valide pour le schéma.
+
+    Désormais c'est la BASE qui arbitre, via l'index unique partiel de
+    `sql/migrate_v10_7_signals_unique_active.sql`. On tente l'INSERT ; s'il
+    est refusé pour violation d'unicité, c'est qu'une ligne ACTIVE existe déjà
+    pour ce (match_id, market_key) et on la met à jour. La décision ne repose
+    plus sur une lecture qui peut être périmée à l'instant où on s'en sert.
+
+    ⚠️ POURQUOI PAS `upsert(on_conflict=…)`. PostgreSQL n'infère un index
+    unique PARTIEL comme cible de `ON CONFLICT` que si l'ordre porte lui-même
+    le prédicat de l'index ; PostgREST ne prend que des noms de colonnes et
+    n'a aucun moyen de le transmettre — un upsert sur cet index échouerait en
+    42P10. Or l'index DOIT être partiel : sans `status='active'`, une ligne
+    déjà réglée empêcherait tout nouveau signal sur le même match. Le détour
+    INSERT-puis-UPDATE donne le même effet et la même absence de course.
+
+    ⚠️ SANS `match_id` NI `market_key`, aucune contrainte n'existe — l'index
+    les exclut, parce que `_emit` écrit `match_id=""` par défaut et que deux
+    matchs sans identifiant se seraient écrasés l'un l'autre. Ces lignes
+    gardent l'ancien chemin, course comprise : documenté plutôt que masqué.
+    Mesuré le 2026-08-27 : 90 lignes actives, 0 sans `match_id`.
+
+    Le payload de `_emit` ne nomme ni `id`, ni `created_at`, ni les colonnes
+    de clôture : elles survivent mécaniquement à un UPDATE.
     """
     from core.constants import MAX_DB_RETRIES, DELAY_DB_RETRY
     from core.db import update_signal_fields
@@ -410,59 +440,90 @@ def _save(sb, signal) -> bool:
     # cohabiter dans le moteur — c'est précisément la confusion qu'on retire.
     if "executable_odd" in payload:
         payload["xbet_odd"] = payload.pop("executable_odd")
+
     mid  = payload.get("match_id", "")
     mkey = payload.get("market_key", "")
     sig_label = f"{payload.get('match', '?')}/{payload.get('market', '?')}"
+    protege = bool(mid and mkey)
 
-    for attempt in range(1, MAX_DB_RETRIES + 1):
-        existing_id = None
+    def _rafraichir():
+        """UPDATE de la ligne ACTIVE de ce (match_id, market_key).
+
+        True si elle a été mise à jour, False sur échec d'écriture, et None si
+        AUCUNE ligne active ne correspond — cas réel : elle vient d'être
+        réglée entre notre INSERT refusé et cet UPDATE. L'emplacement actif
+        est alors libre et il faut retenter l'INSERT, pas abandonner le signal.
+        """
+        champs = {k: v for k, v in payload.items()
+                  if k not in ("match_id", "market_key")}
         try:
-            q = sb.table("signals").select("id").eq("status", "active")
-            if mid and mkey:
-                q = q.eq("match_id", mid).eq("market_key", mkey)
-            else:
-                q = q.eq("match", payload["match"]).eq("market", payload.get("market", ""))
-            rows = (q.order("created_at", desc=True).limit(1).execute().data) or []
-            existing_id = rows[0]["id"] if rows else None
+            res = (sb.table("signals").update(champs)
+                   .eq("status", "active").eq("match_id", mid)
+                   .eq("market_key", mkey).execute())
         except Exception as e:
-            # Un SELECT raté retombe sur INSERT — parité avec l'ancien
-            # comportement où un DELETE raté produisait déjà un doublon
-            # potentiel ; la purge nettoie.
+            log.error("Supabase update (signal %s): %s", sig_label, str(e)[:100])
+            return False
+        if not (res.data or []):
+            return None
+        if DEBUG_MODE:
+            log.debug("✓ Signal refreshed: %s [edge=%.2f%%]",
+                      sig_label, payload.get("edge_pct", 0))
+        return True
+
+    def _rafraichir_sans_contrainte() -> bool:
+        """Chemin des lignes SANS identifiant, que l'index ne protège pas : on
+        retombe sur l'ancien select-then-update, course comprise. Le dire vaut
+        mieux que de laisser croire que tout est couvert."""
+        try:
+            rows = (sb.table("signals").select("id").eq("status", "active")
+                    .eq("match", payload["match"])
+                    .eq("market", payload.get("market", ""))
+                    .order("created_at", desc=True).limit(1).execute().data) or []
+        except Exception as e:
             if DEBUG_MODE:
                 log.debug("Supabase select (signal %s): %s", sig_label, str(e)[:80])
-
-        if existing_id is not None:
-            if update_signal_fields(sb, existing_id, payload,
-                                    optional_cols=frozenset(_OPTIONAL_COLS)):
-                if DEBUG_MODE:
-                    log.debug("✓ Signal refreshed: %s [edge=%.2f%%]",
-                              sig_label, payload.get("edge_pct", 0))
-                return True
-            if attempt < MAX_DB_RETRIES:
-                time.sleep(DELAY_DB_RETRY)
-                continue
-            log.error("Supabase update FAILED after %d retries (signal %s)",
-                      MAX_DB_RETRIES, sig_label)
             return False
+        if not rows:
+            return False
+        return update_signal_fields(sb, rows[0]["id"], payload,
+                                    optional_cols=frozenset(_OPTIONAL_COLS))
 
-        # Insert new signal
+    for attempt in range(1, MAX_DB_RETRIES + 1):
+        if not protege and _rafraichir_sans_contrainte():
+            return True
         try:
             sb.table("signals").insert(payload).execute()
             if DEBUG_MODE:
-                log.debug("✓ Signal saved: %s [edge=%.2f%%]", sig_label, payload.get("edge_pct", 0))
+                log.debug("✓ Signal saved: %s [edge=%.2f%%]",
+                          sig_label, payload.get("edge_pct", 0))
             return True
         except Exception as e:
             err = str(e)
-            
-            # Retry on transient DB errors
-            if "FATAL" in err or "connection" in err.lower() or "timeout" in err.lower():
+
+            # La ligne active existe déjà : c'est le cas NOMINAL d'un re-scan,
+            # pas une panne.
+            if protege and _is_unique_violation(err):
+                issue = _rafraichir()
+                if issue is True:
+                    return True
+                if issue is None and attempt < MAX_DB_RETRIES:
+                    continue      # réglée entre-temps, l'emplacement est libre
                 if attempt < MAX_DB_RETRIES:
-                    log.warning("Supabase transient error (signal %s, attempt %d/%d): %s", 
-                               sig_label, attempt, MAX_DB_RETRIES, err[:60])
                     time.sleep(DELAY_DB_RETRY)
                     continue
-            
-            # Graceful fallback: strip optional columns if schema mismatch
+                log.error("Supabase update FAILED after %d retries (signal %s)",
+                          MAX_DB_RETRIES, sig_label)
+                return False
+
+            # Erreurs transitoires : on retente.
+            if "FATAL" in err or "connection" in err.lower() or "timeout" in err.lower():
+                if attempt < MAX_DB_RETRIES:
+                    log.warning("Supabase transient error (signal %s, attempt %d/%d): %s",
+                                sig_label, attempt, MAX_DB_RETRIES, err[:60])
+                    time.sleep(DELAY_DB_RETRY)
+                    continue
+
+            # Schéma en retard : on réessaie sans les colonnes optionnelles.
             if "does not exist" in err or "column" in err.lower():
                 core = {k: v for k, v in payload.items() if k not in _OPTIONAL_COLS}
                 try:
@@ -470,13 +531,13 @@ def _save(sb, signal) -> bool:
                     log.warning("Signal saved (schema fallback): %s", sig_label)
                     return True
                 except Exception as e2:
-                    log.error("Supabase insert FAILED after retry (signal %s): %s", sig_label, str(e2)[:80])
+                    log.error("Supabase insert FAILED after retry (signal %s): %s",
+                              sig_label, str(e2)[:80])
             else:
                 log.error("Supabase insert FAILED (signal %s): %s", sig_label, err[:80])
-            
+
             return False
-    
-    log.error("Supabase insert FAILED after %d retries (signal %s)", MAX_DB_RETRIES, sig_label)
+
     return False
 
 
