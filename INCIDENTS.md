@@ -507,6 +507,37 @@ Actions. Il faut une sortie hors des colos US — relais épinglé en Europe
 Europe. Tant que ce n'est pas fait, odds500 → 7M → `team_aliases` reste
 INERTE (12 lignes) : ne pas chercher un bug de code, il n'y en a pas.
 
+### Un proxy posé était CAPTÉ par le relais, en silence (2026-08-27)
+
+« J'avais installé un proxy » — et rien n'avait changé. Deux causes,
+cumulées, et aucune ne produisait le moindre message d'erreur.
+
+1. AUCUN PROXY N'ÉTAIT POSÉ NULLE PART. Vérifié le 2026-08-27 : ni dans
+   `app_secrets` (qui ne porte que les 3 clés de cotes), ni dans les secrets
+   GitHub Actions (seuls `FREE_SOURCES_RELAY` et `..._TOKEN` existent), ni
+   dans `.env`. Le bloc `env:` des workflows affichait bien
+   `FREE_SOURCES_PROXY:` et `ODDS500_PROXY:` — VIDES. La plomberie est
+   complète depuis le 2026-08-26 (`scripts/ci_env.py::RELAYS`) ; il ne
+   manquait que la VALEUR. Un proxy acheté chez un fournisseur n'entre pas
+   tout seul dans le pipeline : il faut poser le secret.
+2. ET MÊME POSÉ, IL AURAIT ÉTÉ IGNORÉ. La règle « le relais gagne si les
+   deux sont posés » datait du 2026-08-26, quand le relais était le seul
+   mécanisme et qu'on ignorait encore d'où il sortirait. On le sait depuis :
+   un Worker s'exécute au colo le plus proche de l'APPELANT — IAD depuis les
+   runners — et 500.com refuse cette IP. Le relais est donc PROUVÉ inopérant
+   là où le pipeline tourne, et le proxy est le remède documenté.
+   ⛔ PRÉCÉDENCE INVERSÉE : `net.prepare()` laisse l'URL intacte dès qu'un
+   proxy est configuré pour la source, et le dit dans les logs. Poser un
+   proxy est un geste EXPLICITE qui n'a qu'une raison d'être — contourner ce
+   blocage précis. L'ancienne règle menait au pire scénario : capacité payée,
+   jamais empruntée, invisible.
+   Le relais reste le chemin par défaut quand aucun proxy n'est posé.
+Gardien : `tests/test_free_sources_wiring.py::TestModeRelais`
+::`test_un_proxy_pose_l_emporte_sur_le_relais` et
+::`test_sans_proxy_le_relais_reprend_la_main`.
+⚠️ Ce qui tranche reste un run DEPUIS UN RUNNER GitHub : `describe_failure`
+nomme le colo, et un 403 SANS `X-Relay-By` n'a pas la même cause qu'avec.
+
 ### odds500 : le Smart Placement n'avait jamais été essayé (2026-08-27)
 
 Le blocage est établi et ne change pas : un Worker s'exécute au colo le plus

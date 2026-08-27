@@ -154,6 +154,36 @@ class TestModeRelais:
         assert h["X-Relay-Token"] == "s3cr3t"
         assert h["User-Agent"] == "X"          # l'UA honnête est préservé
 
+    def test_un_proxy_pose_l_emporte_sur_le_relais(self, monkeypatch):
+        """La panne la plus coûteuse serait SILENCIEUSE.
+
+        Le relais est PROUVÉ inopérant depuis les runners GitHub : un Worker
+        s'exécute au colo le plus proche de l'APPELANT (IAD), et 500.com
+        refuse cette IP de sortie. Avec l'ancienne précédence, un opérateur
+        qui pose un proxy pour débloquer la source voyait le relais capter
+        l'URL malgré tout — capacité payée, jamais utilisée, et pas une ligne
+        de log pour le dire.
+        """
+        monkeypatch.setenv("FREE_SOURCES_RELAY", "https://w.example.dev")
+        monkeypatch.setenv("FREE_SOURCES_RELAY_TOKEN", "t")
+        monkeypatch.setenv("ODDS500_PROXY", "http://u:p@eu-proxy.example:8080")
+        net.reset()
+        u, h = net.prepare("odds500", "https://odds.500.com/", {"User-Agent": "X"})
+        assert u == "https://odds.500.com/", "le relais a capté l'URL malgré le proxy"
+        assert "X-Relay-Token" not in h
+        # Et le proxy est bien celui qui sera emprunté.
+        assert net.proxy_for("odds500") == "http://u:p@eu-proxy.example:8080"
+
+    def test_sans_proxy_le_relais_reprend_la_main(self, monkeypatch):
+        """L'inversion ne doit pas désactiver le relais pour tout le monde :
+        il reste le chemin par défaut quand aucun proxy n'est posé."""
+        monkeypatch.setenv("FREE_SOURCES_RELAY", "https://w.example.dev")
+        monkeypatch.delenv("ODDS500_PROXY", raising=False)
+        monkeypatch.delenv("FREE_SOURCES_PROXY", raising=False)
+        net.reset()
+        u, _h = net.prepare("odds500", "https://odds.500.com/", {})
+        assert u.startswith("https://w.example.dev?u=")
+
     def test_les_entetes_appelants_ne_sont_pas_mutes(self, monkeypatch):
         """`_HEADERS` est un dict de MODULE partagé : le muter contaminerait
         tous les appels suivants, y compris hors relais."""

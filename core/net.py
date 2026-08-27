@@ -133,6 +133,29 @@ def prepare(source: str, url: str, headers: dict) -> tuple:
     relay = relay_for(source)
     if not relay:
         return url, headers
+
+    # ── UN PROXY POSÉ L'EMPORTE SUR LE RELAIS (2026-08-27) ───────────
+    # La règle inverse (« le relais gagne si les deux sont posés ») datait du
+    # 2026-08-26, quand le relais était le seul mécanisme et qu'on ignorait
+    # encore d'où il sortirait. On le sait maintenant, et c'est tranché : un
+    # Worker s'exécute au colo le plus proche de l'APPELANT, donc IAD depuis
+    # les runners GitHub, et 500.com REFUSE cette IP de sortie (run engine
+    # 32994959190). Le relais est donc PROUVÉ inopérant là où le pipeline
+    # tourne, tandis que le proxy est le remède documenté.
+    #
+    # Garder l'ancienne précédence menait au pire scénario possible :
+    # l'opérateur pose un proxy pour débloquer la source, le relais continue
+    # de capter l'URL, et rien ne change — sans un seul message d'erreur qui
+    # le dise. Une capacité payée et jamais utilisée, invisible dans les logs.
+    #
+    # Poser un proxy est un geste EXPLICITE : il n'a qu'une raison d'être, et
+    # c'est de contourner exactement ce blocage.
+    if proxy_for(source):
+        log.info("net[%s]: proxy configuré — le relais est ignoré pour cette "
+                 "source (le relais sort au colo de l'appelant, ce que 500.com "
+                 "refuse depuis les runners)", source)
+        return url, headers
+
     target = urllib.parse.quote(url, safe="")
     out = dict(headers or {})
     token = _secret(f"{source.upper()}_RELAY_TOKEN") or _secret(_RELAY_TOKEN_ENV)
