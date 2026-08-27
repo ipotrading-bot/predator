@@ -57,12 +57,10 @@ jobs:
         with:
           pool: readonly
         env:
-          # ▼ GÉNÉRÉ par `python scripts/ci_env.py --write` — pool `readonly`. NE PAS ÉDITER.
+          # ▼ GÉNÉRÉ par `python scripts/ci_env.py --write` — pool `readonly`, amorçage (Supabase seul). NE PAS ÉDITER.
           SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
           SUPABASE_KEY: ${{ secrets.SUPABASE_KEY }}
-          TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
-          TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID }}
-          # ▲ fin du bloc généré (pool `readonly`)
+          # ▲ fin du bloc généré (pool `readonly`, amorçage (Supabase seul))
       - name: Envoyer le rapport Telegram
         env:
           # ▼ GÉNÉRÉ par `python scripts/ci_env.py --write` — pool `readonly`. NE PAS ÉDITER.
@@ -88,12 +86,10 @@ jobs:
         with:
           pool: readonly
         env:
-          # ▼ GÉNÉRÉ par `python scripts/ci_env.py --write` — pool `readonly`. NE PAS ÉDITER.
+          # ▼ GÉNÉRÉ par `python scripts/ci_env.py --write` — pool `readonly`, amorçage (Supabase seul). NE PAS ÉDITER.
           SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
           SUPABASE_KEY: ${{ secrets.SUPABASE_KEY }}
-          TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
-          TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID }}
-          # ▲ fin du bloc généré (pool `readonly`)
+          # ▲ fin du bloc généré (pool `readonly`, amorçage (Supabase seul))
       - name: Classement des sports par réussite
         env:
           # ▼ GÉNÉRÉ par `python scripts/ci_env.py --write` — pool `readonly`. NE PAS ÉDITER.

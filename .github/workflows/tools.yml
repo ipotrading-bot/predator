@@ -28,12 +28,10 @@ jobs:
         with:
           pool: readonly
         env:
-          # ▼ GÉNÉRÉ par `python scripts/ci_env.py --write` — pool `readonly`. NE PAS ÉDITER.
+          # ▼ GÉNÉRÉ par `python scripts/ci_env.py --write` — pool `readonly`, amorçage (Supabase seul). NE PAS ÉDITER.
           SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
           SUPABASE_KEY: ${{ secrets.SUPABASE_KEY }}
-          TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
-          TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID }}
-          # ▲ fin du bloc généré (pool `readonly`)
+          # ▲ fin du bloc généré (pool `readonly`, amorçage (Supabase seul))
       - name: Simulation Monte Carlo
         env:
           # ▼ GÉNÉRÉ par `python scripts/ci_env.py --write` — pool `readonly`. NE PAS ÉDITER.
@@ -57,11 +55,11 @@ jobs:
         with:
           pool: backfill
         env:
-          # ▼ GÉNÉRÉ par `python scripts/ci_env.py --write` — pool `backfill`. NE PAS ÉDITER.
+          # ▼ GÉNÉRÉ par `python scripts/ci_env.py --write` — pool `backfill`, amorçage (Supabase seul). NE PAS ÉDITER.
           SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
           SUPABASE_KEY: ${{ secrets.SUPABASE_KEY }}
           SUPABASE_SERVICE_KEY: ${{ secrets.SUPABASE_SERVICE_KEY }}
-          # ▲ fin du bloc généré (pool `backfill`)
+          # ▲ fin du bloc généré (pool `backfill`, amorçage (Supabase seul))
       - name: Backfill du ledger
         env:
           # ▼ GÉNÉRÉ par `python scripts/ci_env.py --write` — pool `backfill`. NE PAS ÉDITER.

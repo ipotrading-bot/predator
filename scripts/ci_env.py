@@ -176,6 +176,34 @@ def env_for(pool: str, secrets: dict) -> dict:
     return env
 
 
+def bootstrap_keys(pool: str) -> tuple:
+    """Ce qu'un step de PRÉPARATION reçoit : les clés Supabase du pool, et
+    rien d'autre.
+
+    POURQUOI CE BLOC RÉDUIT EXISTE (C5, 2026-08-27)
+    -----------------------------------------------
+    L'action composite `.github/actions/setup` recevait le pool ENTIER. Or
+    elle ne fait pas que le préflight : elle restaure un cache et lance
+    `pip install -r requirements.txt`. Toutes les clés IA, de cotes, de
+    Telegram et de Betfair étaient donc dans l'environnement d'un `pip`, qui
+    exécute du code arbitraire de dizaines de paquets tiers. C'est exactement
+    le reproche que CLAUDE.md fait au dump `toJSON(secrets)` — « lisible par
+    chaque step du job, `actions/checkout` et `pip install` compris » — sous
+    une autre forme.
+
+    Même chose pour le step « Résoudre le mode », qui lance
+    `scripts/ci_scan_mode.py` : celui-ci ne lit que SUPABASE_URL,
+    SUPABASE_KEY et SUPABASE_SERVICE_KEY (vérifié), et recevait pourtant les
+    quarante clés du pool `scan`.
+
+    DÉRIVÉ, jamais listé à la main : on filtre le passthrough du pool. Le pool
+    `readonly` n'a pas de SUPABASE_SERVICE_KEY, son bloc d'amorçage n'en aura
+    donc pas non plus — l'invariant « readonly ne détient aucun jeton
+    d'écriture » tient sans qu'on ait à y penser.
+    """
+    return tuple(k for k in POOLS[pool]["passthrough"] if k.startswith("SUPABASE_"))
+
+
 def secret_names_for(pool: str) -> set:
     """Les SECRETS GitHub lus par le pool (≠ noms d'env : cf. rename)."""
     spec = POOLS[pool]
@@ -188,18 +216,33 @@ def secret_names_for(pool: str) -> set:
 
 
 # ── Rendu des blocs YAML (l'ancienne voie toJSON est interdite, cf. en-tête) ──
-MARQUE_DEBUT = "# ▼ GÉNÉRÉ par `python scripts/ci_env.py --write` — pool `{pool}`. NE PAS ÉDITER."
-MARQUE_FIN = "# ▲ fin du bloc généré (pool `{pool}`)"
+MARQUE_DEBUT = ("# ▼ GÉNÉRÉ par `python scripts/ci_env.py --write` — pool `{pool}`"
+                "{suffixe}. NE PAS ÉDITER.")
+MARQUE_FIN = "# ▲ fin du bloc généré (pool `{pool}`{suffixe})"
+# Suffixe des blocs RÉDUITS. Il est dans le marqueur pour que `--write` sache
+# quoi régénérer sans deviner, et pour qu'un relecteur du YAML voie du premier
+# coup d'œil qu'un step est volontairement privé de ses clés.
+SUFFIXE_AMORCAGE = ", amorçage (Supabase seul)"
 _RE_BLOC = None  # compilé à la volée dans _blocs_de
 
 
-def render(pool: str, indent: int = 10) -> str:
+def render(pool: str, indent: int = 10, amorcage: bool = False) -> str:
     """Le bloc `env:` YAML du pool — une ligne `NOM: ${{ secrets.SOURCE }}`
-    par clé, marqueurs compris. Déterministe : l'ordre vient des pools."""
+    par clé, marqueurs compris. Déterministe : l'ordre vient des pools.
+
+    `amorcage=True` rend le bloc RÉDUIT de `bootstrap_keys()` : Supabase seul,
+    pour les steps qui préparent le runner sans faire le travail.
+    """
     pad = " " * indent
     spec = POOLS[pool]
+    suffixe = SUFFIXE_AMORCAGE if amorcage else ""
+    lignes = [pad + MARQUE_DEBUT.format(pool=pool, suffixe=suffixe)]
+    if amorcage:
+        for nom in bootstrap_keys(pool):
+            lignes.append(f"{pad}{nom}: ${{{{ secrets.{nom} }}}}")
+        lignes.append(pad + MARQUE_FIN.format(pool=pool, suffixe=suffixe))
+        return "\n".join(lignes)
     renames = spec.get("rename") or {}
-    lignes = [pad + MARQUE_DEBUT.format(pool=pool)]
     for nom in spec["passthrough"]:
         if nom in renames:
             continue
@@ -207,16 +250,17 @@ def render(pool: str, indent: int = 10) -> str:
     for dst, src in renames.items():
         lignes.append(f"{pad}{dst}: ${{{{ secrets.{src} }}}}   "
                       f"# cloisonnement : {dst} du process = secret {src}")
-    lignes.append(pad + MARQUE_FIN.format(pool=pool))
+    lignes.append(pad + MARQUE_FIN.format(pool=pool, suffixe=suffixe))
     return "\n".join(lignes)
 
 
 def _blocs_de(texte: str):
-    """[(pool, indent, bloc_tel_qu_ecrit)] trouvés dans un YAML."""
+    """[(pool, indent, amorcage, bloc_tel_qu_ecrit)] trouvés dans un YAML."""
     import re
     trouves = []
     debut = re.compile(r"^([ ]*)# \u25bc GÉNÉRÉ par `python scripts/ci_env\.py --write` "
-                       r"— pool `([a-z]+)`\. NE PAS ÉDITER\.$")
+                       r"— pool `([a-z]+)`(, amorçage \(Supabase seul\))?\. "
+                       r"NE PAS ÉDITER\.$")
     lignes = texte.split("\n")
     i = 0
     while i < len(lignes):
@@ -225,19 +269,21 @@ def _blocs_de(texte: str):
             i += 1
             continue
         indent, pool = len(m.group(1)), m.group(2)
-        fin = MARQUE_FIN.format(pool=pool)
+        amorcage = m.group(3) is not None
+        fin = MARQUE_FIN.format(pool=pool,
+                                suffixe=SUFFIXE_AMORCAGE if amorcage else "")
         j = i + 1
         while j < len(lignes) and lignes[j].strip() != fin:
             j += 1
-        trouves.append((pool, indent, "\n".join(lignes[i:j + 1])))
+        trouves.append((pool, indent, amorcage, "\n".join(lignes[i:j + 1])))
         i = j + 1
     return trouves
 
 
 def reecrire(texte: str) -> str:
     """Remplace chaque bloc marqué par son rendu à jour."""
-    for pool, indent, ancien in _blocs_de(texte):
-        texte = texte.replace(ancien, render(pool, indent), 1)
+    for pool, indent, amorcage, ancien in _blocs_de(texte):
+        texte = texte.replace(ancien, render(pool, indent, amorcage), 1)
     return texte
 
 # ── Préflight ─────────────────────────────────────────────────────────
@@ -263,13 +309,26 @@ def supabase_role(key: str) -> str:
         return "?"
 
 
-def check(pool: str, secrets: dict) -> list[tuple[str, str]]:
+def check(pool: str, secrets: dict, amorcage: bool = False) -> list[tuple[str, str]]:
     """Retourne [(niveau, message)] avec niveau ∈ {error, warning, notice}.
-    N'imprime rien, ne lit pas l'env : testable purement."""
+    N'imprime rien, ne lit pas l'env : testable purement.
+
+    `amorcage=True` : le step ne porte QUE les clés Supabase (C5), on ne
+    vérifie donc que les fondations — présence des clés requises visibles et
+    rôle de la clé de service. Poursuivre au-delà ferait crier au loup sur des
+    secrets absents de CE step mais bien présents dans celui qui travaille :
+    un préflight qui alerte à chaque run n'est plus lu, et c'est ainsi qu'on
+    perd une vraie alerte.
+    """
     spec = POOLS[pool]
     out: list[tuple[str, str]] = []
 
-    missing = [k for k in spec["required"] if not secrets.get(k)]
+    exigees = spec["required"]
+    if amorcage:
+        visibles = set(bootstrap_keys(pool))
+        exigees = tuple(k for k in exigees if k in visibles)
+
+    missing = [k for k in exigees if not secrets.get(k)]
     if missing:
         out.append(("error", f"Secrets manquants pour le pool {pool} : {' '.join(missing)} "
                              "— le job sortirait en 0 sans rien avoir fait"))
@@ -282,6 +341,12 @@ def check(pool: str, secrets: dict) -> list[tuple[str, str]]:
                                  "c'est la clé anon/publishable. Toute écriture sera rejetée par RLS "
                                  "(42501). Correctif : Supabase → Project Settings → API Keys → copier "
                                  "la clé 'service_role' dans ce secret GitHub."))
+
+    if amorcage:
+        # Le reste (empreinte Groq, pool Groq, sources de repli) porte sur des
+        # secrets que ce step ne reçoit PAS. Le préflight complet tourne dans
+        # le step qui travaille — voir `--check` sans `--amorcage`.
+        return out
 
     if spec.get("groq_fingerprint"):
         # LE CLOISONNEMENT NE PEUT PLUS SE VÉRIFIER DANS UN SEUL JOB, et c'est
@@ -323,13 +388,14 @@ def check(pool: str, secrets: dict) -> list[tuple[str, str]]:
 
 
 # ── CLI ───────────────────────────────────────────────────────────────
-def _load_secrets(pool: str) -> dict:
+def _load_secrets(pool: str, amorcage: bool = False) -> dict:
     """Les secrets du pool, lus dans l'ENVIRONNEMENT du step.
 
     C'est le bloc généré du workflow qui les y a mis, un par un. Il n'existe
     plus de dump JSON : GitHub refuse de faire tourner un workflow qui en
     fabrique un (cf. l'en-tête de ce fichier)."""
-    noms = set(POOLS[pool]["passthrough"]) | set((POOLS[pool].get("rename") or {}))
+    noms = (set(bootstrap_keys(pool)) if amorcage
+            else set(POOLS[pool]["passthrough"]) | set((POOLS[pool].get("rename") or {})))
     return {k: os.environ.get(k, "") for k in noms}
 
 
@@ -338,6 +404,10 @@ def main(argv: list[str] | None = None) -> int:
     ap.add_argument("--pool", choices=sorted(POOLS))
     ap.add_argument("--check", action="store_true",
                     help="préflight seul : annotations GitHub, sort 1 si une erreur")
+    ap.add_argument("--amorcage", action="store_true",
+                    help="le step ne porte que les clés Supabase (C5) : ne "
+                         "vérifier que les fondations, sans crier au loup sur "
+                         "les secrets qu'il ne reçoit délibérément pas")
     ap.add_argument("--render", action="store_true",
                     help="imprime le bloc `env:` YAML du pool")
     ap.add_argument("--write", action="store_true",
@@ -357,16 +427,19 @@ def main(argv: list[str] | None = None) -> int:
     if not args.pool:
         ap.error("--pool est requis (sauf avec --write)")
     if args.render:
-        print(render(args.pool))
+        print(render(args.pool, amorcage=args.amorcage))
         return 0
 
-    secrets = _load_secrets(args.pool)
-    findings = check(args.pool, secrets)
+    secrets = _load_secrets(args.pool, args.amorcage)
+    findings = check(args.pool, secrets, args.amorcage)
     for level, msg in findings:
         print(f"::{level}::{msg}")
     if any(lvl == "error" for lvl, _ in findings):
         return 1
-    print(f"Préflight pool={args.pool} OK — {len(POOLS[args.pool]['passthrough'])} variables "
+    attendues = (len(bootstrap_keys(args.pool)) if args.amorcage
+                 else len(POOLS[args.pool]["passthrough"]))
+    portee = "amorçage (Supabase seul)" if args.amorcage else "complet"
+    print(f"Préflight pool={args.pool} [{portee}] OK — {attendues} variables "
           f"attendues, aucune valeur affichée.")
     return 0
 

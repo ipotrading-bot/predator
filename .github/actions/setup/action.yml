@@ -6,8 +6,8 @@ description: >-
   clés par job, dérivée du registre IA. Le checkout reste dans l'appelant :
   une action locale ne peut pas tourner avant que le dépôt soit présent.
 
-  Le step appelant DOIT poser le bloc `env:` de son pool, généré par
-  `python scripts/ci_env.py --write`. NE JAMAIS fabriquer un dump de tous les
+  Le step appelant DOIT poser le bloc `env:` d'AMORÇAGE de son pool (Supabase
+  seul), généré par `python scripts/ci_env.py --write`. NE JAMAIS fabriquer un dump de tous les
   secrets (`toJSON(secrets)`) : GitHub refuse de faire tourner un workflow qui
   en contient un — « GitHub detected that this workflow file may be malicious »,
   conclusion `action_required`, zéro job, aucun log. Vécu le 2026-08-26 sur
@@ -49,9 +49,15 @@ runs:
       shell: bash
       run: pip install -r requirements.txt
 
-    - name: Préflight des secrets (pool ${{ inputs.pool }})
+    # PRÉFLIGHT D'AMORÇAGE SEULEMENT (C5, 2026-08-27). Ce step ne reçoit plus
+    # que les clés Supabase : `pip install` ci-dessus exécute le code de
+    # dizaines de paquets tiers, et il n'a rien à faire avec les clés IA, de
+    # cotes, de Telegram ou de Betfair dans son environnement. Le préflight
+    # COMPLET — empreinte Groq, pool Groq, sources de repli — tourne dans le
+    # step qui travaille, seul à porter le pool entier.
+    - name: Préflight d'amorçage (pool ${{ inputs.pool }})
       if: inputs.pool != 'none'
       shell: bash
       env:
         POOL: ${{ inputs.pool }}
-      run: python scripts/ci_env.py --pool "$POOL" --check
+      run: python scripts/ci_env.py --pool "$POOL" --check --amorcage

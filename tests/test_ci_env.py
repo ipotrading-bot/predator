@@ -313,9 +313,10 @@ def test_chaque_bloc_genere_est_conforme_a_son_pool(wf):
     compare la copie à sa source » de la parade de CLAUDE.md.
     """
     texte = wf.read_text(encoding="utf-8")
-    for pool, indent, ecrit in ci_env._blocs_de(texte):
-        assert ecrit == ci_env.render(pool, indent), (
-            f"{wf.name} : le bloc du pool `{pool}` a divergé de sa source — "
+    for pool, indent, amorcage, ecrit in ci_env._blocs_de(texte):
+        assert ecrit == ci_env.render(pool, indent, amorcage), (
+            f"{wf.name} : le bloc du pool `{pool}`"
+            f"{' (amorçage)' if amorcage else ''} a divergé de sa source — "
             "lancer `python scripts/ci_env.py --write`")
 
 
@@ -325,7 +326,7 @@ def test_aucun_secret_nommé_hors_dun_bloc_genere(wf):
     que toute cette mécanique existe pour rendre impossible."""
     texte = wf.read_text(encoding="utf-8")
     dedans = set()
-    for _pool, _i, bloc in ci_env._blocs_de(texte):
+    for _pool, _i, _amorcage, bloc in ci_env._blocs_de(texte):
         dedans |= set(re.findall(r"secrets\.([A-Za-z0-9_]+)", bloc))
     dehors = set(re.findall(r"secrets\.([A-Za-z0-9_]+)", texte)) - dedans - SECRETS_HORS_BLOC
     assert not dehors, (f"{wf.name} nomme {sorted(dehors)} hors d'un bloc généré — "
@@ -365,7 +366,8 @@ def test_le_step_reprice_ne_peut_mecaniquement_rien_depenser():
     garantie n'est plus un filtrage à l'exécution mais ce que le YAML transmet.
     C'est plus fort, et c'est vérifiable en lisant le fichier."""
     texte = (RACINE / ".github" / "workflows" / "scan.yml").read_text(encoding="utf-8")
-    blocs = {pool: b for pool, _i, b in ci_env._blocs_de(texte)}
+    blocs = {pool: b for pool, _i, amorcage, b in ci_env._blocs_de(texte)
+             if not amorcage}
     assert "reprice" in blocs, "scan.yml n'a plus de bloc `reprice`"
     noms = set(re.findall(r"secrets\.([A-Za-z0-9_]+)", blocs["reprice"]))
     assert not (noms & CLES_PAYANTES), f"REPRICE reçoit des clés payantes : {noms & CLES_PAYANTES}"
@@ -373,7 +375,8 @@ def test_le_step_reprice_ne_peut_mecaniquement_rien_depenser():
 
 def test_le_settlement_ne_recoit_que_la_cle_groq_de_reserve():
     texte = (RACINE / ".github" / "workflows" / "audit.yml").read_text(encoding="utf-8")
-    blocs = {pool: b for pool, _i, b in ci_env._blocs_de(texte)}
+    blocs = {pool: b for pool, _i, amorcage, b in ci_env._blocs_de(texte)
+             if not amorcage}
     groq = re.findall(r"GROQ_API_KEY: \$\{\{ secrets\.([A-Za-z0-9_]+)", blocs["settlement"])
     assert groq == [ci_env.GROQ_SETTLEMENT_SOURCE], groq
     assert "secrets.GROQ_API_KEY " not in blocs["settlement"]
@@ -385,3 +388,125 @@ def test_write_est_idempotent(tmp_path):
     for wf in WORKFLOWS:
         texte = wf.read_text(encoding="utf-8")
         assert ci_env.reecrire(texte) == texte, f"{wf.name} n'est pas à jour"
+
+
+# ── C5 — un step qui prépare le runner n'a pas à voir les clés ───────────
+
+class TestAmorcageSupabaseSeul:
+    """L'action composite `.github/actions/setup` recevait le pool ENTIER. Or
+    elle ne fait pas que le préflight : elle restaure un cache et lance
+    `pip install -r requirements.txt`. Toutes les clés IA, de cotes, de
+    Telegram et de Betfair étaient donc dans l'environnement d'un `pip`, qui
+    exécute le code de dizaines de paquets tiers.
+
+    C'est le reproche exact que CLAUDE.md fait au dump `toJSON(secrets)` —
+    « lisible par chaque step du job, `actions/checkout` et `pip install`
+    compris » — sous une autre forme, et celle-là ne déclenchait aucune
+    détection de GitHub.
+    """
+
+    @pytest.mark.parametrize("pool", sorted(ci_env.POOLS))
+    def test_lamorcage_ne_contient_que_du_supabase(self, pool):
+        assert all(k.startswith("SUPABASE_") for k in ci_env.bootstrap_keys(pool))
+
+    @pytest.mark.parametrize("pool", sorted(ci_env.POOLS))
+    def test_lamorcage_est_DERIVE_du_pool_jamais_liste(self, pool):
+        """Une liste tenue à la main finirait par diverger — c'est la panne
+        la plus fréquente de ce dépôt."""
+        attendu = tuple(k for k in ci_env.POOLS[pool]["passthrough"]
+                        if k.startswith("SUPABASE_"))
+        assert ci_env.bootstrap_keys(pool) == attendu
+
+    def test_readonly_namorce_pas_avec_un_jeton_decriture(self):
+        """Conséquence gratuite de la dérivation : le pool `readonly` n'a pas
+        de SUPABASE_SERVICE_KEY, son amorçage n'en a donc pas non plus.
+        L'invariant « readonly ne détient aucun jeton d'écriture » tient sans
+        qu'on ait eu à y penser."""
+        assert "SUPABASE_SERVICE_KEY" not in ci_env.bootstrap_keys("readonly")
+        assert "SUPABASE_SERVICE_KEY" in ci_env.bootstrap_keys("scan")
+
+    @pytest.mark.parametrize("wf", WORKFLOWS, ids=lambda p: p.name)
+    def test_les_steps_de_preparation_ne_voient_que_supabase(self, wf):
+        """Le garde qui compte : dans le YAML RÉEL, le bloc qui suit
+        `uses: ./.github/actions/setup` ou « Résoudre le mode » ne doit nommer
+        que des secrets Supabase."""
+        lignes = wf.read_text(encoding="utf-8").split("\n")
+        motifs = ("uses: ./.github/actions/setup", "name: Résoudre le mode")
+        for i, l in enumerate(lignes):
+            if not any(m in l for m in motifs):
+                continue
+            for j in range(i, min(i + 15, len(lignes))):
+                if "# ▼ GÉNÉRÉ par" not in lignes[j]:
+                    continue
+                assert ci_env.SUFFIXE_AMORCAGE in lignes[j], (
+                    f"{wf.name} ligne {j + 1} : un step de préparation porte "
+                    "le pool ENTIER — `pip install` verrait toutes les clés")
+                fin = next(k for k in range(j, len(lignes))
+                           if "# ▲ fin du bloc" in lignes[k])
+                noms = re.findall(r"secrets\.([A-Za-z0-9_]+)",
+                                  "\n".join(lignes[j:fin + 1]))
+                assert noms and all(n.startswith("SUPABASE_") for n in noms), \
+                    f"{wf.name} : amorçage non-Supabase → {noms}"
+                break
+
+
+class TestLePreflightCompletTourneOuSontLesCles:
+    """Réduire l'amorçage sans déplacer le préflight l'aurait rendu AVEUGLE :
+    il aurait signalé « GROQ_API_KEY absente » à chaque run, sur un secret
+    pourtant présent dans le step qui travaille. Un préflight qui crie au loup
+    à chaque exécution n'est plus lu — et c'est ainsi qu'on perd une vraie
+    alerte."""
+
+    def test_lamorcage_ne_verifie_que_les_fondations(self):
+        """Aucun avertissement sur des secrets que le step ne reçoit PAS."""
+        secrets = {"SUPABASE_URL": "u", "SUPABASE_KEY": "k",
+                   "SUPABASE_SERVICE_KEY": "sb_secret_x"}
+        constats = ci_env.check("scan", secrets, amorcage=True)
+        assert not [m for lvl, m in constats if lvl in ("warning", "error")], constats
+
+    def test_lamorcage_attrape_quand_meme_une_mauvaise_cle_de_service(self):
+        """Ce qu'il doit garder : la vérification qui a coûté 17 h le
+        2026-07-07."""
+        secrets = {"SUPABASE_URL": "u", "SUPABASE_KEY": "k",
+                   "SUPABASE_SERVICE_KEY": "sb_publishable_x"}
+        constats = ci_env.check("scan", secrets, amorcage=True)
+        assert any(lvl == "error" and "service_role" in m for lvl, m in constats)
+
+    def test_lamorcage_attrape_une_cle_supabase_manquante(self):
+        constats = ci_env.check("scan", {}, amorcage=True)
+        assert any(lvl == "error" for lvl, _ in constats)
+
+    def test_le_preflight_COMPLET_lui_avertit_encore(self):
+        """Sans quoi le déplacement aurait perdu l'empreinte Groq et les
+        alertes de sources de repli."""
+        secrets = {"SUPABASE_URL": "u", "SUPABASE_KEY": "k",
+                   "SUPABASE_SERVICE_KEY": "sb_secret_x"}
+        constats = ci_env.check("scan", secrets, amorcage=False)
+        assert any(lvl in ("warning", "notice") for lvl, _ in constats)
+
+    @pytest.mark.parametrize("wf,pool", [("scan.yml", "scan"),
+                                         ("audit.yml", "settlement")])
+    def test_le_step_de_travail_lance_le_preflight_complet(self, wf, pool):
+        """Seuls ces deux pools portent des contrôles au-delà des fondations
+        (empreinte Groq, pool Groq, sources de repli). Ils doivent donc les
+        exécuter là où les clés sont réellement présentes."""
+        texte = (RACINE / ".github" / "workflows" / wf).read_text(encoding="utf-8")
+        assert f"ci_env.py --pool {pool} --check" in texte, \
+            f"{wf} ne lance plus le préflight complet du pool `{pool}`"
+        assert f"--pool {pool} --check --amorcage" not in texte
+
+    def test_seuls_scan_et_settlement_ont_des_controles_au_dela_des_fondations(self):
+        """Si un autre pool en gagnait un, il faudrait lui aussi déplacer son
+        préflight — ce test le signalerait."""
+        riches = {p for p, spec in ci_env.POOLS.items()
+                  if spec.get("groq_fingerprint") or spec.get("groq_pool")
+                  or spec.get("warn_missing")}
+        assert riches == {"scan", "settlement"}, riches
+
+
+class TestLactionComposite:
+    def test_le_preflight_de_lation_est_en_mode_amorcage(self):
+        action = (RACINE / ".github" / "actions" / "setup" / "action.yml").read_text(
+            encoding="utf-8")
+        assert "--check --amorcage" in action, \
+            "l'action lancerait le préflight complet sans en avoir les clés"
