@@ -507,6 +507,35 @@ Actions. Il faut une sortie hors des colos US — relais épinglé en Europe
 Europe. Tant que ce n'est pas fait, odds500 → 7M → `team_aliases` reste
 INERTE (12 lignes) : ne pas chercher un bug de code, il n'y en a pas.
 
+### odds500 : le Smart Placement n'avait jamais été essayé (2026-08-27)
+
+Le blocage est établi et ne change pas : un Worker s'exécute au colo le plus
+proche de l'APPELANT, donc IAD depuis les runners GitHub, et 500.com refuse
+cette IP de sortie. Ce qui n'avait jamais été vérifié, c'est le réglage qui
+INVERSE cette règle. Relevé en base le 2026-08-27 : l'endpoint
+`workers/scripts/predator-relay/settings` rend `placement: {}` — le Smart
+Placement, qui exécute le Worker près de l'ORIGINE et non de l'appelant, n'a
+jamais été activé.
+Outil : `scripts/relay_smart_placement.py` (lecture seule sans `--oui`,
+réversible par `--annuler`).
+⚠️ CE N'EST PAS UNE SOLUTION ANNONCÉE, c'est une hypothèse gratuite qu'on
+ferme avant d'en payer une autre. Cloudflare optimise la LATENCE et choisit
+lui-même le colo : rien ne garantit qu'il en retienne un dont 500.com accepte
+l'IP. Si le 403 persiste en nommant un colo américain, la conclusion tient
+sans changement — il faut une sortie hors des colos US (relais épinglé en
+Europe, proxy à IP dédiée, ou runner auto-hébergé).
+⛔ ET LE PIÈGE EST LE MÊME QUE CELUI DU SOUS-DOMAINE workers.dev : un
+`placement.mode = smart` POSÉ ne prouve rien sur le RÉSULTAT. Seul un run
+depuis un runner GitHub tranche, et `net.describe_failure` nomme le colo.
+⚠️ Le PATCH renvoie les réglages EXISTANTS tels quels. N'envoyer que
+`placement` effacerait les bindings du Worker, dont `RELAY_TOKEN` — dont la
+valeur est ILLISIBLE une fois posée, ce qui obligerait à faire tourner le
+jeton des deux côtés. Et l'endpoint n'accepte QUE du multipart/form-data :
+un PATCH JSON rend 415.
+Note sur le jeton : il avait été trouvé en lecture seule le 2026-08-27 sur
+`workers/scripts`. Sur `settings` il rend 415 et non 403 — donc il écrit
+peut-être ici. Un 403 ne veut pas dire « jeton expiré ».
+
 ### Kalshi/Polymarket
 
 BRANCHÉS le 2026-08-26 (`free_sources.measure_slate_consensus`,
