@@ -34,9 +34,43 @@ class TestWilsonCI:
 
 
 class TestPBreakeven:
-    def test_matches_the_simplified_1_25_over_odds_formula_at_20pct_tax(self):
-        assert p_breakeven(2.5, tax_rate=0.20) == pytest.approx(1.25 / 2.5)
-        assert p_breakeven(5.0, tax_rate=0.20) == pytest.approx(1.25 / 5.0)
+    """Le modèle de taxe du dépôt frappe le GAIN NET d'un pari gagnant, jamais
+    le payout brut. Le point mort est donc `1 / (1 + (cote−1)(1−taux))`.
+
+    Le test précédent enchâssait `1.25/cote`, c'est-à-dire `1/((1−taux)·cote)`
+    — la taxe sur le PAYOUT BRUT, modèle qu'aucune autre fonction du dépôt
+    n'applique. Il ne pouvait donc pas détecter l'erreur : il la définissait.
+    """
+
+    def test_le_point_mort_equilibre_le_gain_net_et_la_mise_perdue(self):
+        # Définition : à p = point mort, p·(cote−1)·(1−taux) == (1−p).
+        for odds in (1.30, 1.85, 2.50, 5.00):
+            for tax in (0.0, 0.20, 0.35):
+                p = p_breakeven(odds, tax_rate=tax)
+                assert p * (odds - 1) * (1 - tax) == pytest.approx(1 - p, abs=1e-3), \
+                    (odds, tax)
+
+    def test_sans_taxe_le_point_mort_est_la_probabilite_implicite(self):
+        for odds in (1.30, 2.00, 4.00):
+            assert p_breakeven(odds, tax_rate=0.0) == pytest.approx(1 / odds, abs=1e-4)
+
+    def test_la_taxe_releve_le_point_mort(self):
+        for odds in (1.30, 2.00, 4.00):
+            assert p_breakeven(odds, tax_rate=0.20) > p_breakeven(odds, tax_rate=0.0)
+
+    def test_lancienne_formule_surestimait_le_taux_requis(self):
+        # Garde de non-régression chiffrée : à cote courte l'écart dépassait
+        # 15 points, assez pour déclarer perdante une bande rentable.
+        ancienne = 1 / ((1 - 0.20) * 1.35)          # 0.9259
+        assert p_breakeven(1.35, tax_rate=0.20) == pytest.approx(0.7812, abs=1e-4)
+        assert ancienne - p_breakeven(1.35, tax_rate=0.20) > 0.14
+
+    def test_une_bande_a_824_pct_sur_cote_135_est_rentable(self):
+        # Le cas réel du 2026-08-02 que l'ancienne formule condamnait.
+        p, odds = 0.824, 1.35
+        assert p > p_breakeven(odds, tax_rate=0.20)
+        ev_nette = p * (odds - 1) * 0.8 - (1 - p)
+        assert ev_nette > 0
 
     def test_higher_odds_need_lower_win_probability_to_break_even(self):
         assert p_breakeven(2.0) > p_breakeven(4.0)

@@ -29,11 +29,17 @@ def _now():
 
 
 def _totals_match(kickoff_hours):
-    """Marché totals largement au-dessus du seuil — seul le coup d'envoi varie."""
+    """Marché totals qui qualifie franchement — seul le coup d'envoi varie.
+
+    Cote soft 2.28 contre une ligne Pinnacle symétrique : +14 % d'EV brute et
+    +0,9 % d'EV NETTE de la taxe de 20 % rétablie en A2. L'ancienne fixture
+    (2.10) était positive avant taxe et négative après : le témoin
+    « émet normalement » ne témoignait plus de rien.
+    """
     return {
         "id": "match-past",
         "commence_time": (_now() + timedelta(hours=kickoff_hours)).isoformat(),
-        "totals_1xbet":    {"over": 2.10, "under": 1.80, "point": 2.5},
+        "totals_1xbet":    {"over": 2.28, "under": 1.80, "point": 2.5},
         "totals_pinnacle": {"over": 1.90, "under": 1.90, "point": 2.5},
     }
 

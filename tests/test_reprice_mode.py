@@ -114,14 +114,19 @@ def _slate_match(hours_ahead=5.0):
         "home": "Boca Juniors", "away": "River Plate",
         "league": "Copa", "sport": "soccer",
         "commence_time": ko.strftime("%Y-%m-%dT%H:%M:%SZ"),
-        "odds_1xbet": {"1": 2.10, "X": 3.55, "2": 4.0},
+        "odds_1xbet": {"1": 1.75, "X": 4.20, "2": 7.00},
         "_soft_source": "odds_api_io",
     }
 
 
 def _mb_prices():
+    # Chiffres calés sur le régime post-A2 : le DNB exécutable du soft vaut
+    # 1.3333 contre une probabilité sharp de 0,8171, soit +8,94 % d'EV brute
+    # et +3,50 % NETTE de la taxe de 20 %. L'ancien jeu (soft 2.10/3.55/4.00
+    # contre 2.00/3.60/4.20) donnait +2,49 % brut mais −4,42 % net : le signal
+    # ne sortait plus, et le test ne mesurait plus le mode REPRICE.
     return {"boca juniors_river plate": {
-        "1": 2.00, "X": 3.60, "2": 4.20,
+        "1": 1.55, "X": 4.00, "2": 6.50,
         "home": "Boca Juniors", "away": "River Plate", "_source": "matchbook",
     }}
 

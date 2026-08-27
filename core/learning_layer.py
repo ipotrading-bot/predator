@@ -30,7 +30,7 @@ import json
 import logging
 from datetime import datetime, timezone
 
-from core.constants import TAX_RATE as _TAX_RATE
+from core.constants import TAX_RATE as _TAX_RATE, roi_net_of_tax
 from core.stats_utils import (bucket_predictions, brier_reference, brier_score,
                               p_breakeven, wilson_ci)
 
@@ -338,12 +338,16 @@ def _sport_stats(rows: list[dict]) -> dict:
     docstring). PUSH/UNKNOWN/'closed'/'expired' rows are excluded from both
     hit_rate and ROI: they carry no decisive WIN/LOSS result.
 
-    roi = Σ(kelly_pct·(odds-1)) if WIN else -kelly_pct, / Σ(kelly_pct) —
-    kelly_pct stands in for stake size (mise); since it's a % of the same
-    fixed reference bankroll for every row, it cancels correctly in the
-    ratio without needing the absolute € amount. Rows missing kelly_pct
-    (pre-migration, or odds<=0) are skipped for ROI but still count for
-    hit_rate.
+    Le ROI est NET DE TAXE et vient de `core.constants.roi_net_of_tax` —
+    formule unique du dépôt. Il était calculé ICI, en BRUT, jusqu'au
+    2026-08-27 : la couche qui décide de monter ou de baisser un seuil jugeait
+    donc la rentabilité sur des gains que l'opérateur n'encaisse pas. Sur un
+    portefeuille à cote moyenne 1,85, la retenue de 20 % coûte environ 17
+    points de ROI — largement de quoi faire passer un sport perdant pour
+    rentable, et inversement.
+
+    Une ligne sans `kelly_pct` (avant migration) est écartée du ROI mais
+    compte toujours pour le `hit_rate`.
     """
     decisive = [r for r in rows if r.get("outcome") in _DECISIVE_OUTCOMES]
     n = len(decisive)
@@ -370,14 +374,7 @@ def _sport_stats(rows: list[dict]) -> dict:
     # imported from constants there.
     breakeven = p_breakeven(avg_odds, _TAX_RATE) if avg_odds else None
 
-    staked = [r for r in decisive if r.get("kelly_pct") and r.get("odds")]
-    if staked:
-        numer = sum(r["kelly_pct"] * (r["odds"] - 1) if r["outcome"] == "WIN" else -r["kelly_pct"]
-                    for r in staked)
-        denom = sum(r["kelly_pct"] for r in staked)
-        roi = numer / denom if denom else None
-    else:
-        roi = None
+    roi = roi_net_of_tax(decisive, _TAX_RATE)
 
     return {
         "n": n,

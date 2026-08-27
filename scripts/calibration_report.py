@@ -33,7 +33,7 @@ import os
 
 logging.basicConfig(level=logging.WARNING, format="%(levelname)s | %(message)s")
 
-from core.constants import TAX_RATE                       # noqa: E402
+from core.constants import TAX_RATE, roi_net_of_tax       # noqa: E402
 from core.constants import RETIRED_SPORTS  # noqa: E402
 from core.db import get_db                                # noqa: E402
 from core.learning_layer import (SPORT_DEFAULTS, _DECISIVE_OUTCOMES,  # noqa: E402
@@ -63,13 +63,10 @@ def _band_stats(rows: list[dict]) -> dict | None:
     # mis à 0, et le défaut (0.20) durcirait le seuil d'environ 25%.
     be = p_breakeven(avg_odds, TAX_RATE) if avg_odds else None
 
-    staked = [r for r in dec if r.get("kelly_pct") and r.get("odds")]
-    roi = None
-    if staked:
-        numer = sum(r["kelly_pct"] * (r["odds"] - 1) if r["outcome"] == "WIN"
-                    else -r["kelly_pct"] for r in staked)
-        denom = sum(r["kelly_pct"] for r in staked)
-        roi = numer / denom if denom else None
+    # Formule unique du dépôt, NETTE DE TAXE (core.constants). Elle était
+    # recopiée ici en BRUT : le rapport de calibration annonçait donc une
+    # rentabilité que l'opérateur n'encaisse pas.
+    roi = roi_net_of_tax(dec, TAX_RATE)
 
     return {"n": n, "hit": hit, "be": be, "roi": roi,
             "avg_odds": avg_odds, "wl": wl, "wh": wh}

@@ -33,10 +33,24 @@ def _kickoff(hours=3):
     return (_now() + timedelta(hours=hours)).isoformat()
 
 
-def _emit(signals, xbet_odd, sharp_prob, sharp_prob_cons=None, min_edge=1.5,
+# ── Régime de référence des tests de gates (A2, taxe rétablie à 20 %) ─────
+# Chaque gate doit être éprouvé dans un régime où LUI SEUL peut refuser le
+# signal. Depuis que TAX_RATE vaut 0.20, la mise Kelly refuse d'elle-même
+# toute EV brute inférieure au point mort après taxe — et ce point mort monte
+# vite avec la cote : +4,84 % à cote 1,30, mais +10,47 % à cote 1,90, soit
+# AU-DESSUS de SUSPECT_EDGE. Éprouver un gate à cote 1,90 le rendrait donc
+# indistinguable du gate de mise : le test passerait même si le gate étudié
+# était supprimé.
+# Régime retenu : cote 1.30, p 0.83 → +7,90 % brut, +2,92 % net, f* = 0,1217.
+COTE_VIABLE = 1.30
+PROB_VIABLE = 0.83        # EV nette positive, mise Kelly non nulle
+PROB_VIABLE_CONS = 0.82   # borne worst-case encore positive
+
+
+def _emit(signals, executable_odd, sharp_prob, sharp_prob_cons=None, min_edge=1.5,
           sport="soccer"):
     run_engine._emit(signals, None, _now(), log, "Arsenal vs Chelsea", sport,
-                     "PL", "h2h", "AH 0.0", xbet_odd, 1.90, sharp_prob, "⚽",
+                     "PL", "h2h", "AH 0.0", executable_odd, 1.25, sharp_prob, "⚽",
                      selection_name="Arsenal", min_edge=min_edge,
                      match_time=_kickoff(), match_id="m1",
                      sharp_prob_cons=sharp_prob_cons)
@@ -73,40 +87,49 @@ class TestDevigEnsemble:
 class TestWorstCaseGate:
     def test_median_positive_but_worst_case_negative_is_discarded(self):
         signals = []
-        # EV médiane +4.5% (passe le plancher), worst-case −5% : refus sec.
-        _emit(signals, xbet_odd=1.90, sharp_prob=0.55, sharp_prob_cons=0.50)
+        # La MÉDIANE est pleinement viable (+7,90 % brut, +2,92 % net, mise
+        # Kelly non nulle) : seul le gate worst-case peut refuser ce signal.
+        # Le supprimer ferait passer le test au vert — c'est ce qui le rend
+        # probant.
+        _emit(signals, executable_odd=COTE_VIABLE, sharp_prob=PROB_VIABLE,
+              sharp_prob_cons=0.76)   # 0.76 × 1.30 − 1 = −1,2 %
         assert signals == []
 
     def test_robust_ev_passes(self):
         signals = []
-        _emit(signals, xbet_odd=1.90, sharp_prob=0.56, sharp_prob_cons=0.55)
+        _emit(signals, executable_odd=COTE_VIABLE, sharp_prob=PROB_VIABLE,
+              sharp_prob_cons=PROB_VIABLE_CONS)
         assert len(signals) == 1
-        assert signals[0]["edge_pct"] == pytest.approx(6.4, abs=0.01)
+        assert signals[0]["edge_pct"] == pytest.approx(7.9, abs=0.01)
 
     def test_gate_optional_when_no_bound_available(self):
         # Branche oracle : pas de côté opposé, pas de borne — le gate ne
         # s'applique pas, les autres gardes suffisent.
         signals = []
-        _emit(signals, xbet_odd=1.90, sharp_prob=0.56, sharp_prob_cons=None)
+        _emit(signals, executable_odd=COTE_VIABLE, sharp_prob=PROB_VIABLE,
+              sharp_prob_cons=None)
         assert len(signals) == 1
 
 
 class TestKellyGate:
     def test_zero_stake_never_emits(self, monkeypatch):
-        # EV positive AVANT taxe (+3.1%) mais nulle après une taxe de 50% :
-        # optimal_stake_fraction rend 0 → le signal ne doit pas sortir.
+        # Le MÊME signal, viable à 20 % de taxe, cesse de l'être à 50 % :
+        # optimal_stake_fraction rend 0 → il ne doit pas sortir. Le contraste
+        # entre les deux taux est ce qui prouve que la mise est fiscalisée.
         monkeypatch.setattr(run_engine, "_TAX_RATE", 0.50)
         signals = []
-        _emit(signals, xbet_odd=1.90, sharp_prob=0.5425, sharp_prob_cons=0.5425)
+        _emit(signals, executable_odd=COTE_VIABLE, sharp_prob=PROB_VIABLE,
+              sharp_prob_cons=PROB_VIABLE_CONS)
         assert signals == []
 
     def test_kelly_pct_comes_from_tax_engine(self):
         from core.tax_engine import optimal_stake_fraction
         from core.constants import KELLY_FRACTION, TAX_RATE
         signals = []
-        _emit(signals, xbet_odd=1.90, sharp_prob=0.56, sharp_prob_cons=0.55)
+        _emit(signals, executable_odd=COTE_VIABLE, sharp_prob=PROB_VIABLE,
+              sharp_prob_cons=PROB_VIABLE_CONS)
         expected = round(optimal_stake_fraction(
-            0.56, 1.90, tax_rate=TAX_RATE,
+            PROB_VIABLE, COTE_VIABLE, tax_rate=TAX_RATE,
             kelly_multiplier=KELLY_FRACTION["soccer"]) * 100, 2)
         assert signals[0]["kelly_pct"] == pytest.approx(expected, abs=0.01)
         assert signals[0]["kelly_pct"] > 0
@@ -114,11 +137,12 @@ class TestKellyGate:
 
 class TestEvFloor:
     def test_floor_cannot_be_undercut_by_caller(self):
-        # min_edge=0.8 (règle AH0) + EV à +1.0% : sous le plancher → refus.
+        # min_edge=0.8 (règle AH0) + EV à +1.0 % : sous le plancher → refus.
+        # 0.7769 × 1.30 − 1 = +1,0 %.
         assert EV_EDGE_FLOOR > 1.0
         signals = []
-        _emit(signals, xbet_odd=1.90, sharp_prob=0.5316, sharp_prob_cons=0.5316,
-              min_edge=0.8)
+        _emit(signals, executable_odd=COTE_VIABLE, sharp_prob=0.7769,
+              sharp_prob_cons=0.7769, min_edge=0.8)
         assert signals == []
 
     def test_learned_threshold_above_floor_is_kept(self):

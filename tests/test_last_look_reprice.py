@@ -47,7 +47,7 @@ class TestLastLookReprice:
 
     def test_price_unchanged_system_survives(self):
         legs = [_leg("Arsenal vs Chelsea", "Arsenal", "soccer", "h2h",
-                     _dnb(2.20, 3.4), 0.65)]
+                     _dnb(2.20, 3.4), 0.75)]
         systems = [_system("2026-07-10T20", legs)]
 
         # 2.20 / nul 3.4 → DNB exécutable 1.5529, soit le prix d'entrée du leg.
@@ -59,11 +59,11 @@ class TestLastLookReprice:
         assert result[0]["legs"][0]["executable_odd"] == _dnb(2.20, 3.4)
 
     def test_price_worsened_cancels_the_system(self):
-        # Entrée : 1X2 brut 2.20 / nul 3.4 → DNB exécutable 1.5529, +EV à
-        # true_prob 0.65. Le relevé frais tombe à 1.60 / 3.4 → 1.1294, soit
-        # une EV franchement négative : le système doit être annulé.
+        # Entrée : 1X2 brut 2.20 / nul 3.4 → DNB exécutable 1.5529, soit
+        # +8,17 % d'EV NETTE à true_prob 0.75. Le relevé frais tombe à
+        # 1.60 / 3.4 → 1.1294, soit −17,24 % net : le système doit être annulé.
         legs = [_leg("Arsenal vs Chelsea", "Arsenal", "soccer", "h2h",
-                     _dnb(2.20, 3.4), 0.65)]
+                     _dnb(2.20, 3.4), 0.75)]
         systems = [_system("2026-07-10T20", legs)]
 
         with patch.object(harvester, "_fetch_multi_book",
@@ -74,7 +74,7 @@ class TestLastLookReprice:
 
     def test_price_improved_system_survives_with_new_price(self):
         legs = [_leg("Arsenal vs Chelsea", "Arsenal", "soccer", "h2h",
-                     _dnb(2.20, 3.4), 0.65)]
+                     _dnb(2.20, 3.4), 0.75)]
         systems = [_system("2026-07-10T20", legs)]
 
         with patch.object(harvester, "_fetch_multi_book",
@@ -89,7 +89,7 @@ class TestLastLookReprice:
         l'extérieur doit être relu sur la cote extérieure, sinon un simple
         basculement de favori écrirait le prix de l'autre équipe."""
         legs = [_leg("Arsenal vs Chelsea", "Chelsea", "soccer", "h2h",
-                     _dnb(3.20, 3.4), 0.50)]
+                     _dnb(3.20, 3.4), 0.55)]
         systems = [_system("2026-07-10T20", legs)]
 
         with patch.object(harvester, "_fetch_multi_book",
@@ -114,7 +114,7 @@ class TestLastLookReprice:
 
     def test_fetch_failure_keeps_original_price_not_fatal(self):
         legs = [_leg("Arsenal vs Chelsea", "Arsenal", "soccer", "h2h",
-                     _dnb(2.20, 3.4), 0.65)]
+                     _dnb(2.20, 3.4), 0.75)]
         systems = [_system("2026-07-10T20", legs)]
 
         with patch.object(harvester, "_fetch_multi_book", side_effect=RuntimeError("network down")):
@@ -125,7 +125,7 @@ class TestLastLookReprice:
 
     def test_no_matching_event_in_fresh_batch_keeps_original(self):
         legs = [_leg("Arsenal vs Chelsea", "Arsenal", "soccer", "h2h",
-                     _dnb(2.20, 3.4), 0.65)]
+                     _dnb(2.20, 3.4), 0.75)]
         systems = [_system("2026-07-10T20", legs)]
 
         with patch.object(harvester, "_fetch_multi_book",

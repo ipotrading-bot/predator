@@ -14,7 +14,10 @@ hit_rate is computed from the real `outcome` column instead.
 """
 import json
 
-from core.stats_utils import brier_score
+import pytest
+
+from core.constants import TAX_RATE, roi_net_of_tax
+from core.stats_utils import brier_score, p_breakeven
 from core.learning_layer import (
     SPORT_DEFAULTS,
     _MIN_SAMPLES,
@@ -219,10 +222,10 @@ class TestComputeAndSaveRealOutcome:
         assert updated["soccer"] == SPORT_DEFAULTS["soccer"]
 
     def test_high_hit_rate_not_significant_at_low_odds_holds_threshold(self):
-        # Task 4: 25/30 = 83% observed hit rate clears _TARGET_HI, but at
-        # odds=1.3 the tax-adjusted breakeven is ~96% (p_breakeven=1.25/1.3)
-        # — the Wilson 95% CI lower bound (~66%) doesn't clear that, so the
-        # threshold must NOT be relaxed on this sample alone.
+        # 25/30 = 83 % de réussite observée, au-dessus de _TARGET_HI. Mais à
+        # cote 1,30 le point mort net de taxe est de 80,65 % et la borne BASSE
+        # de Wilson (~66 %) ne le franchit pas : l'échantillon ne PROUVE rien,
+        # le seuil ne doit pas être relâché sur cette seule base.
         rows = [_row("WIN", odds=1.3) for _ in range(25)] + [_row("LOSS", odds=1.3) for _ in range(5)]
         sb = _FakeSupabase({"soccer": rows})
 
@@ -243,22 +246,46 @@ class TestComputeAndSaveRealOutcome:
 
 
 class TestBreakevenUsesOperatorTaxRate:
-    def test_lowering_allowed_at_realistic_win_rate_in_tax_zero_regime(self):
-        # 43/50 = 86% real win rate at avg odds 1.45. In the operator's
-        # configured tax regime (constants.TAX_RATE = 0.0) the breakeven is
-        # 1/1.45 ≈ 69.0%, and the Wilson lower bound (~73.8%) clears it —
-        # the gate must allow lowering. Before the fix, _sport_stats called
-        # p_breakeven(avg_odds) bare, silently inheriting the function's
-        # own tax_rate=0.20 default: breakeven 1/(0.8*1.45) ≈ 86.2%, which
-        # no realistic sample can clear at these odds — every lowering was
-        # frozen in a regime the operator explicitly zeroed.
+    """`_sport_stats` doit DÉRIVER son breakeven de `constants.TAX_RATE`, et
+    jamais hériter du défaut nu de `p_breakeven`.
+
+    Le test s'énonçait auparavant « dans le régime à taxe nulle » : il compa-
+    rait à une valeur en dur qui ne valait que pour TAX_RATE=0.0. A2 ayant
+    rétabli 0.20, comparer à un nombre figé ne prouverait plus rien — et
+    referait tomber le test au prochain changement de taux. On vérifie donc la
+    DÉRIVATION elle-même, ce qui est l'invariant réel.
+    """
+
+    def test_le_breakeven_est_derive_du_taux_configure(self):
         rows = ([_row("WIN", odds=1.45) for _ in range(43)]
                 + [_row("LOSS", odds=1.45) for _ in range(7)])
         stats = _sport_stats(rows)
-        assert stats["hit_rate"] > 0.82   # sanity: above _TARGET_HI
+        assert stats["p_breakeven"] == pytest.approx(p_breakeven(1.45, TAX_RATE))
+
+    def test_le_roi_rendu_est_net_de_taxe(self):
+        # A2 : `_sport_stats` calculait un ROI BRUT, alors que la couche qui
+        # décide de monter ou de baisser un seuil s'en sert comme mesure de
+        # rentabilité. Sur ce lot, la taxe coûte une dizaine de points.
+        rows = ([_row("WIN", odds=1.45) for _ in range(43)]
+                + [_row("LOSS", odds=1.45) for _ in range(7)])
+        stats = _sport_stats(rows)
+        assert stats["roi"] == pytest.approx(roi_net_of_tax(rows, TAX_RATE))
+        brut = roi_net_of_tax(rows, 0.0)
+        assert stats["roi"] < brut, "un ROI net ne peut pas égaler le ROI brut"
+
+    def test_lowering_allowed_when_wilson_clears_breakeven(self):
+        # 43/50 = 86 % à cote 2.50 : la borne basse de Wilson (~73,8 %) passe
+        # largement le seuil de rentabilité quel que soit le modèle de taxe,
+        # donc l'abaissement doit être autorisé. Le test ne dépend plus d'un
+        # taux particulier.
+        rows = ([_row("WIN", odds=2.50) for _ in range(43)]
+                + [_row("LOSS", odds=2.50) for _ in range(7)])
+        stats = _sport_stats(rows)
+        assert stats["hit_rate"] > 0.82   # sanity : au-dessus de _TARGET_HI
+        assert stats["wilson_lower"] > stats["p_breakeven"]
 
         new_t, reason = _decide_threshold(2.0, stats, _clv_stats(rows), overconfident=False)
-        assert new_t == 1.8, f"lowering blocked: {reason}"
+        assert new_t == 1.8, f"abaissement bloqué : {reason}"
 
 
 class TestMarketFamily:
@@ -729,11 +756,19 @@ class TestOddsCeiling:
     Asymétrie voulue avec le plafond d'edge : « un edge trop gros est un prix
     mal apparié » préexistait dans le code (SUSPECT_EDGE, MAX_EDGE) et le test
     relatif haut-contre-bas la valide (p=0,005 sur soccer au 2026-08-02). « On
-    gagne sur les favoris courts » est une affirmation NOUVELLE, sans mécanisme
-    préalable — exactement le motif qui ressort d'une fouille de données puis
-    disparaît hors échantillon. Au 2026-08-02 aucune bande n'était concluante,
-    pas même celle à n=109 dont la borne haute (52,5%) dépassait son seuil de
-    50,0%. Poser la règle dessus aurait coupé 58% du volume sur du bruit.
+    gagne sur les favoris courts » reste une affirmation qu'on n'accepte que
+    PROUVÉE — sinon c'est le motif qui ressort d'une fouille de données puis
+    disparaît hors échantillon.
+
+    ⚠️ CE QUE A2/A3 ONT CHANGÉ ICI. Ce qui rend une bande « prouvée perdante »
+    est la comparaison de sa borne HAUTE de Wilson au point mort net de taxe.
+    Les deux termes ont bougé le 2026-08-27 : `TAX_RATE` est repassé au taux
+    réel (0.20) et `p_breakeven` a cessé de supposer une taxe sur le payout
+    brut. Sur les données du 2026-08-02 le verdict s'inverse donc, et il
+    s'inverse À RAISON : la bande 1,50+ y affiche 51,7 % de réussite à cote
+    moyenne 1,66, quand il en faut 65,5 % — soit une EV nette de −21 %. Ce
+    n'était pas du bruit, c'était une perte que le régime à taxe nulle rendait
+    invisible.
     """
 
     def _rows(self, odds: float, n: int, wr: float):
@@ -741,13 +776,23 @@ class TestOddsCeiling:
         return ([_row("WIN", odds=odds) for _ in range(wins)]
                 + [_row("LOSS", odds=odds) for _ in range(n - wins)])
 
-    def test_real_2026_08_02_data_activates_nothing(self):
-        # Les bandes telles que mesurées : aucune n'est concluante.
+    def test_les_donnees_du_2026_08_02_prouvent_la_bande_haute_perdante(self):
         rows = (self._rows(1.35, 17, 0.824)
                 + self._rows(1.66, 60, 0.517)
                 + self._rows(2.00, 109, 0.431))
+        cap, n, diag = _odds_band_verdict(rows)
+        assert cap == 1.50
+        assert n >= 60
+        assert "prouvée" in diag
+
+    def test_la_bande_courte_rentable_nest_pas_condamnee(self):
+        # 82,4 % à cote 1,35 rapporte +5,5 % d'EV NETTE : c'est précisément la
+        # bande que l'ancienne formule de `p_breakeven` déclarait perdante en
+        # exigeant 92,6 % au lieu de 78,1 %. Le plafond ne doit jamais
+        # descendre jusqu'à la couper.
+        rows = self._rows(1.35, 60, 0.824)
         cap, _n, _diag = _odds_band_verdict(rows)
-        assert cap is None, "aucune bande n'était prouvée perdante ce jour-là"
+        assert cap is None or cap > 1.35
 
     def test_activates_on_a_clearly_losing_band(self):
         # Même bande de cote, mais un taux assez bas pour que la borne HAUTE

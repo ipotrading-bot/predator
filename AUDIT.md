@@ -107,6 +107,12 @@ C'est le tableau à consulter avant de toucher à quoi que ce soit.
 | Le moteur nomme le prix `executable_odd` ; la colonne reste `xbet_odd` | `…::TestSignalEnMemoire` |
 | Un DNB synthétique annonce la répartition de ses DEUX jambes | `…::TestAdviceAnnonceLesDeuxJambes` |
 | Le last-look reprixe le CÔTÉ MISÉ au prix exécutable, pas la cote 1X2 brute | `tests/test_last_look_reprice.py` |
+| Le point mort équilibre le GAIN NET et la mise perdue, pas le payout brut | `tests/test_stats_utils.py::TestPBreakeven` |
+| Sans taxe, le point mort vaut exactement 1/cote | `…::test_sans_taxe_le_point_mort_est_la_probabilite_implicite` |
+| Le ROI pondéré Kelly est NET de taxe, et calculé en un seul endroit | `tests/test_taxe_reelle.py::TestFormuleUnique` |
+| `learning_layer` dérive son point mort de `constants.TAX_RATE` | `tests/test_learning_layer.py::TestBreakevenUsesOperatorTaxRate` |
+| La courbe d'équité du disjoncteur est nette de taxe | `tests/test_taxe_reelle.py::TestDrawdownFiscalise` |
+| `tax_engine.DEFAULT_TAX_RATE` est DÉRIVÉ de `constants.TAX_RATE` | `tests/test_taxe_reelle.py::TestUnSeulTaux` |
 
 L'**invariant des sport-keys** (4 fichiers : `core/odds_api.py`,
 `core/learning_layer.py`, `api/index.py`) est décrit

@@ -55,6 +55,8 @@ currently active:
 import logging
 from datetime import datetime, timezone
 
+from core.constants import net_b
+
 log = logging.getLogger("PREDATOR.risk_manager")
 
 MAX_EXPOSURE_PCT    = 0.15   # % of bankroll — never more than this actively staked at once
@@ -142,6 +144,13 @@ def rolling_drawdown(ledger_rows: list[dict]) -> float:
     count; PUSH/UNKNOWN/closed/expired carry no real result and are
     dropped, same as core/learning_layer.py. Returns 0.0 with fewer than
     2 decisive rows (nothing to draw down from).
+
+    La courbe d'équité est NETTE DE TAXE depuis le 2026-08-27
+    (`core.constants.net_b`). Elle créditait auparavant le gain BRUT : un
+    disjoncteur qui surestime chaque gain et compte chaque perte en entier
+    sous-estime le drawdown réel, et se déclenche donc trop tard —
+    exactement quand il devrait être le plus utile. Les pertes, elles, ne
+    sont pas taxées : la retenue ne frappe que le gain net d'un pari gagnant.
     """
     decisive = [r for r in ledger_rows if r.get("outcome") in ("WIN", "LOSS") and r.get("kelly_pct")]
     if len(decisive) < 2:
@@ -155,7 +164,7 @@ def rolling_drawdown(ledger_rows: list[dict]) -> float:
     for r in ordered:
         stake = r["kelly_pct"]
         if r["outcome"] == "WIN":
-            equity += stake * ((r.get("odds") or 2.0) - 1)
+            equity += stake * net_b(r.get("odds") or 2.0)
         else:
             equity -= stake
         curve.append(equity)

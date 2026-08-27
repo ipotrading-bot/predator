@@ -20,7 +20,7 @@ import requests
 
 from core.audit_engine import count_missed_closing_lines
 from core.constants import (CLOSING_SRC_EXCHANGE, CLOSING_SRC_ODDSAPI,
-                            CLOSING_SRC_ORACLE, TAX_RATE)
+                            CLOSING_SRC_ORACLE)
 from core.db import get_db
 from core.learning_layer import (SPORT_DEFAULTS, _LEDGER_SELECT, _clv_stats,
                                  _sport_stats, load_sport_verdicts, playable_rows)
@@ -42,14 +42,11 @@ def sport_truth_metrics(rows: list[dict]) -> dict:
     dec = [r for r in rows if r.get("outcome") in _DECISIVE]
     preds = [(float(r["sharp_prob"]), 1 if r["outcome"] == "WIN" else 0)
              for r in dec if r.get("sharp_prob") is not None]
-    # ROI post-taxe : la taxe ne frappe que le gain net d'un pari gagnant.
-    staked = [r for r in dec if r.get("kelly_pct") and r.get("odds")]
-    roi_net = None
-    if staked:
-        num = sum(r["kelly_pct"] * (r["odds"] - 1) * (1 - TAX_RATE) if r["outcome"] == "WIN"
-                  else -r["kelly_pct"] for r in staked)
-        den = sum(r["kelly_pct"] for r in staked)
-        roi_net = num / den if den else None
+    # ROI post-taxe : `_sport_stats` le rend déjà net depuis le 2026-08-27.
+    # Ce module en portait sa propre copie — la seule des trois qui appliquait
+    # la taxe, ce qui faisait dire au rapport hebdo autre chose qu'à la couche
+    # d'apprentissage sur les mêmes lignes.
+    roi_net = stats["roi"]
     return {
         "n": stats["n"], "hit_rate": stats["hit_rate"],
         "wilson_lower": stats["wilson_lower"], "p_breakeven": stats["p_breakeven"],

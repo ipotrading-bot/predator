@@ -26,22 +26,73 @@ EV_EDGE_FLOOR = 1.5   # % EV
 
 SUSPECT_EDGE = 10.0   # % — safety trigger: major sport edge above this = SUSPECT_DATA (cap totals=15%)
 
-# ── Tax (PAIM v9.5) ───────────────────────────────────────────────────
-# Set to 0.0 on 2026-07-08 — explicit operator instruction ("les 20%, on
-# s'en soucie plus") after a day of near-zero signal volume, most of it
-# caused by the now-fixed compute_alpha() k=1 gate (see git history
-# around a30cd39), but the operator's call here is broader: stop
-# accounting for the withholding tax in gating/sizing at all, trading
-# tax-adjusted rigor for volume. This does NOT mean the real bookmaker
-# stops withholding 20% on winnings — it means core.tax_engine's math
-# (min_edge_required/optimal_stake_fraction/is_combo_tax_viable, all
-# parameterized on this constant via run_engine.py's _TAX_RATE) now
-# computes as if there were no tax: lower edges pass, and Kelly stakes
-# are sized on the FULL untaxed payout — larger than the true tax-adjusted
-# optimum if 20% genuinely is still withheld in reality. Revert to 0.20
-# (the real rate — see core/tax_engine.py's module docstring for the tax
-# model) to restore tax-aware gating and sizing.
-TAX_RATE = 0.0   # % withheld on net profit of a winning bet — see core/tax_engine.py
+# ── Taxe ──────────────────────────────────────────────────────────────
+# RÉTABLI À 0.20 LE 2026-08-27 — le taux réel.
+#
+# Historique, parce qu'il explique la panne : mis à 0.0 le 2026-07-08 sur
+# instruction explicite de l'opérateur (« les 20%, on s'en soucie plus »),
+# après une journée à volume quasi nul dont la cause réelle était ailleurs
+# (le gate k=1 de compute_alpha, corrigé depuis — cf. git autour de a30cd39).
+# Mettre la constante à zéro n'a JAMAIS empêché le bookmaker de prélever :
+# ça a seulement fait calculer le moteur comme si la retenue n'existait pas.
+# Conséquences mesurées : des edges plus faibles passaient les gates, et les
+# mises Kelly étaient dimensionnées sur un payout NON taxé — donc plus
+# grosses que l'optimum réel. Un moteur qui ignore un coût qu'il paie
+# vraiment ne « gagne du volume » qu'en trompant sa propre comptabilité.
+#
+# Modèle de taxe : retenue sur le GAIN NET d'un pari GAGNANT uniquement
+# (`net_b` ci-dessous). Un pari perdant n'est pas taxé, un remboursement non
+# plus. Voir la docstring de core/tax_engine.py.
+TAX_RATE = 0.20   # part retenue sur le gain net d'un pari gagnant
+
+
+def net_b(odds: float, tax_rate: float = TAX_RATE) -> float:
+    """
+    Gain net par unité misée sur un pari gagnant, après taxe — le « b » de
+    Kelly, fiscalisé : `(cote − 1) · (1 − taux)`.
+
+    POINT UNIQUE DU MODÈLE DE TAXE. Il vit ici, à côté du taux lui-même, et
+    non dans `core/tax_engine.py`, pour deux raisons :
+      · `core/constants.py` ne dépend de rien, donc `learning_layer`,
+        `risk_manager` et le dashboard peuvent fiscaliser leurs calculs sans
+        tirer scipy dans le bundle Vercel via `tax_engine` ;
+      · un modèle de taxe recopié à trois endroits finit par diverger — c'est
+        exactement ce qui s'était produit (ROI brut dans `learning_layer` et
+        `calibration_report`, ROI net dans `weekly_report`).
+    Si le bookmaker taxait le payout brut ou la mise à la pose, cette
+    fonction est la SEULE à changer : tout le reste s'en compose.
+    """
+    return (odds - 1) * (1 - tax_rate)
+
+
+def roi_net_of_tax(rows: list[dict], tax_rate: float = TAX_RATE) -> float | None:
+    """
+    ROI pondéré Kelly et NET DE TAXE sur des lignes d'`ai_learning_ledger`.
+
+        ROI = Σ mise·net_b(cote)  si WIN, −mise sinon   /   Σ mise
+
+    `kelly_pct` tient lieu de mise : c'est un pourcentage du MÊME bankroll de
+    référence pour toutes les lignes, donc il se simplifie correctement dans
+    le rapport sans qu'on ait besoin du montant en euros.
+
+    Seules les lignes DÉCISIVES (WIN/LOSS) portant une mise ET une cote
+    comptent. PUSH/expired/closed ne portent aucun résultat ; une ligne sans
+    `kelly_pct` (avant migration) est écartée du ROI plutôt que de recevoir
+    une mise inventée. Rend None quand rien n'est mesurable — jamais 0.0, qui
+    se lirait comme « à l'équilibre ».
+
+    Formule unique du dépôt : `learning_layer`, `weekly_report` et
+    `calibration_report` en portaient chacun une copie, dont deux OUBLIAIENT
+    la taxe. Gardé par `tests/test_taxe_reelle.py`.
+    """
+    staked = [r for r in rows
+              if r.get("outcome") in ("WIN", "LOSS") and r.get("kelly_pct") and r.get("odds")]
+    if not staked:
+        return None
+    numer = sum(r["kelly_pct"] * net_b(r["odds"], tax_rate) if r["outcome"] == "WIN"
+                else -r["kelly_pct"] for r in staked)
+    denom = sum(r["kelly_pct"] for r in staked)
+    return numer / denom if denom else None
 
 # The tax gate lives exclusively in core.tax_engine.suggest_system() /
 # is_combo_tax_viable() now, evaluated on the real assembled combo — NOT

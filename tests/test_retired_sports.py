@@ -32,11 +32,14 @@ class TestNoSignalEver:
     @pytest.mark.parametrize("sport", RETIRED)
     def test_emit_refuses_even_with_a_great_edge(self, sport):
         signals = []
-        # EV +6.4%, worst-case +4.5%, Kelly > 0 : tout passerait pour un sport vivant.
+        # +7,9 % d'EV brute, +2,9 % NETTE de la taxe de 20 %, worst-case
+        # positif, Kelly > 0 : tout passerait pour un sport vivant. (Les
+        # anciens chiffres — 1.90 / 0.56 — sont négatifs après taxe depuis
+        # A2 : le test aurait été vert sans que le garde y soit pour rien.)
         run_engine._emit(signals, None, datetime.now(timezone.utc), log,
-                         "A vs B", sport, "L", "h2h", "ML", 1.90, 1.80, 0.56, "🎯",
+                         "A vs B", sport, "L", "h2h", "ML", 1.30, 1.25, 0.83, "🎯",
                          selection_name="A", min_edge=1.5, match_time=_kickoff(),
-                         match_id="x1", sharp_prob_cons=0.55)
+                         match_id="x1", sharp_prob_cons=0.82)
         assert signals == []
 
     @pytest.mark.parametrize("sport", RETIRED)
@@ -55,9 +58,9 @@ class TestNoSignalEver:
         # Témoin : le garde ne mord que sur RETIRED_SPORTS.
         signals = []
         run_engine._emit(signals, None, datetime.now(timezone.utc), log,
-                         "A vs B", "basketball", "L", "h2h", "ML", 1.90, 1.80, 0.56,
+                         "A vs B", "basketball", "L", "h2h", "ML", 1.30, 1.25, 0.83,
                          "🏀", selection_name="A", min_edge=1.5,
-                         match_time=_kickoff(), match_id="x2", sharp_prob_cons=0.55)
+                         match_time=_kickoff(), match_id="x2", sharp_prob_cons=0.82)
         assert len(signals) == 1
 
 

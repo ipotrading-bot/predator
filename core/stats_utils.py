@@ -31,27 +31,54 @@ def wilson_ci(wins: int, n: int, z: float = Z_95) -> tuple[float, float]:
 
 def p_breakeven(avg_odds: float, tax_rate: float = 0.20) -> float:
     """
-    Approximate net-of-tax breakeven win probability for a segment's
-    AVERAGE odds: p > 1 / ((1-tax_rate)*avg_odds) — at tax_rate=0.20 this
-    is exactly 1.25/avg_odds. Deliberately simple (segment-average odds,
-    not each bet's exact price) — a fast, at-a-glance dashboard indicator,
-    not a go/no-go gate (core/tax_engine.py's per-signal check with that
-    signal's own true probability is the actual gate before any send).
+    Taux de réussite minimal, net de taxe, pour une cote MOYENNE de segment :
+
+        p > 1 / (1 + (cote − 1)·(1 − taux))
+
+    Déduction : à l'équilibre, p·(cote−1)·(1−taux) = (1−p) — le gain net
+    espéré d'un pari gagnant compense exactement la mise perdue le reste du
+    temps. C'est le modèle de taxe du dépôt : la retenue frappe le GAIN NET
+    d'un pari gagnant, jamais la mise ni le payout brut (cf. la docstring de
+    core/tax_engine.py et `core.constants.net_b`).
+
+    ⚠️ CORRIGÉ LE 2026-08-27. La formule précédente était
+    `1 / ((1−taux)·cote)`, qui suppose la taxe prélevée sur le PAYOUT BRUT —
+    un modèle que ce dépôt n'applique nulle part ailleurs. Elle surestimait
+    le taux requis, d'autant plus que la cote est courte :
+
+        cote 1,35 → 92,6 % exigés au lieu de 78,1 %  (+14,5 points)
+        cote 1,30 → 96,2 % au lieu de 80,6 %         (+15,6 points)
+        cote 2,50 → 62,5 % au lieu de 45,5 %         (+17,0 points)
+
+    Le défaut était DORMANT tant que `core.constants.TAX_RATE` valait 0.0 :
+    à taux nul les deux formules donnent 1/cote, à la décimale près. Le
+    rétablissement du taux réel (0.20) le 2026-08-27 l'a réveillé, et il
+    s'est vu tout de suite — la couche d'apprentissage déclarait « prouvée
+    perdante » la bande de cotes 1,35 du 2026-08-02, dont le taux de réussite
+    mesuré (82,4 %) rapporte en réalité +5,5 % d'EV nette. Poser un plafond
+    de cote là-dessus aurait coupé l'essentiel du volume sur une erreur
+    d'algèbre.
+
+    Volontairement simple (cote moyenne du segment, pas le prix exact de
+    chaque pari) — indicateur de lecture rapide pour le dashboard, pas un
+    gate d'émission (le juge réel reste core/tax_engine.py, par signal et
+    avec sa probabilité propre).
 
     WARNING — this module is generic statistics with no business-config
-    dependency (no import of core.constants) on purpose; the tax_rate=0.20
-    default is NOT necessarily the operator's real, currently-configured
-    rate (core.constants.TAX_RATE has been 0.0 since 2026-07-08 — see that
-    module's docstring). Every caller that gates a real decision (raising/
-    lowering a threshold, sizing a stake, displaying "seuil rentable")
-    MUST pass tax_rate=constants.TAX_RATE explicitly — see
-    core/learning_layer.py's _sport_stats and api/index.py's /performance
-    route for the pattern. A bare p_breakeven(avg_odds) call silently
-    reintroduces a 20% tax assumption the operator turned off.
+    dependency (no import of core.constants) on purpose: the tax_rate=0.20
+    default is NOT guaranteed to match the operator's configured rate. It
+    happens to match it since 2026-08-27 (core.constants.TAX_RATE was
+    restored to 0.20 that day, after having been 0.0 from 2026-07-08 — see
+    that module's docstring), and that coincidence is exactly what makes a
+    bare call dangerous: it works today and lies silently the day the rate
+    moves. Every caller that gates a real decision (raising/lowering a
+    threshold, sizing a stake, displaying "seuil rentable") MUST pass
+    tax_rate=constants.TAX_RATE explicitly — see core/learning_layer.py's
+    _sport_stats and api/index.py's /performance route for the pattern.
     """
     if avg_odds <= 1.0:
         return 1.0
-    return round(1 / ((1 - tax_rate) * avg_odds), 4)
+    return round(1 / (1 + (avg_odds - 1) * (1 - tax_rate)), 4)
 
 
 def brier_score(predictions: list[tuple[float, int]]) -> float | None:

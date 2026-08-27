@@ -202,8 +202,14 @@ def _now():
 
 def _emit_one(**kw):
     signals = []
-    # EV visée ~+4.5 % : au-dessus du plancher, sous SUSPECT_EDGE.
-    params = dict(executable_odd=1.90, pin_odd=1.80, sharp_prob=0.55)
+    # Le pari doit être RÉELLEMENT jouable : EV positive APRÈS la taxe de 20 %
+    # (rétablie en A2), sous SUSPECT_EDGE, et avec une mise Kelly non nulle.
+    # cote 1.30 / p 0.83 → +7.90 % brut, +2.92 % net, f* = 0.1217.
+    # ⚠️ Une EV brute suffit de moins en moins à mesure que la cote monte : à
+    # 1.90 il faut +10.47 % brut pour seulement atteindre le point mort après
+    # taxe, soit AU-DESSUS de SUSPECT_EDGE (10 %). Ce n'est pas un détail de
+    # fixture, c'est la contradiction que A6 devra trancher.
+    params = dict(executable_odd=1.30, pin_odd=1.25, sharp_prob=0.83)
     params.update(kw)
     run_engine._emit(signals, None, _now(), log, "Lille vs Reims", "soccer",
                      "L1", "h2h", "AH 0.0 (2 jambes)",
@@ -218,7 +224,7 @@ def _emit_one(**kw):
 class TestSignalEnMemoire:
     def test_le_moteur_nomme_le_prix_executable_odd(self):
         (sig,) = _emit_one()
-        assert sig["executable_odd"] == 1.90
+        assert sig["executable_odd"] == 1.30
         assert "xbet_odd" not in sig, \
             "le moteur ne doit plus porter l'ancien nom : c'est lui qui " \
             "entretenait la confusion entre prix dévigorisé et prix jouable"
@@ -244,12 +250,12 @@ class TestSignalEnMemoire:
             def table(self, _name): return _Table()
 
         assert run_engine._save(_SB(), sig) is True
-        assert vus["xbet_odd"] == 1.90
+        assert vus["xbet_odd"] == 1.30
         assert "executable_odd" not in vus
 
     def test_ledge_se_calcule_sur_le_prix_executable(self):
-        (sig,) = _emit_one(executable_odd=1.90, sharp_prob=0.55)
-        assert sig["edge_pct"] == pytest.approx((0.55 * 1.90 - 1) * 100, abs=0.01)
+        (sig,) = _emit_one(executable_odd=1.30, sharp_prob=0.83)
+        assert sig["edge_pct"] == pytest.approx((0.83 * 1.30 - 1) * 100, abs=0.01)
 
 
 class TestAdviceAnnonceLesDeuxJambes:

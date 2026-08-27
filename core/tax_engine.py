@@ -18,8 +18,8 @@ TAX_RATE is withheld on the NET PROFIT of a WINNING bet only:
 A losing bet is not taxed (you simply lose the stake). A push/void returns
 the stake untaxed. This is the common "tax on winnings" structure. If your
 bookmaker instead taxes the gross payout (stake * odds) or the stake at
-placement, `net_b()` is the only function that needs to change — every
-other function composes from it.
+placement, `core.constants.net_b()` is the only function that needs to
+change — every other function composes from it.
 
 ── "System" here means an accumulator/parlay ───────────────────────────
 suggest_system() combines legs into a single accumulator (all legs must
@@ -46,9 +46,14 @@ from itertools import combinations
 
 from scipy.optimize import minimize_scalar
 
+from core.constants import TAX_RATE as _CONFIGURED_TAX_RATE, net_b
+
 log = logging.getLogger("PREDATOR.tax_engine")
 
-DEFAULT_TAX_RATE = 0.20
+# DÉRIVÉ de core.constants, jamais redéclaré : les deux valeurs ont cohabité
+# à 0.20 et 0.0 du 2026-07-08 au 2026-08-27, si bien que le taux appliqué
+# dépendait de quel module l'appelant avait consulté.
+DEFAULT_TAX_RATE = _CONFIGURED_TAX_RATE
 # Reference true probability used by min_edge_required() when no specific
 # leg is known yet (e.g. sizing a floor threshold before signals exist).
 # 0.55 matches SHARP_PROB_MIN in core/paim_engine.py — the codebase's
@@ -56,11 +61,6 @@ DEFAULT_TAX_RATE = 0.20
 # inventing a new arbitrary constant.
 DEFAULT_REFERENCE_PROB = 0.55
 MAX_SYSTEM_LEGS = 4   # compounding tax + variance beyond this is too aggressive for a soft-book audience
-
-
-def net_b(odds: float, tax_rate: float = DEFAULT_TAX_RATE) -> float:
-    """Tax-adjusted Kelly 'b' — net profit multiplier per unit staked on a win."""
-    return (odds - 1) * (1 - tax_rate)
 
 
 def net_return_on_win(stake: float, odds: float, tax_rate: float = DEFAULT_TAX_RATE) -> float:
