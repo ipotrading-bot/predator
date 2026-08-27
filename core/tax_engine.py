@@ -308,7 +308,8 @@ def suggest_system(signals: list[dict], bankroll: float,
                    rho: float = DEFAULT_CORRELATION_RHO) -> dict | None:
     """
     Given individual signals that fired in the same time window (each a
-    dict with at least 'sharp_prob'/'true_prob' and 'xbet_odd'/'odds',
+    dict with at least 'sharp_prob'/'true_prob' and
+    'executable_odd'/'xbet_odd'/'odds',
     optionally 'correlation_group'), search all leg-count combinations
     from 1 up to `max_legs` legs and return the one with the highest
     net-of-tax EV at its numerically optimal stake — subject to
@@ -344,7 +345,11 @@ def suggest_system(signals: list[dict], bankroll: float,
 
     def _leg(sig):
         prob = sig.get("sharp_prob", sig.get("true_prob"))
-        odds = sig.get("xbet_odd", sig.get("odds"))
+        # `executable_odd` = signal EN MÉMOIRE produit par run_engine._emit
+        # (depuis le 2026-08-27) ; `xbet_odd` = ligne relue de `signals`, dont
+        # la colonne garde l'ancien nom ; `odds` = ligne du ledger. Les trois
+        # portent le même prix, sous trois vocabulaires imposés par la base.
+        odds = sig.get("executable_odd", sig.get("xbet_odd", sig.get("odds")))
         return {"true_prob": prob, "odds": odds, "correlation_group": sig.get("correlation_group"), "signal": sig}
 
     candidates = [_leg(s) for s in signals]

@@ -99,6 +99,14 @@ C'est le tableau à consulter avant de toucher à quoi que ce soit.
 | La closing line d'exchange lit le prix de l'EXCHANGE, jamais le prix d'entrée | `tests/test_closing_line_exchange.py::test_le_prix_capture_est_celui_de_lexchange_pas_le_pinnacle_dentree` |
 | Football sans prix de nul : refus, jamais de repli sur le moneyline | `…::test_football_sans_prix_de_nul_est_refuse` |
 | Un prix de clôture exact n'est pas ré-estimé par l'oracle avant 90 min | `…::test_needs_refresh_protege_un_prix_exchange_recent` |
+| Le prix soft d'entrée est EXÉCUTABLE, jamais dévigorisé | `tests/test_prix_executable.py::TestToBinaryRendLePrixExecutable` |
+| Le prix exécutable est toujours SOUS le prix dévigorisé | `…::test_le_prix_executable_est_toujours_sous_le_prix_devigorise` |
+| Football sans nul : refus, jamais de repli sur le moneyline | `…::test_football_sans_nul_est_refuse_jamais_rabattu_sur_le_moneyline` |
+| Le bloc soft retenu appartient à UN book réel (pas de max par issue) | `…::TestLineShoppingSurLePrixFinal` |
+| Le line shopping se départage sur le prix FINAL, pas sur la cote nue | `…::test_cest_le_prix_executable_qui_departage_pas_la_cote_nue` |
+| Le moteur nomme le prix `executable_odd` ; la colonne reste `xbet_odd` | `…::TestSignalEnMemoire` |
+| Un DNB synthétique annonce la répartition de ses DEUX jambes | `…::TestAdviceAnnonceLesDeuxJambes` |
+| Le last-look reprixe le CÔTÉ MISÉ au prix exécutable, pas la cote 1X2 brute | `tests/test_last_look_reprice.py` |
 
 L'**invariant des sport-keys** (4 fichiers : `core/odds_api.py`,
 `core/learning_layer.py`, `api/index.py`) est décrit

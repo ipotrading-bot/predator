@@ -28,6 +28,12 @@ sous-estimait le favori de 2,6 à 3,1 points sous 1,10 (0,1 point à cote égale
 émettait le plus. Ne pas restaurer ce raccourci.
 
 Doctrine Zero-Draw conservée : football = AH 0.0 uniquement.
+
+RÉPARTITION DES RÔLES (2026-08-27) — la dévigorisation sert à ESTIMER une
+probabilité, jamais à fixer un prix d'entrée. `calc_dnb` est donc réservé au
+côté SHARP ; le côté SOFT passe par `synthetic_dnb`, qui rend la cote
+réellement exécutable. Confondre les deux fait mesurer une divergence
+d'opinion et l'appeler « edge ».
 """
 import math
 
@@ -194,33 +200,147 @@ def is_round_number_line(point: float) -> bool:
     return bool(point) and point > 0 and point % 1 == 0
 
 
+def synthetic_dnb(team_odd: float, draw_odd: float) -> float:
+    """
+    Cote RÉELLEMENT EXÉCUTABLE d'un Draw No Bet synthétique, construit chez UN
+    SEUL book à partir de son 1X2 brut :
+
+        exec = o_équipe · (o_nul − 1) / o_nul
+
+    Démonstration en une ligne : pour une mise totale de 1, on place 1/o_nul
+    sur le nul (qui rend alors exactement 1, donc la mise) et le reste,
+    1 − 1/o_nul, sur l'équipe. Un nul rembourse ; une victoire rapporte
+    (1 − 1/o_nul) · o_équipe, ce qui est la formule ci-dessus.
+
+    ⚠️ NE PAS CONFONDRE AVEC `calc_dnb`. `calc_dnb` DÉVIGORISE : il rend le
+    prix qu'un book sans marge afficherait, c'est-à-dire une ESTIMATION DE
+    PROBABILITÉ. Il n'est légitime que du côté SHARP, où l'on cherche
+    justement à estimer la probabilité vraie. L'employer du côté SOFT — ce que
+    faisait `to_binary` jusqu'au 2026-08-27 — revient à comparer une opinion à
+    une opinion et à appeler « edge » l'écart : le coût de transaction n'est
+    jamais soustrait. Mesuré le 2026-08-27 sur les 1X2 bruts du jour, le prix
+    exécutable vaut 0,87 à 0,98 fois le prix dévigorisé (médiane 0,89 chez
+    1xbet, 0,92 sur le panel api-sports) — de 2 à 13 points d'EV, quand le
+    moteur émettait à partir de 1,2 %.
+
+    Rend 0.0 sur entrée invalide — même contrat de dégradation que le reste
+    du module.
+    """
+    if not team_odd or not draw_odd or team_odd <= 1.01 or draw_odd <= 1.01:
+        return 0.0
+    price = team_odd * (draw_odd - 1.0) / draw_odd
+    return round(price, 4) if price > 1.0 else 0.0
+
+
+def dnb_leg_split(draw_odd: float) -> tuple[float, float]:
+    """
+    (part_sur_le_nul, part_sur_l_équipe) d'une mise TOTALE de 1 sur un DNB
+    synthétique. Somme = 1 par construction.
+
+    Cette répartition n'est pas un détail d'affichage : un DNB synthétique
+    engage DEUX paris chez le même book, et l'opérateur qui miserait la mise
+    conseillée entièrement sur l'équipe prendrait une exposition au nul que le
+    calcul d'EV ne modélise pas. Rend (0.0, 0.0) sur entrée invalide.
+    """
+    if not draw_odd or draw_odd <= 1.01:
+        return 0.0, 0.0
+    part_nul = 1.0 / draw_odd
+    return round(part_nul, 4), round(1.0 - part_nul, 4)
+
+
+def executable_price(odds: dict, sport: str, side: str) -> float:
+    """
+    Prix SOFT EXÉCUTABLE d'un côté donné (`side` = "1" pour le domicile,
+    "2" pour l'extérieur), à partir des cotes brutes d'UN book.
+
+    Football : AH 0.0 brut si la source l'expose (`ah0_1`/`ah0_2`), sinon DNB
+    synthétique sur le 1X2 de ce book. Hors football : la cote brute du côté.
+    Rend 0.0 quand rien n'est jouable — jamais de repli sur une autre cote.
+
+    Point unique de la règle : `to_binary` (prix d'entrée) et le repricing de
+    dernière minute de `run_engine` s'en servent tous les deux. Les laisser
+    calculer chacun leur prix ferait comparer, au last-look, une cote 1X2 brute
+    à un DNB synthétique — la marge du book passerait alors pour un mouvement
+    de ligne, sans qu'aucune erreur ne soit levée.
+    """
+    if side not in ("1", "2"):
+        return 0.0
+    own = float(odds.get(side) or 0)
+    if own <= 1.01:
+        return 0.0
+    if sport != "soccer":
+        return round(own, 4)
+    ah0 = float(odds.get("ah0_1" if side == "1" else "ah0_2") or 0)
+    if ah0 > 1.01:
+        return round(ah0, 4)
+    return synthetic_dnb(own, float(odds.get("X") or 0))
+
+
 def to_binary(odds: dict, sport: str, home: str = "", away: str = "") -> tuple[float, str | None, str]:
     """
-    Convert raw 1N2 odds to a binary market price.
-    Returns (best_odd, market_label, favorite_team_name).
+    Prix SOFT EXÉCUTABLE d'un marché binaire, à partir des cotes brutes.
+    Rend (cote_exécutable, libellé_de_marché, nom_du_favori).
 
-    Soccer: MUST produce AH 0.0. No draw odd → (0.0, None, "") → REJECT.
-    Tennis / Basketball: Moneyline (naturally binary).
+    Football — AH 0.0 obligatoire (doctrine Zero-Draw), et le prix rendu est
+    celui qu'on peut RÉELLEMENT jouer :
+      1. si la source expose un vrai AH 0.0 (clés `ah0_1` / `ah0_2`), on prend
+         sa cote BRUTE — c'est un marché que le book affiche, rien à
+         reconstruire ;
+      2. sinon on construit le DNB synthétique `synthetic_dnb()` sur le 1X2
+         brut du book.
+    Sans cote de nul, ni l'un ni l'autre n'est possible → (0.0, None, "") →
+    REFUS. Jamais de repli sur le moneyline : comparer une entrée ML à une
+    référence DNB donne un edge faux et silencieux.
+
+    Tennis / Basket / MMA — moneyline, naturellement binaire, cote brute.
+
+    ⚠️ CE QUI A CHANGÉ LE 2026-08-27, ET POURQUOI ON NE REVIENT PAS EN ARRIÈRE
+    -------------------------------------------------------------------------
+    Cette fonction rendait `calc_dnb(...)`, c'est-à-dire le DNB DÉVIGORISÉ.
+    Un tel prix n'est affiché par aucun book : la marge en avait été retirée.
+    L'« edge » publié mesurait donc la divergence d'opinion entre le book soft
+    et la référence sharp, sans jamais soustraire le coût de transaction.
+    `calc_dnb` reste employé — mais du côté SHARP UNIQUEMENT, où dévigoriser
+    est exactement ce qu'on veut faire (estimer une probabilité). Voir la
+    docstring de `synthetic_dnb` pour l'ordre de grandeur mesuré.
+
+    ⚠️ LE PRIX RENDU ENGAGE DEUX JAMBES CHEZ LE MÊME BOOK
+    ------------------------------------------------------
+    Quand le DNB est SYNTHÉTIQUE (cas 2, le cas courant), la cote rendue n'est
+    jouable qu'en plaçant simultanément deux paris : `dnb_leg_split(o_nul)`
+    donne la répartition. Conséquences que l'appelant DOIT porter :
+      · `kelly_pct` calculé sur cette cote est l'exposition TOTALE, à répartir
+        entre les deux jambes — ce n'est pas une mise à poser sur l'équipe ;
+      · `advice` doit énoncer la répartition, sinon l'opérateur mise tout sur
+        l'équipe et détient une exposition au nul que l'EV n'a pas modélisée ;
+      · les deux jambes doivent partir chez LE MÊME book, sinon la cote n'est
+        pas celle qui a été calculée (voir `core.api_sports.extract_prices` :
+        le line shopping se fait sur le prix final, jamais par issue).
+    Dans le cas 1 (AH 0.0 réel) il n'y a qu'une jambe et `dnb_leg_split` n'a
+    pas lieu d'être — le libellé rendu distingue les deux situations.
     """
     o1 = float(odds.get("1") or 0)
-    ox = float(odds.get("X") or 0)
     o2 = float(odds.get("2") or 0)
 
     if sport == "soccer":
-        if ox <= 1.01 or o1 <= 1.01 or o2 <= 1.01:
+        # Le favori se choisit sur le 1X2 BRUT : une cote brute ne ment
+        # jamais, là où une formule peut dégénérer sur un carnet aberrant.
+        if o1 <= 1.01 or o2 <= 1.01:
             return 0.0, None, ""
-        dnb_home = calc_dnb(o1, o2, ox)
-        dnb_away = calc_dnb(o2, o1, ox)
-        # Use RAW 1X2 odds to pick the favourite — DNB formula can fail
-        # for extreme edge-cases, but raw odds never lie.
-        if o1 <= o2:
-            return (dnb_home, "AH 0.0", home) if dnb_home > 1.01 else (0.0, None, "")
-        else:
-            return (dnb_away, "AH 0.0", away) if dnb_away > 1.01 else (0.0, None, "")
+        fav_is_home = o1 <= o2
+        fav_name = home if fav_is_home else away
 
-    # Tennis / Basketball — no draw market
+        price = executable_price(odds, sport, "1" if fav_is_home else "2")
+        if price <= 1.01:
+            return 0.0, None, ""
+        # Une jambe si le book cote un vrai AH 0.0, deux s'il faut le
+        # construire — le libellé doit le dire, c'est ce que l'opérateur lit.
+        une_jambe = float(odds.get("ah0_1" if fav_is_home else "ah0_2") or 0) > 1.01
+        return price, "AH 0.0" if une_jambe else "AH 0.0 (2 jambes)", fav_name
+
+    # Tennis / Basketball / MMA — no draw market, the raw price is executable.
     if o1 > 1.01 and (o2 <= 1.01 or o1 <= o2):
-        return o1, "Moneyline", home
+        return round(o1, 4), "Moneyline", home
     elif o2 > 1.01:
-        return o2, "Moneyline", away
+        return round(o2, 4), "Moneyline", away
     return 0.0, "Moneyline", ""

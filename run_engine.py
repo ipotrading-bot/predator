@@ -28,7 +28,9 @@ from core.exchange_match import lookup_exchange as _lookup_exchange
 from core.api_sports import fetch_all as _api_sports_all
 from core.odds_api_io import fetch_all as _odds_api_io_all
 from core.titan007 import fetch_matches as _titan007_fetch
-from core.math_engine import to_binary, devig_bounds, is_round_number_line
+from core.math_engine import (to_binary, devig_bounds, is_round_number_line,
+                              dnb_leg_split as _dnb_leg_split,
+                              executable_price as _executable_price)
 from core.tax_engine import optimal_stake_fraction as _optimal_stake_fraction
 from core.odds_api import fetch_odds, pool_status as _odds_pool_status, pool_counters as _odds_pool_counters
 from core.scan_windows import SpendPolicy as _SpendPolicy
@@ -389,6 +391,15 @@ def _save(sb, signal) -> bool:
     from core.db import update_signal_fields
 
     payload = dict(signal)
+    # MAPPING EXPLICITE — le moteur nomme le prix `executable_odd` depuis le
+    # 2026-08-27, parce que c'est ce qu'il est : la cote qu'on peut réellement
+    # jouer. La COLONNE reste `xbet_odd` : la renommer demanderait une
+    # migration et casserait le dashboard, `closing_line`, `settlement` et
+    # `audit_engine`, qui relisent tous cette colonne. La traduction se fait
+    # ICI, au point unique de persistance, plutôt qu'en laissant les deux noms
+    # cohabiter dans le moteur — c'est précisément la confusion qu'on retire.
+    if "executable_odd" in payload:
+        payload["xbet_odd"] = payload.pop("executable_odd")
     mid  = payload.get("match_id", "")
     mkey = payload.get("market_key", "")
     sig_label = f"{payload.get('match', '?')}/{payload.get('market', '?')}"
@@ -963,9 +974,9 @@ def _purge_old_signals(sb):
 
 
 def _emit(signals, sb, now, log, name, sport, league, mkt_key, mkt_label,
-          xbet_odd, pin_odd, sharp_prob, emoji, selection_name="", min_edge=None,
+          executable_odd, pin_odd, sharp_prob, emoji, selection_name="", min_edge=None,
           match_time="", match_id="", sharp_sources=None, consensus_score=None,
-          ah0_value: bool = False, sharp_prob_cons=None):
+          ah0_value: bool = False, sharp_prob_cons=None, dnb_draw_odd: float = 0.0):
     """Calcule l'EV, applique les gates de qualité, collecte le signal.
 
     `sharp_prob_cons` est la borne worst-case de devig_bounds() : quand elle
@@ -988,12 +999,12 @@ def _emit(signals, sb, now, log, name, sport, league, mkt_key, mkt_label,
     if sharp_prob <= 0:
         log.info("DISCARD | %s %s | %s — sharp_prob=0 (stale/missing data)", emoji, name, mkt_label)
         return
-    edge, status = compute_alpha(xbet_odd, sharp_prob, min_edge=effective_min)
+    edge, status = compute_alpha(executable_odd, sharp_prob, min_edge=effective_min)
     if status == "DISCARD":
         log.info("DISCARD | %s %s | %s — EV %.2f%%", emoji, name, mkt_label, edge)
         return
     if sharp_prob_cons is not None:
-        ev_cons = (sharp_prob_cons * xbet_odd - 1) * 100
+        ev_cons = (sharp_prob_cons * executable_odd - 1) * 100
         if ev_cons <= 0:
             log.info("DISCARD | %s %s | %s — EV worst-case %.2f%% <= 0 (médiane %.2f%%) — "
                      "edge non robuste au choix de devig", emoji, name, mkt_label, ev_cons, edge)
@@ -1024,9 +1035,9 @@ def _emit(signals, sb, now, log, name, sport, league, mkt_key, mkt_label,
     # Plafond de COTE appris — au-dessus, la sélection n'est pas un favori mais
     # un quasi pile-ou-face que le ledger a prouvé perdant pour ce sport.
     odds_cap = _ODDS_CEILINGS.get(sport)
-    if odds_cap is not None and xbet_odd > odds_cap:
+    if odds_cap is not None and executable_odd > odds_cap:
         log.warning("PLAFOND COTE | %s %s | %s — cote %.2f > %.2f appris — DISCARD",
-                    emoji, name, mkt_label, xbet_odd, odds_cap)
+                    emoji, name, mkt_label, executable_odd, odds_cap)
         return
 
     # J+72h filter: signaux très éloignés doivent être HIGH_VALUE (≥ 6%) pour justifier immobilisation capital
@@ -1091,7 +1102,7 @@ def _emit(signals, sb, now, log, name, sport, league, mkt_key, mkt_label,
     # kelly_pct=0, c'est-à-dire refusés par la couche de mise et publiés
     # quand même (constaté le 2026-08-22, concentrés sur les cotes 1,08-1,30).
     kelly_fraction = _KELLY_FRACTION.get(sport, 0.12)   # fraction ≤ 0,15 = réponse standard à l'erreur d'estimation
-    kelly_pct = round(_optimal_stake_fraction(sharp_prob, xbet_odd,
+    kelly_pct = round(_optimal_stake_fraction(sharp_prob, executable_odd,
                                               tax_rate=_TAX_RATE,
                                               kelly_multiplier=kelly_fraction) * 100, 2)
     if kelly_pct <= 0:
@@ -1099,24 +1110,38 @@ def _emit(signals, sb, now, log, name, sport, league, mkt_key, mkt_label,
                  "un signal qu'on ne miserait pas ne sort pas", emoji, name, mkt_label, edge)
         return
 
+    # `dnb_draw_odd` n'est fourni que quand le prix d'entrée est un DNB
+    # SYNTHÉTIQUE : il engage alors DEUX jambes chez le même book, et
+    # `kelly_pct` est l'exposition TOTALE, pas une mise à poser sur l'équipe.
+    # Taire la répartition ferait miser tout sur l'équipe et laisserait une
+    # exposition au nul que le calcul d'EV n'a pas modélisée.
     advice = (
-        f"EV +{edge:.1f}% — cote soft {xbet_odd:.2f} vs sharp {pin_odd:.2f} "
-        f"(prob. dévigorisée {sharp_prob * 100:.1f}%). "
+        f"EV +{edge:.1f}% — cote soft exécutable {executable_odd:.2f} vs sharp "
+        f"{pin_odd:.2f} (prob. dévigorisée {sharp_prob * 100:.1f}%). "
         f"Mise conseillée {kelly_pct:.2f}% de bankroll (Kelly fractionnaire)."
     )
+    if dnb_draw_odd and dnb_draw_odd > 1.01:
+        part_nul, part_equipe = _dnb_leg_split(dnb_draw_odd)
+        advice += (
+            f" DNB synthétique — exposition TOTALE à répartir chez le MÊME book : "
+            f"{part_equipe * 100:.1f}% sur {selection_name or name} et "
+            f"{part_nul * 100:.1f}% sur le nul (@ {dnb_draw_odd:.2f}), "
+            f"soit {kelly_pct * part_equipe:.2f}% et {kelly_pct * part_nul:.2f}% "
+            f"de bankroll."
+        )
 
     # Normalize match_time to ISO UTC (+00:00)
     mt = match_time.replace("Z", "+00:00") if match_time else ""
 
     log.info("SIGNAL  | %s %s | %s: Melbet=%.3f Pin=%.3f Edge=+%.2f%% Prob=%.0f%% %s",
-             emoji, name, mkt_label, xbet_odd, pin_odd, edge, sharp_prob * 100, risk)
+             emoji, name, mkt_label, executable_odd, pin_odd, edge, sharp_prob * 100, risk)
     signal = {
         "match":          name,
         "league":         league or "",
         "sport":          sport,
         "market":         mkt_label,
         "market_key":     mkt_key,
-        "xbet_odd":       float(xbet_odd),
+        "executable_odd": float(executable_odd),
         "pinnacle_price": float(pin_odd),
         "sharp_prob":     float(sharp_prob),
         "edge_pct":       float(edge),
@@ -1135,6 +1160,28 @@ def _emit(signals, sb, now, log, name, sport, league, mkt_key, mkt_label,
     signals.append(signal)
 
 
+def _dnb_draw_odd(m: dict, sport: str) -> float:
+    """
+    Cote du nul QUAND le prix d'entrée est un DNB synthétique, 0.0 sinon.
+
+    Miroir exact de la branche football de `core.math_engine.to_binary` : si la
+    source expose un vrai AH 0.0 sur le côté favori, le pari n'a qu'une jambe
+    et il n'y a aucune répartition à annoncer. Hors football non plus.
+    Diverger de `to_binary` ici ferait annoncer une répartition sur un pari qui
+    n'en a pas — ou taire celle d'un pari qui en a une.
+    """
+    if sport != "soccer":
+        return 0.0
+    o = m.get("odds_1xbet") or {}
+    o1, o2 = float(o.get("1") or 0), float(o.get("2") or 0)
+    if o1 <= 1.01 or o2 <= 1.01:
+        return 0.0
+    ah0 = float(o.get("ah0_1" if o1 <= o2 else "ah0_2") or 0)
+    if ah0 > 1.01:
+        return 0.0
+    return float(o.get("X") or 0.0)
+
+
 def _process_h2h(m, name, sport, league, home, away, emoji, signals, sb, now, log, min_edge=None):
     """H2H market: DNB for soccer, Moneyline for NBA/Tennis + Prob.Sharp filter."""
     prob_min    = SHARP_PROB_BY_MARKET.get("h2h_soccer" if sport == "soccer" else "h2h", 0.52)
@@ -1142,7 +1189,7 @@ def _process_h2h(m, name, sport, league, home, away, emoji, signals, sb, now, lo
 
     if "_oracle_price" in m:
         pin_price = m["_oracle_price"]
-        xbet_price, _, xbet_fav = to_binary(m["odds_1xbet"], sport, home, away)
+        executable_price, _, soft_fav = to_binary(m["odds_1xbet"], sport, home, away)
         pin_fav = m.get("_oracle_team", "")
         # Strict Matching: if oracle returned no team name, outcome alignment
         # is unverifiable — discard rather than risk a cross-outcome comparison.
@@ -1157,12 +1204,12 @@ def _process_h2h(m, name, sport, league, home, away, emoji, signals, sb, now, lo
         sharp_prob = round(1 / pin_price, 4) if pin_price > 1.01 else 0.0
         sharp_cons = sharp_prob   # proba implicite vigorisée = déjà une borne basse
     else:
-        xbet_price, _, xbet_fav = to_binary(m["odds_1xbet"], sport, home, away)
+        executable_price, _, soft_fav = to_binary(m["odds_1xbet"], sport, home, away)
         # Strict Matching: lock Pinnacle lookup to the same position as 1XBet
         # (fav_key "1"=home, "2"=away). Never run to_binary() on Pinnacle
         # independently — it could pick a different favourite and silently
         # compare Como's 1XBet odd against Parma's Pinnacle odd.
-        fav_key = "1" if xbet_fav == home else "2"
+        fav_key = "1" if soft_fav == home else "2"
         opp_key = "2" if fav_key == "1" else "1"
         po = m.get("odds_pinnacle", {})
         if sport == "soccer":
@@ -1225,12 +1272,12 @@ def _process_h2h(m, name, sport, league, home, away, emoji, signals, sb, now, lo
             opp_for_devig = con_opp if con_opp > 1.01 else opp_price
             sharp_prob, sharp_cons = devig_bounds(pin_price, opp_for_devig)
 
-        pin_fav = xbet_fav  # Same outcome guaranteed — no cross-book mismatch possible
+        pin_fav = soft_fav  # Same outcome guaranteed — no cross-book mismatch possible
 
-    if xbet_price <= 1.01 or pin_price <= 1.01:
+    if executable_price <= 1.01 or pin_price <= 1.01:
         return
-    if not strict_team_match(xbet_fav, pin_fav):
-        log.info("SPLIT   | %s %s — Melbet=%s Sharp=%s", emoji, name, xbet_fav, pin_fav)
+    if not strict_team_match(soft_fav, pin_fav):
+        log.info("SPLIT   | %s %s — Melbet=%s Sharp=%s", emoji, name, soft_fav, pin_fav)
         return
     if sharp_prob < prob_min:
         log.info("LOWPROB | %s %s h2h — Prob.Sharp=%.0f%% < %.0f%%",
@@ -1238,15 +1285,16 @@ def _process_h2h(m, name, sport, league, home, away, emoji, signals, sb, now, lo
         return
 
     # Soccer AH0 Value Rule : cote DNB fav > 1.5 → signal de valeur intrinsèque
-    ah0_value = sport == "soccer" and xbet_price > _AH0_VALUE_THRESHOLD
+    ah0_value = sport == "soccer" and executable_price > _AH0_VALUE_THRESHOLD
     # Abaisser le seuil d'edge à 0.8% pour ne pas étouffer ces signaux
     h2h_min_edge = min(min_edge if min_edge is not None else MIN_EDGE, 0.8) if ah0_value else min_edge
 
     lbl = market_label("h2h", "", 0.0, sport)
     _emit(signals, sb, now, log, name, sport, league,
-          "h2h", lbl, xbet_price, pin_price, sharp_prob, emoji,
+          "h2h", lbl, executable_price, pin_price, sharp_prob, emoji,
           sharp_prob_cons=sharp_cons,
-          selection_name=xbet_fav, min_edge=h2h_min_edge,
+          selection_name=soft_fav, min_edge=h2h_min_edge,
+          dnb_draw_odd=_dnb_draw_odd(m, sport),
           match_time=m.get("commence_time", ""), match_id=m.get("id", ""),
           sharp_sources=sources_found if sources_found else None,
           consensus_score=consensus_score if sources_found else None,
@@ -1542,7 +1590,7 @@ def _suggest_systems_by_window(signals: list, log, sb=None) -> list:
         # Final go/no-go re-check right before it's ever eligible for
         # Telegram — defense in depth even though suggest_system() already
         # filtered every candidate combo on this internally.
-        legs_for_check = [{"true_prob": s.get("sharp_prob", 0), "odds": s.get("xbet_odd", 0),
+        legs_for_check = [{"true_prob": s.get("sharp_prob", 0), "odds": s.get("executable_odd", 0),
                            "correlation_group": s.get("correlation_group")}
                           for s in result["legs"]]
         if not _is_combo_tax_viable(legs_for_check, tax_rate=_TAX_RATE):
@@ -1582,9 +1630,15 @@ def _refresh_leg_price(leg: dict, fresh_by_sport: dict, log) -> float | None:
         return None
     sel = leg.get("selection_name") or ""
     is_home = strict_team_match(sel, home)
-    odds = fresh.get("odds_1xbet", {})
-    new_odd = odds.get("1") if is_home else odds.get("2")
-    return new_odd if new_odd and new_odd > 1.01 else None
+    # Le prix d'un leg est le prix EXÉCUTABLE (DNB synthétique en football).
+    # Relire la cote 1X2 brute — ce que faisait cette fonction jusqu'au
+    # 2026-08-27 — comparerait deux grandeurs différentes : la marge du book
+    # passerait pour un mouvement de ligne favorable, et le last-look
+    # laisserait passer des combos que le prix réel condamne. On reprixe donc
+    # le CÔTÉ MISÉ avec `executable_price`, la règle même qui a fixé l'entrée.
+    new_odd = _executable_price(fresh.get("odds_1xbet", {}),
+                                leg.get("sport", ""), "1" if is_home else "2")
+    return new_odd if new_odd > 1.01 else None
 
 
 def _last_look_reprice(systems: list, log) -> list:
@@ -1617,13 +1671,13 @@ def _last_look_reprice(systems: list, log) -> list:
         changed = False
         for leg in sys_["legs"]:
             new_odd = _refresh_leg_price(leg, fresh_by_sport, log)
-            if new_odd and new_odd != leg.get("xbet_odd"):
-                repriced_legs.append({**leg, "xbet_odd": new_odd})
+            if new_odd and new_odd != leg.get("executable_odd"):
+                repriced_legs.append({**leg, "executable_odd": new_odd})
                 changed = True
             else:
                 repriced_legs.append(leg)
 
-        combo_legs = [{"true_prob": leg.get("sharp_prob", 0), "odds": leg.get("xbet_odd", 0),
+        combo_legs = [{"true_prob": leg.get("sharp_prob", 0), "odds": leg.get("executable_odd", 0),
                        "correlation_group": leg.get("correlation_group")} for leg in repriced_legs]
         if _is_combo_tax_viable(combo_legs, tax_rate=_TAX_RATE):
             if changed:
@@ -1726,7 +1780,7 @@ def _telegram_systems(systems: list, now, session: str, matches: int,
             if fav and fav != sel:
                 lines.append(f"   Favori : {fav}\n")
             tag = " (favori)" if fav and fav == sel else ""
-            lines.append(f"   → {sel}{tag} `@ {leg['xbet_odd']:.2f}` · valeur `+{leg.get('edge_pct', 0):.1f}%`\n")
+            lines.append(f"   → {sel}{tag} `@ {leg['executable_odd']:.2f}` · valeur `+{leg.get('edge_pct', 0):.1f}%`\n")
         if sys_["k"] > 1:
             combo_value = (sys_["combined_odds"] * sys_["combined_prob"] - 1) * 100
             lines.append(f"   *Combiné* `@ {sys_['combined_odds']:.2f}` · valeur `+{combo_value:.1f}%`\n")

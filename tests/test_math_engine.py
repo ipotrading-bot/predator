@@ -12,9 +12,14 @@ class TestComputeAlpha:
     # Depuis 2026-08-22, compute_alpha prend (cote_soft, prob_dévigorisée) et
     # rend l'EV vraie — plus jamais le ratio de prix contre une cote vigorisée
     # (voir la docstring de compute_alpha pour le post-mortem chiffré).
+    #
+    # Depuis 2026-08-27 le premier paramètre s'appelle `executable_odd` : la
+    # cote soft doit être un prix qu'un book AFFICHE, pas un DNB dévigorisé.
+    # Le nom `xbet_odd` a été retiré parce qu'il désignait, en football,
+    # exactement le prix qu'il ne fallait pas passer.
 
     def test_positive_ev_within_range(self):
-        edge, status = compute_alpha(xbet_odd=2.10, sharp_prob=0.52, min_edge=1.5)
+        edge, status = compute_alpha(executable_odd=2.10, sharp_prob=0.52, min_edge=1.5)
         assert status == "OK"
         assert edge == pytest.approx(9.2, abs=0.01)
 
@@ -24,13 +29,13 @@ class TestComputeAlpha:
         # jeté 22/22 candidats réels d'un scan. La viabilité fiscale reste
         # le travail exclusif de core.tax_engine.suggest_system()/
         # is_combo_tax_viable(), sur le combo réellement assemblé.
-        edge, status = compute_alpha(xbet_odd=2.09, sharp_prob=0.52, min_edge=1.5)
+        edge, status = compute_alpha(executable_odd=2.09, sharp_prob=0.52, min_edge=1.5)
         assert status == "OK"
         assert edge == pytest.approx(8.68, abs=0.01)
 
     def test_ev_below_min_threshold_discarded(self):
         # +0.7% d'EV sous un plancher à 1.5%
-        edge, status = compute_alpha(xbet_odd=1.90, sharp_prob=0.53, min_edge=1.5)
+        edge, status = compute_alpha(executable_odd=1.90, sharp_prob=0.53, min_edge=1.5)
         assert status == "DISCARD"
 
     def test_zero_or_invalid_inputs_discarded(self):
@@ -41,7 +46,7 @@ class TestComputeAlpha:
 
     def test_suspiciously_high_ev_discarded_above_max(self):
         # EV +50% = inversion de mapping ou donnée périmée, pas une opportunité
-        edge, status = compute_alpha(xbet_odd=5.0, sharp_prob=0.30, min_edge=1.5)
+        edge, status = compute_alpha(executable_odd=5.0, sharp_prob=0.30, min_edge=1.5)
         assert status == "DISCARD"
 
 

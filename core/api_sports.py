@@ -58,6 +58,7 @@ from datetime import datetime, timedelta, timezone
 import requests
 
 from core import daily_quota
+from core.math_engine import synthetic_dnb
 from core.secret_store import get_secret
 
 log = logging.getLogger("PREDATOR.api_sports")
@@ -214,11 +215,69 @@ def _bookmaker_odds(bookmaker: dict, draw: bool) -> dict | None:
     return None
 
 
+def _favourite_side(books: list[dict]) -> str:
+    """'1' ou '2' — le côté favori au CONSENSUS des books soft.
+
+    Décidé sur la moyenne des probabilités implicites et non sur un seul book :
+    deux books peuvent se contredire sur un match serré, et laisser le choix du
+    favori dépendre de l'ordre de la réponse HTTP rendrait le prix retenu
+    instable d'un scan à l'autre.
+    """
+    tot1 = tot2 = 0.0
+    n = 0
+    for o in books:
+        o1, o2 = float(o.get("1") or 0), float(o.get("2") or 0)
+        if o1 <= 1.01 or o2 <= 1.01:
+            continue
+        tot1 += 1.0 / o1
+        tot2 += 1.0 / o2
+        n += 1
+    if not n:
+        return "1"
+    return "1" if tot1 >= tot2 else "2"
+
+
+def _executable_price(odds: dict, fav_key: str, draw: bool) -> float:
+    """Prix que ce book-ci permet RÉELLEMENT de jouer sur le côté `fav_key`.
+
+    Football : DNB synthétique, donc les DEUX jambes chez CE book.
+    Hors football : la cote brute du côté, un seul pari.
+    """
+    fav = float(odds.get(fav_key) or 0)
+    if not draw:
+        return fav
+    return synthetic_dnb(fav, float(odds.get("X") or 0))
+
+
 def extract_prices(bookmakers: list, draw: bool) -> tuple[dict | None, dict | None]:
-    """(soft, sharp) — soft = meilleur prix par issue hors books sharp ;
-    sharp = le premier book sharp trouvé (pas de line shopping côté sharp :
-    on veut LE prix de référence, pas le plus généreux)."""
-    soft: dict = {}
+    """
+    (soft, sharp) — `soft` est le bloc de cotes D'UN SEUL BOOK, celui dont le
+    prix FINAL EXÉCUTABLE est le meilleur sur le côté qui sera joué ; `sharp`
+    est le premier book sharp trouvé (aucun line shopping côté sharp : on veut
+    LE prix de référence, pas le plus généreux).
+
+    ⚠️ POURQUOI PLUS JAMAIS UN MAX PAR ISSUE (2026-08-27)
+    -----------------------------------------------------
+    Cette fonction retenait le meilleur prix issue par issue à travers tous les
+    books soft. Le 1X2 qui en sortait n'était offert par PERSONNE : son « 1 »
+    venait de Bwin, son « X » d'Unibet. Or le prix d'entrée du football est un
+    DNB synthétique, qui engage deux jambes — et deux jambes ne se placent chez
+    deux books qu'en admettant que la cote calculée n'est pas celle qu'on
+    obtiendra. Mesuré le 2026-08-27 sur 30 matchs api-sports (3 à 12 books
+    soft) : le 1X2 line-shoppé surestime le prix par-book de 0,73 point médian
+    et de 2,46 au p90. C'est de l'edge fabriqué, qui s'ajoute à celui que la
+    dévigorisation fabriquait déjà.
+
+    Le line shopping n'est pas abandonné — il est déplacé au bon endroit : on
+    compare les books sur le prix FINAL, puis on prend le bloc du gagnant
+    INTACT. Un seul book, donc un prix réellement affiché.
+
+    Hors football le pari final n'a qu'une jambe, mais on rend malgré tout le
+    bloc d'un seul book : le côté opposé n'est jamais misé (le h2h joue le
+    favori), et un bloc cohérent supprime à la racine toute recomposition
+    accidentelle en aval.
+    """
+    soft_books: list[dict] = []
     sharp: dict | None = None
     for bk in bookmakers or []:
         odds = _bookmaker_odds(bk, draw)
@@ -228,13 +287,19 @@ def extract_prices(bookmakers: list, draw: bool) -> tuple[dict | None, dict | No
             if sharp is None:
                 sharp = odds
             continue
-        if not soft:
-            soft = dict(odds)
-        else:
-            for k in ("1", "X", "2"):
-                if odds.get(k, 0.0) > soft.get(k, 0.0):
-                    soft[k] = odds[k]
-    return (soft or None), sharp
+        soft_books.append(odds)
+
+    if not soft_books:
+        return None, sharp
+
+    fav_key = _favourite_side(soft_books)
+    # `max` conserve le premier ex aequo : à prix égal, l'ordre de la réponse
+    # tranche, et il est stable pour un même payload. Quand aucun book ne
+    # produit de prix exploitable (pas de nul en football), le premier est
+    # rendu tel quel — le match reste prixé et c'est `to_binary` qui refusera,
+    # au point unique où ce refus est déjà documenté.
+    best = max(soft_books, key=lambda o: _executable_price(o, fav_key, draw))
+    return best, sharp
 
 
 def _remaining(resp) -> int | None:

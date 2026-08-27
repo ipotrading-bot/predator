@@ -200,7 +200,7 @@ def risk_flag(edge_pct: float, elite: float = ELITE_EDGE) -> str:
     return "LOW_VALUE"
 
 
-def kelly_stake(xbet_odd: float, sharp_prob: float,
+def kelly_stake(executable_odd: float, sharp_prob: float,
                 bankroll: int = BANKROLL_REF,
                 sport: str = "soccer",
                 current_exposure: float = 0.0) -> int:
@@ -215,7 +215,7 @@ def kelly_stake(xbet_odd: float, sharp_prob: float,
     stakes down to 0 instead of stacking risk on top of risk. Defaults to
     0 (no reduction) for callers that haven't computed exposure.
     """
-    b = xbet_odd - 1
+    b = executable_odd - 1   # gain net par unité misée, au prix RÉELLEMENT jouable
     if b <= 0 or sharp_prob <= 0:
         return 0
     effective_bankroll = max(0.0, bankroll - current_exposure)

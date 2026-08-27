@@ -23,6 +23,7 @@ from datetime import datetime, timedelta, timezone
 import pytest
 
 import core.api_sports as aps
+from core.math_engine import synthetic_dnb
 
 
 class _Resp:
@@ -152,7 +153,56 @@ def test_sharp_price_is_split_out_and_excluded_from_soft(monkeypatch):
     _wire(monkeypatch, sched, pages)
     (m,) = aps.fetch_sport("soccer", api_key="k")
     assert m["odds_pinnacle"] == {"1": 2.50, "X": 3.20, "2": 2.90}
-    assert m["odds_1xbet"] == {"1": 2.30, "X": 3.50, "2": 3.00}
+    # Le bloc soft est celui d'UN SEUL book, jamais un assemblage.
+    assert m["odds_1xbet"] in ({"1": 2.30, "X": 3.40, "2": 2.80},
+                               {"1": 2.20, "X": 3.50, "2": 3.00})
+
+
+def test_le_bloc_soft_retenu_est_celui_dun_seul_book(monkeypatch):
+    """Le line shopping se fait sur le prix FINAL EXÉCUTABLE, pas issue par
+    issue : un « 1 » de Bwin marié à un « X » d'Unibet donne un 1X2 que
+    personne n'offre, donc un DNB synthétique qu'on ne peut pas placer."""
+    day = _when().strftime("%Y-%m-%d")
+    pages = {(day, 1): [_odds_row(7, [
+        _bk("Bwin",   2.30, 2.80, 3.40),
+        _bk("Unibet", 2.20, 3.00, 3.50),
+    ])]}
+    _wire(monkeypatch, [_game(7, "Lille", "Reims")], pages)
+    (m,) = aps.fetch_sport("soccer", api_key="k")
+    soft = m["odds_1xbet"]
+    assert soft in ({"1": 2.30, "X": 3.40, "2": 2.80},
+                    {"1": 2.20, "X": 3.50, "2": 3.00}), \
+        "le bloc doit provenir d'un book réel, pas d'un max par issue"
+    # L'ancien comportement fabriquait exactement ceci :
+    assert soft != {"1": 2.30, "X": 3.50, "2": 3.00}
+
+
+def test_le_book_retenu_est_celui_au_meilleur_prix_executable(monkeypatch):
+    """Sur le côté qui sera joué (le favori), c'est le DNB synthétique final
+    qui départage — pas la cote nue du favori."""
+    day = _when().strftime("%Y-%m-%d")
+    # Favori = domicile chez les deux books. B a un « 1 » PLUS FAIBLE mais un
+    # nul si généreux que son DNB exécutable est meilleur : c'est lui qui doit
+    # gagner. Un tri sur la cote nue du favori choisirait A.
+    a = {"1": 1.80, "X": 3.20, "2": 4.50}
+    b = {"1": 1.78, "X": 8.00, "2": 4.40}
+    assert synthetic_dnb(b["1"], b["X"]) > synthetic_dnb(a["1"], a["X"])
+    pages = {(day, 1): [_odds_row(7, [_bk("A", a["1"], a["2"], a["X"]),
+                                      _bk("B", b["1"], b["2"], b["X"])])]}
+    _wire(monkeypatch, [_game(7, "Lille", "Reims")], pages)
+    (m,) = aps.fetch_sport("soccer", api_key="k")
+    assert m["odds_1xbet"] == b
+
+
+def test_hors_football_le_bloc_reste_celui_dun_seul_book(monkeypatch):
+    """Le pari n'a qu'une jambe, mais rendre un bloc cohérent supprime toute
+    recomposition accidentelle en aval."""
+    pages = {("game", 11): [_odds_row(11, [_bk("A", 1.60, 2.40),
+                                           _bk("B", 1.55, 2.60)],
+                                      style="game")]}
+    _wire(monkeypatch, [_game(11, "Home", "Away", style="game")], pages)
+    (m,) = aps.fetch_sport("basketball", api_key="k")
+    assert m["odds_1xbet"] == {"1": 1.60, "X": 0.0, "2": 2.40}
 
 
 def test_sharp_only_match_is_kept_but_yields_no_edge(monkeypatch):

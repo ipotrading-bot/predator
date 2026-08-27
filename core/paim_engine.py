@@ -75,7 +75,19 @@ MMA_SPORTS = {"mma", "boxing"}
 
 
 def convert_to_ah0(v1: float, vx: float, v2: float) -> tuple[float, float]:
-    """Return (DNB_home, DNB_away) from raw 1X2 odds."""
+    """(DNB_domicile, DNB_extérieur) DÉVIGORISÉS à partir d'un 1X2 brut.
+
+    ⚠️ CÔTÉ SHARP UNIQUEMENT. Ces deux prix ont eu leur marge retirée : ce
+    sont des ESTIMATIONS DE PROBABILITÉ, pas des cotes qu'un book affiche.
+    Les employer comme prix d'entrée soft fait mesurer une divergence
+    d'opinion et l'appeler « edge » — c'est exactement le défaut corrigé le
+    2026-08-27 dans `core.math_engine.to_binary`. Pour un prix d'entrée,
+    utiliser `core.math_engine.executable_price` / `synthetic_dnb`.
+
+    Sans appelant dans le dépôt au 2026-08-27 : conservée parce qu'un helper
+    de conversion 1X2→AH0 est légitime côté sharp, mais dûment étiquetée pour
+    qu'elle ne soit pas ressaisie de bonne foi du mauvais côté.
+    """
     return calc_dnb(v1, v2, vx), calc_dnb(v2, v1, vx)
 
 
@@ -193,16 +205,24 @@ def calculate_consensus_price(
 
 
 def compute_alpha(
-    xbet_odd: float,
+    executable_odd: float,
     sharp_prob: float,
     min_edge: float = MIN_EDGE,
 ) -> tuple[float, str]:
     """
     Rend (edge_pct, status) où edge_pct est l'ESPÉRANCE DE GAIN VRAIE :
-        edge = (sharp_prob × cote_soft − 1) × 100
+        edge = (sharp_prob × cote_soft_EXÉCUTABLE − 1) × 100
     avec sharp_prob la probabilité dévigorisée (ensemble de
     core.math_engine.devig). status: "OK" dans [min_edge, MAX_EDGE],
     "DISCARD" sinon.
+
+    ⚠️ `executable_odd` DOIT être un prix qu'un book affiche vraiment — la
+    sortie de `core.math_engine.to_binary` / `executable_price`. Le paramètre
+    s'appelait `xbet_odd` jusqu'au 2026-08-27 et recevait, en football, un DNB
+    DÉVIGORISÉ : la marge du book n'était alors jamais soustraite et cette
+    fonction rendait une divergence d'opinion sous le nom d'« espérance de
+    gain ». Le nom a changé pour que la confusion ne puisse pas se réinstaller
+    en silence.
 
     HISTORIQUE — jusqu'au 2026-08-22 cette fonction rendait le RATIO DE PRIX
     (xbet/pinnacle − 1) contre une cote Pinnacle encore vigorisée : la marge
@@ -216,9 +236,9 @@ def compute_alpha(
     2026-07-08) : core.tax_engine.suggest_system()/is_combo_tax_viable()
     reste le seul juge fiscal, sur le combo réellement assemblé.
     """
-    if not xbet_odd or xbet_odd <= 1.01 or not sharp_prob or not (0.0 < sharp_prob < 1.0):
+    if not executable_odd or executable_odd <= 1.01 or not sharp_prob or not (0.0 < sharp_prob < 1.0):
         return 0.0, "DISCARD"
-    edge = round((sharp_prob * xbet_odd - 1) * 100, 2)
+    edge = round((sharp_prob * executable_odd - 1) * 100, 2)
     if edge < min_edge or edge > MAX_EDGE:
         return edge, "DISCARD"
     return edge, "OK"

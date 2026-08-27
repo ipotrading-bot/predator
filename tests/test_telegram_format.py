@@ -22,15 +22,31 @@ NOW = datetime(2026, 7, 21, 23, 8, tzinfo=timezone.utc)
 
 
 def _sig(**over) -> dict:
+    """Signal EN MÉMOIRE, tel que `run_engine._emit` le produit.
+
+    Le prix s'y nomme `executable_odd` depuis le 2026-08-27 : c'est la cote
+    réellement jouable (DNB synthétique en football), et plus le prix
+    dévigorisé que personne n'affiche. Voir `_row()` pour la forme persistée.
+    """
     base = {
         "match": "Real Madrid vs Barcelona", "sport": "soccer",
         "league": "La Liga", "market_key": "h2h", "market": "AH 0.0",
-        "selection_name": "Barcelona", "xbet_odd": 3.40, "sharp_prob": 0.31,
+        "selection_name": "Barcelona", "executable_odd": 3.40, "sharp_prob": 0.31,
         "edge_pct": 5.4, "risk_flag": "HIGH_VALUE",
         "match_time": "2026-07-21T21:00:00+00:00",
     }
     base.update(over)
     return base
+
+
+def _row(**over) -> dict:
+    """La MÊME ligne, relue de `signals`. La colonne a gardé son nom
+    historique `xbet_odd` — `run_engine._save` fait la traduction au point
+    unique de persistance. `run_rapport` lit la base, donc lit ce nom-là."""
+    row = _sig()
+    row["xbet_odd"] = row.pop("executable_odd")
+    row.update(over)
+    return row
 
 
 @pytest.fixture
@@ -56,17 +72,17 @@ class TestNoStakeNoBankroll:
 
     @pytest.mark.parametrize("banned", ["Mise", "1000€", "Kelly", "€"])
     def test_report_line_is_money_free(self, banned):
-        assert banned not in run_rapport._signal_line(_sig(), NOW)
+        assert banned not in run_rapport._signal_line(_row(), NOW)
 
     def test_zero_stake_signal_is_still_reported(self):
         # Régression : _signal_line renvoyait None quand la mise Kelly tombait
         # sous MIN_STAKE, effaçant le signal du rapport sans rien dire.
-        assert run_rapport._signal_line(_sig(xbet_odd=1.01, sharp_prob=0.01), NOW)
+        assert run_rapport._signal_line(_row(xbet_odd=1.01, sharp_prob=0.01), NOW)
 
 
 class TestRequiredFields:
     def test_event_selection_odds_and_value_are_present(self):
-        line = run_rapport._signal_line(_sig(), NOW)
+        line = run_rapport._signal_line(_row(), NOW)
         assert "Real Madrid vs Barcelona" in line   # événement
         assert "Barcelona" in line                  # signal proposé
         assert "3.40" in line                       # cote
@@ -74,16 +90,16 @@ class TestRequiredFields:
         assert "21:00 UTC" in line                  # heure
 
     def test_kickoff_shows_date_when_not_today(self):
-        line = run_rapport._signal_line(_sig(match_time="2026-07-22T02:30:00+00:00"), NOW)
+        line = run_rapport._signal_line(_row(match_time="2026-07-22T02:30:00+00:00"), NOW)
         assert "22/07 02:30 UTC" in line
 
     def test_unknown_kickoff_prints_no_hour_rather_than_a_fake_one(self):
-        assert "UTC" not in run_rapport._signal_line(_sig(match_time=""), NOW)
+        assert "UTC" not in run_rapport._signal_line(_row(match_time=""), NOW)
 
 
 class TestFavourite:
     def test_outsider_pick_names_the_favourite(self):
-        line = run_rapport._signal_line(_sig(), NOW)
+        line = run_rapport._signal_line(_row(), NOW)
         assert "Favori : Real Madrid" in line
 
     def test_favourite_pick_is_tagged_inline_not_repeated(self):
