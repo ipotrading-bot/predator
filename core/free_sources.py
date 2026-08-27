@@ -288,7 +288,7 @@ def measure_against(matches: list, trusted: list, card: dict) -> dict:
 # RÔLE `consensus`, JAMAIS SHARP : ils MESURENT, ils n'émettent aucun signal
 # et ne modifient aucun prix. Le module existait depuis le 2026-08-22 et
 # n'était importé nulle part hors de ses tests (capacité morte en silence,
-# motif « listes qui divergent » de CLAUDE.md) — c'est ce branchement-ci.
+# motif « listes qui divergent », INCIDENTS.md) — c'est ce branchement-ci.
 #
 # COUVERTURE HONNÊTE : Kalshi et Polymarket ne cotent que 4 compétitions
 # (EPL, UCL, NFL, NBA). Le slate de Predator étant surtout composé de ligues

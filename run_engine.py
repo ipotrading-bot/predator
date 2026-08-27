@@ -2446,7 +2446,7 @@ def run():
             # CONTRAT DE FIN (B5). Zéro match n'est un échec que si des sources
             # ont RÉPONDU : un créneau réellement creux reste vert. Matchbook
             # sert de témoin — gratuit, illimité, il rend 141 à 202 marchés
-            # quand le réseau et le pipeline vont bien (CLAUDE.md). Des marchés
+            # quand le réseau et le pipeline vont bien (INCIDENTS.md). Des marchés
             # chargés et zéro match, c'est nous qui avons perdu la donnée.
             _terminer_run(verdict_de_fin(
                 sources_joignables=bool(betfair_prices),

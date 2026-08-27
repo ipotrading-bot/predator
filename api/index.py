@@ -817,7 +817,7 @@ def trigger_audit():
     déclencher `audit.yml` : 45 minutes de runner, le settlement, et la
     consommation de la réserve IA gardée en négatif exprès. Sans cooldown
     et sans limite de débit, une boucle `curl` épuisait le quota — et
-    CLAUDE.md rappelle ce que coûte un quota épuisé : dix jours sans
+    INCIDENTS.md rappelle ce que coûte un quota épuisé : dix jours sans
     signal (incident du 10→20 août 2026).
 
     Le cron de `audit.yml` (toutes les 6 h) et le `workflow_dispatch` depuis

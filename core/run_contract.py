@@ -6,7 +6,7 @@ LE PROBLÈME QUE CE MODULE EXISTE POUR RENDRE VISIBLE
 Ce dépôt échoue en silence, et il échoue en silence de la même façon depuis le
 début : le travail ne se fait pas, rien ne lève, GitHub Actions affiche une
 coche verte, et personne ne l'apprend avant des jours. Les cas déjà consignés
-dans CLAUDE.md et AUDIT.md :
+dans INCIDENTS.md et AUDIT.md :
 
   · 2026-07-07 — ~17 h de « 0/N signals persisted », chaque run vert, parce que
     chaque écriture échouait UNE PAR UNE sur une RLS 42501 ;

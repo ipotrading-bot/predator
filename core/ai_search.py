@@ -81,7 +81,7 @@ AI_CACHE_TTL_MIN = int(os.environ.get("AI_CACHE_TTL_MIN", "30"))
 # des 404 en boucle, retries et backoff, jusqu'au timeout global de 540 s qui
 # tuait le Deep Scan du matin (runs 32936332791 et 32814980496).
 #
-# C'est la panne « listes qui divergent » de CLAUDE.md, dans sa forme la plus
+# C'est la panne « listes qui divergent » (INCIDENTS.md), dans sa forme la plus
 # coûteuse : le gardien du registre faisait son travail pendant que le vrai
 # chemin d'appel l'ignorait. Une liste qui existe déjà ailleurs se dérive.
 #

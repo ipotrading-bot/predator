@@ -386,7 +386,7 @@ Et le taux nu ne suffit pas à conclure, dans un sens comme dans l'autre :
 ont corrigé le prix retenu (exécutable, non dévigorisé) et la ligne comparée
 (même handicap des deux côtés) ; depuis, le football n'émet plus aucun signal
 positif. Une recalibration demande des lignes réglées POSTÉRIEURES à ces
-corrections — voir `CLAUDE.md`. Ne pas recalculer un seuil sur ce ledger : il
+corrections — voir `INCIDENTS.md`. Ne pas recalculer un seuil sur ce ledger : il
 décrit une distribution que le moteur ne produit plus.
 
 Reproduire ces chiffres : `python scripts/replay_ledger_executable.py`

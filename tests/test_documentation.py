@@ -39,6 +39,7 @@ import pytest
 _RACINE = pathlib.Path(__file__).resolve().parent.parent
 _README = _RACINE / "README.md"
 _CLAUDE = _RACINE / "CLAUDE.md"
+_INCIDENTS = _RACINE / "INCIDENTS.md"
 
 
 def _texte(f: pathlib.Path) -> str:
@@ -128,8 +129,13 @@ class TestAucunChiffreDePerformanceNu:
         « 9 signaux » — zéro occurrence. Le README peut RACONTER qu'il était
         annoncé (c'est la trace de la correction), pas l'annoncer."""
         import subprocess
-        sortie = subprocess.run(["git", "grep", "-lE", r"MIN_WINS|7/9", "--", "*.py"],
-                                cwd=_RACINE, capture_output=True, text=True).stdout.strip()
+        # `:!` exclut CE fichier, qui NOMME le mécanisme pour le nier — même
+        # parti pris que tests/test_sans_scipy.py. Sans l'exclusion le test
+        # se détecte lui-même ; il ne passait au commit de D4 que parce qu'il
+        # n'était pas encore SUIVI par git, `git grep` ne lisant que l'index.
+        sortie = subprocess.run(
+            ["git", "grep", "-lE", r"MIN_WINS|7/9", "--", "*.py", ":!tests/test_documentation.py"],
+            cwd=_RACINE, capture_output=True, text=True).stdout.strip()
         assert not sortie, f"le mécanisme 7/9 existerait donc dans : {sortie}"
         titres = [l for l in _texte(_README).splitlines() if l.startswith("#")]
         assert not any("7/9" in t for t in titres), \
@@ -163,3 +169,79 @@ class TestLArborescenceDecritDesFichiersQuiExistent:
                    (reels | {"wiz", "signals", "dashboard"})
         assert annonces <= reels, (
             f"le README annonce des pages qui n'existent plus : {sorted(annonces - reels)}")
+
+
+# ── D5 : la scission CLAUDE.md / INCIDENTS.md ────────────────────────────
+
+class TestLaScissionTient:
+    """`CLAUDE.md` faisait 38 Ko, dont 33 de récit d'incidents, et il est
+    chargé dans CHAQUE session. Un fichier de consignes qu'on ne lit plus en
+    entier ne donne plus de consignes : le récit est parti dans
+    `INCIDENTS.md`, les consignes sont restées.
+
+    Ces tests existent parce que la pente naturelle est le regonflement — le
+    prochain incident coûteux voudra s'écrire là où on le lira d'abord."""
+
+    PLAFOND = 5_000
+
+    def test_claude_md_reste_sous_son_plafond(self):
+        taille = len(_texte(_CLAUDE).encode("utf-8"))
+        assert taille <= self.PLAFOND, (
+            f"CLAUDE.md fait {taille} o (plafond {self.PLAFOND}). Le récit d'un "
+            "incident va dans INCIDENTS.md ; ici ne restent que la commande, "
+            "l'architecture, la convention et la règle dure.")
+
+    def test_le_recit_a_bien_ete_deplace_et_non_resume(self):
+        """La scission ne devait rien perdre : INCIDENTS.md doit peser
+        l'ordre de grandeur de ce qui est sorti de CLAUDE.md."""
+        assert len(_texte(_INCIDENTS).encode("utf-8")) > 25_000
+
+    def test_claude_md_envoie_lire_les_incidents(self):
+        """Sans ce renvoi, la scission ne fait que CACHER les pièges."""
+        texte = _texte(_CLAUDE)
+        assert "INCIDENTS.md" in texte
+        assert "AVANT DE" in texte, "le renvoi doit être impératif, pas décoratif"
+
+    def test_chaque_section_citee_par_une_regle_dure_existe(self):
+        """Les règles dures renvoient à une section d'INCIDENTS.md sous la
+        forme `— *Nom*`. Une règle qui pointe vers une section disparue est
+        pire qu'une règle sans renvoi : elle fait croire qu'on peut vérifier.
+
+        ⚠️ La citation doit être le PRÉFIXE d'un vrai titre, pas « un mot en
+        commun quelque part ». Une première version se contentait de
+        `any(mot in titres)` : elle acceptait « Une section qui n'existe pas »
+        parce que le mot « section » figurait ailleurs dans le fichier.
+        Trouvé par sabotage.
+        """
+        regles = [l for l in _texte(_CLAUDE).splitlines() if re.match(r"^\s*\d+\.", l)]
+        assert len(regles) >= 8, "les règles dures ont disparu de CLAUDE.md"
+
+        def normalise(t):
+            import unicodedata
+            t = unicodedata.normalize("NFD", t.lower())
+            return " ".join("".join(c for c in t if not unicodedata.combining(c)).split())
+
+        titres = [normalise(t) for t in
+                  re.findall(r"^### (.+)$", _texte(_INCIDENTS), re.M)]
+        assert titres, "INCIDENTS.md n'a plus de sections"
+
+        # `— *…*` seulement : le `*…*` isolé attraperait l'intérieur des
+        # passages en gras, qui ne sont pas des renvois.
+        citations = re.findall(r"—\s*\*([^*]{2,60})\*", _texte(_CLAUDE))
+        assert citations, "plus aucune règle ne renvoie à une section"
+        for citation in citations:
+            attendu = normalise(citation)
+            assert any(t.startswith(attendu) for t in titres), (
+                f"la règle dure cite « {citation} » : aucune section "
+                f"d'INCIDENTS.md ne commence par ça")
+
+    def test_les_prohibitions_absolues_survivent_dans_claude_md(self):
+        """Celles-là doivent être lisibles SANS ouvrir INCIDENTS.md : elles
+        interdisent un geste qu'on ferait avant d'avoir lu quoi que ce soit."""
+        texte = _texte(_CLAUDE)
+        for prohibition in ("toJSON(secrets)",          # workflow refusé par GitHub, zéro job
+                            "ci_env.py",                # blocs de secrets générés
+                            "ai_router.py",             # aucun modèle en dur
+                            ".python-version",          # appartient à Vercel
+                            "Wilson"):                  # jamais un taux nu
+            assert prohibition in texte, f"règle dure perdue dans la scission : {prohibition}"

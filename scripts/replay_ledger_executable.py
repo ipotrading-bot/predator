@@ -27,7 +27,7 @@ qui dévigorise. Pour tous les autres marchés (spreads, totals, quel que soit l
 sport) et pour le h2h hors football, `to_binary` et `_process_totals` /
 `_process_spreads` stockent la cote SOFT BRUTE — déjà exécutable, prélèvement
 nul. Ce n'est pas une bonne nouvelle : sur le ledger d'août 2026, 53 des 114
-lignes réglées sont du football h2h, et CLAUDE.md note que 100 % des signaux
+lignes réglées sont du football h2h, et INCIDENTS.md note que 100 % des signaux
 récents sont du football.
 
 POURQUOI UN PRÉLÈVEMENT MODÉLISÉ, ET PAS LE 1X2 BRUT
@@ -67,7 +67,7 @@ Le défaut du script est le chiffre **odds-api.io**, parce qu'il est le plus
 SÉVÈRE des deux : si une ligne survit sous ce prélèvement, elle survit sous
 n'importe quel autre du panel. Un argument milite pour l'autre valeur et mérite
 d'être posé avant A6 — api-sports est la source qui porte RÉELLEMENT les signaux
-football (odds-api.io ne sert aucun prix sharp, cf. CLAUDE.md), donc 0.9244 est
+football (odds-api.io ne sert aucun prix sharp, cf. INCIDENTS.md), donc 0.9244 est
 probablement plus proche du prix qu'une exécution obtiendrait. Le choix ne change
 pas la conclusion : `--haircut` rejoue sous l'autre hypothèse, et la table de
 sensibilité couvre TOUTE la bande 0.8720 → 0.9806, sur laquelle le verdict tient.

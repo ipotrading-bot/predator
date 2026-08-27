@@ -174,7 +174,7 @@ C'est le tableau à consulter avant de toucher à quoi que ce soit.
 
 L'**invariant des sport-keys** (4 fichiers : `core/odds_api.py`,
 `core/learning_layer.py`, `api/index.py`) est décrit
-dans `CLAUDE.md` ; son maillon d'affichage est tenu par
+dans le skill `predator-pipeline` ; son maillon d'affichage est tenu par
 `tests/test_dashboard_sports.py`. Vérifié propre sur les 4 fichiers le
 2026-08-22.
 

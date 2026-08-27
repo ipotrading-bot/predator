@@ -11,7 +11,7 @@ depuis une URL Vercel publique, et AUCUNE interface du dépôt n'appelle cette
 route : elle n'était connue que du README. Une boucle `curl` anonyme suffisait
 donc à épuiser le quota GitHub Actions et le quota IA du projet.
 
-Ce que ça coûte n'est pas théorique : CLAUDE.md documente l'incident du
+Ce que ça coûte n'est pas théorique : INCIDENTS.md documente l'incident du
 10→20 août 2026 — dix jours sans signal après un épuisement de quota.
 
 La règle retenue est l'ÉCHEC FERMÉ. Sans `DASHBOARD_ADMIN_TOKEN` configuré,
