@@ -163,11 +163,6 @@ C'est le tableau à consulter avant de toucher à quoi que ce soit.
 | Une panne de la fonction ne fuit ni son nom ni la policy dans la réponse | `…::test_une_panne_de_la_fonction_ne_fuit_pas_dans_la_reponse` |
 | `anon` ne peut plus écrire `meta` (RLS + GRANT retirés) | `sql/migrate_v10_9_scan_request_rpc.sql` §3 |
 | Le déploiement Vercel ne porte que les 4 variables réellement lues | README §« Le dashboard n'a plus de clé d'écriture » |
-| Les steps de PRÉPARATION ne voient que Supabase (pas de clé dans `pip install`) | `tests/test_ci_env.py::TestAmorcageSupabaseSeul` |
-| Un bloc d'amorçage reste conforme à sa source dérivée | `…::test_chaque_bloc_genere_est_conforme_a_son_pool` |
-| Aucune URL de script n'est flottante sur `/system` | `tests/test_dashboard_cdn.py::TestPlusAucuneURLFlottante` |
-| Tout script tiers porte `integrity` ET `crossorigin` | `…::TestToutTiersEstVerifie` |
-| Tailwind est servi par le dépôt, et le bundle est celui qu'on croit | `…::TestTailwindEstServiParLeDepot` |
 | Aucun script du dashboard ne vient d'une URL flottante | `tests/test_dashboard_cdn.py::TestPlusAucuneURLFlottante` |
 | Tout script DISTANT porte `integrity` ET `crossorigin` | `…::TestToutTiersEstVerifie` |
 | Tailwind est servi par le dépôt, et son empreinte est vérifiée | `…::TestTailwindEstServiParLeDepot` |
