@@ -148,3 +148,89 @@ class TestQuotaWatch:
         monkeypatch.setattr(eng, "_odds_pool_counters",
                             lambda: {"remaining": 400, "used": 100, "total": 500, "pct": 80.0})
         assert eng._alert_oddsapi_pool_levels(FakeSB()) is None and sent == []
+
+
+# ── B6 — le taux de résolution, contre le biais de survie ────────────────
+
+class TestTauxDeResolution:
+    """/performance ne compte que les lignes RÉGLÉES : les `expired` — signaux
+    purgés avant qu'un score ait pu être trouvé — sortent de chaque agrégat.
+    La page mesurait donc les paris qu'on a réussi à SUIVRE et présentait ce
+    résultat comme celui de tous les paris.
+
+    Le biais n'est pas neutre : le règlement échoue plus souvent là où
+    l'appariement de noms échoue — ligues obscures, sources douteuses —,
+    c'est-à-dire exactement là où l'edge est le plus suspect. Les écarter
+    embellit la page dans le sens précis qui flatte le moteur.
+
+    Mesuré le 2026-08-27 : 44 % (138 sur 311) sur la page réelle.
+    """
+
+    def test_le_taux_est_regles_sur_regles_plus_expires(self):
+        from core.perf_view import resolution_rate
+        rows = [{"outcome": "WIN"}, {"outcome": "LOSS"}, {"outcome": "PUSH"},
+                {"outcome": "expired"}]
+        d = resolution_rate(rows)
+        assert d == {"settled": 3, "expired": 1, "denom": 4, "rate_pct": 75.0}
+
+    def test_un_push_compte_comme_resolu(self):
+        """Un remboursement EST un résultat connu : le match a eu lieu et on
+        sait ce qu'il a donné. L'exclure ferait passer un règlement réussi
+        pour un échec de suivi."""
+        from core.perf_view import resolution_rate
+        assert resolution_rate([{"outcome": "PUSH"}])["rate_pct"] == 100.0
+
+    def test_active_et_closed_nentrent_nulle_part(self):
+        """Ni résultat, ni abandon — des états intermédiaires. Les compter au
+        dénominateur ferait passer un run récent pour une panne de
+        règlement."""
+        from core.perf_view import resolution_rate
+        d = resolution_rate([{"outcome": "WIN"}, {"outcome": "active"},
+                             {"outcome": "closed"}])
+        assert d["denom"] == 1 and d["rate_pct"] == 100.0
+
+    def test_les_signals_parlent_status_le_ledger_outcome(self):
+        from core.perf_view import resolution_rate
+        d = resolution_rate([{"status": "settled"}, {"status": "expired"}],
+                            field="status")
+        assert d["settled"] == 1 and d["rate_pct"] == 50.0
+
+    def test_rien_de_mesurable_rend_none_pas_zero(self):
+        """0.0 se lirait « aucun signal résolu », ce qui est une affirmation."""
+        from core.perf_view import resolution_rate
+        assert resolution_rate([])["rate_pct"] is None
+        assert resolution_rate([{"outcome": "active"}])["rate_pct"] is None
+
+    def test_la_page_performance_expose_le_taux(self):
+        """Un calcul que la page n'affiche pas ne corrige aucun biais."""
+        import inspect
+        import api.index as idx
+        src = inspect.getsource(idx)
+        assert '_resolution_rate(rows)' in src
+        assert 'global_s["resolution"]' in src
+
+    def test_le_gabarit_affiche_le_nombre_dexpires(self):
+        """La phrase doit nommer les EXPIRÉS, pas seulement un pourcentage :
+        c'est le nombre de paris absents des chiffres du dessus qui informe."""
+        import pathlib
+        gabarit = (pathlib.Path(__file__).resolve().parent.parent
+                   / "templates" / "performance.html").read_text(encoding="utf-8")
+        assert "global_s.resolution" in gabarit
+        assert "r.expired" in gabarit and "r.settled" in gabarit
+
+    def test_la_formule_nest_pas_recopiee_ailleurs(self):
+        """Elle vivait en double : ici et dans
+        `scripts/replay_ledger_executable.py`. Une seconde copie finirait par
+        diverger, et la page et l'outil de mesure ne diraient plus la même
+        chose des mêmes lignes."""
+        import ast
+        import pathlib
+        racine = pathlib.Path(__file__).resolve().parent.parent
+        definitions = []
+        for f in list(racine.glob("core/*.py")) + list(racine.glob("scripts/*.py")) \
+                + list(racine.glob("*.py")) + list(racine.glob("api/*.py")):
+            arbre = ast.parse(f.read_text(encoding="utf-8"))
+            for noeud in ast.walk(arbre):
+                if isinstance(noeud, ast.FunctionDef) and noeud.name == "resolution_rate":
+                    definitions.append(str(f.relative_to(racine)))
+        assert definitions == ["core/perf_view.py"], definitions

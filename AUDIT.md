@@ -148,6 +148,9 @@ C'est le tableau à consulter avant de toucher à quoi que ce soit.
 | Le contrat est réellement appelé aux trois sorties | `…::TestLeContratEstReellementCable` |
 | Un audit à 0 réglé sur N éligibles sort rouge | `…::TestLauditSterileSortEnEchec` |
 | Un scan qui n'a rien persisté sort rouge | `…::TestLeScanQuiNePersisteRienSortEnEchec` |
+| /performance affiche le taux de résolution (biais de survie) | `tests/test_mission2_dashboard_quota.py::TestTauxDeResolution` |
+| Un PUSH compte comme RÉSOLU, `active`/`closed` ne comptent nulle part | `…::test_un_push_compte_comme_resolu`, `…::test_active_et_closed_nentrent_nulle_part` |
+| La formule du taux de résolution n'existe qu'une fois (AST) | `…::test_la_formule_nest_pas_recopiee_ailleurs` |
 
 L'**invariant des sport-keys** (4 fichiers : `core/odds_api.py`,
 `core/learning_layer.py`, `api/index.py`) est décrit

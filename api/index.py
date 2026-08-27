@@ -33,7 +33,8 @@ from flask import Flask, jsonify, render_template, request, send_from_directory
 # seuils appris, dernier cycle d'apprentissage, calibration de Brier. Ces
 # mesures existent toujours — elles vivent dans la base et dans
 # scripts/weekly_report.py — elles ne sont simplement plus rendues ici.
-from core.perf_view import filter_rows as _perf_filter_rows
+from core.perf_view import (filter_rows as _perf_filter_rows,
+                            resolution_rate as _resolution_rate)
 from core.constants import TAX_RATE as _TAX_RATE
 from core.db import get_db as _get_db_client, MissingCredentialsError
 from core.stats_utils import p_breakeven, wilson_ci
@@ -669,6 +670,19 @@ def performance():
                     "clv_is_real":  bool(clv_real),
                     "clv_n":        len(clv_all),
                 }
+
+                # TAUX DE RÉSOLUTION (B6, 2026-08-27). Tout ce qui précède ne
+                # compte que les lignes RÉGLÉES : les `expired` — signaux
+                # purgés avant qu'un score ait pu être trouvé — sortent de
+                # chaque agrégat. La page mesurait donc les paris qu'on a
+                # réussi à SUIVRE et présentait ce résultat comme celui de
+                # tous les paris.
+                # Le biais n'est pas neutre : le règlement échoue plus souvent
+                # là où l'appariement de noms échoue, c'est-à-dire sur les
+                # ligues obscures et les sources douteuses — exactement les
+                # lignes dont l'edge est le plus suspect. Les écarter embellit
+                # la page, dans le sens précis qui flatte le moteur.
+                global_s["resolution"] = _resolution_rate(rows)
 
                 # Per-sport win rate + Wilson CI + breakeven
                 sport_perf: dict = {}

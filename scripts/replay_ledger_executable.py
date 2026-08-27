@@ -122,6 +122,7 @@ import statistics
 
 from core.constants import EV_EDGE_FLOOR, TAX_RATE, roi_net_of_tax
 from core.math_engine import calc_dnb
+from core.perf_view import resolution_rate
 from core.stats_utils import p_breakeven, wilson_ci
 from core.paim_engine import MIN_EDGE
 
@@ -350,29 +351,6 @@ def survivors(records: list[dict], floor: float) -> dict:
     return {"floor": floor, "n": len(records), "before": before, "after": after,
             "emis_a_lepoque": sum(1 for r in records if r["edge_stored"] >= floor),
             "kept_pct": round(after / before * 100, 1) if before else None}
-
-
-# Un signal a REÇU un résultat (ledger : outcome ; signals : status).
-_RESOLU = {"WIN", "LOSS", "PUSH", "settled"}
-
-
-def resolution_rate(rows: list[dict], field: str = "outcome") -> dict:
-    """
-    réglés / (réglés + expired) — le biais de survie que /performance cache
-    aujourd'hui : un signal purgé sans score sort en `expired` et disparaît des
-    stats, alors que ces lignes-là sont précisément celles dont l'edge était le
-    plus douteux.
-
-    `field` vaut `outcome` sur le ledger et `status` sur `signals`, qui portent
-    le même fait sous deux vocabulaires. `active`/`closed` n'entrent nulle part :
-    ni résultat, ni abandon — des états intermédiaires, et les compter au
-    dénominateur ferait passer un run récent pour une panne de règlement.
-    """
-    settled = sum(1 for r in rows if str(r.get(field)) in _RESOLU)
-    expired = sum(1 for r in rows if str(r.get(field)) == "expired")
-    denom = settled + expired
-    return {"settled": settled, "expired": expired, "denom": denom,
-            "rate_pct": round(settled / denom * 100, 1) if denom else None}
 
 
 # ── Calibration hors-ligne du prélèvement ────────────────────────────────

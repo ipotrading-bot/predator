@@ -32,6 +32,17 @@
 .wr-hero-s { font-size: 14px; color: var(--t1); margin-top: 8px; font-family: var(--font-data); font-weight: 600; }
 .wr-verdict { display: inline-block; margin-top: 12px; padding: 5px 14px; border-radius: 100px; font-size: 12px; font-weight: 700; letter-spacing: .3px; }
 
+/* Taux de résolution — une phrase, pas un chiffre nu : le lecteur doit
+   comprendre ce que les agrégats du dessus NE contiennent pas. */
+.perf-note {
+  margin: 16px 16px 0; padding: 12px 14px;
+  background: var(--bg1); border: 1px solid var(--bd); border-radius: 8px;
+  font-size: 12.5px; line-height: 1.65; color: var(--t2);
+}
+.perf-note strong { color: var(--t1); font-family: var(--font-data); }
+.perf-note em { font-style: normal; text-decoration: underline; }
+@media (min-width: 640px) { .perf-note { margin: 18px 24px 0; font-size: 13px; } }
+
 .perf-kpis {
   display: flex; overflow-x: auto; scrollbar-width: none;
   border-bottom: 1px solid var(--bd); background: var(--bg1);
@@ -147,6 +158,30 @@
     <div class="wr-verdict" style="color:var(--t3);background:var(--bg2)">PAS ASSEZ DE PARIS</div>
     {% endif %}
   </div>
+
+  {# ── Taux de résolution ──────────────────────────────────────────
+     Tout ce qui est au-dessus ne compte QUE les paris réglés. Les
+     signaux expirés — purgés avant qu'un score ait pu être trouvé —
+     sortent de chaque agrégat. Sans cette ligne, la page mesure les
+     paris qu'on a réussi à SUIVRE et le présente comme le résultat de
+     tous les paris.
+     Et le biais n'est pas neutre : le règlement échoue plus souvent sur
+     les ligues obscures et les sources douteuses, c'est-à-dire là où
+     l'edge est le plus suspect. Les taire embellit la page dans le sens
+     précis qui flatte le moteur. #}
+  {% set r = global_s.resolution %}
+  {% if r and r.rate_pct is not none and r.expired %}
+  {% set res_color = 'var(--green)' if r.rate_pct >= 80 else ('var(--yellow)' if r.rate_pct >= 50 else 'var(--red)') %}
+  <div class="perf-note" style="border-left:3px solid {{ res_color }}">
+    <strong style="color:{{ res_color }}">{{ "%.0f"|format(r.rate_pct) }}%</strong>
+    des signaux ont reçu un résultat ({{ r.settled }} sur {{ r.denom }}).
+    Les <strong>{{ r.expired }}</strong> autres ont expiré sans score
+    retrouvé et n'entrent dans <em>aucun</em> chiffre de cette page —
+    ni réussite, ni CLV. Le règlement échoue surtout sur les ligues
+    obscures, donc ces chiffres décrivent la part la mieux suivie du
+    portefeuille, pas son ensemble.
+  </div>
+  {% endif %}
 
   <div class="perf-kpis">
     <div class="pk">

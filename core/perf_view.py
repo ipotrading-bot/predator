@@ -26,6 +26,11 @@ TROIS RÈGLES, et elles ne servent pas la même chose :
    calendaires. C'est un confort de lecture, pas une règle de validité ;
    elle se combine avec la borne (1) par intersection.
 
+4. `resolution_rate()` — le TAUX DE RÉSOLUTION, réglés / (réglés + expired).
+   Ce n'est pas un filtre mais une MESURE, et elle vit ici parce que c'est la
+   page /performance qui la doit à son lecteur. Voir sa docstring : sans elle,
+   la page souffre d'un biais de survie.
+
 Rien n'est détruit ici : ce module ne fait que filtrer un affichage.
 """
 import os
@@ -78,3 +83,45 @@ def filter_rows(rows: list[dict], now: datetime | None = None,
             if (r.get("sport") or "") not in RETIRED_SPORTS
             and (r.get("created_at") or "")[:7] in months
             and (r.get("created_at") or "")[:7] >= PERF_START_MONTH]
+
+
+# Un signal a REÇU un résultat. Le ledger l'exprime par `outcome`, la table
+# `signals` par `status` — même fait, deux vocabulaires imposés par le schéma.
+_RESOLU = frozenset({"WIN", "LOSS", "PUSH", "settled"})
+
+
+def resolution_rate(rows: list[dict], field: str = "outcome") -> dict:
+    """
+    réglés / (réglés + expired) — la part des signaux dont on a SU le résultat.
+
+    POURQUOI CETTE MESURE MANQUAIT, ET CE QU'ELLE CORRIGE
+    -----------------------------------------------------
+    /performance ne compte que les lignes réglées. Les `expired` — les signaux
+    purgés avant qu'un score ait pu être trouvé — sortent de tous les
+    agrégats : ni dans le taux de réussite, ni dans le CLV, ni dans le ROI.
+    La page mesure donc les paris qu'on a réussi à SUIVRE, et présente ce
+    résultat comme celui de tous les paris.
+
+    C'est un BIAIS DE SURVIE, et il n'est pas neutre : le règlement échoue
+    plus souvent là où l'appariement de noms échoue, c'est-à-dire sur les
+    ligues obscures et les sources douteuses — exactement les lignes dont
+    l'edge est le plus suspect. Les écarter embellit la page, dans le sens
+    précis qui flatte le moteur.
+
+    Mesuré le 2026-08-27 : 44,8 % côté ledger, et 37,8 % pour le seul
+    football. Près de deux signaux sur trois n'ont jamais reçu de résultat,
+    et la page n'en disait rien.
+
+    `field` vaut `outcome` sur le ledger et `status` sur `signals`.
+    `active`/`closed` n'entrent NULLE PART : ni résultat, ni abandon — des
+    états intermédiaires, et les compter au dénominateur ferait passer un run
+    récent pour une panne de règlement.
+
+    Rend `rate_pct=None` quand rien n'est mesurable — jamais 0.0, qui se
+    lirait « aucun signal résolu ».
+    """
+    settled = sum(1 for r in rows if str(r.get(field)) in _RESOLU)
+    expired = sum(1 for r in rows if str(r.get(field)) == "expired")
+    denom = settled + expired
+    return {"settled": settled, "expired": expired, "denom": denom,
+            "rate_pct": round(settled / denom * 100, 1) if denom else None}
