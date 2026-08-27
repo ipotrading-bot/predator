@@ -162,6 +162,11 @@ C'est le tableau à consulter avant de toucher à quoi que ce soit.
 | `/api/scan` passe par `demander_scan()`, jamais par une écriture directe | `…::TestScanPasseParLaFonctionPostgres` |
 | Une panne de la fonction ne fuit ni son nom ni la policy dans la réponse | `…::test_une_panne_de_la_fonction_ne_fuit_pas_dans_la_reponse` |
 | `anon` ne peut plus écrire `meta` (RLS + GRANT retirés) | `sql/migrate_v10_9_scan_request_rpc.sql` §3 |
+| Le déploiement Vercel ne porte que les 4 variables réellement lues | README §« Le dashboard n'a plus de clé d'écriture » |
+| Aucun script du dashboard ne vient d'une URL flottante | `tests/test_dashboard_cdn.py::TestPlusAucuneURLFlottante` |
+| Tout script DISTANT porte `integrity` ET `crossorigin` | `…::TestToutTiersEstVerifie` |
+| Tailwind est servi par le dépôt, et son empreinte est vérifiée | `…::TestTailwindEstServiParLeDepot` |
+| L'ordre de chargement des scripts reste correct | `…::TestLaPageResteChargeable` |
 
 L'**invariant des sport-keys** (4 fichiers : `core/odds_api.py`,
 `core/learning_layer.py`, `api/index.py`) est décrit

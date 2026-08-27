@@ -76,12 +76,63 @@
 })();
 </script>
 
-<!-- System Bet Calculator — React via CDN (no build step in this repo) -->
-<script src="https://unpkg.com/react@18/umd/react.production.min.js" crossorigin></script>
-<script src="https://unpkg.com/react-dom@18/umd/react-dom.production.min.js" crossorigin></script>
-<script src="https://cdn.tailwindcss.com"></script>
+<!-- System Bet Calculator — React via CDN (aucune étape de build ici).
+     ═══════════════════════════════════════════════════════════════════
+     VERSIONS ÉPINGLÉES + SRI (C4, 2026-08-27).
+
+     Ces quatre scripts s'exécutaient depuis des URL FLOTTANTES : `react@18`
+     suivait tous les correctifs de la branche, et `cdn.tailwindcss.com` comme
+     `@babel/standalone` n'avaient AUCUNE version. Le tiers décidait donc seul
+     du code exécuté sur cette page, à chaque chargement.
+
+     Ce n'est pas théorique : `@babel/standalone` sans version sert
+     aujourd'hui la 8.0.4. La page a donc changé de MAJEURE de Babel sans
+     qu'aucun commit ne le mentionne. Les empreintes ci-dessous figent
+     exactement ce qui tournait au moment de l'épinglage — aucun changement de
+     comportement, seulement la fin du changement silencieux.
+
+     `integrity` fait vérifier au navigateur que l'octet reçu est celui qu'on
+     attend ; `crossorigin="anonymous"` est OBLIGATOIRE avec lui sur une
+     ressource tierce, sans quoi le navigateur ne peut pas lire la réponse
+     pour la hacher. Un fichier altéré n'est pas exécuté : la page casse
+     BRUYAMMENT au lieu d'exécuter autre chose en silence. C'est le compromis
+     voulu — et il implique qu'une republication du même chemin par le CDN
+     casse la page tant qu'on n'a pas recalculé l'empreinte.
+     Empreintes calculées le 2026-08-27 :
+       openssl dgst -sha384 -binary <fichier> | openssl base64 -A
+-->
+<script src="https://unpkg.com/react@18.3.1/umd/react.production.min.js"
+        integrity="sha384-DGyLxAyjq0f9SPpVevD6IgztCFlnMF6oW/XQGmfe+IsZ8TqEiDrcHkMLKI6fiB/Z"
+        crossorigin="anonymous"></script>
+<script src="https://unpkg.com/react-dom@18.3.1/umd/react-dom.production.min.js"
+        integrity="sha384-gTGxhz21lVGYNMcdJOyq01Edg0jhn/c22nsx0kyqP0TxaV5WVdsSH1fSDUf5YJj1"
+        crossorigin="anonymous"></script>
+<!-- ⚠️ TAILWIND EST SERVI DEPUIS CE DÉPÔT, ET C'EST MESURÉ, PAS UN CAPRICE.
+     `cdn.tailwindcss.com` ne renvoie AUCUN en-tête
+     `Access-Control-Allow-Origin`, y compris avec un `Origin` explicite
+     (vérifié le 2026-08-27). Or `integrity` sur une ressource tierce exige
+     `crossorigin`, lequel déclenche une requête CORS : y ajouter les deux
+     aurait fait BLOQUER le script par le navigateur, donc cassé la page.
+     unpkg, lui, renvoie `access-control-allow-origin: *` — d'où le SRI sur
+     les trois autres.
+
+     Épingler la version fermait le risque principal — la mise à jour
+     silencieuse — mais pas « le CDN republie ce chemin ». Le fichier est donc
+     hébergé avec le reste (`api/static/js/`, déjà servi) : 398 Ko versionnés,
+     PLUS AUCUN TIERS n'exécute de code sur cette page, et le SRI devient sans
+     objet puisque l'origine est la nôtre. Le bundle a été vérifié autonome
+     (aucun appel réseau à l'exécution) et son empreinte est identique à celle
+     du CDN — c'est le même octet, servi d'ailleurs.
+
+     Pour revenir au CDN : remplacer par
+       <script src="https://cdn.tailwindcss.com/3.4.17"></script>
+     et supprimer `api/static/js/tailwind-3.4.17.min.js`. On y perd
+     l'intégrité, on y gagne 398 Ko de dépôt. -->
+<script src="/static/js/tailwind-3.4.17.min.js?v={{ version }}"></script>
 <script>tailwind.config = { corePlugins: { preflight: false } };</script>
-<script src="https://unpkg.com/@babel/standalone/babel.min.js"></script>
+<script src="https://unpkg.com/@babel/standalone@8.0.4/babel.min.js"
+        integrity="sha384-bdF7m0Y1IFKt9Q6xC8X9qkXn0OBriQWKyWwZKYsN05zF6P/g9OakjjL0G2Sd4pB4"
+        crossorigin="anonymous"></script>
 <script type="text/babel">
 {% raw %}
 const { useState, useMemo, useEffect } = React;
