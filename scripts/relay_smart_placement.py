@@ -107,8 +107,10 @@ def main() -> int:
     # obligerait à faire tourner le jeton des deux côtés.
     payload = dict(avant)
     payload["placement"] = {"mode": "smart"}
-    r = requests.patch(BASE, headers={**HEAD, "Content-Type": "application/json"},
-                       json=payload, timeout=30)
+    # L'endpoint `settings` n'accepte QUE du multipart/form-data : un PATCH
+    # JSON rend 415 « Content-Type must be one of: multipart/form-data ».
+    r = requests.patch(BASE, headers=HEAD,
+                       files={"settings": (None, json.dumps(payload))}, timeout=30)
     body = r.json() if r.content else {}
     if not (r.ok and body.get("success")):
         if r.status_code == 403:
@@ -130,9 +132,11 @@ def main() -> int:
 
 if __name__ == "__main__":
     if "--annuler" in sys.argv:
-        r = requests.patch(BASE, headers={**HEAD, "Content-Type": "application/json"},
-                           json={**_settings(), "placement": {"mode": "off"}},
-                           timeout=30)
+        r = requests.patch(
+            BASE, headers=HEAD,
+            files={"settings": (None, json.dumps(
+                {**_settings(), "placement": {"mode": "off"}}))},
+            timeout=30)
         print("annulé" if r.ok else f"HTTP {r.status_code} {r.text[:200]}")
         sys.exit(0)
     sys.exit(main())
