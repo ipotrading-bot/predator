@@ -111,7 +111,8 @@ class _FakeSupabase:
 
 
 def _row(outcome, kelly_pct=10.0, odds=2.0, clv_final=5.0, market_type=None,
-         initial_edge=None, sharp_prob=None, clv_pct_real=None):
+         initial_edge=None, sharp_prob=None, clv_pct_real=None,
+         created_at="2026-09-01T12:00:00+00:00"):
     # clv_final is deliberately positive on every row regardless of outcome
     # — reproducing the exact incident this guards against: entry-edge-as-
     # CLV is ~always >= 0 (MIN_EDGE already rejected negative edges before
@@ -122,6 +123,10 @@ def _row(outcome, kelly_pct=10.0, odds=2.0, clv_final=5.0, market_type=None,
         "outcome": outcome, "kelly_pct": kelly_pct, "odds": odds, "clv_final": clv_final,
         "market_type": market_type, "initial_edge": initial_edge,
         "sharp_prob": sharp_prob, "clv_pct_real": clv_pct_real,
+        # Postérieur à CALIBRATION_EPOCH par défaut : ces lignes synthétiques
+        # représentent le moteur COURANT. Les tests de l'époque posent une
+        # date antérieure explicitement.
+        "created_at": created_at,
     }
 
 
@@ -726,6 +731,73 @@ class TestEdgeCeiling:
         writes = [w for w in sb.meta_writes if w["key"] == "edge_ceiling_soccer"]
         assert len(writes) == 1
         assert float(writes[0]["value"]) == 6.0
+
+    # ── Époque de calibration (règle 10) ──────────────────────────────
+
+    def test_un_plafond_ne_s_apprend_pas_sur_des_lignes_pre_correction(self):
+        """A6 (2026-08-27) a corrigé le prix PUIS le pari comparé. La
+        distribution d'avant décrit un moteur qui n'existe plus : « soccer
+        au-dessus de 6 % perd » a été mesuré le 2026-08-02, dans une unité
+        que la refonte EV du 2026-08-22 a changée. La couche l'a pourtant
+        reposé le soir même — rien ne l'en empêchait."""
+        vieilles = self._rows(low_band_wr=0.75, top_band_wr=0.20, n_each=15)
+        for r in vieilles:
+            r["created_at"] = "2026-08-20T12:00:00+00:00"
+        sb = _FakeSupabase({"soccer": vieilles})
+        compute_and_save(sb)
+        writes = [w for w in sb.meta_writes if w["key"] == "edge_ceiling_soccer"]
+        assert writes == [], "un plafond a été appris sur des lignes de l'ancien moteur"
+
+    def test_un_plafond_perime_est_RETIRE_pas_seulement_plus_reecrit(self):
+        """Gater les écritures futures ne suffit pas : cette couche ne fait que
+        des upserts, donc `edge_ceiling_soccer=6.0` posé le 2026-08-27 à 19:28
+        serait resté appliqué indéfiniment."""
+        from core.learning_layer import _drop_stale_ceiling
+        deleted = []
+
+        class _T:
+            def delete(self):
+                return self
+
+            def eq(self, key, val):
+                deleted.append(val)
+                return self
+
+            def execute(self):
+                return None
+
+        class _SB:
+            def table(self, _name):
+                return _T()
+
+        lignes = []
+        _drop_stale_ceiling(_SB(), "edge_ceiling_soccer", "soccer", 6.0, lignes)
+        assert deleted == ["edge_ceiling_soccer"]
+        assert lignes and "retiré" in lignes[0]
+
+    def test_aucun_appel_quand_aucun_plafond_n_est_pose(self):
+        """Le cas nominal : ne pas payer un DELETE par sport à chaque audit."""
+        from core.learning_layer import _drop_stale_ceiling
+
+        class _SB:
+            def table(self, _name):
+                raise AssertionError("un appel réseau pour rien")
+
+        lignes = []
+        _drop_stale_ceiling(_SB(), "edge_ceiling_tennis", "tennis", None, lignes)
+        assert lignes == []
+
+    def test_post_correction_rows_ecarte_une_ligne_sans_date(self):
+        """Contrat INVERSE de playable_rows, qui conserve l'inconnu : ici,
+        garder une ligne non datée ferait passer l'ancien moteur pour une
+        preuve."""
+        from core.learning_layer import post_correction_rows
+        gardees = post_correction_rows([
+            {"created_at": "2026-09-01T00:00:00+00:00"},
+            {"created_at": "2026-08-01T00:00:00+00:00"},
+            {},
+        ])
+        assert len(gardees) == 1
 
     def test_load_edge_ceilings_parses_and_skips_garbage(self):
         class _Sel:

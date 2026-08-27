@@ -28,6 +28,7 @@ core assumption the whole system rests on.
 """
 import json
 import logging
+import os
 from datetime import datetime, timezone
 
 from core.constants import TAX_RATE as _TAX_RATE, roi_net_of_tax
@@ -797,7 +798,45 @@ def _decide_threshold(old_t: float, stats: dict, clv: dict, overconfident: bool,
 
 
 _LEDGER_SELECT = ("outcome, kelly_pct, odds, market_type, initial_edge, sharp_prob, "
-                  "clv_pct_real, time_to_match_minutes")
+                  "clv_pct_real, time_to_match_minutes, created_at")
+
+
+# ── ÉPOQUE DE CALIBRATION (2026-08-27) ────────────────────────────────
+# Tout ce que cette couche LOGGE peut se mesurer sur n'importe quelle ligne.
+# Tout ce qu'elle fait APPLIQUER par le moteur — les plafonds d'edge et de
+# cote, lus par run_engine._EDGE_CEILINGS/_ODDS_CEILINGS — ne le peut pas.
+#
+# Le 2026-08-27, A6 a corrigé le PRIX (prix exécutable) puis le PARI comparé
+# (_meme_ligne : égalité exacte de ligne, signe compris). La distribution des
+# edges d'AVANT décrit un moteur qui n'existe plus : « soccer au-dessus de
+# 6 % perd » a été mesuré le 2026-08-02, dans une unité que la refonte EV du
+# 2026-08-22 a changée. A6 a tranché « _EDGE_CEILINGS : rien à poser ».
+#
+# Cette couche l'a pourtant reposé le soir même (`edge_ceiling_soccer=6.0`,
+# écrit à 19:28), parce que rien dans le code ne l'en empêchait : elle
+# apprenait sur les 120 dernières lignes, toutes antérieures à la correction.
+# Un plafond appris sur l'ancien moteur et appliqué au nouveau est exactement
+# ce que la règle 10 de CLAUDE.md interdit — « aucun seuil numérique
+# d'émission n'est modifié sans mesure sur des lignes réglées POSTÉRIEURES à
+# la correction en cours ».
+#
+# D'où cette borne. Elle ne masque aucune ligne : le ledger reste entier, les
+# diagnostics et les verdicts continuent de tout lire. Elle dit seulement de
+# quoi on a le droit de faire une CONSIGNE. Elle se lève d'elle-même dès que
+# le moteur corrigé a produit assez de résultats.
+CALIBRATION_EPOCH = os.environ.get("CALIBRATION_EPOCH", "2026-08-27")
+
+
+def post_correction_rows(rows: list[dict]) -> list[dict]:
+    """Lignes réglées POSTÉRIEURES à la correction A6 (voir CALIBRATION_EPOCH).
+
+    Une ligne sans `created_at` est ÉCARTÉE — contrairement à playable_rows,
+    qui conserve l'inconnu. Le contrat est inverse ici : playable_rows filtre
+    ce qu'on OBSERVE (jeter l'inconnu viderait l'historique), celle-ci filtre
+    ce qu'on IMPOSE au moteur (garder l'inconnu ferait passer une ligne de
+    l'ancien moteur pour une preuve).
+    """
+    return [r for r in rows if (r.get("created_at") or "")[:10] >= CALIBRATION_EPOCH]
 
 
 def playable_rows(rows: list[dict]) -> list[dict]:
@@ -825,6 +864,26 @@ def playable_rows(rows: list[dict]) -> list[dict]:
     return kept
 
 
+def _drop_stale_ceiling(sb, key: str, sport: str, ancienne, summary_lines: list[str]) -> None:
+    """Retire un plafond que les lignes postérieures à l'époque ne prouvent plus.
+
+    Ne lève jamais : un plafond qu'on n'arrive pas à effacer reste en place et
+    sera re-tenté au prochain audit — on ne fait pas tomber l'apprentissage
+    pour ça. Silencieux quand la clé n'existe pas (le cas nominal).
+    """
+    if ancienne is None:          # rien de posé : le cas nominal, aucun appel
+        return
+    try:
+        sb.table("meta").delete().eq("key", key).execute()
+        log.warning("[%s] plafond %s=%s RETIRÉ — mesuré sur des lignes antérieures "
+                    "au %s, donc sur un moteur qui n'existe plus (règle 10)",
+                    sport, key, ancienne, CALIBRATION_EPOCH)
+        summary_lines.append(f"{sport}: plafond {key} retiré (mesure pré-{CALIBRATION_EPOCH})")
+    except Exception as e:
+        log.warning("[%s] retrait de %s impossible (%s) — il reste appliqué",
+                    sport, key, e)
+
+
 def compute_and_save(sb) -> dict[str, float]:
     """
     Re-compute thresholds from real WIN/LOSS history (plus real CLV and
@@ -839,6 +898,10 @@ def compute_and_save(sb) -> dict[str, float]:
     """
     current = load_thresholds(sb)
     updated = current.copy()
+    # Plafonds réellement posés aujourd'hui : sert à ne retirer que ce qui
+    # existe, sans un SELECT par sport et par clé à chaque audit.
+    edge_ceilings_posed = load_edge_ceilings(sb)
+    odds_ceilings_posed = load_odds_ceilings(sb)
     segment_current = load_segment_thresholds(sb)
     now     = datetime.now(timezone.utc).isoformat()
     summary_lines: list[str] = []
@@ -876,7 +939,18 @@ def compute_and_save(sb) -> dict[str, float]:
             # Plafond d'edge : au-delà, l'edge mesuré n'est pas une inefficience
             # mais un prix mal apparié. Persisté avant la décision de seuil, qui
             # en dépend.
-            top_fake, ceiling, band_n, best_band_lo = _top_band_verdict(rows)
+            # ── Ce qui est APPLIQUÉ se mesure APRÈS la correction ──────
+            # Les deux plafonds ci-dessous sont les seules sorties de cette
+            # couche que le moteur fait respecter (run_engine._EDGE_CEILINGS
+            # et _ODDS_CEILINGS) ; le reste est loggé. Ils ne se calculent
+            # donc que sur des lignes postérieures à CALIBRATION_EPOCH.
+            appliquables = post_correction_rows(rows)
+            if len(appliquables) != len(rows):
+                log.info("[%s] plafonds : %d/%d lignes postérieures au %s "
+                         "(le reste décrit un moteur qui n'existe plus)",
+                         sport, len(appliquables), len(rows), CALIBRATION_EPOCH)
+
+            top_fake, ceiling, band_n, best_band_lo = _top_band_verdict(appliquables)
             if top_fake and ceiling is not None:
                 log.warning("[%s] Plafond d'edge %.1f%% — la bande haute perd plus "
                             "que les basses sur %d résultats", sport, ceiling, band_n)
@@ -887,8 +961,14 @@ def compute_and_save(sb) -> dict[str, float]:
                 }).execute()
                 summary_lines.append(
                     f"{sport}: plafond edge {ceiling:.1f}% (bande haute perdante, n={band_n})")
+            else:
+                # Gater les écritures FUTURES ne suffit pas : un plafond posé
+                # avant l'époque resterait appliqué indéfiniment, cette couche
+                # ne faisant que des upserts. Il est retiré, pas laissé.
+                _drop_stale_ceiling(sb, f"edge_ceiling_{sport}", sport,
+                                    edge_ceilings_posed.get(sport), summary_lines)
 
-            odds_cap, odds_n, odds_diag = _odds_band_verdict(rows)
+            odds_cap, odds_n, odds_diag = _odds_band_verdict(appliquables)
             if odds_cap is not None:
                 log.warning("[%s] %s", sport, odds_diag)
                 sb.table("meta").upsert({
@@ -897,6 +977,9 @@ def compute_and_save(sb) -> dict[str, float]:
                     "updated_at": now,
                 }).execute()
                 summary_lines.append(f"{sport}: {odds_diag}")
+            else:
+                _drop_stale_ceiling(sb, f"odds_ceiling_{sport}", sport,
+                                    odds_ceilings_posed.get(sport), summary_lines)
 
             if stats["n"] < _MIN_SAMPLES:
                 log.info("[%s] %d decisive samples < %d — threshold unchanged (%.1f%%)",

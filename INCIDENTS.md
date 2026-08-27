@@ -583,6 +583,39 @@ pour toujours, et elle fabriquerait exactement le biais de survie qu'on vient
 de retirer (règle dure n°9). Elles se résorbent d'elles-mêmes à chaque audit.
 Gardien : `tests/test_relance_expires.py`.
 
+### Un plafond appris sur l'ANCIEN moteur était réappliqué au nouveau (2026-08-27)
+
+A6 avait tranché le matin même : « `_EDGE_CEILINGS` : rien à poser », et
+« vérifié en base : `meta` ne porte aucune clé de plafond ». Le soir, l'audit
+de 19:26 a reposé `edge_ceiling_soccer = 6.0` (écrit à 19:28). Rien dans le
+code ne l'en empêchait : `compute_and_save` apprend sur les 120 dernières
+lignes du ledger, toutes ANTÉRIEURES à la correction du prix et du pari. Le
+constat « soccer au-dessus de 6 % perd » date du 2026-08-02 et d'une unité
+que la refonte EV du 2026-08-22 a changée.
+Il ne coupait rien ce jour-là — zéro refus `PLAFOND` sur 5 runs, faute de
+candidats — mais il aurait mordu dès le retour du flux sharp : une panne
+posée d'avance, invisible tant que la source d'amont était éteinte.
+Ce que dit la règle 10 est appliqué DANS le code, pas seulement dans la
+doc : `CALIBRATION_EPOCH` (défaut 2026-08-27) + `post_correction_rows()`.
+Seules les deux sorties que le moteur fait RESPECTER (`edge_ceiling_*` et
+`odds_ceiling_*`, lues par `run_engine._EDGE_CEILINGS`/`_ODDS_CEILINGS`) y
+sont soumises ; tout le reste de la couche continue de lire le ledger entier,
+puisqu'il est loggé et non appliqué.
+⚠️ DEUX MOITIÉS, ET LA SECONDE EST CELLE QU'ON OUBLIE : gater les écritures
+FUTURES ne retire pas la clé DÉJÀ posée, et cette couche ne fait que des
+upserts — le 6,0 serait resté appliqué pour toujours. `_drop_stale_ceiling`
+la retire, et ne fait aucun appel quand rien n'est posé (le cas nominal).
+⚠️ `post_correction_rows` ÉCARTE une ligne sans date, là où `playable_rows`
+CONSERVE l'inconnu. Les deux contrats sont inverses et c'est voulu : l'une
+filtre ce qu'on OBSERVE (jeter l'inconnu viderait l'historique), l'autre ce
+qu'on IMPOSE au moteur (garder l'inconnu ferait passer l'ancien moteur pour
+une preuve).
+La borne se lève d'elle-même quand le moteur corrigé aura produit assez de
+réglés. Elle ne modifie aucun seuil : elle interdit d'en fabriquer un sur une
+mesure périmée.
+Gardien : `tests/test_learning_layer.py::TestEdgeCeiling` — les quatre tests
+d'époque, dont `test_un_plafond_perime_est_RETIRE_pas_seulement_plus_reecrit`.
+
 ### Closing line : `capture_from_scan` est morte avec OddsAPI (2026-08-26)
 
 `capture_from_scan` (payload OddsAPI) est MORTE avec OddsAPI —
