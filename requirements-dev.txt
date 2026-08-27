@@ -1,0 +1,24 @@
+# ============================================================================
+# requirements-dev.txt — OUTILLAGE DE DÉVELOPPEMENT ET DE CI (D2, 2026-08-27)
+#
+# Séparé de requirements.txt parce que ce dernier est installé par VERCEL :
+# pytest et ses dépendances partaient dans le bundle serverless, où rien ne
+# les exécute jamais. Moins de paquets installés dans un job, c'est aussi
+# moins de code tiers lancé par `pip install` — et ces jobs-là portent des
+# clés (voir C5, .github/actions/setup).
+#
+# pyflakes était installé par `ci.yml` dans un `run:`, SANS version : le
+# linter qui juge le dépôt était lui-même choisi par PyPI au moment du run.
+#
+# Installation : pip install -r requirements-dev.txt   (tire l'autre fichier)
+# ============================================================================
+-r requirements.txt
+
+# ── Directes ──────────────────────────────────────────────────────────────
+pytest==9.1.1
+pyflakes==3.4.0
+
+# ── Transitives ───────────────────────────────────────────────────────────
+iniconfig==2.3.0
+pluggy==1.6.0
+pygments==2.21.0

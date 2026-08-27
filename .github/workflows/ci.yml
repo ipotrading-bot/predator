@@ -20,6 +20,7 @@ on:
       - 'api/**'
       - 'templates/**'
       - 'requirements.txt'
+      - 'requirements-dev.txt'
       - 'vercel.json'
       # La CI se teste elle-même : tests/test_ci_env lit scan.yml pour
       # vérifier que chaque cron a sa ligne dans CRON_MODES, et
@@ -43,10 +44,15 @@ jobs:
     steps:
       - uses: actions/checkout@v4
       - uses: ./.github/actions/setup   # pool 'none' : aucun secret, tests purs
+        with:
+          dev: 'true'                    # pytest + pyflakes, versions verrouillées
       - name: Tests
         run: python -m pytest tests/ -q
+      # pyflakes vient de requirements-dev.txt depuis D2. Il était installé
+      # ici, dans le `run:`, SANS version : le linter qui juge le dépôt était
+      # choisi par PyPI au moment du run.
       - name: Lint
-        run: pip install -q pyflakes && python -m pyflakes $(git ls-files '*.py')
+        run: python -m pyflakes $(git ls-files '*.py')
 
   deploy:
     needs: test
@@ -56,8 +62,11 @@ jobs:
     timeout-minutes: 10   # un `vercel deploy` pendu consommait 6 h avant le 2026-08-22
     steps:
       - uses: actions/checkout@v4
+      # ÉPINGLÉ (D2) : `vercel@latest` laissait npm choisir, au moment du run,
+      # l'outil qui pousse en PRODUCTION. C'est le dernier maillon flottant de
+      # la chaîne de déploiement, et le plus sensible.
       - name: Installer Vercel CLI
-        run: npm install -g vercel@latest
+        run: npm install -g vercel@59.1.4
       - name: Déployer sur Vercel (production)
         env:
           VERCEL_TOKEN:      ${{ secrets.VERCEL_TOKEN }}

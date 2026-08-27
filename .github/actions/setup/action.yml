@@ -1,7 +1,8 @@
 name: Predator — préparation du runner
 description: >-
-  Python 3.11, dépendances (site-packages mis en cache sur le hash de
-  requirements.txt : pip n'est relancé que quand il change), puis préflight
+  Python 3.11, dépendances VERROUILLÉES (site-packages mis en cache sur le
+  hash des deux fichiers de dépendances : pip n'est relancé que quand l'un
+  d'eux change), puis préflight
   des secrets du pool via scripts/ci_env.py — l'unique source de vérité des
   clés par job, dérivée du registre IA. Le checkout reste dans l'appelant :
   une action locale ne peut pas tourner avant que le dépôt soit présent.
@@ -23,10 +24,17 @@ inputs:
     default: 'none'
   fast-install:
     description: >-
-      'true' → restaure site-packages depuis le cache et saute pip quand
-      requirements.txt n'a pas changé. Mettre 'false' pour revenir au pip
-      systématique si un paquet natif se comporte mal après restauration.
+      'true' → restaure site-packages depuis le cache et saute pip quand les
+      fichiers de dépendances n'ont pas changé. Mettre 'false' pour revenir au
+      pip systématique si un paquet natif se comporte mal après restauration.
     default: 'true'
+  dev:
+    description: >-
+      'true' → installe AUSSI requirements-dev.txt (pytest, pyflakes). Réservé
+      au job de CI. Les jobs qui font tourner le pipeline n'en ont pas besoin,
+      et chaque paquet installé est du code tiers exécuté par `pip install`
+      dans un job qui porte des clés — voir le préflight d'amorçage plus bas.
+    default: 'false'
 
 runs:
   using: composite
@@ -42,12 +50,18 @@ runs:
       uses: actions/cache@v4
       with:
         path: ${{ env.pythonLocation }}/lib/python3.11/site-packages
-        key: ${{ runner.os }}-py311-sitepkg-${{ hashFiles('requirements.txt') }}
+        # Les DEUX fichiers entrent dans la clé, et `dev` aussi : sans lui,
+        # un job dev et un job runtime partageraient une entrée de cache, et
+        # le premier arrivé déciderait si pytest est présent pour l'autre.
+        key: ${{ runner.os }}-py311-sitepkg-${{ inputs.dev }}-${{ hashFiles('requirements.txt', 'requirements-dev.txt') }}
 
     - name: Installer les dépendances
       if: inputs.fast-install != 'true' || steps.pkg.outputs.cache-hit != 'true'
       shell: bash
-      run: pip install -r requirements.txt
+      # `--no-deps` n'est PAS utilisé : le verrou est complet (transitives
+      # comprises), donc pip n'a plus rien à résoudre, mais on le laisse
+      # vérifier la cohérence plutôt que d'installer à l'aveugle.
+      run: pip install -r ${{ inputs.dev == 'true' && 'requirements-dev.txt' || 'requirements.txt' }}
 
     # PRÉFLIGHT D'AMORÇAGE SEULEMENT (C5, 2026-08-27). Ce step ne reçoit plus
     # que les clés Supabase : `pip install` ci-dessus exécute le code de

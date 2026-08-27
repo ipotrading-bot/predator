@@ -1,6 +1,87 @@
-flask>=3.0.0
-requests>=2.31.0
-supabase>=2.0.0
-python-dotenv>=1.0.0
-pytest>=8.0.0
-pyyaml>=6.0
+# ============================================================================
+# requirements.txt — DÉPENDANCES D'EXÉCUTION, VERROUILLÉES (D2, 2026-08-27)
+#
+# POURQUOI TOUT EST ÉPINGLÉ AU `==`, TRANSITIVES COMPRISES
+# --------------------------------------------------------
+# Ce fichier ne déclarait que six paquets, tous en `>=`. Conséquence : le
+# code réellement exécuté en CI et sur Vercel était choisi par PyPI, à chaque
+# installation, sans commit et sans revue — le même défaut exactement que les
+# URL de CDN flottantes fermées en C4, et pour la même raison de fond : un
+# tiers décidait seul de ce qui tourne.
+#
+# Ce n'était pas théorique. Les planchers déclarés ne décrivaient RIEN de ce
+# qui tournait : `flask>=3.0.0` installait 3.1.3, `pytest>=8.0.0` installait
+# 9.1.1 — une MAJEURE d'écart. Et 52 des 58 paquets présents n'étaient pas
+# nommés du tout : ils entraient par transitivité, entièrement libres.
+#
+# Les transitives sont donc épinglées elles aussi. Sans elles, `pip install`
+# reste non déterministe : `supabase==2.31.0` figé laisse `cryptography`,
+# `pydantic` et `httpx` bouger sous lui.
+#
+# ⚠️ CE FICHIER EST INSTALLÉ PAR VERCEL, QUI CONSTRUIT EN PYTHON 3.12, alors
+# que la CI et le dev tournent en 3.11 (voir CLAUDE.md : deux interpréteurs
+# subis, pas choisis). L'arbre ci-dessous a été résolu pour LES DEUX et il
+# est IDENTIQUE — 43 paquets, tous disponibles en roue binaire, aucune
+# compilation. C'est ce qui rend le verrou sûr : un épinglage transitif qui
+# n'existerait pas en 3.12 casserait le déploiement et laisserait la
+# production sur le commit précédent, ce qui est déjà arrivé le 2026-08-22.
+#
+# ⚠️ pytest n'est plus ici : il partait dans le bundle serverless avec ses
+# dépendances. Il vit dans requirements-dev.txt, avec pyflakes — que ci.yml
+# installait à la volée, sans version, dans un `run:`.
+#
+# POUR RAFRAÎCHIR LE VERROU (mise à jour de sécurité, montée de version) :
+#   pip install --dry-run --report /tmp/r.json --python-version 3.12 \
+#       --only-binary=:all: --target /tmp/x  <les directes ci-dessous>
+# puis refaire la même chose en 3.11 et VÉRIFIER QUE LES DEUX ARBRES SONT
+# IDENTIQUES avant de recopier. Rejouer ensuite la suite dans un venv vierge :
+# un verrou qu'on n'a pas installé n'est pas un verrou, c'est une intention.
+# ============================================================================
+
+# ── Dépendances DIRECTES (ce que le dépôt importe vraiment) ────────────────
+flask==3.1.3
+requests==2.34.2
+supabase==2.31.0
+python-dotenv==1.2.3
+pyyaml==6.0.3
+
+# ── Transitives, épinglées pour que l'installation soit reproductible ──────
+# Aucune n'est importée par le dépôt ; elles arrivent par les cinq ci-dessus.
+annotated-types==0.8.0
+anyio==4.14.2
+blinker==1.9.0
+certifi==2026.7.22
+cffi==2.1.1
+charset-normalizer==3.5.1
+click==8.5.0
+cryptography==50.0.1
+deprecation==2.1.0
+h11==0.16.0
+h2==4.4.1
+hpack==4.2.0
+httpcore==1.0.9
+httpx==0.28.1
+hyperframe==6.1.0
+idna==3.19
+itsdangerous==2.2.0
+jinja2==3.1.6
+markupsafe==3.0.3
+multidict==6.7.1
+packaging==26.3
+postgrest==2.31.0
+propcache==0.5.2
+pycparser==3.0
+pydantic==2.13.4
+pydantic-core==2.46.4
+pyjwt==2.13.0
+realtime==2.31.0
+storage3==2.31.0
+strenum==0.4.15
+supabase-auth==2.31.0
+supabase-functions==2.31.0
+typing-extensions==4.16.0
+typing-inspection==0.4.4
+urllib3==2.7.0
+websockets==15.0.1
+werkzeug==3.1.8
+yarl==1.24.5
