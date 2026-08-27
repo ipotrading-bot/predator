@@ -172,6 +172,10 @@ C'est le tableau à consulter avant de toucher à quoi que ce soit.
 | Tout script DISTANT porte `integrity` ET `crossorigin` | `…::TestToutTiersEstVerifie` |
 | Tailwind est servi par le dépôt, et son empreinte est vérifiée | `…::TestTailwindEstServiParLeDepot` |
 | L'ordre de chargement des scripts reste correct | `…::TestLaPageResteChargeable` |
+| Un step de PRÉPARATION ne voit que Supabase (pas `pip install`) | `tests/test_ci_env.py::TestAmorcageSupabaseSeul` |
+| Le bloc d'amorçage est DÉRIVÉ du pool, jamais listé | `…::test_lamorcage_est_DERIVE_du_pool_jamais_liste` |
+| Le préflight COMPLET tourne là où les clés sont présentes | `…::TestLePreflightCompletTourneOuSontLesCles` |
+| Seuls `scan` et `settlement` ont des contrôles au-delà des fondations | `…::test_seuls_scan_et_settlement_ont_des_controles_au_dela_des_fondations` |
 
 L'**invariant des sport-keys** (4 fichiers : `core/odds_api.py`,
 `core/learning_layer.py`, `api/index.py`) est décrit
