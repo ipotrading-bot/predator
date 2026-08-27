@@ -53,9 +53,12 @@ def net_b(odds: float, tax_rate: float = TAX_RATE) -> float:
 
     POINT UNIQUE DU MODÈLE DE TAXE. Il vit ici, à côté du taux lui-même, et
     non dans `core/tax_engine.py`, pour deux raisons :
-      · `core/constants.py` ne dépend de rien, donc `learning_layer`,
+      · `core/constants.py` ne dépend de RIEN, donc `learning_layer`,
         `risk_manager` et le dashboard peuvent fiscaliser leurs calculs sans
-        tirer scipy dans le bundle Vercel via `tax_engine` ;
+        importer `tax_engine`, qui traîne tout l'appareil des combinés.
+        (La raison d'origine — « sans tirer scipy dans le bundle Vercel » —
+        a disparu avec la dépendance elle-même, retirée en D1 le
+        2026-08-27 ; la séparation, elle, reste bonne) ;
       · un modèle de taxe recopié à trois endroits finit par diverger — c'est
         exactement ce qui s'était produit (ROI brut dans `learning_layer` et
         `calibration_report`, ROI net dans `weekly_report`).
