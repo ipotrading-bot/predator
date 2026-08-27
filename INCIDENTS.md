@@ -263,6 +263,56 @@ couverture du slate est sans commune mesure avec celle de
 Kalshi/Polymarket (3 fixtures exploitables sur 70). Mesuré sur
 10 runs du 2026-08-23 au 26. Corollaire : 100 % des signaux sont du FOOTBALL.
 
+### QUATRE sources, la même panne : le budget du soir était mangé le matin (2026-08-27)
+
+Découverte quatre fois de suite dans la même soirée, en cherchant pourquoi
+« pauvreté de signaux » alors que le moteur tournait et qu'aucun seuil
+n'avait bougé. Chaque source avait un compteur qui l'empêchait de DÉPASSER
+son plan. Aucune n'avait de quoi dire QUAND le dépenser.
+
+    api-sports    budget de SCAN 64/64 dès 19:20  → slate sharp Tier 2 42 → 25
+    odds-api.io   « budget journalier atteint (400/400) » à 20:05, 408/400 le soir
+    Tavily        plan MENSUEL épuisé — compteur JAMAIS partagé entre les runs
+    Groq          TPD des deux organisations à sec dès 18:10
+
+Le cas Tavily est le pire et mérite d'être nommé : `_tavily_used` est un
+global de MODULE, donc remis à zéro à chaque processus, avec un budget de 25
+par run. Le plan gratuit fait 1 000 crédits par MOIS et ce dépôt lance ~40
+runs par jour : jusqu'à 1 000 crédits par JOUR contre un plan MENSUEL de
+1 000. « Tavily: plafond de PLAN atteint (HTTP 432) » n'était pas un pic
+d'usage, c'était l'état permanent. `core/daily_quota.py` existe exactement
+pour ça et son docstring cite api-sports et odds-api.io — pas Tavily, qui n'y
+avait jamais été câblé.
+⚠️ CE QUE ÇA COÛTAIT, ET C'EST LE VRAI SUJET : Tavily est l'ÉTAGE 2 de la
+recherche de prix Pinnacle, groq/compound-mini l'ÉTAGE 1. Les deux mouraient
+ENSEMBLE, chaque soir, faute d'être rationnés l'un comme l'autre — d'où
+« Pinnacle/Search: 0/25 prices received ». Sur 5 runs : **141 refus « Échec
+prix Sharp »** (dont 81 en tennis, structurellement sans source sharp),
+57 `LINESKIP`, 19 `CONFLIT SHARP`, et **zéro** `PLAFOND`, **zéro** `SUSPECT`.
+Aucune garde d'edge ne refusait quoi que ce soit : elles n'étaient pas
+atteintes, faute de candidats. Baisser un seuil n'aurait rien changé.
+Remède unique, posé UNE fois : `daily_quota.paced_allowance(budget, floor)`
+n'ouvre à chaque heure que la fraction du budget correspondant à la journée
+UTC écoulée, avec un plancher d'un cycle pour que le premier run du jour
+parte toujours. Aucun budget n'est augmenté — api-sports a déjà coûté une
+SUSPENSION de compte le 2026-08-20.
+⛔ AUCUNE COPIE. La formule vit dans `core/daily_quota.py` et nulle part
+ailleurs : quatre sources l'appellent, et `tests/test_rythme_des_sources.py`
+::`test_le_rythme_vit_a_UN_seul_endroit` échoue si quelqu'un la recopie
+(règle dure n°6 — la panne la plus fréquente de ce dépôt).
+⚠️ Réserve du settlement partout, tenue EN NÉGATIF : `prioriser_settlement()`
+n'est levé que par `run_audit.py`, jamais par un scan. C'est un drapeau de
+PROCESS et non une variable d'env — l'env est posé par les workflows, et un
+scan qui en hériterait mangerait la réserve en silence. Un signal dont le
+score n'a pas pu être cherché sort en `expired` et n'apprend plus rien.
+⚠️ Budget épuisé ≠ abandon : l'étage 1 rationné SAUTE vers Tavily. C'est tout
+l'intérêt d'avoir deux étages, et c'est ce qui ne se produisait jamais.
+Gardien : `tests/test_rythme_des_sources.py` — il DÉRIVE la liste des sources
+budgétées et exige que chacune consulte le rythme ; une cinquième source
+ajoutée sans lui fait échouer la suite. Les exemptions (odds500 filtrée par
+IP, 7M qui ne cote rien, Kalshi/Polymarket qui n'émettent jamais) y sont
+nommées avec leur motif.
+
 ### Le budget api-sports partait PREMIER ARRIVÉ, PREMIER SERVI (2026-08-27)
 
 Symptôme opérateur : « pauvreté de signaux » le soir, alors que le moteur

@@ -66,6 +66,13 @@ SITE_UTC_OFFSET_H = int(os.environ.get("TITAN007_UTC_OFFSET", "8"))
 
 QUOTA_BUCKET  = "titan007"
 DAILY_BUDGET  = int(os.environ.get("TITAN007_DAILY_BUDGET", "500"))
+
+# Rythme de dépense (2026-08-27) — titan007 est la SECONDE source qui porte
+# réellement un prix sharp (~24-33 matchs par cycle). Elle n'était pas encore
+# à sec le soir du relevé (242/500 à 20:03), mais rien ne la protégeait : le
+# budget partait premier arrivé, premier servi, comme api-sports et
+# odds-api.io qui, eux, tombaient. On la verrouille avant la panne, pas après.
+CYCLE_COST    = int(os.environ.get("TITAN007_CYCLE_COST", "35"))
 MAX_MATCHES   = int(os.environ.get("TITAN007_MAX_MATCHES", "40"))
 REQUEST_DELAY = float(os.environ.get("TITAN007_DELAY", "0.4"))
 TIMEOUT       = int(os.environ.get("TITAN007_TIMEOUT", "25"))
@@ -231,6 +238,12 @@ def fetch_matches(hours_ahead: int = 24, max_matches: int | None = None) -> list
     if spent >= DAILY_BUDGET:
         log.warning("titan007: budget journalier atteint (%d/%d) — cycle ignoré",
                     spent, DAILY_BUDGET)
+        return []
+    ouverture = daily_quota.paced_allowance(DAILY_BUDGET, CYCLE_COST)
+    if spent >= ouverture:
+        log.info("titan007: rythme de dépense — %d/%d dépensées, l'ouverture "
+                 "de cette heure est %d. Le reste est gardé pour les scans du "
+                 "soir.", spent, DAILY_BUDGET, ouverture)
         return []
 
     now   = datetime.now(timezone.utc)

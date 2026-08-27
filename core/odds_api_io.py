@@ -70,6 +70,18 @@ SPORTS: dict[str, tuple[str, int, bool]] = {
 # Plan gratuit : 500 requêtes/jour. On garde une marge : le settlement et
 # d'éventuels appels manuels passent par le même compte.
 DAILY_BUDGET = int(os.environ.get("ODDS_API_IO_DAILY_BUDGET", "400"))
+
+# ── RYTHME DE DÉPENSE (2026-08-27) ────────────────────────────────────
+# Troisième source du stack à tomber sur la même panne, et c'est celle qui
+# fait le plus mal : odds-api.io porte le côté SOFT, et le moteur ne peut
+# pas calculer d'edge sur un match dont il n'a qu'un côté.
+# Relevé le 2026-08-27 à 20:05 : « budget journalier atteint (400/400) » sur
+# mma, baseball et hockey, puis 408/400 en fin de soirée. Le budget partait
+# premier arrivé, premier servi — les crons du matin le raflaient et les
+# scans du soir, quand le slate européen entre dans la zone jouable 2-24 h,
+# repartaient sans prix soft.
+# Le budget n'est pas augmenté : il est étalé (core/daily_quota).
+CYCLE_COST = int(os.environ.get("ODDS_API_IO_CYCLE_COST", "12"))
 MULTI_BATCH  = 10          # maximum accepté par /v3/odds/multi
 MAX_EVENTS   = int(os.environ.get("ODDS_API_IO_MAX_EVENTS", "60"))
 TIMEOUT      = int(os.environ.get("ODDS_API_IO_TIMEOUT", "25"))
@@ -307,6 +319,13 @@ def fetch_sport(sport: str, api_key: str | None = None, hours_ahead: int = 24,
     if used_before >= DAILY_BUDGET:
         log.warning("odds-api.io[%s]: budget journalier atteint (%d/%d) — cycle ignoré",
                     sport, used_before, DAILY_BUDGET)
+        return []
+    ouverture = daily_quota.paced_allowance(DAILY_BUDGET, CYCLE_COST)
+    if used_before >= ouverture:
+        log.info("odds-api.io[%s]: rythme de dépense — %d/%d dépensées, "
+                 "l'ouverture de cette heure est %d. Le reste est gardé pour "
+                 "les scans du soir : sans prix soft, un match sharp ne "
+                 "produit aucun edge.", sport, used_before, DAILY_BUDGET, ouverture)
         return []
 
     books = selected_bookmakers(key)
