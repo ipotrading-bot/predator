@@ -64,6 +64,12 @@ C'est le tableau à consulter avant de toucher à quoi que ce soit.
 | Le score vient d'api-sports, sans aucun appel d'IA | `tests/test_settlement_deterministe.py::TestScoreSansIA::test_le_score_vient_dapi_sports_sans_aucun_appel_ia` |
 | Deux matchs candidats → refus, jamais un WIN/LOSS deviné | `…::test_deux_candidats_font_REFUSER_pas_deviner` |
 | Un audit qui ne règle rien alerte et repousse la purge | `…::TestAuditSterile`, `…::TestPurgeNeDetruitPasLechantillon` |
+| `expired` n'est plus terminal : chaque audit relance la recherche web | `tests/test_relance_expires.py` |
+| La relance passe APRÈS le settlement frais (réserve IA en négatif) | `…::TestLaPlaceDansLaudit::test_la_relance_passe_apres_le_settlement_frais` |
+| Un audit à vide relance quand même les expirés | `…::test_un_audit_a_vide_relance_quand_meme` |
+| Sans score sûr, la ligne RESTE expirée — jamais un WIN/LOSS deviné | `…::TestElleNeDevinePas` |
+| Le curseur tourne : toutes les lignes sont couvertes, pas seulement les 12 premières | `…::TestLeBudgetEtLeCurseur` |
+| Une panne de relance ne fait pas échouer un audit qui a réglé | `…::test_une_panne_de_relance_ne_fait_pas_echouer_laudit` |
 | Le pool `scan` porte les relais des sources filtrées par IP | `…::test_le_pool_scan_porte_les_relais_des_sources_filtrees_par_ip` |
 | Le préflight refuse une `SUPABASE_SERVICE_KEY` qui n'est pas `service_role` | `…::test_preflight_refuse_une_cle_qui_nest_pas_service_role` |
 | `ODDS_API_KEY` n'est PLUS requise (la garde échouait fermé) | `…::test_preflight_odds_api_key_nest_plus_requise` |

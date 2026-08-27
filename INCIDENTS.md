@@ -405,6 +405,40 @@ l'échantillon : un signal purgé part en `expired`, ligne que
 plus retrouvable et laisser gonfler la table créerait une seconde panne pour
 en éviter une première. Gardien : `tests/test_settlement_deterministe.py`.
 
+### `expired` n'est plus un état terminal (2026-08-27)
+
+Une ligne passait en `expired` le plus souvent parce qu'on n'avait pas **PU**
+chercher — Tavily au plafond de plan, Groq en limite par minute, api-sports
+qui ferme l'historique au plan gratuit (« Free plans do not have access to
+this date »). Or `fetch_pending` ne sélectionne que `status='active'` : la
+ligne ne repassait donc **plus jamais** devant un moteur de recherche. Le
+commentaire d'`audit_one` le disait déjà : « a transient rate limit
+permanently cost those signals their real WIN/LOSS ».
+MESURÉ le 2026-08-27 : **255 lignes** dans cet état (199 au ledger dont le
+signal était purgé, 56 signaux), soit **57 % du portefeuille** absent de
+/performance — biais de survie pur, puisque `learning_layer._clv_stats`
+exclut les expirés. Après recherche manuelle de 137 affiches sur 175, la
+résolution est passée de 43 % à 90 % (138 → 351 paris réglés) et le taux de
+réussite s'est stabilisé à 59,4 % — il affichait 63,9 % après la première
+vague, écart dû aux affiches les plus faciles à trouver, pas au portefeuille.
+Outils : `scripts/backfill_expired_results.py` (réparation one-shot depuis
+`reports/backfill_scores_2026-08.json`) et surtout `core/relance_expires.py`,
+appelé à la fin de CHAQUE audit, qui reprend un lot de lignes expirées et
+refait la recherche web.
+⚠️ TROIS GARDES À NE PAS DÉFAIRE. (1) La relance passe **après** le settlement
+frais : la réserve IA est tenue en négatif depuis le 2026-08-02, un signal du
+jour vaut plus qu'un match d'il y a deux semaines. (2) **Curseur tournant**
+(`meta.relance_expires_cursor`) : sans lui, 12 lignes/run repasseraient
+éternellement sur les 12 mêmes introuvables pendant que les autres ne
+seraient jamais retentées. (3) Elle ne **devine** rien : score introuvable ou
+marché indécidable → la ligne RESTE expirée et repassera. Un WIN/LOSS faux au
+ledger est DÉFINITIF, l'attente ne l'est pas.
+⛔ NE PAS SUPPRIMER les lignes expirées résiduelles pour « nettoyer »
+/performance : c'est la seule action qui rendrait leur résultat introuvable
+pour toujours, et elle fabriquerait exactement le biais de survie qu'on vient
+de retirer (règle dure n°9). Elles se résorbent d'elles-mêmes à chaque audit.
+Gardien : `tests/test_relance_expires.py`.
+
 ### Closing line : `capture_from_scan` est morte avec OddsAPI (2026-08-26)
 
 `capture_from_scan` (payload OddsAPI) est MORTE avec OddsAPI —

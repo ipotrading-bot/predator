@@ -567,6 +567,20 @@ def _effacer_marqueur_sterile(sb) -> None:
     except Exception as e:                                       # noqa: BLE001
         log.debug("effacement %s: %s", SETTLEMENT_STARVED_KEY, e)
 
+def _relancer_expires(sb) -> None:
+    """Reprend un lot de lignes expirées (core/relance_expires.py).
+
+    Import TARDIF et échec avalé : ce lot améliore un état déjà écrit, il ne
+    doit jamais pouvoir faire échouer un audit qui a par ailleurs réglé des
+    signaux — ni entrer dans le contrat de fin, qui juge le settlement frais.
+    """
+    try:
+        from core.relance_expires import relancer
+        relancer(sb)
+    except Exception as e:                                       # noqa: BLE001
+        log.warning("Relance des expirés: %s", e)
+
+
 def run():
     # This module only ever deletes/inserts/upserts, it never serves public
     # reads — write=True fails fast and loud if SUPABASE_SERVICE_KEY is
@@ -595,6 +609,10 @@ def run():
 
     if not pending:
         log.info("Nothing to audit.")
+        # Rien de frais à régler ne veut pas dire rien à faire : les lignes
+        # EXPIRÉES attendent toujours leur score. Un audit à vide est même le
+        # meilleur moment pour les reprendre — tout le budget est disponible.
+        _relancer_expires(sb)
         log.info("━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━")
         return
 
@@ -622,6 +640,14 @@ def run():
     log.info("Oracle: %d/%d | Settlement: %d/%d calls used",
              ORACLE_BUDGET - oracle_budget[0], ORACLE_BUDGET,
              SETTLE_BUDGET - settle_budget[0], SETTLE_BUDGET)
+
+    # RELANCE DES EXPIRÉS — ICI et pas plus haut. `expired` était terminal :
+    # une ligne perdue faute d'avoir PU chercher (quota mort, historique
+    # api-sports fermé) ne repassait jamais devant un moteur de recherche.
+    # Ce lot la reprend, mais APRÈS le settlement frais : la réserve IA du
+    # settlement est tenue en négatif depuis le 2026-08-02 et un signal du
+    # jour vaut plus qu'un match d'il y a deux semaines.
+    _relancer_expires(sb)
 
     log.info("--- Learning Layer ---")
     try:
