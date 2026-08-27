@@ -1,5 +1,8 @@
 """
 core/oracle.py — PAIM v7.6 — Recherche web (Groq/Tavily) → Sharp fair price
+
+⚠️ INERTE PAR DÉFAUT DEPUIS LE 2026-08-27 : `MAX_ORACLE_DEFAULT = 0`. Voir le
+commentaire de cette constante pour la raison et pour ce qu'elle ne couvre pas.
 Multi-source: Pinnacle → Betfair Exchange → Circa Sports
 Non-Pinnacle sources receive a 0.5% reference price penalty (conservative edge).
 Returns (price: float | None, team_name: str | None)
@@ -16,6 +19,37 @@ from core.ai_search import ai_available, ai_search_complete
 from core.math_engine import calc_dnb
 
 log = logging.getLogger("PREDATOR.oracle")
+
+# ── Budget de repêchage — À ZÉRO PAR DÉFAUT DEPUIS LE 2026-08-27 ─────────
+#
+# Ce module demande à un LLM de CHERCHER sur le web « la cote Pinnacle » d'un
+# match, puis le moteur traite la valeur rendue comme sa RÉFÉRENCE SHARP :
+# c'est elle qui fixe `sharp_prob`, donc l'edge, donc la mise. Or rien dans la
+# chaîne ne garantit qu'un tel prix ait jamais été affiché par Pinnacle. Un
+# modèle de langage à qui l'on demande une cote en rend une ; à l'échelle du
+# centième — celle qui décide de l'edge — c'est une génération plausible, pas
+# une observation. Le moteur ne peut pas distinguer les deux : une cote
+# inventée franchit exactement les mêmes gardes qu'une cote lue.
+#
+# La conséquence est asymétrique, donc pire qu'un simple bruit : un prix sharp
+# SOUS-ESTIMÉ fabrique un edge là où il n'y en a pas, et ces signaux-là sont
+# précisément ceux que le moteur émet. Un prix surestimé, lui, ne produit
+# aucun signal et ne se voit jamais dans le ledger.
+#
+# `MAX_ORACLE=3` remet le repêchage en service — le code reste entier et
+# fonctionnel. Il n'est pas supprimé parce qu'il redeviendrait légitime le
+# jour où sa sortie serait recoupée avec un prix réellement observé.
+#
+# ⚠️ CE RÉGLAGE NE COUVRE PAS TOUT. Deux autres chemins font encore prixer un
+# « sharp » par un LLM, et A4 ne les touche pas :
+#   · `core.harvester.fetch_pinnacle_prices` — la recherche GROUPÉE, appelée
+#     sur tout match sans prix sharp ; c'est le chemin dominant, MAX_ORACLE
+#     n'a aucune prise dessus ;
+#   · `core.audit_engine` — qui appelle `get_pinnacle_price` pour estimer la
+#     ligne de CLÔTURE (`closing_source='oracle'`), sous son propre budget
+#     `CLOSING_LINE_BUDGET`. Ce prix-là alimente le CLV, dont la couche
+#     d'apprentissage fait un critère de premier rang.
+MAX_ORACLE_DEFAULT = 0
 
 # Fallback chain: (book_name, edge_penalty_pct)
 # Penalty inflates the reference price → reduces effective edge → more conservative

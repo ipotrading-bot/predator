@@ -51,7 +51,14 @@ MODE_ENV: dict[str, dict[str, str]] = {
         "PINNACLE_BATCH": "25",            # au-delà, le prompt pousse au 413
         "PINNACLE_TAVILY_QUERIES": "6",    # défaut 4
         "TAVILY_RUN_BUDGET": "40",         # défaut 25
-        "MAX_ORACLE": "3",
+        # MAX_ORACLE RETIRÉ le 2026-08-27. Il valait "3", reporté tel quel
+        # depuis guerrilla.yml. Le laisser aurait annulé le passage à zéro du
+        # défaut (core.oracle.MAX_ORACLE_DEFAULT) pour le SEUL mode qui en
+        # abuse le plus : une constante mise à zéro d'un côté et rétablie de
+        # l'autre est exactement la divergence de listes que ce dépôt paie le
+        # plus cher. Le reste du renforcement guerrilla (budget Tavily, taille
+        # de lot, tokens) est conservé : il porte la recherche GROUPÉE, que A4
+        # ne touche pas.
         "CACHE_MMA_TTL_H": "4",            # défaut 8
         # eSports a été RETIRÉ du périmètre le 2026-08-22 (RETIRED_SPORTS) :
         # cette variable est morte, elle l'était déjà dans guerrilla.yml. On

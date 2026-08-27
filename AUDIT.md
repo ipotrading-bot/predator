@@ -113,6 +113,10 @@ C'est le tableau à consulter avant de toucher à quoi que ce soit.
 | `learning_layer` dérive son point mort de `constants.TAX_RATE` | `tests/test_learning_layer.py::TestBreakevenUsesOperatorTaxRate` |
 | La courbe d'équité du disjoncteur est nette de taxe | `tests/test_taxe_reelle.py::TestDrawdownFiscalise` |
 | `tax_engine.DEFAULT_TAX_RATE` est DÉRIVÉ de `constants.TAX_RATE` | `tests/test_taxe_reelle.py::TestUnSeulTaux` |
+| Le repêchage oracle est à ZÉRO par défaut (prix sharp inventé par un LLM) | `tests/test_oracle_inerte.py::TestLeDefautEstZero` |
+| Aucun mode de scan ne rétablit `MAX_ORACLE` | `…::TestAucunModeNeLeRetablit` |
+| L'appel à l'oracle reste gardé par son budget (vérifié sur l'AST) | `…::TestLappelResteGardeParLeBudget` |
+| Le code de l'oracle reste VIVANT, débranché et non supprimé | `…::TestLeCodeResteVivant` |
 
 L'**invariant des sport-keys** (4 fichiers : `core/odds_api.py`,
 `core/learning_layer.py`, `api/index.py`) est décrit

@@ -35,7 +35,7 @@ from core.tax_engine import optimal_stake_fraction as _optimal_stake_fraction
 from core.odds_api import fetch_odds, pool_status as _odds_pool_status, pool_counters as _odds_pool_counters
 from core.scan_windows import SpendPolicy as _SpendPolicy
 from core.constants import CLOSING_LINE_WINDOW_MIN as _CLOSING_LINE_WINDOW_MIN
-from core.oracle import get_pinnacle_price
+from core.oracle import get_pinnacle_price, MAX_ORACLE_DEFAULT as _MAX_ORACLE_DEFAULT
 from core.learning_layer import load_thresholds as _load_thresholds
 from core.learning_layer import load_segment_thresholds as _load_segment_thresholds
 from core.learning_layer import load_sport_ranking as _load_sport_ranking
@@ -211,9 +211,12 @@ _TTL_SOFT_SLATE = float(os.environ.get("CACHE_SOFT_SLATE_TTL_H", "4"))
 _MATCHBOOK_OFF = os.environ.get("MATCHBOOK_OFF", "") == "1"
 
 # Nombre de repêchages oracle (1 appel IA chacun) quand la recherche groupée
-# n'a pas trouvé de ligne Pinnacle pour un match. C'est précisément le cas des
-# sports alternatifs, rarement cotés par Pinnacle en marché groupé.
-_MAX_ORACLE = int(os.environ.get("MAX_ORACLE", "3"))
+# n'a pas trouvé de ligne Pinnacle pour un match. Le défaut vaut ZÉRO depuis le
+# 2026-08-27 : un prix « Pinnacle » produit par un LLM ne peut pas servir de
+# référence sharp. La valeur vit dans `core.oracle`, à côté du code qu'elle
+# gouverne, plutôt qu'en dur ici — voir sa docstring pour le raisonnement et
+# pour les deux chemins que ce réglage NE couvre pas.
+_MAX_ORACLE = int(os.environ.get("MAX_ORACLE", str(_MAX_ORACLE_DEFAULT)))
 
 # Sports absents du plan OddsAPI : la recherche web est leur SEULE source de
 # prix sharp. Le budget oracle doit leur revenir en premier — il se dépensait
