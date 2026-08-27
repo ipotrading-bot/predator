@@ -50,6 +50,18 @@ def _die(msg: str) -> None:
 def _check(r: requests.Response, quoi: str) -> dict:
     body = r.json() if r.content else {}
     if not (r.ok and body.get("success", True)):
+        # Le cas VÉCU le 2026-08-27 : le jeton du .env lit les Workers
+        # (il liste predator-relay) mais n'a pas la permission d'écriture,
+        # d'où un 403 « Authentication error » qui ressemble à un jeton
+        # invalide alors qu'il est actif. Le dire en clair évite de partir
+        # chercher un jeton expiré qui ne l'est pas.
+        if r.status_code == 403:
+            _die(f"{quoi} : HTTP 403 — le jeton Cloudflare est probablement en "
+                 "LECTURE SEULE sur les Workers. Il lui faut la permission "
+                 "« Account | Workers Scripts | Edit ». Créer un jeton sur "
+                 "https://dash.cloudflare.com/profile/api-tokens (modèle « Edit "
+                 "Cloudflare Workers »), puis remplacer CLOUDFLARE_API_TOKEN "
+                 "dans .env et rejouer ce script.")
         _die(f"{quoi} : HTTP {r.status_code} {json.dumps(body.get('errors', body))[:400]}")
     return body
 
