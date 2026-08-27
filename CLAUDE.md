@@ -24,6 +24,9 @@ Tout le calcul tourne en crons GitHub Actions ; le dashboard est en lecture seul
   nombre de tests n'est pas écrit ici : il périmerait au commit suivant.
 - Lint : `python -m pyflakes $(git ls-files '*.py')` (actuellement propre)
 - Dashboard local : skill `predator-dashboard-check` (mode démo, sans credentials)
+- Gestes qui touchent un compte EXTERNE (proxy odds500, 2e book
+  odds-api.io, Cloudflare) : `docs/actions_operateur.md` — commande exacte,
+  vérification, et ce que chacun ne règle PAS.
 - Piloter Supabase/Vercel : `python scripts/ops.py doctor|status|supabase …|vercel …`
   (credentials dans `.env`, gitignoré ; CLIs `supabase`/`vercel` aussi
   installables). `ops.py ai` fait un VRAI appel — seul diagnostic qui tranche
