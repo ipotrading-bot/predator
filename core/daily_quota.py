@@ -72,3 +72,31 @@ def add(bucket: str, n: int) -> None:
 
 def remaining(bucket: str, budget: int) -> int:
     return max(0, budget - spent(bucket))
+
+
+# ── RYTHME DE DÉPENSE (2026-08-27) ────────────────────────────────────
+# Un compteur partagé empêche de DÉPASSER un plan. Il ne dit rien de QUAND
+# on le dépense, et c'est l'autre moitié du problème : les crons du matin
+# raflaient tout, et les scans du soir — quand le slate européen entre dans
+# la zone jouable 2-24 h — repartaient sans leur source.
+#
+# Mesuré le 2026-08-27 sur api-sports : budget épuisé à 19:20, le slate sharp
+# du Tier 2 tombant de 42 matchs à 25. Même forme sur Tavily et sur le quota
+# Groq, à des heures voisines. La réponse est la même partout, donc elle est
+# ICI et pas recopiée dans chaque source : trois copies d'une même règle
+# finissent toujours par diverger (règle dure n°6).
+def paced_allowance(budget: int, floor: int, now: datetime | None = None) -> int:
+    """Part de `budget` ouverte à cette heure de la journée UTC.
+
+    Croît linéairement de `floor` (00:00) à `budget` (24:00). `floor` vaut le
+    coût d'un cycle complet : sans lui, le premier run du jour ne pourrait
+    rien faire et la source serait morte jusqu'à midi.
+
+    Aucun horaire n'est codé en dur — une fenêtre favorable qui bouge dans
+    core/scan_windows.py n'a rien à re-déclarer ici.
+    """
+    now = now or datetime.now(timezone.utc)
+    debut = now.replace(hour=0, minute=0, second=0, microsecond=0)
+    frac = (now - debut).total_seconds() / 86400.0
+    frac = min(1.0, max(0.0, frac))
+    return max(min(floor, budget), min(budget, int(budget * frac)))

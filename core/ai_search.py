@@ -119,10 +119,77 @@ TAVILY_URL = "https://api.tavily.com/search"
 # recherche web coûte cher, d'où la réserve settlement).
 _SEARCH_MODEL = "groq/compound-mini"       # recherche web intégrée
 
-# Budget Tavily par process — protège le quota mensuel (1 000 crédits)
-# contre un run pathologique. Chaque search basic = 1 crédit.
+# Budget Tavily par process — protège le quota mensuel contre un run
+# pathologique. Chaque search basic = 1 crédit.
 _TAVILY_RUN_BUDGET = int(os.environ.get("TAVILY_RUN_BUDGET", "25"))
 _tavily_used = 0
+
+# ── LE BUDGET DE RUN NE PROTÉGEAIT RIEN DU TOUT (2026-08-27) ──────────
+# `_tavily_used` est un global de MODULE : il repart à zéro à chaque
+# processus. Le plan gratuit fait 1 000 crédits par MOIS. Ce dépôt lance
+# ~40 runs par jour (scans, audits, closing line, rapports) et chacun
+# s'autorisait 25 crédits : jusqu'à 1 000 crédits par JOUR contre un plan
+# MENSUEL de 1 000. Le mois entier pouvait partir en une journée.
+#
+# Symptôme observé le 2026-08-27 à 20:06 : « Tavily: plafond de PLAN atteint
+# (HTTP 432) ». Ce n'était pas un pic d'usage, c'était l'état permanent.
+# Conséquence en cascade : Tavily est l'ÉTAGE 2 de la recherche de prix
+# Pinnacle. L'étage 1 (groq/compound-mini) meurt sur son quota de tokens
+# journalier vers 18:10 ; les deux étages morts ensemble donnent
+# « Pinnacle/Search: 0/25 prices received », donc 141 refus « Échec prix
+# Sharp » sur 5 runs — le premier motif de rejet du pipeline, très loin
+# devant toutes les gardes d'edge réunies (0 refus PLAFOND, 0 SUSPECT).
+#
+# C'est exactement la panne que core/daily_quota.py existe pour empêcher, et
+# Tavily n'y avait jamais été câblé — son docstring cite api-sports et
+# odds-api.io, pas lui. Le compteur est désormais PARTAGÉ entre les runs et
+# ÉTALÉ sur la journée, comme api-sports.
+_TAVILY_BUCKET = "tavily"
+
+# 1 000 crédits/mois. On garde une marge : un plan épuisé le 20 du mois
+# laisse le settlement sans filet pendant dix jours, et un résultat de match
+# manqué sort une ligne du ledger en `expired` — elle n'apprend plus rien.
+_TAVILY_MONTHLY_BUDGET = int(os.environ.get("TAVILY_MONTHLY_BUDGET", "900"))
+_TAVILY_DAILY_BUDGET = int(os.environ.get(
+    "TAVILY_DAILY_BUDGET", str(max(1, _TAVILY_MONTHLY_BUDGET // 31))))
+
+# Plancher du rythme : ce qu'un seul run doit pouvoir dépenser même à 00h05,
+# sinon la source est morte jusqu'à midi.
+_TAVILY_CYCLE = int(os.environ.get("TAVILY_CYCLE_COST", "6"))
+
+
+# Réserve du SETTLEMENT, tenue EN NÉGATIF — même remède que api-sports
+# (RESULTS_RESERVE) et que le cloisonnement Groq du 2026-08-02. Les SCANS
+# sont amputés, la réserve n'est jamais partagée : un scan de plus vaut moins
+# qu'un résultat de moins. Un signal dont le score n'a pas pu être cherché
+# sort du ledger en `expired` et n'apprend plus rien à personne.
+_TAVILY_RESULTS_RESERVE = int(os.environ.get("TAVILY_RESULTS_RESERVE", "8"))
+_priorite_settlement = False
+
+
+def prioriser_settlement() -> None:
+    """Ce process a le droit d'entamer la réserve (appelé par run_audit.py).
+
+    Un drapeau de PROCESS et non une variable d'environnement : l'env est
+    posé par les workflows, et un scan qui hériterait par erreur du drapeau
+    mangerait silencieusement la réserve — la panne exacte qu'on répare.
+    """
+    global _priorite_settlement
+    _priorite_settlement = True
+
+
+def _tavily_budget_du_jour() -> int:
+    """Crédits encore ouverts AUJOURD'HUI, tous runs confondus.
+
+    Sans base (tests, sandbox, panne réseau), `daily_quota` rend 0 dépensé :
+    on retombe alors sur le seul budget de run, comme avant. Une source ne
+    doit jamais tomber parce que son compteur est muet.
+    """
+    plafond = _TAVILY_DAILY_BUDGET
+    if not _priorite_settlement:
+        plafond = max(1, plafond - _TAVILY_RESULTS_RESERVE)
+    ouvert = daily_quota.paced_allowance(plafond, _TAVILY_CYCLE)
+    return max(0, ouvert - daily_quota.spent(_TAVILY_BUCKET))
 
 # Plafond de PLAN atteint (HTTP 432) — distinct du budget de run ci-dessus.
 #
@@ -292,7 +359,9 @@ def search_exhausted() -> bool:
     tester ceci avant de conclure : un None renvoyé dans cet état veut dire
     « je n'ai pas pu chercher », pas « l'information n'existe pas ».
     """
-    return _tavily_plan_dead or _tavily_used >= _TAVILY_RUN_BUDGET
+    return (_tavily_plan_dead
+            or _tavily_used >= _TAVILY_RUN_BUDGET
+            or _tavily_budget_du_jour() <= 0)
 
 
 def search_credits_left() -> int:
@@ -302,7 +371,9 @@ def search_credits_left() -> int:
     important : dans core/audit_engine.py, le settlement (résultat réel
     WIN/LOSS, permanent) prime toujours sur la CLV (une métrique).
     """
-    return max(0, _TAVILY_RUN_BUDGET - _tavily_used)
+    if _tavily_plan_dead:
+        return 0
+    return max(0, min(_TAVILY_RUN_BUDGET - _tavily_used, _tavily_budget_du_jour()))
 
 
 def _groq_post(model: str, messages: list, max_tokens: int,
@@ -427,6 +498,13 @@ def tavily_search(query: str, max_results: int = 5) -> list[dict]:
     if _tavily_used >= _TAVILY_RUN_BUDGET:
         log.warning("Tavily: budget du run épuisé (%d) — recherche sautée", _TAVILY_RUN_BUDGET)
         return []
+    if _tavily_budget_du_jour() <= 0:
+        log.warning("Tavily: budget PARTAGÉ du jour épuisé (%d/%d dépensés, plan "
+                    "mensuel %d) — recherche sautée. Le reste est gardé pour les "
+                    "runs plus tardifs et pour le settlement.",
+                    daily_quota.spent(_TAVILY_BUCKET), _TAVILY_DAILY_BUDGET,
+                    _TAVILY_MONTHLY_BUDGET)
+        return []
     try:
         r = requests.post(TAVILY_URL, json={
             "api_key":     api_key,
@@ -435,6 +513,7 @@ def tavily_search(query: str, max_results: int = 5) -> list[dict]:
             "search_depth": "basic",
         }, timeout=20)
         _tavily_used += 1
+        daily_quota.add(_TAVILY_BUCKET, 1)
         if r.status_code == 432:
             globals()["_tavily_plan_dead"] = True
             log.warning("Tavily: plafond de PLAN atteint (HTTP 432) — plus aucune "

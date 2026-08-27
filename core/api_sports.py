@@ -152,15 +152,11 @@ CYCLE_COST = int(os.environ.get("API_SPORTS_CYCLE_COST", "10"))
 def scan_allowance(now: datetime | None = None) -> int:
     """Part de SCAN_BUDGET ouverte à cette heure de la journée UTC.
 
-    Croît linéairement de CYCLE_COST (00:00) à SCAN_BUDGET (24:00). Aucun
-    horaire n'est codé en dur : une fenêtre favorable qui bouge dans
-    core/scan_windows.py n'a rien à re-déclarer ici.
+    Le calcul vit dans core/daily_quota : Tavily et le quota Groq ont la même
+    maladie et la même réponse, et trois copies d'une même règle finissent
+    toujours par diverger (règle dure n°6).
     """
-    now = now or datetime.now(timezone.utc)
-    start = now.replace(hour=0, minute=0, second=0, microsecond=0)
-    frac = (now - start).total_seconds() / 86400.0
-    frac = min(1.0, max(0.0, frac))
-    return max(CYCLE_COST, min(SCAN_BUDGET, int(SCAN_BUDGET * frac)))
+    return daily_quota.paced_allowance(SCAN_BUDGET, CYCLE_COST, now)
 
 # Reconnaissance par NOM (insensible à la casse) et non par id numérique :
 # les ids de bookmakers de la doc n'ont pas pu être vérifiés, et un id faux
