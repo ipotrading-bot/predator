@@ -236,6 +236,41 @@ Les chemins normaux restent le cron de `audit.yml` (toutes les 6 h) et le
 `workflow_dispatch` depuis l'interface GitHub ; cette route n'est qu'un
 raccourci d'opérateur.
 
+#### Le dashboard n'a plus de clé d'écriture — `SUPABASE_SERVICE_KEY` à retirer
+
+Depuis le 2026-08-27, `api/index.py` n'écrit plus rien. `/api/scan`, sa seule
+écriture, passe par `demander_scan()` — une fonction Postgres `security
+definer` appelable avec la clé de LECTURE, qui porte elle-même le cooldown et
+la limite de débit (`sql/migrate_v10_9_scan_request_rpc.sql`).
+
+Tant que `SUPABASE_SERVICE_KEY` restait posée sur Vercel, une faille de la
+fonction publique donnait les pleins pouvoirs sur `signals`,
+`ai_learning_ledger`, `meta` et `app_secrets`. Elle n'y a plus aucun usage.
+
+**Sur Vercel — Settings → Environment Variables :**
+
+| Variable | Action | Pourquoi |
+|---|---|---|
+| `SUPABASE_SERVICE_KEY` | **SUPPRIMER** (production ET preview) | plus aucun appelant ; c'était la clé qui donnait tout |
+| `SUPABASE_URL` | garder | lecture |
+| `SUPABASE_KEY` | garder | clé anon, lecture seule — l'écriture passe par la fonction |
+| `DASHBOARD_ADMIN_TOKEN` | garder | `/api/audit/run` |
+| `GITHUB_PAT` | garder | `/api/audit/run` déclenche `audit.yml` |
+
+⚠️ **Dans cet ordre** : appliquer la migration, DÉPLOYER le nouveau code,
+vérifier `/api/scan`, et seulement ensuite retirer la clé. L'inverse casse la
+route entre les deux étapes. Un changement de variable n'agit qu'au
+déploiement suivant — `python scripts/ops.py vercel redeploy` après le retrait.
+
+Vérification : `curl -X POST https://<déploiement>/api/scan` doit rendre
+`queued` puis `already_queued`, et `/api/health` rester à `db_configured: true`.
+
+⚠️ Ces variables restent sur le déploiement sans y servir à rien et méritent
+le même examen : `GROQ_API_KEY`, `GEMINI_API_KEY`, `ODDS_API_KEY`,
+`NEWS_API_KEY`, `TELEGRAM_BOT_TOKEN`, `TELEGRAM_CHAT_ID`, `POSTGRES_*`. Le
+dashboard n'appelle ni IA, ni source de cotes, ni Telegram, ni Postgres en
+direct. Hors périmètre de C3, listé parce que la vérification les a trouvées.
+
 ---
 
 ## 📁 Structure du Projet

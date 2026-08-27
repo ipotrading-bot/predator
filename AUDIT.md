@@ -158,6 +158,10 @@ C'est le tableau à consulter avant de toucher à quoi que ce soit.
 | L'IP vient de l'en-tête de la plateforme, jamais de `remote_addr` | `…::test_deux_IP_ont_des_compteurs_SEPARES` |
 | La fenêtre GLISSE — la limite n'est pas un bannissement | `…::test_la_fenetre_glisse` |
 | Le compteur par IP ne grandit pas indéfiniment | `…::test_le_compteur_ne_grandit_pas_indefiniment` |
+| Le dashboard ne demande JAMAIS de clé d'écriture (vérifié sur l'AST) | `tests/test_api_admin_auth.py::TestLeDashboardNaPlusDeCleDEcriture` |
+| `/api/scan` passe par `demander_scan()`, jamais par une écriture directe | `…::TestScanPasseParLaFonctionPostgres` |
+| Une panne de la fonction ne fuit ni son nom ni la policy dans la réponse | `…::test_une_panne_de_la_fonction_ne_fuit_pas_dans_la_reponse` |
+| `anon` ne peut plus écrire `meta` (RLS + GRANT retirés) | `sql/migrate_v10_9_scan_request_rpc.sql` §3 |
 
 L'**invariant des sport-keys** (4 fichiers : `core/odds_api.py`,
 `core/learning_layer.py`, `api/index.py`) est décrit

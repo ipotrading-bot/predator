@@ -37,7 +37,7 @@ from flask import Flask, jsonify, render_template, request, send_from_directory
 from core.perf_view import (filter_rows as _perf_filter_rows,
                             resolution_rate as _resolution_rate)
 from core.constants import TAX_RATE as _TAX_RATE
-from core.db import get_db as _get_db_client, MissingCredentialsError
+from core.db import get_db as _get_db_client
 from core.stats_utils import p_breakeven, wilson_ci
 
 log = logging.getLogger("PREDATOR.api")
@@ -101,12 +101,19 @@ def no_cache(response):
 
 
 def _db(write: bool = False):
-    """write=False (default, every route except /api/scan): anon key, safe
-    for reads, returns None if unconfigured so routes degrade gracefully.
-    write=True (/api/scan only): requires SUPABASE_SERVICE_KEY — raises
-    MissingCredentialsError if it's absent/wrong, which the one call site
-    below turns into an honest error response instead of a silent RLS
-    failure on the meta-table upsert."""
+    """Client Supabase du dashboard — clé de LECTURE, toujours.
+
+    ⚠️ `write=True` N'EST PLUS UTILISÉ NULLE PART depuis C3 (2026-08-27), et
+    le paramètre n'est conservé que pour ne pas casser une signature. Le
+    dashboard n'écrit plus rien : `/api/scan`, sa seule écriture, passe par
+    `demander_scan()`, fonction Postgres `security definer` appelable avec la
+    clé anon (sql/migrate_v10_9_scan_request_rpc.sql).
+
+    C'est ce qui permet de RETIRER `SUPABASE_SERVICE_KEY` du déploiement
+    Vercel : tant qu'elle y était, une faille de la fonction publique donnait
+    les pleins pouvoirs sur `signals`, `ai_learning_ledger`, `meta` et
+    `app_secrets`. Rend None si rien n'est configuré, pour que les routes se
+    dégradent proprement au lieu de lever."""
     return _get_db_client(write=write)
 
 
@@ -994,45 +1001,41 @@ def trigger_scan():
                 "message": "Trop de demandes — réessayez dans quelques minutes",
             }), 429
 
-    # This route WRITES to meta (scan_request) — RLS rejects that from the
-    # anon key, so it needs the same service_role client the batch scripts
-    # use, not the read-only _db() the rest of this file relies on.
-    try:
-        sb = _db(write=True)
-    except MissingCredentialsError as e:
-        log.error("scan trigger: %s", e)
-        # Surface the specific diagnostic (e.g. "decodes to role='anon'") —
-        # it doesn't leak the secret itself, only the JWT's role claim, and
-        # it's the difference between "not set" and "set to the wrong key"
-        # without needing to go dig through Vercel's function logs.
-        return jsonify({"error": f"Écriture Supabase impossible sur ce déploiement : {e}"}), 503
+    # ── C3 (2026-08-27) : plus AUCUNE clé d'écriture dans le dashboard ────
+    # Cette route était la SEULE écriture d'`api/index.py`, et elle exigeait la
+    # clé service_role — donc les pleins pouvoirs sur `signals`,
+    # `ai_learning_ledger`, `meta` et `app_secrets` pour une fonction servie
+    # publiquement. Elle passe désormais par `demander_scan()`, une fonction
+    # Postgres `security definer` appelable avec la clé de LECTURE
+    # (sql/migrate_v10_9_scan_request_rpc.sql).
+    #
+    # Le cooldown ET la limite de débit vivent maintenant DANS la fonction.
+    # C'est le point de C3 : la limite en mémoire ajoutée par C2 repart à zéro
+    # à chaque instance froide de Vercel et ne se partage pas entre instances ;
+    # celle-ci est unique, partagée, et l'appelant ne peut pas la contourner.
+    # La limite en mémoire est CONSERVÉE en amont — elle refuse sans même
+    # ouvrir une connexion, ce que le SQL ne peut pas faire par construction.
+    sb = _db()
     if not sb:
         return jsonify({"error": "Base de données non configurée"}), 503
     try:
-        pending = _get_meta(sb, "scan_request")
-        if pending and pending.get("requested_at"):
-            try:
-                requested_at = datetime.fromisoformat(pending["requested_at"].replace("Z", "+00:00"))
-                age_s = (datetime.now(_tz.utc) - requested_at).total_seconds()
-            except Exception:
-                age_s = None
-            if age_s is not None and age_s < _SCAN_REQUEST_COOLDOWN_S:
-                return jsonify({
-                    "status":  "already_queued",
-                    "message": "Un scan est déjà en attente — réessayez dans quelques minutes",
-                }), 429
-
-        sb.table("meta").upsert({
-            "key":   "scan_request",
-            "value": json.dumps({"requested_at": datetime.now(_tz.utc).isoformat()}),
-        }, on_conflict="key").execute()
-        return jsonify({"status": "queued", "message": "Scan demandé — résultats sous 30 min max (prochain passage planifié)"}), 200
+        reponse = sb.rpc("demander_scan", {"p_ip": _client_ip()}).execute()
+        resultat = reponse.data if isinstance(reponse.data, dict) else {}
     except Exception as exc:
-        # Le détail va au log du déploiement, pas dans la réponse : un
-        # message PostgREST brut nomme la table, la colonne et la politique
-        # RLS qui a refusé. Utile en diagnostic, inutile à publier.
+        # Le détail va au log du déploiement, pas dans la réponse : un message
+        # PostgREST brut nomme la fonction, le schéma et la politique qui a
+        # refusé. Utile en diagnostic, inutile à publier.
         log.error("scan queue error: %s", exc)
         return jsonify({"error": "la demande de scan a échoué"}), 500
+
+    statut = resultat.get("status")
+    if statut == "queued":
+        return jsonify(resultat), 200
+    if statut in ("already_queued", "rate_limited"):
+        return jsonify(resultat), 429
+    # `error`, ou une forme inattendue : on ne relaie pas le détail.
+    log.error("demander_scan a rendu une réponse inattendue : %.200s", resultat)
+    return jsonify({"error": "la demande de scan a échoué"}), 500
 
 
 if __name__ == "__main__":

@@ -306,3 +306,162 @@ class TestScanLimiteDeDebit:
         assert len(_scan_hits) == 50
         _scan_rate_limited("11.0.0.1", 1000.0 + _SCAN_RATE_LIMIT_WINDOW_S + 1)
         assert len(_scan_hits) == 1, "les fenêtres périmées doivent être purgées"
+
+
+# ── C3 — le dashboard n'a plus aucune clé d'écriture ─────────────────────
+
+class _RpcSB:
+    """Faux client Supabase qui n'expose QUE `rpc`. Toute tentative
+    d'écriture directe lève : c'est le contrat de C3."""
+
+    def __init__(self, reponse):
+        self.reponse = reponse
+        self.appels = []
+
+    def rpc(self, nom, params=None):
+        self.appels.append((nom, params))
+        rep = self.reponse
+
+        class _Q:
+            def execute(self):
+                if isinstance(rep, Exception):
+                    raise rep
+                return type("R", (), {"data": rep})()
+
+        return _Q()
+
+    def table(self, nom):
+        raise AssertionError(
+            f"écriture directe sur {nom} — le dashboard ne doit plus en faire")
+
+
+class TestScanPasseParLaFonctionPostgres:
+    """C3 — `/api/scan` était la SEULE écriture du dashboard, et elle exigeait
+    la clé service_role : les pleins pouvoirs sur `signals`,
+    `ai_learning_ledger`, `meta` et `app_secrets` pour une fonction servie
+    publiquement. Elle passe par `demander_scan()`, fonction Postgres
+    `security definer` appelable avec la clé de lecture."""
+
+    @pytest.fixture(autouse=True)
+    def _compteur_vierge(self):
+        from api.index import _scan_hits
+        _scan_hits.clear()
+        yield
+        _scan_hits.clear()
+
+    def _cabler(self, monkeypatch, reponse):
+        import api.index as idx
+        faux = _RpcSB(reponse)
+        monkeypatch.setattr(idx, "_db", lambda write=False: faux)
+        monkeypatch.delenv(ADMIN_TOKEN_ENV, raising=False)
+        return faux
+
+    def test_la_route_appelle_la_fonction_et_lui_passe_lIP(self, client, monkeypatch):
+        faux = self._cabler(monkeypatch, {"status": "queued", "message": "ok"})
+        r = client.post("/api/scan", headers={"x-vercel-forwarded-for": "1.2.3.4"})
+        assert r.status_code == 200
+        assert faux.appels == [("demander_scan", {"p_ip": "1.2.3.4"})]
+
+    def test_le_client_demande_est_celui_de_LECTURE(self, monkeypatch, client):
+        """Si la route redemandait `write=True`, retirer la clé de Vercel la
+        casserait — et tout C3 serait annulé sans qu'aucun test ne bronche."""
+        import api.index as idx
+        vus = []
+        faux = _RpcSB({"status": "queued"})
+
+        def _db(write=False):
+            vus.append(write)
+            return faux
+
+        monkeypatch.setattr(idx, "_db", _db)
+        monkeypatch.delenv(ADMIN_TOKEN_ENV, raising=False)
+        client.post("/api/scan", headers={"x-vercel-forwarded-for": "1.2.3.4"})
+        assert vus == [False], f"le dashboard a demandé une clé d'écriture : {vus}"
+
+    def test_aucune_ecriture_directe_nest_tentee(self, client, monkeypatch):
+        # `_RpcSB.table` lève : le test échouerait si la route écrivait encore.
+        self._cabler(monkeypatch, {"status": "queued"})
+        assert client.post("/api/scan",
+                           headers={"x-vercel-forwarded-for": "1.2.3.4"}).status_code == 200
+
+    @pytest.mark.parametrize("statut,code", [
+        ("queued", 200), ("already_queued", 429), ("rate_limited", 429),
+        ("error", 500),
+    ])
+    def test_chaque_statut_a_son_code_http(self, client, monkeypatch, statut, code):
+        self._cabler(monkeypatch, {"status": statut, "message": "m"})
+        r = client.post("/api/scan", headers={"x-vercel-forwarded-for": "5.6.7.8"})
+        assert r.status_code == code
+
+    def test_une_reponse_inattendue_ne_passe_pas_pour_un_succes(self, client,
+                                                                monkeypatch):
+        """Une fonction qui rendrait autre chose — parce qu'elle a été
+        modifiée en base sans que le code suive — ne doit pas être lue comme
+        un scan accepté."""
+        self._cabler(monkeypatch, {"quelque_chose": "d'autre"})
+        assert client.post("/api/scan",
+                           headers={"x-vercel-forwarded-for": "5.6.7.8"}).status_code == 500
+
+    def test_une_panne_de_la_fonction_ne_fuit_pas_dans_la_reponse(self, client,
+                                                                  monkeypatch):
+        """Un message PostgREST brut nomme la fonction, le schéma et la
+        politique qui a refusé."""
+        self._cabler(monkeypatch, RuntimeError(
+            'permission denied for function demander_scan, policy "meta_service_update"'))
+        r = client.post("/api/scan", headers={"x-vercel-forwarded-for": "5.6.7.8"})
+        assert r.status_code == 500
+        corps = r.get_data(as_text=True)
+        assert "demander_scan" not in corps and "policy" not in corps
+
+    def test_la_limite_en_memoire_refuse_AVANT_douvrir_une_connexion(self, client,
+                                                                    monkeypatch):
+        """C2 est conservée EN AMONT de C3 : elle refuse sans même joindre la
+        base, ce que le SQL ne peut pas faire par construction."""
+        import api.index as idx
+        from api.index import _SCAN_RATE_LIMIT_N
+        faux = self._cabler(monkeypatch, {"status": "queued"})
+        for _ in range(_SCAN_RATE_LIMIT_N):
+            client.post("/api/scan", headers={"x-vercel-forwarded-for": "7.7.7.7"})
+        avant = len(faux.appels)
+        monkeypatch.setattr(idx, "_db",
+                            lambda write=False: (_ for _ in ()).throw(
+                                AssertionError("base jointe malgré la limite")))
+        assert client.post("/api/scan",
+                           headers={"x-vercel-forwarded-for": "7.7.7.7"}).status_code == 429
+        assert len(faux.appels) == avant
+
+
+class TestLeDashboardNaPlusDeCleDEcriture:
+    """Le garde qui compte : tant qu'un seul `write=True` subsiste, retirer
+    `SUPABASE_SERVICE_KEY` de Vercel casse le dashboard en production."""
+
+    def test_aucun_appel_a_une_cle_decriture_dans_le_dashboard(self):
+        import ast
+        import pathlib
+        src = (pathlib.Path(__file__).resolve().parent.parent
+               / "api" / "index.py").read_text(encoding="utf-8")
+        coupables = []
+        for noeud in ast.walk(ast.parse(src)):
+            if not isinstance(noeud, ast.Call):
+                continue
+            nom = getattr(noeud.func, "id", None) or getattr(noeud.func, "attr", None)
+            if nom not in ("_db", "get_db", "_get_db_client"):
+                continue
+            for kw in noeud.keywords:
+                if kw.arg == "write" and getattr(kw.value, "value", False) is True:
+                    coupables.append(noeud.lineno)
+        assert coupables == [], \
+            f"api/index.py demande encore une clé d'écriture, lignes {coupables}"
+
+    def test_aucune_ecriture_supabase_directe_dans_le_dashboard(self):
+        """`.upsert` / `.insert` / `.update` / `.delete` sur une table n'ont
+        plus rien à faire ici : tout passe par la fonction Postgres."""
+        import re
+        import pathlib
+        src = (pathlib.Path(__file__).resolve().parent.parent
+               / "api" / "index.py").read_text(encoding="utf-8")
+        code = [l for l in src.splitlines()
+                if not l.strip().startswith("#") and "table(" in l]
+        ecritures = [l.strip() for l in code
+                     if re.search(r"\.(upsert|insert|update|delete)\(", l)]
+        assert ecritures == [], ecritures
