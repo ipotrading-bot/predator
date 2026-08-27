@@ -538,7 +538,7 @@ Gardien : `tests/test_free_sources_wiring.py::TestModeRelais`
 ⚠️ Ce qui tranche reste un run DEPUIS UN RUNNER GitHub : `describe_failure`
 nomme le colo, et un 403 SANS `X-Relay-By` n'a pas la même cause qu'avec.
 
-### odds500 : le Smart Placement n'avait jamais été essayé (2026-08-27)
+### odds500 : le Smart Placement a été essayé — et il NE SUFFIT PAS (2026-08-27)
 
 Le blocage est établi et ne change pas : un Worker s'exécute au colo le plus
 proche de l'APPELANT, donc IAD depuis les runners GitHub, et 500.com refuse
@@ -549,6 +549,22 @@ Placement, qui exécute le Worker près de l'ORIGINE et non de l'appelant, n'a
 jamais été activé.
 Outil : `scripts/relay_smart_placement.py` (lecture seule sans `--oui`,
 réversible par `--annuler`).
+
+⛔ TRANCHÉ LE MÊME JOUR — ACTIVÉ, MESURÉ, INSUFFISANT. `placement: smart`
+posé à 21:41, puis run de scan 33119345516 : le colo est passé de **IAD**
+(Washington) à **SEA** (Seattle). Le Smart Placement DÉPLACE donc bien
+l'exécution — ce n'est pas un réglage inerte — mais Cloudflare choisit par
+LATENCE, et depuis les runners GitHub le plus proche de l'origine reste un
+colo américain. 500.com refuse toujours : « 403 de l'AMONT via le relais
+(colo Cloudflare SEA) ».
+Le réglage est LAISSÉ EN PLACE : il ne nuit pas, et un proxy le contourne de
+toute façon depuis l'inversion de précédence. Mais il ne faut plus le
+compter comme une piste — elle est fermée, avec sa mesure.
+CE QUI RESTE, ET IL N'Y A PLUS D'HYPOTHÈSE GRATUITE : une sortie hors des
+colos US. Proxy à sortie européenne (`FREE_SOURCES_PROXY`, le chemin le plus
+court — la plomberie est déjà là, il ne manque que la valeur du secret),
+relais épinglé en Europe (Fly.io/Render région EU), ou runner auto-hébergé
+en Europe.
 ⚠️ CE N'EST PAS UNE SOLUTION ANNONCÉE, c'est une hypothèse gratuite qu'on
 ferme avant d'en payer une autre. Cloudflare optimise la LATENCE et choisit
 lui-même le colo : rien ne garantit qu'il en retienne un dont 500.com accepte
