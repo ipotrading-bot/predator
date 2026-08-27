@@ -154,6 +154,10 @@ C'est le tableau à consulter avant de toucher à quoi que ce soit.
 | Le jeton d'admin ne passe QUE par l'en-tête, jamais en query string | `tests/test_api_admin_auth.py::…::test_le_jeton_en_query_string_est_REFUSE` |
 | Une query string ne sert pas de repli sur un en-tête erroné | `…::test_la_query_string_ne_sert_pas_de_repli_sur_en_tete_errone` |
 | Le refus par query string est journalisé SANS recopier le jeton | `…::test_le_jeton_nest_jamais_recopie_dans_le_log` |
+| `/api/scan` est limitée par IP, AVANT tout accès à la base | `tests/test_api_admin_auth.py::TestScanLimiteDeDebit` |
+| L'IP vient de l'en-tête de la plateforme, jamais de `remote_addr` | `…::test_deux_IP_ont_des_compteurs_SEPARES` |
+| La fenêtre GLISSE — la limite n'est pas un bannissement | `…::test_la_fenetre_glisse` |
+| Le compteur par IP ne grandit pas indéfiniment | `…::test_le_compteur_ne_grandit_pas_indefiniment` |
 
 L'**invariant des sport-keys** (4 fichiers : `core/odds_api.py`,
 `core/learning_layer.py`, `api/index.py`) est décrit

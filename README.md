@@ -199,7 +199,7 @@ budget crédits avant/après, carte des crons, boucle de calibration) est docume
 | Endpoint | Method | Description |
 |----------|--------|-------------|
 | `/api/signals` | GET | Signaux actifs **encore jouables** — coup d'envoi non passé (`?all=1` pour la liste brute, diagnostic) |
-| `/api/scan` | POST | Demander un scan PAIM — pose le flag `meta.scan_request`, ramassé par `scan.yml` à chaque tick (≤ ~1 h) |
+| `/api/scan` | POST | Demander un scan PAIM — pose le flag `meta.scan_request`, ramassé par `scan.yml` à chaque tick (≤ ~1 h). **Limitée à 3 demandes / 5 min par IP** ; un jeton d'admin en dispense |
 | `/api/audit/run` | POST | Déclencher `audit.yml` — **jeton d'admin requis** (`X-Predator-Token`), voir ci-dessous |
 | `/api/health` | GET | Santé du **dashboard** (aucun appel à Supabase — reste utilisable base injoignable) |
 

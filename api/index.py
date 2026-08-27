@@ -20,6 +20,7 @@ import hmac
 import json
 import logging
 import os
+import time
 from datetime import datetime, timezone as _tz
 
 import requests
@@ -896,9 +897,103 @@ def health():
 # `golden` est promu en scan complet ; les autres modes en sont déjà un.
 _SCAN_REQUEST_COOLDOWN_S = 120
 
+# ── Limite de débit par IP sur /api/scan (C2, 2026-08-27) ────────────────
+# La route est appelée par un BOUTON PUBLIC du dashboard (templates/index.html,
+# `triggerScan`). Un jeton y serait écrit dans le JavaScript servi à tout le
+# monde : ce ne serait pas une protection, seulement l'illusion d'une. C'est
+# donc une limite de débit — avec une dérogation par jeton pour l'opérateur,
+# qui lui peut le garder secret.
+_SCAN_RATE_LIMIT_N = 3            # requêtes autorisées…
+_SCAN_RATE_LIMIT_WINDOW_S = 300   # …par IP et par fenêtre de 5 minutes
+
+# {ip: [horodatages]} — mémoire du PROCESSUS.
+_scan_hits: dict[str, list[float]] = {}
+
+
+def _client_ip() -> str:
+    """L'IP de l'appelant, telle que le proxy de déploiement la rapporte.
+
+    ⚠️ `request.remote_addr` derrière Vercel est l'IP du PROXY, identique pour
+    tout le monde : s'en servir ferait partager un seul compteur à la planète
+    entière, et le premier visiteur bloquerait tous les autres.
+
+    `x-vercel-forwarded-for` est posé par la plateforme et n'est pas
+    falsifiable par le client ; `x-forwarded-for` l'est — un attaquant qui le
+    fabrique obtient un compteur neuf à chaque requête. On préfère donc le
+    premier, et on garde le second en repli EN SACHANT ce qu'il vaut. C'est
+    précisément cette limite que C3 lève en déplaçant le comptage dans
+    Postgres.
+    """
+    entete = (request.headers.get("x-vercel-forwarded-for")
+              or request.headers.get("x-forwarded-for") or "")
+    if entete:
+        # Le premier élément est le client d'origine ; les suivants sont les
+        # relais traversés.
+        return entete.split(",")[0].strip()
+    return request.remote_addr or "inconnue"
+
+
+def _scan_rate_limited(ip: str, maintenant: float | None = None) -> bool:
+    """Cette IP a-t-elle dépassé son quota ? Enregistre la requête si non.
+
+    ⚠️ CE QUE CETTE LIMITE VAUT, ET CE QU'ELLE NE VAUT PAS. Le compteur vit
+    dans la MÉMOIRE DU PROCESSUS. Sur Vercel, chaque instance de fonction a la
+    sienne, et une instance froide démarre à zéro : la limite arrête un flot
+    naïf venu d'une seule IP vers une instance chaude — le cas courant — et
+    n'arrête PAS un flot distribué, ni un attaquant qui fabrique son
+    `x-forwarded-for`.
+
+    Elle a malgré tout un effet réel et immédiat : elle refuse AVANT de créer
+    un client service_role et AVANT de lire `meta`. Chaque requête abusive
+    coûtait jusque-là une lecture Supabase ; elle ne coûte plus rien.
+
+    La vraie limite, partagée entre instances et non falsifiable, est l'objet
+    de C3 — comptée dans Postgres, du côté où l'état est commun.
+    """
+    maintenant = time.time() if maintenant is None else maintenant
+    debut = maintenant - _SCAN_RATE_LIMIT_WINDOW_S
+    recents = [t for t in _scan_hits.get(ip, []) if t > debut]
+    if len(recents) >= _SCAN_RATE_LIMIT_N:
+        _scan_hits[ip] = recents
+        return True
+    recents.append(maintenant)
+    _scan_hits[ip] = recents
+    # Purge des IP dont la fenêtre est vide : sans elle, le dictionnaire
+    # grandit indéfiniment sur une instance chaude longue durée.
+    for autre in [k for k, v in _scan_hits.items() if not v or v[-1] <= debut]:
+        _scan_hits.pop(autre, None)
+    return False
+
 
 @app.route("/api/scan", methods=["POST"])
 def trigger_scan():
+    """Demande un scan — pose `meta.scan_request`, ramassé par `scan.yml`.
+
+    OUVERTE À TOUT INTERNET JUSQU'AU 2026-08-27 (C2). N'importe quel site
+    pouvait déclencher l'upsert : le dashboard est servi depuis une URL Vercel
+    publique et la route n'exigeait rien. Le cooldown global de 120 s bornait
+    déjà la FRÉQUENCE d'écriture, mais chaque requête refusée coûtait quand
+    même la création d'un client service_role et une lecture de `meta` — et
+    rien n'empêchait de maintenir un scan perpétuellement en attente, donc de
+    forcer un scan complet à chaque tick de cron.
+
+    La limite par IP s'applique AVANT tout accès à la base. Un jeton
+    d'administration valide en dispense : c'est le seul appelant qui puisse
+    garder un secret, le bouton du dashboard étant, lui, servi à tout le monde.
+    """
+    # L'opérateur authentifié n'est pas limité : `_admin_autorise` exige
+    # l'en-tête `X-Predator-Token` (C1), jamais l'URL.
+    if not _admin_autorise():
+        ip = _client_ip()
+        if _scan_rate_limited(ip):
+            log.warning("scan refusé — limite de débit atteinte pour %s "
+                        "(%d requêtes / %d s)", ip, _SCAN_RATE_LIMIT_N,
+                        _SCAN_RATE_LIMIT_WINDOW_S)
+            return jsonify({
+                "status":  "rate_limited",
+                "message": "Trop de demandes — réessayez dans quelques minutes",
+            }), 429
+
     # This route WRITES to meta (scan_request) — RLS rejects that from the
     # anon key, so it needs the same service_role client the batch scripts
     # use, not the read-only _db() the rest of this file relies on.

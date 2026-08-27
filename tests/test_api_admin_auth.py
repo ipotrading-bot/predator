@@ -174,3 +174,135 @@ class TestSondeDeSante:
     def test_health_porte_la_version_unique(self, client):
         from api.index import DASHBOARD_VERSION
         assert client.get("/api/health").get_json()["version"] == DASHBOARD_VERSION
+
+
+# ── C2 — /api/scan était ouverte à tout Internet ─────────────────────────
+
+class TestScanLimiteDeDebit:
+    """`POST /api/scan` pose `meta.scan_request` et n'exigeait RIEN. Le
+    dashboard est servi depuis une URL Vercel publique.
+
+    Le cooldown global de 120 s bornait déjà la fréquence d'ÉCRITURE, mais
+    chaque requête refusée coûtait quand même la création d'un client
+    service_role et une lecture de `meta` — et rien n'empêchait de maintenir
+    un scan perpétuellement en attente, donc de forcer un scan complet à
+    chaque tick de cron.
+
+    Pourquoi une limite de débit et NON un jeton : la route est appelée par un
+    bouton public du dashboard (`templates/index.html`, `triggerScan`). Un
+    jeton y serait écrit dans le JavaScript servi à tout le monde — pas une
+    protection, l'illusion d'une.
+    """
+
+    @pytest.fixture(autouse=True)
+    def _compteur_vierge(self):
+        from api.index import _scan_hits
+        _scan_hits.clear()
+        yield
+        _scan_hits.clear()
+
+    def test_les_premieres_demandes_passent(self, client, monkeypatch):
+        from api.index import _SCAN_RATE_LIMIT_N
+        monkeypatch.delenv(ADMIN_TOKEN_ENV, raising=False)
+        for i in range(_SCAN_RATE_LIMIT_N):
+            r = client.post("/api/scan", headers={"x-vercel-forwarded-for": "1.2.3.4"})
+            assert r.status_code != 429, f"demande {i + 1} refusée trop tôt"
+
+    def test_au_dela_du_quota_la_route_refuse(self, client, monkeypatch):
+        from api.index import _SCAN_RATE_LIMIT_N
+        monkeypatch.delenv(ADMIN_TOKEN_ENV, raising=False)
+        for _ in range(_SCAN_RATE_LIMIT_N):
+            client.post("/api/scan", headers={"x-vercel-forwarded-for": "1.2.3.4"})
+        r = client.post("/api/scan", headers={"x-vercel-forwarded-for": "1.2.3.4"})
+        assert r.status_code == 429
+        assert r.get_json()["status"] == "rate_limited"
+
+    def test_le_refus_precede_tout_acces_a_la_base(self, client, monkeypatch):
+        """L'intérêt principal : une requête abusive ne doit plus coûter une
+        lecture Supabase. Sans cela, la limite ne fait qu'économiser
+        l'écriture, qui était déjà bornée par le cooldown."""
+        import api.index as idx
+        from api.index import _SCAN_RATE_LIMIT_N
+        monkeypatch.delenv(ADMIN_TOKEN_ENV, raising=False)
+        for _ in range(_SCAN_RATE_LIMIT_N):
+            client.post("/api/scan", headers={"x-vercel-forwarded-for": "9.9.9.9"})
+
+        def _interdit(*_a, **_k):
+            raise AssertionError("_db() appelé alors que la limite était atteinte")
+
+        monkeypatch.setattr(idx, "_db", _interdit)
+        assert client.post("/api/scan",
+                           headers={"x-vercel-forwarded-for": "9.9.9.9"}).status_code == 429
+
+    def test_deux_IP_ont_des_compteurs_SEPARES(self, client, monkeypatch):
+        """Sinon le premier visiteur bloquerait tous les autres — c'est ce qui
+        arriverait en comptant sur `remote_addr`, identique pour tout le monde
+        derrière le proxy Vercel."""
+        from api.index import _SCAN_RATE_LIMIT_N
+        monkeypatch.delenv(ADMIN_TOKEN_ENV, raising=False)
+        for _ in range(_SCAN_RATE_LIMIT_N + 2):
+            client.post("/api/scan", headers={"x-vercel-forwarded-for": "1.1.1.1"})
+        r = client.post("/api/scan", headers={"x-vercel-forwarded-for": "2.2.2.2"})
+        assert r.status_code != 429
+
+    def test_lIP_est_lue_sur_len_tete_de_la_plateforme_en_priorite(self):
+        """`x-vercel-forwarded-for` est posé par Vercel et n'est pas
+        falsifiable ; `x-forwarded-for` l'est. Le premier doit primer."""
+        from api.index import _client_ip, app as flask_app
+        with flask_app.test_request_context(
+                headers={"x-vercel-forwarded-for": "5.5.5.5",
+                         "x-forwarded-for": "6.6.6.6"}):
+            assert _client_ip() == "5.5.5.5"
+
+    def test_seule_lIP_dorigine_est_retenue_dans_la_chaine(self):
+        """Un `x-forwarded-for` porte « client, relais1, relais2 ». Compter sur
+        le dernier ferait partager un compteur à tous les clients d'un même
+        relais."""
+        from api.index import _client_ip, app as flask_app
+        with flask_app.test_request_context(
+                headers={"x-forwarded-for": "7.7.7.7, 10.0.0.1, 10.0.0.2"}):
+            assert _client_ip() == "7.7.7.7"
+
+    def test_la_fenetre_glisse(self):
+        """Une IP bloquée doit redevenir libre — sinon la limite est un
+        bannissement définitif, et le bouton du dashboard cesse de marcher
+        pour un visiteur ordinaire."""
+        from api.index import (_SCAN_RATE_LIMIT_N, _SCAN_RATE_LIMIT_WINDOW_S,
+                               _scan_rate_limited)
+        t = 1000.0
+        for _ in range(_SCAN_RATE_LIMIT_N):
+            assert _scan_rate_limited("8.8.8.8", t) is False
+        assert _scan_rate_limited("8.8.8.8", t) is True
+        assert _scan_rate_limited("8.8.8.8", t + _SCAN_RATE_LIMIT_WINDOW_S + 1) is False
+
+    def test_le_jeton_dadmin_dispense_de_la_limite(self, client, monkeypatch):
+        """Le seul appelant capable de garder un secret. Le bouton du
+        dashboard, lui, est servi à tout le monde."""
+        from api.index import _SCAN_RATE_LIMIT_N
+        monkeypatch.setenv(ADMIN_TOKEN_ENV, JETON)
+        for _ in range(_SCAN_RATE_LIMIT_N + 3):
+            r = client.post("/api/scan",
+                            headers={"X-Predator-Token": JETON,
+                                     "x-vercel-forwarded-for": "3.3.3.3"})
+            assert r.status_code != 429
+
+    def test_un_mauvais_jeton_ne_dispense_de_rien(self, client, monkeypatch):
+        from api.index import _SCAN_RATE_LIMIT_N
+        monkeypatch.setenv(ADMIN_TOKEN_ENV, JETON)
+        for _ in range(_SCAN_RATE_LIMIT_N):
+            client.post("/api/scan", headers={"X-Predator-Token": "faux",
+                                              "x-vercel-forwarded-for": "4.4.4.4"})
+        r = client.post("/api/scan", headers={"X-Predator-Token": "faux",
+                                              "x-vercel-forwarded-for": "4.4.4.4"})
+        assert r.status_code == 429
+
+    def test_le_compteur_ne_grandit_pas_indefiniment(self):
+        """Une instance chaude de longue durée verrait le dictionnaire enfler
+        d'une entrée par IP vue, sans jamais rien libérer."""
+        from api.index import _SCAN_RATE_LIMIT_WINDOW_S, _scan_hits, _scan_rate_limited
+        _scan_hits.clear()
+        for i in range(50):
+            _scan_rate_limited(f"10.0.0.{i}", 1000.0)
+        assert len(_scan_hits) == 50
+        _scan_rate_limited("11.0.0.1", 1000.0 + _SCAN_RATE_LIMIT_WINDOW_S + 1)
+        assert len(_scan_hits) == 1, "les fenêtres périmées doivent être purgées"
