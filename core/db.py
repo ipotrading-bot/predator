@@ -178,6 +178,71 @@ def update_signal_fields(sb, signal_id, fields: dict,
         return False
 
 
+def is_unique_violation(err: str) -> bool:
+    """Un INSERT refusé parce que la ligne existe déjà (Postgres 23505).
+
+    Reconnu sur le CODE d'abord — PostgREST le remonte tel quel — et sur le
+    libellé ensuite, parce que le client peut aplatir l'erreur en chaîne.
+
+    POINT UNIQUE : `run_engine._save` (index unique sur `signals`) et
+    `log_to_ledger` (index unique sur le ledger) s'en servent tous les deux.
+    Deux copies de cette reconnaissance finiraient par diverger, et l'une des
+    deux prendrait alors une collision NORMALE pour une panne d'écriture —
+    perdant le signal ou faisant partir un log CRITICAL à chaque re-scan.
+    """
+    bas = err.lower()
+    return ("23505" in err
+            or "duplicate key" in bas
+            or "already exists" in bas
+            or "unique constraint" in bas)
+
+
+_DECISIF = ("WIN", "LOSS", "PUSH")
+
+
+def _ledger_deja_ecrit(sb, signal_id, outcome: str) -> bool:
+    """Le résultat de ce signal est-il DÉJÀ au ledger, et faut-il en rester là ?
+
+    Appelée après une violation d'unicité sur `ledger_signal_id_uniq`
+    (sql/migrate_v10_8). Rend True quand il n'y a plus rien à faire.
+
+    La règle n'est pas « le premier gagne » mais « le DÉCISIF gagne ». Deux
+    chemins peuvent écrire le résultat d'un même signal — `settle_signal` avec
+    un vrai WIN/LOSS, `_archive_before_purge` avec un `expired` —, et laisser
+    le dernier écraser le premier pourrait remplacer un résultat réel par une
+    absence de résultat. On ne remplace donc que dans un sens : quand la ligne
+    stockée ne porte AUCUN résultat et que celle qui arrive en porte un.
+
+    Sur erreur de lecture, rend True : ne rien faire est le comportement sûr,
+    puisque la ligne existe déjà.
+    """
+    try:
+        res = (sb.table("ai_learning_ledger").select("id,outcome")
+               .eq("signal_id", signal_id).limit(1).execute())
+        rows = res.data or []
+    except Exception as e:
+        log.warning("Ledger déjà écrit pour le signal %s, relecture impossible "
+                    "(%s) — on ne touche à rien", signal_id, str(e)[:80])
+        return True
+    if not rows:
+        return False        # la collision venait d'ailleurs : laisser remonter
+    stocke = str(rows[0].get("outcome") or "")
+    if stocke in _DECISIF or outcome not in _DECISIF:
+        log.info("Ledger : signal %s déjà enregistré (%s) — écriture ignorée, "
+                 "le doublon fausserait le n de la couche d'apprentissage",
+                 signal_id, stocke or "sans résultat")
+        return True
+    try:
+        sb.table("ai_learning_ledger").update({"outcome": outcome}) \
+          .eq("id", rows[0]["id"]).execute()
+        log.info("Ledger : signal %s passe de %r à %r — un résultat réel "
+                 "remplace une absence de résultat", signal_id, stocke, outcome)
+    except Exception as e:
+        log.error("Ledger : promotion de %s vers %s impossible : %s",
+                  signal_id, outcome, str(e)[:80])
+    return True
+
+
 def log_to_ledger(sb, sig: dict, clv: float, outcome: str) -> None:
     """Insert one row into ai_learning_ledger for a settled/closed/expired
     signal. Failure here is logged CRITICAL (not swallowed as routine) —
@@ -269,7 +334,19 @@ def log_to_ledger(sb, sig: dict, clv: float, outcome: str) -> None:
     }
     try:
         sb.table("ai_learning_ledger").insert(payload).execute()
+        return
     except Exception as e:
+        # IDEMPOTENCE (B3, 2026-08-27). L'index `ledger_signal_id_uniq`
+        # refuse une seconde ligne pour le même signal. Ce refus n'est PAS une
+        # panne : c'est un audit rejoué, un règlement retenté après timeout,
+        # deux workflows qui se croisent. Le traiter comme une erreur ferait
+        # partir un log CRITICAL sur un fonctionnement normal ; l'ignorer
+        # aurait laissé le doublon gonfler le `n` de `learning_layer`, qui
+        # aurait alors resserré ses intervalles de Wilson SANS information
+        # nouvelle — la façon la plus discrète de se croire sûr de soi.
+        if payload.get("signal_id") is not None and is_unique_violation(str(e)):
+            if _ledger_deja_ecrit(sb, payload["signal_id"], outcome):
+                return
         # Strip only the columns the error actually names — dropping the whole
         # optional set for one missing column threw away kelly_pct/sharp_prob
         # from rows that could have kept them (same reasoning as

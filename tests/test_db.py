@@ -338,3 +338,194 @@ class TestUpdateSignalFields:
         sb = _UpdateSupabase()
         assert update_signal_fields(sb, 7, {}) is True
         assert sb.attempts == []
+
+
+# ── B3 — le ledger n'enregistre qu'une fois par signal ───────────────────
+
+class _LedgerViolation(RuntimeError):
+    """Ce que Postgres renvoie sur `ledger_signal_id_uniq` (migrate_v10_8)."""
+
+    def __init__(self):
+        super().__init__(
+            '{"code":"23505","message":"duplicate key value violates unique '
+            'constraint \\"ledger_signal_id_uniq\\""}')
+
+
+class _LedgerSB:
+    """Faux Supabase qui MODÉLISE l'index unique partiel sur `signal_id`.
+
+    Sans lui, ces tests éprouveraient une base qui n'existe pas : l'INSERT
+    passerait toujours et le chemin d'idempotence ne serait jamais exercé.
+    """
+
+    def __init__(self, rows=None):
+        self.rows = list(rows or [])
+        self.calls = []
+
+    def table(self, _name):
+        outer = self
+
+        class _T:
+            def __init__(self):
+                self._op = None
+                self._payload = None
+                self._filters = {}
+
+            def insert(self, payload):
+                self._op, self._payload = "insert", dict(payload)
+                return self
+
+            def update(self, payload):
+                self._op, self._payload = "update", dict(payload)
+                return self
+
+            def select(self, *_a, **_k):
+                self._op = "select"
+                return self
+
+            def eq(self, col, val):
+                self._filters[col] = val
+                return self
+
+            def limit(self, *_a, **_k):
+                return self
+
+            def execute(self):
+                if self._op == "insert":
+                    sid = self._payload.get("signal_id")
+                    if sid is not None and any(r.get("signal_id") == sid
+                                               for r in outer.rows):
+                        outer.calls.append(("insert-refused", sid))
+                        raise _LedgerViolation()
+                    row = dict(self._payload)
+                    row.setdefault("id", len(outer.rows) + 1)
+                    outer.rows.append(row)
+                    outer.calls.append(("insert", sid))
+                    return type("R", (), {"data": [row]})()
+                if self._op == "update":
+                    hit = [r for r in outer.rows
+                           if all(r.get(c) == v for c, v in self._filters.items())]
+                    for r in hit:
+                        r.update(self._payload)
+                    outer.calls.append(("update", dict(self._payload)))
+                    return type("R", (), {"data": hit})()
+                hit = [r for r in outer.rows
+                       if all(r.get(c) == v for c, v in self._filters.items())]
+                outer.calls.append(("select", dict(self._filters)))
+                return type("R", (), {"data": hit})()
+
+        return _T()
+
+
+def _sig_ledger(**over):
+    base = {"id": 7, "match": "A vs B", "sport": "soccer", "market_key": "h2h",
+            "selection_name": "A", "xbet_odd": 1.90, "edge_pct": 3.0,
+            "kelly_pct": 1.0, "sharp_prob": 0.55}
+    base.update(over)
+    return base
+
+
+class TestLedgerIdempotent:
+    """B3 — un doublon de ledger ne lève aucune erreur et ne se voit nulle
+    part. Il gonfle simplement le `n` de `learning_layer`, qui resserre alors
+    ses intervalles de Wilson SANS information nouvelle : la façon la plus
+    discrète de se convaincre qu'on a prouvé quelque chose."""
+
+    def test_un_premier_enregistrement_ecrit_la_ligne(self):
+        from core.db import log_to_ledger
+        sb = _LedgerSB()
+        log_to_ledger(sb, _sig_ledger(), clv=1.0, outcome="WIN")
+        assert len(sb.rows) == 1 and sb.rows[0]["signal_id"] == 7
+
+    def test_un_second_enregistrement_ne_duplique_pas_ni_nalerte(self, caplog):
+        """Deux exigences, et la seconde est celle qui manquait : sans la
+        branche d'idempotence, l'insert échoue AUSSI sans dupliquer — mais il
+        part alors en CRITICAL sur un fonctionnement parfaitement normal
+        (audit rejoué, règlement retenté). Un CRITICAL qui crie pour rien finit
+        par ne plus être lu."""
+        import logging as _logging
+        from core.db import log_to_ledger
+        sb = _LedgerSB()
+        log_to_ledger(sb, _sig_ledger(), clv=1.0, outcome="WIN")
+        with caplog.at_level(_logging.INFO, logger="PREDATOR.db"):
+            log_to_ledger(sb, _sig_ledger(), clv=1.0, outcome="WIN")
+        assert len(sb.rows) == 1
+        assert ("insert-refused", 7) in sb.calls
+        assert not [r for r in caplog.records if r.levelno >= _logging.ERROR], \
+            "une collision attendue ne doit pas produire d'erreur"
+        assert any("déjà enregistré" in r.getMessage() for r in caplog.records)
+
+    def test_un_resultat_reel_remplace_une_absence_de_resultat(self):
+        """`_archive_before_purge` écrit `expired`, `settle_signal` un vrai
+        WIN. Si l'expiration arrive la première, le résultat réel doit encore
+        pouvoir la remplacer — sinon l'idempotence détruirait l'information
+        qu'elle est censée protéger."""
+        from core.db import log_to_ledger
+        sb = _LedgerSB()
+        log_to_ledger(sb, _sig_ledger(), clv=0.0, outcome="expired")
+        log_to_ledger(sb, _sig_ledger(), clv=1.0, outcome="WIN")
+        assert len(sb.rows) == 1
+        assert sb.rows[0]["outcome"] == "WIN"
+
+    def test_une_absence_de_resultat_ne_remplace_jamais_un_resultat_reel(self):
+        """Le sens inverse est interdit : « le dernier gagne » remplacerait un
+        WIN mesuré par un `expired` écrit ensuite par un autre chemin."""
+        from core.db import log_to_ledger
+        sb = _LedgerSB()
+        log_to_ledger(sb, _sig_ledger(), clv=1.0, outcome="WIN")
+        log_to_ledger(sb, _sig_ledger(), clv=0.0, outcome="expired")
+        assert len(sb.rows) == 1
+        assert sb.rows[0]["outcome"] == "WIN"
+
+    def test_deux_resultats_decisifs_ne_secrasent_pas(self):
+        from core.db import log_to_ledger
+        sb = _LedgerSB()
+        log_to_ledger(sb, _sig_ledger(), clv=1.0, outcome="WIN")
+        log_to_ledger(sb, _sig_ledger(), clv=1.0, outcome="LOSS")
+        assert sb.rows[0]["outcome"] == "WIN", \
+            "le premier résultat décisif fait foi ; le second est un rejeu"
+
+    def test_deux_signaux_distincts_sur_la_meme_affiche_coexistent(self):
+        """Deux équipes se rencontrent deux fois par saison. C'est la raison
+        pour laquelle la clé est `signal_id` et NON
+        (match, market_type, selection) : ce triplet portait déjà des doublons
+        légitimes en base (mesuré le 2026-08-27)."""
+        from core.db import log_to_ledger
+        sb = _LedgerSB()
+        log_to_ledger(sb, _sig_ledger(id=7), clv=1.0, outcome="WIN")
+        log_to_ledger(sb, _sig_ledger(id=8), clv=1.0, outcome="LOSS")
+        assert len(sb.rows) == 2
+        assert {r["outcome"] for r in sb.rows} == {"WIN", "LOSS"}
+
+    def test_une_ligne_sans_signal_id_nest_pas_contrainte(self):
+        # L'index est partiel : sans identifiant, pas de protection — et
+        # surtout pas d'échec d'insertion.
+        from core.db import log_to_ledger
+        sb = _LedgerSB()
+        log_to_ledger(sb, _sig_ledger(id=None), clv=1.0, outcome="WIN")
+        log_to_ledger(sb, _sig_ledger(id=None), clv=1.0, outcome="WIN")
+        assert len(sb.rows) == 2
+
+    def test_une_relecture_impossible_ne_reecrit_rien(self):
+        """Sur erreur de lecture après collision, ne rien faire est le
+        comportement sûr : la ligne existe déjà."""
+        from core.db import log_to_ledger
+        sb = _LedgerSB([{"id": 1, "signal_id": 7, "outcome": "expired"}])
+        vrai_table = sb.table
+
+        def _table(nom):
+            t = vrai_table(nom)
+            vrai_execute = t.execute
+
+            def _execute():
+                if t._op == "select":
+                    raise RuntimeError("lecture impossible")
+                return vrai_execute()
+
+            t.execute = _execute
+            return t
+
+        sb.table = _table
+        log_to_ledger(sb, _sig_ledger(), clv=1.0, outcome="WIN")
+        assert len(sb.rows) == 1
+        assert sb.rows[0]["outcome"] == "expired"

@@ -331,7 +331,15 @@ class TestB2LaBaseArbitre:
 
 class TestB2ReconnaissanceDeLaViolation:
     """Une violation d'unicité non reconnue serait traitée comme une panne
-    d'écriture : le signal serait perdu à chaque re-scan, en silence."""
+    d'écriture : le signal serait perdu à chaque re-scan, en silence.
+
+    La reconnaissance vit dans `core.db.is_unique_violation` — point UNIQUE,
+    partagé avec `log_to_ledger`. Deux copies finiraient par diverger, et
+    l'une des deux prendrait une collision normale pour une panne."""
+
+    def test_la_reconnaissance_est_derivee_pas_recopiee(self):
+        from core.db import is_unique_violation
+        assert eng._is_unique_violation is is_unique_violation
 
     @pytest.mark.parametrize("err", [
         '{"code":"23505","message":"duplicate key value violates unique constraint"}',

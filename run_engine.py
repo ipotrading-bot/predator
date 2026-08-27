@@ -17,7 +17,9 @@ from datetime import datetime, timedelta, timezone
 import requests
 from dotenv import load_dotenv
 
-from core.db import get_db, MissingCredentialsError, log_to_ledger as _log_to_ledger
+from core.db import (get_db, MissingCredentialsError,
+                     log_to_ledger as _log_to_ledger,
+                     is_unique_violation as _is_unique_violation)
 from core.harvester import fetch_matches, fetch_pinnacle_prices, fetch_estimated_prices, fetch_betfair_prices
 from core.ai_search import ai_dead as gemini_quota_dead
 from core.closing_line import capture_from_exchange, capture_from_scan
@@ -377,19 +379,6 @@ def _refresh_ai_catalogues() -> None:
 
 # Columns optional at DB level — strip only as last-resort fallback
 _OPTIONAL_COLS = {"selection_name", "kelly_pct", "advice", "sharp_sources", "consensus_score", "correlation_group"}
-
-
-def _is_unique_violation(err: str) -> bool:
-    """Un INSERT refusé parce que la ligne existe déjà (Postgres 23505).
-
-    Reconnu sur le CODE d'abord — PostgREST le remonte tel quel — et sur le
-    libellé ensuite, parce que le client peut aplatir l'erreur en chaîne.
-    """
-    bas = err.lower()
-    return ("23505" in err
-            or "duplicate key" in bas
-            or "already exists" in bas
-            or "unique constraint" in bas)
 
 
 def _save(sb, signal) -> bool:

@@ -133,6 +133,11 @@ C'est le tableau à consulter avant de toucher à quoi que ce soit.
 | Une ligne réglée entre-temps ne fait pas perdre le signal | `…::test_une_ligne_reglee_entre_temps_libere_la_place` |
 | Deux matchs sans identifiant ne s'écrasent pas | `…::test_deux_matchs_sans_identifiant_ne_secrasent_pas` |
 | Une violation d'unicité n'est pas prise pour une panne d'écriture | `…::TestB2ReconnaissanceDeLaViolation` |
+| Une seule ligne de ledger par signal | `sql/migrate_v10_8_ledger_unique_signal.sql` + `tests/test_db.py::TestLedgerIdempotent` |
+| Un rejeu de règlement n'alerte pas et ne duplique pas | `…::test_un_second_enregistrement_ne_duplique_pas_ni_nalerte` |
+| Un résultat réel remplace une absence de résultat, jamais l'inverse | `…::test_un_resultat_reel_remplace_une_absence_de_resultat` |
+| Deux signaux sur la même affiche coexistent au ledger | `…::test_deux_signaux_distincts_sur_la_meme_affiche_coexistent` |
+| La reconnaissance d'une violation d'unicité est DÉRIVÉE, pas recopiée | `tests/test_save_preserving.py::…::test_la_reconnaissance_est_derivee_pas_recopiee` |
 
 L'**invariant des sport-keys** (4 fichiers : `core/odds_api.py`,
 `core/learning_layer.py`, `api/index.py`) est décrit
