@@ -576,7 +576,15 @@ def _relancer_expires(sb) -> None:
     """
     try:
         from core.relance_expires import relancer
-        relancer(sb)
+        faits = relancer(sb)
+        # Le compte-rendu est ré-émis par le logger de CE module : celui de
+        # `core.relance_expires` n'est pas configuré par run_audit.py, et sa
+        # ligne de résumé n'apparaissait pas dans les logs Actions — une passe
+        # qu'on ne voit pas travailler est une passe qu'on croit morte.
+        log.info("RELANCE EXPIRÉS — %d signal(aux) et %d ligne(s) réglés | "
+                 "%d sans score | %d marché indécidable",
+                 faits.get("signaux", 0), faits.get("ledger", 0),
+                 faits.get("sans_score", 0), faits.get("indecidable", 0))
     except Exception as e:                                       # noqa: BLE001
         log.warning("Relance des expirés: %s", e)
 
