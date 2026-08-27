@@ -308,20 +308,28 @@ REGISTRY: tuple = (
     Provider(
         name="openrouter", base_url="https://openrouter.ai/api/v1",
         env_key="OPENROUTER_API_KEY",
-        # Préférences vérifiées présentes au catalogue :free du 2026-08-22.
+        # Préférences vérifiées présentes au catalogue :free du 2026-08-27.
         # Elles PÉRIMERONT — c'est le principe même du module.
-        # Ordre établi par INFÉRENCE RÉELLE le 2026-08-22, pas par taille de
-        # modèle. `gemma-4-31b-it` rend « OK » en 1 token ; le nemotron-super,
-        # qui est un modèle de RAISONNEMENT, a dépensé 8 de ses 10 tokens en
-        # réflexion et répondu « We are to say "OK" as per the… ». Sous les
-        # plafonds serrés de ce pipeline (max_tokens=80 pour un alias, 300
-        # pour l'oracle), un modèle de raisonnement brûle son budget à penser
-        # et ne rend jamais le JSON attendu. Les instruct d'abord, donc.
-        models=("nvidia/nemotron-3-nano-30b-a3b:free",
-                "google/gemma-4-31b-it:free",
+        # Ordre établi par INFÉRENCE RÉELLE (2026-08-22 puis 2026-08-27), pas
+        # par taille de modèle. `gemma-4-31b-it` rend « OK » en 1 token ; le
+        # nemotron-super, qui est un modèle de RAISONNEMENT, a dépensé 8 de
+        # ses 10 tokens en réflexion et répondu « We are to say "OK" as per
+        # the… ». Sous les plafonds serrés de ce pipeline (max_tokens=80 pour
+        # un alias, 300 pour l'oracle), un modèle de raisonnement brûle son
+        # budget à penser et ne rend jamais le JSON attendu. Les instruct
+        # d'abord, donc.
+        # Re-mesuré le 2026-08-27 : `nvidia/nemotron-3-nano-30b-a3b:free` et
+        # `nvidia/nemotron-nano-9b-v2:free` ont DISPARU du catalogue (le
+        # remplaçant du nano est un `-reasoning`, donc non repris) ;
+        # `nvidia/nemotron-3.5-lightning:free` répond par sa chaîne de pensée
+        # (« Here's a thinking process ») — écarté ; `minimax/minimax-m3:free`
+        # rend « OK » proprement (13 s — lent, d'où sa place de repli) ;
+        # `google/gemma-4-26b-a4b-it:free` existe mais n'a pas pu être validé
+        # (429 amont ce jour-là) — ne l'ajouter qu'après une inférence réelle.
+        models=("google/gemma-4-31b-it:free",
+                "minimax/minimax-m3:free",
                 "nvidia/nemotron-3-super-120b-a12b:free",
                 "z-ai/glm-5.2:free",
-                "nvidia/nemotron-nano-9b-v2:free",
                 "liquid/lfm-2.5-2.6b:free"),
         lanes=(ANALYZE, FILTER, TRANSLATE_CJK, SEARCH_READ),
         # 40 et non 150 : l'endpoint /key confirme `is_free_tier: true` et
