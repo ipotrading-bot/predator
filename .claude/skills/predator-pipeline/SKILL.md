@@ -386,6 +386,16 @@ couche de mise, publiés quand même). Depuis :
 | `ci.yml` | sur push/PR | tests + lint, **puis** déploiement Vercel — le gate n'est réel que parce que `vercel.json` désactive le déploiement Git |
 
 Total : **124 déclenchements planifiés/jour** (contre 196 avant le 2026-08-26).
+
+**Le scheduler GitHub sous-livre ces crons** (mesuré 2026-08-27 : closing line
+~5 %, trou de 9 h sur scan.yml). Un chien de garde Cloudflare
+(`scripts/cloudflare_watchdog_worker.js`, cron `*/10`, déployé par
+`scripts/deploy_watchdog_worker.py`) dispatche un rattrapage `workflow_dispatch`
+quand un workflow est en retard sur sa cadence — récit et règles dans
+INCIDENTS.md (« Le scheduler GitHub ne livre qu'une fraction des crons »),
+invariants gardés par `tests/test_watchdog_worker.py`. Avant de diagnostiquer
+une cadence : les runs `workflow_dispatch` dans `gh run list` peuvent être des
+rattrapages du chien de garde, pas des clics d'opérateur.
 Le mode d'un tick de `scan.yml` est déduit du cron qui a tiré
 (`scripts/ci_scan_mode.py::CRON_MODES`) : un cron ajouté sans sa ligne fait
 échouer le run ET le test.

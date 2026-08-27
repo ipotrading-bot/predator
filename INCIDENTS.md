@@ -535,6 +535,29 @@ Les 4 scans sont fusionnés dans `scan.yml`, le mode vient du cron qui a tiré
 échouer le run ET le test).
 Gardiens : `tests/test_ci_env.py`, `tests/test_workflow_secrets.py`.
 
+### Le scheduler GitHub ne livre qu'une fraction des crons (2026-08-27)
+
+Mesuré sur les ~21 h suivant la refonte du 26/08 : `closing_line.yml` livré à
+~5 % (3 ticks sur ~63 attendus), l'audit de 12:00 UTC jamais tiré, un trou de
+9 h 19 sur `scan.yml` — alors que CHAQUE run livré était vert et de durée
+normale. Ce n'est pas le dépôt : c'est GitHub qui ne tire pas, même à 124
+déclenchements/jour (la réduction du 26/08 n'a pas suffi). Conséquence
+mesurée : 72 signaux h2h passés sans prix de clôture, couverture CLV réduite
+à 12 lignes sur 112 en 7 jours — pendant que `learning_layer` fait du CLV un
+critère de premier rang.
+
+Remède : le chien de garde `scripts/cloudflare_watchdog_worker.js` (Worker
+Cloudflare, cron `*/10`, déployé par `scripts/deploy_watchdog_worker.py`).
+Il ne dispatche un `workflow_dispatch` de rattrapage QUE si le dernier run du
+workflow est démontrablement en retard (seuil > cadence nominale, gardé par
+`tests/test_watchdog_worker.py`). Ce n'est PAS l'erreur du 2026-07-07 : on
+n'ajoute aucun schedule GitHub, on vit HORS du scheduler défaillant. Deux
+règles à ne pas défaire : `scan.yml` n'est rattrapé qu'en `golden` (gratuit —
+rattraper standard/deep/guerrilla doublerait la dépense des budgets des
+sources gratuites), et les seuils restent au-dessus des cadences (le chien de
+garde ne peut pas tirer plus vite que le schedule qu'il supplée). Le PAT est
+un secret du Worker (`WATCHDOG_PAT`), jamais dans le JS.
+
 ### Le verrou `predator-signals-write` ne contient plus `closing_line.yml`
 
 raison courante (« aucune ligne en commun ») est FAUSSE : `purge_rules`
