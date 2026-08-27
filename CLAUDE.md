@@ -425,7 +425,9 @@ Tout le calcul tourne en crons GitHub Actions ; le dashboard est en lecture seul
   h2h est DÉJÀ nulle depuis A1, sans toucher à un seul seuil. Ce qui émet
   encore, c'est le football totals/spreads : 54 lignes sur 54 passent 1,5 %
   (leur cote soft est brute, A1 ne les touche pas), pour un ROI net mesuré de
-  **−11,2 %** sur les 19 réglés.
+  **−11,2 %** sur les 19 réglés. ⚠️ CETTE DERNIÈRE PHRASE A ÉTÉ EXPLIQUÉE LE
+  MÊME JOUR, ET C'ÉTAIT UN BUG — voir le point suivant : ces edges comparaient
+  DEUX PARIS DIFFÉRENTS.
   ⛔ SEUILS PROPOSÉS, NON APPLIQUÉS — ils demandent un arbitrage. MIN_EDGE et
   EV_EDGE_FLOOR à 14,5 % (au-dessus du max football observé, +14,22 %) et
   SUSPECT_EDGE à 12,5 % (p99 de la nouvelle distribution, exprimé en
@@ -451,5 +453,60 @@ Tout le calcul tourne en crons GitHub Actions ; le dashboard est en lecture seul
   Outil : `python scripts/replay_ledger_executable.py` (lecture seule) rend la
   table des bandes, le seuil proposé, le p99 et les plafonds par sport.
   Gardien de la méthode : `tests/test_replay_ledger_executable.py::TestCalibrationA6`.
+- LA LIGNE COMPARÉE DOIT ÊTRE LA MÊME LIGNE — ET A6 EST TRANCHÉE (2026-08-27).
+  A1 avait corrigé le PRIX du h2h. Restait l'anomalie : pourquoi le football
+  spreads/totals sortait-il encore des edges à +12 % quand le h2h s'effondrait
+  à −4,7 % ? Réponse : sur ces marchés, ce n'était pas le prix qui était faux,
+  c'était le PARI. La garde anti-lignes-divergentes existait dans
+  `_process_totals` ET `_process_spreads` — deux copies, avec des défauts
+  différents. Celle des spreads en portait TROIS :
+    1. `if xs_line and ps_line` — **0.0 est faux en Python**. Une ligne AH 0.0
+       d'un côté DÉSACTIVAIT la garde entièrement. C'est le cas le plus
+       fréquent du football.
+    2. Une tolérance de 0,5 — AH −1,0 contre AH −1,5 passait. Sur un handicap,
+       une demi-unité change le pari.
+    3. `abs(abs(x) - abs(p))` — le double `abs` DÉTRUIT LE SIGNE : −0,5 contre
+       +0,5 passait. On comparait le prix du FAVORI chez un book à celui de
+       l'OUTSIDER chez l'autre. L'écart est énorme et ressemble toujours à un
+       edge.
+  Symptôme qui aurait dû alerter : les 7 refus `LINESKIP` du premier run du
+  moteur corrigé portaient TOUS sur des totals, pas un seul sur un spread —
+  alors que les deux seuls signaux émis étaient des spreads (« SOC PS -0.0 »
+  et « SOC PS -1.0 », +12,00 % et +12,28 %). Une garde qui ne refuse jamais
+  rien n'est pas une garde.
+  MESURÉ sur le slate réel le 2026-08-27 : **21 paires de spreads sur 24**
+  avaient des lignes différentes, **dont 20 passaient l'ancienne garde** ;
+  19 totals sur 24, dont 9 passaient. Effet sur la distribution des edges :
+
+      AVANT  n=74  p50 −5,86  p90 +9,18  max **+13,88**  →  29 lignes ≥ +1,5 %
+      APRÈS  n=16  p50 −5,43  p90 −3,31  max **−2,30**   →   0 ligne  ≥ +1,5 %
+
+  Toute la queue positive du football spreads/totals était l'écart de prix
+  entre deux paris différents. La règle est maintenant l'ÉGALITÉ EXACTE, signe
+  compris, par une garde UNIQUE (`run_engine._meme_ligne`) partagée par les
+  deux marchés — deux copies d'une même règle finissent toujours par diverger,
+  c'est exactement ce qui s'est produit ici. Une ligne ABSENTE fait REFUSER :
+  on ne peut pas vérifier qu'on compare le même pari sans la voir (même
+  contrat que le football sans prix de nul).
+  ⚠️ CONSÉQUENCE SUR A6, ET C'EST LA RÉPONSE À LA QUESTION DES SEUILS : après
+  cette correction, le football n'a plus **aucune** ligne positive, ni en h2h
+  (max +0,00 %) ni en spreads/totals (max −2,30 %). L'émission football est
+  nulle SANS TOUCHER À UN SEUL SEUIL. Les 14,5 / 12,5 proposés plus haut sont
+  donc SANS OBJET : ils n'ajouteraient rien à zéro, et ils poseraient un
+  plancher d'émission AU-DESSUS du plafond de suspicion — une fenêtre vide par
+  construction, 19 tests par terre dont 7 non réécrivables honnêtement.
+  **DÉCISION : aucun seuil numérique n'est modifié.** MIN_EDGE, EV_EDGE_FLOOR,
+  SUSPECT_EDGE et `_EDGE_CEILINGS` restent où ils sont. Ce qui a supprimé
+  l'émission, c'est la correction du PRIX et du PARI, pas un durcissement de
+  garde — et c'est la bonne façon : un seuil relevé masque un mécanisme faux,
+  il ne le répare pas.
+  ⚠️ Et la recalibration reste À FAIRE, pas faite : le ledger ne contient que
+  des lignes de l'ANCIEN moteur. Un p99 calculé dessus décrirait une
+  distribution que le moteur ne produit plus — exactement l'erreur qu'A6
+  interdisait (« il se re-mesure, il ne se convertit pas »). Il faut des
+  réglés post-correction, et le piège de la sortie tient toujours : à volume
+  nul, aucune bande n'atteindra jamais n ≥ 30.
+  Gardien : `tests/test_prix_executable.py::TestMemeLigne` (les trois défauts,
+  nommés un par un) et `::TestUnSpreadNemetPlusSurUneLigneDifferente`.
 - Sub-agent `predator-diagnostician` pour tout audit pipeline/santé (isole les
   gros logs hors de la conversation principale).

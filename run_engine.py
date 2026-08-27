@@ -1479,20 +1479,78 @@ def _keep_best_side(sides: list, log, emoji, name) -> list:
     return [best]
 
 
+def _meme_ligne(soft: dict, sharp: dict, marche: str, nom: str, emoji: str,
+                log) -> float | None:
+    """La ligne du book SOFT et celle du SHARP sont-elles la MÊME ?
+
+    Rend la ligne commune, ou None s'il faut refuser le marché.
+
+    POURQUOI C'EST DEVENU STRICT (2026-08-27)
+    -----------------------------------------
+    La garde précédente s'écrivait :
+
+        if xs_line and ps_line and abs(abs(xs_line) - abs(ps_line)) > 0.5
+
+    Elle portait TROIS défauts, et chacun fabrique exactement l'objet qu'elle
+    prétend écarter — un « edge » qui n'est que l'écart de prix entre deux
+    paris DIFFÉRENTS :
+
+      1. `if xs_line and ps_line` — en Python, **0.0 est faux**. Une ligne à
+         AH 0.0 d'un côté DÉSACTIVAIT donc la garde entièrement : le moteur
+         pouvait comparer un Draw No Bet soft à un handicap −1,5 sharp sans
+         rien signaler. C'est le cas le plus fréquent du football.
+      2. Une tolérance de 0,5 — AH −1,0 contre AH −1,5 passait. Sur un
+         handicap, une demi-unité change le pari : l'un rembourse sur une
+         victoire d'un but exact, l'autre la perd.
+      3. `abs(abs(x) - abs(p))` — le double `abs` DÉTRUIT LE SIGNE. −0,5
+         contre +0,5 passait, −1,0 contre +1,0 aussi. Ce sont les handicaps
+         OPPOSÉS : on comparait le prix du favori chez un book à celui de
+         l'outsider chez l'autre. L'écart est énorme et ressemble toujours à
+         un edge.
+
+    Mesuré le 2026-08-27 : sur le premier run du moteur corrigé, les 7 refus
+    LINESKIP portaient TOUS sur des totals — pas un seul sur un spread, alors
+    que les deux seuls signaux émis étaient des spreads (« SOC PS -0.0 » et
+    « SOC PS -1.0 »).
+
+    La règle est donc l'ÉGALITÉ EXACTE, signe compris. Deux handicaps
+    différents sont deux paris différents ; il n'y a pas de « presque le même
+    pari ». Et une ligne ABSENTE fait refuser au lieu de passer : on ne peut
+    pas vérifier qu'on compare la même chose sans la voir. C'est le même
+    contrat que le football sans prix de nul (A1) — le refus silencieux plutôt
+    qu'un prix posé au hasard.
+    """
+    brut_soft, brut_sharp = soft.get("point"), sharp.get("point")
+    if brut_soft is None or brut_sharp is None:
+        log.info("LINESKIP | %s %s %s — ligne absente d'un côté "
+                 "(soft=%s sharp=%s), impossible de vérifier qu'on compare "
+                 "le même pari", emoji, nom, marche, brut_soft, brut_sharp)
+        return None
+    try:
+        ligne_soft, ligne_sharp = float(brut_soft), float(brut_sharp)
+    except (TypeError, ValueError):
+        log.info("LINESKIP | %s %s %s — ligne illisible", emoji, nom, marche)
+        return None
+    # `+0.0 == -0.0` est vrai en Python, et c'est ce qu'on veut : les deux
+    # écritures désignent le même handicap nul.
+    if ligne_soft != ligne_sharp:
+        log.info("LINESKIP | %s %s %s — soft %+.2f ≠ sharp %+.2f : deux paris "
+                 "différents, l'écart de prix n'est pas un edge",
+                 emoji, nom, marche, ligne_soft, ligne_sharp)
+        return None
+    return ligne_sharp
+
+
 def _process_totals(m, name, sport, league, emoji, signals, sb, now, log, min_edge=None):
     """Over/Under market for all sports."""
     prob_min = SHARP_PROB_BY_MARKET["totals"]
     xt = m["totals_1xbet"]
     pt = m["totals_pinnacle"]
 
-    # Line-mismatch guard: 1XBet et Pinnacle sur des totaux différents = faux edge.
-    xt_line = float(xt.get("point") or 0)
-    pt_line = float(pt.get("point") or 0)
-    if xt_line and pt_line and abs(xt_line - pt_line) > 0.5:
-        log.info("LINESKIP | %s %s totals — 1XBet %.1f ≠ Pinnacle %.1f",
-                 emoji, name, xt_line, pt_line)
+    # Les deux books doivent coter LE MÊME total — voir `_meme_ligne`.
+    point = _meme_ligne(xt, pt, "totals", name, emoji, log)
+    if point is None:
         return
-    point = pt_line or xt_line
 
     # Round-line push detection: integer totals (8.0, 9.0) can push.
     # Half-lines (.5) never push — no adjustment needed.
@@ -1563,14 +1621,13 @@ def _process_spreads(m, name, sport, league, home, away, emoji, signals, sb, now
     xs = m["spreads_1xbet"]
     ps = m["spreads_pinnacle"]
 
-    # Line-mismatch guard: handicaps différents entre books = faux edge.
-    xs_line = float(xs.get("point") or 0)
-    ps_line = float(ps.get("point") or 0)
-    if xs_line and ps_line and abs(abs(xs_line) - abs(ps_line)) > 0.5:
-        log.info("LINESKIP | %s %s spreads — 1XBet %.1f ≠ Pinnacle %.1f",
-                 emoji, name, xs_line, ps_line)
+    # Les deux books doivent coter LE MÊME handicap, SIGNE COMPRIS — voir
+    # `_meme_ligne`. Le libellé du signal reprend cette ligne unique : quand
+    # les deux divergeaient, l'ancien code étiquetait le pari avec la ligne
+    # SHARP tout en misant au prix de la ligne SOFT.
+    home_point = _meme_ligne(xs, ps, "spreads", name, emoji, log)
+    if home_point is None:
         return
-    home_point = float(ps.get("point", xs.get("point", 0.0)))
     away_point = -home_point
 
     circa_s = m.get("spreads_circa") or {}

@@ -281,3 +281,110 @@ class TestAdviceAnnonceLesDeuxJambes:
         (sig,) = _emit_one(dnb_draw_odd=0.0)
         assert "MÊME book" not in sig["advice"]
         assert "répartir" not in sig["advice"]
+
+
+# ── La ligne comparée doit être LA MÊME ligne ────────────────────────────
+
+class TestMemeLigne:
+    """Le pendant de A1 pour les handicaps et les totaux. A1 avait corrigé le
+    PRIX du h2h ; ici c'est le PARI lui-même qui n'était pas le même des deux
+    côtés.
+
+    L'ancienne garde s'écrivait
+    `if xs and ps and abs(abs(xs) - abs(ps)) > 0.5` et portait trois défauts,
+    chacun fabriquant exactement l'objet qu'elle prétendait écarter :
+
+      1. `if xs and ps` — 0.0 est FAUX en Python, donc une ligne AH 0.0
+         désactivait la garde entièrement ;
+      2. tolérance de 0,5 — AH −1,0 contre AH −1,5 passait ;
+      3. `abs(abs(x) - abs(p))` — le double `abs` détruit le SIGNE : −0,5
+         contre +0,5 passait, c'est-à-dire les handicaps OPPOSÉS.
+
+    MESURÉ le 2026-08-27 sur le slate réel : 21 paires de spreads sur 24
+    avaient des lignes différentes, dont 20 passaient l'ancienne garde. Les
+    edges tombent de « 29 lignes au-dessus de +1,5 %, max +13,88 % » à
+    « aucune, max −2,30 % ». Toute la queue positive était l'écart de prix
+    entre deux paris différents.
+    """
+
+    @staticmethod
+    def _ligne(soft_pt, sharp_pt):
+        return run_engine._meme_ligne({"point": soft_pt}, {"point": sharp_pt},
+                                      "spreads", "A vs B", "⚽", log)
+
+    def test_deux_lignes_identiques_passent(self):
+        assert self._ligne(-1.0, -1.0) == -1.0
+        assert self._ligne(2.5, 2.5) == 2.5
+
+    def test_zero_et_moins_zero_sont_le_meme_handicap(self):
+        assert self._ligne(0.0, -0.0) == 0.0
+
+    def test_une_ligne_a_zero_ne_desactive_plus_la_garde(self):
+        """Défaut n°1, et le plus coûteux : `if 0.0` est faux. Une AH 0.0
+        soft pouvait être comparée à un handicap −1,5 sharp sans un mot."""
+        assert self._ligne(0.0, -1.5) is None
+        assert self._ligne(-1.5, 0.0) is None
+
+    def test_une_demi_unite_decart_est_refusee(self):
+        """Défaut n°2. Sur un handicap, une demi-unité change le pari : l'un
+        rembourse une victoire d'un but exact, l'autre la perd."""
+        assert self._ligne(-1.0, -1.5) is None
+        assert self._ligne(-1.0, -0.5) is None
+
+    def test_deux_handicaps_OPPOSES_sont_refuses(self):
+        """Défaut n°3, le pire : le double `abs` faisait comparer le prix du
+        FAVORI chez un book à celui de l'OUTSIDER chez l'autre."""
+        assert self._ligne(-0.5, 0.5) is None
+        assert self._ligne(-1.0, 1.0) is None
+
+    def test_une_ligne_absente_fait_REFUSER_pas_passer(self):
+        """On ne peut pas vérifier qu'on compare le même pari sans voir la
+        ligne. Même contrat que le football sans prix de nul : refus
+        silencieux plutôt qu'un prix posé au hasard."""
+        assert run_engine._meme_ligne({}, {"point": -1.0}, "spreads",
+                                      "A vs B", "⚽", log) is None
+        assert run_engine._meme_ligne({"point": -1.0}, {}, "spreads",
+                                      "A vs B", "⚽", log) is None
+
+    def test_une_ligne_illisible_ne_leve_pas(self):
+        assert run_engine._meme_ligne({"point": "n/a"}, {"point": -1.0},
+                                      "spreads", "A vs B", "⚽", log) is None
+
+    def test_les_deux_marches_partagent_la_MEME_garde(self):
+        """Totals et spreads avaient chacun leur copie, avec des défauts
+        différents — le double `abs` n'était que côté spreads. Deux copies
+        d'une même règle finissent toujours par diverger."""
+        import inspect
+        for fonction in (run_engine._process_totals, run_engine._process_spreads):
+            src = inspect.getsource(fonction)
+            assert "_meme_ligne(" in src, fonction.__name__
+            assert "abs(abs(" not in src, f"{fonction.__name__} recompare à la main"
+
+
+class TestUnSpreadNemetPlusSurUneLigneDifferente:
+    """Bout en bout : le marché entier est refusé, pas seulement un côté."""
+
+    @staticmethod
+    def _match(soft_pt, sharp_pt):
+        return {
+            "id": "m1", "commence_time": (_now() + timedelta(hours=4)).isoformat(),
+            "spreads_1xbet":    {"home": 2.05, "away": 1.85, "point": soft_pt},
+            "spreads_pinnacle": {"home": 1.90, "away": 1.95, "point": sharp_pt},
+        }
+
+    def _lancer(self, m):
+        out = []
+        run_engine._process_spreads(m, "A vs B", "soccer", "L1", "A", "B", "⚽",
+                                    out, None, _now(), log, min_edge=1.0)
+        return out
+
+    def test_lignes_differentes_nemettent_rien(self):
+        assert self._lancer(self._match(0.0, -1.5)) == []
+        assert self._lancer(self._match(-1.0, 1.0)) == []
+
+    def test_le_temoin_avec_la_meme_ligne_traverse_la_garde(self):
+        """Sans lui, le test ci-dessus passerait même si `_process_spreads`
+        refusait TOUT."""
+        m = self._match(-1.0, -1.0)
+        assert run_engine._meme_ligne(m["spreads_1xbet"], m["spreads_pinnacle"],
+                                      "spreads", "A vs B", "⚽", log) == -1.0
