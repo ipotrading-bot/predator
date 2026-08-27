@@ -94,6 +94,34 @@ def _bookmakers_disponibles(key: str) -> list[str]:
     return noms
 
 
+def _slate_de_reference(key: str, cap: int | None = None) -> list[str]:
+    """Identifiants des matchs à venir, tous candidats confondus.
+
+    Chargé UNE fois : mesurer chaque book sur un slate différent ne
+    comparerait rien. `pending` seulement — les statuts live/settled n'ont
+    rien à faire dans une mesure pré-match, comme dans le scan.
+    """
+    from datetime import datetime, timedelta, timezone
+    # `/odds/multi` n'accepte que MULTI_BATCH identifiants ; la valeur vit
+    # dans core/odds_api_io, la recopier ici la ferait diverger.
+    cap = cap or oai.MULTI_BATCH
+    now = datetime.now(timezone.utc)
+    ids: list[str] = []
+    for sport in SPORTS_TEST:
+        slug = oai.SPORTS[sport][0]
+        status, body = oai._get("events", key, {
+            "sport": slug,
+            "from": now.strftime("%Y-%m-%dT%H:%M:%SZ"),
+            "to": (now + timedelta(hours=24)).strftime("%Y-%m-%dT%H:%M:%SZ"),
+            "limit": str(cap),
+        })
+        if status != 200 or not isinstance(body, list):
+            continue
+        ids += [str(e.get("id")) for e in body
+                if str(e.get("status", "")).lower() == "pending" and e.get("id")]
+    return ids[:cap]
+
+
 def cmd_list(key: str) -> None:
     poses = oai.selected_bookmakers(key, force=True)
     print(f"Slots posés ({len(poses)}/2) : {', '.join(poses) or '(aucun)'}")
@@ -110,7 +138,7 @@ def cmd_list(key: str) -> None:
         print(f"  {nom}{marque}")
 
 
-def cmd_suggest(key: str, candidats: list[str]) -> None:
+def cmd_suggest(key: str, candidats: list[str], marge: bool = False) -> None:
     """Classe les candidats NOMMÉS par NOMBRE DE MATCHS réellement cotés.
 
     Une couverture annoncée ne vaut rien : ce qui compte est le nombre de
@@ -148,26 +176,35 @@ def cmd_suggest(key: str, candidats: list[str]) -> None:
     deja = oai.daily_quota.spent(oai.QUOTA_BUCKET)
     print(f"Budget odds-api.io : {deja}/{oai.DAILY_BUDGET} déjà dépensées "
           f"aujourd'hui, cette mesure en coûte {len(candidats)}.")
-    if deja + len(candidats) > oai.DAILY_BUDGET:
-        sys.exit("cette mesure dépasserait le budget du jour — réessayer demain.")
+    if deja + len(candidats) > oai.DAILY_BUDGET and not marge:
+        sys.exit(f"cette mesure dépasserait le budget que les scans se "
+                 f"partagent ({oai.DAILY_BUDGET}/jour). Le plan réel est plus "
+                 f"large — la différence est une marge de sûreté délibérée. "
+                 f"`--marge` pour l'entamer sciemment (geste d'opérateur, "
+                 f"quelques requêtes), sinon réessayer demain.")
 
-    print(f"\nMesure de la couverture réelle ({', '.join(SPORTS_TEST)}) :\n")
+    # Le slate de référence est chargé UNE fois et sert à tous les candidats :
+    # comparer des books sur des slates différents ne comparerait rien.
+    evenements = _slate_de_reference(key)
+    if not evenements:
+        sys.exit("aucun match à venir à mesurer.")
+    print(f"\nSlate de référence : {len(evenements)} matchs à venir "
+          f"({', '.join(SPORTS_TEST)}).\n")
+
     scores: Counter = Counter()
     for nom in candidats:
+        status, body = oai._get("odds/multi", key, {
+            "eventIds": ",".join(str(e) for e in evenements),
+            "bookmakers": nom,
+        })
         total = 0
-        for sport in SPORTS_TEST:
-            status, body = oai._get("odds/multi", key, {
-                "sport": sport, "bookmakers": nom,
-            })
-            if status != 200 or not body:
-                continue
-            events = body if isinstance(body, list) else (body.get("events") or [])
-            # Un événement SANS cote ne compte pas : c'est exactement le
-            # piège de 1xbet, qui « répond » sur des matchs qu'il ne price pas.
-            total += sum(1 for e in events if (e or {}).get("bookmakers")
-                         or (e or {}).get("odds"))
+        if status == 200 and isinstance(body, list):
+            # Un événement SANS cote ne compte pas : c'est exactement le piège
+            # de 1xbet, qui « répond » sur des matchs qu'il ne price pas.
+            total = sum(1 for ev in body if (ev or {}).get("bookmakers"))
         scores[nom] = total
-        print(f"  {nom:<20} {total:>3} matchs réellement cotés")
+        pct = 100 * total / len(evenements)
+        print(f"  {nom:<20} {total:>3}/{len(evenements)} matchs cotés  ({pct:.0f} %)")
 
     if not any(scores.values()):
         sys.exit("\nAucun candidat n'a coté un seul match — ne rien poser.")
@@ -223,13 +260,16 @@ def main() -> None:
     ap.add_argument("book", nargs="*",
                     help="`set` : le bookmaker à poser. `suggest` : les candidats à mesurer.")
     ap.add_argument("--oui", action="store_true", help="ne pas demander confirmation")
+    ap.add_argument("--marge", action="store_true",
+                    help="entamer sciemment la marge de sûreté du budget "
+                         "journalier (geste d'opérateur, quelques requêtes)")
     a = ap.parse_args()
 
     key = _key()
     if a.action == "list":
         cmd_list(key)
     elif a.action == "suggest":
-        cmd_suggest(key, a.book)
+        cmd_suggest(key, a.book, a.marge)
     elif a.action == "set":
         if len(a.book) != 1:
             sys.exit("`set` attend UN nom de bookmaker (voir `suggest`).")
