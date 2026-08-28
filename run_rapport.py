@@ -83,17 +83,38 @@ def _send(text: str):
         log.error("Telegram erreur: %s", e)
 
 
-def _kickoff(s: dict, now: datetime) -> str:
-    """' · 21:00 UTC' today, ' · 22/07 21:00 UTC' otherwise, '' if unknown."""
+def _match_dt(s: dict) -> datetime | None:
     raw = s.get("match_time") or ""
     if not raw:
-        return ""
+        return None
     try:
         mt = datetime.fromisoformat(str(raw).replace("Z", "+00:00"))
     except ValueError:
+        return None
+    return mt if mt.tzinfo else mt.replace(tzinfo=timezone.utc)
+
+
+def _a_venir(signals: list, now: datetime) -> list:
+    """Ne garde que les signaux dont le coup d'envoi est encore devant.
+
+    Le digest de 15:20 le 2026-08-28 annonçait « CSKA Moscow @ 1.39 » sur un
+    match commencé à 15:00 : `status='active'` ne tombe qu'à l'audit suivant
+    (toutes les 6 h), et le filtre sur `created_at` ne regarde pas le match.
+    Un signal sans coup d'envoi lisible est conservé — on ne sait pas.
+    """
+    out = []
+    for s in signals:
+        mt = _match_dt(s)
+        if mt is None or mt > now:
+            out.append(s)
+    return out
+
+
+def _kickoff(s: dict, now: datetime) -> str:
+    """' · 21:00 UTC' today, ' · 22/07 21:00 UTC' otherwise, '' if unknown."""
+    mt = _match_dt(s)
+    if mt is None:
         return ""
-    if mt.tzinfo is None:
-        mt = mt.replace(tzinfo=timezone.utc)
     same_day = mt.date() == now.date()
     return f" · {mt.strftime('%H:%M') if same_day else mt.strftime('%d/%m %H:%M')} UTC"
 
@@ -261,7 +282,7 @@ def run():
                .order("edge_pct", desc=True)
                .limit(30)
                .execute())
-        signals = res.data or []
+        signals = _a_venir(res.data or [], now)
     except Exception as e:
         log.error("Fetch signaux: %s", e)
         _send(

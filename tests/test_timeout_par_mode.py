@@ -139,7 +139,34 @@ class TestLArmement:
         _poser_mode(monkeypatch, GUERRILLA=True)
         run_engine._arm_global_timeout()
         with caplog.at_level(logging.ERROR, logger="PREDATOR"):
-            with pytest.raises(TimeoutError) as exc:
+            with pytest.raises(run_engine.EngineTimeout) as exc:
                 run_engine._timeout_handler(signal_module.SIGALRM, None)
         assert str(SCAN_TIMEOUTS["guerrilla"]) in str(exc.value)
         assert any(str(SCAN_TIMEOUTS["guerrilla"]) in r.getMessage() for r in caplog.records)
+
+
+class TestLeTimeoutNestPasAvalable:
+    """2026-08-28 15:50:56 : « TIMEOUT: Engine exceeded 600 seconds » — puis
+    le run a continué 7 min, l'exception attrapée par un `except Exception`
+    de la boucle d'alias IA (et `core.net` retente sur TimeoutError comme sur
+    une erreur réseau). Le tick a tenu 17 min 44 s sous le verrou d'écriture.
+    Un timeout attrapable par accident n'est pas un timeout."""
+
+    def test_le_handler_leve_une_BaseException(self):
+        with pytest.raises(run_engine.EngineTimeout):
+            run_engine._timeout_handler(14, None)
+        assert not issubclass(run_engine.EngineTimeout, Exception)
+
+    def test_un_except_Exception_ne_l_arrete_pas(self):
+        def boucle_jamais_bloquante():
+            try:
+                run_engine._timeout_handler(14, None)
+            except Exception:                       # le patron « jamais bloquant »
+                return "avalé"
+            return "passé"
+        with pytest.raises(run_engine.EngineTimeout):
+            boucle_jamais_bloquante()
+
+    def test_core_net_ne_le_retente_pas_comme_une_erreur_transitoire(self):
+        from core import net
+        assert not issubclass(run_engine.EngineTimeout, net._TRANSIENT)

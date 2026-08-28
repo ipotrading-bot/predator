@@ -232,7 +232,10 @@ def learn_from_trusted(cn_fixtures: list, trusted: list) -> dict:
     if not cn_fixtures or not trusted:
         return {"appris": 0, "confirmés": 0, "contredits": 0}
     right = [f for f in (_as_fixture(m, "trusted") for m in trusted) if f]
-    pairs = pair_fixtures(cn_fixtures, right)
+    # Ligue exigée des deux côtés : un alias « trusted » naît à 0,7, donc
+    # utilisable dès l'écriture — il n'a pas droit à l'appariement au bénéfice
+    # du doute (4 paires fausses sur 5 le 2026-08-28, voir `pair_fixtures`).
+    pairs = pair_fixtures(cn_fixtures, right, require_league=True)
     if not pairs:
         return {"appris": 0, "confirmés": 0, "contredits": 0}
     return team_aliases.apply_pairing("odds500", pairs, canonical_source="trusted")

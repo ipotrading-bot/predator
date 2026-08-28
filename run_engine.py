@@ -141,9 +141,19 @@ from core.constants import GLOBAL_TIMEOUT, SCAN_TIMEOUTS
 _budget_arme = GLOBAL_TIMEOUT      # renseigné par _arm_global_timeout, pour le message
 
 
+class EngineTimeout(BaseException):
+    """Le budget de temps du run est épuisé. Dérive de BaseException, PAS
+    d'Exception : le moteur est truffé d'`except Exception` « jamais
+    bloquants » (sources, IA, alias), et `core.net` retente sur TimeoutError
+    comme sur une erreur réseau transitoire. Le 2026-08-28 15:50:56 le filet
+    golden (600 s) a bien levé — et le run a continué 7 min de plus, avalé par
+    la boucle d'alias IA, sous le verrou d'écriture. Un timeout qu'on peut
+    attraper par accident n'est pas un timeout."""
+
+
 def _timeout_handler(signum, frame):
     log.error("TIMEOUT: Engine exceeded %d seconds — exiting gracefully", _budget_arme)
-    raise TimeoutError(f"Global timeout ({_budget_arme}s) exceeded")
+    raise EngineTimeout(f"Global timeout ({_budget_arme}s) exceeded")
 
 
 def _mode_courant() -> str:

@@ -294,3 +294,37 @@ class TestSourceSpec:
     def test_une_confiance_hors_bornes_est_refusee(self):
         with pytest.raises(ValueError):
             sa.SourceSpec(name="x", role="sharp", trust=1.5, daily_budget=1)
+
+
+class TestLaLigueEstExigeeSurLeCheminDeConfiance:
+    """Régression des QUATRE fausses paires du 2026-08-28 15:48.
+
+    Appariement odds500↔slate de confiance : 5 paires sur 28×104, dont 4
+    fausses — 拜仁/斯图加特 (Bundesliga) appris comme UCD/Finn Harps (Irlande
+    D2). Même minute, gros favori des deux côtés, et le libellé api-sports
+    absent de LEAGUE_MAP : `la and lb and la != lb` ne refusait rien. Ces alias
+    naissent à 0,7, utilisables dès l'écriture. Sur ce chemin, une ligue
+    inconnue d'un côté n'est pas « pas de désaccord », c'est « pas de preuve ».
+    """
+    def test_ligue_inconnue_dun_cote_nest_pas_une_preuve(self):
+        zh = [_fx("odds500", "1", "2026-08-28T18:30:00Z", "德甲", "拜仁", "斯图加特",
+                  [1.30, 5.50, 9.00])]
+        en = [_fx("trusted", "9", "2026-08-28T18:30:00Z", "Ireland - First Division",
+                  "UCD", "Finn Harps", [1.32, 5.40, 8.80])]
+        assert len(sa.pair_fixtures(zh, en)) == 1, "sans l'exigence, la paire passe (c'est le défaut)"
+        assert sa.pair_fixtures(zh, en, require_league=True) == []
+
+    def test_ligue_connue_et_concordante_reste_appariee(self):
+        zh = [_fx("odds500", "1", "2026-08-28T18:30:00Z", "德甲", "拜仁", "斯图加特",
+                  [1.30, 5.50, 9.00])]
+        en = [_fx("trusted", "9", "2026-08-28T18:30:00Z", "Bundesliga",
+                  "Bayern Munich", "VfB Stuttgart", [1.32, 5.40, 8.80])]
+        pairs = sa.pair_fixtures(zh, en, require_league=True)
+        assert len(pairs) == 1 and pairs[0][2]["league_key"] == "bundesliga"
+
+    def test_les_deux_ligues_inconnues_ne_suffisent_pas_non_plus(self):
+        zh = [_fx("odds500", "1", "2026-08-28T18:30:00Z", "德乙", "波鸿", "奥斯纳",
+                  [1.30, 5.50, 9.00])]
+        en = [_fx("trusted", "9", "2026-08-28T18:30:00Z", "2. Bundesliga",
+                  "VfL Bochum", "Osnabruck", [1.32, 5.40, 8.80])]
+        assert sa.pair_fixtures(zh, en, require_league=True) == []

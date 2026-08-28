@@ -337,8 +337,22 @@ def structure_distance(a: Fixture, b: Fixture) -> float:
 
 def pair_fixtures(left: list, right: list,
                   tolerance_min: int | None = None,
-                  max_structure_pts: float | None = None) -> list:
+                  max_structure_pts: float | None = None,
+                  require_league: bool = False) -> list:
     """Apparie deux calendriers SANS se fier aux noms.
+
+    `require_league=True` : la ligue doit être CONNUE des deux côtés et
+    concorder — une ligue inconnue d'un côté n'est plus « pas de désaccord »,
+    c'est « pas de preuve ». Mesuré le 2026-08-28 15:48 sur l'appariement
+    odds500↔slate de confiance (28×104) : 5 paires, dont 4 FAUSSES — 拜仁 et
+    斯图加特 (Bundesliga) appris comme UCD et Finn Harps (Irlande D2), 蒙彼利埃
+    et 布洛涅 (Ligue 2) comme Farsta et Nacka Iliria, 雷克斯 et 伯明翰
+    (Championship) comme Kerry et Treaty United, 卡斯鲁厄 et 沃夫斯堡 comme
+    AIK W et Kristianstad W. Même minute, gros favori des deux côtés (moins
+    de 12 pts d'écart), et un libellé api-sports absent de LEAGUE_MAP : la
+    garde `la and lb and la != lb` ne pouvait rien refuser. Ces alias
+    partaient à 0,7 — utilisables dès l'écriture. Sur ce chemin-là, le temps
+    et la structure ne suffisent pas ; on exige la ligue.
 
     Rend une liste de (fixture_gauche, fixture_droite, evidence). `evidence`
     porte l'écart de coup d'envoi, la clé de ligue et la distance structurelle
@@ -365,6 +379,8 @@ def pair_fixtures(left: list, right: list,
             la, lb = league_key(a.league), league_key(b.league)
             if la and lb and la != lb:
                 continue                      # deux ligues connues et différentes
+            if require_league and not (la and lb and la == lb):
+                continue                      # ligue inconnue d'un côté : pas de preuve
             dist = structure_distance(a, b)
             if dist > max_pts:
                 continue                      # structures incompatibles

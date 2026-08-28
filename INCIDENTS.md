@@ -518,6 +518,39 @@ n'écarte rien de plus.
 Gardiens : `tests/test_free_sources.py::TestLesDeuxChemainsQuiManquaient`,
 `tests/test_team_aliases.py::TestSeuilDeConfiance`.
 
+### Le slate de confiance a appris QUATRE alias faux sur cinq (2026-08-28)
+
+Premier run du chemin `learn_from_trusted` (ci-dessus), 15:48 UTC :
+« appariement odds500↔trusted : 5 paires sur 28×104 ». Deux justes (波鸿 →
+VfL Bochum, 奥斯纳 → Osnabrück) et **quatre fausses** : 拜仁/斯图加特
+(Bayern/Stuttgart, 德甲) appris comme **UCD / Finn Harps** (Irlande D2),
+蒙彼利埃/布洛涅 (Ligue 2) comme Farsta / Nacka Iliria (Suède, divisions
+inférieures), 雷克斯/伯明翰 (Championship) comme Kerry / Treaty United,
+卡斯鲁厄/沃夫斯堡 (2. Bundesliga) comme **AIK W / Kristianstad W** (football
+féminin). Huit lignes `team_aliases` (id 15-22), `resolved_by='trusted'`,
+confiance **0,7 ≥ MIN_CONFIDENCE 0,6** — utilisables dès l'écriture. Le
+`SUSPECT_DATA odds500 vs trusted 11.77 pts` loggé juste après, c'était la
+comparaison de Bayern-Stuttgart avec UCD-Finn Harps.
+Cause : `pair_fixtures` ne refusait une ligue que si elle était connue des
+DEUX côtés (`la and lb and la != lb`). Le libellé api-sports (« Ireland -
+First Division ») n'est pas dans `LEAGUE_MAP` → `lb` vide → la garde ne
+peut rien dire, et il reste le temps (même minute) et la structure — deux
+gros favoris se ressemblent à moins de 12 pts. Conçu pour le chemin 7M, dont
+les libellés ont été recopiés dans `LEAGUE_MAP` ; jamais mesuré sur le slate
+de confiance. Et le paragraphe « l'IA propose, elle ne décide pas » ne
+protégeait que la voie IA (0,4) : la voie `trusted` décide en un passage.
+Correction : `pair_fixtures(require_league=True)` sur ce chemin — une ligue
+inconnue d'un côté n'est plus « pas de désaccord », c'est « pas de preuve ».
+Ça coûte les deux paires justes de 德乙 (pas dans `LEAGUE_MAP` non plus) :
+un match sauté contre un alias faux à vie, l'arbitrage est le même que pour
+l'ambiguïté. Les huit lignes ont été INVALIDÉES en base (confiance 0,
+contradiction +1 — le geste d'`invalidate()`, pas un DELETE : la ligne
+garde la trace de ce que la source a affirmé).
+⚠️ Impact contenu parce qu'odds500 était en MODE OMBRE (0 émis). Le jour où
+elle en sort, un alias faux = un signal émis ET réglé sur le mauvais match.
+Gardiens : `tests/test_source_adapter.py::TestLaLigueEstExigeeSurLeCheminDeConfiance`,
+`tests/test_free_sources.py::TestLeSlateDeConfianceExigeLaLigue`.
+
 ### Le proxy gratuit rate une requête sur trois — et ça coûtait la source (2026-08-28)
 
 Mesuré au lendemain du déblocage, trois GET identiques sur 500.com à travers
@@ -1076,6 +1109,26 @@ sources gratuites), et les seuils restent au-dessus des cadences (le chien de
 garde ne peut pas tirer plus vite que le schedule qu'il supplée). Le PAT est
 un secret du Worker (`WATCHDOG_PAT`), jamais dans le JS.
 
+### Le timeout du moteur se déclenchait — et le run continuait (2026-08-28)
+
+Run golden 15:40 UTC (rattrapage watchdog, budget 600 s) : `15:50:56 ERROR
+TIMEOUT: Engine exceeded 600 seconds — exiting gracefully`. Puis **sept
+minutes de plus** — alias IA jusqu'à 15:54, Tier 2 jusqu'à 15:58. Le tick a
+tenu 17 min 44 s sous le verrou `predator-signals-write`, dont
+`cancel-in-progress: false` fait attendre tous les autres.
+Cause : `_timeout_handler` levait `TimeoutError`, qui dérive d'`Exception`.
+Le moteur est truffé d'`except Exception` « jamais bloquants » (sources, IA,
+alias — chacun justifié séparément), et `core.net._TRANSIENT` retente sur
+`TimeoutError` comme sur une coupure réseau. L'alarme est tombée pendant un
+appel IA de la boucle d'alias : attrapée, loggée en debug, boucle suivante.
+Le filet D3 était bien dimensionné et bien armé ; il n'était simplement pas
+inarrêtable.
+Correction : `run_engine.EngineTimeout(BaseException)`. Rien de ce qui
+attrape `Exception` ne le voit passer, et `finally` s'exécute quand même. Le
+comportement voulu — sortie, traceback, exit 1, run en ÉCHEC par le contrat —
+est celui qu'on croyait avoir depuis le 2026-08-27.
+Gardien : `tests/test_timeout_par_mode.py::TestLeTimeoutNestPasAvalable`.
+
 ### Le verrou `predator-signals-write` ne contient plus `closing_line.yml`
 
 raison courante (« aucune ligne en commun ») est FAUSSE : `purge_rules`
@@ -1149,6 +1202,20 @@ page que l'opérateur regarde quand il n'y a rien :
 
 Gardiens : `tests/test_reprice_mode.py::test_reprice_empty_cache_preserves_last_scan_counts`,
 `tests/test_dashboard_sports.py::TestCompteARebours`.
+
+### Le digest Telegram annonçait un pari sur un match commencé (2026-08-28)
+
+15:20 UTC, digest « APRÈS-MIDI » : « FK Akron Tolyatti vs CSKA Moscow ·
+15:00 UTC → CSKA @ 1.39 · valeur +6.1% ». Coup d'envoi vingt minutes plus
+tôt. Le signal était légitime (émis 14:27, T-33 min, CLV réel +5 %) — mais
+`run_rapport` filtre `status='active'` et `created_at` dans les 2 h, jamais
+`match_time` : `active` ne tombe qu'à l'audit, toutes les 6 h. À 17:03 le
+dashboard disait « 0 sig » pour le même signal, parce que LUI filtre
+`match_time > now` (`api/index.py::_is_playable`) — deux lecteurs, deux
+règles, et l'opérateur qui demande « où sont mes signaux ? ».
+Correction : `run_rapport._a_venir` — même règle que le dashboard. Un signal
+sans coup d'envoi lisible est conservé (on ne sait pas), pas jeté.
+Gardien : `tests/test_rapport_signaux_a_venir.py`.
 
 ### Une version, un seul endroit
 

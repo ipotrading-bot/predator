@@ -300,3 +300,31 @@ class TestLesDeuxChemainsQuiManquaient:
         monkeypatch.setattr(team_aliases, "resolve_with_ai", boom)
         out, dropped = FS.resolve_names([_match()])
         assert out == [] and dropped == 1               # même verdict, pas d'exception
+
+
+class TestLeSlateDeConfianceExigeLaLigue:
+    """2026-08-28 15:48 : 4 alias faux sur 5 appris depuis le slate de
+    confiance (拜仁 → UCD…), à 0,7 donc utilisables. `learn_from_trusted`
+    doit apparier avec `require_league=True` — c'est le seul chemin qui écrit
+    un alias utilisable en un seul passage."""
+
+    def test_learn_from_trusted_exige_la_ligue(self, monkeypatch, dico):
+        vu = {}
+        def faux_pair(left, right, **kw):
+            vu.update(kw)
+            return []
+        monkeypatch.setattr(FS, "pair_fixtures", faux_pair)
+        trusted = dict(_match(mid="t1", home="UCD", away="Finn Harps", needs=False))
+        FS.learn_from_trusted([FS._as_fixture(_match(), "odds500")], [trusted])
+        assert vu.get("require_league") is True
+
+    def test_une_ligue_inconnue_cote_confiance_napprend_rien(self, monkeypatch, dico):
+        ecrit = []
+        monkeypatch.setattr(team_aliases, "apply_pairing",
+                            lambda source, pairs, canonical_source="sevenm":
+                            ecrit.extend(pairs) or {"appris": 0, "confirmés": 0, "contredits": 0})
+        cn = _match(league="德甲")
+        trusted = dict(_match(mid="t1", home="UCD", away="Finn Harps", needs=False,
+                              league="Ireland - First Division"))
+        FS.learn_from_trusted([FS._as_fixture(cn, "odds500")], [trusted])
+        assert ecrit == []
