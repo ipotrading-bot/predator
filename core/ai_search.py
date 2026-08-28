@@ -202,11 +202,11 @@ _GROQ_SEARCH_CYCLE = int(os.environ.get("GROQ_SEARCH_CYCLE_COST", "8"))
 
 def _groq_search_budget_du_jour() -> int:
     """Appels compound-mini encore ouverts aujourd'hui, tous runs confondus."""
-    plafond = _GROQ_SEARCH_DAILY
-    if not _priorite_settlement:
-        plafond = max(1, plafond - _GROQ_SEARCH_RESERVE)
-    ouvert = daily_quota.paced_allowance(plafond, _GROQ_SEARCH_CYCLE)
-    return max(0, ouvert - daily_quota.spent(_GROQ_SEARCH_BUCKET))
+    depense = daily_quota.spent(_GROQ_SEARCH_BUCKET)
+    if _priorite_settlement:          # même raison que pour Tavily
+        return max(0, _GROQ_SEARCH_DAILY - depense)
+    plafond = max(1, _GROQ_SEARCH_DAILY - _GROQ_SEARCH_RESERVE)
+    return max(0, daily_quota.paced_allowance(plafond, _GROQ_SEARCH_CYCLE) - depense)
 
 
 def _tavily_budget_du_jour() -> int:
@@ -216,11 +216,32 @@ def _tavily_budget_du_jour() -> int:
     on retombe alors sur le seul budget de run, comme avant. Une source ne
     doit jamais tomber parce que son compteur est muet.
     """
-    plafond = _TAVILY_DAILY_BUDGET
-    if not _priorite_settlement:
-        plafond = max(1, plafond - _TAVILY_RESULTS_RESERVE)
-    ouvert = daily_quota.paced_allowance(plafond, _TAVILY_CYCLE)
-    return max(0, ouvert - daily_quota.spent(_TAVILY_BUCKET))
+    depense = daily_quota.spent(_TAVILY_BUCKET)
+    # Le SETTLEMENT n'est PAS étalé. Le rythme sert à empêcher les scans du
+    # matin de manger le budget des scans du soir ; un audit, lui, règle des
+    # signaux dont le match est DÉJÀ joué — le reporter ne le rend pas
+    # meilleur, il le rend `expired`. Mesuré le 2026-08-28 à 01:15 : étalé,
+    # `search_credits_left()` rendait 6 (le plancher) contre une réserve CLV
+    # de 12, et `core/audit_engine` sautait l'audit CLV toute la matinée.
+    # C'est exactement la famine que la réserve existe pour empêcher.
+    if _priorite_settlement:
+        return _tavily_budget_settlement()
+    plafond = max(1, _TAVILY_DAILY_BUDGET - _TAVILY_RESULTS_RESERVE)
+    return max(0, daily_quota.paced_allowance(plafond, _TAVILY_CYCLE) - depense)
+
+
+def _tavily_budget_settlement() -> int:
+    """Crédits vus par le SETTLEMENT : budget entier du jour, sans rythme.
+
+    `search_exhausted()` et `search_credits_left()` n'ont qu'un consommateur,
+    `core/audit_engine`, et il s'en sert pour décider d'écrire un état
+    TERMINAL. Leur faire rendre la part ÉTALÉE des scans serait doublement
+    faux : sémantiquement (elles répondent « le settlement peut-il encore
+    chercher ? ») et en pratique — mesuré le 2026-08-28 à 01:15, elles
+    rendaient 6 contre une réserve CLV de 12, et l'audit sautait toute la
+    matinée. Elles ne dépendent donc PAS de l'heure.
+    """
+    return max(0, _TAVILY_DAILY_BUDGET - daily_quota.spent(_TAVILY_BUCKET))
 
 # Plafond de PLAN atteint (HTTP 432) — distinct du budget de run ci-dessus.
 #
@@ -392,7 +413,7 @@ def search_exhausted() -> bool:
     """
     return (_tavily_plan_dead
             or _tavily_used >= _TAVILY_RUN_BUDGET
-            or _tavily_budget_du_jour() <= 0)
+            or _tavily_budget_settlement() <= 0)
 
 
 def search_credits_left() -> int:
@@ -404,7 +425,8 @@ def search_credits_left() -> int:
     """
     if _tavily_plan_dead:
         return 0
-    return max(0, min(_TAVILY_RUN_BUDGET - _tavily_used, _tavily_budget_du_jour()))
+    return max(0, min(_TAVILY_RUN_BUDGET - _tavily_used,
+                      _tavily_budget_settlement()))
 
 
 def _groq_post(model: str, messages: list, max_tokens: int,

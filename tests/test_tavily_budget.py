@@ -130,6 +130,38 @@ class TestEtage1Groq:
         assert ai_search._groq_search_budget_du_jour() > 0
 
 
+class TestVueSettlementSansRythme:
+    """`search_exhausted()` et `search_credits_left()` ne dépendent PAS de l'heure.
+
+    Régression du 2026-08-28 01:15 : étalées comme les scans, elles rendaient
+    6 crédits (le plancher du rythme) contre une réserve CLV de 12, et
+    `core/audit_engine` sautait l'audit CLV toute la matinée — « CLV SKIP |
+    … 6 crédits restants réservés au settlement ». Étaler la dépense des
+    SCANS est utile ; étaler celle du SETTLEMENT ne l'est pas : un match déjà
+    joué ne se règle pas mieux plus tard, il sort `expired`.
+    """
+
+    @staticmethod
+    def _a(h, monkeypatch):
+        vraie = daily_quota.paced_allowance
+        monkeypatch.setattr(
+            daily_quota, "paced_allowance",
+            lambda b, f, now=None: vraie(b, f, datetime(2026, 8, 28, h,
+                                                        tzinfo=timezone.utc)))
+        return ai_search.search_credits_left()
+
+    def test_les_credits_du_settlement_sont_les_memes_a_toute_heure(self, monkeypatch):
+        _quota(monkeypatch, 0)
+        assert self._a(1, monkeypatch) == self._a(23, monkeypatch)
+
+    def test_et_ils_depassent_la_reserve_CLV_des_le_matin(self, monkeypatch):
+        """Le chiffre qui a cassé : il doit rester au-dessus de
+        CLV_CREDIT_RESERVE, sinon l'audit CLV ne part jamais le matin."""
+        from core.audit_engine import CLV_CREDIT_RESERVE
+        _quota(monkeypatch, 0)
+        assert self._a(1, monkeypatch) > CLV_CREDIT_RESERVE
+
+
 class TestReserveDuSettlement:
     """Les SCANS sont amputés, la réserve ne l'est jamais.
 

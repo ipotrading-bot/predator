@@ -25,7 +25,8 @@ from dotenv import load_dotenv
 from core.db import (get_db, log_to_ledger,
                      update_signal_fields, MissingCredentialsError)
 from core.ai_search import (ai_available, ai_dead as gemini_quota_dead,
-                            search_credits_left, search_exhausted)
+                            prioriser_settlement, search_credits_left,
+                            search_exhausted)
 # Task 3 — real closing-line capture (run_closing_line.py). The window
 # constants and the optional-column set are shared with core/closing_line.py,
 # which captures the same fields for free off the OddsAPI scan feed; they
@@ -590,6 +591,14 @@ def _relancer_expires(sb) -> None:
 
 
 def run():
+    # Ce process RÈGLE des signaux : il a droit à la réserve de crédits de
+    # recherche que les scans ne peuvent pas toucher, et il n'est pas étalé
+    # sur la journée (un match déjà joué ne se règle pas mieux plus tard —
+    # il sort `expired`). Le drapeau est levé ICI et non dans run_audit.py :
+    # l'audit a plusieurs points d'entrée (cron, /api/audit/run), et un seul
+    # qui le pose est un oubli qui attend son tour.
+    prioriser_settlement()
+
     # This module only ever deletes/inserts/upserts, it never serves public
     # reads — write=True fails fast and loud if SUPABASE_SERVICE_KEY is
     # missing or resolves to the wrong role, instead of silently falling

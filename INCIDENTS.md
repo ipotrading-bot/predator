@@ -263,6 +263,32 @@ couverture du slate est sans commune mesure avec celle de
 Kalshi/Polymarket (3 fixtures exploitables sur 70). Mesuré sur
 10 runs du 2026-08-23 au 26. Corollaire : 100 % des signaux sont du FOOTBALL.
 
+### Étaler le SETTLEMENT était une faute — corrigé le 2026-08-28
+
+Le rythme de dépense posé la veille avait été appliqué sans distinction. Il
+n'a de sens que pour les SCANS : un scan tardif vaut mieux qu'un scan
+matinal, parce que le slate européen entre dans la zone jouable le soir. Un
+AUDIT, lui, règle des signaux dont le match est DÉJÀ joué — le reporter ne le
+règle pas mieux, il le laisse sortir en `expired`.
+Mesuré le 2026-08-28 à 01:15 : `search_credits_left()` rendait **6** (le
+plancher du rythme) contre `CLV_CREDIT_RESERVE` = 12, et l'audit sautait —
+« CLV SKIP | … 6 crédits restants réservés au settlement ». La réserve
+existe pour empêcher exactement cette famine, et le rythme la recréait par
+en dessous.
+⛔ `search_exhausted()` et `search_credits_left()` n'ont qu'UN consommateur,
+`core/audit_engine`, et il s'en sert pour décider d'écrire un état TERMINAL.
+Elles répondent donc désormais « le settlement peut-il encore chercher ? » —
+budget entier du jour, **sans rythme, sans dépendance à l'heure**.
+⚠️ ET LE DRAPEAU EST LEVÉ DANS `audit_engine.run()`, PAS dans `run_audit.py`.
+L'audit a plusieurs points d'entrée (cron, `/api/audit/run`) ; un seul qui le
+pose est un oubli qui attend son tour.
+⚠️ Symptôme à reconnaître : une suite VERTE le soir et ROUGE le matin. Six
+tests sont tombés au passage de minuit — un test qui dépend de l'heure réelle
+est pire qu'un test absent, il donne une confiance fausse la moitié du temps.
+Gardien : `tests/test_tavily_budget.py::TestVueSettlementSansRythme` — dont
+`test_et_ils_depassent_la_reserve_CLV_des_le_matin`, qui compare au vrai
+`CLV_CREDIT_RESERVE` plutôt qu'à un nombre recopié.
+
 ### QUATRE sources, la même panne : le budget du soir était mangé le matin (2026-08-27)
 
 Découverte quatre fois de suite dans la même soirée, en cherchant pourquoi
