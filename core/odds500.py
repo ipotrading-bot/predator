@@ -196,13 +196,11 @@ def _get(url: str) -> str | None:
         # (mesuré le 2026-08-26 — 200 depuis un poste, Connection refused
         # depuis Azure). Sans ODDS500_PROXY/FREE_SOURCES_PROXY, `opener` vaut
         # None et le comportement est strictement celui d'avant.
-        opener = net.opener_for("odds500")
-        if opener is not None:
-            with opener.open(req, timeout=TIMEOUT) as r:
-                raw = r.read()
-        else:
-            with urllib.request.urlopen(req, timeout=TIMEOUT) as r:
-                raw = r.read()
+        # UNE reprise sur échec de transport : un proxy gratuit et partagé
+        # rate ~1 requête sur 3 (mesuré le 2026-08-28), et sans reprise cet
+        # aléa coûte le calendrier entier du run. Voir core/net.py.
+        with net.open_with_retry("odds500", req, TIMEOUT) as r:
+            raw = r.read()
     except Exception as e:
         log.warning("odds500: %s — %s", url.rsplit("/", 1)[-1] or url,
                     net.describe_failure("odds500", e))

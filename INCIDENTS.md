@@ -468,6 +468,52 @@ le repaie donc plus jamais. Rendement mesuré 10 % → 30 % dès le 2e run, et
 croissant. La mémoire est refermée sur le sitemap courant à chaque écriture,
 sinon elle gonfle sans fin.
 
+### Le proxy gratuit rate une requête sur trois — et ça coûtait la source (2026-08-28)
+
+Mesuré au lendemain du déblocage, trois GET identiques sur 500.com à travers
+le proxy Webshare : **un timeout de handshake TLS à 40 s, deux réponses en
+~1 s**. Un proxy gratuit et partagé est instable par construction.
+Sans reprise, cette unique requête ratée rendait `_get` None, le calendrier
+repartait vide, et odds500 loggait « 0 match dans les 24h » — INDISCERNABLE
+d'un blocage réel. On venait de payer un proxy pour lever un blocage ; le
+perdre un run sur trois sur un aléa réseau n'a pas de sens.
+`net.open_with_retry()` reprend UNE fois, et seulement sur les échecs de
+TRANSPORT (timeout, connexion refusée, coupure TLS). Un `HTTPError` — 403,
+404, 429 — est une RÉPONSE du serveur : la rejouer ne changerait rien et ne
+ferait que marteler la source, ce que `robots.txt` et le budget journalier
+existent pour éviter. L'échec final remonte tel quel : l'appelant garde son
+`except` et son message, seul le nombre d'essais change.
+⚠️ Le helper vit dans `core/net.py` et NON dans chaque source : odds500 et 7M
+passent par le même proxy, donc par la même instabilité. Une seule des deux
+protégée serait une liste qui diverge (règle dure n°6), et c'est exactement
+ce que garde `test_les_deux_sources_du_proxy_l_utilisent`.
+Gardien : `tests/test_free_sources_wiring.py::TestRepriseSurEchecPassager`.
+
+### Le pont d'alias converge, mais sa mise en route coûte ~11 jours (2026-08-28)
+
+Mesuré en direct, odds500 et 7M interrogés côte à côte depuis un poste :
+
+    odds500        14 matchs à venir, 14 avec prix sharp réel
+    7M sitemap     854 identifiants
+    balayage       60 identifiants interrogés → **1 seul match à venir**,
+                   42 déjà joués (donc mémorisés), 17 inexploitables
+
+Le sitemap 7M n'est pas trié par coup d'envoi et traîne plusieurs jours de
+passé : le rendement en matchs À VENIR est de ~1,7 % au premier passage. Avec
+`SEVENM_DAILY_BUDGET` = 80, il faut ~11 jours pour balayer les 854 entrées.
+⚠️ CE N'EST PAS UNE PANNE, ET LE COÛT EST NON RÉCURRENT : les 42 joués de ce
+balayage sont entrés dans `meta.sevenm_past_gids` et ne seront plus jamais
+repayés. Le rendement monte donc à chaque run. Ce qu'il faut surveiller n'est
+pas la lenteur mais l'ARRÊT : si `team_aliases` (12 lignes, inchangé depuis
+le 2026-08-22) n'a pas bougé sous deux jours, le pont ne fonctionne pas et il
+faut le diagnostiquer, pas l'attendre.
+
+    python scripts/ops.py supabase sql "select count(*) from team_aliases"
+
+⚠️ Et rappel de l'échelle : la sortie du MODE OMBRE demande 100 matchs
+appariés à ≤ 2 points de divergence. Tant que le dictionnaire est vide,
+14 des 15 prix sharp d'odds500 sont écartés à chaque run.
+
 ### odds500 était FILTRÉE PAR IP — ✅ LEVÉ le 2026-08-27 par un proxy UK
 
 HTTP 200

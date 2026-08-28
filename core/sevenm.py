@@ -98,11 +98,9 @@ def _get(url: str) -> str | None:
         # runner (0 ligne de log au 2026-08-26) : sa joignabilite reelle depuis
         # Azure est INCONNUE, pas bonne. Si elle s'avere bloquee comme 500.com,
         # SEVENM_PROXY/FREE_SOURCES_PROXY suffit, sans redeploiement.
-        opener = net.opener_for("sevenm")
-        if opener is not None:
-            with opener.open(req, timeout=TIMEOUT) as r:
-                return r.read().decode("utf-8", "replace")
-        with urllib.request.urlopen(req, timeout=TIMEOUT) as r:
+        # Même reprise qu'odds500 : les deux passent par le même proxy, donc
+        # par la même instabilité. Voir core/net.py::open_with_retry.
+        with net.open_with_retry("sevenm", req, TIMEOUT) as r:
             return r.read().decode("utf-8", "replace")
     except Exception as e:
         log.warning("sevenm: %s — %s", url.split("/")[2],

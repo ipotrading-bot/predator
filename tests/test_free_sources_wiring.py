@@ -119,6 +119,65 @@ class TestDiagnostic403Relais:
         assert "AMONT" not in msg and "RELAIS" not in msg
 
 
+class TestRepriseSurEchecPassager:
+    """Un proxy gratuit et partagé rate des requêtes ; la source ne doit pas
+    tomber pour autant.
+
+    Mesuré le 2026-08-28 sur le proxy qui a débloqué odds500 : trois GET
+    identiques, un timeout TLS à 40 s et deux réponses en ~1 s. Sans reprise,
+    cette requête ratée rend `_get` None, le calendrier est vide, et odds500
+    logge « 0 match dans les 24h » — indiscernable d'un blocage réel.
+    """
+
+    def test_une_reprise_sur_un_echec_de_transport(self, monkeypatch):
+        essais = []
+
+        def _urlopen(req, timeout=None):
+            essais.append(1)
+            if len(essais) == 1:
+                raise TimeoutError("handshake")
+            return "réponse"
+
+        monkeypatch.setattr(net.urllib.request, "urlopen", _urlopen)
+        monkeypatch.setattr(net, "opener_for", lambda source: None)
+        assert net.open_with_retry("odds500", object(), 5) == "réponse"
+        assert len(essais) == 2
+
+    def test_un_403_n_est_PAS_rejoue(self, monkeypatch):
+        """Un HTTPError est une RÉPONSE du serveur, pas un aléa réseau. La
+        rejouer ne changerait rien et martèlerait la source — ce que le
+        budget journalier et robots.txt existent pour éviter."""
+        essais = []
+
+        def _urlopen(req, timeout=None):
+            essais.append(1)
+            raise net.urllib.error.HTTPError("u", 403, "Forbidden", {}, None)
+
+        monkeypatch.setattr(net.urllib.request, "urlopen", _urlopen)
+        monkeypatch.setattr(net, "opener_for", lambda source: None)
+        with pytest.raises(net.urllib.error.HTTPError):
+            net.open_with_retry("odds500", object(), 5)
+        assert len(essais) == 1, "un 403 a été rejoué"
+
+    def test_l_echec_final_remonte_a_l_appelant(self, monkeypatch):
+        """L'appelant garde son `except` et son message : on ne change que le
+        nombre d'essais, jamais le contrat d'erreur."""
+        monkeypatch.setattr(net.urllib.request, "urlopen",
+                            lambda req, timeout=None: (_ for _ in ()).throw(TimeoutError("ko")))
+        monkeypatch.setattr(net, "opener_for", lambda source: None)
+        with pytest.raises(TimeoutError):
+            net.open_with_retry("odds500", object(), 5)
+
+    def test_les_deux_sources_du_proxy_l_utilisent(self):
+        """odds500 et 7M passent par le MÊME proxy, donc la même instabilité.
+        Une seule des deux protégée serait une liste qui diverge."""
+        import inspect
+        from core import odds500, sevenm
+        for mod in (odds500, sevenm):
+            assert "open_with_retry" in inspect.getsource(mod), \
+                f"{mod.__name__} n'a pas de reprise sur échec de transport"
+
+
 class TestModeRelais:
     """Le relais (Cloudflare Worker) réécrit l'URL ; le proxy, lui, tunnelise.
 

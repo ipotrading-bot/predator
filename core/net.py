@@ -177,6 +177,52 @@ def opener_for(source: str):
         urllib.request.ProxyHandler({"http": url, "https": url}))
 
 
+# ── REPRISE SUR ÉCHEC PASSAGER (2026-08-28) ───────────────────────────
+# Un proxy gratuit et partagé est instable par construction. Mesuré le
+# 2026-08-28 sur le proxy Webshare qui a débloqué odds500 : sur trois GET
+# identiques, **un timeout de handshake TLS à 40 s et deux réponses en ~1 s**.
+#
+# Sans reprise, cette unique requête ratée coûte la SOURCE ENTIÈRE pour le
+# run : `_get` rend None, le calendrier est vide, et odds500 logge « 0 match
+# dans les 24h » — indiscernable d'un blocage réel. On vient de payer un
+# proxy pour lever un blocage ; le perdre un run sur trois sur un aléa
+# réseau serait absurde.
+#
+# UNE seule reprise, et seulement sur les échecs de TRANSPORT (timeout,
+# connexion refusée, coupure TLS). Un 403 ou un 404 est une réponse du
+# serveur : la rejouer ne changerait rien et ne ferait que marteler la
+# source — c'est ce que `robots.txt` et le budget journalier existent pour
+# éviter.
+_TRANSIENT = (TimeoutError, ConnectionError, urllib.error.URLError, OSError)
+
+
+def open_with_retry(source: str, req, timeout: int, tentatives: int = 2):
+    """Ouvre `req` en reprenant UNE fois sur un échec de transport.
+
+    Rend l'objet réponse ouvert (à utiliser dans un `with`). Lève la dernière
+    exception si toutes les tentatives échouent — l'appelant garde son
+    `except` et son message, on ne change que le nombre d'essais.
+
+    La reprise ne s'applique QU'aux échecs de transport : un `HTTPError`
+    (403, 404, 429…) est une réponse et remonte immédiatement.
+    """
+    opener = opener_for(source)
+    derniere = None
+    for essai in range(1, max(1, tentatives) + 1):
+        try:
+            if opener is not None:
+                return opener.open(req, timeout=timeout)
+            return urllib.request.urlopen(req, timeout=timeout)
+        except urllib.error.HTTPError:
+            raise                      # une réponse, pas un aléa réseau
+        except _TRANSIENT as e:
+            derniere = e
+            if essai < tentatives:
+                log.info("net[%s]: échec de transport (%s) — nouvelle tentative "
+                         "%d/%d", source, e, essai + 1, tentatives)
+    raise derniere
+
+
 def describe_failure(source: str, exc: Exception) -> str:
     """Message de log qui distingue « injoignable » de « en panne ».
 
