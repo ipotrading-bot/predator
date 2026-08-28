@@ -477,8 +477,8 @@ Sans reprise, cette unique requête ratée rendait `_get` None, le calendrier
 repartait vide, et odds500 loggait « 0 match dans les 24h » — INDISCERNABLE
 d'un blocage réel. On venait de payer un proxy pour lever un blocage ; le
 perdre un run sur trois sur un aléa réseau n'a pas de sens.
-`net.open_with_retry()` reprend UNE fois, et seulement sur les échecs de
-TRANSPORT (timeout, connexion refusée, coupure TLS). Un `HTTPError` — 403,
+`net.open_with_retry()` reprend DEUX fois au plus, et seulement sur les
+échecs de TRANSPORT (timeout, connexion refusée, coupure TLS). Un `HTTPError` — 403,
 404, 429 — est une RÉPONSE du serveur : la rejouer ne changerait rien et ne
 ferait que marteler la source, ce que `robots.txt` et le budget journalier
 existent pour éviter. L'échec final remonte tel quel : l'appelant garde son
@@ -487,6 +487,14 @@ existent pour éviter. L'échec final remonte tel quel : l'appelant garde son
 passent par le même proxy, donc par la même instabilité. Une seule des deux
 protégée serait une liste qui diverge (règle dure n°6), et c'est exactement
 ce que garde `test_les_deux_sources_du_proxy_l_utilisent`.
+⚠️ UNE reprise ne suffisait pas, et c'est mesuré : depuis un runner le
+2026-08-28, les DEUX tentatives ont échoué sur le même scan (« handshake
+timed out » puis « Remote end closed connection ») alors que le même proxy
+rendait **6/6** depuis un poste de dev à la même minute. Le chemin
+runner → proxy est plus fragile, et les échecs se GROUPENT. D'où 3 tentatives
+(`FREE_SOURCES_TENTATIVES`) : à ~1 échec sur 3, le risque de perdre la source
+sur un run passe de 11 % à 4 %, pour une requête de plus en cas d'échec
+seulement.
 Gardien : `tests/test_free_sources_wiring.py::TestRepriseSurEchecPassager`.
 
 ### Le pont d'alias converge, mais sa mise en route coûte ~11 jours (2026-08-28)

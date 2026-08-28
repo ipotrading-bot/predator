@@ -188,15 +188,25 @@ def opener_for(source: str):
 # proxy pour lever un blocage ; le perdre un run sur trois sur un aléa
 # réseau serait absurde.
 #
-# UNE seule reprise, et seulement sur les échecs de TRANSPORT (timeout,
-# connexion refusée, coupure TLS). Un 403 ou un 404 est une réponse du
-# serveur : la rejouer ne changerait rien et ne ferait que marteler la
-# source — c'est ce que `robots.txt` et le budget journalier existent pour
-# éviter.
+# DEUX reprises au plus (3 tentatives), et seulement sur les échecs de
+# TRANSPORT (timeout, connexion refusée, coupure TLS). Deux ne suffisaient
+# pas : mesuré depuis un runner le 2026-08-28, les DEUX tentatives ont échoué
+# sur le même scan (« handshake timed out » puis « Remote end closed
+# connection »), alors que le même proxy rendait 6/6 depuis un poste de dev.
+# Le chemin runner → proxy est plus fragile que le chemin dev → proxy, et les
+# échecs se GROUPENT. À ~1 échec sur 3, trois tentatives ramènent le risque
+# de perdre la source de 11 % à 4 %, pour une requête de plus en cas d'échec
+# seulement.
+# Un 403 ou un 404 est une réponse du serveur : la rejouer ne changerait rien
+# et ne ferait que marteler la source — c'est ce que `robots.txt` et le
+# budget journalier existent pour éviter.
 _TRANSIENT = (TimeoutError, ConnectionError, urllib.error.URLError, OSError)
 
 
-def open_with_retry(source: str, req, timeout: int, tentatives: int = 2):
+_TENTATIVES = int(os.environ.get("FREE_SOURCES_TENTATIVES", "3"))
+
+
+def open_with_retry(source: str, req, timeout: int, tentatives: int | None = None):
     """Ouvre `req` en reprenant UNE fois sur un échec de transport.
 
     Rend l'objet réponse ouvert (à utiliser dans un `with`). Lève la dernière
@@ -206,6 +216,7 @@ def open_with_retry(source: str, req, timeout: int, tentatives: int = 2):
     La reprise ne s'applique QU'aux échecs de transport : un `HTTPError`
     (403, 404, 429…) est une réponse et remonte immédiatement.
     """
+    tentatives = _TENTATIVES if tentatives is None else tentatives
     opener = opener_for(source)
     derniere = None
     for essai in range(1, max(1, tentatives) + 1):

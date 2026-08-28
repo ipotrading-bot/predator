@@ -129,19 +129,21 @@ class TestRepriseSurEchecPassager:
     logge « 0 match dans les 24h » — indiscernable d'un blocage réel.
     """
 
-    def test_une_reprise_sur_un_echec_de_transport(self, monkeypatch):
+    def test_deux_reprises_sur_des_echecs_de_transport(self, monkeypatch):
         essais = []
 
         def _urlopen(req, timeout=None):
             essais.append(1)
-            if len(essais) == 1:
+            # Les échecs se GROUPENT : mesuré depuis un runner le 2026-08-28,
+            # les deux premières tentatives ont échoué sur le même scan.
+            if len(essais) < 3:
                 raise TimeoutError("handshake")
             return "réponse"
 
         monkeypatch.setattr(net.urllib.request, "urlopen", _urlopen)
         monkeypatch.setattr(net, "opener_for", lambda source: None)
         assert net.open_with_retry("odds500", object(), 5) == "réponse"
-        assert len(essais) == 2
+        assert len(essais) == 3
 
     def test_un_403_n_est_PAS_rejoue(self, monkeypatch):
         """Un HTTPError est une RÉPONSE du serveur, pas un aléa réseau. La
