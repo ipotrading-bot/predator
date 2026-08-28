@@ -151,9 +151,16 @@ def prepare(source: str, url: str, headers: dict) -> tuple:
     # Poser un proxy est un geste EXPLICITE : il n'a qu'une raison d'être, et
     # c'est de contourner exactement ce blocage.
     if proxy_for(source):
-        log.info("net[%s]: proxy configuré — le relais est ignoré pour cette "
-                 "source (le relais sort au colo de l'appelant, ce que 500.com "
-                 "refuse depuis les runners)", source)
+        # UNE fois par source et par processus. `prepare()` est appelé à
+        # CHAQUE requête : le logger ici sans mémoire noyait le run sous
+        # quinze lignes identiques, et un log qu'on ne lit plus ne sert à
+        # rien — c'est la raison d'être du reste de ce fichier.
+        drapeau = f"log-proxy:{source.lower()}"
+        if drapeau not in _memo:
+            _memo[drapeau] = "1"
+            log.info("net[%s]: proxy configuré — le relais est ignoré pour "
+                     "cette source (le relais sort au colo de l'appelant, ce "
+                     "que 500.com refuse depuis les runners)", source)
         return url, headers
 
     target = urllib.parse.quote(url, safe="")

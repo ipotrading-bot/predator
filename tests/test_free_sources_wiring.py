@@ -18,6 +18,7 @@ tests/test_free_sources_wiring.py — les trois réparations du 2026-08-26.
 
 Aucun réseau (tests/conftest.py) : tout ce qui sort est stubbé.
 """
+import logging
 import os
 from datetime import datetime, timedelta, timezone
 
@@ -234,6 +235,19 @@ class TestModeRelais:
         assert "X-Relay-Token" not in h
         # Et le proxy est bien celui qui sera emprunté.
         assert net.proxy_for("odds500") == "http://u:p@eu-proxy.example:8080"
+
+    def test_le_message_proxy_n_est_logge_qu_une_fois(self, monkeypatch, caplog):
+        """`prepare()` est appelé à chaque requête : sans mémoire, un run
+        d'odds500 sortait quinze lignes identiques. Un log qu'on ne lit plus
+        ne sert à rien."""
+        monkeypatch.setenv("FREE_SOURCES_RELAY", "https://w.example.dev")
+        monkeypatch.setenv("ODDS500_PROXY", "http://u:p@eu.example:8080")
+        net.reset()
+        with caplog.at_level(logging.INFO, logger="PREDATOR.net"):
+            for _ in range(5):
+                net.prepare("odds500", "https://odds.500.com/", {})
+        lignes = [r for r in caplog.records if "proxy configuré" in r.getMessage()]
+        assert len(lignes) == 1, f"{len(lignes)} lignes au lieu d'une"
 
     def test_sans_proxy_le_relais_reprend_la_main(self, monkeypatch):
         """L'inversion ne doit pas désactiver le relais pour tout le monde :
