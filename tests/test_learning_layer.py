@@ -1021,3 +1021,110 @@ class TestBreakevenAnchoredThreshold:
         new_t, reason = _decide_threshold(3.0, stats, self._no_clv, overconfident=False)
         assert new_t is not None and new_t > 3.0
         assert "repli" in reason
+
+
+# ── Règle 10 côté PLANCHERS (2026-08-28) ─────────────────────────────────
+
+
+class _MetaAvecCles:
+    """Faux `meta` avec des clés posées : lisible par load_thresholds()/
+    load_segment_thresholds(), effaçable par _drop_stale_ceiling()."""
+
+    def __init__(self, rows: list, writes: list, deleted: list):
+        self._rows, self._writes, self._deleted = rows, writes, deleted
+        self._prefix, self._is_delete, self._eq_val = None, False, None
+
+    def select(self, *_a, **_k):
+        return self
+
+    def like(self, _col, pattern):
+        self._prefix = pattern.rstrip("%")
+        return self
+
+    def upsert(self, payload, **_k):
+        self._writes.append(payload)
+        return self
+
+    def delete(self):
+        self._is_delete = True
+        return self
+
+    def eq(self, _col, val):
+        self._eq_val = val
+        return self
+
+    def execute(self):
+        if self._is_delete:
+            self._deleted.append(self._eq_val)
+            self._rows[:] = [r for r in self._rows if r["key"] != self._eq_val]
+            return _Result(None)
+        if self._prefix is not None:
+            return _Result([r for r in self._rows if r["key"].startswith(self._prefix)])
+        return _Result([])
+
+
+class _FakeSupabaseAvecSeuils(_FakeSupabase):
+    def __init__(self, rows_by_sport: dict, meta_rows: list):
+        super().__init__(rows_by_sport)
+        self.meta_rows = list(meta_rows)
+        self.deleted: list = []
+
+    def table(self, name):
+        if name == "meta":
+            return _MetaAvecCles(self.meta_rows, self.meta_writes, self.deleted)
+        return super().table(name)
+
+
+class TestSeuilEpoqueRegle10:
+    """threshold_* et threshold_seg_* sont APPLIQUÉS par run_engine
+    (_segment_min_edge → le min_edge du scan) — la doctrine « loggé, jamais
+    appliqué » ne vaut que pour les verdicts. Même règle d'époque que les
+    plafonds : l'incident du 2026-08-27 (edge_ceiling_soccer=6.0 appris sur
+    l'ancien moteur, reposé le soir d'A6) s'est rejoué le 2026-08-28 côté
+    planchers — threshold_soccer=5.6, appris le 24/08 sur les edges d'avant
+    la correction du prix et du pari, gatait l'émission du moteur corrigé
+    pendant que le plancher committé (SPORT_DEFAULTS + EV_EDGE_FLOOR) aurait
+    laissé passer dès 1,5 % d'EV."""
+
+    def _vieilles_lignes(self, n=25, **kw):
+        # Assez de lignes pour dépasser _MIN_SAMPLES : sans le filtre
+        # d'époque, la règle normale AURAIT relevé le plancher (25 LOSS).
+        return [_row("LOSS", created_at="2026-08-20T12:00:00+00:00", **kw)
+                for _ in range(n)]
+
+    def test_un_seuil_ne_s_apprend_pas_sur_des_lignes_pre_correction(self):
+        sb = _FakeSupabase({"soccer": self._vieilles_lignes()})
+        compute_and_save(sb)
+        assert [w for w in sb.meta_writes if w["key"] == "threshold_soccer"] == [], \
+            "un plancher a été appris sur des lignes de l'ancien moteur"
+
+    def test_un_seuil_pose_sans_lignes_post_epoque_est_RETIRE(self):
+        # Gater les écritures futures ne suffit pas (couche à upserts) : le
+        # 5.6 posé le 2026-08-24 serait resté appliqué pour toujours.
+        sb = _FakeSupabaseAvecSeuils(
+            {"soccer": self._vieilles_lignes()},
+            [{"key": "threshold_soccer", "value": "5.6"}])
+        updated = compute_and_save(sb)
+        assert "threshold_soccer" in sb.deleted
+        assert updated["soccer"] == SPORT_DEFAULTS["soccer"]
+
+    def test_un_segment_pose_sans_lignes_post_epoque_est_RETIRE(self):
+        sb = _FakeSupabaseAvecSeuils(
+            {"soccer": self._vieilles_lignes(market_type="h2h")},
+            [{"key": "threshold_seg_soccer_h2h", "value": "2.4"}])
+        compute_and_save(sb)
+        assert "threshold_seg_soccer_h2h" in sb.deleted
+
+    def test_avec_assez_de_lignes_post_epoque_l_apprentissage_reprend(self):
+        # Les lignes de _row() sont post-époque par défaut : la borne se lève
+        # d'elle-même quand le moteur corrigé a produit assez de réglés.
+        sb = _FakeSupabase({"soccer": [_row("LOSS") for _ in range(_MIN_SAMPLES)]})
+        compute_and_save(sb)
+        writes = [w for w in sb.meta_writes if w["key"] == "threshold_soccer"]
+        assert writes and float(writes[0]["value"]) > SPORT_DEFAULTS["soccer"]
+
+    def test_rien_de_pose_rien_n_est_efface(self):
+        # Le cas nominal : pas un DELETE par sport et par audit.
+        sb = _FakeSupabaseAvecSeuils({"soccer": self._vieilles_lignes()}, [])
+        compute_and_save(sb)
+        assert sb.deleted == []

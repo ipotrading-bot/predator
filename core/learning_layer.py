@@ -864,21 +864,23 @@ def playable_rows(rows: list[dict]) -> list[dict]:
     return kept
 
 
-def _drop_stale_ceiling(sb, key: str, sport: str, ancienne, summary_lines: list[str]) -> None:
-    """Retire un plafond que les lignes postérieures à l'époque ne prouvent plus.
+def _drop_stale_ceiling(sb, key: str, sport: str, ancienne, summary_lines: list[str],
+                        nature: str = "plafond") -> None:
+    """Retire une sortie APPLIQUÉE (plafond ou plancher appris) que les lignes
+    postérieures à l'époque ne prouvent plus.
 
-    Ne lève jamais : un plafond qu'on n'arrive pas à effacer reste en place et
-    sera re-tenté au prochain audit — on ne fait pas tomber l'apprentissage
+    Ne lève jamais : une clé qu'on n'arrive pas à effacer reste en place et
+    sera re-tentée au prochain audit — on ne fait pas tomber l'apprentissage
     pour ça. Silencieux quand la clé n'existe pas (le cas nominal).
     """
     if ancienne is None:          # rien de posé : le cas nominal, aucun appel
         return
     try:
         sb.table("meta").delete().eq("key", key).execute()
-        log.warning("[%s] plafond %s=%s RETIRÉ — mesuré sur des lignes antérieures "
+        log.warning("[%s] %s %s=%s RETIRÉ — mesuré sur des lignes antérieures "
                     "au %s, donc sur un moteur qui n'existe plus (règle 10)",
-                    sport, key, ancienne, CALIBRATION_EPOCH)
-        summary_lines.append(f"{sport}: plafond {key} retiré (mesure pré-{CALIBRATION_EPOCH})")
+                    sport, nature, key, ancienne, CALIBRATION_EPOCH)
+        summary_lines.append(f"{sport}: {nature} {key} retiré (mesure pré-{CALIBRATION_EPOCH})")
     except Exception as e:
         log.warning("[%s] retrait de %s impossible (%s) — il reste appliqué",
                     sport, key, e)
@@ -903,6 +905,15 @@ def compute_and_save(sb) -> dict[str, float]:
     edge_ceilings_posed = load_edge_ceilings(sb)
     odds_ceilings_posed = load_odds_ceilings(sb)
     segment_current = load_segment_thresholds(sb)
+    # Seuils réellement POSÉS en base (load_thresholds fond les défauts dans le
+    # résultat et ne dit pas lesquels existent) : sert à ne retirer que ce qui
+    # est posé, comme pour les plafonds.
+    seuils_poses: set[str] = set()
+    try:
+        res_poses = sb.table("meta").select("key").like("key", "threshold_%").execute()
+        seuils_poses = {r["key"] for r in (res_poses.data or [])}
+    except Exception as e:
+        log.warning("lecture des seuils posés : %s — aucun retrait ce tour", e)
     now     = datetime.now(timezone.utc).isoformat()
     summary_lines: list[str] = []
     ranking_stats: dict[str, dict] = {}   # sport -> stats, pour _save_sport_ranking
@@ -940,10 +951,16 @@ def compute_and_save(sb) -> dict[str, float]:
             # mais un prix mal apparié. Persisté avant la décision de seuil, qui
             # en dépend.
             # ── Ce qui est APPLIQUÉ se mesure APRÈS la correction ──────
-            # Les deux plafonds ci-dessous sont les seules sorties de cette
-            # couche que le moteur fait respecter (run_engine._EDGE_CEILINGS
-            # et _ODDS_CEILINGS) ; le reste est loggé. Ils ne se calculent
-            # donc que sur des lignes postérieures à CALIBRATION_EPOCH.
+            # Trois sorties de cette couche sont RESPECTÉES par le moteur :
+            # les deux plafonds (run_engine._EDGE_CEILINGS/_ODDS_CEILINGS)
+            # et les seuils threshold_* (run_engine._segment_min_edge → le
+            # min_edge du scan). La version précédente de ce commentaire
+            # prétendait que les seuils étaient « loggés, non appliqués » —
+            # c'était FAUX, et threshold_soccer=5.6 (appris le 2026-08-24
+            # sur les edges de l'ANCIEN moteur) a gaté l'émission du nouveau
+            # jusqu'au 2026-08-28. Tout ce qui est appliqué ne se calcule
+            # que sur des lignes postérieures à CALIBRATION_EPOCH ; seul le
+            # loggé (verdicts, classement, diagnostics) lit le ledger entier.
             appliquables = post_correction_rows(rows)
             if len(appliquables) != len(rows):
                 log.info("[%s] plafonds : %d/%d lignes postérieures au %s "
@@ -981,21 +998,32 @@ def compute_and_save(sb) -> dict[str, float]:
                 _drop_stale_ceiling(sb, f"odds_ceiling_{sport}", sport,
                                     odds_ceilings_posed.get(sport), summary_lines)
 
-            if stats["n"] < _MIN_SAMPLES:
-                log.info("[%s] %d decisive samples < %d — threshold unchanged (%.1f%%)",
-                         sport, stats["n"], _MIN_SAMPLES, current[sport])
+            # Le seuil est appliqué par le scan : il ne se décide que sur les
+            # lignes post-époque, et un seuil posé que ces lignes ne portent
+            # plus est RETIRÉ (retour à SPORT_DEFAULTS) — même mécanique que
+            # les plafonds, même incident d'origine (f30b317).
+            stats_appl = _sport_stats(appliquables)
+            if stats_appl["n"] < _MIN_SAMPLES:
+                if f"threshold_{sport}" in seuils_poses:
+                    _drop_stale_ceiling(sb, f"threshold_{sport}", sport,
+                                        current[sport], summary_lines,
+                                        nature="plancher appris")
+                    updated[sport] = SPORT_DEFAULTS[sport]
+                log.info("[%s] %d réglés post-%s < %d — seuil par défaut (%.1f%%)",
+                         sport, stats_appl["n"], CALIBRATION_EPOCH, _MIN_SAMPLES,
+                         SPORT_DEFAULTS[sport])
             else:
                 old_t = current[sport]
-                clv = _clv_stats(rows)
-                overconfident = _calibration_flag(rows)
-                new_t, reason = _decide_threshold(old_t, stats, clv, overconfident,
+                clv = _clv_stats(appliquables)
+                overconfident = _calibration_flag(appliquables)
+                new_t, reason = _decide_threshold(old_t, stats_appl, clv, overconfident,
                                                   top_band_fake=top_fake,
                                                   best_band_lo=best_band_lo)
                 if new_t is not None:
                     updated[sport] = new_t
-                    roi_str = f"{stats['roi']*100:+.1f}%" if stats["roi"] is not None else "n/a"
+                    roi_str = f"{stats_appl['roi']*100:+.1f}%" if stats_appl["roi"] is not None else "n/a"
                     log.info("[%s] Threshold %.2f%% → %.2f%% | %s | n=%d | ROI %s",
-                             sport, old_t, new_t, reason, stats["n"], roi_str)
+                             sport, old_t, new_t, reason, stats_appl["n"], roi_str)
                     sb.table("meta").upsert({
                         "key":        f"threshold_{sport}",
                         "value":      str(new_t),
@@ -1012,18 +1040,28 @@ def compute_and_save(sb) -> dict[str, float]:
             # Segment layer: same rows, sliced by market family (h2h/totals/
             # spreads) — a narrower question ("is THIS market within this
             # sport reliable?") than the sport-wide aggregate above.
+            # Appliqué lui aussi (_segment_min_edge) : lignes post-époque
+            # seulement, et un segment posé que ces lignes ne portent plus
+            # est retiré comme le seuil de sport.
             by_family: dict[str, list[dict]] = {}
-            for r in rows:
+            for r in appliquables:
                 fam = _market_family(r.get("market_type"))
                 if fam in _MARKET_FAMILIES:
                     by_family.setdefault(fam, []).append(r)
 
-            for fam, fam_rows in by_family.items():
+            fams_posees = {k.split(":", 1)[1] for k in segment_current
+                           if k.startswith(f"{sport}:")}
+            for fam in sorted(set(by_family) | fams_posees):
+                fam_rows = by_family.get(fam, [])
                 fam_stats = _sport_stats(fam_rows)
-                if fam_stats["n"] < _SEGMENT_MIN_SAMPLES:
-                    continue
                 dict_key = f"{sport}:{fam}"
                 meta_key = f"threshold_seg_{sport}_{fam}"
+                if fam_stats["n"] < _SEGMENT_MIN_SAMPLES:
+                    if dict_key in segment_current:
+                        _drop_stale_ceiling(sb, meta_key, sport,
+                                            segment_current[dict_key], summary_lines,
+                                            nature="plancher appris")
+                    continue
                 seg_old = segment_current.get(dict_key, updated[sport])
                 fam_clv = _clv_stats(fam_rows)
                 fam_overconfident = _calibration_flag(fam_rows)

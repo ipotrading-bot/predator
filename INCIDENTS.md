@@ -844,6 +844,35 @@ mesure périmée.
 Gardien : `tests/test_learning_layer.py::TestEdgeCeiling` — les quatre tests
 d'époque, dont `test_un_plafond_perime_est_RETIRE_pas_seulement_plus_reecrit`.
 
+### Le même piège côté PLANCHERS : « loggé, jamais appliqué » était faux (2026-08-28)
+
+L'incident du plafond (ci-dessus) s'est rejoué le lendemain, côté seuils —
+et il avait survécu à la correction précisément à cause d'un commentaire
+faux. f30b317 disait : « les deux plafonds sont les seules sorties de cette
+couche que le moteur fait respecter ; le reste est loggé ». CLAUDE.md
+répétait « seuils … loggés, jamais appliqués ». Or `run_engine` passe
+`threshold_<sport>`/`threshold_seg_*` à `_segment_min_edge`, qui en fait le
+`min_edge` de CHAQUE scan. Résultat : `threshold_soccer = 5.6` (appris le
+2026-08-24 sur les edges de l'ANCIEN moteur, avant la correction du prix et
+du pari) gatait l'émission du moteur corrigé, pendant que le plancher
+committé (SPORT_DEFAULTS 1.2 + EV_EDGE_FLOOR 1.5) aurait laissé passer dès
+1,5 % d'EV. `threshold_basketball` a même été RE-calculé le 2026-08-28 à
+09:25 sur une fenêtre dominée par des lignes pré-époque.
+Contexte opérateur, à retenir : la demande était « baisse les seuils, la
+perf est à plus de 60 % ». La re-mesure du jour (`replay_ledger_executable`,
+390 lignes, 90 % résolues) répond : ROI net de taxe **−12,1 %** au prix
+exécutable, bandes à 55-72 % de réussite pour des points morts à 74-78 %
+(cotes moyennes 1,34-1,43), aucune bande d'EV ne qualifie. **Un taux de
+réussite nu au-dessus de 60 % peut perdre de l'argent** (règle 7) —
+MIN_EDGE / EV_EDGE_FLOOR / SUSPECT_EDGE n'ont donc PAS bougé (règle 10).
+Ce qui a été fait est l'inverse d'une baisse au doigt mouillé : appliquer
+aux planchers la règle d'époque des plafonds. `compute_and_save` ne décide
+un seuil que sur `post_correction_rows` ; sous `_MIN_SAMPLES` post-époque,
+un seuil POSÉ est RETIRÉ (retour à SPORT_DEFAULTS) — même mécanique de
+retrait actif, la couche ne faisant que des upserts. La borne se lève
+d'elle-même quand le moteur corrigé a assez de réglés.
+Gardien : `tests/test_learning_layer.py::TestSeuilEpoqueRegle10`.
+
 ### Closing line : `capture_from_scan` est morte avec OddsAPI (2026-08-26)
 
 `capture_from_scan` (payload OddsAPI) est MORTE avec OddsAPI —

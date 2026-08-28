@@ -39,9 +39,9 @@ Tout le calcul tourne en crons GitHub Actions ; le dashboard est en lecture seul
 - `core/odds_api.py` / `harvester.py` / `oracle.py` — sources de cotes (Tier 1/2/3)
 - `core/math_engine.py` + `paim_engine.py` — devig, prix exécutable, edge, consensus
 - `core/audit_engine.py` + `settlement.py` — règlement, CLV, `ai_learning_ledger`
-- `core/learning_layer.py` — seuils (`meta.threshold_<sport>`) et verdicts
-  (`meta.sport_verdict_<sport>`, ≥30 réglés, Wilson vs rentabilité) —
-  **loggés, jamais appliqués** ; hebdo `scripts/weekly_report.py`
+- `core/learning_layer.py` — seuils (`meta.threshold_<sport>`, **APPLIQUÉS**
+  au min_edge du scan, époque *A6*) ; verdicts (≥30 réglés, Wilson vs
+  rentabilité) loggés, jamais appliqués ; hebdo `scripts/weekly_report.py`
 - `core/scan_windows.py` — fenêtres favorables (UTC) + politique de dépense
 - `core/constants.py` — taxe, Kelly, `SCAN_TIMEOUTS` (budget par mode de scan)
 - `core/run_contract.py` — un run qui n'a pas fait son travail sort en ÉCHEC
