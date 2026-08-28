@@ -217,6 +217,25 @@ def test_reprice_empty_cache_exits_quietly(reprice_env):
     assert "last_scan" in sb.meta            # heartbeat quand même
 
 
+def test_reprice_empty_cache_preserves_last_scan_counts(reprice_env):
+    # Mesuré le 2026-08-28, 12:38 UTC : le scan golden écrivait « 41 matchs »
+    # au heartbeat, et le step REPRICE — cache expiré, exit immédiat —
+    # l'écrasait par « 0 matchs » six secondes plus tard. Le dashboard
+    # annonçait un slate vide alors que le scan venait d'en voir 41. Un tick
+    # qui n'a pas scanné rafraîchit `at` (preuve de vie) mais CONSERVE les
+    # comptes du dernier scan réel.
+    sb, _t, _mb = reprice_env
+    ancien_at = "2026-08-28T12:38:27+00:00"
+    sb.meta["last_scan"] = {"key": "last_scan",
+                            "value": json.dumps({"at": ancien_at,
+                                                 "matches": 41, "signals": 2})}
+    eng.run()   # aucun cache_soft_slate → exit muet
+    hb = json.loads(sb.meta["last_scan"]["value"])
+    assert hb["matches"] == 41 and hb["signals"] == 2, \
+        "un tick REPRICE muet ne doit pas écraser les comptes du dernier vrai scan"
+    assert hb["at"] != ancien_at, "mais il doit rafraîchir `at` (preuve de vie)"
+
+
 def test_reprice_expired_cache_is_a_miss(reprice_env):
     sb, _t, mb_calls = reprice_env
     sb.meta["cache_soft_slate"] = _meta_row([_slate_match()],

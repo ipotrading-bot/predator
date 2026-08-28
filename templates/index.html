@@ -61,7 +61,7 @@
 
   {% if last_scan and last_scan.at %}
   <div class="scan-meta" id="scan-meta" data-at="{{ last_scan.at }}">
-    Dernier scan {{ last_scan.at[11:16] }} UTC &middot; {{ last_scan.matches }} matchs &middot; <span id="next-scan-label">prochain &lt;30min</span>
+    Dernier scan {{ last_scan.at[11:16] }} UTC &middot; {{ last_scan.matches }} matchs &middot; <span id="next-scan-label">prochain —</span>
   </div>
   {% endif %}
 
@@ -485,10 +485,15 @@ function applyFilters(){
 const SIGNALS={{ signals|tojson }};
 let _kpct=0;
 
-// Init
-_buildSportChips();
-applyFilters();
-setInterval(applyFilters,30000);
+// Init — l'état vide (branche « aucun signal » plus haut) ne rend ni
+// #sport-chips ni #signals-list : lancer les filtres ici jetait un TypeError qui tuait tout
+// le script restant, compte à rebours « prochain scan » compris — précisément
+// sur la page que l'opérateur regarde quand il n'y a rien (2026-08-28).
+if(document.getElementById('signals-list')){
+  _buildSportChips();
+  applyFilters();
+  setInterval(applyFilters,30000);
+}
 
 function updateStake(){
   const br=parseFloat(document.getElementById('bankroll-input').value)||0;
@@ -580,17 +585,36 @@ function closeModal(){
 }
 document.addEventListener('keydown',e=>{ if(e.key==='Escape') closeModal(); });
 
-// ── Prochain scan — Golden Hour toutes les 30 min ──
+// ── Prochain scan — instants dérivés des crons de scan.yml, injectés par
+// api/index.py depuis scripts/ci_scan_mode.py::CRON_MODES (aucune cadence
+// recopiée à la main ici : l'ancien « toutes les 30 min » codé en dur mentait
+// depuis le passage du tick golden à l'horaire, 2026-07-23). C'est l'heure
+// PLANIFIÉE : le scheduler GitHub sous-livre, le chien de garde rattrape. ──
+const SCAN_CRONS={{ scan_crons|tojson }};
 (function nextScan(){
+  function nextFire(nowMs){
+    const now=new Date(nowMs);
+    let best=null;
+    SCAN_CRONS.forEach(c=>{
+      const hours = c.h || Array.from({length:24},(_,i)=>i);
+      hours.forEach(h=>{
+        for(let d=0;d<2;d++){   // aujourd'hui puis demain (UTC)
+          const t=Date.UTC(now.getUTCFullYear(),now.getUTCMonth(),now.getUTCDate()+d,h,c.m,0);
+          if(t>nowMs && (best===null||t<best)) best=t;
+        }
+      });
+    });
+    return best;
+  }
   function update(){
-    const now = new Date();
-    const utcM = now.getUTCMinutes(), utcS = now.getUTCSeconds();
-    // Next :00 or :30 mark
-    const minsIntoSlot = utcM % 30;
-    const diffMins = 30 - minsIntoSlot;
-    const diffSecs = diffMins * 60 - utcS;
-    const m = Math.floor(diffSecs / 60), s = diffSecs % 60;
-    const txt = `dans ${m}m${String(s).padStart(2,'0')}s`;
+    const nowMs=Date.now();
+    const best=nextFire(nowMs);
+    if(best===null) return;
+    const diffSecs=Math.max(0,Math.round((best-nowMs)/1000));
+    const m=Math.floor(diffSecs/60), s=diffSecs%60;
+    const txt = m>=60
+      ? `dans ${Math.floor(m/60)}h${String(m%60).padStart(2,'0')}`
+      : `dans ${m}m${String(s).padStart(2,'0')}s`;
     const el = document.getElementById('empty-countdown');
     const lbl = document.getElementById('next-scan-label');
     if(el) el.textContent = `prochain scan ${txt}`;

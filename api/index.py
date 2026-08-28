@@ -39,6 +39,7 @@ from core.perf_view import (filter_rows as _perf_filter_rows,
 from core.constants import TAX_RATE as _TAX_RATE
 from core.db import get_db as _get_db_client
 from core.stats_utils import p_breakeven, wilson_ci
+from scripts.ci_scan_mode import CRON_MODES as _CRON_MODES
 
 log = logging.getLogger("PREDATOR.api")
 
@@ -58,6 +59,30 @@ app = Flask(__name__, template_folder=_template_dir, static_folder=_static_dir, 
 # aussi de cache-busting au CSS (`?v=`) : sans bump, un telephone qui a
 # deja predator.css en cache ne verrait AUCUN changement de style.
 DASHBOARD_VERSION = "10.5"
+
+
+# Instants de tir des scans pour le compte à rebours « prochain scan » du
+# dashboard, DÉRIVÉS de scripts/ci_scan_mode.py::CRON_MODES — la seule table
+# cron → mode du dépôt (règle n°6 : le template annonçait « toutes les 30 min »
+# alors que le tick golden est horaire depuis le 2026-07-23). Rappel : c'est
+# l'heure PLANIFIÉE ; le scheduler GitHub sous-livre et le chien de garde
+# Cloudflare rattrape derrière (INCIDENTS.md).
+def _scan_cron_specs() -> list:
+    """[{"m": minute, "h": [heures] | None}] — None = toutes les heures.
+    Ne supporte que les deux formes présentes dans scan.yml (« M H1,H2 * * * »
+    et « M * * * * ») : un cron plus exotique lève ici, donc dès l'import du
+    module en test, jamais en silence sur le dashboard."""
+    specs = []
+    for cron in _CRON_MODES:
+        minute, hour, dom, month, dow = cron.split()
+        if (dom, month, dow) != ("*", "*", "*"):
+            raise ValueError(f"cron non supporté par le compte à rebours : {cron!r}")
+        specs.append({"m": int(minute),
+                      "h": None if hour == "*" else sorted(int(h) for h in hour.split(","))})
+    return specs
+
+
+_SCAN_CRONS = _scan_cron_specs()
 
 
 @app.context_processor
@@ -306,6 +331,7 @@ def dashboard():
     from core.constants import BANKROLL_REF
     return render_template("index.html", signals=signals, groups=groups,
                            last_scan=last_scan, bankroll_ref=BANKROLL_REF,
+                           scan_crons=_SCAN_CRONS,
                            sport_emoji=_SPORT_EMOJI,
                            sport_label_short=_SPORT_LABEL_SHORT,
                            sport_order=_SPORT_ORDER)

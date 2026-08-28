@@ -1040,6 +1040,37 @@ exige `DASHBOARD_ADMIN_TOKEN` et ÉCHOUE FERMÉ depuis le 2026-08-22 — elle
 était ouverte à tout Internet. Ne pas « réparer » son 401 en retirant la
 garde.
 
+### Trois zéros à l'écran, deux étaient faux (2026-08-28)
+
+Dashboard à 12:41 UTC : « 0 matchs », « Aucun signal haute valeur », « Prochain
+scan automatique : — ». Un seul de ces trois constats était vrai (0 signal —
+résultat de marché, sources saines, 41 matchs tous écartés à EV négative).
+Les deux autres étaient des artefacts, et ils se cumulaient précisément sur la
+page que l'opérateur regarde quand il n'y a rien :
+
+1. **Le heartbeat du vrai scan était écrasé par le step REPRICE.** Le scan
+   golden écrivait « 41 matchs » à `meta.last_scan` ; six secondes plus tard le
+   step REPRICE du même tick, cache expiré → exit, réécrivait « 0 matchs ».
+   Un tick qui n'a pas scanné rafraîchit désormais `at` (preuve de vie, le
+   test REPRICE l'exige) mais CONSERVE les comptes du dernier scan réel —
+   `_heartbeat(sb, now, None, None)` sur les trois sorties anticipées.
+2. **L'état vide tuait tout le script du template.** La branche « aucun
+   signal » ne rend ni `#sport-chips` ni `#signals-list`, mais l'init des
+   filtres tournait inconditionnellement : TypeError, et tout le bloc script
+   restant mourait — dont le compte à rebours « prochain scan », laissant les
+   deux textes de repli figés (« — » en bas, « prochain <30min » en haut, qui
+   n'étaient PAS une divergence de données mais deux victimes du même crash).
+3. **Et ce compte à rebours mentait de toute façon** : il visait :00/:30 en
+   dur alors que le tick golden est horaire depuis le 2026-07-23 — une liste
+   recopiée qui avait divergé (règle n°6). Les instants de tir sont désormais
+   DÉRIVÉS de `scripts/ci_scan_mode.py::CRON_MODES` par `api/index.py`
+   (`_scan_cron_specs`) et injectés dans le template ; un cron d'une forme
+   nouvelle lève à l'import, jamais en silence à l'écran. C'est l'heure
+   PLANIFIÉE : le scheduler GitHub sous-livre, le chien de garde rattrape.
+
+Gardiens : `tests/test_reprice_mode.py::test_reprice_empty_cache_preserves_last_scan_counts`,
+`tests/test_dashboard_sports.py::TestCompteARebours`.
+
 ### Une version, un seul endroit
 
 `DASHBOARD_VERSION` (`api/index.py`), injectée

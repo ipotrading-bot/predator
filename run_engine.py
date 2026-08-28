@@ -1013,8 +1013,23 @@ def _enrich_from_exchange(items: list, prices: dict, log) -> int:
     return enriched
 
 
-def _heartbeat(sb, scan_time: datetime, matches: int, signals: int):
+def _heartbeat(sb, scan_time: datetime, matches: int | None, signals: int | None):
+    """matches/signals à None = tick qui n'a PAS scanné (REPRICE à cache vide,
+    sortie anticipée) : il rafraîchit `at` pour prouver sa vie, mais CONSERVE
+    les comptes du dernier scan réel. Le step REPRICE du même tick écrasait
+    « 41 matchs » par « 0 » six secondes après le scan — le dashboard annonçait
+    un slate vide alors que le scan venait d'en voir 41 (2026-08-28)."""
     try:
+        if matches is None or signals is None:
+            prev = {}
+            try:
+                row = sb.table("meta").select("value").eq("key", "last_scan").maybe_single().execute()
+                if row.data:
+                    prev = json.loads(row.data["value"]) or {}
+            except Exception:
+                prev = {}
+            matches = prev.get("matches", 0) if matches is None else matches
+            signals = prev.get("signals", 0) if signals is None else signals
         sb.table("meta").upsert({
             "key":        "last_scan",
             "value":      json.dumps({
@@ -2374,7 +2389,7 @@ def run():
         if not matches:
             log.info("💹 REPRICE — cache_soft_slate vide/expiré → exit (rien à repricer)")
             if sb:
-                _heartbeat(sb, now, 0, 0)
+                _heartbeat(sb, now, None, None)
             if credentials_failed:
                 raise SystemExit(1)
             return
@@ -2457,7 +2472,7 @@ def run():
     if GOLDEN_HOUR and not matches and ODDS_API_ENABLED:
         log.info("⚡ GOLDEN HOUR — 0 events dans T-2h → exit rapide (lignes stables)")
         if sb:
-            _heartbeat(sb, now, 0, 0)
+            _heartbeat(sb, now, None, None)
         if credentials_failed:
             raise SystemExit(1)
         return
@@ -2478,7 +2493,7 @@ def run():
         if not matches:
             log.info("💹 REPRICE — 0 match repricé par l'exchange → exit")
             if sb:
-                _heartbeat(sb, now, 0, 0)
+                _heartbeat(sb, now, None, None)
             if credentials_failed:
                 raise SystemExit(1)
             return

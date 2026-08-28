@@ -87,3 +87,53 @@ class TestPasDeTableDupliquee:
         rendu = api_src[api_src.index('render_template("index.html"'):][:400]
         for var in ("sport_emoji", "sport_label_short", "sport_order"):
             assert var in rendu, f"{var} n'est pas passé à index.html"
+
+
+class TestCompteARebours:
+    """Le « prochain scan » du dashboard dérive des crons réels de scan.yml.
+
+    Mesuré le 2026-08-28 : le compte à rebours visait :00/:30 en dur alors que
+    le tick golden est horaire depuis le 2026-07-23 — et il ne tournait même
+    pas sur l'état vide, tué par un TypeError d'initialisation (voir plus
+    bas). Règle n°6 : la cadence vit dans scripts/ci_scan_mode.py::CRON_MODES,
+    api/index.py la dérive, le template ne fait que la recevoir.
+    """
+
+    def test_les_specs_couvrent_tous_les_crons_de_scan(self):
+        from api.index import _SCAN_CRONS
+        from scripts.ci_scan_mode import CRON_MODES
+        assert len(_SCAN_CRONS) == len(CRON_MODES)
+        for spec in _SCAN_CRONS:
+            assert 0 <= spec["m"] < 60
+            assert spec["h"] is None or all(0 <= h < 24 for h in spec["h"])
+
+    def test_un_cron_exotique_leve_au_lieu_de_mentir(self, monkeypatch):
+        # Un cron que le parseur ne comprend pas doit faire échouer l'import
+        # (donc la suite), jamais afficher un compte à rebours faux.
+        import api.index as api
+        monkeypatch.setattr(api, "_CRON_MODES", {"3 2 * * 1": "standard"})
+        with pytest.raises(ValueError):
+            api._scan_cron_specs()
+
+    def test_le_template_recoit_les_crons_sans_cadence_en_dur(self):
+        src = TestPasDeTableDupliquee.JS.read_text(encoding="utf-8")
+        m = re.search(r"const SCAN_CRONS\s*=\s*(.+)", src)
+        assert m, "SCAN_CRONS a disparu de index.html"
+        assert m.group(1).strip().startswith("{{"), (
+            "SCAN_CRONS est codé en dur dans index.html — "
+            "il doit venir de api/index.py (scan_crons).")
+        api_src = (Path(__file__).resolve().parent.parent
+                   / "api" / "index.py").read_text(encoding="utf-8")
+        rendu = api_src[api_src.index('render_template("index.html"'):][:400]
+        assert "scan_crons" in rendu, "scan_crons n'est pas passé à index.html"
+
+    def test_l_initialisation_des_filtres_est_gardee_sur_l_etat_vide(self):
+        # L'état vide ne rend ni #sport-chips ni #signals-list : une init
+        # inconditionnelle jetait un TypeError qui tuait tout le script
+        # restant, compte à rebours compris — précisément sur la page que
+        # l'opérateur regarde quand il n'y a aucun signal (2026-08-28).
+        src = TestPasDeTableDupliquee.JS.read_text(encoding="utf-8")
+        garde = src.index("if(document.getElementById('signals-list'))")
+        assert garde < src.index("_buildSportChips();"), (
+            "l'init des filtres n'est plus gardée par la présence de "
+            "#signals-list — l'état vide re-cassera tout le script.")
