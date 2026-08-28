@@ -143,6 +143,57 @@ Réversible : `python scripts/odds_api_io_books.py clear`.
 
 ---
 
+## 2bis. odds-api.io — un pool de comptes ⏳ CÔTÉ CODE PRÊT le 2026-08-28
+
+### Le constat
+
+Le plan gratuit se compte PAR COMPTE : 500 requêtes/jour et 2 bookmakers.
+Avec un seul compte, à 13:00 UTC le 2026-08-28 le compteur était à 221/400,
+tout dépensé pour le football ; tennis, basketball, MMA, baseball et hockey
+sortaient en « rythme de dépense » à chaque tick. Le code accepte désormais
+plusieurs comptes (`core/odds_api_io.candidate_keys`) : budget tenu par
+compte, rythme de dépense sur le total, compte refusé (401/403/429) écarté
+pour le run et requête rejouée sur le suivant.
+
+⚠️ C'est un geste de COMPTE EXTERNE, et il n'est pas neutre : plusieurs
+comptes gratuits chez un même fournisseur peuvent contrevenir à ses
+conditions. api-sports a SUSPENDU le compte pour dépassement le 2026-08-20
+— un compte suspendu l'est pour de bon. Le budget reste à 400 sur 500 par
+compte, la marge ne se mange pas.
+
+### La commande
+
+1. Créer le ou les comptes supplémentaires sur odds-api.io, récupérer
+   chaque clé.
+2. Les poser dans `app_secrets` (lues avant l'environnement, sans
+   redéploiement) :
+
+   ```bash
+   python scripts/ops.py supabase secrets set ODDS_API_IO_KEYS "<clé2>,<clé3>"
+   ```
+
+   `ODDS_API_IO_KEY` reste le compte n° 1.
+3. Poser les 2 books de CHAQUE nouveau compte — une réponse est toujours
+   servie par UN compte, donc chaque compte doit se suffire :
+
+   ```bash
+   python scripts/odds_api_io_books.py suggest --compte 2
+   python scripts/odds_api_io_books.py set <book> --compte 2
+   ```
+
+### Vérifier
+
+```bash
+python scripts/ops.py sources        # odds-api.io : « N compte(s) · #1: books=… · #2: books=… »
+```
+
+Puis, au prochain scan, `odds-api.io[soccer]: … | comptes=2/2 | n/800 req`,
+et les sports du matin qui sortaient en « rythme de dépense » repartent.
+Un compte sans bookmaker se voit à la sonde ET au scan (« compte #N :
+aucun bookmaker sélectionné — écarté »).
+
+---
+
 ## 3. Cloudflare — Smart Placement ⚠️ ESSAYÉ, INSUFFISANT
 
 Activé le 2026-08-27 à 21:41. Mesuré au run 33119345516 : le colo est passé

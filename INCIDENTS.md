@@ -429,6 +429,29 @@ et à lignes indépendantes ajoute des matchs ET un vrai line shopping — un
 meilleur prix exécutable sur le MÊME pari est un edge honnête, pas un
 artefact. Réinitialisation : `PUT /bookmakers/selected/clear`.
 
+### odds-api.io : un POOL de comptes, budget par compte (2026-08-28)
+
+Le second slot posé (Bet365 + 1xbet, vérifié le 2026-08-28 : Bet365 cote
+5/5 des matchs sondés, 1xbet 4/5), le goulot suivant était le QUOTA : 221/400
+à 13:00 UTC, tout pour le foot, les cinq autres sports en « rythme de
+dépense » à chaque tick. Le plan se compte PAR COMPTE (500 req, 2 books) :
+`ODDS_API_IO_KEYS` (CSV, app_secrets d'abord) ajoute des comptes, sur le
+contrat de `core/odds_api.candidate_keys` — ordonné, dédupliqué, compte
+refusé (401/403/429) écarté pour le processus et MÊME requête rejouée sur le
+suivant. Trois règles à ne pas défaire :
+- le budget est tenu PAR COMPTE (`_bucket(clé)` = empreinte, jamais la clé :
+  le nom finit dans `meta`) — un compte à 400 ne coupe pas les autres ;
+- le rythme de dépense porte sur le TOTAL et reste `daily_quota.paced_
+  allowance` — aucune copie (`test_le_rythme_vit_a_UN_seul_endroit`) ;
+- les books sont lus PAR COMPTE et la garde « aucun bookmaker » passe AVANT
+  la requête calendrier : une réponse est servie par un seul compte, donc
+  chaque compte doit porter ses deux books lui-même
+  (`scripts/odds_api_io_books.py --compte N`).
+⚠️ Multi-comptes chez un fournisseur gratuit = risque de conditions
+d'utilisation ; api-sports a suspendu le compte le 2026-08-20. DAILY_BUDGET
+reste 400/500 par compte. Décision opérateur du 2026-08-28.
+Gardiens : `tests/test_odds_api_io.py` (bloc « Pool de comptes »).
+
 ### Périmètre sports (2026-08-22)
 
 eSports/tennis de table/volley/handball RETIRÉS

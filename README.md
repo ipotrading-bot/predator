@@ -164,7 +164,7 @@ http://localhost:5000
 | `SUPABASE_URL` / `SUPABASE_KEY` / `SUPABASE_SERVICE_KEY` | Supabase (anon pour lire, service_role pour écrire) | ✅ |
 | `TELEGRAM_BOT_TOKEN` / `TELEGRAM_CHAT_ID` | Notifications Telegram | ✅ |
 | `GROQ_API_KEY` / `TAVILY_API_KEY` | Recherche web (settlement + prix Pinnacle de repli) | ❌ |
-| `API_SPORTS_KEY` / `ODDS_API_IO_KEY` | Books soft authentifiés par clé (Tier 2) | ❌ |
+| `API_SPORTS_KEY` / `ODDS_API_IO_KEY` (+ pool `ODDS_API_IO_KEYS`) | Books soft authentifiés par clé (Tier 2) | ❌ |
 | `MISTRAL_API_KEY` | Fournisseur du registre IA — lanes `filter` / `analyze` | ❌ |
 | `NFL_SEASON_START` | Date d'ouverture NFL (défaut `2026-09-10`) — pas de scan de présaison | ❌ |
 | `ODDS_API_RESERVE_CREDITS` / `BACKGROUND_MIN_INTERVAL_MIN` | Politique de dépense OddsAPI (`core/scan_windows.py`) — défauts 60 / 180 | ❌ |

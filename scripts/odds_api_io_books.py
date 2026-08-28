@@ -34,6 +34,7 @@ USAGE
     python scripts/odds_api_io_books.py suggest           # classe les candidats par couverture
     python scripts/odds_api_io_books.py set <book>        # pose le second slot (DEMANDE confirmation)
     python scripts/odds_api_io_books.py clear             # remet la sélection à zéro
+    python scripts/odds_api_io_books.py list --compte 2   # idem sur le 2e compte du pool
 
 La clé est lue comme partout ailleurs (`core/secret_store`) : `app_secrets`
 d'abord, puis l'environnement. Aucune valeur de secret n'est imprimée.
@@ -57,7 +58,7 @@ sys.path.insert(0, __file__.rsplit("/scripts/", 1)[0])
 load_dotenv()
 
 from core import odds_api_io as oai          # noqa: E402
-from core.secret_store import get_secret     # noqa: E402
+from core.odds_api_io import candidate_keys  # noqa: E402
 
 # Familles à ne PAS proposer en second slot : mêmes lignes que le premier.
 # Une liste tenue à la main est une liste qui diverge — celle-ci reste
@@ -73,11 +74,16 @@ SPORTS_TEST = ("soccer",)
 MAX_SONDES = 12
 
 
-def _key() -> str:
-    k = get_secret("ODDS_API_IO_KEY")
-    if not k:
-        sys.exit("ODDS_API_IO_KEY absente (app_secrets ou environnement).")
-    return k
+def _key(compte: int = 1) -> str:
+    """Le compte n° `compte` (1 = le premier) du pool ODDS_API_IO_KEYS /
+    ODDS_API_IO_KEY — chaque compte a ses PROPRES slots bookmaker, donc ses
+    propres `list`/`suggest`/`set`."""
+    keys = candidate_keys()
+    if not keys:
+        sys.exit("ODDS_API_IO_KEY / ODDS_API_IO_KEYS absentes (app_secrets ou environnement).")
+    if not 1 <= compte <= len(keys):
+        sys.exit(f"--compte {compte} : le pool compte {len(keys)} compte(s).")
+    return keys[compte - 1]
 
 
 def _bookmakers_disponibles(key: str) -> list[str]:
@@ -263,9 +269,11 @@ def main() -> None:
     ap.add_argument("--marge", action="store_true",
                     help="entamer sciemment la marge de sûreté du budget "
                          "journalier (geste d'opérateur, quelques requêtes)")
+    ap.add_argument("--compte", type=int, default=1, metavar="N",
+                    help="compte du pool ODDS_API_IO_KEYS à gérer (1 = le premier)")
     a = ap.parse_args()
 
-    key = _key()
+    key = _key(a.compte)
     if a.action == "list":
         cmd_list(key)
     elif a.action == "suggest":

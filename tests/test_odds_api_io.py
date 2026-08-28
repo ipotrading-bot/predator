@@ -205,7 +205,10 @@ def test_budget_exhausted_mid_cycle_keeps_what_was_fetched(monkeypatch):
                 for i in range(0, 10)]]
     _wire(monkeypatch, events, batches)
     seq = iter([0, 0, oai.DAILY_BUDGET, oai.DAILY_BUDGET])
-    monkeypatch.setattr(oai.daily_quota, "spent", lambda bucket: next(seq, oai.DAILY_BUDGET))
+    # Le compteur TOTAL suit la séquence ; les compteurs PAR COMPTE (pool,
+    # 2026-08-28) restent à zéro — c'est le total qui coupe ici.
+    monkeypatch.setattr(oai.daily_quota, "spent",
+                        lambda bucket: next(seq, oai.DAILY_BUDGET) if bucket == oai.QUOTA_BUCKET else 0)
     out = oai.fetch_sport("soccer", api_key="k")
     assert len(out) == 10          # le premier lot est conservé, pas jeté
 
@@ -265,3 +268,100 @@ def test_fetch_all_isolates_a_failing_sport(monkeypatch):
     monkeypatch.setattr(oai, "fetch_sport", flaky)
     out = oai.fetch_all(sports=["soccer", "basketball", "hockey"])
     assert {m["match"] for m in out} == {"soccer match", "hockey match"}
+
+
+# ── Pool de comptes (2026-08-28) ──────────────────────────────────────
+# Le plan gratuit se compte PAR COMPTE (500 req, 2 books). Le pool suit le
+# contrat de core/odds_api.candidate_keys : ordonné, dédupliqué, compte
+# refusé écarté et requête rejouée sur le suivant, budget par compte.
+
+def _wire_pool(monkeypatch, events, odds_payload, *, refus=None, books_by_key=None):
+    """refus : {clé: status HTTP} — le compte répond ce code à /odds/multi.
+    books_by_key : {clé: [...]} — sélection propre à chaque compte."""
+    refus = refus or {}
+    books_by_key = books_by_key or {}
+    calls = []          # (path, clé, bookmakers)
+
+    def fake_get(url, timeout=None, params=None):
+        key = params["apiKey"]
+        path = url.rsplit("/v3/", 1)[1]
+        calls.append((path, key, params.get("bookmakers")))
+        if path == "bookmakers/selected":
+            return _Resp({"bookmakers": list(books_by_key.get(key, ["1xbet"]))})
+        if path == "events":
+            return _Resp(events)
+        if key in refus:
+            return _Resp(None, status=refus[key])
+        return _Resp(odds_payload)
+
+    monkeypatch.setattr(oai.requests, "get", fake_get)
+    oai.reset_cache()
+    return calls
+
+
+def test_le_pool_lit_KEYS_puis_KEY_et_dedoublonne(monkeypatch):
+    monkeypatch.setattr(oai, "get_secret",
+                        lambda name, **kw: {"ODDS_API_IO_KEYS": "a, b;b", "ODDS_API_IO_KEY": "c"}.get(name))
+    monkeypatch.setenv("ODDS_API_IO_KEY_2", "a")
+    assert oai.candidate_keys() == ["a", "b", "c"]
+    assert oai.candidate_keys("z") == ["z", "a", "b", "c"]     # l'explicite d'abord
+
+
+def test_un_compte_refuse_est_ecarte_et_le_meme_lot_rejoue_sur_le_suivant(monkeypatch):
+    events = [_event(1, "A", "B")]
+    payload = [_odds_event(1, "A", "B", {"1xbet": [_ml(2.0, 3.4, 3.6)]})]
+    calls = _wire_pool(monkeypatch, events, payload, refus={"k1": 429})
+    out = oai.fetch_sport("soccer", api_key="k1,k2")
+    assert [m["match"] for m in out] == ["A vs B"]
+    multi = [(k, b) for p, k, b in calls if p == "odds/multi"]
+    assert multi == [("k1", "1xbet"), ("k2", "1xbet")], "même lot, compte suivant"
+    assert "k1" in oai._dead_keys
+
+
+def test_les_books_sont_ceux_du_compte_qui_sert(monkeypatch):
+    events = [_event(1, "A", "B")]
+    payload = [_odds_event(1, "A", "B", {"Betano": [_ml(2.0, 3.4, 3.6)]})]
+    calls = _wire_pool(monkeypatch, events, payload, refus={"k1": 401},
+                       books_by_key={"k1": ["1xbet", "Bet365"], "k2": ["Betano", "Unibet"]})
+    oai.fetch_sport("soccer", api_key="k1,k2")
+    multi = [(k, b) for p, k, b in calls if p == "odds/multi"]
+    assert multi[-1] == ("k2", "Betano,Unibet")
+
+
+def test_le_budget_est_tenu_par_compte(monkeypatch):
+    # Compte #1 à son plafond du jour, #2 intact : le cycle part sur #2 sans
+    # qu'aucune requête ne soit payée sur #1.
+    events = [_event(1, "A", "B")]
+    payload = [_odds_event(1, "A", "B", {"1xbet": [_ml(2.0, 3.4, 3.6)]})]
+    calls = _wire_pool(monkeypatch, events, payload)
+    plein = oai._bucket("k1")
+    monkeypatch.setattr(oai.daily_quota, "spent",
+                        lambda bucket: oai.DAILY_BUDGET if bucket == plein else 0)
+    out = oai.fetch_sport("soccer", api_key="k1,k2")
+    assert len(out) == 1
+    assert {k for _p, k, _b in calls} == {"k2"}
+
+
+def test_le_rythme_porte_sur_le_total_des_comptes(monkeypatch):
+    # Deux comptes = 2 × DAILY_BUDGET : le rythme s'ouvre sur ce total.
+    seen = {}
+    monkeypatch.setattr(oai.daily_quota, "paced_allowance",
+                        lambda budget, floor, now=None: seen.setdefault("budget", budget) and 0)
+    _wire_pool(monkeypatch, [], [])
+    oai.fetch_sport("soccer", api_key="k1,k2")
+    assert seen["budget"] == 2 * oai.DAILY_BUDGET
+
+
+def test_tous_les_comptes_refuses_rend_vide_sans_exception(monkeypatch, caplog):
+    events = [_event(1, "A", "B")]
+    calls = _wire_pool(monkeypatch, events, [], refus={"k1": 403, "k2": 401})
+    with caplog.at_level(logging.WARNING, logger="PREDATOR.odds_api_io"):
+        assert oai.fetch_sport("soccer", api_key="k1,k2") == []
+    assert sum(1 for p, _k, _b in calls if p == "odds/multi") == 2
+    assert sum("écarté" in r.getMessage() for r in caplog.records) == 2
+
+
+def test_probe_rend_un_etat_par_compte(monkeypatch):
+    _wire_pool(monkeypatch, [], [], books_by_key={"k1": ["1xbet", "Bet365"], "k2": []})
+    ok, detail = oai.probe("k1,k2")
+    assert ok and "2 compte(s)" in detail and "#1: books=['1xbet', 'Bet365']" in detail

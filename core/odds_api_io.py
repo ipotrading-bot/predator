@@ -43,8 +43,10 @@ exploitable sans aucune autre source.
 CGU : les cotes servent au CALCUL interne. Leur redistribution telle quelle
 est interdite — ne pas les republier brutes sur le dashboard public.
 """
+import hashlib
 import logging
 import os
+import re
 from datetime import datetime, timedelta, timezone
 
 import requests
@@ -88,15 +90,73 @@ TIMEOUT      = int(os.environ.get("ODDS_API_IO_TIMEOUT", "25"))
 
 SHARP_NAMES = ("pinnacle", "betfair exchange", "smarkets", "matchbook")
 
-_selected_cache: list[str] | None = None
+# ── POOL DE COMPTES (2026-08-28) ──────────────────────────────────────
+# Le plan gratuit fait 500 req/jour et 2 bookmakers PAR COMPTE. Avec un seul
+# compte, tennis/basketball/mma/hockey sortaient en « rythme de dépense » à
+# chaque tick (mesuré le 2026-08-28 : 221/400 à 13:00, tout pour le foot).
+# `ODDS_API_IO_KEYS` (CSV — app_secrets d'abord, puis l'environnement) ajoute
+# des comptes ; `ODDS_API_IO_KEY` reste lue et forme le premier.
+# Même contrat que core/odds_api.candidate_keys : ordonné, dédupliqué ; un
+# compte refusé (401/403/429) est écarté pour le PROCESSUS et la MÊME
+# requête est rejouée sur le suivant. Le budget est tenu PAR COMPTE (chaque
+# compte a son propre plafond) ; le rythme de dépense porte sur le TOTAL et
+# reste celui de core/daily_quota — aucune copie.
+# ⚠️ Un compte suspendu pour abus l'est pour de bon (api-sports, 2026-08-20) :
+# DAILY_BUDGET reste 400 sur 500 PAR compte, la marge ne se mange pas. Les
+# bookmakers se choisissent compte par compte (scripts/odds_api_io_books.py
+# --compte N) : une réponse est toujours servie par UN compte, donc les
+# deux slots de chaque compte doivent porter des books utiles à eux seuls.
+POOL_SECRET = "ODDS_API_IO_KEYS"
+_REFUS = (401, 403, 429)          # le compte, pas la requête
+_selected_cache: dict[str, list[str]] = {}
+_dead_keys: dict[str, str] = {}
 
 
-def _key(api_key: str | None = None) -> str | None:
-    return api_key or get_secret("ODDS_API_IO_KEY")
+def _split_keys(raw: str | None) -> list[str]:
+    return [k.strip() for k in re.split(r"[,;\s]+", raw or "") if k.strip()]
+
+
+def candidate_keys(explicit: str | None = None) -> list[str]:
+    """Pool ordonné et dédupliqué — voir le bloc de commentaire ci-dessus."""
+    out: list[str] = []
+
+    def add(raw: str | None) -> None:
+        for k in _split_keys(raw):
+            if k not in out:
+                out.append(k)
+
+    add(explicit)
+    add(get_secret(POOL_SECRET))
+    add(get_secret("ODDS_API_IO_KEY"))
+    # L'environnement rejoint TOUJOURS le pool, même quand app_secrets a une
+    # valeur (même leçon qu'OddsAPI : une clé neuve en env restait invisible
+    # derrière une clé périmée en table).
+    add(os.environ.get(POOL_SECRET))
+    add(os.environ.get("ODDS_API_IO_KEY"))
+    for i in range(2, 10):
+        add(os.environ.get(f"ODDS_API_IO_KEY_{i}"))
+    return out
+
+
+def _bucket(key: str) -> str:
+    """Compteur journalier PAR COMPTE — une empreinte, jamais la clé : le
+    nom du bucket finit dans la table meta."""
+    return f"{QUOTA_BUCKET}_{hashlib.sha1(key.encode()).hexdigest()[:8]}"
+
+
+def live_keys(keys: list[str]) -> list[str]:
+    """Comptes ni refusés ce processus, ni à leur plafond du jour."""
+    return [k for k in keys
+            if k not in _dead_keys and daily_quota.spent(_bucket(k)) < DAILY_BUDGET]
+
+
+def mark_dead(key: str, reason: str) -> None:
+    _dead_keys[key] = reason
 
 
 def _get(path: str, key: str, params: dict) -> tuple[int, object]:
-    """(status, corps) — ne lève jamais. Compte la requête au budget du jour."""
+    """(status, corps) — ne lève jamais. Compte la requête au budget du jour,
+    au total ET au compte."""
     try:
         r = requests.get(f"{BASE_URL}/{path}", timeout=TIMEOUT,
                          params={**params, "apiKey": key})
@@ -104,6 +164,7 @@ def _get(path: str, key: str, params: dict) -> tuple[int, object]:
         log.warning("odds-api.io %s: %s", path, e)
         return 0, None
     daily_quota.add(QUOTA_BUCKET, 1)
+    daily_quota.add(_bucket(key), 1)
     if r.status_code != 200:
         body = (r.text or "")[:160]
         log.warning("odds-api.io %s: HTTP %d %s", path, r.status_code, body)
@@ -116,27 +177,55 @@ def _get(path: str, key: str, params: dict) -> tuple[int, object]:
 
 
 def selected_bookmakers(key: str, *, force: bool = False) -> list[str]:
-    """Books actifs sur le compte. `ODDS_API_IO_BOOKMAKERS` court-circuite
-    l'appel réseau ; sinon le résultat est mémorisé pour le processus."""
-    global _selected_cache
+    """Books actifs sur CE compte. `ODDS_API_IO_BOOKMAKERS` court-circuite
+    l'appel réseau (pour tous les comptes) ; sinon le résultat est mémorisé
+    par compte pour le processus."""
     forced = os.environ.get("ODDS_API_IO_BOOKMAKERS", "").strip()
     if forced:
         return [b.strip() for b in forced.split(",") if b.strip()]
-    if _selected_cache is not None and not force:
-        return _selected_cache
+    if key in _selected_cache and not force:
+        return _selected_cache[key]
     _, body = _get("bookmakers/selected", key, {})
     books: list[str] = []
     if isinstance(body, dict):
         books = [str(b) for b in (body.get("bookmakers") or [])]
     elif isinstance(body, list):
         books = [str(b) for b in body]
-    _selected_cache = books
+    _selected_cache[key] = books
     return books
 
 
 def reset_cache() -> None:
-    global _selected_cache
-    _selected_cache = None
+    """Oublie les books mémorisés et les comptes écartés (tests, rotation)."""
+    _selected_cache.clear()
+    _dead_keys.clear()
+
+
+def _request(path: str, params_for, keys: list[str], sport: str) -> tuple[int, object, str | None]:
+    """Une requête servie par le premier compte vivant ; un compte refusé est
+    écarté et la MÊME requête rejouée sur le suivant. `params_for(key)` rend
+    les paramètres (les books sont par compte), ou None si ce compte n'est
+    pas exploitable. Rend (status, corps, compte utilisé)."""
+    while True:
+        vivants = live_keys(keys)
+        if not vivants:
+            return 0, None, None
+        key = vivants[0]
+        num = keys.index(key) + 1
+        params = params_for(key)
+        if params is None:
+            mark_dead(key, "aucun bookmaker sélectionné")
+            log.warning("odds-api.io[%s]: compte #%d : aucun bookmaker sélectionné — écarté "
+                        "(scripts/odds_api_io_books.py --compte %d)", sport, num, num)
+            continue
+        status, body = _get(path, key, params)
+        if status in _REFUS:
+            mark_dead(key, f"HTTP {status}")
+            log.warning("odds-api.io[%s]: compte #%d écarté (HTTP %d) — requête rejouée "
+                        "sur le suivant (%d compte(s) vivant(s))",
+                        sport, num, status, len(live_keys(keys)))
+            continue
+        return status, body, key
 
 
 def _odd(val) -> float:
@@ -310,39 +399,41 @@ def fetch_sport(sport: str, api_key: str | None = None, hours_ahead: int = 24,
     if cfg is None:
         return []
     slug, sport_id, draw = cfg
-    key = _key(api_key)
-    if not key:
-        log.debug("odds-api.io: pas de clé (ODDS_API_IO_KEY) — source ignorée")
+    keys = candidate_keys(api_key)
+    if not keys:
+        log.debug("odds-api.io: pas de clé (ODDS_API_IO_KEY / ODDS_API_IO_KEYS) — source ignorée")
         return []
 
+    budget_total = DAILY_BUDGET * len(keys)
     used_before = daily_quota.spent(QUOTA_BUCKET)
-    if used_before >= DAILY_BUDGET:
-        log.warning("odds-api.io[%s]: budget journalier atteint (%d/%d) — cycle ignoré",
-                    sport, used_before, DAILY_BUDGET)
+    if used_before >= budget_total or not live_keys(keys):
+        log.warning("odds-api.io[%s]: budget journalier atteint (%d/%d, %d compte(s)) "
+                    "— cycle ignoré", sport, used_before, budget_total, len(keys))
         return []
-    ouverture = daily_quota.paced_allowance(DAILY_BUDGET, CYCLE_COST)
+    ouverture = daily_quota.paced_allowance(budget_total, CYCLE_COST)
     if used_before >= ouverture:
         log.info("odds-api.io[%s]: rythme de dépense — %d/%d dépensées, "
                  "l'ouverture de cette heure est %d. Le reste est gardé pour "
                  "les scans du soir : sans prix soft, un match sharp ne "
-                 "produit aucun edge.", sport, used_before, DAILY_BUDGET, ouverture)
-        return []
-
-    books = selected_bookmakers(key)
-    if not books:
-        log.warning("odds-api.io[%s]: aucun bookmaker sélectionné sur le compte "
-                    "— rien à demander", sport)
+                 "produit aucun edge.", sport, used_before, budget_total, ouverture)
         return []
 
     now   = datetime.now(timezone.utc)
     until = now + timedelta(hours=hours_ahead)
     cap   = max_events or MAX_EVENTS
-    status, body = _get("events", key, {
-        "sport": slug,
-        "from": now.strftime("%Y-%m-%dT%H:%M:%SZ"),
-        "to":   until.strftime("%Y-%m-%dT%H:%M:%SZ"),
-        "limit": str(cap),
-    })
+    def _params_events(k: str):
+        # Vérifié AVANT le calendrier : un compte sans bookmaker ne peut rien
+        # demander, autant ne pas lui payer la requête /events.
+        if not selected_bookmakers(k):
+            return None
+        return {
+            "sport": slug,
+            "from": now.strftime("%Y-%m-%dT%H:%M:%SZ"),
+            "to":   until.strftime("%Y-%m-%dT%H:%M:%SZ"),
+            "limit": str(cap),
+        }
+
+    status, body, _ = _request("events", _params_events, keys, sport)
     if status != 200 or not isinstance(body, list):
         return []
 
@@ -354,19 +445,23 @@ def fetch_sport(sport: str, api_key: str | None = None, hours_ahead: int = 24,
         return []
 
     matches: list[dict] = []
-    book_param = ",".join(books)
+    book_param = ""
     for i in range(0, len(events), MULTI_BATCH):
-        if daily_quota.spent(QUOTA_BUCKET) >= DAILY_BUDGET:
+        if daily_quota.spent(QUOTA_BUCKET) >= budget_total or not live_keys(keys):
             log.warning("odds-api.io[%s]: budget épuisé en cours de cycle — "
                         "%d matchs conservés", sport, len(matches))
             break
         batch = events[i:i + MULTI_BATCH]
-        status, body = _get("odds/multi", key, {
-            "eventIds": ",".join(str(e.get("id")) for e in batch),
-            "bookmakers": book_param,
-        })
+        ids = ",".join(str(e.get("id")) for e in batch)
+
+        def _params(k: str, ids: str = ids):
+            books = selected_bookmakers(k)
+            return {"eventIds": ids, "bookmakers": ",".join(books)} if books else None
+
+        status, body, key = _request("odds/multi", _params, keys, sport)
         if status != 200 or not isinstance(body, list):
             break
+        book_param = ",".join(selected_bookmakers(key))
         for ev in body:
             m = _to_match(ev, sport, sport_id, draw)
             if m:
@@ -374,9 +469,10 @@ def fetch_sport(sport: str, api_key: str | None = None, hours_ahead: int = 24,
 
     n_sharp = sum(1 for m in matches if m.get("odds_pinnacle"))
     log.info("odds-api.io[%s]: %d matchs (%d avec prix sharp) / %d à venir | "
-             "books=%s | %d req au total aujourd'hui",
+             "books=%s | comptes=%d/%d | %d/%d req au total aujourd'hui",
              sport, len(matches), n_sharp, len(events), book_param,
-             daily_quota.spent(QUOTA_BUCKET))
+             len(live_keys(keys)), len(keys),
+             daily_quota.spent(QUOTA_BUCKET), budget_total)
     return matches
 
 
@@ -392,13 +488,21 @@ def fetch_all(hours_ahead: int = 24, sports: list[str] | None = None) -> list[di
 
 
 def probe(api_key: str | None = None) -> tuple[bool, str]:
-    """(utilisable ?, détail) — pour scripts/ops.py sources."""
-    key = _key(api_key)
-    if not key:
-        return False, "pas de clé (ODDS_API_IO_KEY)"
-    status, body = _get("bookmakers/selected", key, {})
-    if status != 200:
-        return False, f"HTTP {status}"
-    books = (body or {}).get("bookmakers") if isinstance(body, dict) else body
-    used = daily_quota.spent(QUOTA_BUCKET)
-    return True, f"OK — books={books} | {used}/{DAILY_BUDGET} req aujourd'hui"
+    """(utilisable ?, détail) — pour scripts/ops.py sources. Un compte par
+    ligne : un compte sans bookmaker ou refusé se voit ici, pas au scan."""
+    keys = candidate_keys(api_key)
+    if not keys:
+        return False, "pas de clé (ODDS_API_IO_KEY / ODDS_API_IO_KEYS)"
+    parts, ok_any = [], False
+    for i, key in enumerate(keys, 1):
+        status, body = _get("bookmakers/selected", key, {})
+        if status != 200:
+            parts.append(f"#{i}: HTTP {status}")
+            continue
+        ok_any = True
+        books = (body or {}).get("bookmakers") if isinstance(body, dict) else body
+        parts.append(f"#{i}: books={books} | {daily_quota.spent(_bucket(key))}/{DAILY_BUDGET}")
+    total = daily_quota.spent(QUOTA_BUCKET)
+    return ok_any, (f"{'OK' if ok_any else 'KO'} — {len(keys)} compte(s) · "
+                    + " · ".join(parts)
+                    + f" | total {total}/{DAILY_BUDGET * len(keys)} req aujourd'hui")
