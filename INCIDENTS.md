@@ -491,6 +491,33 @@ le repaie donc plus jamais. Rendement mesuré 10 % → 30 % dès le 2e run, et
 croissant. La mémoire est refermée sur le sitemap courant à chaque écriture,
 sinon elle gonfle sans fin.
 
+### Le pont d'alias avait DEUX chemins morts en silence (2026-08-28)
+
+Mesuré au scan de 14:19 : odds500 rend **27 matchs, 27 avec prix sharp réel**
+— et **26 sont écartés « faute d'alias fiable »**, 7M à court de budget
+(90/80). L'estimation « ~11 jours pour converger » (ci-dessous) reposait sur
+le seul chemin 7M ; deux autres existaient et n'étaient branchés nulle part :
+1. **Le slate de confiance du run** (api-sports/Matchbook/titan007, noms
+   anglais). `measure_against` apparie DÉJÀ ces fixtures à celles de 500.com
+   par temps + ligue + structure — mais seulement APRÈS `resolve_names`, qui
+   venait de les jeter. Les matchs mesurables étaient exactement ceux qu'on
+   écartait. `learn_from_trusted` fait le même appariement AVANT, et nourrit
+   `apply_pairing(canonical_source="trusted")` : gratuit, zéro requête,
+   confiance 0,7 comme 7M (même nature de preuve, aucun nom).
+2. **`team_aliases.resolve_with_ai`** (lane `translate_cjk`, 40 appels/jour
+   sur les modèles chinois du registre) — écrite le 2026-08-22, **jamais
+   appelée** : 12 alias en base, tous `sevenm`, zéro `ai`, aucune clé
+   `quota_alias_ai_*` jamais écrite. Capacité morte en silence, règle 6.
+   Branchée dans `resolve_names` pour les noms encore inconnus.
+⛔ L'IA PROPOSE, ELLE NE DÉCIDE PAS. Un alias IA part à 0,4 sous le seuil de
+0,6 : le match reste écarté tant que deux appariements indépendants (7M ou
+slate de confiance) ne l'ont pas confirmé. `resolve_names` ignore la valeur
+rendue par l'IA et ne lit que `canonical()`. Un nom déjà proposé ne repasse
+pas par l'IA (c'est un dictionnaire, pas un traducteur), et une panne IA
+n'écarte rien de plus.
+Gardiens : `tests/test_free_sources.py::TestLesDeuxChemainsQuiManquaient`,
+`tests/test_team_aliases.py::TestSeuilDeConfiance`.
+
 ### Le proxy gratuit rate une requête sur trois — et ça coûtait la source (2026-08-28)
 
 Mesuré au lendemain du déblocage, trois GET identiques sur 500.com à travers

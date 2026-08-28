@@ -45,6 +45,11 @@ def dico(monkeypatch):
     monkeypatch.setattr(team_aliases, "canonical", canonical)
     monkeypatch.setattr(team_aliases, "apply_pairing",
                         lambda *a, **k: {"appris": 0, "confirmés": 0, "contredits": 0})
+    # L'IA ne décide jamais : par défaut elle ne propose rien.
+    store_ai = []
+    monkeypatch.setattr(team_aliases, "resolve_with_ai",
+                        lambda source, alias, league="", **kw: store_ai.append(alias) or None)
+    store["_ia"] = store_ai
     return store
 
 
@@ -250,3 +255,48 @@ class TestCurseurDeBalayage:
         monkeypatch.setattr(sevenm.time, "sleep", lambda s: None)
         sevenm.fetch_fixtures(max_matches=3, offset=9)
         assert vus == ["9", "0", "1"]
+
+
+class TestLesDeuxChemainsQuiManquaient:
+    """2026-08-28 : 27 matchs odds500 avec prix sharp réel, 26 écartés faute
+    d'alias, 7M à court de budget (90/80) — alors que (a) le slate de
+    confiance du run portait les noms anglais de ces mêmes matchs et que
+    (b) `team_aliases.resolve_with_ai` existait depuis le 2026-08-22 sans
+    être appelée nulle part."""
+
+    def test_le_slate_de_confiance_enseigne_les_alias_sans_requete(self, monkeypatch, dico):
+        seen = {}
+        monkeypatch.setattr(team_aliases, "apply_pairing",
+                            lambda source, pairs, canonical_source="sevenm":
+                            seen.update(source=source, n=len(pairs), via=canonical_source)
+                            or {"appris": len(pairs) * 2, "confirmés": 0, "contredits": 0})
+        cn = _match()                                     # 曼联 vs 赫尔城, Pinnacle
+        trusted = dict(_match(mid="t1", home="Manchester United", away="Hull City",
+                              needs=False))
+        trusted["_alias_source"] = "api_sports"
+        cn_fx = [FS._as_fixture(cn, "odds500")]
+        bilan = FS.learn_from_trusted(cn_fx, [trusted])
+        assert seen == {"source": "odds500", "n": 1, "via": "trusted"}
+        assert bilan["appris"] == 2
+
+    def test_sans_slate_de_confiance_rien_n_est_appris_ni_leve(self, dico):
+        assert FS.learn_from_trusted([FS._as_fixture(_match(), "odds500")], []) == \
+            {"appris": 0, "confirmés": 0, "contredits": 0}
+
+    def test_l_IA_est_sollicitee_pour_un_nom_inconnu_mais_ne_decide_pas(self, dico):
+        dico.update({"曼联": "Manchester United"})        # 赫尔城 inconnu
+        out, dropped = FS.resolve_names([_match()])
+        assert dico["_ia"] == ["赫尔城"], "l'IA doit être consultée pour le nom manquant"
+        assert out == [] and dropped == 1, "proposition IA ≠ alias confirmé : le match reste écarté"
+
+    def test_un_nom_connu_ne_sollicite_jamais_l_IA(self, dico):
+        dico.update({"曼联": "Manchester United", "赫尔城": "Hull City"})
+        FS.resolve_names([_match()])
+        assert dico["_ia"] == []
+
+    def test_une_panne_IA_n_ecarte_rien_de_plus(self, monkeypatch, dico):
+        def boom(*a, **k):
+            raise RuntimeError("quota")
+        monkeypatch.setattr(team_aliases, "resolve_with_ai", boom)
+        out, dropped = FS.resolve_names([_match()])
+        assert out == [] and dropped == 1               # même verdict, pas d'exception

@@ -218,6 +218,26 @@ def learn_aliases(cn_fixtures: list, budget: int | None = None) -> dict:
     return team_aliases.apply_pairing("odds500", pairs)
 
 
+def learn_from_trusted(cn_fixtures: list, trusted: list) -> dict:
+    """Apprend les alias en appariant 500.com au slate de CONFIANCE du run
+    (api-sports/Matchbook/titan007 — noms anglais), par temps + ligue +
+    structure de cotes, sans aucun nom. Gratuit : zéro requête, zéro appel IA.
+
+    C'est le chemin qui manquait (2026-08-28) : `measure_against` apparie
+    déjà ces mêmes fixtures pour mesurer la divergence — mais seulement APRÈS
+    la résolution des noms, qui les avait écartées. Les matchs mesurables
+    étaient donc exactement ceux qu'on jetait faute d'alias : 26 sur 27 ce
+    jour-là, 7M à court de budget (90/80).
+    """
+    if not cn_fixtures or not trusted:
+        return {"appris": 0, "confirmés": 0, "contredits": 0}
+    right = [f for f in (_as_fixture(m, "trusted") for m in trusted) if f]
+    pairs = pair_fixtures(cn_fixtures, right)
+    if not pairs:
+        return {"appris": 0, "confirmés": 0, "contredits": 0}
+    return team_aliases.apply_pairing("odds500", pairs, canonical_source="trusted")
+
+
 def resolve_names(matches: list) -> tuple:
     """Remplace les libellés chinois par les noms canoniques.
 
@@ -225,18 +245,41 @@ def resolve_names(matches: list) -> tuple:
     pas est écarté — jamais émis avec un libellé brut. C'est le seul
     comportement sûr : un nom non résolu casserait le settlement six heures
     plus tard, et un nom MAL résolu produirait un signal sur le mauvais match.
+
+    Pour un nom encore inconnu, l'IA (`team_aliases.resolve_with_ai`, lane
+    translate_cjk, budget journalier borné) PROPOSE un alias à confiance 0,4 —
+    elle ne décide jamais : le match reste écarté tant qu'un appariement
+    indépendant (7M ou slate de confiance) n'a pas confirmé jusqu'au seuil.
+    Un nom déjà proposé ne repasse pas par l'IA (dictionnaire, pas traducteur).
+    Cette fonction existait depuis le 2026-08-22 et n'était appelée nulle part
+    (capacité morte en silence, INCIDENTS.md).
     """
-    out, dropped = [], 0
+    out, dropped, proposes = [], 0, 0
     for m in matches:
         if not m.get("_needs_alias"):
             out.append(m)
             continue
         ids = m.get("_alias_team_ids") or (None, None)
         league = m.get("league") or ""
-        home = team_aliases.canonical("odds500", m.get("home", ""),
-                                      ids[0] if len(ids) > 0 else None, league)
-        away = team_aliases.canonical("odds500", m.get("away", ""),
-                                      ids[1] if len(ids) > 1 else None, league)
+        raw_home, raw_away = m.get("home", ""), m.get("away", "")
+        id_home = ids[0] if len(ids) > 0 else None
+        id_away = ids[1] if len(ids) > 1 else None
+        home = team_aliases.canonical("odds500", raw_home, id_home, league)
+        away = team_aliases.canonical("odds500", raw_away, id_away, league)
+        if not home or not away:
+            # L'IA propose pour ce qui manque ; la valeur rendue n'est PAS
+            # utilisée comme nom — seul canonical() (seuil de confiance) l'est.
+            for raw, tid, opp in ((raw_home, id_home, raw_away), (raw_away, id_away, raw_home)):
+                if raw and not team_aliases.canonical("odds500", raw, tid, league):
+                    try:
+                        if team_aliases.resolve_with_ai("odds500", raw, league, opponent=opp,
+                                                        match_date=m.get("commence_time", ""),
+                                                        team_id=tid):
+                            proposes += 1
+                    except Exception as e:      # jamais bloquant
+                        log.debug("free_sources: IA alias %r : %s", raw, e)
+            home = team_aliases.canonical("odds500", raw_home, id_home, league)
+            away = team_aliases.canonical("odds500", raw_away, id_away, league)
         if not home or not away:
             dropped += 1
             log.debug("free_sources: %s écarté — alias manquant (%s / %s)",
@@ -248,6 +291,9 @@ def resolve_names(matches: list) -> tuple:
         m["_needs_alias"] = False
         m["_alias_resolved"] = True
         out.append(m)
+    if proposes:
+        log.info("free_sources: %d alias proposé(s) par l'IA — en attente de "
+                 "confirmation par appariement", proposes)
     if dropped:
         log.info("free_sources: %d match(s) écarté(s) faute d'alias fiable", dropped)
     return out, dropped
@@ -376,10 +422,18 @@ def fetch_odds500(sport_id: int, trusted: list | None = None) -> list:
         return []
 
     # 1. apprendre — sur les fixtures brutes, avant toute résolution
+    cn_fixtures = [f for f in (_as_fixture(m, "odds500") for m in matches) if f]
     try:
-        learn_aliases([f for f in (_as_fixture(m, "odds500") for m in matches) if f])
+        learn_aliases(cn_fixtures)
     except Exception as e:
         log.warning("free_sources: apprentissage d'alias impossible (%s)", e)
+    # 1bis. le slate de confiance du run enseigne aussi — gratuit, immédiat
+    try:
+        bilan = learn_from_trusted(cn_fixtures, trusted or [])
+        if any(bilan.values()):
+            log.info("free_sources: alias via slate de confiance — %s", bilan)
+    except Exception as e:
+        log.warning("free_sources: apprentissage via slate de confiance impossible (%s)", e)
 
     # 2. résoudre — un nom non résolu = match écarté
     resolved, dropped = resolve_names(matches)

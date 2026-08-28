@@ -53,7 +53,10 @@ TABLE = "team_aliases"
 
 # Confiance de départ selon le chemin de résolution. 7M part plus haut que
 # l'IA : c'est un calendrier apparié, pas une génération.
-CONFIDENCE_START = {"sevenm": 0.7, "ai": 0.4, "manual": 1.0}
+# `trusted` (2026-08-28) : appariement structurel contre le slate de confiance
+# du run (api-sports/Matchbook/titan007, noms anglais) — même nature de preuve
+# que 7M (temps + ligue + structure, aucun nom), donc même confiance.
+CONFIDENCE_START = {"sevenm": 0.7, "trusted": 0.7, "ai": 0.4, "manual": 1.0}
 CONFIDENCE_STEP  = float(os.environ.get("ALIAS_CONFIDENCE_STEP", "0.1"))
 
 # Seuil au-dessous duquel un alias ne peut pas porter un signal. 0.6 = un

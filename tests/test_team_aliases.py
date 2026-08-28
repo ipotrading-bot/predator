@@ -192,6 +192,13 @@ class TestSeuilDeConfiance:
         ta._CACHE.clear()
         assert ta.canonical("odds500", "某某队", "999", "英超") == "Some Team"
 
+    def test_un_alias_du_slate_de_confiance_passe_des_le_premier_appariement(self, base):
+        # Même nature de preuve que 7M (temps + ligue + structure, aucun nom).
+        ta.remember("odds500", "曼联", "Manchester United", "1075", "英超",
+                    resolved_by="trusted")
+        ta._CACHE.clear()
+        assert ta.canonical("odds500", "曼联", "1075", "英超") == "Manchester United"
+
     def test_un_alias_7M_passe_des_le_premier_appariement(self, base):
         ta.remember("odds500", "鹿岛鹿角", "Kashima Antlers", "1029", "日职",
                     resolved_by="sevenm")
