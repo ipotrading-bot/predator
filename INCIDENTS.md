@@ -263,6 +263,34 @@ couverture du slate est sans commune mesure avec celle de
 Kalshi/Polymarket (3 fixtures exploitables sur 70). Mesuré sur
 10 runs du 2026-08-23 au 26. Corollaire : 100 % des signaux sont du FOOTBALL.
 
+### Matchbook : quatre marchés « total » par match, un seul est le match entier (2026-08-28)
+
+REPRICE 15:58 : « Al-Riyadh SC vs Neom SC | SOC Under 2.5 — EV 80.84 % »
+(et 58 %, 70 %, 78 % sur d'autres totals du run), juste après « ALIGNE …
+soft +2.75 / sharp +2.50 : les deux cotent +2.50 ». Refusé par `MAX_EDGE`,
+donc sans dégât — mais un edge à 80 % sur une ligne alignée est un signe, pas
+du bruit.
+Relevé sur l'API le jour même : un match de football porte QUATRE marchés de
+`market-type: total` — **« Total », « 1st Half Total », « Home Team Total
+Goals », « Away Team Total Goals »** — et les runners s'appellent tous
+« OVER 2.5 » / « UNDER 2.5 ». `_totals_odds` les fusionnait dans une seule
+échelle : le point 2.5 y figurait deux fois (under 2.68 et under 1.21).
+`run_engine._aligner_sur_meme_ligne` indexe l'échelle par point, le dernier
+gagne : le moteur comparait le Under 2.5 du match entier chez le soft au
+Under 2.5 de la PREMIÈRE MI-TEMPS chez l'exchange. Deux paris différents
+comparés — l'artefact d'A6, revenu par le nom du marché au lieu du signe de
+la ligne. Le handicap a la même porte (« 1st Half Handicap »).
+Correction : `matchbook._est_sous_marche` — un marché dont le nom porte un
+qualificatif de sous-marché (half, 1st/2nd, team, quarter, period, corner,
+card, booking) est écarté des totals ET des handicaps. Un marché sans nom
+reste accepté : perdre la seule source de totals sharp du stack sur une clé
+absente coûterait plus qu'un doublon.
+⚠️ Ces edges refusés n'ont jamais atteint le ledger ; mais tout signal
+totals/spreads « Matchbook » émis AVANT cette date est suspect de la même
+confusion si sa ligne existait en mi-temps. À garder en tête pour la
+recalibration A6.
+Gardien : `tests/test_matchbook.py::TestLesSousMarchesNeSontPasLeMatchEntier`.
+
 ### Étaler le SETTLEMENT était une faute — corrigé le 2026-08-28
 
 Le rythme de dépense posé la veille avait été appliqué sans distinction. Il

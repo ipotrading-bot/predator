@@ -342,3 +342,56 @@ def test_suspended_side_market_is_ignored(monkeypatch):
     _wire(monkeypatch, [ev])
     (row,) = mb.fetch_matchbook_prices(sports=["soccer"]).values()
     assert "totals" not in row
+
+
+# ── Sous-marchés : même type, pas le même pari (2026-08-28) ─────────────
+
+def _named(mtype, name, runners):
+    return {**_market(mtype, None, runners), "name": name}
+
+
+class TestLesSousMarchesNeSontPasLeMatchEntier:
+    """« Al-Riyadh SC vs Neom SC | SOC Under 2.5 — EV 80.84 % » : le point 2.5
+    figurait deux fois dans l'échelle Matchbook — « Total » et « 1st Half
+    Total » — et l'alignement par point retenait la mi-temps. Relevé sur
+    l'API : quatre marchés de type « total » par match, runners identiques."""
+
+    def _event(self):
+        return _rich_event("Al-Riyadh SC vs Neom SC", [
+            _ML,
+            _named("total", "Total", [("OVER 2.5", 1.57, 1.61), ("UNDER 2.5", 2.64, 2.72)]),
+            _named("total", "1st Half Total", [("OVER 2.5", 5.6, 6.0), ("UNDER 2.5", 1.20, 1.22)]),
+            _named("total", "Home Team Total Goals", [("OVER 1.5", 2.0, 2.1), ("UNDER 1.5", 1.85, 1.95)]),
+            _named("total", "Away Team Total Goals", [("OVER 1.5", 2.3, 2.4), ("UNDER 1.5", 1.65, 1.7)]),
+            _named("handicap", "Handicap", [("Al-Riyadh SC -0.5", 2.0, 2.1), ("Neom SC +0.5", 1.85, 1.95)]),
+            _named("handicap", "1st Half Handicap", [("Al-Riyadh SC -0.5", 3.5, 3.7), ("Neom SC +0.5", 1.3, 1.32)]),
+        ])
+
+    def test_un_point_napparait_quune_fois_dans_lechelle(self):
+        tot = mb._totals_odds(self._event())
+        points = [r["point"] for r in tot["ladder"]]
+        assert len(points) == len(set(points)), points
+        assert points == [2.5]
+        assert tot["under"] == pytest.approx(2.68), "c'est le Under du match entier, pas de la mi-temps"
+
+    def test_le_handicap_de_mi_temps_est_ecarte_aussi(self):
+        hcp = mb._handicap_odds(self._event(), "Al-Riyadh SC", "Neom SC")
+        assert len(hcp["ladder"]) == 1
+        assert hcp["home"] == pytest.approx(2.05)
+
+    def test_un_marche_sans_nom_reste_accepte(self):
+        # L'API a toujours nommé ses marchés ; si elle cessait, on ne veut pas
+        # perdre la seule source de totals sharp du stack sur une clé absente.
+        ev = _rich_event("A vs B", [_ML, _market("total", None,
+                                                 [("OVER 2.5", 1.9, 1.95), ("UNDER 2.5", 1.95, 2.0)])])
+        assert mb._totals_odds(ev)["point"] == 2.5
+
+    @pytest.mark.parametrize("nom", ["1st Half Total", "2nd Half Total", "Home Team Total Goals",
+                                     "Away Team Total Goals", "Total Corners", "Total Cards",
+                                     "1st Quarter Total", "Bookings Total"])
+    def test_chaque_qualificatif_releve_est_un_sous_marche(self, nom):
+        assert mb._est_sous_marche({"name": nom})
+
+    @pytest.mark.parametrize("nom", ["Total", "Handicap", "Total Goals", "Total Points"])
+    def test_le_marche_du_match_entier_ne_lest_pas(self, nom):
+        assert not mb._est_sous_marche({"name": nom})

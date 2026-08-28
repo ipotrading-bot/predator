@@ -230,13 +230,43 @@ def _sans_prive(row: dict) -> dict:
     return {k: v for k, v in row.items() if not k.startswith("_")}
 
 
+# Qualificatifs d'un SOUS-marché : même `market-type` (« total », « handicap »),
+# mais pas le même pari. Relevé sur l'API le 2026-08-28 : un match de football
+# porte QUATRE marchés de type « total » — « Total », « 1st Half Total »,
+# « Home Team Total Goals », « Away Team Total Goals » — et les runners
+# s'appellent tous « OVER 2.5 » / « UNDER 2.5 ».
+_SOUS_MARCHE = ("half", "1st", "2nd", "team", "quarter", "period",
+                "corner", "card", "booking")
+
+
+def _est_sous_marche(market: dict) -> bool:
+    """Un marché de mi-temps, par équipe, de corners… n'est PAS le marché
+    du match entier, même si son type et ses runners sont identiques.
+
+    Le 2026-08-28 15:58, « Al-Riyadh SC vs Neom SC | SOC Under 2.5 —
+    EV 80.84 % » (refusé par MAX_EDGE, donc sans dégât) : l'échelle des
+    totals contenait le point 2.5 DEUX fois — « Total » (under 2.68) et
+    « 1st Half Total » (under 1.21). `run_engine._aligner_sur_meme_ligne`
+    indexe l'échelle par point, le dernier gagne : le moteur comparait le
+    Under 2.5 du match entier chez le soft au Under 2.5 de la première
+    mi-temps chez l'exchange. Un edge à 80 % sur une ligne « alignée » —
+    exactement l'artefact d'A6 (deux paris différents comparés), par une
+    autre porte.
+    """
+    name = str(market.get("name", "")).lower()
+    return any(q in name for q in _SOUS_MARCHE)
+
+
 def _totals_odds(event: dict) -> dict | None:
-    """{"over","under","point"} — forme attendue par run_engine._process_totals."""
+    """{"over","under","point"} — forme attendue par run_engine._process_totals.
+    Seul le total du MATCH ENTIER : voir `_est_sous_marche`."""
     cands = []
     for market in event.get("markets") or []:
         if str(market.get("market-type", "")).lower() != "total":
             continue
         if str(market.get("status", "")).lower() not in ("open", ""):
+            continue
+        if _est_sous_marche(market):
             continue
         over = under = None
         point = None
@@ -264,6 +294,8 @@ def _handicap_odds(event: dict, home: str, away: str) -> dict | None:
             continue
         if str(market.get("status", "")).lower() not in ("open", ""):
             continue
+        if _est_sous_marche(market):
+            continue                  # même garde que les totals, même raison
         row: dict = {}
         for runner in market.get("runners") or []:
             rname = str(runner.get("name", "")).strip()
