@@ -207,3 +207,38 @@ def test_urls_never_carry_a_query_string():
     ferait basculer ces endpoints sous un Disallow."""
     assert "?" not in t7.FIXTURES_URL
     assert "?" not in t7.ODDS_URL
+
+
+# ── Priorité de ligue avant le cap (2026-08-28) ───────────────────────
+
+def test_les_ligues_majeures_passent_avant_le_cap(monkeypatch):
+    """Vendredi 2026-08-28 : 58 coups d'envoi à 18:00 (U21, Welsh PR, POL D3…)
+    avant Bayern–Stuttgart 18:30 (GER D1) — position 62, cap 40. Le moteur ne
+    voyait que des divisions mineures et sortait à EV −3 à −9 % partout."""
+    from datetime import datetime, timedelta, timezone
+    base = datetime.now(timezone.utc) + timedelta(hours=2 + t7.SITE_UTC_OFFSET_H)
+    mineures = [_row(sid=str(i), league="Welsh PR", home=f"H{i}", away=f"A{i}",
+                     date=f"{base.month}-{base.day}", hhmm=base.strftime("%H:%M"),
+                     year=str(base.year)) for i in range(10)]
+    tard = base + timedelta(minutes=30)
+    majeur = _row(sid="bayern", league="GER D1", home="Bayern", away="Stuttgart",
+                  date=f"{tard.month}-{tard.day}", hhmm=tard.strftime("%H:%M"),
+                  year=str(tard.year))
+    calls = _wire(monkeypatch, mineures + [majeur], _BOOKS)
+    t7.fetch_matches(hours_ahead=24, max_matches=3)
+    assert len(calls["odds"]) == 3
+    assert "bayern" in calls["odds"][0], "le majeur est servi en PREMIER, pas coupé"
+
+
+def test_a_priorite_egale_lordre_reste_celui_des_coups_denvoi(monkeypatch):
+    from datetime import datetime, timedelta, timezone
+    base = datetime.now(timezone.utc) + timedelta(hours=2 + t7.SITE_UTC_OFFSET_H)
+    rows = []
+    for i, delta in enumerate((90, 30, 60)):
+        w = base + timedelta(minutes=delta)
+        rows.append(_row(sid=f"m{delta}", league="Welsh PR", home=f"H{i}", away=f"A{i}",
+                         date=f"{w.month}-{w.day}", hhmm=w.strftime("%H:%M"), year=str(w.year)))
+    calls = _wire(monkeypatch, rows, _BOOKS)
+    t7.fetch_matches(hours_ahead=24)
+    ordre = [next(s for s in ("m30", "m60", "m90") if s in u) for u in calls["odds"]]
+    assert ordre == ["m30", "m60", "m90"]

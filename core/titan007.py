@@ -55,6 +55,7 @@ import urllib.request
 from datetime import datetime, timedelta, timezone
 
 from core import daily_quota
+from core.source_adapter import league_rank
 
 log = logging.getLogger("PREDATOR.titan007")
 
@@ -251,7 +252,14 @@ def fetch_matches(hours_ahead: int = 24, max_matches: int | None = None) -> list
     cap   = max_matches or MAX_MATCHES
 
     upcoming = [f for f in fetch_fixtures() if now < f["kickoff"] <= until]
-    upcoming.sort(key=lambda f: f["kickoff"])
+    # Priorité de ligue AVANT l'heure. Mesuré le 2026-08-28 (vendredi, 24 h) :
+    # 238 matchs au calendrier, positions 0-57 toutes à 17:45-18:00 (Eerste
+    # Divisie, U21, Welsh PR, Pologne D3…) — Bayern–Stuttgart (18:30) en
+    # position 62, hors du cap de 40. Le scan ne voyait que des divisions
+    # mineures et sortait à EV −3 à −9 % sur toutes. Le tri par heure
+    # servait la masse ; celui-ci sert d'abord ce qui a un prix sharp liquide,
+    # puis le reste dans l'ordre d'avant. Zéro requête de plus.
+    upcoming.sort(key=lambda f: (league_rank(f["league"]), f["kickoff"]))
     if not upcoming:
         log.info("titan007: 0 match dans les %dh", hours_ahead)
         return []

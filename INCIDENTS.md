@@ -367,6 +367,39 @@ ajoutée sans lui fait échouer la suite. Les exemptions (odds500 filtrée par
 IP, 7M qui ne cote rien, Kalshi/Polymarket qui n'émettent jamais) y sont
 nommées avec leur motif.
 
+### titan007 coupait à 40 par ORDRE D'HEURE — les grosses affiches n'entraient jamais (2026-08-28)
+
+Vendredi soir, scans golden 17:00 et 17:38 : 13 matchs avec prix sharp, tous
+de divisions mineures (Eerste Divisie, Challenge League, Pologne D4, Chili),
+0 signal, EV −3 à −9 % partout. Pourtant ce soir : Palace–City, Bayern–
+Stuttgart, Milan–Venezia, Lille–PSG, Alavés–Villarreal, Rio Ave–Sporting.
+Le moteur ne les voyait QUE côté odds500 (mode ombre, 5/100 mesurés — pas un
+levier avant des semaines) sous « alias : budget IA atteint ».
+Mesuré sur le calendrier titan007 à 24 h : 238 matchs ; `upcoming.sort(
+key=kickoff)` puis `[:40]`. Les positions 0-57 sont TOUTES des coups d'envoi
+17:45-18:00 (U21 anglais/belges, Welsh PR, Pologne D3, INT CF…) ;
+Bayern–Stuttgart (18:30) est en **position 62**. odds-api.io a la même
+signature (`limit=60`, les 60 premiers par heure : 51 U21/U20 et divisions
+inférieures). api-sports, lui, était éteint par le rythme de dépense (54/64,
+réouverture ~20:37 — après les coups d'envoi). Matchbook AVAIT Bayern,
+Milan, Al-Hilal, Boca dans ses 100 marchés — mais `_enrich_from_exchange`
+n'enrichit que le slate soft : un sharp sans soft en face n'entre jamais.
+Ce n'est ni un seuil ni un alias : c'est l'INGESTION qui servait la masse,
+et la masse d'un vendredi 18:00 est du football de comté.
+Correction : `source_adapter.LEAGUE_PRIORITY` (rang par liquidité du sharp)
+et `league_rank(label)` ; titan007 trie par `(rang, heure)` avant le cap.
+Rejoué sur le calendrier réel du soir : les 13 premiers du nouveau tri sont
+les 13 affiches ci-dessus, toutes hors du cap auparavant. **Zéro requête de
+plus, aucun seuil touché** (règle 10). Les libellés titan (« GER D1»,
+« ENG PR »…) rejoignent `LEAGUE_MAP` — une seule table de libellés, et un
+test refuse toute clé de priorité qu'aucun libellé ne produit (règle 6).
+⚠️ Non fait, faute de pouvoir le vérifier hors CI (clé odds-api.io absente
+du `.env`) : le même tri chez odds-api.io demanderait `limit` > 60 sur
+`/events` — 1 requête quelle que soit la limite d'après le coût mesuré, mais
+rien ne dit que le serveur honore 240. À sonder depuis un run.
+Gardiens : `tests/test_titan007.py::test_les_ligues_majeures_passent_avant_le_cap`,
+`tests/test_source_adapter.py::TestPrioriteDeLigue`.
+
 ### Le budget api-sports partait PREMIER ARRIVÉ, PREMIER SERVI (2026-08-27)
 
 Symptôme opérateur : « pauvreté de signaux » le soir, alors que le moteur

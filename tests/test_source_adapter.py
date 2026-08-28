@@ -328,3 +328,25 @@ class TestLaLigueEstExigeeSurLeCheminDeConfiance:
         en = [_fx("trusted", "9", "2026-08-28T18:30:00Z", "2. Bundesliga",
                   "VfL Bochum", "Osnabruck", [1.32, 5.40, 8.80])]
         assert sa.pair_fixtures(zh, en, require_league=True) == []
+
+
+class TestPrioriteDeLigue:
+    def test_les_libelles_titan_des_majeures_sont_connus(self):
+        for lbl, key in (("GER D1", "bundesliga"), ("ENG PR", "epl"), ("SPA D1", "laliga"),
+                         ("ITA D1", "seriea"), ("FRA D1", "ligue1"), ("HOL D1", "eredivisie")):
+            assert sa.league_key(lbl) == key, lbl
+
+    def test_une_majeure_passe_avant_une_inconnue(self):
+        assert sa.league_rank("GER D1") < sa.league_rank("Welsh PR")
+        assert sa.league_rank("Welsh PR") == sa.league_rank("") == len(sa.LEAGUE_PRIORITY)
+
+    def test_les_cinq_grands_passent_avant_le_reste(self):
+        big5 = [sa.league_rank(x) for x in ("ENG PR", "SPA D1", "ITA D1", "GER D1", "FRA D1")]
+        assert max(big5) < min(sa.league_rank(x) for x in ("HOL D1", "ENG LCH", "ARG D1", "SAU D1"))
+
+    def test_chaque_cle_de_priorite_est_atteignable_depuis_un_libelle(self):
+        """Une clé de LEAGUE_PRIORITY qu'aucun libellé de LEAGUE_MAP ne produit
+        est une entrée morte (règle 6) — elle ne trierait jamais rien."""
+        produites = set(sa.LEAGUE_MAP.values())
+        mortes = [k for k in sa.LEAGUE_PRIORITY if k not in produites]
+        assert not mortes, mortes

@@ -287,6 +287,17 @@ LEAGUE_MAP = {
     "greece super league 1": "greece_super", "russian premier league": "russia_premier",
     "czech first league": "czech_first", "liga i": "romania_liga1",
     "usl championship": "usl_championship", "eredivisie": "eredivisie",
+    # libellés EXACTS du calendrier titan007 (`core/titan007.py`), relevés le
+    # 2026-08-28 sur 234 fixtures / 114 libellés. Ils servent au TRI par
+    # priorité avant le cap de 40 (voir `league_rank`) : sans eux, le vendredi
+    # soir, 58 coups d'envoi de 18:00 (U21, Welsh PR, Pologne D3…) remplissent
+    # la fenêtre et Bayern–Stuttgart (18:30) reste en position 62.
+    "eng pr": "epl", "ger d1": "bundesliga", "spa d1": "laliga", "ita d1": "seriea",
+    "fra d1": "ligue1", "hol d1": "eredivisie", "por d1": "primeira", "bel d1": "belgium_pro",
+    "tur d1": "turkish_super", "sco pr": "spl", "arg d1": "argentina_primera",
+    "bra d1": "brasileirao", "usa mls": "mls", "jpn d1": "j_league", "kor d1": "k_league",
+    "sau d1": "saudi_pro", "eng lch": "efl_championship", "ger d2": "bundesliga2",
+    "spa d2": "laliga2", "ita d2": "seriea_b", "fra d2": "ligue2", "hol d2": "eredivisie2",
     "allsvenskan": "allsvenskan", "veikkausliiga": "veikkausliiga",
     "eliteserien": "eliteserien", "challenger pro league": "belgium_challenger",
 }
@@ -299,6 +310,28 @@ def league_key(label: str) -> str:
         return ""
     raw = label.strip()
     return LEAGUE_MAP.get(raw) or LEAGUE_MAP.get(raw.lower(), "")
+
+
+# Ligues servies EN PREMIER quand une source coupe son calendrier (titan007 :
+# 40 matchs sur ~240 à 24 h). Ordre = liquidité du marché sharp, donc qualité
+# du prix de référence — pas une préférence sportive. Tout ce qui n'y figure
+# pas passe APRÈS, dans l'ordre des coups d'envoi comme avant : la liste ne
+# retire rien, elle réordonne.
+LEAGUE_PRIORITY = (
+    "epl", "laliga", "seriea", "bundesliga", "ligue1",
+    "ucl", "uel",
+    "eredivisie", "primeira", "belgium_pro", "turkish_super", "spl",
+    "efl_championship", "bundesliga2", "laliga2", "seriea_b", "ligue2",
+    "mls", "brasileirao", "argentina_primera", "j_league", "k_league", "saudi_pro",
+    "libertadores", "sudamericana",
+)
+_RANK = {k: i for i, k in enumerate(LEAGUE_PRIORITY)}
+
+
+def league_rank(label: str) -> int:
+    """Rang de priorité d'un libellé de ligue : 0 = servi en premier ;
+    `len(LEAGUE_PRIORITY)` pour tout ce qui est inconnu ou hors liste."""
+    return _RANK.get(league_key(label), len(LEAGUE_PRIORITY))
 
 
 def detect_lang(text: str) -> str:
