@@ -1,5 +1,15 @@
 # Actions opérateur — ce que le code ne peut pas faire à ta place
 
+> **État au 2026-08-27 23:00 UTC — les trois sont FAITS.**
+> 1. ✅ Proxy Webshare (sortie Londres) posé → odds500 rend 15 matchs sharp.
+> 2. ✅ Second book posé → `Slots posés (2/2) : Bet365, 1xbet`.
+> 3. ⚠️ Smart Placement activé mais INSUFFISANT (colo IAD → SEA, toujours US).
+>    C'est le proxy qui a levé le blocage, pas lui.
+>
+> Ce document reste la marche à suivre pour REFAIRE ces gestes (rotation de
+> proxy, changement de book). Le suivi de ce qui reste ouvert est dans
+> INCIDENTS.md.
+
 Trois gestes touchent des comptes EXTERNES (odds-api.io, Cloudflare, GitHub).
 Aucun agent ni workflow ne les fait : ils modifient tes comptes, pas ce dépôt.
 Chacun est réversible et documenté ici avec sa commande exacte, ce qu'on
@@ -9,11 +19,11 @@ Tous se lancent depuis la racine du dépôt, avec le `.env` en place.
 
 ---
 
-## 1. odds500 — poser le proxy (LE PLUS URGENT)
+## 1. odds500 — poser le proxy ✅ FAIT le 2026-08-27
 
-### Le constat
+### Le constat d'origine
 
-Vérifié le 2026-08-27 : **aucun proxy n'est posé nulle part.** Ni dans
+Vérifié le 2026-08-27 : **aucun proxy n'était posé nulle part.** Ni dans
 `app_secrets`, ni dans les secrets GitHub Actions, ni dans `.env`. Le bloc
 `env:` des workflows porte bien `FREE_SOURCES_PROXY` et `ODDS500_PROXY` —
 **vides**. La plomberie est complète depuis le 2026-08-26 ; il ne manque que
@@ -73,7 +83,7 @@ démarre en mode ombre et rend `[]` tant qu'elle n'a pas 100 matchs appariés à
 
 ---
 
-## 2. odds-api.io — le second slot bookmaker (gratuit)
+## 2. odds-api.io — le second slot bookmaker ✅ FAIT le 2026-08-27
 
 ### Le constat
 
@@ -133,9 +143,14 @@ Réversible : `python scripts/odds_api_io_books.py clear`.
 
 ---
 
-## 3. Cloudflare — tenter le Smart Placement du relais
+## 3. Cloudflare — Smart Placement ⚠️ ESSAYÉ, INSUFFISANT
 
-À faire **seulement si tu n'as pas de proxy** (le geste 1 le rend inutile).
+Activé le 2026-08-27 à 21:41. Mesuré au run 33119345516 : le colo est passé
+de **IAD** (Washington) à **SEA** (Seattle). Le réglage n'est donc pas inerte
+— il déplace bien l'exécution — mais Cloudflare choisit par LATENCE et le
+plus proche reste américain depuis les runners. 500.com refuse toujours.
+Laissé activé : il ne nuit pas, et le proxy le contourne de toute façon.
+Piste fermée. Section conservée pour la mémoire du geste.
 
 ### Le constat
 
@@ -175,6 +190,36 @@ gh run view <id> --log | grep -i odds500
 Si le 403 persiste en nommant un colo américain, la conclusion tient : il
 faut une sortie hors des colos US (relais épinglé en Europe sur Fly.io ou
 Render, proxy à IP dédiée, ou runner auto-hébergé en Europe).
+
+---
+
+## Le goulot qui suit — à surveiller
+
+odds500 est débloquée, mais **le pont d'alias n'a encore rien produit.**
+Relevé le 2026-08-28 00:32 UTC, après plusieurs runs avec le proxy actif :
+
+    team_aliases          12 lignes, inchangé depuis le 2026-08-22
+    sitemap 7M            854 identifiants, curseur à 90
+    matchs passés mémorisés  41
+    par run               30 identifiants balayés, budget 80 req/jour
+    résultat              « 14 match(s) écarté(s) faute d'alias fiable »
+
+Les noms d'odds500 sont en chinois et l'appariement se fait par temps + ligue
++ STRUCTURE de cotes, jamais par nom. Tant que le dictionnaire ne se remplit
+pas, 14 matchs sharp sur 15 partent à la poubelle à chaque run.
+
+À ce rythme, balayer le sitemap entier demande ~11 jours. Ce qui n'est PAS
+encore établi, c'est si l'intersection entre les rencontres à venir de 7M et
+le slate d'odds500 est seulement suffisante pour produire des alias — elle
+n'a jamais pu être mesurée, odds500 ayant été bloquée jusqu'ici.
+
+**Le signe qui tranche : `team_aliases` doit dépasser 12.** S'il n'a pas
+bougé d'ici deux jours, ce n'est pas de la lenteur, c'est que le pont ne
+fonctionne pas et il faut le diagnostiquer.
+
+```bash
+python scripts/ops.py supabase sql "select count(*) from team_aliases"
+```
 
 ---
 

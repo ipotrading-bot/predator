@@ -12,6 +12,14 @@ plus proche de l'APPELANT — Londres depuis un poste de dev, où 500.com répon
 Ce n'est ni le jeton, ni le code, ni la liste blanche : `net.describe_failure`
 le dit en clair, un 403 AVEC `X-Relay-By` vient de l'amont, et il nomme le colo.
 
+⛔ RÉSULTAT CONNU — ESSAYÉ LE 2026-08-27, INSUFFISANT.
+Activé à 21:41, run de contrôle 33119345516 : le colo est passé de IAD
+(Washington) à SEA (Seattle). Le réglage DÉPLACE bien l'exécution, mais
+Cloudflare choisit par LATENCE et le plus proche de l'origine reste américain
+depuis les runners GitHub — 500.com refuse toujours. Ce qui a levé le blocage
+le même soir est un PROXY à sortie Londres (`FREE_SOURCES_PROXY`), pas ce
+réglage. Ne pas y revenir en croyant la piste neuve.
+
 CE QUE CE SCRIPT TENTE, ET CE QU'IL NE PROMET PAS
 -------------------------------------------------
 Le Smart Placement de Cloudflare inverse la règle : au lieu de s'exécuter près
