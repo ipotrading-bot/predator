@@ -89,7 +89,7 @@ class TestMinEdgeRequired:
         # combined_p = true_prob**k shrinks. Confirmed via EV: both a k=1 bet
         # at its min_edge_required and a k=4 combo at its (smaller) per-leg
         # min_edge_required land at combo EV ~= 0.
-        edges = [min_edge_required(k=k, true_prob=0.55) for k in range(1, 5)]
+        edges = [min_edge_required(k=k, true_prob=0.55, tax_rate=0.20) for k in range(1, 5)]
         assert edges == sorted(edges, reverse=True)   # per-leg requirement: decreasing
         assert edges[0] > edges[-1]
 
@@ -99,8 +99,8 @@ class TestMinEdgeRequired:
     def test_higher_true_prob_needs_less_edge_at_k1(self):
         # Favorites need less edge to clear the tax bar than live underdogs
         # do, at the same tax rate — tax bites the (larger) underdog payout harder.
-        e_fav = min_edge_required(k=1, true_prob=0.80)
-        e_dog = min_edge_required(k=1, true_prob=0.30)
+        e_fav = min_edge_required(k=1, true_prob=0.80, tax_rate=0.20)
+        e_dog = min_edge_required(k=1, true_prob=0.30, tax_rate=0.20)
         assert e_fav < e_dog
 
     def test_zero_tax_requires_zero_edge(self):

@@ -323,7 +323,10 @@ des sources gratuites : api-sports 80 req/sport (~8 scans), odds-api.io 400
 (~14), titan007 500 (~12, 41 req/scan). À 12 engine + 12 guerrilla + 4 deep,
 le budget entier partait avant 08:30 UTC — dernier signal du 2026-08-21 émis
 à 08:24, soirée européenne à sec. Cadences réduites à 8+2+2 = 12 scans
-finançables. Golden hour ne paie rien (il sort avant le Tier 2 sans OddsAPI).
+finançables. Golden hour porte le Tier 1 OddsAPI depuis le 2026-09-01
+(pool de 2 500 crédits, rythme mensuel dans `core/scan_windows.py`) : fenêtre
+2 h, le pré-vol gratuit rend 0 ligue peuplée la plupart des ticks, et il
+descend au Tier 2 (sources gratuites) dans tous les cas.
 Ne pas remonter une cadence sans refaire ce tableau. Titan007 est branché
 dans le chemin économique du coupe-circuit depuis le même jour (même classe
 de bug que a0767c8 : source saine court-circuitée par ricochet).
@@ -373,7 +376,7 @@ couche de mise, publiés quand même). Depuis :
 
 | Workflow (mode) | Cadence | Purpose |
 |---|---|---|
-| `scan.yml` — `golden` | horaire (H+25), 24/j | scan de mouvement de ligne à T-120min, purge à chaque run, lit `meta.scan_request`. **Ses signaux partent en FANTÔME depuis le 2026-08-06** (`SHADOW_GOLDEN_HOUR`) : persistés et réglés, jamais recommandés — 39% de réussite pour 54,5% requis, p=0,007. Porte aussi le step **REPRICE** (section dédiée) — gratuit, non fantôme, avec un pool de secrets qui ne contient aucune clé payante. Ne PAS ajouter de poller dédié pour compenser la latence du bouton Scan — c'est l'erreur du 2026-07-07. |
+| `scan.yml` — `golden` | horaire (H+25), 24/j | scan de mouvement de ligne à T-120min, **Tier 1 OddsAPI depuis le 2026-09-01** (`ODDS_API=1` posé par `scripts/ci_scan_mode.py`, dépense bornée par le rythme mensuel de `core/scan_windows.py`), purge à chaque run, lit `meta.scan_request` (bouton Scan → promu en scan **standard** depuis le 2026-09-01). Fantôme **baseball** (`SHADOW_SPORTS`) LEVÉ le 2026-09-01 — seul `SHADOW_GOLDEN_HOUR` reste. **Ses signaux partent en FANTÔME depuis le 2026-08-06** (`SHADOW_GOLDEN_HOUR`) : persistés et réglés, jamais recommandés — 39% de réussite pour 54,5% requis, p=0,007. Porte aussi le step **REPRICE** (section dédiée) — gratuit, non fantôme, avec un pool de secrets qui ne contient aucune clé payante. Ne PAS ajouter de poller dédié pour compenser la latence du bouton Scan — c'est l'erreur du 2026-07-07. |
 | `scan.yml` — `standard` | **8x/jour sur les FENÊTRES FAVORABLES** (02/06/09/12/17/19/21/23 UTC) depuis le 2026-08-22 (était 12x/2h uniforme) | scan complet, fenêtre **24h**. Placement = `core/scan_windows.py` ; cadence dimensionnée sur le budget des sources gratuites — voir « L'arbitrage de cadence » |
 | `scan.yml` — `deep` | **2x/jour (05:33, 17:33)** depuis le 2026-08-22 (était 4) | **fenêtre 24h elle aussi** — `HOURS_AHEAD: "24"` explicite. Ce qui reste « deep » = `MAX_MATCHES=100` et `_QUOTA_DEEP`, pas l'horizon. |
 | `scan.yml` — `guerrilla` | **2x/jour (09:47, 21:47)** depuis le 2026-08-22 (était toutes les 2h) | scan sans OddsAPI (sources gratuites + recherche web renforcée, horizon 48h venu du CODE et non d'une variable) — c'est lui, pas un bouton, qui consomme le TPD Groq quand les sources sont mortes ; le coupe-circuit `harvest_empty_at` le neutralise 3h après un Tier 2 vide |

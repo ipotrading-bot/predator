@@ -40,12 +40,13 @@ MODES = ("standard", "golden", "deep", "guerrilla", "reprice")
 # app_secrets.ODDS_API_KEYS. Le défaut du module reste 0 (obsolescence du
 # 2026-08-26, tests/test_oddsapi_obsolete.py) : c'est ICI, et seulement ici,
 # que le flag est posé. GUERRILLA et REPRICE n'ont pas de Tier 1 par
-# construction (run_engine.py le teste avant le flag). GOLDEN l'a perdu une
-# heure le 2026-09-01 (24 ticks/jour = une clé vidée en 3-5 jours), puis l'a
-# RETROUVÉ le même jour avec le rythme mensuel (core/scan_windows) : ce n'est
-# plus le nombre de ticks qui borne la dépense mais l'allocation du jour,
-# calculée sur le pool entier — et un tick golden à T-2h est là où la ligne
-# bouge et où la closing line se capture sur le payload payé.
+# construction (run_engine.py le teste avant le flag). GOLDEN porte le
+# Tier 1 depuis le 2026-09-01, décision opérateur (pool de 2 500 crédits) :
+# fenêtre 2 h, le pré-vol gratuit rend 0 ligue peuplée la plupart des ticks,
+# et le rythme mensuel (core/scan_windows) borne la dépense sur le pool
+# entier — ce n'est pas le nombre de ticks qui compte. Un tick golden à
+# T-2h est là où la ligne bouge et où la closing line se capture sur le
+# payload payé.
 TIER1_ENV = {"ODDS_API": "1"}
 
 MODE_ENV: dict[str, dict[str, str]] = {
@@ -107,8 +108,12 @@ def promote(mode: str, manual: bool) -> str:
     un clic tombant sur un tick standard/deep/guerrilla est donc consommé sans
     promotion — mais ces modes SONT déjà des scans complets, le clic obtient
     bien un scan. Seule la « saveur » varie. Ne pas ajouter de poller dédié
-    pour rendre la promotion systématique : c'est l'erreur du 2026-07-07."""
-    return "guerrilla" if (manual and mode == "golden") else mode
+    pour rendre la promotion systématique : c'est l'erreur du 2026-07-07.
+
+    Promotion en STANDARD depuis le 2026-09-01 (décision opérateur) : guerrilla
+    n'a pas de Tier 1 par construction et ne rendait que du foot ; le bouton
+    doit donner un scan complet, tous sports, OddsAPI compris."""
+    return "standard" if (manual and mode == "golden") else mode
 
 
 def env_for(mode: str, hours_ahead: str = "") -> dict[str, str]:

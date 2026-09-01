@@ -27,23 +27,26 @@ EV_EDGE_FLOOR = 1.5   # % EV
 SUSPECT_EDGE = 10.0   # % — safety trigger: major sport edge above this = SUSPECT_DATA (cap totals=15%)
 
 # ── Taxe ──────────────────────────────────────────────────────────────
-# RÉTABLI À 0.20 LE 2026-08-27 — le taux réel.
+# REMIS À 0.0 LE 2026-09-01 — décision opérateur, réitérée (première
+# instruction le 2026-07-08 : « les 20 %, on s'en soucie plus »).
 #
-# Historique, parce qu'il explique la panne : mis à 0.0 le 2026-07-08 sur
-# instruction explicite de l'opérateur (« les 20%, on s'en soucie plus »),
-# après une journée à volume quasi nul dont la cause réelle était ailleurs
-# (le gate k=1 de compute_alpha, corrigé depuis — cf. git autour de a30cd39).
-# Mettre la constante à zéro n'a JAMAIS empêché le bookmaker de prélever :
-# ça a seulement fait calculer le moteur comme si la retenue n'existait pas.
-# Conséquences mesurées : des edges plus faibles passaient les gates, et les
-# mises Kelly étaient dimensionnées sur un payout NON taxé — donc plus
-# grosses que l'optimum réel. Un moteur qui ignore un coût qu'il paie
-# vraiment ne « gagne du volume » qu'en trompant sa propre comptabilité.
+# Le 2026-08-27 une session avait remis 0.20 CONTRE cette instruction. Combiné
+# au refus en dur de `_emit` (run_engine.py, 2026-08-22 : tout signal dont
+# tax_engine.optimal_stake_fraction rend une mise Kelly nulle est écarté), la
+# taxe dans le b de Kelly fermait l'émission : à proba 0,60 il fallait +10 %
+# d'EV brut (= le plafond SUSPECT_EDGE), à 0,70 → +7,6 %, à 0,80 → +5 %,
+# alors que les edges sharp-vs-soft réels font 1,5-4 %. Résultat : « Aucun
+# pari de valeur · 17-50 matchs analysés » sur tous les scans du 2026-09-01.
+# Vérifiable : optimal_stake_fraction(0.62, 1.68, tax_rate=0.20,
+# kelly_multiplier=0.12) → 0.0 ; à tax_rate=0.0 → ~0.0073. La période à
+# TAX_RATE = 0.0 (juillet-août) tournait à 61 % de réussite.
 #
-# Modèle de taxe : retenue sur le GAIN NET d'un pari GAGNANT uniquement
-# (`net_b` ci-dessous). Un pari perdant n'est pas taxé, un remboursement non
-# plus. Voir la docstring de core/tax_engine.py.
-TAX_RATE = 0.20   # part retenue sur le gain net d'un pari gagnant
+# TAX_RATE est une DÉCISION OPÉRATEUR : une session ne la change pas, même
+# « pour le réel » (INCIDENTS.md, entrée du 2026-09-01). Le modèle reste
+# intact : retenue sur le GAIN NET d'un pari GAGNANT uniquement (`net_b`
+# ci-dessous, à taux passé explicitement). Un pari perdant n'est pas taxé,
+# un remboursement non plus. Voir la docstring de core/tax_engine.py.
+TAX_RATE = 0.0   # part retenue sur le gain net d'un pari gagnant — décision opérateur
 
 
 def net_b(odds: float, tax_rate: float = TAX_RATE) -> float:

@@ -267,14 +267,16 @@ class TestBreakevenUsesOperatorTaxRate:
         stats = _sport_stats(rows)
         assert stats["p_breakeven"] == pytest.approx(p_breakeven(1.45, TAX_RATE))
 
-    def test_le_roi_rendu_est_net_de_taxe(self):
+    def test_le_roi_rendu_est_net_de_taxe(self, monkeypatch):
+        import core.learning_layer
+        monkeypatch.setattr(core.learning_layer, "_TAX_RATE", 0.20)   # propriété à taux non nul
         # A2 : `_sport_stats` calculait un ROI BRUT, alors que la couche qui
         # décide de monter ou de baisser un seuil s'en sert comme mesure de
         # rentabilité. Sur ce lot, la taxe coûte une dizaine de points.
         rows = ([_row("WIN", odds=1.45) for _ in range(43)]
                 + [_row("LOSS", odds=1.45) for _ in range(7)])
         stats = _sport_stats(rows)
-        assert stats["roi"] == pytest.approx(roi_net_of_tax(rows, TAX_RATE))
+        assert stats["roi"] == pytest.approx(roi_net_of_tax(rows, 0.20))
         brut = roi_net_of_tax(rows, 0.0)
         assert stats["roi"] < brut, "un ROI net ne peut pas égaler le ROI brut"
 
@@ -848,7 +850,9 @@ class TestOddsCeiling:
         return ([_row("WIN", odds=odds) for _ in range(wins)]
                 + [_row("LOSS", odds=odds) for _ in range(n - wins)])
 
-    def test_les_donnees_du_2026_08_02_prouvent_la_bande_haute_perdante(self):
+    def test_les_donnees_du_2026_08_02_prouvent_la_bande_haute_perdante(self, monkeypatch):
+        import core.learning_layer
+        monkeypatch.setattr(core.learning_layer, "_TAX_RATE", 0.20)   # verdict établi à taux 0.20
         rows = (self._rows(1.35, 17, 0.824)
                 + self._rows(1.66, 60, 0.517)
                 + self._rows(2.00, 109, 0.431))

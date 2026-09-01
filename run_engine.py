@@ -136,7 +136,12 @@ DEBUG_MODE   = os.environ.get("PREDATOR_DEBUG", "0") == "1"
 # système ne prend plus. La collecte reste donc intacte pour une décision
 # manuelle de réouverture — c'est exactement ce qui a permis de mesurer ce
 # segment — mais l'ajustement automatique, lui, ne les voit plus.
-SHADOW_SPORTS      = {"baseball"}
+# Fantôme baseball LEVÉ le 2026-09-01 (décision opérateur) : la mesure du
+# 2026-08-04 (48 paris, 42 % pour 56,5 % requis) date de l'ancien moteur,
+# avant la refonte EV du 2026-08-22 — elle ne dit rien du moteur actuel.
+# À réévaluer après 30 réglés post-CALIBRATION_EPOCH. SHADOW_GOLDEN_HOUR
+# n'est pas concerné.
+SHADOW_SPORTS: set[str] = set()
 SHADOW_GOLDEN_HOUR = True
 
 # ── Global Timeout Handler (Safety Net) ──────────────────────────────

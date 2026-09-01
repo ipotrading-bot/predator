@@ -259,7 +259,10 @@ def test_dispatch_prend_le_mode_demande():
 
 
 def test_flag_manuel_promeut_golden_seulement():
-    assert ci_mode.promote("golden", True) == "guerrilla"
+    """Bouton Scan = scan STANDARD depuis le 2026-09-01 : guerrilla n'a pas
+    de Tier 1 et ne rendait que du foot ; le bouton doit donner un scan
+    complet tous sports."""
+    assert ci_mode.promote("golden", True) == "standard"
     assert ci_mode.promote("deep", True) == "deep"
     assert ci_mode.promote("golden", False) == "golden"
 
@@ -274,10 +277,10 @@ def test_env_de_mode():
 
 def test_le_tier_1_est_rallume_par_le_workflow_pas_par_le_module():
     """Rallumage OddsAPI du 2026-09-01 : le flag vit dans MODE_ENV. Le défaut
-    du module reste 0 (tests/test_oddsapi_obsolete.py). GUERRILLA et REPRICE
-    n'ont pas de Tier 1 par construction. GOLDEN le porte : depuis le rythme
-    mensuel (core/scan_windows), c'est l'allocation du jour qui borne la
-    dépense, pas le nombre de ticks."""
+    du module reste 0 (tests/test_oddsapi_obsolete.py). Golden porte le
+    Tier 1 (décision opérateur, pool de 2 500 crédits ; le rythme mensuel de
+    core/scan_windows borne la dépense, pas le nombre de ticks). Seuls
+    GUERRILLA et REPRICE restent sans, par construction."""
     assert ci_mode.TIER1_ENV == {"ODDS_API": "1"}
     for mode in ("standard", "golden", "deep"):
         assert ci_mode.env_for(mode).get("ODDS_API") == "1", mode

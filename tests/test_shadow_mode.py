@@ -22,10 +22,12 @@ def _sig(sport, match="A vs B"):
 
 
 class TestSegmentsFantomes:
-    def test_baseball_est_ecarte_de_telegram(self):
+    def test_baseball_nest_plus_ecarte_de_telegram(self):
+        # Fantôme levé le 2026-09-01 (décision opérateur) : la mesure du
+        # 2026-08-04 datait de l'ancien moteur, avant la refonte EV.
         kept, shadowed = _partition([_sig("baseball")], golden_hour=False)
-        assert kept == []
-        assert len(shadowed) == 1
+        assert len(kept) == 1
+        assert shadowed == []
 
     def test_les_autres_sports_passent(self):
         signals = [_sig("soccer"), _sig("basketball")]
@@ -53,8 +55,8 @@ class TestSegmentsFantomes:
 
 
 class TestConfiguration:
-    def test_baseball_est_bien_fantome(self):
-        assert "baseball" in run_engine.SHADOW_SPORTS
+    def test_aucun_sport_en_fantome(self):
+        assert run_engine.SHADOW_SPORTS == set()
 
     def test_golden_hour_est_bien_fantome(self):
         assert run_engine.SHADOW_GOLDEN_HOUR is True

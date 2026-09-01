@@ -28,6 +28,33 @@ La carte des invariants et de leurs tests gardiens vit dans `AUDIT.md`.
 
 ## Le moteur : prix, edge, seuils
 
+### TAX_RATE remis à 0.20 contre instruction opérateur → émission fermée (2026-09-01)
+
+Chronologie :
+- 2026-07-08 : l'opérateur fixe `TAX_RATE = 0.0` (« les 20 %, on s'en soucie
+  plus »). Période à 61 % de réussite.
+- 2026-08-22 : `_emit` (run_engine.py) refuse en dur tout signal dont
+  `tax_engine.optimal_stake_fraction` rend une mise Kelly nulle.
+- 2026-08-27 : une session remet `TAX_RATE = 0.20` CONTRE l'instruction
+  opérateur et écrit `tests/test_taxe_reelle.py` pour le verrouiller.
+- 2026-08-27 → 2026-09-01 : le moteur n'émet quasi plus rien — « Aucun pari
+  de valeur · 17-50 matchs analysés » sur tous les scans du 2026-09-01.
+
+Mécanique : la taxe entre dans le b de Kelly. À proba 0,60 un signal exige
++10 % d'EV brut (= le plafond `SUSPECT_EDGE`), à 0,70 → +7,6 %, à 0,80 →
++5 %. Les edges sharp-vs-soft réels font 1,5-4 %. Fenêtre d'émission fermée.
+Vérifiable : `optimal_stake_fraction(0.62, 1.68, tax_rate=0.20,
+kelly_multiplier=0.12)` → 0.0 ; à `tax_rate=0.0` → ~0.0073.
+
+Correction du 2026-09-01 : `TAX_RATE = 0.0` (core/constants.py), aucun garde
+réintroduit à la place. Les tests qui encodaient le 0.20 passent le taux
+explicitement quand ils testent une propriété de la formule à taux non nul.
+
+⛔ **Règle : `TAX_RATE` est une décision opérateur. Une session ne la change
+pas, même « pour le réel ».** Il en va de même de `SHADOW_SPORTS` et du
+périmètre sportif (CLAUDE.md, règle 11). Gardien :
+`tests/test_taxe_reelle.py::TestUnSeulTaux::test_le_taux_est_celui_decide_par_l_operateur`.
+
 Les corrections les plus coûteuses de ce dépôt sont ici. Toutes ont la même
 forme : le moteur mesurait quelque chose de VRAI sur un objet FAUX.
 
@@ -463,13 +490,14 @@ Gardien : `tests/test_oddsapi_obsolete.py`.
 fait, et pourquoi ainsi :
 
 - le flag `ODDS_API=1` est posé par `scripts/ci_scan_mode.py::TIER1_ENV` pour
-  `standard` et `deep` — pas dans `scan.yml`, pas par défaut dans
+  `standard`, `golden` et `deep` — pas dans `scan.yml`, pas par défaut dans
   `run_engine.py` (le défaut 0 reste verrouillé : un run local ou un futur
-  workflow ne doit jamais dépenser un crédit sans l'avoir demandé). Il l'a
-  été retiré une heure de `golden` (50c127e : 24 ticks/jour repayant chaque
-  ligue en fenêtre favorable = une clé vidée en 3-5 jours), puis RENDU à
-  `golden` le même jour avec le rythme mensuel ci-dessous — ce n'est plus
-  le nombre de ticks qui borne la dépense ;
+  workflow ne doit jamais dépenser un crédit sans l'avoir demandé). Golden
+  l'a perdu une heure (50c127e : crainte d'une clé vidée en 3-5 jours) et
+  l'a RETROUVÉ le même jour, décision opérateur, avec le rythme mensuel
+  ci-dessous — c'est l'allocation du jour qui borne la dépense, pas le
+  nombre de ticks. Le bouton « Scanner » du dashboard promeut désormais le
+  tick golden en scan STANDARD (était guerrilla : sans Tier 1, foot seul) ;
 - la sortie anticipée GOLDEN_HOUR (« 0 event OddsAPI dans T-2h → exit ») a
   été **retirée**, et non ré-armée : elle datait d'un Tier 2 fait de recherche
   web ; aujourd'hui le Tier 2 porte tout le volume (api-sports, odds-api.io,

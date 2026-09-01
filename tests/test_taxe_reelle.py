@@ -35,9 +35,12 @@ def _ligne(outcome, odds=2.0, kelly=1.0, jour="2026-08-25"):
 
 
 class TestUnSeulTaux:
-    def test_le_taux_reel_est_retabli(self):
-        assert TAX_RATE == 0.20, \
-            "le bookmaker retient 20 % ; calculer à 0 ne l'en empêche pas"
+    def test_le_taux_est_celui_decide_par_l_operateur(self):
+        assert TAX_RATE == 0.0, (
+            "TAX_RATE est une décision opérateur (0.0, réitérée le 2026-09-01) : "
+            "à 0.20, combiné au refus « Kelly nulle » de _emit, l'émission se "
+            "ferme (INCIDENTS.md 2026-09-01). Ne pas la changer sans instruction "
+            "explicite dans la session courante.")
 
     def test_tax_engine_derive_le_taux_au_lieu_de_le_redeclarer(self):
         assert DEFAULT_TAX_RATE == TAX_RATE

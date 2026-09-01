@@ -2,36 +2,33 @@
 
 Pipeline de paris sportifs : ingestion de cotes → moteur de signaux (edge/devig)
 → Supabase → settlement/CLV → couche d'apprentissage → dashboard Flask (Vercel).
-Tout le calcul tourne en crons GitHub Actions ; le dashboard est en lecture seule.
+Calcul en crons GitHub Actions ; dashboard en lecture seule.
 
 ## Où est quoi
 
 - `INCIDENTS.md` — **ce qui a déjà cassé, et pourquoi.** À LIRE AVANT DE
-  DIAGNOSTIQUER, et avant de toucher aux sources, à la couche IA, aux
-  workflows ou aux seuils : une règle dont on ignore la raison finit
-  contournée.
+  DIAGNOSTIQUER, et avant de toucher sources, couche IA, workflows ou
+  seuils : une règle dont on ignore la raison finit contournée.
 - `AUDIT.md` — carte des invariants et de leurs tests gardiens. À lire avant
   d'ajouter un sport, un fournisseur IA, une route ou un workflow.
 - Skill `predator-pipeline` — carte du flux, invariant des sport-keys
   (4 fichiers synchrones), purge (`status='active'` obligatoire), cadences
   cron, zone jouable 2-24 h pour toute analyse du ledger.
 - Sub-agent `predator-diagnostician` — tout audit pipeline/santé (isole les
-  gros logs hors de la conversation).
+  gros logs).
 
 ## Commandes
 
-- Tests : `python -m pytest tests/ -q` (~40 s, doit rester à 0 échec). Le
-  nombre de tests n'est pas écrit ici : il périmerait au commit suivant.
+- Tests : `python -m pytest tests/ -q` (~40 s, doit rester à 0 échec).
 - Lint : `python -m pyflakes $(git ls-files '*.py')`
-- Dashboard local : skill `predator-dashboard-check` (mode démo, sans credentials)
+- Dashboard local : skill `predator-dashboard-check` (mode démo)
 - Comptes externes : `docs/actions_operateur.md`
 - Piloter Supabase/Vercel : `python scripts/ops.py doctor|status|supabase …|vercel …`
   (credentials dans `.env`, gitignoré ; CLIs `supabase`/`vercel` aussi
   installables). `ops.py ai` fait un VRAI appel — seul diagnostic qui tranche
   sur un fournisseur IA.
-- Pas de build. Le push ne déploie pas : le déploiement Git de Vercel est
-  DÉSACTIVÉ (`vercel.json`), le job `deploy` de `ci.yml` pousse en CLI après
-  une suite verte.
+- Pas de build. Le push ne déploie pas (déploiement Git Vercel DÉSACTIVÉ,
+  `vercel.json`) : le job `deploy` de `ci.yml` pousse en CLI si la suite est verte.
 
 ## Architecture (fichiers clés)
 
@@ -57,8 +54,8 @@ Tout le calcul tourne en crons GitHub Actions ; le dashboard est en lecture seul
 - Chaque changement de schéma = nouveau `sql/migrate_vX_Y.sql`, appliqué À LA
   MAIN dans le SQL Editor Supabase (aucun runner de migration).
 - Tests purs uniquement (pas de réseau, pas de rendu de template).
-- Dépendances VERROUILLÉES au `==`, transitives comprises (`requirements.txt`,
-  `requirements-dev.txt`). Ne jamais y remettre une borne molle.
+- Dépendances VERROUILLÉES au `==`, transitives comprises
+  (`requirements*.txt`). Ne jamais y remettre une borne molle.
 
 ## Règles dures — jamais à rediscuter
 
@@ -66,8 +63,7 @@ Chacune a coûté une panne. Le récit et la justification sont dans
 `INCIDENTS.md`, à la section nommée.
 
 1. ⛔ **JAMAIS `${{ toJSON(secrets) }}` dans un workflow.** GitHub refuse de
-   le faire tourner : zéro job, aucun log. Ne pas contourner —
-   *Les blocs de secrets*.
+   le faire tourner : zéro job, aucun log — *Les blocs de secrets*.
 2. Les blocs `env:` des workflows sont **générés** par `python scripts/ci_env.py
    --write`, jamais écrits à la main, et posés par STEP.
 3. Ne **jamais** coder un nom de modèle IA en dur hors de `core/ai_router.py` —
@@ -86,3 +82,6 @@ Chacune a coûté une panne. Le récit et la justification sont dans
    trace empirique, les ignorer crée un biais de survie.
 10. Aucun seuil numérique d'émission n'est modifié sans mesure sur des lignes
     réglées POSTÉRIEURES à la correction en cours — *A6*.
+11. `TAX_RATE`, `SHADOW_SPORTS` et le périmètre sportif sont des décisions
+    opérateur ; ne pas les modifier sans instruction explicite dans la
+    session courante — *TAX_RATE remis à 0.20 contre instruction*.

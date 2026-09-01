@@ -320,7 +320,9 @@ class TestCalibrationA6:
         assert b and all(not x["qualifie"] for x in b)
         assert seuil_propose(calibration_bands(recs)) is None
 
-    def test_un_roi_positif_ne_suffit_pas_sans_wilson(self):
+    def test_un_roi_positif_ne_suffit_pas_sans_wilson(self, monkeypatch):
+        import scripts.replay_ledger_executable
+        monkeypatch.setattr(scripts.replay_ledger_executable, "TAX_RATE", 0.20)   # propriété à taux 0.20
         # 60 % à cote 2.50 : ROI net positif, mais la borne basse de Wilson
         # sur 30 tirages reste sous le point mort → on ne conclut pas.
         recs = self._bande(n=30, wins=18)
