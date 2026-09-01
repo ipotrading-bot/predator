@@ -466,9 +466,10 @@ fait, et pourquoi ainsi :
   `standard` et `deep` — pas dans `scan.yml`, pas par défaut dans
   `run_engine.py` (le défaut 0 reste verrouillé : un run local ou un futur
   workflow ne doit jamais dépenser un crédit sans l'avoir demandé). Il l'a
-  été une heure pour `golden` aussi (commit 14484da), puis RETIRÉ le même
-  jour sur décision opérateur : 24 ticks/jour repayant chaque ligue en
-  fenêtre favorable, c'était une clé vidée en 3-5 jours ;
+  été retiré une heure de `golden` (50c127e : 24 ticks/jour repayant chaque
+  ligue en fenêtre favorable = une clé vidée en 3-5 jours), puis RENDU à
+  `golden` le même jour avec le rythme mensuel ci-dessous — ce n'est plus
+  le nombre de ticks qui borne la dépense ;
 - la sortie anticipée GOLDEN_HOUR (« 0 event OddsAPI dans T-2h → exit ») a
   été **retirée**, et non ré-armée : elle datait d'un Tier 2 fait de recherche
   web ; aujourd'hui le Tier 2 porte tout le volume (api-sports, odds-api.io,
@@ -478,10 +479,23 @@ fait, et pourquoi ainsi :
   `…::test_golden_hour_tier_1_allume_mais_vide_descend_au_tier_2` ;
 - **le budget est le vrai risque.** Une clé = 500 crédits/mois ; un scan
   paie ~3 crédits par ligue peuplée (24 h ≈ 4 ligues ≈ 9-12 crédits, plus
-  en saison). À 8 standard + 2 deep par jour (~10 scans payants), la
-  politique de dépense (`core/scan_windows.py`) espaçant le HORS fenêtre,
-  une clé seule tient de l'ordre de 2-3 semaines — avec golden en plus
-  c'était 3-5 jours. Un pool mort n'est PAS une panne
+  en saison). Mesuré le 2026-09-01 : 24 crédits sur le tick standard de
+  09:03, soit ~240/jour à 10 scans — le pool de 5 comptes (2 500) serait
+  parti en dix jours. D'où le **rythme mensuel** (même jour, décision
+  opérateur « 1 mois seulement, maximum d'utilisation, suffisant pour tenir
+  30 jours ») : `core/scan_windows` calcule à chaque scan l'allocation du
+  jour = crédits restants du POOL ENTIER (5 sondes gratuites) ÷ jours
+  restants du cycle de 30 j (`meta.oddsapi_cycle_start`, redémarre seul) ;
+  un plafond intra-journée linéaire (15 % à 02:00 UTC, 100 % à 22:00) garde
+  du budget pour la soirée Big 5 ; closing line imminente jusqu'à 110 % de
+  l'allocation, fenêtre favorable / golden T-2h jusqu'à 100 %, fond jusqu'à
+  50 % ; dans un scan les ligues les plus peuplées passent d'abord. L'engagé
+  du jour vit dans `meta.oddsapi_spent_day`. Ce n'est PAS le gouverneur
+  retiré le 2026-08-01 (« ne pas rationner » : il étalait un budget que
+  l'opérateur voulait brûler) — celui-ci vise 100 % du pool, à la bonne
+  vitesse, et l'inutilisé d'un jour creux est reporté. `ODDS_API_PACING=0`
+  le coupe. Gardiens : `tests/test_scan_windows.py::TestRythme` et suivants.
+  Un pool mort n'est PAS une panne
   (les alertes de pool Telegram sont de nouveau actives et le disent) :
   la réponse est `rotate_odds_key.py --add`, jamais un rationnement muet.
 

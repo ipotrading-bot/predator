@@ -73,7 +73,8 @@ C'est le tableau à consulter avant de toucher à quoi que ce soit.
 | Le pool `scan` porte les relais des sources filtrées par IP | `…::test_le_pool_scan_porte_les_relais_des_sources_filtrees_par_ip` |
 | Le préflight refuse une `SUPABASE_SERVICE_KEY` qui n'est pas `service_role` | `…::test_preflight_refuse_une_cle_qui_nest_pas_service_role` |
 | `ODDS_API_KEY` n'est PLUS requise (la garde échouait fermé) | `…::test_preflight_odds_api_key_nest_plus_requise` |
-| Le Tier 1 est rallumé par `MODE_ENV` (standard/deep), jamais par défaut ni en golden/guerrilla/reprice | `…::test_le_tier_1_est_rallume_par_le_workflow_pas_par_le_module` |
+| Le Tier 1 est rallumé par `MODE_ENV` (standard/golden/deep), jamais par défaut ni en guerrilla/reprice | `…::test_le_tier_1_est_rallume_par_le_workflow_pas_par_le_module` |
+| Rythme mensuel OddsAPI : allocation = pool ÷ jours restants, plafond intra-journée, parts par priorité, ligues les plus peuplées d'abord | `tests/test_scan_windows.py::TestRythme`, `…::test_fetch_odds_sert_les_ligues_les_plus_peuplees_d_abord`, `…::test_build_spend_policy_porte_le_rythme` |
 | GOLDEN_HOUR avec Tier 1 allumé mais vide descend quand même au Tier 2 | `tests/test_oddsapi_obsolete.py::…::test_golden_hour_tier_1_allume_mais_vide_descend_au_tier_2` |
 | Chaque cron de `scan.yml` a sa ligne dans `CRON_MODES` | `…::test_la_table_cron_mode_est_exactement_les_crons_de_scan_yml` |
 | `closing_line.yml` ne tire jamais plus vite que `CLOSING_LINE_REFRESH_MIN` | `…::test_closing_line_cadence_alignee_sur_refresh_min` |

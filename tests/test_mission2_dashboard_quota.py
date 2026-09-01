@@ -124,6 +124,7 @@ class TestQuotaWatch:
         from tests.test_engine_circuit_breaker import FakeSB
         sent = []
         monkeypatch.setattr(eng, "_telegram", lambda t: sent.append(t))
+        monkeypatch.setattr(eng, "_odds_pool_totals", lambda: None)   # voie mono-clé
         monkeypatch.setattr(eng, "_odds_pool_counters",
                             lambda: {"remaining": 20, "used": 480, "total": 500, "pct": 4.0})
         sb = FakeSB()
@@ -136,6 +137,7 @@ class TestQuotaWatch:
         from tests.test_engine_circuit_breaker import FakeSB
         sent = []
         monkeypatch.setattr(eng, "_telegram", lambda t: sent.append(t))
+        monkeypatch.setattr(eng, "_odds_pool_totals", lambda: None)   # voie mono-clé
         monkeypatch.setattr(eng, "_odds_pool_counters",
                             lambda: {"remaining": 90, "used": 410, "total": 500, "pct": 18.0})
         assert eng._alert_oddsapi_pool_levels(FakeSB()) == "alert_oddsapi_pool_20"
@@ -145,6 +147,7 @@ class TestQuotaWatch:
         from tests.test_engine_circuit_breaker import FakeSB
         sent = []
         monkeypatch.setattr(eng, "_telegram", lambda t: sent.append(t))
+        monkeypatch.setattr(eng, "_odds_pool_totals", lambda: None)   # voie mono-clé
         monkeypatch.setattr(eng, "_odds_pool_counters",
                             lambda: {"remaining": 400, "used": 100, "total": 500, "pct": 80.0})
         assert eng._alert_oddsapi_pool_levels(FakeSB()) is None and sent == []

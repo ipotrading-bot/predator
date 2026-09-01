@@ -123,6 +123,46 @@ def favorable_leagues(now: datetime | None = None) -> set[str]:
     return {k for k in _WINDOWS if is_favorable(k, now)}
 
 
+# ── Rythme mensuel (2026-09-01) ───────────────────────────────────────
+# Décision opérateur : « 1 mois seulement, maximum d'utilisation, suffisant
+# pour tenir 30 jours ». Le pool (5 comptes × 500) doit être DÉPENSÉ EN
+# ENTIER sur le cycle, jamais avant sa fin. Ce n'est pas le gouverneur retiré
+# le 2026-08-01 (« ne pas rationner ») : celui-ci étalait un budget que
+# l'opérateur voulait brûler ; celui-là vise 100 % du pool, à la bonne
+# vitesse. Trois mécanismes, tous loggés :
+#   1. allocation du jour = crédits restants du POOL ÷ jours restants du cycle
+#      — recalculée à chaque scan, donc l'inutilisé d'un jour creux est
+#      reporté sur les suivants (« maximum d'utilisation ») ;
+#   2. plafond intra-journée linéaire (INTRADAY_LEAD_H) : à 02:00 UTC on ne
+#      peut engager que ~15 % de l'allocation, à 22:00 la totalité — le tick
+#      de nuit (SA/MLB) ne mange pas la soirée Big 5, qui porte le volume ;
+#   3. parts par priorité : closing line imminente jusqu'à EXEMPT_SHARE,
+#      fenêtre favorable / golden (T-2h) jusqu'à 100 %, scan de fond jusqu'à
+#      BACKGROUND_SHARE — le fond ne préempte jamais les fenêtres.
+# ODDS_API_PACING=0 remet l'ancien comportement (paie tout, réserve seule).
+PACING_ENABLED = os.environ.get("ODDS_API_PACING", "1") == "1"
+CYCLE_DAYS = float(os.environ.get("ODDS_API_CYCLE_DAYS", "30"))
+BACKGROUND_SHARE = float(os.environ.get("ODDS_API_BACKGROUND_SHARE", "0.5"))
+EXEMPT_SHARE = float(os.environ.get("ODDS_API_EXEMPT_SHARE", "1.1"))
+INTRADAY_LEAD_H = float(os.environ.get("ODDS_API_INTRADAY_LEAD_H", "2"))
+
+
+def daily_allowance(pool_remaining: int | float | None, days_left: float | None) -> float | None:
+    """Crédits à engager aujourd'hui pour finir le pool à la fin du cycle.
+    None si l'un des deux est inconnu : pas de rythme, on paie comme avant."""
+    if pool_remaining is None or days_left is None:
+        return None
+    return max(0.0, float(pool_remaining)) / max(1.0, float(days_left))
+
+
+def intraday_cap(allowance: float, now: datetime) -> float:
+    """Part de l'allocation engageable à cette heure UTC : linéaire, 100 %
+    atteint à (24 - INTRADAY_LEAD_H) h. La journée démarre douce pour que le
+    soir — les fenêtres qui comptent — trouve encore du budget."""
+    frac = (now.hour + now.minute / 60.0 + INTRADAY_LEAD_H) / 24.0
+    return allowance * min(1.0, max(0.0, frac))
+
+
 class SpendPolicy:
     """Décide, ligue par ligue, si un scan payant est autorisé maintenant.
 
@@ -130,26 +170,72 @@ class SpendPolicy:
     l'appelant (run_engine : horodatages dans meta) — ce module ne connaît
     pas Supabase. `exempt_sports` : sport-types ayant un signal actif proche
     du coup d'envoi (capture de closing line) — jamais espacés.
+
+    Rythme mensuel (optionnel) : `allowance` (crédits du jour), `spent_today`
+    (déjà engagés aujourd'hui, toutes exécutions confondues) et `note_spent`
+    (persiste les crédits payés). `imminent_mode=True` (golden hour, fenêtre
+    T-2h) : toute ligue peuplée est traitée au rang « fenêtre favorable » —
+    à deux heures du coup d'envoi, la ligne bouge partout.
     Sans politique (None), core/odds_api.fetch_odds paie comme avant.
     """
 
     def __init__(self, last_paid_age_min, note_paid, exempt_sports=frozenset(),
                  min_interval_min: int = BACKGROUND_MIN_INTERVAL_MIN,
-                 reserve_credits: int = RESERVE_CREDITS, log=None):
+                 reserve_credits: int = RESERVE_CREDITS, log=None,
+                 allowance: float | None = None, spent_today: float = 0.0,
+                 note_spent=None, imminent_mode: bool = False):
         self._age = last_paid_age_min
         self._note = note_paid
+        self._note_spent = note_spent
         self.exempt_sports = set(exempt_sports)
         self.min_interval = min_interval_min
         self.reserve = reserve_credits
         self.log = log
+        self.allowance = allowance if PACING_ENABLED else None
+        self.spent_today = float(spent_today)
+        self.engaged = 0.0            # crédits accordés par allow() dans CE scan
+        self.imminent_mode = imminent_mode
         self.skipped: list[tuple[str, str]] = []   # (sport_key, raison) — pour le rapport
 
+    # ── Rythme ──
+    def _cap(self, share: float, now: datetime, intraday: bool) -> float | None:
+        if self.allowance is None:
+            return None
+        base = intraday_cap(self.allowance, now) if intraday else self.allowance
+        return base * share
+
+    def _within(self, cost: float, share: float, now: datetime, intraday: bool):
+        cap = self._cap(share, now, intraday)
+        if cap is None:
+            return True, ""
+        projected = self.spent_today + self.engaged + cost
+        if projected <= cap + 1e-9:
+            return True, ""
+        return False, (f"rythme : {self.spent_today + self.engaged:.0f} engagés aujourd'hui "
+                       f"+ {cost:.0f} > plafond {cap:.0f} (allocation {self.allowance:.0f}/j)")
+
+    def budget_left(self, now: datetime) -> float | None:
+        """Crédits encore engageables à cette heure (rang fenêtre) — pour le log."""
+        cap = self._cap(1.0, now, True)
+        return None if cap is None else max(0.0, cap - self.spent_today - self.engaged)
+
     def allow(self, sport_key: str, sport_type: str, now: datetime,
-              pool_remaining: int | None) -> tuple[bool, str]:
-        if is_favorable(sport_key, now):
-            return True, "fenêtre favorable"
+              pool_remaining: int | None, cost: float = 3.0) -> tuple[bool, str]:
         if sport_type in self.exempt_sports:
-            return True, "closing line imminente"
+            ok, why = self._within(cost, EXEMPT_SHARE, now, intraday=False)
+            if ok:
+                self.engaged += cost
+                return True, "closing line imminente"
+            self._skip(sport_key, "closing line imminente mais " + why)
+            return False, why
+        if self.imminent_mode or is_favorable(sport_key, now):
+            rank = "golden T-2h" if self.imminent_mode else "fenêtre favorable"
+            ok, why = self._within(cost, 1.0, now, intraday=True)
+            if ok:
+                self.engaged += cost
+                return True, rank
+            self._skip(sport_key, f"{rank} mais {why}")
+            return False, why
         age = self._age(sport_key)
         if age is not None and age < self.min_interval:
             reason = (f"scan de fond : déjà payé il y a {age:.0f} min "
@@ -162,13 +248,23 @@ class SpendPolicy:
                       f"et closing line prioritaires")
             self._skip(sport_key, reason)
             return False, reason
+        ok, why = self._within(cost, BACKGROUND_SHARE, now, intraday=True)
+        if not ok:
+            self._skip(sport_key, "scan de fond : " + why)
+            return False, why
+        self.engaged += cost
         return True, "scan de fond"
 
-    def note_paid(self, sport_key: str) -> None:
+    def note_paid(self, sport_key: str, cost: float | None = None) -> None:
         try:
             self._note(sport_key)
         except Exception:
             pass
+        if cost and self._note_spent is not None:
+            try:
+                self._note_spent(float(cost))
+            except Exception:
+                pass
 
     def _skip(self, sport_key: str, reason: str) -> None:
         self.skipped.append((sport_key, reason))

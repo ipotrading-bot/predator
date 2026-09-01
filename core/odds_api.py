@@ -493,6 +493,8 @@ def reset_pool() -> None:
     """Oublie les clés marquées mortes (tests, ou après une rotation)."""
     global _last_failure
     _dead_keys.clear()
+    _key_remaining.clear()
+    _key_used.clear()
     _last_failure = ""
 
 
@@ -517,10 +519,68 @@ def pool_exhausted() -> bool:
 # pour sa garde de réserve. None = jamais observé.
 _last_remaining: int | None = None
 _last_used: int | None = None
+# Compteurs PAR CLÉ (dernier en-tête vu, sonde ou réponse payante). C'est la
+# base du rythme mensuel (core/scan_windows) : l'allocation du jour se calcule
+# sur le POOL ENTIER, pas sur la clé active — sinon 5 comptes de 500 seraient
+# gérés comme un seul de 500, cinq fois de suite.
+_key_remaining: dict[str, int] = {}
+_key_used: dict[str, int] = {}
+
+
+def _note_key(key: str, remaining, used=None) -> None:
+    try:
+        _key_remaining[key] = int(remaining)
+    except (TypeError, ValueError):
+        return
+    try:
+        _key_used[key] = int(used)
+    except (TypeError, ValueError):
+        pass
+
+
+def league_cost(sport_type: str) -> int:
+    """Crédits d'un appel /odds pour ce sport : 1 par marché × 1 région (eu)."""
+    return len(_MARKETS_BY_SPORT.get(sport_type, "h2h").split(","))
 
 
 def pool_remaining() -> int | None:
     return _last_remaining
+
+
+def pool_known_remaining() -> int | None:
+    """Somme des crédits restants des clés déjà observées (vivantes), sans
+    aucun appel. None si aucune clé n'a encore été vue."""
+    seen = [r for k, r in _key_remaining.items() if k not in _dead_keys]
+    return sum(seen) if seen else None
+
+
+def pool_total_remaining(explicit: str | None = None) -> int | None:
+    """Crédits restants du POOL ENTIER : sonde (0 crédit) chaque clé pas
+    encore observée dans ce process, puis somme des vivantes. Une clé qui ne
+    répond pas est marquée morte, comme dans _next_live_key. Cinq GET /sports
+    gratuits par run, pour piloter 2 500 crédits : c'est le bon échange."""
+    for k in candidate_keys(explicit):
+        if k in _dead_keys or k in _key_remaining:
+            continue
+        ok, detail = probe_key(k)
+        if not ok:
+            mark_dead(k, detail)
+    return pool_known_remaining()
+
+
+def pool_totals() -> dict | None:
+    """{'remaining','used','total','pct'} agrégés sur les clés observées —
+    None tant que moins de deux clés sont connues (pool_counters suffit)."""
+    keys = [k for k in _key_remaining if k not in _dead_keys]
+    if len(_key_remaining) < 2:
+        return None
+    r = sum(_key_remaining[k] for k in keys)
+    u = sum(_key_used.get(k, 0) for k in keys) + \
+        sum(_key_remaining[k] + _key_used.get(k, 0) for k in _key_remaining if k in _dead_keys)
+    total = r + u
+    if total <= 0:
+        return None
+    return {"remaining": r, "used": u, "total": total, "pct": 100.0 * r / total}
 
 
 def pool_counters() -> dict:
@@ -579,6 +639,7 @@ def probe_key(key: str) -> tuple[bool, str]:
         left = None
     if left is not None:
         _note_remaining(left, used)
+        _note_key(key, left, used)
     if left is not None and left < MIN_CREDITS:
         return False, f"quota épuisé — restantes={left} utilisées={used}"
     return True, f"HTTP 200 — restantes={remaining or '?'} utilisées={used}"
@@ -653,8 +714,9 @@ def fetch_odds(api_key: str | None = None, hours_ahead: int = 24,
     # matchs dans la fenêtre, triées par volume décroissant — si un 422
     # interrompt le scan, il l'aura interrompu sur les ligues les moins
     # fournies, pas au hasard de l'ordre du dictionnaire.
-    scan_plan: list = []
+    populated: list = []
     skipped_empty = 0
+    saved = 0
     skipped_season = 0
     skipped_policy = 0
     for sport_key, sport_type in keys_to_scan.items():
@@ -664,23 +726,44 @@ def fetch_odds(api_key: str | None = None, hours_ahead: int = 24,
         n_events = _events_in_window(api_key, sport_key, time_from, time_to)
         if n_events == 0:
             skipped_empty += 1
+            saved += league_cost(sport_type)
             continue
+        populated.append((sport_key, sport_type, n_events if n_events is not None else 0))
+    # Les plus peuplées d'abord — AVANT la politique de dépense : quand le
+    # rythme du jour n'autorise que quelques ligues, ce sont celles qui
+    # rapportent le plus de matchs par crédit qui passent, pas les premières
+    # du dictionnaire. Même ordre pour l'achat : un 422 interrompt sur les
+    # ligues les moins fournies.
+    populated.sort(key=lambda x: x[2], reverse=True)
+    scan_plan: list = []
+    for sport_key, sport_type, n_events in populated:
         if spend_policy is not None:
-            allowed, _why = spend_policy.allow(sport_key, sport_type, now, _last_remaining)
+            pool_left = pool_known_remaining()
+            allowed, _why = spend_policy.allow(
+                sport_key, sport_type, now,
+                pool_left if pool_left is not None else _last_remaining,
+                cost=league_cost(sport_type))
             if not allowed:
                 skipped_policy += 1
                 continue
-        scan_plan.append((sport_key, sport_type, n_events if n_events is not None else 0))
-    scan_plan.sort(key=lambda x: x[2], reverse=True)
+        scan_plan.append((sport_key, sport_type, n_events))
     if skipped_empty:
         log.info("Pré-vol gratuit : %d/%d ligues sans match dans la fenêtre — "
-                 "%d crédits économisés", skipped_empty, len(keys_to_scan), skipped_empty * 3)
+                 "%d crédits économisés", skipped_empty, len(keys_to_scan), saved)
     if skipped_season:
         log.info("Hors saison : %d ligue(s) avant leur date d'ouverture (SEASON_OPENS) — "
                  "0 crédit, 0 appel", skipped_season)
     if skipped_policy:
         log.info("Politique de dépense : %d ligue(s) peuplée(s) sautée(s) ce scan "
-                 "(fond espacé / réserve) — détail ligne par ligne ci-dessus", skipped_policy)
+                 "(rythme / fond espacé / réserve) — détail ligne par ligne ci-dessus",
+                 skipped_policy)
+    if spend_policy is not None and getattr(spend_policy, "allowance", None) is not None:
+        planned = sum(league_cost(t) for _k, t, _n in scan_plan)
+        left = spend_policy.budget_left(now)
+        log.info("RYTHME | allocation %.0f crédits/j — engagés aujourd'hui %.0f (dont %d "
+                 "pour ce scan : %d ligue(s)) — encore engageables à cette heure : %.0f",
+                 spend_policy.allowance, spend_policy.spent_today + spend_policy.engaged,
+                 planned, len(scan_plan), left if left is not None else -1)
 
     all_events = []
     for sport_key, sport_type, _n in scan_plan:
@@ -719,8 +802,9 @@ def fetch_odds(api_key: str | None = None, hours_ahead: int = 24,
             remaining = r.headers.get("x-requests-remaining", "?")
             used      = r.headers.get("x-requests-used", "?")
             _note_remaining(remaining, used)
+            _note_key(api_key, remaining, used)
             if spend_policy is not None and r.status_code == 200:
-                spend_policy.note_paid(sport_key)
+                spend_policy.note_paid(sport_key, league_cost(sport_type))
 
             if r.status_code == 404:
                 continue  # Not in season

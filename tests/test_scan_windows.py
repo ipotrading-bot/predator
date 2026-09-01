@@ -6,7 +6,8 @@ testé dans test_odds_api_preflight.py), intervalle minimal hors fenêtre
 favorable, garde de réserve — avec deux priorités absolues : les fenêtres
 favorables et la capture de closing line ne sont JAMAIS espacées.
 """
-from datetime import datetime, timezone
+import pytest
+from datetime import datetime, timedelta, timezone
 
 from core import odds_api
 from core.scan_windows import (BACKGROUND_MIN_INTERVAL_MIN, RESERVE_CREDITS,
@@ -190,3 +191,188 @@ def test_sports_with_imminent_signals(monkeypatch):
     got = eng._sports_with_imminent_signals(_SB(), datetime.now(timezone.utc))
     assert got == {"soccer", "mma"}
     assert eng._sports_with_imminent_signals(None, datetime.now(timezone.utc)) == set()
+
+
+# ── Rythme mensuel (2026-09-01) ───────────────────────────────────────
+# « 1 mois seulement, maximum d'utilisation, suffisant pour tenir 30 jours » :
+# le pool entier doit être dépensé sur le cycle, jamais avant sa fin.
+
+from core.scan_windows import daily_allowance, intraday_cap, BACKGROUND_SHARE, EXEMPT_SHARE  # noqa: E402
+
+
+class TestRythme:
+    NIGHT = _utc(2026, 9, 2, 1)        # 01:00 UTC, mercredi : SA/MLB favorables, EPL de fond
+    EVENING = _utc(2026, 9, 2, 22)     # 22:00 UTC : plafond intra-journée = 100 %
+
+    def test_allocation_du_jour_est_pool_sur_jours_restants(self):
+        assert daily_allowance(2500, 30) == pytest.approx(2500 / 30)
+        assert daily_allowance(2500, 0.2) == 2500          # dernier jour : tout
+        assert daily_allowance(None, 30) is None
+        assert daily_allowance(2500, None) is None
+
+    def test_plafond_intra_journee_monte_lineairement(self):
+        assert intraday_cap(240, _utc(2026, 9, 2, 0)) == pytest.approx(240 * 2 / 24)
+        assert intraday_cap(240, _utc(2026, 9, 2, 10)) == pytest.approx(240 * 12 / 24)
+        assert intraday_cap(240, self.EVENING) == 240
+        assert intraday_cap(240, _utc(2026, 9, 2, 23, 30)) == 240
+
+    def _pol(self, allowance, spent=0.0, exempt=(), imminent=False):
+        noted = []
+        p = SpendPolicy(lambda _k: None, lambda _k: None, exempt_sports=exempt,
+                        allowance=allowance, spent_today=spent,
+                        note_spent=noted.append, imminent_mode=imminent)
+        return p, noted
+
+    def test_fenetre_favorable_bornee_par_le_plafond_du_jour(self):
+        p, _ = self._pol(allowance=24, spent=0)     # 01:00 → plafond 24 × 3/24 = 3
+        ok, why = p.allow("baseball_mlb", "baseball", self.NIGHT, 2000, cost=2)
+        assert ok and why == "fenêtre favorable"
+        ok, why = p.allow("soccer_brazil_campeonato", "soccer", self.NIGHT, 2000, cost=3)
+        assert not ok and "rythme" in why and "plafond 3" in why
+        assert p.skipped and "fenêtre favorable mais" in p.skipped[0][1]
+
+    def test_le_soir_le_plafond_est_l_allocation_entiere(self):
+        late = _utc(2026, 9, 2, 21, 30)              # EPL en fenêtre, plafond 24 × 23,5/24 = 23,5
+        p, _ = self._pol(allowance=24, spent=15)
+        assert p.allow("soccer_epl", "soccer", late, 2000, cost=3)[0]      # 18
+        assert p.allow("soccer_epl", "soccer", late, 2000, cost=3)[0]      # 21
+        assert not p.allow("soccer_epl", "soccer", late, 2000, cost=3)[0]  # 24 > 23,5
+        assert p.engaged == 6                        # comptés dans CE scan, avant paiement
+
+    def test_le_fond_ne_prend_que_sa_part(self):
+        # 22:00 : plafond = allocation ; le fond s'arrête à BACKGROUND_SHARE
+        p, _ = self._pol(allowance=10, spent=10 * BACKGROUND_SHARE - 1)
+        # EPL à 22:00 est hors fenêtre (17-22 exclu) → scan de fond
+        assert p.allow("soccer_epl", "soccer", self.EVENING, 2000, cost=1)[0]
+        ok, why = p.allow("soccer_epl", "soccer", self.EVENING, 2000, cost=1)
+        assert not ok and "scan de fond" in p.skipped[0][1]
+        # …mais une ligue en fenêtre passe encore (NBA 22-04)
+        assert p.allow("basketball_nba", "basketball", self.EVENING, 2000, cost=3)[0]
+
+    def test_closing_line_imminente_deborde_un_peu_mais_pas_sans_fin(self):
+        p, _ = self._pol(allowance=10, spent=10, exempt={"soccer"})
+        assert p.allow("soccer_epl", "soccer", self.NIGHT, 2000, cost=1)[0]      # 11 ≤ 11
+        ok, why = p.allow("soccer_epl", "soccer", self.NIGHT, 2000, cost=1)
+        assert not ok and "closing line imminente mais" in p.skipped[0][1]
+        assert EXEMPT_SHARE == pytest.approx(1.1)
+
+    def test_golden_t_2h_est_au_rang_fenetre(self):
+        # 01:00, EPL hors fenêtre : de fond en standard, rang fenêtre en golden
+        std, _ = self._pol(allowance=240)
+        assert std.allow("soccer_epl", "soccer", self.NIGHT, 2000, cost=3)[1] == "scan de fond"
+        gold, _ = self._pol(allowance=240, imminent=True)
+        assert gold.allow("soccer_epl", "soccer", self.NIGHT, 2000, cost=3)[1] == "golden T-2h"
+
+    def test_sans_allocation_rien_ne_change(self):
+        p, _ = self._pol(allowance=None, spent=10_000)
+        assert p.allow("soccer_epl", "soccer", self.NIGHT, 2000, cost=3)[0]
+        assert p.budget_left(self.NIGHT) is None
+
+    def test_note_paid_persiste_le_cout(self):
+        p, noted = self._pol(allowance=100)
+        p.note_paid("soccer_epl", 3)
+        p.note_paid("soccer_epl")            # ancien appel, sans coût : rien à persister
+        assert noted == [3.0]
+
+    def test_pacing_desactivable_par_env(self, monkeypatch):
+        import core.scan_windows as sw
+        monkeypatch.setattr(sw, "PACING_ENABLED", False)
+        p = sw.SpendPolicy(lambda _k: None, lambda _k: None, allowance=1, spent_today=99)
+        assert p.allowance is None
+        assert p.allow("soccer_epl", "soccer", self.EVENING, 2000, cost=3)[0]
+
+
+def test_fetch_odds_sert_les_ligues_les_plus_peuplees_d_abord(monkeypatch):
+    """Quand le rythme ne laisse passer qu'une ligue, c'est celle qui
+    rapporte le plus de matchs par crédit — pas la première du dict."""
+    calls = []
+    events = {"soccer_epl": 2, "baseball_kbo": 9}
+
+    def fake_get(url, params=None, timeout=None):
+        if url.rstrip("/").endswith("/sports"):
+            return _Resp([])
+        key = url.split("/sports/")[1].split("/")[0]
+        if "/events" in url:
+            return _Resp([{"id": str(i)} for i in range(events[key])])
+        calls.append(key)
+        return _Resp([])
+
+    monkeypatch.setattr(odds_api.requests, "get", fake_get)
+    monkeypatch.setattr(odds_api, "datetime", _FrozenDT)
+    noted = []
+    # Mardi 04:00 : les deux ligues sont de fond → plafond 1000 × 6/24 × 0,5 = 125.
+    # À 123 engagés, il reste 2 crédits : KBO (h2h,totals = 2) passe, EPL (3) non.
+    pol = SpendPolicy(lambda _k: None, lambda _k: None, allowance=1000, spent_today=123,
+                      note_spent=noted.append)
+    odds_api.fetch_odds(api_key="k", hours_ahead=24,
+                        sport_keys={"soccer_epl": "soccer", "baseball_kbo": "baseball"},
+                        spend_policy=pol)
+    assert calls == ["baseball_kbo"]                 # 9 matchs pour 2 crédits, servie d'abord
+    assert noted == [2.0]                            # coût réel (h2h,totals) persisté
+    assert [k for k, _ in pol.skipped] == ["soccer_epl"]
+
+
+def test_league_cost_suit_les_marches():
+    assert odds_api.league_cost("soccer") == 3
+    assert odds_api.league_cost("baseball") == 2
+    assert odds_api.league_cost("mma") == 1
+    assert odds_api.league_cost("inconnu") == 1
+
+
+def test_pool_total_remaining_sonde_chaque_cle_une_fois(monkeypatch):
+    odds_api.reset_pool()
+    seen = []
+
+    def fake_get(url, params=None, timeout=None):
+        seen.append(params["apiKey"])
+        left = {"a": "476", "b": "500", "c": "0"}[params["apiKey"]]
+        r = _Resp([], remaining=left)
+        r.headers["x-requests-used"] = str(500 - int(left))
+        return r
+
+    monkeypatch.setattr(odds_api.requests, "get", fake_get)
+    monkeypatch.setattr(odds_api, "candidate_keys", lambda explicit=None: ["a", "b", "c"])
+    assert odds_api.pool_total_remaining() == 976          # c : 0 crédit → morte, exclue
+    assert odds_api.pool_total_remaining() == 976          # aucune nouvelle sonde
+    assert seen == ["a", "b", "c"]
+    t = odds_api.pool_totals()
+    assert t["remaining"] == 976 and t["total"] == 1500 and abs(t["pct"] - 976 / 15) < 1e-9
+    odds_api.reset_pool()
+    assert odds_api.pool_totals() is None
+
+
+def test_compteurs_meta_du_rythme(monkeypatch):
+    """Cycle, dépense du jour et remise à zéro au changement de date — sur
+    le double Supabase des tests moteur."""
+    import run_engine as eng
+    from tests.test_engine_circuit_breaker import FakeSB
+    sb = FakeSB()
+    now = datetime(2026, 9, 2, 12, tzinfo=timezone.utc)
+    assert eng._oddsapi_spent_today(sb, now) == 0.0
+    eng._oddsapi_note_spent(sb, now, 3)
+    eng._oddsapi_note_spent(sb, now, 2)
+    assert eng._oddsapi_spent_today(sb, now) == 5.0
+    assert eng._oddsapi_spent_today(sb, now + timedelta(days=1)) == 0.0   # nouveau jour
+    # Cycle : démarre à la première lecture (≈ 30 j restants), redémarre après 30 j.
+    days = eng._oddsapi_cycle_days_left(sb, datetime.now(timezone.utc))
+    assert 29.9 < days <= 30.0
+    sb.store["oddsapi_cycle_start"]["value"] = (datetime.now(timezone.utc)
+                                                - timedelta(days=31)).isoformat()
+    days = eng._oddsapi_cycle_days_left(sb, datetime.now(timezone.utc))
+    assert 29.9 < days <= 30.0
+
+
+def test_build_spend_policy_porte_le_rythme(monkeypatch):
+    import run_engine as eng
+    from tests.test_engine_circuit_breaker import FakeSB
+    sb = FakeSB()
+    monkeypatch.setattr(eng, "_odds_pool_total_remaining", lambda: 2400)
+    monkeypatch.setattr(eng, "_sports_with_imminent_signals", lambda _sb, _now: {"mma"})
+    monkeypatch.setattr(eng, "GOLDEN_HOUR", True)
+    now = datetime.now(timezone.utc)
+    pol = eng._build_spend_policy(sb, now)
+    assert pol.allowance == pytest.approx(2400 / 30, rel=0.01)
+    assert pol.imminent_mode and pol.exempt_sports == {"mma"}
+    pol.note_paid("soccer_epl", 3)
+    assert eng._oddsapi_spent_today(sb, now) == 3.0
+    assert eng._build_spend_policy(None, now) is None

@@ -34,8 +34,12 @@ from core.math_engine import (to_binary, devig_bounds, is_round_number_line, dev
                               dnb_leg_split as _dnb_leg_split,
                               executable_price as _executable_price)
 from core.tax_engine import optimal_stake_fraction as _optimal_stake_fraction
-from core.odds_api import fetch_odds, pool_status as _odds_pool_status, pool_counters as _odds_pool_counters
-from core.scan_windows import SpendPolicy as _SpendPolicy
+from core.odds_api import (fetch_odds, pool_status as _odds_pool_status,
+                           pool_counters as _odds_pool_counters,
+                           pool_totals as _odds_pool_totals,
+                           pool_total_remaining as _odds_pool_total_remaining)
+from core.scan_windows import (SpendPolicy as _SpendPolicy, CYCLE_DAYS as _ODDS_CYCLE_DAYS,
+                               daily_allowance as _odds_daily_allowance)
 from core.constants import CLOSING_LINE_WINDOW_MIN as _CLOSING_LINE_WINDOW_MIN
 from core.oracle import get_pinnacle_price, MAX_ORACLE_DEFAULT as _MAX_ORACLE_DEFAULT
 from core.run_contract import terminer as _terminer_run, verdict_de_fin
@@ -83,8 +87,9 @@ GUERRILLA    = os.environ.get("GUERRILLA",   "0") == "1"  # skip OddsAPI → Tie
 # Réactivation explicite, sans autre changement : ODDS_API=1
 #
 # RALLUMÉ le 2026-09-01 (décision opérateur, nouvelle clé dans le pool) : le
-# flag est posé par scripts/ci_scan_mode.py::TIER1_ENV pour standard et deep
-# seulement (golden : 24 ticks/jour, trop cher). Le DÉFAUT reste 0 — verrouillé par tests/test_oddsapi_obsolete.py —
+# flag est posé par scripts/ci_scan_mode.py::TIER1_ENV pour standard, golden
+# et deep ; la dépense est bornée par le rythme mensuel (core/scan_windows,
+# _build_spend_policy), pas par le nombre de ticks. Le DÉFAUT reste 0 — verrouillé par tests/test_oddsapi_obsolete.py —
 # pour qu'un `python run_engine.py` local ou un futur workflow ne dépense
 # jamais un crédit sans l'avoir demandé.
 ODDS_API_ENABLED = os.environ.get("ODDS_API", "0") == "1"
@@ -753,12 +758,15 @@ def _alert_oddsapi_pool_levels(sb) -> str | None:
     UNE seule par palier et par 24 h (dédup meta via _alert_once). Rappel de
     l'incident du 10→20 août 2026 : une clé à 0 crédit pendant dix jours sans
     que personne ne le voie. Rend la clé d'alerte envoyée, ou None."""
-    c = _odds_pool_counters()
+    # Pool entier quand plusieurs clés sont connues (rythme mensuel) : une
+    # clé n° 1 à 4 % avec quatre clés pleines derrière n'est pas une alerte.
+    totals = _odds_pool_totals()
+    c = totals or _odds_pool_counters()
     if c.get("pct") is None:
         log.info("Quota OddsAPI : inconnu (aucune réponse OddsAPI observée ce run)")
         return None
-    log.info("Quota OddsAPI : %d restantes / %d (%.1f%%) — clé active",
-             c["remaining"], c["total"], c["pct"])
+    log.info("Quota OddsAPI : %d restantes / %d (%.1f%%) — %s",
+             c["remaining"], c["total"], c["pct"], "pool entier" if totals else "clé active")
     for threshold, key, icon in _POOL_ALERT_TIERS:
         if c["pct"] < threshold:
             sent = _alert_once(
@@ -793,10 +801,53 @@ def _sports_with_imminent_signals(sb, now) -> set[str]:
         return set()
 
 
+def _meta_get(sb, key: str) -> str | None:
+    """Valeur brute de meta[key], None si absente ou illisible."""
+    try:
+        row = sb.table("meta").select("value").eq("key", key).maybe_single().execute()
+        raw = (row.data or {}).get("value") if row and row.data else None
+        return None if raw in (None, "") else str(raw).strip('"')
+    except Exception as e:
+        log.debug("meta get [%s]: %s", key, e)
+        return None
+
+
+def _oddsapi_cycle_days_left(sb, now) -> float:
+    """Jours restants du cycle de dépense (ODDS_API_CYCLE_DAYS, 30 par
+    défaut). Le cycle démarre à la première lecture et REDÉMARRE tout seul
+    une fois écoulé : les comptes gratuits se rechargent chacun à leur date,
+    le pool re-mesuré à chaque scan absorbe ça sans réglage."""
+    age_h = _meta_stamp_age_h(sb, "oddsapi_cycle_start")
+    if age_h is None or age_h / 24.0 >= _ODDS_CYCLE_DAYS:
+        _meta_stamp(sb, "oddsapi_cycle_start", now.isoformat())
+        age_h = 0.0
+    return max(1.0, _ODDS_CYCLE_DAYS - age_h / 24.0)
+
+
+def _oddsapi_spent_today(sb, now) -> float:
+    """Crédits engagés aujourd'hui (UTC), tous runs confondus —
+    meta `oddsapi_spent_day` = "YYYY-MM-DD:crédits"."""
+    raw = _meta_get(sb, "oddsapi_spent_day") or ""
+    day, _, val = raw.partition(":")
+    if day != now.strftime("%Y-%m-%d"):
+        return 0.0
+    try:
+        return float(val)
+    except ValueError:
+        return 0.0
+
+
+def _oddsapi_note_spent(sb, now, cost: float) -> None:
+    total = _oddsapi_spent_today(sb, now) + float(cost)
+    _meta_stamp(sb, "oddsapi_spent_day", f"{now.strftime('%Y-%m-%d')}:{total:.0f}")
+
+
 def _build_spend_policy(sb, now):
     """Politique de dépense OddsAPI (core/scan_windows) adossée aux
-    horodatages meta `scan_paid_<ligue>`. Sans Supabase : None (on paie
-    comme avant — mieux vaut un crédit de trop qu'un trou de couverture)."""
+    horodatages meta `scan_paid_<ligue>` et, depuis le 2026-09-01, au rythme
+    mensuel : allocation du jour = pool restant ÷ jours restants du cycle.
+    Sans Supabase : None (on paie comme avant — mieux vaut un crédit de trop
+    qu'un trou de couverture)."""
     if not sb:
         return None
 
@@ -807,9 +858,22 @@ def _build_spend_policy(sb, now):
     def _note(sport_key: str):
         _meta_stamp(sb, f"scan_paid_{sport_key}", datetime.now(timezone.utc).isoformat())
 
+    pool_total = _odds_pool_total_remaining()          # sondes gratuites, toutes les clés
+    days_left = _oddsapi_cycle_days_left(sb, now)
+    allowance = _odds_daily_allowance(pool_total, days_left)
+    spent = _oddsapi_spent_today(sb, now)
+    if allowance is None:
+        log.info("RYTHME | pool inconnu — pas de rythme ce run, politique classique")
+    else:
+        log.info("RYTHME | pool %d crédits, %.1f j restants du cycle → allocation %.0f/j ; "
+                 "engagés aujourd'hui %.0f%s", pool_total, days_left, allowance, spent,
+                 " | golden T-2h au rang fenêtre" if GOLDEN_HOUR else "")
+
     return _SpendPolicy(_age_min, _note,
                         exempt_sports=_sports_with_imminent_signals(sb, now),
-                        log=log)
+                        log=log, allowance=allowance, spent_today=spent,
+                        note_spent=lambda cost: _oddsapi_note_spent(sb, now, cost),
+                        imminent_mode=GOLDEN_HOUR)
 
 
 _SYSTEM_ALERT_TTL_H = float(os.environ.get("SYSTEM_ALERT_TTL_H", "6"))
