@@ -17,9 +17,10 @@ name: Predator Scan
 #
 # OddsAPI (Tier 1, payant, 500 crédits/mois PAR CLÉ) : déclaré obsolète le
 # 2026-08-26, RALLUMÉ le 2026-09-01 — le flag ODDS_API=1 est posé par
-# scripts/ci_scan_mode.py (MODE_ENV) pour standard/golden/deep, jamais ici.
-# GUERRILLA tourne sans Tier 1 par construction (horizon 48 h, recherche web
-# renforcée) ; REPRICE ne dépense rien.
+# scripts/ci_scan_mode.py (MODE_ENV) pour standard et deep SEULEMENT, jamais
+# ici. GOLDEN (24 ticks/jour) tourne sur les sources gratuites : le payer
+# viderait une clé en 3-5 jours. GUERRILLA tourne sans Tier 1 par
+# construction (horizon 48 h, recherche web renforcée) ; REPRICE ne dépense rien.
 #
 # Cadence : 8 + 24 + 2 + 2 = 36 scans/jour. Ne pas remonter sans recalculer le
 # budget des sources gratuites (api-sports 80/sport, odds-api.io 400, titan007

@@ -39,14 +39,17 @@ MODES = ("standard", "golden", "deep", "guerrilla", "reprice")
 # OddsAPI (Tier 1) RALLUMÉ le 2026-09-01, décision opérateur — clé posée dans
 # app_secrets.ODDS_API_KEYS. Le défaut du module reste 0 (obsolescence du
 # 2026-08-26, tests/test_oddsapi_obsolete.py) : c'est ICI, et seulement ici,
-# que le flag est posé, pour les trois modes qui ont un Tier 1. GUERRILLA et
-# REPRICE ne l'ont pas par construction (run_engine.py le teste avant le
-# flag) — le leur poser serait une seconde source de vérité pour rien.
+# que le flag est posé. GUERRILLA et REPRICE n'ont pas de Tier 1 par
+# construction (run_engine.py le teste avant le flag). GOLDEN ne le porte pas
+# NON PLUS, décision opérateur du 2026-09-01 : 24 ticks/jour qui repaient
+# chaque ligue en fenêtre favorable auraient vidé une clé (500 crédits/mois)
+# en 3-5 jours ; le golden garde sa fenêtre T-120 min sur les sources
+# gratuites. Restent standard (8/jour) et deep (2/jour) : ~10 scans payants.
 TIER1_ENV = {"ODDS_API": "1"}
 
 MODE_ENV: dict[str, dict[str, str]] = {
     "standard": {**TIER1_ENV},
-    "golden": {**TIER1_ENV, "GOLDEN_HOUR": "1"},
+    "golden": {"GOLDEN_HOUR": "1"},
     # HOURS_AHEAD explicite : run_engine.py le lit avec un défaut de 24, mais
     # deep_scan.yml le posait déjà en clair — on ne change pas ce contrat.
     "deep": {**TIER1_ENV, "DEEP_SCAN": "1", "HOURS_AHEAD": "24"},

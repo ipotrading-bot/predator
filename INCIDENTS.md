@@ -463,9 +463,12 @@ Gardien : `tests/test_oddsapi_obsolete.py`.
 fait, et pourquoi ainsi :
 
 - le flag `ODDS_API=1` est posé par `scripts/ci_scan_mode.py::TIER1_ENV` pour
-  `standard`, `golden` et `deep` — pas dans `scan.yml`, pas par défaut dans
+  `standard` et `deep` — pas dans `scan.yml`, pas par défaut dans
   `run_engine.py` (le défaut 0 reste verrouillé : un run local ou un futur
-  workflow ne doit jamais dépenser un crédit sans l'avoir demandé) ;
+  workflow ne doit jamais dépenser un crédit sans l'avoir demandé). Il l'a
+  été une heure pour `golden` aussi (commit 14484da), puis RETIRÉ le même
+  jour sur décision opérateur : 24 ticks/jour repayant chaque ligue en
+  fenêtre favorable, c'était une clé vidée en 3-5 jours ;
 - la sortie anticipée GOLDEN_HOUR (« 0 event OddsAPI dans T-2h → exit ») a
   été **retirée**, et non ré-armée : elle datait d'un Tier 2 fait de recherche
   web ; aujourd'hui le Tier 2 porte tout le volume (api-sports, odds-api.io,
@@ -475,9 +478,10 @@ fait, et pourquoi ainsi :
   `…::test_golden_hour_tier_1_allume_mais_vide_descend_au_tier_2` ;
 - **le budget est le vrai risque.** Une clé = 500 crédits/mois ; un scan
   paie ~3 crédits par ligue peuplée (24 h ≈ 4 ligues ≈ 9-12 crédits, plus
-  en saison). 8 standard + 2 deep + 24 golden par jour, la politique de
-  dépense (`core/scan_windows.py`) espaçant seulement le HORS fenêtre, une
-  clé seule tient de l'ordre de 3-5 jours. Un pool mort n'est PAS une panne
+  en saison). À 8 standard + 2 deep par jour (~10 scans payants), la
+  politique de dépense (`core/scan_windows.py`) espaçant le HORS fenêtre,
+  une clé seule tient de l'ordre de 2-3 semaines — avec golden en plus
+  c'était 3-5 jours. Un pool mort n'est PAS une panne
   (les alertes de pool Telegram sont de nouveau actives et le disent) :
   la réponse est `rotate_odds_key.py --add`, jamais un rationnement muet.
 

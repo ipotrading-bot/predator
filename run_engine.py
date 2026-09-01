@@ -83,8 +83,8 @@ GUERRILLA    = os.environ.get("GUERRILLA",   "0") == "1"  # skip OddsAPI → Tie
 # Réactivation explicite, sans autre changement : ODDS_API=1
 #
 # RALLUMÉ le 2026-09-01 (décision opérateur, nouvelle clé dans le pool) : le
-# flag est posé par scripts/ci_scan_mode.py::TIER1_ENV pour standard/golden/
-# deep. Le DÉFAUT reste 0 — verrouillé par tests/test_oddsapi_obsolete.py —
+# flag est posé par scripts/ci_scan_mode.py::TIER1_ENV pour standard et deep
+# seulement (golden : 24 ticks/jour, trop cher). Le DÉFAUT reste 0 — verrouillé par tests/test_oddsapi_obsolete.py —
 # pour qu'un `python run_engine.py` local ou un futur workflow ne dépense
 # jamais un crédit sans l'avoir demandé.
 ODDS_API_ENABLED = os.environ.get("ODDS_API", "0") == "1"
