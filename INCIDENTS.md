@@ -458,6 +458,29 @@ le jour où le secret est retiré. La sortie anticipée de GOLDEN_HOUR supposait
 un Tier 1 vivant : sans elle, le tick golden était un no-op horaire permanent.
 Gardien : `tests/test_oddsapi_obsolete.py`.
 
+**RALLUMÉ le 2026-09-01** (décision opérateur, nouvelle clé posée par
+`rotate_odds_key.py --add` dans `app_secrets.ODDS_API_KEYS`). Ce qui a été
+fait, et pourquoi ainsi :
+
+- le flag `ODDS_API=1` est posé par `scripts/ci_scan_mode.py::TIER1_ENV` pour
+  `standard`, `golden` et `deep` — pas dans `scan.yml`, pas par défaut dans
+  `run_engine.py` (le défaut 0 reste verrouillé : un run local ou un futur
+  workflow ne doit jamais dépenser un crédit sans l'avoir demandé) ;
+- la sortie anticipée GOLDEN_HOUR (« 0 event OddsAPI dans T-2h → exit ») a
+  été **retirée**, et non ré-armée : elle datait d'un Tier 2 fait de recherche
+  web ; aujourd'hui le Tier 2 porte tout le volume (api-sports, odds-api.io,
+  titan007, Matchbook) et le tick golden tire 24 fois par jour. La garder
+  aurait rendu ces sources muettes à chaque tick où le pool est vide, hors
+  fenêtre ou sans match à 2 h. Gardien :
+  `…::test_golden_hour_tier_1_allume_mais_vide_descend_au_tier_2` ;
+- **le budget est le vrai risque.** Une clé = 500 crédits/mois ; un scan
+  paie ~3 crédits par ligue peuplée (24 h ≈ 4 ligues ≈ 9-12 crédits, plus
+  en saison). 8 standard + 2 deep + 24 golden par jour, la politique de
+  dépense (`core/scan_windows.py`) espaçant seulement le HORS fenêtre, une
+  clé seule tient de l'ordre de 3-5 jours. Un pool mort n'est PAS une panne
+  (les alertes de pool Telegram sont de nouveau actives et le disent) :
+  la réponse est `rotate_odds_key.py --add`, jamais un rationnement muet.
+
 ### odds-api.io : le plan autorise DEUX books, un seul est sélectionné (2026-08-27)
 
 Le côté SOFT est le goulot de tout le pipeline, et il tenait ce jour-là sur

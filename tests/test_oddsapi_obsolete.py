@@ -126,6 +126,21 @@ class TestOddsApiObsolete:
         eng.run()
         assert vus == ["tier2"], "le Tier 2 n'a pas été atteint en GOLDEN_HOUR"
 
+    def test_golden_hour_tier_1_allume_mais_vide_descend_au_tier_2(self, scan_env, monkeypatch):
+        """Rallumage du 2026-09-01 : un Tier 1 vivant qui rend 0 event dans
+        T-2h ne doit plus court-circuiter les sources gratuites — elles
+        portent tout le volume, et le tick golden tire 24 fois par jour."""
+        monkeypatch.setattr(eng, "GOLDEN_HOUR", True)
+        monkeypatch.setattr(eng, "ODDS_API_ENABLED", True)
+        monkeypatch.setattr(eng, "fetch_odds", lambda **_k: [])
+        monkeypatch.setattr(eng, "_build_spend_policy", lambda _sb, _now: None)
+        monkeypatch.setattr(eng, "_alert_oddsapi_pool_levels", lambda _sb: None)
+        monkeypatch.setattr(eng, "_alert_oddsapi_pool_if_dead", lambda _sb: None)
+        vus = []
+        monkeypatch.setattr(eng, "fetch_matches", lambda: vus.append("tier2") or [])
+        eng.run()
+        assert vus == ["tier2"], "Tier 1 vide en GOLDEN_HOUR : le Tier 2 doit être atteint"
+
     def test_odds_api_1_rallume_le_tier_1(self, scan_env, monkeypatch):
         """L'obsolescence est un interrupteur, pas une amputation."""
         monkeypatch.setattr(eng, "ODDS_API_ENABLED", True)

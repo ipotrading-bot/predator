@@ -265,11 +265,24 @@ def test_flag_manuel_promeut_golden_seulement():
 
 
 def test_env_de_mode():
-    assert ci_mode.env_for("golden") == {"GOLDEN_HOUR": "1"}
-    assert ci_mode.env_for("deep") == {"DEEP_SCAN": "1", "HOURS_AHEAD": "24"}
+    assert ci_mode.env_for("golden") == {"ODDS_API": "1", "GOLDEN_HOUR": "1"}
+    assert ci_mode.env_for("deep") == {"ODDS_API": "1", "DEEP_SCAN": "1", "HOURS_AHEAD": "24"}
     assert ci_mode.env_for("guerrilla")["GUERRILLA"] == "1"
-    assert ci_mode.env_for("standard", "12") == {"HOURS_AHEAD": "12"}
+    assert ci_mode.env_for("standard", "12") == {"ODDS_API": "1", "HOURS_AHEAD": "12"}
     assert ci_mode.env_for("reprice") == {}
+
+
+def test_le_tier_1_est_rallume_par_le_workflow_pas_par_le_module():
+    """Rallumage OddsAPI du 2026-09-01 : le flag vit dans MODE_ENV, pour les
+    seuls modes qui ont un Tier 1. Le défaut du module reste 0
+    (tests/test_oddsapi_obsolete.py) ; GUERRILLA et REPRICE n'ont pas de
+    Tier 1 par construction et ne portent donc pas le flag — le leur poser
+    serait une seconde source de vérité pour une valeur que le code ignore."""
+    assert ci_mode.TIER1_ENV == {"ODDS_API": "1"}
+    for mode in ("standard", "golden", "deep"):
+        assert ci_mode.env_for(mode).get("ODDS_API") == "1", mode
+    for mode in ("guerrilla", "reprice"):
+        assert "ODDS_API" not in ci_mode.env_for(mode), mode
 
 
 def test_guerrilla_ne_fige_pas_son_horizon_dans_le_workflow():

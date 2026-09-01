@@ -276,9 +276,10 @@ python scripts/ops.py supabase sql "select count(*) from team_aliases"
 
 ## Ce qu'aucun de ces gestes ne règle
 
-- **Le tennis** n'a plus aucune source sharp depuis l'obsolescence d'OddsAPI.
-  81 des 141 refus « Échec prix Sharp » mesurés le 2026-08-27 sont du tennis.
-  Aucun réglage ne le rattrape ; il faudrait une source qui le price.
+- **Le tennis** n'a de source sharp que par OddsAPI (clés dynamiques
+  `tennis_*`). 81 des 141 refus « Échec prix Sharp » mesurés le 2026-08-27
+  (Tier 1 éteint) étaient du tennis. Tier 1 rallumé le 2026-09-01 : il
+  revient tant que le pool `ODDS_API_KEYS` a du crédit — et seulement là.
 - **7M** ne cote rien : c'est un dictionnaire de noms, et il n'est interrogé
   que lorsqu'odds500 rend des fixtures à résoudre. Il suit odds500, il ne la
   précède pas.

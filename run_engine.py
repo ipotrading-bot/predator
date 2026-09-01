@@ -81,6 +81,12 @@ GUERRILLA    = os.environ.get("GUERRILLA",   "0") == "1"  # skip OddsAPI → Tie
 # fait encore. C'est le prix assumé de la sortie du payant.
 #
 # Réactivation explicite, sans autre changement : ODDS_API=1
+#
+# RALLUMÉ le 2026-09-01 (décision opérateur, nouvelle clé dans le pool) : le
+# flag est posé par scripts/ci_scan_mode.py::TIER1_ENV pour standard/golden/
+# deep. Le DÉFAUT reste 0 — verrouillé par tests/test_oddsapi_obsolete.py —
+# pour qu'un `python run_engine.py` local ou un futur workflow ne dépense
+# jamais un crédit sans l'avoir demandé.
 ODDS_API_ENABLED = os.environ.get("ODDS_API", "0") == "1"
 REPRICE      = os.environ.get("REPRICE",     "0") == "1"  # Matchbook seul vs slate soft en cache — zéro source payante
 DEBUG_MODE   = os.environ.get("PREDATOR_DEBUG", "0") == "1"
@@ -2467,25 +2473,17 @@ def run():
     else:
         log.info("💹 Exchange: 0 marché sharp (Betfair absent/refusé, Matchbook vide ou géobloqué)")
 
-    # ── Golden Hour early-exit — aucun event OddsAPI dans T-2h ──────────
-    # Si OddsAPI ne trouve rien dans la fenêtre 2h, les lignes ne bougent pas.
-    # Tier 2/3 (recherche web) ne sert à rien ici : trop lent, rate-limited,
-    # et les prix estimés ont moins de valeur que le vrai mouvement Pinnacle.
-    #
-    # ⚠️ CETTE SORTIE SUPPOSE UN TIER 1 VIVANT. OddsAPI obsolète (2026-08-26),
-    # `matches` est TOUJOURS vide ici — la garde ferait du tick golden un
-    # no-op permanent, une fois par heure, pour toujours. C'était déjà le cas
-    # en prod avant la décision (run 32965494280, 11:52 : « 0 events dans
-    # T-2h → exit rapide » alors que les sources gratuites, elles, avaient de
-    # quoi travailler). Sans OddsAPI on laisse donc le scan descendre au
-    # Tier 2, qui garde la fenêtre T-120min posée plus haut.
-    if GOLDEN_HOUR and not matches and ODDS_API_ENABLED:
-        log.info("⚡ GOLDEN HOUR — 0 events dans T-2h → exit rapide (lignes stables)")
-        if sb:
-            _heartbeat(sb, now, None, None)
-        if credentials_failed:
-            raise SystemExit(1)
-        return
+    # ── Golden Hour : PLUS de sortie anticipée sur « 0 event OddsAPI » ──
+    # Jusqu'au 2026-09-01 un tick golden dont le Tier 1 rendait 0 event dans
+    # T-2h sortait ici (« lignes stables »). Ce raisonnement datait d'un Tier 2
+    # fait de recherche web (lente, rate-limitée). Depuis, le Tier 2 c'est
+    # api-sports, odds-api.io, titan007 et Matchbook — les sources qui portent
+    # TOUT le volume depuis l'obsolescence d'OddsAPI (2026-08-26). Rallumer
+    # le Tier 1 avec cette garde aurait rendu ces sources muettes 24 fois par
+    # jour dès que le pool est vide, hors fenêtre, ou simplement sans match
+    # dans 2 h — exactement le no-op horaire déjà constaté en prod (run
+    # 32965494280). Un Tier 1 vide descend donc au Tier 2 dans TOUS les
+    # modes ; gardien : tests/test_oddsapi_obsolete.py.
 
     # ── REPRICE : seuls les matchs repricés par l'exchange continuent ────
     # Aucune recherche web n'est autorisée en reprice : un match que

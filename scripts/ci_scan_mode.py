@@ -36,12 +36,20 @@ MODES = ("standard", "golden", "deep", "guerrilla", "reprice")
 # Variables lues par run_engine.py (évaluées à l'import du module).
 # Valeurs reportées telles quelles depuis engine/golden_hour/deep_scan/
 # guerrilla.yml au 2026-08-26 — vérifiées une à une, aucune n'a été inventée.
+# OddsAPI (Tier 1) RALLUMÉ le 2026-09-01, décision opérateur — clé posée dans
+# app_secrets.ODDS_API_KEYS. Le défaut du module reste 0 (obsolescence du
+# 2026-08-26, tests/test_oddsapi_obsolete.py) : c'est ICI, et seulement ici,
+# que le flag est posé, pour les trois modes qui ont un Tier 1. GUERRILLA et
+# REPRICE ne l'ont pas par construction (run_engine.py le teste avant le
+# flag) — le leur poser serait une seconde source de vérité pour rien.
+TIER1_ENV = {"ODDS_API": "1"}
+
 MODE_ENV: dict[str, dict[str, str]] = {
-    "standard": {},
-    "golden": {"GOLDEN_HOUR": "1"},
+    "standard": {**TIER1_ENV},
+    "golden": {**TIER1_ENV, "GOLDEN_HOUR": "1"},
     # HOURS_AHEAD explicite : run_engine.py le lit avec un défaut de 24, mais
     # deep_scan.yml le posait déjà en clair — on ne change pas ce contrat.
-    "deep": {"DEEP_SCAN": "1", "HOURS_AHEAD": "24"},
+    "deep": {**TIER1_ENV, "DEEP_SCAN": "1", "HOURS_AHEAD": "24"},
     # GUERRILLA ne pose PAS HOURS_AHEAD : son horizon de 48 h vient du code
     # (run_engine.py, branche `elif GUERRILLA`), pas du workflow. L'y écrire
     # ferait diverger deux sources de vérité pour la même valeur.
