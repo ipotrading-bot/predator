@@ -1086,6 +1086,55 @@ retrait actif, la couche ne faisant que des upserts. La borne se lève
 d'elle-même quand le moteur corrigé a assez de réglés.
 Gardien : `tests/test_learning_layer.py::TestSeuilEpoqueRegle10`.
 
+### Le même match réel pesait DOUBLE : deux sources, deux match_id, deux lignes de ledger (2026-09-02)
+
+L'opérateur voyait sur /performance des lignes réglées jamais vues ailleurs ;
+en tirant le fil, le diagnostic a trouvé des matchs comptés DEUX FOIS dans
+l'historique et dans le n de la couche d'apprentissage. Mécanique : le même
+match réel arrivant par deux sources porte deux match_id (uuid OddsAPI d'un
+côté, id dérivé des noms d'équipes de l'autre) → deux signaux jumeaux
+coexistent, chacun est réglé, chacun écrit sa ligne. Toutes les gardes
+d'unicité raisonnaient par signal_id (`ledger_signal_id_uniq`, v10_8,
+`_ledger_deja_ecrit`) ou par match_id (index partiel v10_7) — AUCUNE par
+match RÉEL.
+MESURÉ le 2026-09-02, en base : **47 paires exactes** (même
+match/selection/market_type, < 6 jours d'écart) + **7 paires floues**
+vérifiées une à une = 54 lignes sur ~540 vivantes (~10 % du n). Aucune paire
+WIN contre LOSS — les jumeaux concordent, le biais est un POIDS double, pas
+un résultat faux — sauf une paire PUSH contre expired (Hellas Syrou).
+3 lignes avaient en outre été réinsérées par l'audit manuel du 2026-09-01
+(run 33493462880).
+Correctif, deux moitiés :
+1. Le FLUX — `core/db.py::_ledger_jumeau_reel`, appelée par `log_to_ledger` :
+   clé EXACTE (match, selection, market_type) sur 6 jours ; même règle que
+   `_ledger_deja_ecrit`, « le décisif gagne » — entrant décisif sur stocké
+   non décisif → PROMOTION de la ligne stockée au lieu d'une seconde ligne ;
+   fail-open sur panne de lecture (perdre un résultat réel serait définitif,
+   un doublon se rattrape par archivage).
+2. Le STOCK — `sql/migrate_v10_10_ledger_dedup.sql` : ARCHIVAGE (règle n°9,
+   modèle v10_5), règle générique recalculée pour les exacts + liste d'ids
+   MORTE pour les 7 flous, RLS refermée sur l'archive au passage. Le cluster
+   Pachuca n'est traité que PARTIELLEMENT : impossible de trancher sur
+   pièces si « CF Pachuca vs CD Guadalajara » désigne le féminin ou le
+   masculin — on ne devine pas, la paire ambiguë reste. EN ATTENTE
+   D'APPLICATION opérateur (SQL Editor) au moment de cette entrée.
+⛔ L'APPARIEMENT FLOU A ÉTÉ ESSAYÉ ET REJETÉ le même jour, ne pas le
+remettre : `strict_team_match` sur les deux noms rendait des faux positifs —
+Green Gully U23 apparié aux seniors, Kocaelispor U19 aux seniors, et
+« Atletico Junior Barranquilla vs Deportiva Once Caldas » apparié à
+« Atletico Nacional vs Deportivo Cali », matchs DIFFÉRENTS aux issues
+différentes. D'où la décision : comparaison EXACTE seulement ; les libellés
+divergents relèvent du pont d'alias, pas de cette garde.
+⚠️ LIMITE ASSUMÉE, deux faces. Les jumeaux à libellés différents
+continueront d'entrer tant que le pont d'alias ne converge pas — la garde
+n'attrape que la forme majoritaire (47/54). Et les signaux jumeaux restent
+ÉMIS en amont (double exposition Kelly le jour du pari) : la dédup à
+l'émission a été écartée SCIEMMENT — un faux appariement y supprimerait un
+vrai signal, et les doubleheaders MLB rendent la clé (équipes, jour)
+ambiguë.
+Invariant ajouté à AUDIT.md §2 : un match réel = UNE ligne de ledger.
+Gardien : `tests/test_ledger_jumeaux.py` (10 tests).
+
 ### Closing line : `capture_from_scan` est morte avec OddsAPI (2026-08-26)
 
 `capture_from_scan` (payload OddsAPI) est MORTE avec OddsAPI —

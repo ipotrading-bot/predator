@@ -29,5 +29,11 @@ paths:
 - Toute analyse du ledger se conditionne sur la zone jouable 2-24 h AVANT
   de conclure ; `expired` n'est pas terminal ; jamais de suppression de
   lignes réglées (règle n°9) — archiver.
+- ⛔ Jamais d'appariement FLOU pour dédoublonner ou supprimer des lignes de
+  résultats : clé exacte seulement (`core/db.py::_ledger_jumeau_reel`), les
+  libellés divergents relèvent du pont d'alias. Mesuré le 2026-09-02 : le
+  flou appariait U23/U19 aux seniors et deux matchs colombiens différents —
+  *Le même match réel pesait DOUBLE* (INCIDENTS.md). Gardien :
+  `tests/test_ledger_jumeaux.py`.
 - Le sub-agent `ledger-analyst` porte ces gardes pour toute question de
   performance.

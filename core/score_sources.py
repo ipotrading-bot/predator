@@ -18,9 +18,15 @@ DEUX SOURCES, APRÈS api-sports (qui reste l'étage 1, dans core/settlement.py) 
      THESPORTSDB_API_KEY pour un compte Patreon). ⚠️ La requête « tous les
      matchs du jour » (eventsday) est PLAFONNÉE À 3 ÉVÉNEMENTS en gratuit —
      mesuré le 2026-09-02 — donc inutilisable. La voie qui marche est PAR
-     ÉQUIPE : searchteams → eventslast (15 derniers résultats), qui a
-     retrouvé du premier coup les deux signaux en souffrance du jour
-     (Hapoel Akko 0-3 Bnei Yehuda, ligue israélienne D2 — FT).
+     ÉQUIPE : searchteams → eventslast, qui a retrouvé du premier coup les
+     deux signaux en souffrance du jour (Hapoel Akko 0-3 Bnei Yehuda, ligue
+     israélienne D2 — FT).
+     ⚠️ PLAFONDS de la clé gratuite, mesurés le 2026-09-02 et confirmés par
+     la doc officielle : eventslast rend UN seul résultat (10 en premium) et
+     searchteams UNE seule équipe (100 en premium). Dès qu'une équipe a
+     rejoué, le match du signal sort donc de la fenêtre et devient
+     introuvable par cette voie — cause n°1 des `expired` de ligues mineures,
+     que le compte Patreon (~9 $/mois) lèverait sans toucher au code.
 
 LE MÊME CONTRAT QUE result_from_api_sports, ET IL NE SE DISCUTE PAS :
   - appariement `strict_team_match` sur les DEUX équipes du MÊME événement.
@@ -259,7 +265,8 @@ def result_from_thesportsdb(match_name: str, sport: str, match_date: str) -> dic
 
     Sans date (relance d'une ligne de ledger orpheline), l'appariement des
     deux noms reste exigé et le candidat unique aussi : deux confrontations
-    de la même paire dans les 15 derniers résultats → REFUS.
+    de la même paire dans les derniers résultats rendus → REFUS. (La clé
+    gratuite ne rend qu'UN résultat par équipe — voir l'en-tête du module.)
     """
     parts = _split(match_name)
     if not parts:

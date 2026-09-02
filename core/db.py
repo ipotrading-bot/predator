@@ -243,6 +243,71 @@ def _ledger_deja_ecrit(sb, signal_id, outcome: str) -> bool:
     return True
 
 
+def _ledger_jumeau_reel(sb, payload: dict) -> bool:
+    """Le MÊME MATCH RÉEL est-il déjà au ledger sous un AUTRE signal_id ?
+
+    JUMEAUX INTER-SOURCES (mesuré le 2026-09-02) : un même match arrivant par
+    deux sources porte deux match_id différents (uuid OddsAPI vs id dérivé des
+    noms), donc deux signaux jumeaux coexistent et `ledger_signal_id_uniq` ne
+    voit rien — 47 paires exactes + 7 floues dans le ledger d'août, soit ~10 %
+    de lignes en double qui gonflaient le n de la couche d'apprentissage et
+    l'historique /performance (archivées par sql/migrate_v10_10).
+
+    Comparaison VOLONTAIREMENT exacte (match, selection, market_type) sur une
+    fenêtre de 6 jours : l'appariement flou par noms a été essayé le même jour
+    et rendait des faux positifs (U23/U19 contre seniors, « Atletico Junior »
+    contre « Atletico Nacional ») — supprimer une vraie ligne de résultat est
+    pire qu'un doublon, qui reste rattrapable par archivage. Les jumeaux à
+    libellés différents relèvent du pont d'alias, pas d'ici.
+
+    Même règle que `_ledger_deja_ecrit` : le DÉCISIF gagne. Ligne stockée
+    décisive (ou entrant non décisif) → on n'écrit pas ; entrant décisif sur
+    stocké non décisif → on PROMEUT la ligne stockée au lieu d'en créer une
+    seconde. Sur panne de lecture → False : on laisse l'insert se faire,
+    perdre un résultat réel serait définitif, un doublon ne l'est pas.
+    """
+    match = payload.get("match")
+    selection = payload.get("selection")
+    market_type = payload.get("market_type")
+    if not match or not selection or not market_type:
+        return False       # sans clé complète on ne compare pas, on n'invente pas
+    from datetime import datetime, timedelta, timezone
+    seuil = (datetime.now(timezone.utc) - timedelta(days=6)).isoformat()
+    try:
+        res = (sb.table("ai_learning_ledger")
+               .select("id,signal_id,outcome")
+               .eq("match", match).eq("selection", selection)
+               .eq("market_type", market_type)
+               .gte("created_at", seuil).limit(5).execute())
+        rows = [r for r in (res.data or [])
+                if r.get("signal_id") != payload.get("signal_id")]
+    except Exception as e:
+        log.warning("Ledger : recherche de jumeau impossible pour %s (%s) — "
+                    "on laisse l'écriture se faire", match, str(e)[:80])
+        return False
+    if not rows:
+        return False
+    stocke = str(rows[0].get("outcome") or "")
+    outcome = str(payload.get("outcome") or "")
+    if stocke in _DECISIF or outcome not in _DECISIF:
+        log.info("Ledger : %s | %s déjà réglé (%s) sous le signal %s — jumeau "
+                 "inter-sources du signal %s ignoré, le doublon fausserait le n "
+                 "de la couche d'apprentissage", match, selection,
+                 stocke or "sans résultat", rows[0].get("signal_id"),
+                 payload.get("signal_id"))
+        return True
+    try:
+        sb.table("ai_learning_ledger").update({"outcome": outcome}) \
+          .eq("id", rows[0]["id"]).execute()
+        log.info("Ledger : jumeau %s | %s promu de %r à %r (signal %s) au lieu "
+                 "d'une seconde ligne", match, selection, stocke, outcome,
+                 rows[0].get("signal_id"))
+    except Exception as e:
+        log.error("Ledger : promotion du jumeau %s vers %s impossible : %s",
+                  match, outcome, str(e)[:80])
+    return True
+
+
 def log_to_ledger(sb, sig: dict, clv: float, outcome: str) -> None:
     """Insert one row into ai_learning_ledger for a settled/closed/expired
     signal. Failure here is logged CRITICAL (not swallowed as routine) —
@@ -332,6 +397,10 @@ def log_to_ledger(sb, sig: dict, clv: float, outcome: str) -> None:
         "outcome":               outcome,
         **_optional,
     }
+    # Jumeau inter-sources : même match réel déjà réglé sous un autre
+    # signal_id → pas de seconde ligne (voir _ledger_jumeau_reel).
+    if _ledger_jumeau_reel(sb, payload):
+        return
     try:
         sb.table("ai_learning_ledger").insert(payload).execute()
         return

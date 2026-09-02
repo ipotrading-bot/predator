@@ -70,6 +70,7 @@ C'est le tableau à consulter avant de toucher à quoi que ce soit.
 | La relance passe APRÈS le settlement frais (réserve IA en négatif) | `…::TestLaPlaceDansLaudit::test_la_relance_passe_apres_le_settlement_frais` |
 | Un audit à vide relance quand même les expirés | `…::test_un_audit_a_vide_relance_quand_meme` |
 | Sans score sûr, la ligne RESTE expirée — jamais un WIN/LOSS deviné | `…::TestElleNeDevinePas` |
+| Un match réel = UNE ligne de ledger : le jumeau inter-sources est refusé ou promu, jamais inséré (stock nettoyé par `sql/migrate_v10_10`) | `tests/test_ledger_jumeaux.py` |
 | Le curseur tourne : toutes les lignes sont couvertes, pas seulement les 12 premières | `…::TestLeBudgetEtLeCurseur` |
 | Une panne de relance ne fait pas échouer un audit qui a réglé | `…::test_une_panne_de_relance_ne_fait_pas_echouer_laudit` |
 | Le pool `scan` porte les relais des sources filtrées par IP | `…::test_le_pool_scan_porte_les_relais_des_sources_filtrees_par_ip` |
