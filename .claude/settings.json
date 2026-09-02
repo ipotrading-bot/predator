@@ -26,6 +26,77 @@
     ]
   },
   "hooks": {
+    "PreToolUse": [
+      {
+        "matcher": "Edit|Write",
+        "hooks": [
+          {
+            "type": "command",
+            "if": "Edit(.github/**)",
+            "command": "bash \"${CLAUDE_PROJECT_DIR}\"/.claude/hooks/guard_workflows.sh",
+            "timeout": 10,
+            "statusMessage": "Garde workflows (règles n°1 et n°2)..."
+          },
+          {
+            "type": "command",
+            "if": "Write(.github/**)",
+            "command": "bash \"${CLAUDE_PROJECT_DIR}\"/.claude/hooks/guard_workflows.sh",
+            "timeout": 10,
+            "statusMessage": "Garde workflows (règles n°1 et n°2)..."
+          },
+          {
+            "type": "command",
+            "if": "Edit(**/*.py)",
+            "command": "bash \"${CLAUDE_PROJECT_DIR}\"/.claude/hooks/guard_ai_models.sh",
+            "timeout": 10,
+            "statusMessage": "Garde des noms de modèles IA (règle n°3)..."
+          },
+          {
+            "type": "command",
+            "if": "Write(**/*.py)",
+            "command": "bash \"${CLAUDE_PROJECT_DIR}\"/.claude/hooks/guard_ai_models.sh",
+            "timeout": 10,
+            "statusMessage": "Garde des noms de modèles IA (règle n°3)..."
+          },
+          {
+            "type": "command",
+            "if": "Edit(core/constants.py)",
+            "command": "bash \"${CLAUDE_PROJECT_DIR}\"/.claude/hooks/guard_operator_decisions.sh",
+            "timeout": 10,
+            "statusMessage": "Garde des décisions opérateur (règle n°11)..."
+          },
+          {
+            "type": "command",
+            "if": "Write(core/constants.py)",
+            "command": "bash \"${CLAUDE_PROJECT_DIR}\"/.claude/hooks/guard_operator_decisions.sh",
+            "timeout": 10,
+            "statusMessage": "Garde des décisions opérateur (règle n°11)..."
+          }
+        ]
+      },
+      {
+        "matcher": "Bash",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "bash \"${CLAUDE_PROJECT_DIR}\"/.claude/hooks/guard_bash.sh",
+            "timeout": 10,
+            "statusMessage": "Garde des commandes shell..."
+          }
+        ]
+      },
+      {
+        "matcher": "mcp__supabase__.*",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "bash \"${CLAUDE_PROJECT_DIR}\"/.claude/hooks/guard_supabase_writes.sh",
+            "timeout": 10,
+            "statusMessage": "Garde Supabase (règle n°9 : archiver, jamais supprimer)..."
+          }
+        ]
+      }
+    ],
     "PostToolUse": [
       {
         "matcher": "Edit|Write",
@@ -36,6 +107,49 @@
             "async": true,
             "timeout": 30,
             "statusMessage": "Smoke test du dashboard..."
+          },
+          {
+            "type": "command",
+            "if": "Edit(**/*.py)",
+            "command": "bash \"${CLAUDE_PROJECT_DIR}\"/.claude/hooks/lint_on_edit.sh",
+            "async": true,
+            "asyncRewake": true,
+            "timeout": 120,
+            "statusMessage": "pyflakes + tests ciblés..."
+          },
+          {
+            "type": "command",
+            "if": "Write(**/*.py)",
+            "command": "bash \"${CLAUDE_PROJECT_DIR}\"/.claude/hooks/lint_on_edit.sh",
+            "async": true,
+            "asyncRewake": true,
+            "timeout": 120,
+            "statusMessage": "pyflakes + tests ciblés..."
+          }
+        ]
+      }
+    ],
+    "Stop": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "bash \"${CLAUDE_PROJECT_DIR}\"/.claude/hooks/verify_before_stop.sh",
+            "timeout": 180,
+            "statusMessage": "Suite de tests avant de rendre la main..."
+          }
+        ]
+      }
+    ],
+    "SessionStart": [
+      {
+        "matcher": "startup|resume",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "bash \"${CLAUDE_PROJECT_DIR}\"/.claude/hooks/session_context.sh",
+            "timeout": 15,
+            "statusMessage": "Contexte de session (branche, CI)..."
           }
         ]
       }
