@@ -1207,7 +1207,12 @@ def _purge_old_signals(sb):
     _heures_purge = 96 if _settlement_affame(sb) else 48
     purge_match_cutoff = (datetime.now(timezone.utc) - timedelta(hours=_heures_purge)).isoformat()
     try:
-        sb.table("signals").delete().eq("status", "active").lt("match_time", purge_match_cutoff).execute()
+        res = sb.table("signals").delete().eq("status", "active") \
+                .lt("match_time", purge_match_cutoff).execute()
+        n = len(res.data or []) if res is not None else 0
+        if n:
+            log.info("PURGE | %d signal(s) actifs retirés — coup d'envoi > %dh",
+                     n, _heures_purge)
     except Exception as e:
         log.debug("Supabase purge (past matches, active only): %s", str(e)[:60])
 
@@ -1219,8 +1224,10 @@ def _purge_old_signals(sb):
     # can legitimately have edge_pct > 10 (MAX_EDGE caps it at 15, not 10 —
     # 10-15% is merely a pre-bet SUSPECT_DATA trigger, not a data error once
     # the outcome is known) and must not be deleted for that reason alone.
+    # (La règle `status=pending` a été retirée le 2026-09-02 : rien dans le
+    # dépôt n'écrit jamais ce statut — seul un état d'API externe porte ce
+    # nom, core/odds_api_io.py. Règle morte depuis sa création.)
     purge_rules = [
-        ("eq",  "status", "pending",   "status=pending",                        False),
         ("lt",  "created_at", cutoff_48h, ">48h old",                           True),
         ("gt",  "edge_pct", 15.0,                                        "edge > 15% (hard cap)",           True),
         ("lte", "edge_pct", _PURGE_EDGE_FLOOR,                          f"edge <= {_PURGE_EDGE_FLOOR}% (bruit)", True),
@@ -1247,10 +1254,17 @@ def _purge_old_signals(sb):
                 query = query.lte(field, value)
             elif op_type == "is_":
                 query = query.is_(field, value)
-            query.execute()
+            res = query.execute()
 
-            if DEBUG_MODE:
-                log.debug("Purged: %s", label)
+            # Une destruction ne doit jamais être muette (« aucune réduction
+            # silencieuse », .env.example) : jusqu'au 2026-09-02 ces retraits
+            # n'étaient visibles qu'en DEBUG_MODE. Le silence reste la norme
+            # quand la règle n'a rien retiré.
+            n = len(res.data or []) if res is not None else 0
+            if n:
+                log.info("PURGE | %d signal(s) actifs retirés — %s", n, label)
+            elif DEBUG_MODE:
+                log.debug("Purged: %s (0 ligne)", label)
         except Exception as e:
             log.debug("Supabase purge (%s): %s", label, str(e)[:60])
 
@@ -1780,6 +1794,10 @@ def _process_totals(m, name, sport, league, emoji, signals, sb, now, log, min_ed
         p_odd = float(pt.get(side, 0))
         p_lay = float(pt.get(other, 0))
         if x_odd <= 1.01 or p_odd <= 1.01:
+            # debug : une jambe non cotée est l'état normal d'un carnet, pas
+            # un filtre — le niveau info est réservé aux gates qui décident.
+            log.debug("NOPRICE | %s %s totals %s — x=%.2f p=%.2f",
+                      emoji, name, side, x_odd, p_odd)
             continue
 
         src_side  = {"pinnacle": p_odd}
@@ -1809,6 +1827,10 @@ def _process_totals(m, name, sport, league, emoji, signals, sb, now, log, min_ed
             sharp_prob = round(sharp_prob * (1 - _PUSH_PROB_ROUND_LINE), 4)
             sharp_cons = round(sharp_cons * (1 - _PUSH_PROB_ROUND_LINE), 4)
         if sharp_prob < prob_min:
+            # Même visibilité que le gate h2h : muet, ce filtre a coûté du
+            # volume sans qu'on puisse le mesurer (audit du 2026-09-02).
+            log.info("LOWPROB | %s %s totals %s — Prob.Sharp=%.0f%% < %.0f%%",
+                     emoji, name, side, sharp_prob * 100, prob_min * 100)
             continue
         lbl = market_label("totals", side, point, sport)
         sel = f"{'Over' if side == 'over' else 'Under'}{(' ' + str(point)) if point else ''}"
@@ -1848,6 +1870,8 @@ def _process_spreads(m, name, sport, league, home, away, emoji, signals, sb, now
         p_odd = float(ps.get(side, 0))
         p_lay = float(ps.get("away" if side == "home" else "home", 0))
         if x_odd <= 1.01 or p_odd <= 1.01:
+            log.debug("NOPRICE | %s %s spreads %s — x=%.2f p=%.2f",
+                      emoji, name, side, x_odd, p_odd)
             continue
 
         other_side = "away" if side == "home" else "home"
@@ -1873,6 +1897,8 @@ def _process_spreads(m, name, sport, league, home, away, emoji, signals, sb, now
 
         sharp_prob, sharp_cons = devig_bounds(p_odd, p_lay)
         if sharp_prob < prob_min:
+            log.info("LOWPROB | %s %s spreads %s — Prob.Sharp=%.0f%% < %.0f%%",
+                     emoji, name, side, sharp_prob * 100, prob_min * 100)
             continue
         lbl = market_label("spreads", side, pt, sport)
         pt_str = f"+{pt}" if pt > 0 else str(pt)
@@ -2542,15 +2568,22 @@ def run():
             return
         sharp_source = "Matchbook/Reprice"
 
-    # ── Tier 2: sources réelles gratuites — activé si OddsAPI vide/GUERRILLA ──
-    # Gardé sur `tier1_ok` et non sur `matches` : les blocs MMA/eSports/sports
-    # alternatifs ci-dessus alimentent `matches` AVANT ce test, donc un seul
-    # combat trouvé suffisait à sauter tout le harvest Melbet. Run 30768093911 :
-    # 1 combat UFC remonté → 0 match foot/tennis/basket scanné, 0 signal, là où
-    # le run précédent (0 combat) en avait sorti 12 matchs et 1 signal.
-    # REPRICE saute TOUT le tier : coupe-circuit ni lu ni écrit, budgets des
-    # sources payantes intacts, aucune alerte « 0 matchs ».
-    if not tier1_ok and not REPRICE:
+    # ── Tier 2 : sources réelles gratuites — TOUS les ticks sauf REPRICE ──
+    # Ce bloc a été gardé successivement sur `matches` puis sur `tier1_ok`,
+    # et les deux gardes ont produit LA MÊME classe de bug (une source qui
+    # rend quelque chose masque toutes les autres) :
+    #   · run 30768093911 : 1 combat UFC dans `matches` → 0 match foot
+    #     scanné, 0 signal — d'où le passage de `matches` à `tier1_ok` ;
+    #   · run 33551932260 (2026-09-01, mesuré à l'audit du 02/09) : Tier 1
+    #     rend 50 events de tennis US Open sans edge → `tier1_ok=True` →
+    #     titan007/odds-api.io/sevenm jamais interrogés, 0 signal. Volume
+    #     émis : 26/j avant le rallumage OddsAPI, 4/j après — le Tier 1
+    #     affamait le Tier 2 qui portait tout le volume (foot hors-Europe).
+    # Le Tier 2 tourne donc SANS regarder le Tier 1 : chaque source y a son
+    # budget journalier propre, et la fusion en aval déduplique par nom de
+    # match avant le balancer. Seul REPRICE saute TOUT le tier : slate en
+    # cache, coupe-circuit ni lu ni écrit, aucune alerte « 0 matchs ».
+    if not REPRICE:
         # Coupe-circuit : une tentative vide il y a < HARVEST_EMPTY_TTL_H ne
         # se rejoue pas — voir le bloc « Horodatages meta » plus haut. Quand
         # le LineFeed est mort, 40 runs/jour ne trouveront pas plus que 8.
@@ -2646,8 +2679,10 @@ def run():
                 log.warning("⚠️ %s ignoré : Échec prix Sharp", m["match"])
 
         if matches:
-            sharp_source = "Tier2/Sharp"
-            log.info("✅ Tier 2 OK — %d matchs avec prix Sharp", len(matches))
+            # Étiquette honnête : avec un Tier 1 vivant, les matchs viennent
+            # des deux tiers (dédupliqués ci-dessus), pas du seul Tier 2.
+            sharp_source = "OddsAPI+Tier2" if tier1_ok else "Tier2/Sharp"
+            log.info("✅ Tier 1+2 — %d matchs avec prix Sharp", len(matches))
 
     # L'ancien Tier 3 « estimateur IA » (cotes de mémoire d'entraînement,
     # marquées _estimated) a été SUPPRIMÉ le 2026-09-02 — même décision que

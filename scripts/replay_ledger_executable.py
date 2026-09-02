@@ -329,13 +329,6 @@ def _band_label(lo: float, hi: float) -> str:
     return f"{lo:.1f} – {hi:.1f}%"
 
 
-def band_of(edge: float) -> str:
-    for lo, hi in EDGE_BANDS:
-        if lo <= edge < hi:
-            return _band_label(lo, hi)
-    return "< 0%"
-
-
 def survivors(records: list[dict], floor: float) -> dict:
     """
     Combien de lignes passeraient encore un plancher donné.

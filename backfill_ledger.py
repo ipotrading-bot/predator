@@ -97,7 +97,10 @@ def run():
             "initial_edge":          sig.get("edge_pct"),
             "sharp_divergence_std":  None,
             "clv_final":             clv,
-            "was_clv_positive":      clv >= 0,
+            # Même formule que core/db.py::log_to_ledger (clv > 0) : un CLV
+            # exactement nul n'est pas « positif ». Divergeait en >= depuis
+            # la création (règle n°6), sans conséquence lue mais mesurable.
+            "was_clv_positive":      clv > 0,
             "outcome":               outcome,
         }
         try:

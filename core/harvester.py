@@ -158,13 +158,6 @@ def _fetch_from_book(book: str, url_templates: list, referer: str, sport_id: int
     return []
 
 
-def _fetch_from_1xbet(sport_id):
-    """Back-compat wrapper — 1xbet alone, no line shopping. Prefer
-    _fetch_multi_book() for the best-price-across-books behavior."""
-    tpls, referer = SOFT_BOOKS["1xbet"]
-    return _fetch_from_book("1xbet", tpls, referer, sport_id)
-
-
 def _fuzzy_match_event(candidate: dict, pool: list[dict]) -> dict | None:
     """Find `candidate`'s counterpart in `pool` by team-name fuzzy match
     (core.paim_engine.strict_team_match) — used to line up the same

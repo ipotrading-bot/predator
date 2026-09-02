@@ -50,7 +50,7 @@ C'est le tableau à consulter avant de toucher à quoi que ce soit.
 
 | Invariant | Gardien |
 |---|---|
-| Tout fournisseur `PRODUCTION_SAFE` atteint les pools `scan`/`closing`/`settlement` | `tests/test_ci_env.py::test_tout_fournisseur_de_production_atteint_les_pools_ia` |
+| Tout fournisseur `PRODUCTION_SAFE` atteint les pools `scan`/`closing`/`settlement` | `tests/test_ci_env.py::test_tout_fournisseur_de_production_atteint_le_pool_scan` |
 | Chaque bloc de secrets d'un workflow est conforme à son pool | `…::test_chaque_bloc_genere_est_conforme_a_son_pool` |
 | Aucun secret nommé hors d'un bloc généré | `…::test_aucun_secret_nommé_hors_dun_bloc_genere` |
 | Aucun workflow ne fabrique un dump de secrets (GitHub le refuserait) | `…::test_aucun_workflow_ne_fabrique_un_dump_de_secrets` |
@@ -71,6 +71,7 @@ C'est le tableau à consulter avant de toucher à quoi que ce soit.
 | Un audit à vide relance quand même les expirés | `…::test_un_audit_a_vide_relance_quand_meme` |
 | Sans score sûr, la ligne RESTE expirée — jamais un WIN/LOSS deviné | `…::TestElleNeDevinePas` |
 | Un match réel = UNE ligne de ledger : le jumeau inter-sources est refusé ou promu, jamais inséré (stock nettoyé par `sql/migrate_v10_10`) | `tests/test_ledger_jumeaux.py` |
+| Le Tier 2 tourne à CHAQUE tick — jamais conditionné au succès du Tier 1 (seul REPRICE exempte) ; les gates décisifs (LOWPROB) et la purge loggent ce qu'ils jettent | `tests/test_tier2_toujours.py` |
 | Le curseur tourne : toutes les lignes sont couvertes, pas seulement les 12 premières | `…::TestLeBudgetEtLeCurseur` |
 | Une panne de relance ne fait pas échouer un audit qui a réglé | `…::test_une_panne_de_relance_ne_fait_pas_echouer_laudit` |
 | Le pool `scan` porte les relais des sources filtrées par IP | `…::test_le_pool_scan_porte_les_relais_des_sources_filtrees_par_ip` |
@@ -135,7 +136,7 @@ C'est le tableau à consulter avant de toucher à quoi que ce soit.
 | Aucune ligne de `signals` n'est supprimée pour être réécrite | `tests/test_db.py::TestLeDeleteInsertADisparu` |
 | `core.db` n'expose plus de remplacement de ligne (vérifié sur l'AST) | `…::test_aucun_module_ne_reference_encore_le_remplacement_de_ligne` |
 | Un échec d'écriture ne détruit plus la ligne | `…::test_un_echec_ne_detruit_plus_rien` |
-| La capture de closing line ne supprime jamais de ligne | `tests/test_closing_line.py::test_capture_never_uses_the_delete_then_insert_path` |
+| La capture de closing line ne supprime jamais de ligne | `tests/test_closing_line.py::test_le_remplacement_de_ligne_nexiste_plus_dans_audit_engine` |
 | Un seul signal ACTIF par (match_id, market_key) — garanti par la base | `sql/migrate_v10_7_signals_unique_active.sql` + `tests/test_save_preserving.py::TestB2LaBaseArbitre` |
 | `_save` ne LIT plus avant d'écrire quand la clé est connue | `…::test_aucun_select_prealable_quand_la_cle_est_connue` |
 | Une ligne réglée entre-temps ne fait pas perdre le signal | `…::test_une_ligne_reglee_entre_temps_libere_la_place` |

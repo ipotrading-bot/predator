@@ -7,7 +7,7 @@
 > rien (à une exception documentée : la demande de scan).
 
 > **Numéro de version** : il n'y en a plus qu'un, `DASHBOARD_VERSION` dans
-> [`api/index.py`](api/index.py), rendu par `/api/health` et par les six pieds
+> [`api/index.py`](api/index.py), rendu par `/api/health` et par les cinq pieds
 > de page. Cet en-tête a porté « v8.8 » longtemps après que le dashboard soit
 > passé en 10.x — un numéro recopié à la main n'est mis à jour par personne.
 
@@ -67,7 +67,7 @@ ticker de news, des ratios Sortino/Calmar et un monitoring BetterStack :
 existé. Un README qui décrit un autre produit fait chercher les bugs au
 mauvais endroit.
 
-### 📊 Dashboard (6 pages, lecture seule)
+### 📊 Dashboard (5 pages, lecture seule)
 
 | Page | Contenu réel |
 |---|---|
@@ -193,8 +193,9 @@ budget crédits avant/après, carte des crons, boucle de calibration) est docume
 | Endpoint | Method | Description |
 |----------|--------|-------------|
 | `/` | GET | Dashboard — signaux actifs |
-| `/ledger` | GET | Bilan CLV par sport |
-| `/audit` | GET | Audit CLV détaillé + seuils dynamiques |
+| `/system` | GET | État du pipeline (crons, sources, budgets) |
+| `/ledger` | GET | Bilan CLV par sport (servie, hors menus — décision opérateur) |
+| `/audit` | GET | Audit CLV détaillé + seuils dynamiques (servie, hors menus) |
 | `/performance` | GET | Rapport de performance AI learning (`ai_learning_ledger`) |
 
 ### API
@@ -293,7 +294,7 @@ suffit, sans aucune clé d'écriture), `POST /api/audit/run` sans jeton → 401.
 ```
 predator/
 ├── api/
-│   ├── index.py             # Flask — les 6 pages + l'API. DASHBOARD_VERSION y vit.
+│   ├── index.py             # Flask — les 5 pages + l'API. DASHBOARD_VERSION y vit.
 │   └── static/              # CSS écrit à la main, icônes PWA, manifest
 ├── core/
 │   │  ── Sources de cotes ────────────────────────────────────────────

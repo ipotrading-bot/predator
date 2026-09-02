@@ -290,6 +290,54 @@ couverture du slate est sans commune mesure avec celle de
 Kalshi/Polymarket (3 fixtures exploitables sur 70). Mesuré sur
 10 runs du 2026-08-23 au 26. Corollaire : 100 % des signaux sont du FOOTBALL.
 
+### Le Tier 2 entier sautait dès qu'OddsAPI rendait UN event (2026-09-02)
+
+Effondrement du volume émis : ~26 signaux/jour avant le rallumage OddsAPI du
+2026-09-01, **4/jour** après — alors que le rallumage devait AJOUTER une
+source, il en a débranché cinq. Repéré par l'audit complet du 2026-09-02, en
+croisant trois angles : le ledger montrait une perte EN AMONT des seuils
+(bande d'edge [1.2;1.66) vide, aucun `threshold_*` en meta — donc pas un
+resserrement appris), et le pipeline en vif a trouvé l'organe.
+Cause mécanique : dans `run_engine.py`, le bloc Tier 2 (harvest, api-sports,
+odds-api.io, titan007, sevenm) était gardé par `if not tier1_ok and not
+REPRICE:` — il ne tournait que si OddsAPI n'avait RIEN rendu. Or pendant
+l'US Open + la trêve internationale, le Tier 1 rendait du tennis sans edge :
+`tier1_ok=True`, et le foot hors-Europe — qui portait TOUT le volume —
+n'était plus jamais scanné.
+MESURÉ le 2026-09-02 : run 33551932260 du 01/09 19:51 — « Tier 1 OK — 50/78
+events | sports: tennis », 66 candidats TOUS à EV négative, 0 signal, zéro
+ligne Tier 2 au log. odds-api.io : 289 requêtes le 01/09 contre 368 la
+veille. Les seuls ticks productifs du 01-02/09 étaient ceux où le Tier 1
+était revenu vide.
+⚠️ MÊME CLASSE DE BUG, TROISIÈME OCCURRENCE. La garde a d'abord porté sur
+`matches` (run 30768093911 : UN combat UFC suffisait à masquer le foot),
+puis a été « corrigée » en la déplaçant sur `tier1_ok` — qui a reproduit le
+piège à l'échelle du tier entier. La leçon générale : conditionner un étage
+de sources au succès d'un autre finit TOUJOURS par affamer celui qui
+produit. Chaque source a son budget journalier propre, la fusion déduplique
+par nom de match en aval — il n'y a RIEN à économiser en les couplant.
+Correctif : le Tier 2 tourne à CHAQUE tick, seul REPRICE saute le bloc
+(`if not REPRICE:` — REPRICE est le mode « zéro source payante », c'est son
+contrat, pas une économie déguisée). Étiquette `sharp_source` honnête :
+« OddsAPI+Tier2 » quand les deux tiers contribuent. Dans la même passe
+d'audit, quatre silences ont été levés : les gates `sharp_prob < prob_min`
+des totals/spreads loggent désormais LOWPROB comme le h2h (ils jetaient en
+silence — coût immesurable jusqu'ici), les jambes sans prix sortent en
+`log.debug` NOPRICE, la purge logge ses destructions en `info` avec compte
+(elles n'étaient visibles qu'en DEBUG_MODE), et la règle de purge morte
+`status=pending` est retirée (rien n'écrit jamais ce statut). Enfin
+`was_clv_positive` est aligné strict (`clv > 0`) entre `backfill_ledger.py`
+(qui faisait `>=`) et `core/db.py`.
+Ce qui n'a PAS été fait : aucun budget n'a été touché. Le retour du Tier 2
+sur tous les ticks re-expose au problème connu des budgets
+odds-api.io/titan007 brûlés avant le soir (runs stériles des 29-31/08) — à
+REMESURER maintenant que les deux tiers cohabitent, avant de retoucher quoi
+que ce soit au rythme.
+Gardien : `tests/test_tier2_toujours.py` — 6 tests sur le source (style
+`test_api_admin_auth`) : aucune garde `not tier1_ok`, bloc Tier 2 borné par
+REPRICE seul, LOWPROB présent dans `_process_totals`/`_process_spreads`,
+pas de retour de `pending`, PURGE loggée en `info`.
+
 ### Matchbook : quatre marchés « total » par match, un seul est le match entier (2026-08-28)
 
 REPRICE 15:58 : « Al-Riyadh SC vs Neom SC | SOC Under 2.5 — EV 80.84 % »

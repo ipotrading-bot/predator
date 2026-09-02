@@ -357,10 +357,6 @@ def detect_lang(text: str) -> str:
     return "en"
 
 
-def is_cjk(text: str) -> bool:
-    return detect_lang(text) in ("zh", "ja", "ko")
-
-
 def structure_distance(a: Fixture, b: Fixture) -> float:
     """Distance entre les signatures de cotes, en points. -1.0 si l'une des
     deux n'a pas de cotes exploitables : « pas comparable » n'est pas
