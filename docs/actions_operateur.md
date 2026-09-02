@@ -351,3 +351,17 @@ plus de `@latest`) avec le flag `--read-only`. Deux décisions, deux raisons :
 
 Gardien : `tests/test_claude_config.py` (refuse tout `@latest` dans
 `.mcp.json`, vérifie la validité JSON des fichiers `.claude/`).
+
+### Plugins (2026-09-02) — installés en scope user, PAS dans le dépôt
+
+Installés sur ce devcontainer via le CLI (`claude plugin install
+…@claude-plugins-official`) : `security-guidance`, `commit-commands`,
+`pr-review-toolkit`, `vercel`, `github`, `context7`, `pyright-lsp`. Un
+scope « user » est machine-local : à refaire sur un autre poste
+(`/plugin` ou le même CLI).
+
+Le plugin `supabase` (supabase-community) a été examiné et **écarté** : sa
+config MCP pointe le service HÉBERGÉ `https://mcp.supabase.com/mcp` — pas
+de version épinglable (le comportement change côté serveur) ni de
+`--read-only`. Le `.mcp.json` du dépôt (0.11.0 épinglé, lecture seule)
+reste la référence ; ne pas le remplacer par ce plugin.
