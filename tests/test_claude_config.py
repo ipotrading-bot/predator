@@ -115,6 +115,12 @@ pas_de_bash = pytest.mark.skipif(
 def _run_hook(nom, payload, env_extra=None, timeout=120):
     env = dict(os.environ)
     env["CLAUDE_PROJECT_DIR"] = str(_RACINE)
+    # L'environnement du hook est FIXÉ, pas hérité : sur un runner GitHub,
+    # GITHUB_ACTIONS=1 active l'exemption « vercel --prod en CI » de
+    # guard_bash.sh et le test devenait vert en local, rouge en CI — la
+    # même classe de piège que les tests dépendants de l'heure réelle
+    # (INCIDENTS.md, « Étaler le SETTLEMENT était une faute »).
+    env.pop("GITHUB_ACTIONS", None)
     if env_extra:
         env.update(env_extra)
     return subprocess.run(
@@ -272,6 +278,16 @@ class TestGuardBash:
             "tool_name": "Bash", "tool_input": {"command": commande}})
         assert proc.returncode == 0
         assert _decision(proc) is None, f"aurait dû passer : {commande}"
+
+    def test_vercel_prod_est_exempte_en_ci(self):
+        """En CI (GITHUB_ACTIONS posé), `vercel --prod` est LÉGITIME : c'est
+        le job deploy de ci.yml qui l'exécute. L'interdit ne vaut que hors
+        CI — le hook doit donc laisser passer quand la variable est là."""
+        proc = _run_hook("guard_bash.sh", {
+            "tool_name": "Bash", "tool_input": {"command": "vercel --prod"}},
+            env_extra={"GITHUB_ACTIONS": "true"})
+        assert proc.returncode == 0
+        assert _decision(proc) is None
 
 
 @pas_de_bash
