@@ -1116,8 +1116,14 @@ Correctif, deux moitiés :
    MORTE pour les 7 flous, RLS refermée sur l'archive au passage. Le cluster
    Pachuca n'est traité que PARTIELLEMENT : impossible de trancher sur
    pièces si « CF Pachuca vs CD Guadalajara » désigne le féminin ou le
-   masculin — on ne devine pas, la paire ambiguë reste. EN ATTENTE
-   D'APPLICATION opérateur (SQL Editor) au moment de cette entrée.
+   masculin — on ne devine pas, la paire ambiguë reste. APPLIQUÉE le
+   2026-09-02 (ops.py, sur instruction opérateur) : 66 lignes archivées —
+   59 par la règle générique (les 47 inspectées + les 3 réinsérées par
+   l'audit manuel du 01/09 + 9 ré-insertions de la vague de backfill du
+   27/08, vérifiées sur pièces avant application : cote/edge/ttm/issue
+   identiques à une ligne du 9-11/08, donc jumeaux, pas des revanches) +
+   7 épinglées. Témoins passés : 0 doublon restant, 410 lignes vivantes,
+   archive fermée à `anon`.
 ⛔ L'APPARIEMENT FLOU A ÉTÉ ESSAYÉ ET REJETÉ le même jour, ne pas le
 remettre : `strict_team_match` sur les deux noms rendait des faux positifs —
 Green Gully U23 apparié aux seniors, Kocaelispor U19 aux seniors, et
