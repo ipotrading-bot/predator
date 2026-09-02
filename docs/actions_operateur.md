@@ -329,3 +329,25 @@ python scripts/ops.py supabase sql "select count(*) from team_aliases"
 - **Kalshi/Polymarket** ne sont pas un gisement mais un garde-fou : ils
   mesurent et n'émettent jamais. Mesuré le 2026-08-27 : 74 marchés cotés,
   **0 apparié** au slate.
+
+---
+
+## Claude Code — le serveur MCP Supabase est ÉPINGLÉ et en lecture seule
+
+`.mcp.json` lance `@supabase/mcp-server-supabase@0.11.0` (version exacte,
+plus de `@latest`) avec le flag `--read-only`. Deux décisions, deux raisons :
+
+- **Version épinglée** : même principe que `requirements*.txt` (verrouillé au
+  `==`, transitives comprises — décision D2). `@latest` laissait npm décider
+  à chaque session de ce qui tourne avec un jeton d'accès Supabase en main ;
+  aucun tiers ne décide de ce qui s'exécute ici. Pour monter de version :
+  `npm view @supabase/mcp-server-supabase version`, mettre à jour `.mcp.json`
+  À LA MAIN, et relire le changelog avant.
+- **`--read-only`** : une session Claude n'a aucune raison d'écrire en base
+  par le MCP. Les écritures légitimes passent par le pipeline (workflows) ou
+  par `scripts/ops.py supabase sql` sous contrôle opérateur. C'est la même
+  logique que la règle dure n°9 (archiver, jamais supprimer) : le chemin qui
+  ne peut pas détruire n'a pas besoin qu'on lui fasse confiance.
+
+Gardien : `tests/test_claude_config.py` (refuse tout `@latest` dans
+`.mcp.json`, vérifie la validité JSON des fichiers `.claude/`).

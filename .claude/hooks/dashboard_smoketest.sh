@@ -14,7 +14,12 @@ case "$file" in
   *) exit 0 ;;
 esac
 
-cd /workspaces/predator || exit 0
+# Chemin via $CLAUDE_PROJECT_DIR, jamais un chemin absolu machine.
+[ -z "${CLAUDE_PROJECT_DIR:-}" ] && exit 0
+cd "$CLAUDE_PROJECT_DIR" || exit 0
+# Sans Flask dans l'interpréteur, le smoke test n'a rien à vérifier : sortie
+# silencieuse (l'environnement n'est pas celui du dashboard).
+python3 -c "import flask" 2>/dev/null || exit 0
 pkill -f "port=5099" 2>/dev/null
 LOG=/tmp/predator_dashboard_hook.log
 nohup python3 -c "
