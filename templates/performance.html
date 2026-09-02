@@ -37,7 +37,7 @@
 .perf-note {
   margin: 16px 16px 0; padding: 12px 14px;
   background: var(--bg1); border: 1px solid var(--bd); border-radius: 8px;
-  font-size: 12.5px; line-height: 1.65; color: var(--t2);
+  font-size: 12.5px; line-height: 1.5; color: var(--t2);
 }
 .perf-note strong { color: var(--t1); font-family: var(--font-data); }
 .perf-note em { font-style: normal; text-decoration: underline; }
@@ -68,40 +68,21 @@
 .sec-hdr em { color: var(--blue); font-style: normal; font-family: var(--font-data); }
 @media (min-width: 640px) { .sec-hdr { padding: 22px 24px 12px; } }
 
-  display: grid; grid-template-columns: repeat(2, 1fr);
-  gap: 10px; padding: 0 16px 20px;
-}
-@media (min-width: 640px) { .month-grid { grid-template-columns: repeat(3, 1fr); gap: 12px; padding: 0 24px 24px; } }
-@media (min-width: 960px) { .month-grid { grid-template-columns: repeat(4, 1fr); } }
-
-  background: var(--bg1); border: 1px solid var(--bd);
-  border-radius: var(--r); padding: 14px 15px;
-}
-  font-size: 11px; font-weight: 700; color: var(--t1);
-  margin-bottom: 12px; font-family: var(--font-data);
-  display: flex; justify-content: space-between; align-items: center;
-}
-
-  padding-top: 8px; border-top: 1px solid var(--bd);
-  display: flex; justify-content: space-between;
-  font-size: 9px; color: var(--t3); font-family: var(--font-data);
-}
-
 .tbl-outer { padding: 0 16px 24px; overflow-x: auto; -webkit-overflow-scrolling: touch; }
 @media (min-width: 640px) { .tbl-outer { padding: 0 24px 28px; } }
 
 .perf-table { width: 100%; border-collapse: collapse; }
-.perf-table.wide { min-width: 680px; }
+.perf-table.wide { min-width: 620px; }
 .perf-table thead th {
   font-size: 9px; font-weight: 600; letter-spacing: .8px;
   text-transform: uppercase; color: var(--t2);
-  padding: 10px 12px; border-bottom: 1px solid var(--bd);
+  padding: 7px 10px; border-bottom: 1px solid var(--bd);
   background: var(--bg1); text-align: left; white-space: nowrap;
 }
 .perf-table tbody tr { border-bottom: 1px solid var(--bd); transition: background .1s; }
 .perf-table tbody tr:last-child { border-bottom: none; }
 .perf-table tbody tr:hover { background: var(--bg2); }
-.perf-table td { padding: 12px 12px; vertical-align: middle; font-size: 13px; }
+.perf-table td { padding: 7px 10px; vertical-align: middle; font-size: 12.5px; line-height: 1.35; }
 
 .oc-win  { display:inline-block; padding:2px 9px; border-radius:100px; font-size:9px; font-weight:700; background:rgba(0,232,127,.08);  color:var(--green);  border:1px solid rgba(0,232,127,.2); }
 .oc-loss { display:inline-block; padding:2px 9px; border-radius:100px; font-size:9px; font-weight:700; background:rgba(251,78,110,.08); color:var(--red);    border:1px solid rgba(251,78,110,.2); }
@@ -174,12 +155,10 @@
   {% set res_color = 'var(--green)' if r.rate_pct >= 80 else ('var(--yellow)' if r.rate_pct >= 50 else 'var(--red)') %}
   <div class="perf-note" style="border-left:3px solid {{ res_color }}">
     <strong style="color:{{ res_color }}">{{ "%.0f"|format(r.rate_pct) }}%</strong>
-    des signaux ont reçu un résultat ({{ r.settled }} sur {{ r.denom }}).
-    Les <strong>{{ r.expired }}</strong> autres ont expiré sans score
-    retrouvé et n'entrent dans <em>aucun</em> chiffre de cette page —
-    ni réussite, ni CLV. Le règlement échoue surtout sur les ligues
-    obscures, donc ces chiffres décrivent la part la mieux suivie du
-    portefeuille, pas son ensemble.
+    des signaux réglés ({{ r.settled }}/{{ r.denom }}) ;
+    <strong>{{ r.expired }}</strong> expirés sans score, exclus de
+    <em>tous</em> les chiffres ici — surtout des ligues obscures : cette
+    page décrit la part la mieux suivie du portefeuille.
   </div>
   {% endif %}
 
@@ -219,7 +198,7 @@
         <tr>
           <td>{{ sport_emoji.get(sport, '🎯') }} {{ sport_label.get(sport, sport) }}</td>
           <td style="font-family:var(--font-data)">{{ sp.n }}</td>
-          <td style="font-weight:800;font-family:var(--font-data);font-size:15px;color:{{ 'var(--green)' if sp.above_breakeven else 'var(--t1)' }}">{{ "%.1f"|format(sp.win_rate) }}%</td>
+          <td style="font-weight:700;font-family:var(--font-data);font-size:13px;color:{{ 'var(--green)' if sp.above_breakeven else 'var(--t1)' }}">{{ "%.1f"|format(sp.win_rate) }}%</td>
         </tr>
         {% endfor %}
       </tbody>
