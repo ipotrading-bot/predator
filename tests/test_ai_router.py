@@ -163,7 +163,6 @@ class TestAlerteDeLane:
 
     def test_deux_fournisseurs_sains_ne_declenchent_rien(self, monkeypatch):
         monkeypatch.setenv("OPENROUTER_API_KEY", "o")
-        monkeypatch.setenv("GROQ_API_KEY", "g")
         monkeypatch.setenv("SAMBANOVA_API_KEY", "s")
         monkeypatch.setenv("OVH_AI_API_KEY", "v")
         monkeypatch.setenv("MODELSCOPE_API_KEY", "m")
@@ -171,7 +170,7 @@ class TestAlerteDeLane:
         monkeypatch.setenv("OLLAMA_API_KEY", "ol")
         monkeypatch.setattr(R, "fetch_catalog", lambda p, timeout=None: set())
         rapport = R.refresh_catalogues(alert=None)
-        for lane in (R.FILTER, R.ANALYZE, R.SETTLEMENT):
+        for lane in (R.FILTER, R.ANALYZE):
             assert len(rapport["lanes"][lane]) >= R.LANE_MIN_HEALTHY, lane
 
     def test_la_lane_wiz_nalerte_jamais(self, monkeypatch):
@@ -271,25 +270,28 @@ class TestPasDeDoubleDepense:
         assert len(vus) == 1            # un seul appel, pas deux
 
 
-class TestReserveSettlement:
-    def test_les_autres_lanes_ne_peuvent_pas_entamer_la_reserve(self, monkeypatch):
-        """Le 2026-08-02, le scan a épuisé le TPD Groq et le settlement n'a
-        plus rien réglé de la journée. La réserve est gardée EN NÉGATIF : les
-        autres lanes s'arrêtent avant, elles n'y ont jamais accès."""
-        groq = R.by_name("groq")
-        reste = groq.daily_requests - R.SETTLEMENT_RESERVE
-        monkeypatch.setattr(daily_quota, "spent", lambda b: reste)
-        assert R.budget_left(groq, R.FILTER) == 0
-        assert R.budget_left(groq, R.SETTLEMENT) == R.SETTLEMENT_RESERVE
+class TestGroqEtLaneSettlementSupprimes:
+    """Gardiens de la suppression du 2026-09-02 (décision opérateur).
 
-    def test_la_lane_settlement_garde_son_budget_quand_le_scan_a_tout_pris(self, monkeypatch):
-        monkeypatch.setenv("GROQ_API_KEY", "g")
-        monkeypatch.setattr(R, "fetch_catalog", lambda p, timeout=None: set())
-        groq = R.by_name("groq")
-        monkeypatch.setattr(daily_quota, "spent",
-                            lambda b: groq.daily_requests - R.SETTLEMENT_RESERVE)
-        assert R.lane_providers(R.FILTER) == []
-        assert [p.name for p, _m in R.lane_providers(R.SETTLEMENT)] == ["groq"]
+    Groq est sorti du registre (TPD 100k/jour épuisé chaque soir, compound-mini
+    sans autre consommateur que la recherche web supprimée) et la lane
+    SETTLEMENT est partie avec lui : le settlement lit des API de scores
+    structurées (core/score_sources.py) et ne consomme plus un token d'IA.
+    La « réserve settlement » tenue en négatif n'a donc plus d'objet."""
+
+    def test_groq_nest_plus_au_registre(self):
+        assert R.by_name("groq") is None
+
+    def test_les_lanes_settlement_et_search_read_nexistent_plus(self):
+        assert "settlement" not in R.LANES and "search_read" not in R.LANES
+        assert not hasattr(R, "SETTLEMENT") and not hasattr(R, "SEARCH_READ")
+        assert not hasattr(R, "SETTLEMENT_RESERVE")
+
+    def test_le_budget_dune_lane_est_le_budget_entier(self, monkeypatch):
+        """Sans réserve, budget_left = budget journalier − dépensé, point."""
+        p = R.by_name("gemini")
+        monkeypatch.setattr(daily_quota, "spent", lambda b: 15)
+        assert R.budget_left(p, R.FILTER) == p.daily_requests - 15
 
 
 class TestLanes:
@@ -303,10 +305,6 @@ class TestLanes:
         noms = [p.name for p in R.REGISTRY if R.TRANSLATE_CJK in p.lanes]
         assert "zhipu" in noms and "modelscope" in noms
 
-    def test_le_settlement_a_au_moins_deux_fournisseurs_au_registre(self):
-        noms = [p.name for p in R.REGISTRY if R.SETTLEMENT in p.lanes]
-        assert len(noms) >= 2
-
     def test_mistral_est_au_registre_pour_les_lanes_de_signaux(self):
         """L'INVERSE de la règle d'avant, et c'est voulu.
 
@@ -315,15 +313,12 @@ class TestLanes:
         quota est réalloué à la recherche de signaux.
 
         Ce que ce test verrouille, c'est la RETENUE de cette réallocation :
-        à 2 requêtes/minute, Mistral n'a rien à faire dans SETTLEMENT (dont
-        la réserve doit répondre vite), ni dans SEARCH_READ — sa valeur pour
-        Wiz était son connecteur `web_search`, dont le quota était épuisé au
-        niveau du COMPTE. L'y enrôler promettrait une capacité inexistante.
+        à 2 requêtes/minute, Mistral ne sert que l'analyse par lots — les
+        lanes rapides ou critiques n'ont rien à faire de 2 req/min.
         """
         m = R.by_name("mistral")
         assert m is not None, "Mistral doit être au registre depuis la suppression de Wiz"
         assert set(m.lanes) == {R.FILTER, R.ANALYZE}, m.lanes
-        assert R.SETTLEMENT not in m.lanes and R.SEARCH_READ not in m.lanes
         assert m.rpm == 2, "palier gratuit Mistral — 2 req/min"
 
     def test_la_lane_wiz_nexiste_plus(self):
@@ -409,10 +404,11 @@ class TestCouvertureDesLanes:
             n = [p for p in R.REGISTRY if lane in p.lanes and not p.terms_flag]
             assert len(n) >= R.LANE_MIN_HEALTHY, f"{lane}: {len(n)}"
 
-    def test_gemini_ne_sert_jamais_la_lane_de_recherche(self):
-        """Le grounding Google Search gratuit est MORT (limit:0, vérifié sur
-        4 clés le 2026-07-21). Seule la génération simple survit."""
-        assert R.SEARCH_READ not in R.by_name("gemini").lanes
+    def test_plus_aucune_lane_de_recherche_web(self):
+        """Le grounding Google Search gratuit est MORT (limit:0, 2026-07-21),
+        et la lane search_read entière a suivi Groq/Tavily le 2026-09-02 :
+        plus rien dans le pipeline ne fait de recherche web."""
+        assert "search_read" not in R.LANES
 
 
 class TestBasculeDeModeleIntraFournisseur:
@@ -521,7 +517,7 @@ class TestQuatreCentTrois:
             return _R(status=403, text="requires a subscription") if len(vus) == 1 \
                 else _R(text="OK")
         monkeypatch.setattr(R.requests, "post", post)
-        text, prov = R.route([], R.SETTLEMENT)
+        text, prov = R.route([], R.ANALYZE)
         assert text == "OK" and prov == "ollama_cloud"
         assert len(vus) == 2
 
@@ -535,7 +531,7 @@ class TestQuatreCentTrois:
         monkeypatch.setattr(R.requests, "post",
                             lambda url, json=None, headers=None, timeout=None:
                             vus.append(json["model"]) or _R(status=403))
-        assert R.route([], R.SETTLEMENT) == (None, None)
+        assert R.route([], R.ANALYZE) == (None, None)
         assert len(vus) == len(oll.models)
         assert R.load_health("ollama_cloud")["consecutive_errors"] >= R.BREAKER_THRESHOLD
 
@@ -544,10 +540,6 @@ class TestQuatreCentTrois:
         abonnement : le mettre ailleurs qu'en tête écarterait le fournisseur
         à chaque run."""
         assert R.by_name("ollama_cloud").models[0] == "gpt-oss:120b"
-
-    def test_la_lane_settlement_a_bien_deux_fournisseurs_de_production(self):
-        n = [p.name for p in R.REGISTRY if R.SETTLEMENT in p.lanes and not p.terms_flag]
-        assert len(n) >= R.LANE_MIN_HEALTHY, n
 
 
 class TestBudgetsRealistes:
@@ -616,42 +608,26 @@ class TestRepartitionSur24h:
         assert ordre == sorted(ordre, key=lambda n: rang[n])
 
 
-class TestGroqEnReserve:
-    def test_ai_complete_interroge_le_routeur_AVANT_groq(self, monkeypatch):
-        """Groq est le SEUL à porter compound-mini (recherche web intégrée).
-        Chaque token dépensé en complétion simple est retiré à
-        `ai_search_complete` — le manque exact qui a bloqué le settlement le
-        2026-08-02."""
+class TestFacadeRouteurSeule:
+    """Depuis le 2026-09-02, core/ai_search.py n'a plus de client Groq direct
+    ni de recherche web : ai_complete passe par le routeur, et rien d'autre."""
+
+    def test_ai_complete_ne_passe_que_par_le_routeur(self, monkeypatch):
         from core import ai_search
         appels = []
         monkeypatch.setattr(ai_search, "_cache_get", lambda k: None)
         monkeypatch.setattr(ai_search, "_cache_put", lambda k, t: None)
-        monkeypatch.setattr(ai_search, "_groq_post",
-                            lambda *a, **k: appels.append("groq") or "de-groq")
         monkeypatch.setattr(ai_search, "_fallback_post",
                             lambda *a, **k: appels.append("routeur") or "du-routeur")
         assert ai_search.ai_complete("q") == "du-routeur"
-        assert appels == ["routeur"]             # Groq pas touché
+        assert appels == ["routeur"]
 
-    def test_groq_reprend_la_main_si_le_routeur_est_muet(self, monkeypatch):
+    def test_plus_de_client_groq_ni_de_recherche_web(self):
         from core import ai_search
-        appels = []
-        monkeypatch.setattr(ai_search, "_cache_get", lambda k: None)
-        monkeypatch.setattr(ai_search, "_cache_put", lambda k, t: None)
-        monkeypatch.setattr(ai_search, "_fallback_post",
-                            lambda *a, **k: appels.append("routeur") or None)
-        monkeypatch.setattr(ai_search, "_groq_post",
-                            lambda *a, **k: appels.append("groq") or "de-groq")
-        assert ai_search.ai_complete("q") == "de-groq"
-        assert appels == ["routeur", "groq"]
-
-    def test_la_recherche_web_garde_groq_en_premier(self, monkeypatch):
-        """`ai_search_complete` est l'inverse : compound-mini d'abord, parce
-        qu'aucun autre fournisseur ne fait de recherche web."""
-        import inspect
-        from core import ai_search
-        src = inspect.getsource(ai_search.ai_search_complete)
-        assert src.index("_SEARCH_MODEL") < src.index("_fallback_post")
+        for attr in ("_groq_post", "_groq_keys", "ai_search_complete",
+                     "tavily_search", "search_exhausted", "search_credits_left",
+                     "prioriser_settlement", "ai_dead"):
+            assert not hasattr(ai_search, attr), attr
 
 
 class TestCalibration24h:
@@ -665,7 +641,7 @@ class TestCalibration24h:
         """
         from datetime import datetime, timedelta, timezone
         for n in ("GEMINI_API_KEY", "CLOUDFLARE_API_TOKEN", "CLOUDFLARE_ACCOUNT_ID",
-                  "OPENROUTER_API_KEY", "OLLAMA_API_KEY", "GROQ_API_KEY"):
+                  "OPENROUTER_API_KEY", "OLLAMA_API_KEY"):
             monkeypatch.setenv(n, "x")
         monkeypatch.setattr(R, "fetch_catalog", lambda p, timeout=None: set())
         spent = {}
@@ -685,26 +661,14 @@ class TestCalibration24h:
                 servis[prov.name] = servis.get(prov.name, 0) + 1
 
         assert sum(servis.values()) == 240
-        assert len(servis) >= 5              # tout le monde a servi
+        assert len(servis) >= 4              # tout le monde a servi (4 configurés)
 
         # Chacun consomme la MÊME fraction de son budget, à 10 points près.
         parts = []
         for nom, n in servis.items():
             p = R.by_name(nom)
-            plafond = p.daily_requests - (R.SETTLEMENT_RESERVE
-                                          if R.SETTLEMENT in p.lanes else 0)
-            parts.append(n / plafond)
+            parts.append(n / p.daily_requests)
         assert max(parts) - min(parts) < 0.10, dict(zip(servis, parts))
-
-    def test_le_budget_groq_reflete_son_TPD_et_non_un_nombre_de_requetes(self):
-        """La contrainte de Groq est 100 000 tokens/jour PAR ORGANISATION.
-        À ~600 tokens l'appel, cela fait ~165 appels — pas 400. Un budget
-        surévalué ferait continuer d'appeler après l'épuisement du TPD, et
-        surtout brûlerait sur des complétions simples le quota dont
-        compound-mini a besoin."""
-        groq = R.by_name("groq")
-        assert groq.daily_tokens == 100_000
-        assert groq.daily_requests <= groq.daily_tokens // 600
 
 
 class TestAucunModeleEnDurHorsDuRegistre:
@@ -720,20 +684,6 @@ class TestAucunModeleEnDurHorsDuRegistre:
     Le gardien du registre existait déjà ; ce qui manquait, c'est qu'il
     s'applique au VRAI chemin d'appel. D'où ces deux tests.
     """
-
-    def test_ai_search_derive_ses_modeles_du_registre(self):
-        """Aucune des trois listes n'est recopiée : toutes viennent d'ici."""
-        from core import ai_search
-
-        attendus = list(R.by_name("groq").models)
-        assert ai_search._groq_models() == attendus
-        assert ai_search._all_models() == [ai_search._SEARCH_MODEL] + attendus
-        # Le palier ne réordonne plus : inverser mettrait un modèle de
-        # RAISONNEMENT en tête, qui rend un contenu vide sous max_tokens=80
-        # (mesuré le 2026-08-26) — l'estimateur et les alias échoueraient
-        # en silence.
-        for tier in ("light", "heavy", "inconnu"):
-            assert ai_search._tier_models(tier) == attendus, tier
 
     def test_aucun_nom_de_modele_code_en_dur_ailleurs(self):
         """« NE JAMAIS coder un nom de modèle en dur hors du registre. »

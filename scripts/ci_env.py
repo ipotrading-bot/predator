@@ -49,10 +49,11 @@ Le préflight lit l'environnement du step, jamais un dump. Aucune valeur n'est
 imprimée, et il ne faut pas ajouter d'`echo` de debug dans ces steps.
 
 POOLS.
-    scan        moteur de scan (run_engine.py) — tout sauf GROQ_API_KEY_3
-    closing     capture closing line — Supabase RW + pool Groq scans + IA
-    settlement  audit (run_audit.py) — GROQ_API_KEY = secret GROQ_API_KEY_3,
-                et AUCUNE autre clé Groq
+    scan        moteur de scan (run_engine.py) — sources + IA du registre
+    closing     capture closing line — Supabase RW + exchange (Betfair opt.)
+    settlement  audit (run_audit.py) — Supabase RW + clés de RÉSULTATS
+                (api-sports…), AUCUNE clé IA : le settlement est déterministe
+                depuis le 2026-09-02 (Groq/Tavily supprimés)
     reprice     Matchbook vs slate soft — Supabase RW + Telegram, RIEN d'autre
     readonly    rapports, Monte Carlo — clé anon, jamais SUPABASE_SERVICE_KEY
     backfill    backfill_ledger.py — Supabase RW seul
@@ -61,7 +62,6 @@ from __future__ import annotations
 
 import argparse
 import base64
-import hashlib
 import json
 import os
 import sys
@@ -85,26 +85,25 @@ TELEGRAM = ("TELEGRAM_BOT_TOKEN", "TELEGRAM_CHAT_ID")
 # ODDS_API_KEY(S) restent câblées mais ne sont plus REQUISES (OddsAPI obsolète
 # depuis le 2026-08-26) : ne jamais les remettre en garde bloquante.
 ODDS_SOURCES = ("ODDS_API_KEY", "ODDS_API_KEYS", "API_FOOTBALL_KEY")
-# Clés api-sports du SETTLEMENT (2026-08-26). Le score final est un champ de
-# `/fixtures?date=` : sans ces clés dans le pool, core/settlement retomberait
-# sur la recherche web — exactement le chemin dont la panne a fait tomber le
-# taux de résolution à 11 %. Une capacité non câblée est une capacité morte,
-# et elle meurt SANS ERREUR.
+# Clés de RÉSULTATS du settlement (2026-08-26, élargies 2026-09-02). Le score
+# final est un champ d'API structurée : api-sports (`/fixtures?date=`), MLB
+# statsapi (sans clé) et TheSportsDB (clé publique « 123 », THESPORTSDB_API_KEY
+# pour un compte Patreon). Une capacité non câblée est une capacité morte, et
+# elle meurt SANS ERREUR.
 RESULTS_SOURCES = ("API_FOOTBALL_KEY", "API_SPORTS_KEY",
-                   "API_BASKETBALL_KEY", "API_BASEBALL_KEY")
+                   "API_BASKETBALL_KEY", "API_BASEBALL_KEY",
+                   "THESPORTSDB_API_KEY")
 BETFAIR = ("BETFAIR_APP_KEY", "BETFAIR_USERNAME", "BETFAIR_PASSWORD",
            "BETFAIR_CERT", "BETFAIR_CERT_KEY")
 # Sources filtrées par IP (core/net.py) : proxy OU relais Cloudflare Worker.
 RELAYS = ("FREE_SOURCES_PROXY", "ODDS500_PROXY", "SEVENM_PROXY",
           "FREE_SOURCES_RELAY", "FREE_SOURCES_RELAY_TOKEN",
           "ODDS500_RELAY", "SEVENM_RELAY")
-# Pool Groq des SCANS. _3 est la réserve du settlement (cloisonnement du
-# 2026-08-02 : les scans, 10x plus nombreux, vidaient le TPD avant qu'un
-# seul WIN/LOSS soit écrit).
-GROQ_SCAN = ("GROQ_API_KEY", "GROQ_API_KEY_2", "GROQ_API_KEY_4", "GROQ_API_KEY_5")
-GROQ_SETTLEMENT_SOURCE = "GROQ_API_KEY_3"
-SEARCH = ("TAVILY_API_KEY",)
-FALLBACK_SOURCES = ("API_FOOTBALL_KEY", "GROQ_API_KEY", "TAVILY_API_KEY")
+# Le pool Groq des scans (GROQ_API_KEY, _2, _4, _5), la clé de réserve du
+# settlement (GROQ_API_KEY_3) et TAVILY_API_KEY ont été SUPPRIMÉS le
+# 2026-09-02 avec Groq/Tavily. Les contrôles `groq_pool`/`groq_fingerprint`
+# sont partis avec eux.
+FALLBACK_SOURCES = ("API_FOOTBALL_KEY",)
 
 
 def _companions_of(keys) -> tuple:
@@ -125,7 +124,6 @@ def _uniq(*groups) -> tuple:
 
 
 AI_FULL = _uniq(AI_KEYS, _companions_of(AI_KEYS))
-AI_NO_GROQ = tuple(k for k in AI_FULL if k != "GROQ_API_KEY")
 
 # ── Pools ─────────────────────────────────────────────────────────────
 # passthrough : nom d'env ← secret du même nom (vide si absent, comme
@@ -138,22 +136,20 @@ AI_NO_GROQ = tuple(k for k in AI_FULL if k != "GROQ_API_KEY")
 POOLS: dict[str, dict] = {
     "scan": dict(
         passthrough=_uniq(SUPABASE_RW, TELEGRAM, ODDS_SOURCES, BETFAIR, RELAYS,
-                          RESULTS_SOURCES, GROQ_SCAN, SEARCH, AI_FULL),
-        required=SUPABASE_RW, service_role=True, warn_missing=FALLBACK_SOURCES,
-        groq_pool=True, groq_fingerprint=True),
+                          RESULTS_SOURCES, AI_FULL),
+        required=SUPABASE_RW, service_role=True, warn_missing=FALLBACK_SOURCES),
     "closing": dict(
-        passthrough=_uniq(SUPABASE_RW, GROQ_SCAN, SEARCH, AI_FULL),
+        # La capture de closing line lit l'EXCHANGE (Matchbook sans clé,
+        # Betfair si les clés sont posées) — plus aucune clé IA/recherche
+        # depuis la suppression de l'oracle web (2026-09-02).
+        passthrough=_uniq(SUPABASE_RW, BETFAIR),
         required=SUPABASE_RW, service_role=True),
     "settlement": dict(
-        passthrough=_uniq(SUPABASE_RW, TELEGRAM, RESULTS_SOURCES, SEARCH, AI_NO_GROQ),
-        rename={"GROQ_API_KEY": GROQ_SETTLEMENT_SOURCE},
-        # ⚠️ EN NOMS D'ENV, PAS DE SECRETS. Le bloc généré pose la valeur du
-        # secret GROQ_API_KEY_3 sous le nom GROQ_API_KEY ; le nom
-        # GROQ_API_KEY_3 n'existe nulle part dans l'environnement du job.
-        # Exiger l'ancien nom faisait échouer l'audit sur un secret pourtant
-        # présent — vécu le 2026-08-26, run 33008750419.
-        required=SUPABASE_RW + ("GROQ_API_KEY",), service_role=True,
-        groq_fingerprint=True, warn_missing=SEARCH),
+        # AUCUNE clé IA : le settlement est déterministe (api-sports, MLB
+        # statsapi sans clé, TheSportsDB clé publique) depuis le 2026-09-02.
+        passthrough=_uniq(SUPABASE_RW, TELEGRAM, RESULTS_SOURCES),
+        required=SUPABASE_RW, service_role=True,
+        warn_missing=("API_FOOTBALL_KEY",)),
     "reprice": dict(
         passthrough=_uniq(SUPABASE_RW, TELEGRAM),
         required=SUPABASE_RW, service_role=True),
@@ -348,41 +344,9 @@ def check(pool: str, secrets: dict, amorcage: bool = False) -> list[tuple[str, s
         # le step qui travaille — voir `--check` sans `--amorcage`.
         return out
 
-    if spec.get("groq_fingerprint"):
-        # LE CLOISONNEMENT NE PEUT PLUS SE VÉRIFIER DANS UN SEUL JOB, et c'est
-        # voulu : depuis que chaque step ne reçoit que son pool, aucun process
-        # ne voit à la fois la clé des scans et celle du settlement. On publie
-        # donc une empreinte irréversible (8 hex d'un SHA-256) : si celle du
-        # pool `scan` et celle du pool `settlement` coïncident dans les logs,
-        # c'est la MÊME organisation Groq, donc le même quota journalier, donc
-        # un cloisonnement fictif — la panne du 2026-08-02 (les scans, 10x plus
-        # nombreux, vidaient le TPD avant qu'un seul WIN/LOSS soit écrit).
-        cle = secrets.get("GROQ_API_KEY", "")
-        if cle:
-            out.append(("notice", f"Empreinte GROQ_API_KEY (pool {pool}) : "
-                                  f"{hashlib.sha256(cle.encode()).hexdigest()[:8]} — elle doit "
-                                  "DIFFÉRER de celle du pool settlement/scan, sinon les deux "
-                                  "partagent une organisation Groq et le cloisonnement est fictif."))
-        else:
-            out.append(("warning", f"GROQ_API_KEY absente du pool {pool}."))
-
-    if spec.get("groq_pool"):
-        if not secrets.get("GROQ_API_KEY_2"):
-            out.append(("warning", "GROQ_API_KEY_2 non définie — les scans tournent sur une seule "
-                                   "organisation Groq (100k TPD)."))
-        elif secrets.get("GROQ_API_KEY_2") == secrets.get("GROQ_API_KEY"):
-            out.append(("warning", "GROQ_API_KEY_2 identique à GROQ_API_KEY — même organisation, aucun gain."))
-        k4 = secrets.get("GROQ_API_KEY_4")
-        if not k4:
-            out.append(("notice", "GROQ_API_KEY_4 non définie — une 4e clé sur un nouveau compte donnerait "
-                                  "300k TPD aux scans sans toucher au settlement."))
-        elif k4 in (secrets.get("GROQ_API_KEY"), secrets.get("GROQ_API_KEY_2")):
-            out.append(("warning", "GROQ_API_KEY_4 duplique une clé de scan — aucun quota supplémentaire."))
-
     for k in spec.get("warn_missing") or ():
         if not secrets.get(k):
-            hint = " (clé gratuite sur app.tavily.com)" if k == "TAVILY_API_KEY" else ""
-            out.append(("warning", f"{k} non configurée — source de repli inerte{hint}. "
+            out.append(("warning", f"{k} non configurée — source de repli inerte. "
                                    "Incident 2026-08-10 → 08-20 : dix jours de « 0 matchs, 0 signaux »."))
     return out
 

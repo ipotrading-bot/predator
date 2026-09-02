@@ -33,9 +33,10 @@ Calcul en crons GitHub Actions ; dashboard en lecture seule.
 ## Architecture (fichiers clés)
 
 - `run_engine.py` — scan + purge + émission des signaux (entrée principale)
-- `core/odds_api.py` / `harvester.py` / `oracle.py` — sources de cotes (Tier 1/2/3)
+- `core/odds_api.py` / `harvester.py` — sources de cotes (Tier 1/2)
 - `core/math_engine.py` + `paim_engine.py` — devig, prix exécutable, edge, consensus
-- `core/audit_engine.py` + `settlement.py` — règlement, CLV, `ai_learning_ledger`
+- `core/audit_engine.py` + `settlement.py` + `score_sources.py` — règlement
+  (0 IA), CLV, ledger
 - `core/learning_layer.py` — seuils (`meta.threshold_<sport>`, **APPLIQUÉS**
   au min_edge du scan, époque *A6*) ; verdicts (≥30 réglés, Wilson vs
   rentabilité) loggés, jamais appliqués ; hebdo `scripts/weekly_report.py`

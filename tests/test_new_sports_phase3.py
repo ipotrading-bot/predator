@@ -15,7 +15,7 @@ NCAAF a un sport-type DÉDIÉ, pas `americanfootball` : même raisonnement que
 un contexte de settlement qui ne dit pas « NFL » pour un match universitaire.
 """
 import run_engine
-from core import odds_api, scan_windows, settlement
+from core import odds_api, scan_windows
 from core.constants import KELLY_FRACTION
 from core.learning_layer import SPORT_DEFAULTS
 from core.odds_api import SPORT_KEYS, _MARKETS_BY_SPORT
@@ -45,9 +45,9 @@ class TestNCAAF:
         american football » pour un match NCAA l'enverrait vers la mauvaise
         ligue, et un score introuvable laisse le signal `active` pour
         toujours."""
-        import inspect
-        src = inspect.getsource(settlement.fetch_match_result)
-        assert '"college_football": "NCAA college football"' in src
+        from core import score_sources
+        assert score_sources._TSDB_SPORTS["college_football"] == "American Football"
+        assert score_sources._TSDB_SPORTS["americanfootball"] == "American Football"
 
     def test_fenetre_favorable_le_samedi(self):
         from datetime import datetime, timezone

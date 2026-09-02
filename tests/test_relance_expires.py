@@ -94,8 +94,7 @@ class TestElleNeDevinePas:
 
     def test_score_introuvable_laisse_la_ligne_expiree(self):
         db = FakeDB(ledger=[dict(LIGNE)])
-        with patch.object(relance_expires, "ai_available", return_value=True), \
-             patch.object(relance_expires, "fetch_match_result", return_value=None):
+        with              patch.object(relance_expires, "fetch_match_result", return_value=None):
             faits = relance_expires.relancer(db)
         assert faits["ledger"] == 0
         assert faits["sans_score"] == 1
@@ -106,8 +105,7 @@ class TestElleNeDevinePas:
         # écrire UNKNOWN au ledger serait pire que d'attendre.
         db = FakeDB(ledger=[dict(LIGNE, market_type="martingale_exotique",
                                  selection="???")])
-        with patch.object(relance_expires, "ai_available", return_value=True), \
-             patch.object(relance_expires, "fetch_match_result",
+        with              patch.object(relance_expires, "fetch_match_result",
                           return_value={"home_score": 2, "away_score": 1, "completed": True}):
             faits = relance_expires.relancer(db)
         assert faits["indecidable"] == 1
@@ -115,19 +113,17 @@ class TestElleNeDevinePas:
 
     def test_un_score_trouve_ecrit_la_vraie_issue(self):
         db = FakeDB(ledger=[dict(LIGNE)])
-        with patch.object(relance_expires, "ai_available", return_value=True), \
-             patch.object(relance_expires, "fetch_match_result",
+        with              patch.object(relance_expires, "fetch_match_result",
                           return_value={"home_score": 2, "away_score": 1, "completed": True}):
             faits = relance_expires.relancer(db)
         assert faits["ledger"] == 1
         assert ("ai_learning_ledger", {"outcome": "WIN"}) in db.updates
 
-    def test_sans_fournisseur_ia_rien_nest_ecrit(self):
-        db = FakeDB(ledger=[dict(LIGNE)])
-        with patch.object(relance_expires, "ai_available", return_value=False):
-            faits = relance_expires.relancer(db)
-        assert faits == {"signaux": 0, "ledger": 0, "sans_score": 0, "indecidable": 0}
-        assert db.updates == []
+    def test_la_relance_ne_depend_plus_daucune_ia(self):
+        """2026-09-02 : la relance lit les mêmes sources structurées que le
+        settlement — plus de garde « fournisseur IA disponible »."""
+        import inspect
+        assert "ai_available" not in inspect.getsource(relance_expires)
 
 
 class TestLeBudgetEtLeCurseur:
@@ -136,31 +132,27 @@ class TestLeBudgetEtLeCurseur:
     def test_le_budget_borne_le_nombre_de_recherches(self):
         db = FakeDB(ledger=[dict(LIGNE, id=f"l{i}") for i in range(50)])
         appels = []
-        with patch.object(relance_expires, "ai_available", return_value=True), \
-             patch.object(relance_expires, "fetch_match_result",
+        with              patch.object(relance_expires, "fetch_match_result",
                           side_effect=lambda *a, **k: appels.append(1) or None):
             relance_expires.relancer(db, budget=5)
         assert len(appels) == 5
 
     def test_le_curseur_avance_pour_couvrir_toutes_les_lignes(self):
         db = FakeDB(ledger=[dict(LIGNE, id=f"l{i}") for i in range(50)], curseur=10)
-        with patch.object(relance_expires, "ai_available", return_value=True), \
-             patch.object(relance_expires, "fetch_match_result", return_value=None):
+        with              patch.object(relance_expires, "fetch_match_result", return_value=None):
             relance_expires.relancer(db, budget=4)
         curseurs = [p for (t, p) in db.upserts if t == "meta"]
         assert curseurs and curseurs[-1]["value"] == "14"
 
     def test_le_curseur_revient_au_debut_en_fin_de_liste(self):
         db = FakeDB(ledger=[], curseur=99)
-        with patch.object(relance_expires, "ai_available", return_value=True):
-            relance_expires.relancer(db, budget=4)
+        relance_expires.relancer(db, budget=4)
         curseurs = [p for (t, p) in db.upserts if t == "meta"]
         assert curseurs and curseurs[-1]["value"] == "0"
 
     def test_un_budget_nul_ne_fait_rien(self):
         db = FakeDB(ledger=[dict(LIGNE)])
-        with patch.object(relance_expires, "ai_available", return_value=True):
-            assert relance_expires.relancer(db, budget=0)["ledger"] == 0
+        assert relance_expires.relancer(db, budget=0)["ledger"] == 0
 
 
 class TestLaPlaceDansLaudit:

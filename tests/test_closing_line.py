@@ -79,224 +79,92 @@ def _sig(id_, match, pinnacle_price, match_time, selection=None):
 
 
 class TestCaptureClosingLines:
-    def test_clv_real_computed_from_bet_price_vs_same_side_close(self, monkeypatch):
-        # Real bettor CLV: the price WE got (xbet_odd) vs the closing price
-        # of the SAME side — not pinnacle_price/close (Pinnacle self-drift),
-        # which is why scan pinnacle_price (2.00) must not appear in the result.
+    """Depuis le 2026-09-02, capture_closing_lines lit l'EXCHANGE (Matchbook,
+    Betfair optionnel) au lieu de l'oracle web-search supprimé avec
+    Groq/Tavily. Le gros du contrat (même côté, DNB exigé au football, refus
+    sinon) vit dans core/closing_line.capture_from_exchange, testé par
+    tests/test_closing_line_exchange.py — ici on teste le CÂBLAGE."""
+
+    def test_sans_candidat_aucun_prix_nest_charge(self, monkeypatch):
+        appels = []
+        import core.matchbook as matchbook
+        monkeypatch.setattr(matchbook, "fetch_matchbook_prices",
+                            lambda **k: appels.append(1) or {})
+        assert audit_engine.capture_closing_lines(_FakeSupabase([])) == 0
+        assert not appels, "aucun candidat : Matchbook ne doit pas être interrogé"
+
+    def test_seuls_les_h2h_sont_candidats(self, monkeypatch):
         now = datetime.now(timezone.utc)
-        sig = _sig(1, "Ajax vs Feyenoord", pinnacle_price=2.00,
-                   match_time=(now + timedelta(minutes=3)).isoformat())
-        sb = _FakeSupabase([sig])
-        monkeypatch.setattr(audit_engine, "get_pinnacle_price",
-                            lambda match, sport, league: (1.80, "Ajax"))
+        sig = _sig(1, "Ajax vs Feyenoord", 2.00,
+                   (now + timedelta(minutes=30)).isoformat())
+        sig["market_key"] = "totals_over"
+        appels = []
+        import core.matchbook as matchbook
+        monkeypatch.setattr(matchbook, "fetch_matchbook_prices",
+                            lambda **k: appels.append(1) or {})
+        assert audit_engine.capture_closing_lines(_FakeSupabase([sig])) == 0
+        assert not appels
 
-        n = audit_engine.capture_closing_lines(sb)
-
-        assert n == 1
-        assert len(sb.inserted) == 1
-        payload = sb.inserted[0]
-        assert payload["closing_pinnacle_price"] == 1.80
-        assert payload["clv_pct_real"] == round((2.10 / 1.80 - 1) * 100, 2)
-
-    def test_budget_limits_oracle_calls(self, monkeypatch):
+    def test_le_cablage_passe_les_pseudo_matchs_a_capture_from_exchange(self, monkeypatch):
         now = datetime.now(timezone.utc)
-        sigs = [_sig(i, f"Home{i} vs Away{i}", 2.0, (now + timedelta(minutes=2)).isoformat())
-                for i in range(5)]
-        sb = _FakeSupabase(sigs)
-        calls = []
+        sig = _sig(7, "Ajax vs Feyenoord", 2.00,
+                   (now + timedelta(minutes=30)).isoformat())
+        sig["match_id"] = "mid-7"
+        vus = {}
+        import core.matchbook as matchbook
+        monkeypatch.setattr(matchbook, "fetch_matchbook_prices",
+                            lambda **k: {"ajax_feyenoord": {"1": 1.9, "X": 3.4, "2": 4.2}})
+        monkeypatch.delenv("BETFAIR_APP_KEY", raising=False)
 
-        def fake_oracle(match, sport, league):
-            calls.append(match)
-            return 1.9, match.split(" vs ")[0]
+        def _fake_capture(sb, matches, prices, now=None):
+            vus["matches"] = matches
+            vus["prices"] = prices
+            return 1
 
-        monkeypatch.setattr(audit_engine, "get_pinnacle_price", fake_oracle)
+        monkeypatch.setattr(audit_engine, "capture_from_exchange", _fake_capture)
+        assert audit_engine.capture_closing_lines(_FakeSupabase([sig])) == 1
+        (m,) = vus["matches"]
+        assert m["id"] == "mid-7" and m["home"] == "Ajax" and m["away"] == "Feyenoord"
+        assert vus["prices"]
 
-        n = audit_engine.capture_closing_lines(sb, budget=2)
-
-        assert n == 2
-        assert len(calls) == 2
-
-    def test_oracle_failure_is_skipped_not_fatal(self, monkeypatch):
+    def test_aucun_prix_exchange_rend_zero_sans_planter(self, monkeypatch):
         now = datetime.now(timezone.utc)
-        sig = _sig(1, "A vs B", 2.0, (now + timedelta(minutes=2)).isoformat())
-        sb = _FakeSupabase([sig])
-
-        def fake_oracle(*_a, **_k):
-            raise RuntimeError("boom")
-
-        monkeypatch.setattr(audit_engine, "get_pinnacle_price", fake_oracle)
-
-        n = audit_engine.capture_closing_lines(sb)
-
-        assert n == 0
-        assert sb.inserted == []
+        sig = _sig(1, "Ajax vs Feyenoord", 2.00,
+                   (now + timedelta(minutes=30)).isoformat())
+        sig["match_id"] = "mid-1"
+        import core.matchbook as matchbook
+        monkeypatch.setattr(matchbook, "fetch_matchbook_prices", lambda **k: {})
+        monkeypatch.delenv("BETFAIR_APP_KEY", raising=False)
+        assert audit_engine.capture_closing_lines(_FakeSupabase([sig])) == 0
 
     def test_no_candidates_returns_zero(self):
-        sb = _FakeSupabase([])
-        assert audit_engine.capture_closing_lines(sb) == 0
+        assert audit_engine.capture_closing_lines(_FakeSupabase([])) == 0
 
-    def test_capture_stamps_closing_captured_at(self, monkeypatch):
-        # Without this stamp a T-3h price is indistinguishable from a T-5min
-        # one, and the CLV derived from it is uninterpretable.
-        now = datetime.now(timezone.utc)
-        sig = _sig(1, "Ajax vs Feyenoord", 2.00,
-                   (now + timedelta(minutes=8)).isoformat())
-        sb = _FakeSupabase([sig])
-        monkeypatch.setattr(audit_engine, "get_pinnacle_price",
-                            lambda match, sport, league: (1.80, "Ajax"))
-
-        assert audit_engine.capture_closing_lines(sb) == 1
-        stamped = sb.inserted[0]["closing_captured_at"]
-        assert stamped
-        taken = datetime.fromisoformat(stamped.replace("Z", "+00:00"))
-        assert abs((taken - now).total_seconds()) < 60
+    def test_loracle_web_nexiste_plus(self):
+        """Gardien de la suppression : plus d'oracle LLM dans la capture."""
+        assert not hasattr(audit_engine, "get_pinnacle_price")
+        import inspect
+        src = inspect.getsource(audit_engine)
+        assert "oracle" not in src.lower() or "ancien" in src.lower() or "supprim" in src.lower()
 
 
-class TestRefreshBeatsCronDrift:
-    """The original bug: capture was one-shot and gated on
-    closing_pinnacle_price IS NULL, inside a 5-min window, on a cron that
-    actually fires every ~116 min. It captured 0 prices in 203 signals.
-    Refreshing is what makes the result independent of when the cron lands."""
+class TestMatchesFromSignals:
+    def test_derive_les_deux_noms_et_le_match_id(self):
+        sig = _sig(1, "Ajax vs Feyenoord", 2.0, "2026-09-02T18:00:00+00:00")
+        sig["match_id"] = "m1"
+        (m,) = audit_engine._matches_from_signals([sig])
+        assert (m["home"], m["away"], m["id"]) == ("Ajax", "Feyenoord", "m1")
+        assert m["commence_time"] == "2026-09-02T18:00:00+00:00"
 
-    def test_signal_with_existing_price_is_repriced_when_stale(self, monkeypatch):
-        now = datetime.now(timezone.utc)
-        sig = _sig(1, "Ajax vs Feyenoord", 2.00,
-                   (now + timedelta(minutes=15)).isoformat())
-        # Priced 90 min ago, far from kickoff — must be refined, not skipped.
-        sig["closing_pinnacle_price"] = 1.95
-        sig["closing_captured_at"] = (now - timedelta(minutes=90)).isoformat()
-        sb = _FakeSupabase([sig])
-        monkeypatch.setattr(audit_engine, "get_pinnacle_price",
-                            lambda match, sport, league: (1.80, "Ajax"))
+    def test_sans_vs_ou_sans_match_id_le_signal_est_ecarte(self):
+        s1 = _sig(1, "Ajax - Feyenoord", 2.0, "2026-09-02T18:00:00+00:00")
+        s1["match_id"] = "m1"
+        s2 = _sig(2, "Ajax vs Feyenoord", 2.0, "2026-09-02T18:00:00+00:00")
+        s2["match_id"] = ""
+        assert audit_engine._matches_from_signals([s1, s2]) == []
 
-        assert audit_engine.capture_closing_lines(sb) == 1
-        assert sb.inserted[0]["closing_pinnacle_price"] == 1.80
 
-    def test_recent_capture_is_not_repriced(self, monkeypatch):
-        # Bounds oracle spend: refreshing every run over a 4h window would
-        # burn the budget on matches nowhere near kickoff.
-        now = datetime.now(timezone.utc)
-        sig = _sig(1, "Ajax vs Feyenoord", 2.00,
-                   (now + timedelta(minutes=15)).isoformat())
-        sig["closing_pinnacle_price"] = 1.95
-        sig["closing_captured_at"] = (now - timedelta(minutes=2)).isoformat()
-        sb = _FakeSupabase([sig])
-        calls = []
-        monkeypatch.setattr(audit_engine, "get_pinnacle_price",
-                            lambda match, sport, league: calls.append(match) or (1.80, "Ajax"))
-
-        assert audit_engine.capture_closing_lines(sb) == 0
-        assert calls == []
-
-    def test_row_without_stamp_is_repriced(self, monkeypatch):
-        # Pre-migration rows carry a price but no stamp — refresh them so the
-        # backlog converges instead of staying permanently uninterpretable.
-        now = datetime.now(timezone.utc)
-        sig = _sig(1, "Ajax vs Feyenoord", 2.00,
-                   (now + timedelta(minutes=15)).isoformat())
-        sig["closing_pinnacle_price"] = 1.95
-        sb = _FakeSupabase([sig])
-        monkeypatch.setattr(audit_engine, "get_pinnacle_price",
-                            lambda match, sport, league: (1.80, "Ajax"))
-
-        assert audit_engine.capture_closing_lines(sb) == 1
-
-    def test_malformed_stamp_does_not_crash(self, monkeypatch):
-        now = datetime.now(timezone.utc)
-        sig = _sig(1, "Ajax vs Feyenoord", 2.00,
-                   (now + timedelta(minutes=15)).isoformat())
-        sig["closing_pinnacle_price"] = 1.95
-        sig["closing_captured_at"] = "pas une date"
-        sb = _FakeSupabase([sig])
-        monkeypatch.setattr(audit_engine, "get_pinnacle_price",
-                            lambda match, sport, league: (1.80, "Ajax"))
-
-        assert audit_engine.capture_closing_lines(sb) == 1
-
-    def test_far_from_kickoff_is_not_repriced_even_when_stale(self, monkeypatch):
-        # 3h out with a price already on file: the line has not converged, so
-        # re-pricing buys no accuracy and just burns web-search quota shared
-        # with the audit.
-        now = datetime.now(timezone.utc)
-        sig = _sig(1, "Ajax vs Feyenoord", 2.00,
-                   (now + timedelta(minutes=180)).isoformat())
-        sig["closing_pinnacle_price"] = 1.95
-        sig["closing_captured_at"] = (now - timedelta(minutes=90)).isoformat()
-        sb = _FakeSupabase([sig])
-        calls = []
-        monkeypatch.setattr(audit_engine, "get_pinnacle_price",
-                            lambda match, sport, league: calls.append(match) or (1.80, "Ajax"))
-
-        assert audit_engine.capture_closing_lines(sb) == 0
-        assert calls == []
-
-    def test_far_from_kickoff_still_gets_its_first_price(self, monkeypatch):
-        # The guarantee that survives a run of dropped ticks: a signal with no
-        # price at all is captured anywhere in the window, however far out.
-        now = datetime.now(timezone.utc)
-        sig = _sig(1, "Ajax vs Feyenoord", 2.00,
-                   (now + timedelta(minutes=200)).isoformat())
-        sb = _FakeSupabase([sig])
-        monkeypatch.setattr(audit_engine, "get_pinnacle_price",
-                            lambda match, sport, league: (1.80, "Ajax"))
-
-        assert audit_engine.capture_closing_lines(sb) == 1
-
-    def test_unparseable_kickoff_refreshes_rather_than_freezing(self, monkeypatch):
-        now = datetime.now(timezone.utc)
-        sig = _sig(1, "Ajax vs Feyenoord", 2.00, "pas une date")
-        sig["closing_pinnacle_price"] = 1.95
-        sig["closing_captured_at"] = (now - timedelta(minutes=90)).isoformat()
-        sb = _FakeSupabase([sig])
-        monkeypatch.setattr(audit_engine, "get_pinnacle_price",
-                            lambda match, sport, league: (1.80, "Ajax"))
-
-        assert audit_engine.capture_closing_lines(sb) == 1
-
-    def test_window_covers_the_real_execution_gap(self):
-        # Guard rail on the constant itself: the measured median gap between
-        # actual executions is 116 min and the worst observed is 254. A window
-        # narrower than that reintroduces the original silent-zero bug.
-        assert audit_engine.CLOSING_LINE_WINDOW_MIN >= 240
-        assert audit_engine.CLOSING_LINE_REFRESH_MIN < audit_engine.CLOSING_LINE_TIGHTEN_MIN
-        assert audit_engine.CLOSING_LINE_TIGHTEN_MIN <= audit_engine.CLOSING_LINE_WINDOW_MIN
-
-    def test_capture_never_uses_the_delete_then_insert_path(self, monkeypatch):
-        """Cette écriture se répète à chaque rafraîchissement sur un signal
-        encore vivant. Le DELETE+INSERT exposait la ligne à une perte
-        définitive entre les deux ordres, et lui donnait un `id` neuf à chaque
-        fois qu'il survivait.
-
-        Le test montait une sentinelle sur `audit_engine.replace_signal_row`.
-        Depuis B1 (2026-08-27) la fonction n'existe plus nulle part, et le
-        garde est plus fort : c'est l'appel à `.delete()` sur `signals` qui
-        doit être impossible pendant une capture."""
-        now = datetime.now(timezone.utc)
-        sig = _sig(1, "Ajax vs Feyenoord", 2.00,
-                   (now + timedelta(minutes=10)).isoformat())
-        sb = _FakeSupabase([sig])
-        monkeypatch.setattr(audit_engine, "get_pinnacle_price",
-                            lambda match, sport, league: (1.80, "Ajax"))
-
-        supprime = []
-        vraie_table = sb.table
-
-        def _table_espionnee(nom):
-            t = vraie_table(nom)
-            vrai_delete = getattr(t, "delete", None)
-
-            def _delete(*a, **k):
-                supprime.append(nom)
-                return vrai_delete(*a, **k) if vrai_delete else t
-
-            t.delete = _delete
-            return t
-
-        monkeypatch.setattr(sb, "table", _table_espionnee)
-        assert audit_engine.capture_closing_lines(sb) == 1
-        assert supprime == [], \
-            f"la capture a supprimé des lignes : {supprime}"
-
+class TestInvariantsHistoriques:
     def test_le_remplacement_de_ligne_nexiste_plus_dans_audit_engine(self):
         assert not hasattr(audit_engine, "replace_signal_row")
 
@@ -319,18 +187,3 @@ class TestMissedClosingLinesIsVisible:
             def table(self, _n):
                 raise RuntimeError("db down")
         assert audit_engine.count_missed_closing_lines(_Boom()) == 0
-
-
-class TestLeadTimeLabel:
-    def test_minutes_then_hours(self):
-        now = datetime.now(timezone.utc)
-        lbl = audit_engine._lead_time_label
-        assert lbl((now + timedelta(minutes=37)).isoformat(), now) == "37min"
-        assert lbl((now + timedelta(minutes=134)).isoformat(), now) == "2h14"
-
-    def test_missing_or_past_is_unknown(self):
-        now = datetime.now(timezone.utc)
-        lbl = audit_engine._lead_time_label
-        assert lbl(None, now) == "?"
-        assert lbl("pas une date", now) == "?"
-        assert lbl((now - timedelta(minutes=5)).isoformat(), now) == "?"

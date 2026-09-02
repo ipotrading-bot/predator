@@ -60,18 +60,11 @@ MODE_ENV: dict[str, dict[str, str]] = {
     # ferait diverger deux sources de vérité pour la même valeur.
     "guerrilla": {
         "GUERRILLA": "1",
-        "SEARCH_MAX_TOKENS": "2500",       # défaut 2048 — MMA / Pinnacle
-        "PINNACLE_BATCH": "25",            # au-delà, le prompt pousse au 413
-        "PINNACLE_TAVILY_QUERIES": "6",    # défaut 4
-        "TAVILY_RUN_BUDGET": "40",         # défaut 25
-        # MAX_ORACLE RETIRÉ le 2026-08-27. Il valait "3", reporté tel quel
-        # depuis guerrilla.yml. Le laisser aurait annulé le passage à zéro du
-        # défaut (core.oracle.MAX_ORACLE_DEFAULT) pour le SEUL mode qui en
-        # abuse le plus : une constante mise à zéro d'un côté et rétablie de
-        # l'autre est exactement la divergence de listes que ce dépôt paie le
-        # plus cher. Le reste du renforcement guerrilla (budget Tavily, taille
-        # de lot, tokens) est conservé : il porte la recherche GROUPÉE, que A4
-        # ne touche pas.
+        # Le renforcement recherche web (SEARCH_MAX_TOKENS, PINNACLE_BATCH,
+        # PINNACLE_TAVILY_QUERIES, TAVILY_RUN_BUDGET — et avant lui
+        # MAX_ORACLE, retiré le 2026-08-27) est PARTI le 2026-09-02 avec la
+        # suppression de Groq/Tavily : plus aucune variable de ce mode ne
+        # gouverne une recherche web, il n'y en a plus.
         "CACHE_MMA_TTL_H": "4",            # défaut 8
         # eSports a été RETIRÉ du périmètre le 2026-08-22 (RETIRED_SPORTS) :
         # cette variable est morte, elle l'était déjà dans guerrilla.yml. On

@@ -258,23 +258,6 @@ class TestRobustness:
         n, rows, _ = _capture(monkeypatch, [sig], [_event()])
         assert n == 0
 
-    def test_scan_price_is_not_clobbered_by_the_oracle(self):
-        # The oracle returns a web-search estimate of the ML/DNB favourite;
-        # the scan feed returns the real per-side price. A 40-minute-old
-        # scan capture must survive the next closing-line run — otherwise
-        # the free, exact measurement is replaced by the guess, and search
-        # budget is spent to make the data worse.
-        import core.audit_engine as audit_engine
-        taken = (NOW - timedelta(minutes=40)).isoformat()
-        kickoff = (NOW + timedelta(minutes=20)).isoformat()
-        base = {"closing_pinnacle_price": 1.90, "closing_captured_at": taken,
-                "match_time": kickoff}
-        assert audit_engine._needs_refresh({**base, "closing_source": "oddsapi"}, NOW) is False
-        # Same age, from the oracle itself → refreshable as before.
-        assert audit_engine._needs_refresh({**base, "closing_source": "oracle"}, NOW) is True
-        # Pre-migration rows (column absent) keep the old behaviour.
-        assert audit_engine._needs_refresh(base, NOW) is True
-
     def test_selection_point_parsing(self):
         assert cl._selection_point("Over 2.5") == 2.5
         assert cl._selection_point("Under 9") == 9.0

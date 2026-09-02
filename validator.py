@@ -28,38 +28,24 @@ def validate_all_systems():
     except Exception:
         print("WARN HARVESTER : 1XBet inaccessible (fallback recherche web actif)")
 
-    # 2. IA (Groq + Tavily — remplace Gemini depuis 2026-07-21)
+    # 2. Sources de SCORES du settlement (Groq/Tavily supprimés le 2026-09-02 :
+    # le settlement lit des API structurées, plus aucune recherche web).
     try:
-        groq_key = os.environ.get("GROQ_API_KEY")
-        if not groq_key:
-            raise RuntimeError("GROQ_API_KEY not set")
-        r = requests.post(
-            "https://api.groq.com/openai/v1/chat/completions",
-            headers={"Authorization": f"Bearer {groq_key}"},
-            json={"model": "llama-3.3-70b-versatile",
-                  "messages": [{"role": "user", "content": "ping"}],
-                  "max_tokens": 5},
-            timeout=15,
-        )
-        if r.status_code == 200:
-            print("OK  GROQ AI : OPERATIONNEL")
-        else:
-            print(f"ERR GROQ AI : HTTP {r.status_code}")
+        r = requests.get("https://statsapi.mlb.com/api/v1/schedule?sportId=1",
+                         timeout=15, headers={"User-Agent": "PREDATOR/1.0"})
+        print("OK  MLB STATSAPI : OPERATIONNEL" if r.status_code == 200
+              else f"ERR MLB STATSAPI : HTTP {r.status_code}")
     except Exception as e:
-        print(f"ERR GROQ AI : {e}")
+        print(f"ERR MLB STATSAPI : {e}")
 
     try:
-        tavily_key = os.environ.get("TAVILY_API_KEY")
-        if not tavily_key:
-            print("WARN TAVILY : TAVILY_API_KEY not set (fallback recherche désactivé)")
-        else:
-            r = requests.post("https://api.tavily.com/search",
-                              json={"api_key": tavily_key, "query": "ping", "max_results": 1},
-                              timeout=15)
-            print("OK  TAVILY : OPERATIONNEL" if r.status_code == 200
-                  else f"ERR TAVILY : HTTP {r.status_code}")
+        cle = os.environ.get("THESPORTSDB_API_KEY") or "123"
+        r = requests.get(f"https://www.thesportsdb.com/api/v1/json/{cle}/searchteams.php?t=Arsenal",
+                         timeout=15, headers={"User-Agent": "PREDATOR/1.0"})
+        print("OK  THESPORTSDB : OPERATIONNEL" if r.status_code == 200
+              else f"ERR THESPORTSDB : HTTP {r.status_code}")
     except Exception as e:
-        print(f"ERR TAVILY : {e}")
+        print(f"ERR THESPORTSDB : {e}")
 
     # 3. SUPABASE
     try:

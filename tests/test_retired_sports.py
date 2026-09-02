@@ -77,7 +77,6 @@ class TestCodeRemoved:
             assert sport not in KELLY_FRACTION
             assert sport not in learning_layer.SPORT_DEFAULTS
             assert sport not in run_engine.SPORT_EMOJI
-            assert sport not in run_engine._NO_ODDSAPI_SPORTS
             assert sport not in matchbook.SPORT_IDS
         assert set(RETIRED) == set(RETIRED_SPORTS)
 

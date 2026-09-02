@@ -21,8 +21,7 @@ from datetime import datetime, timedelta, timezone
 import pytest
 
 from core import closing_line as cl
-from core.constants import (CLOSING_LINE_TIGHTEN_MIN, CLOSING_SRC_EXCHANGE,
-                            CLOSING_SRC_ORACLE)
+from core.constants import CLOSING_SRC_EXCHANGE, CLOSING_SRC_ORACLE
 
 NOW = datetime(2026, 8, 26, 12, 0, tzinfo=timezone.utc)
 
@@ -220,30 +219,10 @@ def test_un_nom_a_suffixe_ne_sapparie_pas_et_cest_un_refus_pas_une_erreur(_updat
 
 # ── Le prix d'exchange n'est pas re-pricé par l'oracle ───────────────
 
-def test_needs_refresh_protege_un_prix_exchange_recent():
-    """Un prix exact doit tenir CLOSING_LINE_TIGHTEN_MIN (90), pas
-    CLOSING_LINE_REFRESH_MIN (20) : l'oracle web-search ne doit pas dépenser du
-    budget pour écraser un vrai prix par une estimation du favori."""
-    from core.audit_engine import _needs_refresh
-    base = {"closing_pinnacle_price": 1.95,
-            "match_time": (NOW + timedelta(minutes=30)).isoformat()}
-    recent = (NOW - timedelta(minutes=CLOSING_LINE_TIGHTEN_MIN - 10)).isoformat()
-
-    assert _needs_refresh({**base, "closing_captured_at": recent,
-                           "closing_source": CLOSING_SRC_EXCHANGE}, NOW) is False
-    # ...alors que l'estimation de l'oracle, elle, se rafraîchit dès 20 min.
-    assert _needs_refresh({**base, "closing_captured_at": recent,
-                           "closing_source": CLOSING_SRC_ORACLE}, NOW) is True
-
-
-def test_needs_refresh_laisse_repricer_un_prix_exchange_perime():
-    from core.audit_engine import _needs_refresh
-    vieux = (NOW - timedelta(minutes=CLOSING_LINE_TIGHTEN_MIN + 10)).isoformat()
-    assert _needs_refresh({"closing_pinnacle_price": 1.95,
-                           "closing_captured_at": vieux,
-                           "closing_source": CLOSING_SRC_EXCHANGE,
-                           "match_time": (NOW + timedelta(minutes=30)).isoformat()},
-                          NOW) is True
+# Les tests `_needs_refresh` ont été retirés le 2026-09-02 avec l'oracle
+# web-search : la capture exchange rafraîchit à chaque passage (le dernier
+# passage avant le coup d'envoi gagne) — il n'y a plus d'estimation LLM
+# susceptible d'écraser un vrai prix.
 
 
 # ── La couverture est SURVEILLÉE, pas laissée aux logs ───────────────

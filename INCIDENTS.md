@@ -1182,6 +1182,80 @@ Premier geste après déploiement : `python scripts/ops.py ai`.
 Gardien : `tests/test_ai_router.py::TestLanes`.
 
 
+### Groq et Tavily SUPPRIMÉS — le settlement est déterministe (2026-09-02)
+
+Décision opérateur, dans ses mots : « j'en ai marre de groq et tavily
+toujours épuisé, on va les supprimer et les remplacer par quelque chose de
+plus efficace, open, gratuit ».
+
+Le constat qui l'a déclenchée : DEUX famines de settlement en une semaine
+(2026-08-26 puis 2026-09-01, « AUDIT STÉRILE — 0 réglé sur 3 éligibles »,
+Tavily 29/29 du jour ET compound-mini KO), pour un besoin qui n'exigeait pas
+d'IA. Un score final est une DONNÉE STRUCTURÉE publiée par des API gratuites ;
+le demander à un LLM, c'était payer deux quotas, un prompt et un parseur de
+JSON approximatif pour une information qui existe en champ.
+
+CE QUI REMPLACE, mesuré le jour même avant d'écrire une ligne :
+  - `core/score_sources.py` — MLB statsapi (officiel, SANS CLÉ, 1 requête
+    par journée) et TheSportsDB (clé publique gratuite « 123 »,
+    `THESPORTSDB_API_KEY` pour un compte Patreon). ⚠️ La voie « tous les
+    matchs du jour » (eventsday) est PLAFONNÉE À 3 ÉVÉNEMENTS en gratuit —
+    inutilisable. La voie qui marche est PAR ÉQUIPE (searchteams →
+    eventslast) : elle a retrouvé du premier coup les deux signaux en
+    souffrance depuis >26 h (Hapoel Akko 0-3 Bnei Yehuda, D2 israélienne, FT).
+  - ⚠️ searchteams est FLOU : « AD Pasto » rend « Pastoreo » (équipe sans
+    ligue), et `strict_team_match` l'accepte par containment. La recherche
+    d'équipe n'est qu'un GÉNÉRATEUR DE CANDIDATS — ce qui règle, c'est
+    l'événement complet : les DEUX noms appariés + la date (±1 jour),
+    candidat UNIQUE, statut TERMINÉ seulement (TheSportsDB et statsapi
+    publient les scores EN DIRECT — régler à la 70e minute écrirait un
+    WIN/LOSS faux et définitif). Même contrat que `result_from_api_sports`.
+  - Budgets journaliers partagés (`daily_quota`), SANS rythme horaire :
+    étaler le settlement était une faute (2026-08-28), la leçon tient.
+
+CE QUI EST PARTI AVEC EUX — parce que sans Tavily/compound-mini ces chemins
+étaient morts, et qu'une capacité morte laissée en place est la panne n°6 :
+  - `core/oracle.py` (SUPPRIMÉ) : « estimer la cote Pinnacle » par LLM était
+    déjà à zéro par défaut (2026-08-27, « une génération plausible, pas une
+    observation ») ; il servait encore la passe CLV de l'audit et le job
+    closing line. Remplacé par ce qui existait déjà : la passe CLV lit la
+    colonne `closing_pinnacle_price` capturée par les scans, et
+    `run_closing_line.py` rejoue `capture_from_exchange` sur des prix
+    Matchbook frais (gratuits, illimités, RÉELS).
+  - `harvester.fetch_pinnacle_prices` (prix sharp groupés par LLM — le
+    « chemin dominant » que l'en-tête d'oracle.py désignait),
+    `fetch_estimated_prices` (Tier 3, cotes de mémoire d'entraînement) et
+    `_fetch_from_gemini` (slates inventés avec « cotes 1XBet réalistes »).
+    Tous fabriquaient des prix qu'aucun book n'a affichés — la fabrique à
+    faux edge d'A6. Un match sans prix sharp RÉEL est écarté, point.
+  - La lane `settlement` du routeur et sa réserve tenue en négatif
+    (`AI_SETTLEMENT_RESERVE`), la lane `search_read`, le fournisseur `groq`
+    du registre, les clés `GROQ_API_KEY(_2…_5)` et `TAVILY_API_KEY` de tous
+    les pools CI (`ci_env.py --write` rejoué), `search_exhausted`/
+    `search_credits_left`/`prioriser_settlement`, les gardes IA de
+    `audit_one` et le `SystemExit` « GROQ_API_KEY absente » de l'audit.
+
+CE QUI NE CHANGE PAS : l'ordre (api-sports reste l'étage 1), le refus
+plutôt que la devinette, `EXPIRE_AFTER_H`, la relance des expirés (qui
+profite même de la voie par équipe, utilisable SANS date : paire unique
+exigée dans les 15 derniers résultats), l'alerte d'audit stérile et le
+marqueur `settlement_starved_at`. La couche IA (alias CJK, analyse) tourne
+sur les ~15 autres fournisseurs du routeur.
+
+⚠️ CE QUI N'EST PAS ENCORE PROUVÉ : la joignabilité de statsapi.mlb.com et
+thesportsdb.com DEPUIS LES RUNNERS GitHub (leçon ESPN/SofaScore : un test
+depuis un poste de dev ne prouve rien). Vérifié depuis ce Codespace (Azure,
+comme les runners) — encourageant, pas concluant. Premier audit à surveiller ;
+en cas de 403, router par `FREE_SOURCES_PROXY` comme odds500.
+⚠️ Sports sans source structurée (tennis surtout, revenus avec OddsAPI) : un
+score introuvable suit le chemin normal actif → expired → relance. Si le
+tennis émet en volume, il faudra lui trouver une source de scores.
+Gardiens : `tests/test_score_sources.py`, `tests/test_settlement.py::
+TestFetchMatchResult::test_no_ai_layer_involved`,
+`tests/test_ci_env.py::test_aucun_pool_ne_transmet_groq_ou_tavily`,
+`tests/test_ai_router.py::TestGroqEtLaneSettlementSupprimes`.
+
+
 ## CI, secrets, déploiement
 
 Cinq workflows sur six ont tourné à vide pendant une journée sans produire

@@ -247,17 +247,13 @@ def vc_redeploy():
 def _ai_secrets() -> tuple:
     from core.ai_router import REGISTRY
     noms = {p.env_key for p in REGISTRY}
-    # Compagnons légitimement HORS registre :
-    #  - CLOUDFLARE_ACCOUNT_ID : l'URL Workers AI contient l'id de compte ;
-    #  - TAVILY_API_KEY : étage 2 de la recherche web de core/ai_search.py ;
-    #  - GROQ_API_KEY_2/3/4 : pool géré par core/ai_search.py, dont la clé
-    #    _3 réservée au settlement.
+    # Compagnon légitimement HORS registre :
+    #  - CLOUDFLARE_ACCOUNT_ID : l'URL Workers AI contient l'id de compte.
     # MISTRAL_API_KEY N'EST PLUS listée ici : depuis la suppression de Wiz
     # (2026-08-26), Mistral est un fournisseur ORDINAIRE du registre, donc
-    # déjà couvert par `noms` ci-dessus. La garder en dur rétablirait
-    # exactement la duplication que ce fichier existe pour éviter.
-    noms |= {"CLOUDFLARE_ACCOUNT_ID", "TAVILY_API_KEY",
-             "GROQ_API_KEY_2", "GROQ_API_KEY_3", "GROQ_API_KEY_4", "GROQ_API_KEY_5"}
+    # déjà couvert par `noms` ci-dessus. TAVILY_API_KEY et GROQ_API_KEY_2…5
+    # sont parties le 2026-09-02 avec la suppression de Groq/Tavily.
+    noms |= {"CLOUDFLARE_ACCOUNT_ID"}
     return tuple(sorted(noms))
 
 
@@ -444,9 +440,9 @@ def sources():
             except Exception as e:
                 print(f"    {league:<4} ERREUR {type(e).__name__}")
 
-    print("── Tier 3 · recherche web (Groq/Tavily) ──")
-    print(f"  Groq   : {'clé présente' if ai_available() else 'indisponible'}")
-    print(f"  Tavily : {'clé présente' if os.environ.get('TAVILY_API_KEY') else 'absente'}")
+    print("── IA (routeur — alias CJK, analyse) ──")
+    print(f"  Fournisseurs : {'au moins un configuré' if ai_available() else 'AUCUN configuré'}"
+          " — le settlement n'en dépend plus (scores structurés, 2026-09-02)")
 
 
 def doctor():

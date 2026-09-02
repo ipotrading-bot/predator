@@ -15,8 +15,10 @@ The contract pinned here: 'closed'/'expired' may only be spent once the match
 is older than EXPIRE_AFTER_H. Before that, a failed settlement returns
 'skipped' and leaves the row 'active' for the next 6h run.
 
-No live HTTP/DB — settlement, oracle and persistence are monkeypatched at the
-core.audit_engine module level.
+No live HTTP/DB — settlement and persistence are monkeypatched at the
+core.audit_engine module level. (2026-09-02 : la recherche web et l'oracle
+ont été supprimés — le settlement est déterministe et la passe CLV lit la
+closing line DÉJÀ capturée par les scans, plus aucun budget de recherche.)
 """
 from datetime import datetime, timedelta, timezone
 
@@ -51,10 +53,6 @@ def stubs(monkeypatch):
     Records every write so a terminal stamp cannot slip through unnoticed."""
     state = {"updates": [], "ledger": []}
     monkeypatch.setattr(audit_engine, "settle_signal", lambda *a, **k: False)
-    monkeypatch.setattr(audit_engine, "get_pinnacle_price", lambda *a, **k: (None, None))
-    monkeypatch.setattr(audit_engine, "ai_available", lambda: True)
-    monkeypatch.setattr(audit_engine, "gemini_quota_dead", lambda: False)
-    monkeypatch.setattr(audit_engine, "search_exhausted", lambda: False)
     monkeypatch.setattr(audit_engine, "_update_signal",
                         lambda sb, sig, payload: state["updates"].append(payload) or True)
     monkeypatch.setattr(audit_engine, "log_to_ledger",
@@ -63,7 +61,7 @@ def stubs(monkeypatch):
 
 
 def _audit(sig):
-    return audit_engine.audit_one(None, sig, [30], [30], NOW)
+    return audit_engine.audit_one(None, sig, [30], NOW)
 
 
 class TestFreshFailureIsRetried:
@@ -76,17 +74,6 @@ class TestFreshFailureIsRetried:
         assert stubs["updates"] == []
         assert stubs["ledger"] == []
 
-    def test_exhausted_search_budget_never_expires(self, stubs, monkeypatch):
-        # Old enough to expire, but the search layer is out of credit — the
-        # failure says nothing about the match, so it must not be terminal.
-        monkeypatch.setattr(audit_engine, "search_exhausted", lambda: True)
-        assert _audit(_sig(hours_ago=72)) == "skipped"
-        assert stubs["ledger"] == []
-
-    def test_missing_api_key_never_expires(self, stubs, monkeypatch):
-        monkeypatch.setattr(audit_engine, "ai_available", lambda: False)
-        assert _audit(_sig(hours_ago=72)) == "skipped"
-        assert stubs["ledger"] == []
 
 
 class TestStaleFailureStillCloses:
@@ -97,44 +84,28 @@ class TestStaleFailureStillCloses:
         _audit(_sig(hours_ago=audit_engine.EXPIRE_AFTER_H + 1))
         assert stubs["ledger"] == ["expired"]
 
-    def test_real_closing_line_still_closes(self, stubs, monkeypatch):
-        monkeypatch.setattr(audit_engine, "get_pinnacle_price", lambda *a, **k: (1.45, None))
-        assert _audit(_sig(hours_ago=audit_engine.EXPIRE_AFTER_H + 1)) == "closed"
+    def test_real_closing_line_still_closes(self, stubs):
+        """La ligne de clôture vient des colonnes DÉJÀ capturées par les
+        scans (closing_pinnacle_price, sources oddsapi/exchange) — plus
+        aucun oracle web (2026-09-02)."""
+        sig = _sig(hours_ago=audit_engine.EXPIRE_AFTER_H + 1,
+                   closing_pinnacle_price=1.45, clv_pct_real=3.45,
+                   closing_source="exchange")
+        assert _audit(sig) == "closed"
+        assert stubs["updates"][0]["clv_pct"] == 3.45
+
+    def test_closing_capturee_sans_clv_real_derive_le_clv(self, stubs):
+        sig = _sig(hours_ago=audit_engine.EXPIRE_AFTER_H + 1,
+                   closing_pinnacle_price=1.45, clv_pct_real=None)
+        assert _audit(sig) == "closed"
+        attendu = round((1.50 / 1.45 - 1) * 100, 2)
+        assert stubs["updates"][0]["clv_pct"] == attendu
 
     def test_settlement_success_is_never_delayed(self, stubs, monkeypatch):
         # A signal young enough to retry must STILL settle immediately when
         # the score is actually found — the retry guard sits after Pass 1.
         monkeypatch.setattr(audit_engine, "settle_signal", lambda *a, **k: True)
         assert _audit(_sig(hours_ago=5)) == "settled"
-
-
-class TestSettlementOutranksCLV:
-    """Pass 2 (CLV) spends up to 3 Tavily credits per signal from the same
-    per-run budget Pass 1 (settlement) needs, and runs interleaved — signal
-    N's CLV starves signal N+1's score lookup. A real WIN/LOSS is permanent,
-    CLV is a metric, so the last credits belong to settlement."""
-
-    def test_clv_is_skipped_once_budget_hits_the_reserve(self, stubs, monkeypatch):
-        monkeypatch.setattr(audit_engine, "search_credits_left",
-                            lambda: audit_engine.CLV_CREDIT_RESERVE)
-        assert _audit(_sig(hours_ago=72)) == "skipped"
-
-    def test_no_terminal_status_is_written_when_clv_is_skipped(self, stubs, monkeypatch):
-        monkeypatch.setattr(audit_engine, "search_credits_left", lambda: 0)
-        _audit(_sig(hours_ago=72))
-        assert stubs["updates"] == []
-        assert stubs["ledger"] == []
-
-    def test_clv_still_runs_with_budget_to_spare(self, stubs, monkeypatch):
-        monkeypatch.setattr(audit_engine, "search_credits_left",
-                            lambda: audit_engine.CLV_CREDIT_RESERVE + 1)
-        assert _audit(_sig(hours_ago=72)) == "expired"
-
-    def test_settlement_is_never_blocked_by_the_reserve(self, stubs, monkeypatch):
-        # The reserve exists to PROTECT Pass 1 — it must never gate it.
-        monkeypatch.setattr(audit_engine, "search_credits_left", lambda: 0)
-        monkeypatch.setattr(audit_engine, "settle_signal", lambda *a, **k: True)
-        assert _audit(_sig(hours_ago=72)) == "settled"
 
 
 class TestPastExpiryDating:

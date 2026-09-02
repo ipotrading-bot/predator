@@ -5,13 +5,18 @@ Runs every 6h via GitHub Actions (run_audit.py entry point).
 Pipeline for each signal whose match kicked off > SETTLEMENT_GRACE_H hours ago
 (or, for legacy rows with no match_time, scanned > AUDIT_LAG_H hours ago) with
 status='active':
-  1. Settlement pass — web search (Groq/Tavily) fetches real match score → status='settled'
-     outcome = WIN | LOSS | PUSH | UNKNOWN
+  1. Settlement pass — chaîne DÉTERMINISTE de scores (api-sports, MLB statsapi,
+     TheSportsDB — core/settlement.py + core/score_sources.py, ZÉRO appel IA
+     depuis le 2026-09-02) → status='settled', outcome = WIN | LOSS | PUSH | UNKNOWN
   2. CLV pass — ONLY once the match is > EXPIRE_AFTER_H old. Before that, a
      failed settlement leaves the signal 'active' for the next run to retry;
      'closed'/'expired' are terminal and must never be spent on a signal we
-     merely failed to look up (rate limit, exhausted search budget).
-     → status='closed' (real closing line) or 'expired' (proxy original price)
+     merely failed to look up.
+     → status='closed' (une closing line RÉELLE a été capturée par les scans —
+     colonne closing_pinnacle_price, sources oddsapi/exchange) ou 'expired'
+     (proxy prix d'origine). L'oracle web-search qui « estimait » une ligne de
+     clôture a été SUPPRIMÉ le 2026-09-02 avec Groq/Tavily : une cote générée
+     par un LLM n'est pas une observation (cf. l'ancien core/oracle.py).
   3. CLV = (xbet_odd / closing_line − 1) × 100
   4. Learning Layer updates sport-specific MIN_EDGE thresholds.
 """
@@ -24,21 +29,14 @@ from dotenv import load_dotenv
 
 from core.db import (get_db, log_to_ledger,
                      update_signal_fields, MissingCredentialsError)
-from core.ai_search import (ai_available, ai_dead as gemini_quota_dead,
-                            prioriser_settlement, search_credits_left,
-                            search_exhausted)
 # Task 3 — real closing-line capture (run_closing_line.py). The window
 # constants and the optional-column set are shared with core/closing_line.py,
 # which captures the same fields for free off the OddsAPI scan feed; they
 # live in core/constants.py so the two paths can never drift apart.
-from core.constants import (CLOSING_LINE_BUDGET, CLOSING_LINE_COLS,
-                            CLOSING_LINE_REFRESH_MIN, CLOSING_LINE_TIGHTEN_MIN,
-                            CLOSING_LINE_WINDOW_MIN, CLOSING_SRC_EXCHANGE,
-                            CLOSING_SRC_ODDSAPI, CLOSING_SRC_ORACLE)
+from core.closing_line import capture_from_exchange
+from core.constants import CLOSING_LINE_WINDOW_MIN
 from core.learning_layer import compute_and_save as _learn
-from core.oracle import get_pinnacle_price
 from core.run_contract import terminer as _terminer_run, verdict_de_fin
-from core.paim_engine import resolve_selection_side
 from core.settlement import settle_signal
 
 load_dotenv()
@@ -61,15 +59,9 @@ SETTLEMENT_GRACE_H  = int(os.environ.get("SETTLEMENT_GRACE_H", 4))   # hours aft
 # run_engine.py's past-match purge window (48h) or a retried signal gets
 # deleted before it ever reaches the ledger.
 EXPIRE_AFTER_H      = int(os.environ.get("EXPIRE_AFTER_H", 36))
-# Tavily credits Pass 2 (CLV) must leave untouched for Pass 1 (settlement).
-# Pass 2 spends up to 3 per signal, Pass 1 at most 1 — this floor keeps roughly
-# a dozen real settlements reachable no matter how much CLV ran before them.
-CLV_CREDIT_RESERVE  = int(os.environ.get("CLV_CREDIT_RESERVE", 12))
-ORACLE_BUDGET = 30     # Max oracle (web search) calls per audit run
-SETTLE_BUDGET = 25     # Max settlement (web search) calls per audit run
+SETTLE_BUDGET = 25     # Max settlement lookups per audit run (score APIs)
 
 _AUDIT_COLS = {"closing_line", "clv_pct", "closed_at"}
-_CLOSING_LINE_COLS = CLOSING_LINE_COLS
 
 # Terminal statuses — Ledger reads all of these
 TERMINAL_STATUSES = ["settled", "closed", "expired"]
@@ -158,7 +150,7 @@ def _past_expiry(sig: dict, now: datetime) -> bool:
     return True
 
 
-def audit_one(sb, sig: dict, oracle_calls: list, settle_calls: list, now: datetime) -> str:
+def audit_one(sb, sig: dict, settle_calls: list, now: datetime) -> str:
     """
     Audit a single signal.
     Pass 1: settlement (real score) → 'settled'
@@ -166,17 +158,7 @@ def audit_one(sb, sig: dict, oracle_calls: list, settle_calls: list, now: dateti
     Returns the new status string.
     """
     match  = sig["match"]
-    sport  = sig.get("sport", "soccer")
-    league = sig.get("league", "")
     now_iso = now.isoformat()
-
-    # BOTH passes are AI-search-backed (Groq/Tavily, core/ai_search.py). If the
-    # search layer cannot run at all, Pass 1 can never settle and Pass 2 can
-    # never fetch a closing line — proceeding would stamp this signal 'expired'
-    # (terminal, never retried) with a garbage proxy CLV. Leave it 'active' so
-    # a later run settles it for real.
-    if not ai_available() or gemini_quota_dead():
-        return "skipped"
 
     # ── Pass 1 : Settlement via real score ───────────────────────────
     if settle_calls[0] > 0:
@@ -185,53 +167,33 @@ def audit_one(sb, sig: dict, oracle_calls: list, settle_calls: list, now: dateti
             return "settled"
         log.info("No score yet for %s — falling back to CLV audit", match)
 
-    # A failed Pass 1 is NOT proof the score is unavailable — it is far more
-    # often proof we could not look. Confirmed live on run 29854918520
-    # (2026-07-21 17:54 UTC): 16 signals settled fine, then compound-mini
-    # started returning "rate limit minute" and the Tavily run budget (25
-    # credits, shared with Pass 2's 3-bookmaker oracle lookups) ran out —
-    # "compound-mini KO et aucune donnée Tavily — abandon". The 6 signals
-    # caught in that window were stamped 'expired' for matches that had been
-    # over for up to 15h and whose scores were on every public scoreboard
-    # (Brewers 8-3 Mets, Rangers 3-10 White Sox, Storm 102-105 Lynx...).
-    # 'expired' is terminal — fetch_pending only ever selects status='active'
-    # — so a transient rate limit permanently cost those signals their real
-    # WIN/LOSS, and the learning layer scored them as unknown.
-    #
-    # So: only let a failure become terminal once the match is old enough that
-    # retrying is genuinely pointless. Before EXPIRE_AFTER_H, stay 'active' and
-    # let the next 6h run try again with a fresh per-run search budget.
-    if gemini_quota_dead() or search_exhausted() or not _past_expiry(sig, now):
+    # A failed Pass 1 is NOT proof the score is unavailable. Historiquement
+    # c'était « on n'a pas PU chercher » (quotas Groq/Tavily morts — run
+    # 29854918520 : 6 signaux tamponnés 'expired' pour des scores publics) ;
+    # depuis la chaîne déterministe c'est le plus souvent « la source n'a pas
+    # ENCORE le score » (saisie en retard chez api-sports/TheSportsDB, statut
+    # non terminé). Même remède : only let a failure become terminal once the
+    # match is old enough that retrying is genuinely pointless. Before
+    # EXPIRE_AFTER_H, stay 'active' and let the next 6h run try again.
+    if not _past_expiry(sig, now):
         log.info("RETRY LATER | %s — settlement failed, signal left active", match)
         return "skipped"
 
-    # ── Pass 2 : CLV — fetch current Pinnacle closing line ────────────
-    # Pass 2 costs up to 3 Tavily lookups per signal (Pinnacle, Betfair, Circa
-    # — see core/oracle.py) out of the SAME per-run budget Pass 1 needs, and it
-    # runs interleaved: signal N's CLV spends credits signal N+1's settlement
-    # will want. That is how the 2026-07-21 run starved itself. Settlement wins
-    # every time — a real WIN/LOSS is permanent, CLV is a metric — so once the
-    # budget is down to the reserve, stop buying CLV entirely and leave what is
-    # left to scores.
-    closing_price: float | None = None
-    if search_credits_left() <= CLV_CREDIT_RESERVE:
-        log.info("CLV SKIP | %s — %d crédits restants réservés au settlement",
-                 match, search_credits_left())
-        return "skipped"
-
-    if oracle_calls[0] > 0:
-        oracle_calls[0] -= 1
-        try:
-            price, _ = get_pinnacle_price(match, sport=sport, league=league)
-            if price and price > 1.01:
-                closing_price = price
-        except Exception as e:
-            log.warning("Oracle [%s]: %s", match, e)
-
-    if closing_price:
-        clv    = round((sig["xbet_odd"] / closing_price - 1) * 100, 2)
+    # ── Pass 2 : CLV — depuis la closing line DÉJÀ CAPTURÉE ──────────
+    # Plus aucun appel ici (2026-09-02). Les scans capturent la vraie ligne de
+    # clôture sur les prix qu'ils téléchargent déjà (core/closing_line.py :
+    # payload OddsAPI à l'arrêt, exchange Matchbook chaque tick) — colonne
+    # closing_pinnacle_price. L'ancien oracle web-search « estimait » une cote
+    # par LLM : une génération plausible, pas une observation, précisément le
+    # défaut qui a mis MAX_ORACLE_DEFAULT à 0 le 2026-08-27.
+    closing_price = float(sig.get("closing_pinnacle_price") or 0.0)
+    if closing_price > 1.01:
+        deja = sig.get("clv_pct_real")
+        clv = float(deja) if deja is not None else round(
+            (sig["xbet_odd"] / closing_price - 1) * 100, 2)
         status = "closed"
-        log.info("CLV %+.2f%% %s | %s", clv, "✓" if clv >= 0 else "✗", match)
+        log.info("CLV %+.2f%% %s | %s (closing %s)", clv, "✓" if clv >= 0 else "✗",
+                 match, sig.get("closing_source") or "?")
     else:
         orig_pin = sig.get("pinnacle_price") or 0.0
         clv      = round((sig["xbet_odd"] / orig_pin - 1) * 100, 2) if orig_pin > 1.01 else 0.0
@@ -286,71 +248,24 @@ def fetch_closing_line_candidates(sb) -> list[dict]:
         return []
 
 
-def _needs_refresh(sig: dict, now: datetime) -> bool:
-    """Should this signal be (re-)priced on this run?
+def _matches_from_signals(signals: list[dict]) -> list[dict]:
+    """Pseudo-matchs pour `capture_from_exchange`, dérivés des signaux mêmes.
 
-    Always yes if it has no price at all — that first capture anywhere in the
-    240-min window is what guarantees we end up with *something* even when the
-    scheduler drops several ticks in a row.
-
-    After that, only inside CLOSING_LINE_TIGHTEN_MIN of kickoff, and at most
-    every CLOSING_LINE_REFRESH_MIN. Re-pricing a match still three hours out
-    buys no accuracy — the line has not converged yet — and this job shares
-    its web-search quota with the audit.
-
-    A price already captured by core/closing_line.py — off the OddsAPI scan
-    feed, or off the exchange prices every scan already downloads —
-    outranks anything this oracle can produce — it is the real Pinnacle
-    number for the exact side, not a web-search estimate of the favourite —
-    so it is only overwritten once it has gone properly stale
-    (CLOSING_LINE_TIGHTEN_MIN rather than CLOSING_LINE_REFRESH_MIN). That
-    also stops this job spending search budget on signals the free path has
-    already measured.
+    Le chemin scan passe les matchs du slate ; ici, hors scan, les signaux
+    portent déjà tout ce que l'appariement exige (les deux noms, le coup
+    d'envoi, le match_id sous lequel les signaux se retrouvent). L'appariement
+    flou vers l'exchange reste celui de `lookup_exchange` — candidat unique.
     """
-    if not sig.get("closing_pinnacle_price"):
-        return True
-    stamp = sig.get("closing_captured_at")
-    if not stamp:
-        return True   # pre-migration row, or capture predating the stamp
-    try:
-        taken = datetime.fromisoformat(str(stamp).replace("Z", "+00:00"))
-    except (ValueError, TypeError):
-        return True
-    if taken.tzinfo is None:
-        taken = taken.replace(tzinfo=timezone.utc)
-    # Un prix EXACT — payload OddsAPI, ou prix d'exchange réel — surclasse
-    # tout ce que cet oracle peut produire (le vrai nombre pour le côté exact,
-    # contre une estimation web du favori) : il n'est écrasé qu'une fois
-    # proprement périmé, et le budget de recherche va ailleurs.
-    exact = sig.get("closing_source") in (CLOSING_SRC_ODDSAPI, CLOSING_SRC_EXCHANGE)
-    hold_min = CLOSING_LINE_TIGHTEN_MIN if exact else CLOSING_LINE_REFRESH_MIN
-    if (now - taken) < timedelta(minutes=hold_min):
-        return False
-    try:
-        kickoff = datetime.fromisoformat(str(sig.get("match_time") or "").replace("Z", "+00:00"))
-    except (ValueError, TypeError):
-        return True   # unparseable kickoff — refresh rather than freeze a stale price
-    if kickoff.tzinfo is None:
-        kickoff = kickoff.replace(tzinfo=timezone.utc)
-    return (kickoff - now) <= timedelta(minutes=CLOSING_LINE_TIGHTEN_MIN)
-
-
-def _lead_time_label(match_time, now: datetime) -> str:
-    """"37min" / "2h14" — how far ahead of kickoff a price was taken. Logged
-    on every capture so a sparse run is obvious in the job output rather than
-    hidden behind a column called `closing_pinnacle_price`."""
-    if not match_time:
-        return "?"
-    try:
-        kickoff = datetime.fromisoformat(str(match_time).replace("Z", "+00:00"))
-    except (ValueError, TypeError):
-        return "?"
-    if kickoff.tzinfo is None:
-        kickoff = kickoff.replace(tzinfo=timezone.utc)
-    mins = int((kickoff - now).total_seconds() // 60)
-    if mins < 0:
-        return "?"
-    return f"{mins}min" if mins < 60 else f"{mins // 60}h{mins % 60:02d}"
+    out = []
+    for sig in signals:
+        name = sig.get("match") or ""
+        if " vs " not in name or not sig.get("match_id"):
+            continue
+        home, away = (p.strip() for p in name.split(" vs ", 1))
+        out.append({"id": sig["match_id"], "match": name, "home": home,
+                    "away": away, "sport": sig.get("sport") or "soccer",
+                    "commence_time": sig.get("match_time") or ""})
+    return out
 
 
 def count_missed_closing_lines(sb) -> int:
@@ -379,105 +294,46 @@ def count_missed_closing_lines(sb) -> int:
         return 0
 
 
-def capture_closing_lines(sb, budget: int = CLOSING_LINE_BUDGET) -> int:
+def capture_closing_lines(sb, budget: int | None = None) -> int:
     """
-    For each signal within CLOSING_LINE_WINDOW_MIN of kickoff, re-fetch the
-    current Pinnacle consensus price and store it as closing_pinnacle_price
-    — a real closing-line measurement, distinct from pinnacle_price
-    (captured at scan time, possibly hours or days earlier). clv_pct_real
-    is the bettor's true CLV — (xbet_odd / closing_price_of_the_same_side
-    − 1) × 100, positive = the price we got beat the close — derived
-    immediately, without waiting for the match outcome (that remains
-    core/settlement.py's real WIN/LOSS job). Runs via run_closing_line.py,
-    not as part of the 6h audit.
+    Capture la closing line des signaux à moins de CLOSING_LINE_WINDOW_MIN du
+    coup d'envoi, depuis les prix d'EXCHANGE (Matchbook gratuit et illimité,
+    Betfair si la clé est posée) — plus aucun oracle web-search (2026-09-02).
 
-    Each run RE-prices every signal still ahead of kickoff (subject to
-    CLOSING_LINE_REFRESH_MIN), so the stored price converges on the close as
-    kickoff approaches and the last run before kickoff wins. closing_captured_at
-    records when the surviving price was taken, so a consumer can tell a
-    genuine T-10min close from a T-3h price instead of trusting the column
-    name — see sql/migrate_v9_11_closing_captured_at.sql.
-
-    THIS IS NOW THE FALLBACK PATH. core/closing_line.py captures the same
-    columns for free off the OddsAPI scan feed — exact Pinnacle prices, every
-    market, no web search — and marks them closing_source='oddsapi'. This
-    oracle exists for what that path cannot reach: signals harvested outside
-    OddsAPI (MMA, eSports, alt sports — see core/harvester.py), and OddsAPI
-    signals whose event stopped being scanned before kickoff (quota
-    exhausted, sport key dropped). _needs_refresh() will not overwrite a
-    fresh scan-feed price with a web-search estimate.
-
-    KNOWN LIMIT — get_pinnacle_price() only ever quotes the closing ML/DNB
-    FAVORITE (with its team name), so a real CLV can only be computed here
-    for h2h signals whose selection still IS that closing favorite (our h2h
-    signals are always emitted on the scan-time favorite — see
-    run_engine._process_h2h). Everything else is never guessed:
-      - totals/spreads candidates are skipped before any oracle budget is
-        spent (the oracle has no price for those markets at all — they are
-        core/closing_line.py's job now);
-      - an h2h signal whose favorite flipped by kickoff, or whose side
-        can't be resolved (selection and oracle team are each resolved
-        against the match's own two team names — exact equality first, see
-        core.paim_engine.resolve_selection_side), stores the raw fetched
-        price with clv_pct_real=None.
-    core/learning_layer.py's _clv_stats() excludes None rows, so unresolved
-    sides simply don't participate in threshold decisions.
+    C'était un LLM à qui l'on demandait « la cote Pinnacle » : une génération
+    plausible, pas une observation (le motif exact de MAX_ORACLE_DEFAULT = 0,
+    2026-08-27), payée sur les quotas Groq/Tavily supprimés depuis. Le chemin
+    exchange existait déjà dans chaque scan (`core/closing_line.py::
+    capture_from_exchange`, closing_source='exchange') ; ce job le rejoue hors
+    scan pour les créneaux où le scheduler n'a pas livré de tick. Prix réels,
+    même côté, mêmes gardes (DNB exigé au football, refus sinon) — et
+    `budget` n'a plus d'objet (gardé pour compatibilité d'appel).
     """
+    del budget
     now = datetime.now(timezone.utc)
-    candidates = fetch_closing_line_candidates(sb)
-    remaining = [budget]
-    captured = 0
-    for sig in candidates:
-        if (sig.get("market_key") or "") != "h2h":
-            continue
-        if not _needs_refresh(sig, now):
-            continue
-        if remaining[0] <= 0:
-            log.warning("CLOSING LINE — oracle budget exhausted, %d signal(s) left for next run",
-                        len(candidates) - captured)
-            break
-        remaining[0] -= 1
-        try:
-            price, team = get_pinnacle_price(sig["match"], sport=sig.get("sport", "soccer"),
-                                             league=sig.get("league", ""))
-        except Exception as e:
-            log.warning("capture_closing_lines oracle [%s]: %s", sig["match"], e)
-            continue
-        if not price or price <= 1.01:
-            continue
+    candidates = [s for s in fetch_closing_line_candidates(sb)
+                  if (s.get("market_key") or "") == "h2h"]
+    if not candidates:
+        return 0
+    matches = _matches_from_signals(candidates)
+    if not matches:
+        return 0
 
-        # Side check — resolve BOTH the signal's selection and the oracle's
-        # returned team against this match's own two team names (exact
-        # equality first — see resolve_selection_side; a bare fuzzy match
-        # between selection and team would conflate shared-token clubs like
-        # "America MG"/"America RN"). Only an identical resolved side means
-        # the fetched price is the price of the thing we actually bet.
-        home, _, away = (sig.get("match") or "").partition(" vs ")
-        sel_side  = resolve_selection_side(sig.get("selection_name") or "", home, away)
-        team_side = resolve_selection_side(team or "", home, away)
-        same_side = sel_side is not None and team_side is not None and sel_side == team_side
-        xbet_odd = sig.get("xbet_odd") or 0.0
-        clv_real = round((xbet_odd / price - 1) * 100, 2) if same_side and xbet_odd > 1.01 else None
-
-        # UPDATE en place — cette écriture se répète tous les
-        # CLOSING_LINE_REFRESH_MIN sur un signal encore vivant. C'est ce
-        # chemin-là qui avait montré le défaut du DELETE+INSERT, supprimé
-        # partout depuis (B1, 2026-08-27).
-        ok = update_signal_fields(sb, sig["id"], {
-            "closing_pinnacle_price": float(price),
-            "clv_pct_real":           clv_real,
-            "closing_captured_at":    now.isoformat(),
-            "closing_source":         CLOSING_SRC_ORACLE,
-        }, optional_cols=_CLOSING_LINE_COLS)
-        if ok:
-            captured += 1
-            log.info("CLOSING LINE | %s | bet %.3f -> close %.3f | CLV_real %s | T-%s",
-                     sig["match"], xbet_odd, price,
-                     f"{clv_real:+.2f}%" if clv_real is not None else "n/a (side unresolved)",
-                     _lead_time_label(sig.get("match_time"), now))
-        else:
-            log.error("Failed to persist closing line for signal %s", sig["id"])
-    return captured
+    from core.matchbook import fetch_matchbook_prices
+    sports = sorted({m["sport"] for m in matches})
+    hours = max(1, -(-CLOSING_LINE_WINDOW_MIN // 60))
+    prices = fetch_matchbook_prices(sports=sports, hours_ahead=hours) or {}
+    if os.environ.get("BETFAIR_APP_KEY"):
+        from core.harvester import fetch_betfair_prices
+        # Betfair prioritaire quand il répond (prix ajustés de la commission),
+        # même précédence que dans run_engine.
+        bf = fetch_betfair_prices(sports=sports, hours_ahead=hours) or {}
+        prices = {**prices, **bf}
+    if not prices:
+        log.info("CLOSING LINE — aucun prix d'exchange chargé (%d candidat(s))",
+                 len(candidates))
+        return 0
+    return capture_from_exchange(sb, matches, prices, now=now)
 
 
 def run_closing_lines():
@@ -545,9 +401,9 @@ def _signaler_audit_sterile(sb, counts: dict, total: int) -> None:
         return
     msg = (f"⚠️ *Audit stérile* — 0 signal réglé sur {total} éligibles "
            f"({counts.get('skipped', 0)} sautés).\n"
-           "Les deux chemins de score sont probablement indisponibles : "
-           "api-sports (clé/budget) et la recherche web (quota Groq/Tavily). "
-           "Chercher « compound-mini KO » et « HTTP 432 » dans le log du job.")
+           "Les chemins de score sont probablement indisponibles : api-sports "
+           "(clé/budget), MLB statsapi, TheSportsDB. Chercher « score_sources » "
+           "et « budget journalier atteint » dans le log du job.")
     log.error("AUDIT STÉRILE — 0 réglé sur %d éligibles ; les signaux restent "
               "actifs et la purge est repoussée", total)
     _alerte_telegram(msg)
@@ -591,14 +447,6 @@ def _relancer_expires(sb) -> None:
 
 
 def run():
-    # Ce process RÈGLE des signaux : il a droit à la réserve de crédits de
-    # recherche que les scans ne peuvent pas toucher, et il n'est pas étalé
-    # sur la journée (un match déjà joué ne se règle pas mieux plus tard —
-    # il sort `expired`). Le drapeau est levé ICI et non dans run_audit.py :
-    # l'audit a plusieurs points d'entrée (cron, /api/audit/run), et un seul
-    # qui le pose est un oubli qui attend son tour.
-    prioriser_settlement()
-
     # This module only ever deletes/inserts/upserts, it never serves public
     # reads — write=True fails fast and loud if SUPABASE_SERVICE_KEY is
     # missing or resolves to the wrong role, instead of silently falling
@@ -607,17 +455,6 @@ def run():
         sb = get_db(write=True)
     except MissingCredentialsError as e:
         log.critical("%s", e)
-        raise SystemExit(1)
-
-    # Fail loudly BEFORE touching any signal. Without GROQ_API_KEY the entire
-    # audit is a no-op that would otherwise mass-expire every pending signal
-    # (see audit_one's guard) — better to exit non-zero so the GitHub Actions
-    # run goes red and the missing secret is visible, than to burn the batch.
-    if not ai_available():
-        log.critical("GROQ_API_KEY absente — recherche de score impossible. "
-                     "Audit interrompu, les signaux restent 'active'. "
-                     "Ajoute le secret GROQ_API_KEY (repo → Settings → "
-                     "Secrets and variables → Actions) pour réactiver le settlement.")
         raise SystemExit(1)
 
     pending = fetch_pending(sb)
@@ -634,18 +471,11 @@ def run():
         return
 
     now = datetime.now(timezone.utc)
-    oracle_budget = [ORACLE_BUDGET]
     settle_budget = [SETTLE_BUDGET]
     counts = {"settled": 0, "closed": 0, "expired": 0, "skipped": 0}
 
-    for i, sig in enumerate(pending):
-        if gemini_quota_dead():
-            counts["skipped"] += len(pending) - i
-            log.warning("Quota IA (Groq) épuisé — %d signals left active "
-                        "for the next audit run (post quota reset ~07:00 UTC)",
-                        len(pending) - i)
-            break
-        status = audit_one(sb, sig, oracle_budget, settle_budget, now)
+    for sig in pending:
+        status = audit_one(sb, sig, settle_budget, now)
         counts[status] = counts.get(status, 0) + 1
 
     log.info("Audit done: %d settled | %d closed | %d expired | %d skipped",
@@ -654,8 +484,7 @@ def run():
         _effacer_marqueur_sterile(sb)
     else:
         _signaler_audit_sterile(sb, counts, len(pending))
-    log.info("Oracle: %d/%d | Settlement: %d/%d calls used",
-             ORACLE_BUDGET - oracle_budget[0], ORACLE_BUDGET,
+    log.info("Settlement: %d/%d lookups used",
              SETTLE_BUDGET - settle_budget[0], SETTLE_BUDGET)
 
     # RELANCE DES EXPIRÉS — ICI et pas plus haut. `expired` était terminal :

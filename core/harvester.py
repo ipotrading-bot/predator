@@ -1,26 +1,30 @@
 """
 core/harvester.py — PAIM v7.5 — Guerrilla Mode
-Soft source : 1XBet direct feed (JSON) → recherche web fallback
-Sharp source: recherche web (Groq/Tavily, core/ai_search.py) → Pinnacle prices
+Soft source : 1XBet direct feed (JSON) + api-sports + odds-api.io + titan007
+Sharp source: Pinnacle via api-sports, exchange (Matchbook/Betfair)
 Sports: 1=Soccer, 3=Tennis, 4=Basketball
 All timestamps : UTC/GMT.
 
-2026-07-21 : Gemini supprimé partout — grounding gratuit mort (limit: 0
-sans facturation prépayée Gemini, vérifié sur 4 clés/projets). Remplacé
-par core/ai_search.py : groq/compound-mini (recherche web intégrée) +
-fallback Tavily/llama-3.3-70b. Les GEMINI_API_KEY* ne sont plus lus.
+2026-09-02 : la recherche web (Groq compound-mini + Tavily) est SUPPRIMÉE du
+harvest — décision opérateur, avec le retrait de Groq/Tavily de tout le
+pipeline. Trois fonctions sont parties avec elle : `_fetch_from_gemini`
+(demandait à un LLM d'« estimer des cotes 1XBet réalistes » sur des matchs
+qu'il pouvait halluciner), `fetch_pinnacle_prices` (recherche groupée d'une
+« cote Pinnacle » par LLM — le chemin dominant du prix sharp GÉNÉRÉ, celui
+que l'en-tête de l'ancien core/oracle.py désignait comme hors de portée de
+MAX_ORACLE) et `fetch_estimated_prices` (cotes de mémoire d'entraînement).
+Toutes trois fabriquaient des prix qu'aucun book n'a affichés : une cote
+sous-estimée fabrique un edge, et ces signaux-là sont précisément ceux que
+le moteur émet (cf. A6). Un match sans prix sharp RÉEL est écarté, point.
 """
 import hashlib
 import logging
 import os
-import re
-import json
 import time
 import random
 import requests
 from datetime import datetime, timedelta, timezone
 
-from core.ai_search import ai_available, ai_complete, ai_search_complete
 from core.api_sports import PROVIDERS as _AS_PROVIDERS, fetch_sport as _as_fetch_sport
 from core.odds_api_io import SPORTS as _OAI_SPORTS, fetch_sport as _oai_fetch_sport
 from core.titan007 import SPORT_ID as _T7_SPORT_ID, fetch_matches as _t7_fetch
@@ -30,31 +34,6 @@ from core.paim_engine import strict_team_match
 log = logging.getLogger("PREDATOR.harvester")
 
 SPORT_IDS = {1: "soccer", 3: "tennis", 4: "basketball", 5: "mma"}
-
-# ── Budget recherche web (Groq/Tavily) ───────────────────────────────
-# Ce plafond borne la TAILLE de la réponse IA. Il partage son TPD Groq avec
-# le settlement — c'est ce partage qui a verrouillé le quota le 2026-08-02.
-#
-# RÉPARTITION depuis le 2026-08-22 (retrait des sports bruités — mission
-# « recentrage sports ») : les deux appels de recherche web par run qui
-# ramenaient eSports (≈2 048 tokens) et table tennis/volley/handball
-# (≈3 000 tokens, ALT_SEARCH_MAX_TOKENS — supprimé) ont disparu, soit
-# ≈5 000 tokens réservés par run × ~10 runs payants/jour ≈ 50k TPD
-# libérés sur un quota de 100k par clé. Ce budget N'EST PAS réinjecté dans
-# un nouveau consommateur de scan : il revient d'abord au settlement
-# (core/settlement.py, même TPD, fetch_match_result) — c'est lui qui
-# manquait de tokens le 2026-08-02 — puis, au second rang, aux lots
-# `fetch_pinnacle_prices` (PINNACLE_BATCH) des sports OddsAPI quand le Tier 1
-# est muet. Le MMA passe sur flux OddsAPI réel (Phase 1 de la même mission) :
-# à terme SEARCH_MAX_TOKENS ne sert plus qu'à la recherche de prix Pinnacle.
-# Réévalué le 2026-08-22 après le retrait des 4 sports : les seuls
-# consommateurs restants sont le lot Pinnacle (PINNACLE_BATCH=25 matchs ≈
-# 1 500 tokens de JSON) et le settlement/oracle (réponses courtes). 2048
-# reste le plancher sûr pour un lot de 25 ; le gain vient du cache IA 30 min
-# et de la chaîne de repli (core/ai_search.py), pas d'une coupe du plafond.
-SEARCH_MAX_TOKENS       = int(os.environ.get("SEARCH_MAX_TOKENS", "2048"))
-PINNACLE_BATCH          = int(os.environ.get("PINNACLE_BATCH", "25"))
-PINNACLE_TAVILY_QUERIES = int(os.environ.get("PINNACLE_TAVILY_QUERIES", "4"))
 
 XBET_FEED_TPLS = [
     "https://1xbet.com/LineFeed/Get1x2?sport={sport_id}&count=50&lng=en&mode=4&partner=157",
@@ -98,14 +77,6 @@ HEADERS = {
     "Accept-Language": "en-US,en;q=0.9",
     "Referer": "https://1xbet.com/en/line/",
 }
-_SPORT_PROMPTS = {
-    "soccer":     "top European football/soccer",
-    "tennis":     "ATP or WTA tennis (Roland Garros, Italian Open, or similar)",
-    "basketball": "NBA playoff or top basketball",
-    "mma":        "UFC or major MMA fights",
-}
-
-
 def _odd(val):
     try:
         f = float(val)
@@ -364,282 +335,24 @@ def _fetch_from_odds500(sport_id: int, trusted: list) -> list[dict]:
         return []
 
 
-def _fetch_from_gemini(sport_id):
-    """Recherche web fallback — finds REAL upcoming matches. Returns list or []."""
-    if not ai_available():
-        return []
-
-    sport_name = SPORT_IDS.get(sport_id, "sport")
-    sport_desc = _SPORT_PROMPTS.get(sport_name, sport_name)
-    is_soccer  = sport_id == 1
-
-    from datetime import date
-    today = date.today().isoformat()
-
-    draw_field = ',"X":3.40' if is_soccer else ',"X":0'
-    prompt = (
-        f"Today is {today}. Search the web to find 6 REAL {sport_desc} matches "
-        f"actually scheduled today or in the next 48 hours. "
-        f"DO NOT invent or hallucinate matches — only include confirmed scheduled games. "
-        f"For each real match found, estimate realistic 1XBet decimal odds. "
-        f"{'Include the draw odd X for every football match.' if is_soccer else 'Set X to 0 for non-soccer.'}"
-        f"\nReturn ONLY a valid JSON array (no other text):\n"
-        f'[{{"match":"Team A vs Team B","home":"Team A","away":"Team B",'
-        f'"league":"League Name","sport":"{sport_name}",'
-        f'"odds_1xbet":{{"1":2.10{draw_field},"2":3.20}}}}]'
-    )
-
-    text = ai_search_complete(
-        prompt,
-        queries=[f"{sport_desc} matches today schedule"],
-        label=f"Harvest/{sport_name}",
-        max_tokens=1024, temperature=0.1, timeout=60,
-    )
-    if not text:
-        return []
-
-    try:
-        text = re.sub(r'```(?:json)?|```', '', text)
-        m = re.search(r'\[[\s\S]*\]', text)
-        if not m:
-            return []
-
-        raw = json.loads(m.group())
-        matches = []
-        for ev in raw:
-            try:
-                home = str(ev.get("home", "")).strip()
-                away = str(ev.get("away", "")).strip()
-                odds = ev.get("odds_1xbet", {})
-                if not home or not away:
-                    continue
-                ox = _odd(odds.get("X", 0))
-                # Hard require draw odd for soccer — reject silently if missing
-                if is_soccer and ox <= 1.01:
-                    continue
-                matches.append({
-                    "id":         _stable_id(str(sport_id), home, away,
-                                             ev.get("commence_time", "")),
-                    "match":      ev.get("match", f"{home} vs {away}"),
-                    "home":       home,
-                    "away":       away,
-                    "league":     ev.get("league", "Unknown"),
-                    "sport":      sport_name,
-                    "sport_id":   sport_id,
-                    "odds_1xbet": {
-                        "1": _odd(odds.get("1")),
-                        "X": ox,
-                        "2": _odd(odds.get("2")),
-                    },
-                })
-            except Exception:
-                continue
-
-        log.info("Harvest/%s: %d valid matches", sport_name, len(matches))
-        return matches
-
-    except Exception as e:
-        log.error("Harvest/%s exception: %s", sport_name, e)
-        return []
-
-
-_GEMINI_INTER_SPORT_SLEEP = 5  # seconds — évite un burst rate-limit Groq quand tous les sports tombent en fallback
-
 def fetch_matches():
     """Fetch matches for all configured sports, line-shopping the best
     price per outcome across every book in SOFT_BOOKS (Task 6). Returns
-    combined list."""
+    combined list.
+
+    Un sport dont aucun book ne rend rien reste VIDE : le repli « demande à
+    un LLM d'inventer le slate et ses cotes » a été supprimé le 2026-09-02
+    avec Groq/Tavily. Rien trouvé veut dire rien, pas « demande à un modèle »."""
     all_matches = []
-    gemini_calls = 0
     for sport_id in SPORT_IDS:
-        matches = _fetch_multi_book(sport_id)
-        if not matches:
-            if gemini_calls > 0:
-                time.sleep(_GEMINI_INTER_SPORT_SLEEP)
-            matches = _fetch_from_gemini(sport_id)
-            gemini_calls += 1
-        all_matches.extend(matches)
+        all_matches.extend(_fetch_multi_book(sport_id))
 
     # Sports couverts par api-sports mais absents du LineFeed (baseball,
-    # hockey) : pas de repli recherche web pour eux — le budget Groq est
-    # partagé avec le settlement, et une cote estimée par IA vaut bien moins
-    # qu'une cote de book réelle. Rien trouvé ici veut dire rien, pas
-    # « demande à un modèle ».
+    # hockey).
     extra_ids = (set(_API_SPORTS_BY_ID) | set(_ODDS_API_IO_BY_ID)) - set(SPORT_IDS)
     for sport_id in sorted(extra_ids):
         all_matches.extend(_fetch_multi_book(sport_id))
     return all_matches
-
-
-def _fuzzy_match_name(ret_name: str, orig_names: list) -> str | None:
-    """Map a Gemini-returned match name back to the original 1XBet name using team fuzzy matching."""
-    if " vs " not in ret_name:
-        return None
-    ret_home, ret_away = [x.strip() for x in ret_name.split(" vs ", 1)]
-    for orig in orig_names:
-        if " vs " not in orig:
-            continue
-        orig_home, orig_away = [x.strip() for x in orig.split(" vs ", 1)]
-        if strict_team_match(ret_home, orig_home) and strict_team_match(ret_away, orig_away):
-            return orig
-    return None
-
-
-def fetch_pinnacle_prices(matches: list) -> dict:
-    """
-    Sharp source — recherche web (Groq/Tavily) → Pinnacle decimal odds.
-    Falls back to Betfair Exchange per match when Pinnacle line is unavailable.
-    Uses fuzzy team matching to handle 1XBet abbreviation vs Pinnacle full name divergence.
-    Returns {match_name: {"1": float, "X": float, "2": float}}.
-    """
-    if not ai_available() or not matches:
-        return {}
-
-    from datetime import date
-    today = date.today().isoformat()
-
-    names = [m["match"] for m in matches[:PINNACLE_BATCH]]
-    match_list = "\n".join(
-        f"- {m['match']} [{m.get('league', '?')}, {m.get('sport', 'soccer')}]"
-        for m in matches[:PINNACLE_BATCH]
-    )
-
-    prompt = (
-        f"Today is {today}. Search the web to find current decimal odds for each match below.\n"
-        f"Search PINNACLE SPORTS first. If Pinnacle has no line for a match, search BETFAIR EXCHANGE.\n"
-        f"Add a 'source' field: 'Pinnacle' or 'Betfair'.\n\n"
-        f"Matches (name [league, sport]):\n{match_list}\n\n"
-        f"Return ONLY a valid JSON array. Use the exact match name from the list:\n"
-        f'[{{"match":"Team A vs Team B","1":2.05,"X":3.35,"2":3.60,"source":"Pinnacle"}}]\n'
-        f"X=0 for non-soccer. Omit matches with no odds found on either book."
-    )
-
-    # Budget Tavily : PINNACLE_TAVILY_QUERIES requêtes max sur les premiers
-    # matchs — compound-mini (étage 1) fait sa propre recherche et n'en
-    # consomme aucune.
-    text = ai_search_complete(
-        prompt,
-        queries=[f"Pinnacle odds {n}" for n in names[:PINNACLE_TAVILY_QUERIES]],
-        label="Pinnacle/Search",
-        max_tokens=SEARCH_MAX_TOKENS, temperature=0.1, timeout=90,
-    )
-    if not text:
-        return {}
-
-    try:
-        text = re.sub(r'```(?:json)?|```', '', text).strip()
-        m_arr = re.search(r'\[[\s\S]*\]', text)
-        if not m_arr:
-            log.warning("Pinnacle/Search: no JSON array in response")
-            return {}
-
-        raw = json.loads(m_arr.group())
-    except Exception as e:
-        log.error("Pinnacle/Search parse exception: %s", e)
-        return {}
-
-    names_set = set(names)
-    result = {}
-    for item in raw:
-        ret_name = item.get("match", "").strip()
-        source   = item.get("source", "Pinnacle")
-        if not ret_name:
-            continue
-
-        # Exact match first, then fuzzy fallback
-        matched = ret_name if ret_name in names_set else _fuzzy_match_name(ret_name, names)
-        if not matched:
-            log.debug("Pinnacle/Search: no local match for '%s'", ret_name)
-            continue
-
-        odds = {
-            "1": _odd(item.get("1")),
-            "X": _odd(item.get("X", 0)),
-            "2": _odd(item.get("2")),
-        }
-        # 0.5% conservative penalty for non-Pinnacle sources
-        if source.lower() not in ("pinnacle", "pinnacle sports"):
-            odds = {k: round(v * 1.005, 4) if v > 1.01 else v for k, v in odds.items()}
-            log.info("Betfair fallback for %s (+0.5%% penalty)", matched)
-
-        result[matched] = odds
-
-    log.info("Pinnacle/Search: %d/%d prices received", len(result), len(names))
-    return result
-
-
-def fetch_estimated_prices(matches: list) -> dict:
-    """
-    Tier 3 fallback — connaissance interne du LLM (NO web search).
-    Asks the model to estimate fair decimal odds from training data.
-    Applies a conservative margin on all estimated prices.
-    Always returns prices (no 'introuvable') — useful when Odds API quota is exhausted
-    and web search fails to find real Pinnacle lines.
-    Returns {match_name: {"1": float, "X": float, "2": float}}.
-    """
-    if not ai_available() or not matches:
-        return {}
-
-    from datetime import date
-    today = date.today().isoformat()
-
-    names = [m["match"] for m in matches[:20]]
-    match_list = "\n".join(
-        f"- {m['match']} ({m.get('league', '?')}, {m.get('sport', 'soccer')})"
-        for m in matches[:20]
-    )
-
-    prompt = (
-        f"Today is {today}. You are a professional sports analyst with expertise in "
-        f"football, tennis, and basketball betting markets.\n\n"
-        f"For each match below, estimate the fair decimal odds reflecting the TRUE probability "
-        f"of each outcome. Base this on team quality, head-to-head history, recent form, "
-        f"and typical market pricing for this competition. Be precise — use realistic odds "
-        f"typical of Pinnacle or Betfair closing lines.\n\n"
-        f"Matches:\n{match_list}\n\n"
-        f"IMPORTANT: Do NOT search the web. Use only your training knowledge.\n"
-        f"Return ONLY a valid JSON array:\n"
-        f'[{{"match":"Team A vs Team B","1":2.10,"X":3.40,"2":3.20}}]\n'
-        f"X=0 for tennis/basketball. Include ALL matches from the list."
-    )
-
-    text = ai_complete(prompt, label="Estimator/AI", tier="light",   # filtrage : petit modèle d'abord
-                       max_tokens=2048, temperature=0.2, timeout=60)
-    if not text:
-        return {}
-
-    try:
-        text = re.sub(r'```(?:json)?|```', '', text).strip()
-        m_arr = re.search(r'\[[\s\S]*\]', text)
-        if not m_arr:
-            log.warning("Estimator/AI: no JSON array in response")
-            return {}
-        raw = json.loads(m_arr.group())
-    except Exception as e:
-        log.error("Estimator/AI parse error: %s", e)
-        return {}
-
-    names_set = set(names)
-    result = {}
-    # Conservative margin: inflate estimated prices by 0.5% (was 2%, artificially killed edges)
-    MARGIN = 1.005
-
-    for item in raw:
-        ret_name = item.get("match", "").strip()
-        if not ret_name:
-            continue
-        matched = ret_name if ret_name in names_set else _fuzzy_match_name(ret_name, names)
-        if not matched:
-            continue
-        odds = {
-            "1": round(_odd(item.get("1")) * MARGIN, 4) if _odd(item.get("1")) > 1.01 else 0.0,
-            "X": round(_odd(item.get("X", 0)) * MARGIN, 4) if _odd(item.get("X", 0)) > 1.01 else 0.0,
-            "2": round(_odd(item.get("2")) * MARGIN, 4) if _odd(item.get("2")) > 1.01 else 0.0,
-        }
-        result[matched] = odds
-
-    log.info("Estimator/AI: %d/%d estimated prices", len(result), len(names))
-    return result
 
 
 # ── Betfair Exchange (Tier 1.5 — sharp prices peer-to-peer) ──────────

@@ -31,15 +31,18 @@ import re
 
 import pytest
 
-from core import (ai_search, api_sports, daily_quota, odds500,
-                  odds_api_io, prediction_markets, sevenm, titan007)
+from core import (api_sports, daily_quota, odds500,
+                  odds_api_io, prediction_markets, score_sources, sevenm,
+                  titan007)
 
 # Sources qui dépensent un budget journalier ET qui alimentent un scan.
+# core/ai_search.py en est SORTI le 2026-09-02 : ses budgets Tavily et
+# compound-mini ont été supprimés avec la recherche web — il ne dépense plus
+# aucun budget de source, le routeur IA porte les siens.
 SOURCES_BUDGETEES = {
     "core/api_sports.py":   api_sports,
     "core/odds_api_io.py":  odds_api_io,
     "core/titan007.py":     titan007,
-    "core/ai_search.py":    ai_search,
 }
 
 # EXEMPTÉES, chacune pour une raison écrite. Une exemption sans motif est une
@@ -55,6 +58,11 @@ EXEMPTEES = {
     # Rôle CONSENSUS : mesure et n'émet jamais. Mesuré le 2026-08-27,
     # 74 marchés cotés et 0 apparié au slate.
     "core/prediction_markets.py": prediction_markets,
+    # Sources de SCORES du settlement (2026-09-02) : budgets journaliers
+    # partagés (daily_quota) mais SANS rythme horaire, et c'est voulu —
+    # étaler le settlement était une faute (incident du 2026-08-28 : un match
+    # déjà joué ne se règle pas mieux plus tard, il sort en `expired`).
+    "core/score_sources.py":      score_sources,
 }
 
 

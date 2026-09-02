@@ -5,8 +5,10 @@ Remplace la vérification par regex des blocs `${{ secrets.X }}` des workflows
 (tests/test_workflow_secrets.py, refonte 2026-08-26) : il n'y a plus de bloc à
 comparer, il y a scripts/ci_env.py et ses pools. Ces tests encodent les
 invariants que les workflows portaient en commentaires :
-  - tout fournisseur PRODUCTION_SAFE atteint scan / closing / settlement ;
-  - GROQ_API_KEY_3 n'atteint QUE le settlement, et sous le nom GROQ_API_KEY ;
+  - tout fournisseur PRODUCTION_SAFE atteint le pool scan (le seul qui
+    consomme encore de l'IA — alias CJK) ;
+  - AUCUN pool ne transmet une clé Groq ou Tavily (supprimées le 2026-09-02,
+    settlement déterministe) ;
   - REPRICE ne voit aucune clé payante ; readonly ne voit aucune clé d'écriture ;
   - les sources filtrées par IP gardent leur relais dans le pool scan ;
   - le préflight échoue fort sur les pannes vécues (clé anon dans
@@ -40,8 +42,14 @@ ci_mode = _module("ci_scan_mode")
 
 CLES_PRODUCTION = {p.env_key for p in PRODUCTION_SAFE}
 TOUTES_CLES_IA = {p.env_key for p in REGISTRY}
-CLES_PAYANTES = TOUTES_CLES_IA | set(ci_env.GROQ_SCAN) | {ci_env.GROQ_SETTLEMENT_SOURCE} \
-    | set(ci_env.SEARCH) | set(ci_env.ODDS_SOURCES) | set(ci_env.BETFAIR) | set(ci_env.RELAYS)
+CLES_PAYANTES = TOUTES_CLES_IA \
+    | set(ci_env.ODDS_SOURCES) | set(ci_env.BETFAIR) | set(ci_env.RELAYS)
+
+# Clés SUPPRIMÉES du pipeline le 2026-09-02 (Groq/Tavily) : aucun pool ne
+# doit plus jamais les transmettre — les réintroduire serait rebrancher une
+# capacité retirée sur décision opérateur.
+CLES_SUPPRIMEES = {"GROQ_API_KEY", "GROQ_API_KEY_2", "GROQ_API_KEY_3",
+                   "GROQ_API_KEY_4", "GROQ_API_KEY_5", "TAVILY_API_KEY"}
 
 
 def _jwt(role):
@@ -52,8 +60,6 @@ def _jwt(role):
 def _secrets(**extra):
     base = {"SUPABASE_URL": "https://x.supabase.co", "SUPABASE_KEY": "anon",
             "SUPABASE_SERVICE_KEY": _jwt("service_role"),
-            "GROQ_API_KEY": "g1", "GROQ_API_KEY_2": "g2", "GROQ_API_KEY_3": "g3",
-            "GROQ_API_KEY_4": "g4", "GROQ_API_KEY_5": "g5", "TAVILY_API_KEY": "t",
             "API_FOOTBALL_KEY": "f"}
     base.update(extra)
     return base
@@ -61,20 +67,29 @@ def _secrets(**extra):
 
 # ── Couverture des fournisseurs ───────────────────────────────────────
 
-@pytest.mark.parametrize("pool", ["scan", "closing", "settlement"])
-def test_tout_fournisseur_de_production_atteint_les_pools_ia(pool):
-    env = ci_env.env_for(pool, {})
+def test_tout_fournisseur_de_production_atteint_le_pool_scan():
+    """Le scan est le SEUL pool qui consomme encore de l'IA (alias CJK,
+    analyse) depuis que le settlement est déterministe (2026-09-02)."""
+    env = ci_env.env_for("scan", {})
     manquants = sorted(CLES_PRODUCTION - set(env))
-    assert not manquants, f"pool {pool} ne transmet pas {manquants} — capacité morte SANS ERREUR"
+    assert not manquants, f"pool scan ne transmet pas {manquants} — capacité morte SANS ERREUR"
 
 
-@pytest.mark.parametrize("pool", ["scan", "closing", "settlement"])
-def test_cloudflare_a_son_identifiant_de_compte(pool):
-    env = ci_env.env_for(pool, {})
+def test_cloudflare_a_son_identifiant_de_compte():
+    env = ci_env.env_for("scan", {})
     for jeton, compagnons in ci_env.COMPANIONS.items():
         if jeton in env:
             for c in compagnons:
-                assert c in env, f"pool {pool} passe {jeton} sans {c}"
+                assert c in env, f"pool scan passe {jeton} sans {c}"
+
+
+@pytest.mark.parametrize("pool", sorted(ci_env.POOLS))
+def test_aucun_pool_ne_transmet_groq_ou_tavily(pool):
+    """Gardien de la suppression du 2026-09-02 : Groq et Tavily sont sortis
+    du pipeline (settlement déterministe via core/score_sources). Une clé qui
+    réapparaît ici est une capacité rebranchée en douce."""
+    assert not (set(ci_env.env_for(pool, {})) & CLES_SUPPRIMEES), pool
+    assert not (ci_env.secret_names_for(pool) & CLES_SUPPRIMEES), pool
 
 
 def test_liste_ia_derivee_du_registre_comme_ops_py():
@@ -85,12 +100,10 @@ def test_liste_ia_derivee_du_registre_comme_ops_py():
 
 
 def test_le_settlement_porte_les_cles_de_resultats():
-    """Le score final vient d'api-sports (`/fixtures?date=`), pas d'un LLM.
-    Sans ces clés dans le pool `settlement`, core/settlement retombe sur la
-    recherche web — le chemin dont la panne du 2026-08-26 (Tavily HTTP 432 +
-    limite minute Groq) a fait tomber le taux de résolution de 65 % à 11 %.
-    Une capacité non câblée meurt SANS ERREUR ; c'est tout l'objet de ce
-    fichier."""
+    """Le score final vient d'API structurées (api-sports `/fixtures?date=`,
+    MLB statsapi sans clé, TheSportsDB), pas d'un LLM — c'est l'UNIQUE chemin
+    depuis la suppression de la recherche web (2026-09-02). Une capacité non
+    câblée meurt SANS ERREUR ; c'est tout l'objet de ce fichier."""
     env = ci_env.env_for("settlement", {})
     manquants = sorted(set(ci_env.RESULTS_SOURCES) - set(env))
     assert not manquants, f"le pool settlement ne transmet pas {manquants}"
@@ -106,20 +119,6 @@ def test_le_pool_scan_porte_les_relais_des_sources_filtrees_par_ip():
 
 
 # ── Cloisonnements ───────────────────────────────────────────────────
-
-def test_settlement_voit_groq_3_sous_le_nom_groq_et_rien_dautre():
-    env = ci_env.env_for("settlement", _secrets())
-    assert env["GROQ_API_KEY"] == "g3"
-    assert not any(k.startswith("GROQ_API_KEY_") for k in env), \
-        "le settlement ne doit voir aucune clé Groq numérotée"
-    assert "g1" not in env.values() and "g2" not in env.values()
-
-
-@pytest.mark.parametrize("pool", ["scan", "closing"])
-def test_les_scans_ne_voient_jamais_groq_3(pool):
-    assert ci_env.GROQ_SETTLEMENT_SOURCE not in ci_env.secret_names_for(pool)
-    assert "g3" not in ci_env.env_for(pool, _secrets()).values()
-
 
 def test_reprice_ne_voit_aucune_cle_payante():
     env = ci_env.env_for("reprice", _secrets())
@@ -171,49 +170,15 @@ def test_preflight_accepte_les_deux_formats_service_role():
     assert not _erreurs("scan", _secrets(SUPABASE_SERVICE_KEY=_jwt("service_role")))
 
 
-def test_le_preflight_sexprime_en_noms_denv_et_non_de_secrets():
-    """Le bloc généré du settlement pose la VALEUR du secret GROQ_API_KEY_3
-    sous le NOM GROQ_API_KEY : le nom GROQ_API_KEY_3 n'existe nulle part dans
-    l'environnement du job. Exiger l'ancien nom faisait échouer l'audit sur un
-    secret pourtant présent (run 33008750419, 2026-08-26) — le préflight
-    réclamait une variable que sa propre conception avait fait disparaître."""
-    env = ci_env.env_for("settlement", _secrets())
-    assert "GROQ_API_KEY_3" not in env and env["GROQ_API_KEY"] == "g3"
-    assert not _erreurs("settlement", env), "un environnement sain ne doit rien lever"
-    assert all(k in env for k in ci_env.POOLS["settlement"]["required"]), \
-        "un `required` doit être un nom d'ENV, sinon il est inatteignable"
-
-
 def test_toute_exigence_de_pool_est_un_nom_denv_atteignable():
-    """Généralisation : ce piège doit être impossible sur TOUS les pools."""
+    """Un `required` doit être un nom d'ENV du pool, sinon il est
+    inatteignable — vécu le 2026-08-26 (run 33008750419) quand le préflight
+    du settlement exigeait GROQ_API_KEY_3, un nom que son propre bloc généré
+    avait fait disparaître."""
     for pool in ci_env.POOLS:
         env = ci_env.env_for(pool, _secrets())
         manquants = [k for k in ci_env.POOLS[pool]["required"] if k not in env]
         assert not manquants, f"pool {pool} exige {manquants}, absent(s) de son propre env"
-
-
-def test_le_cloisonnement_groq_se_verifie_par_empreinte_entre_jobs():
-    """Depuis que chaque step ne reçoit que son pool, AUCUN process ne voit à
-    la fois la clé des scans et celle du settlement — la comparaison directe
-    est devenue impossible, et c'est le but. Le préflight publie donc une
-    empreinte irréversible : deux jobs qui affichent la même partagent une
-    organisation Groq, donc un quota, donc le cloisonnement est fictif
-    (panne du 2026-08-02).
-
-    Une empreinte n'est pas un secret : 8 hex d'un SHA-256, irréversibles."""
-    import hashlib
-    for pool, cle in (("scan", "g1"), ("settlement", "g3")):
-        env = ci_env.env_for(pool, _secrets())
-        msgs = [m for lvl, m in ci_env.check(pool, env) if lvl == "notice" and "Empreinte" in m]
-        assert msgs, f"le pool {pool} ne publie pas d'empreinte Groq"
-        assert hashlib.sha256(cle.encode()).hexdigest()[:8] in msgs[0]
-        assert cle not in msgs[0], "l'empreinte ne doit jamais contenir la clé"
-
-    scan_emp = [m for lvl, m in ci_env.check("scan", ci_env.env_for("scan", _secrets()))
-                if "Empreinte" in m][0]
-    set_emp = [m for lvl, m in ci_env.check("settlement", ci_env.env_for("settlement", _secrets()))
-               if "Empreinte" in m][0]
-    assert scan_emp != set_emp, "des clés distinctes doivent donner des empreintes distinctes"
 
 
 def test_preflight_odds_api_key_nest_plus_requise():
@@ -389,13 +354,14 @@ def test_le_step_reprice_ne_peut_mecaniquement_rien_depenser():
     assert not (noms & CLES_PAYANTES), f"REPRICE reçoit des clés payantes : {noms & CLES_PAYANTES}"
 
 
-def test_le_settlement_ne_recoit_que_la_cle_groq_de_reserve():
-    texte = (RACINE / ".github" / "workflows" / "audit.yml").read_text(encoding="utf-8")
-    blocs = {pool: b for pool, _i, amorcage, b in ci_env._blocs_de(texte)
-             if not amorcage}
-    groq = re.findall(r"GROQ_API_KEY: \$\{\{ secrets\.([A-Za-z0-9_]+)", blocs["settlement"])
-    assert groq == [ci_env.GROQ_SETTLEMENT_SOURCE], groq
-    assert "secrets.GROQ_API_KEY " not in blocs["settlement"]
+def test_aucun_workflow_ne_nomme_une_cle_supprimee():
+    """Groq et Tavily sont sortis des workflows le 2026-09-02 avec la
+    suppression de la recherche web. Un secret réapparu dans un YAML est une
+    capacité rebranchée en douce."""
+    for wf in WORKFLOWS:
+        noms = set(re.findall(r"secrets\.([A-Za-z0-9_]+)",
+                              wf.read_text(encoding="utf-8")))
+        assert not (noms & CLES_SUPPRIMEES), f"{wf.name} nomme {noms & CLES_SUPPRIMEES}"
 
 
 def test_write_est_idempotent(tmp_path):
@@ -515,8 +481,7 @@ class TestLePreflightCompletTourneOuSontLesCles:
         """Si un autre pool en gagnait un, il faudrait lui aussi déplacer son
         préflight — ce test le signalerait."""
         riches = {p for p, spec in ci_env.POOLS.items()
-                  if spec.get("groq_fingerprint") or spec.get("groq_pool")
-                  or spec.get("warn_missing")}
+                  if spec.get("warn_missing")}
         assert riches == {"scan", "settlement"}, riches
 
 

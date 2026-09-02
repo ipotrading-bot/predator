@@ -18,12 +18,13 @@
 ```
    SOURCES DE COTES                       COUCHE IA (core/ai_router.py)
    ───────────────────                    ──────────────────────────────
-   OddsAPI      (OBSOLÈTE, cf. plus bas)  Registre de 18 fournisseurs
+   OddsAPI      (rallumé 2026-09-01)      Registre de 17 fournisseurs
    Matchbook    (sharp, sans clé)         Lanes : FILTER / ANALYZE /
-   api-sports   (soft)                            TRANSLATE_CJK /
-   odds.500.com (gratuit, mode ombre)             SEARCH_READ /
-   7M           (noms d'équipes)                  SETTLEMENT
-   Kalshi / Polymarket (consensus)        Disjoncteur : 3 échecs → 30 min
+   api-sports   (soft)                            TRANSLATE_CJK
+   odds.500.com (gratuit, mode ombre)     (les lanes SEARCH_READ et
+   7M           (noms d'équipes)           SETTLEMENT sont parties avec
+   Kalshi / Polymarket (consensus)         Groq/Tavily le 2026-09-02)
+                                          Disjoncteur : 3 échecs → 30 min
           │                               Découverte du catalogue au run
           ▼                                        │
    ┌──────────────────────┐                        │
@@ -83,7 +84,7 @@ de 120 s), ramassée par `scan.yml` au tick suivant (36/jour, donc ≤ ~1 h).
 ### 🧠 Couche IA
 
 - **Routeur multi-fournisseurs** ([`core/ai_router.py`](core/ai_router.py)) —
-  registre de 18 fournisseurs, dont 10 utilisables en production (les autres
+  registre de 17 fournisseurs, dont 9 utilisables en production (les autres
   portent un `terms_flag` : usage non commercial, évaluation, ou palier
   gratuit fermé). Aucun nom de modèle n'est codé en dur : chaque lane déclare
   une liste de préférences et le routeur retient le premier modèle qui existe
@@ -92,8 +93,11 @@ de 120 s), ramassée par `scan.yml` au tick suivant (36/jour, donc ≤ ~1 h).
   *restant*, pas par ordre du registre : sans cela le premier était drainé
   pendant que les autres restaient intacts (mesuré : 240 appels tous sur
   Groq → 42 après correction).
-- **Réserve settlement gardée en négatif** — les autres lanes sont amputées
-  et n'y touchent jamais. Le règlement des paris passe avant tout le reste.
+- **Le settlement ne consomme plus un token d'IA** (2026-09-02) — le score
+  vient d'API structurées ([`core/score_sources.py`](core/score_sources.py) :
+  api-sports, MLB statsapi, TheSportsDB). Groq et Tavily, dont les quotas
+  gratuits lâchaient ensemble, sont supprimés du pipeline ; l'ancienne
+  « réserve settlement » n'a plus d'objet.
 - **Mistral** y est entré le 2026-08-26, avec la suppression de Wiz : il en
   était le fournisseur exclusif et vivait hors registre à ce titre. Son quota
   sert désormais les lanes de signaux (`filter`, `analyze`).
@@ -176,8 +180,7 @@ budget crédits avant/après, carte des crons, boucle de calibration) est docume
 ### Obtenir les Clés API
 
 1. **The-Odds API** — [the-odds-api.com](https://the-odds-api.com/) (500 crédits/mois/clé — prévoir un pool de 3-4 clés)
-2. **Groq** — [console.groq.com](https://console.groq.com/) · **Tavily** — [tavily.com](https://tavily.com/)
-3. **api-sports** — [api-sports.io](https://api-sports.io/) · **odds-api.io** — [odds-api.io](https://odds-api.io/)
+2. **api-sports** — [api-sports.io](https://api-sports.io/) · **odds-api.io** — [odds-api.io](https://odds-api.io/)
 4. **Supabase** — [supabase.com](https://supabase.com/) (Plan gratuit)
 5. **Mistral** (optionnel) — [console.mistral.ai](https://console.mistral.ai/)
 
@@ -299,7 +302,6 @@ predator/
 │   ├── matchbook.py         # Sharp, sans clé
 │   ├── api_sports.py        # Soft (API_FOOTBALL_KEY / API_SPORTS_KEY)
 │   ├── harvester.py         # Orchestration de la collecte + appariement
-│   ├── oracle.py            # Prix Pinnacle unitaire (repli, max 3 appels/scan)
 │   ├── free_sources.py      # Sources gratuites — appelé EN DERNIER par harvester
 │   ├── source_adapter.py    # Cadre commun : appariement temps+ligue+STRUCTURE, divergence en POINTS
 │   ├── odds500.py           # odds.500.com — 30 books, démarre en MODE OMBRE
@@ -317,14 +319,15 @@ predator/
 │   ├── monte_carlo.py       # Simulation de trajectoires de bankroll
 │   │  ── Règlement & apprentissage ───────────────────────────────────
 │   ├── settlement.py        # Résultat réel du match → WIN/LOSS/PUSH
+│   ├── score_sources.py     # Scores structurés (MLB statsapi, TheSportsDB) — 0 IA
 │   ├── audit_engine.py      # Pipeline settlement + CLV (run_audit.py)
 │   ├── closing_line.py      # Capture de la ligne de clôture → CLV
 │   ├── learning_layer.py    # Seuils d'edge par sport + verdicts promotion/retrait
 │   ├── stats_utils.py       # Brier, Wilson, bucketisation
 │   ├── perf_view.py         # Filtrage des lignes de /performance
 │   │  ── Couche IA ───────────────────────────────────────────────────
-│   ├── ai_router.py         # Registre 18 fournisseurs, lanes, disjoncteur, budgets
-│   ├── ai_search.py         # Recherche web (délègue au routeur) + pool de clés Groq
+│   ├── ai_router.py         # Registre 17 fournisseurs, lanes, disjoncteur, budgets
+│   ├── ai_search.py         # Façade de complétion IA (délègue au routeur)
 │   ├── daily_quota.py       # Comptage des budgets journaliers
 │   │  ── Infrastructure ──────────────────────────────────────────────
 │   ├── db.py                # Source unique des clients Supabase (lecture vs écriture)
@@ -473,8 +476,8 @@ réellement mesuré, et où :
   `tests/test_workflow_secrets.py`. Aucun build.
 - **Flask + Jinja** — dashboard, servi en serverless sur Vercel
 - **Supabase** (PostgreSQL) — seul état persistant
-- **Routeur IA maison** ([`core/ai_router.py`](core/ai_router.py)) — 18
-  fournisseurs enregistrés, 10 utilisables en production ; aucun modèle codé
+- **Routeur IA maison** ([`core/ai_router.py`](core/ai_router.py)) — 17
+  fournisseurs enregistrés, 9 utilisables en production ; aucun modèle codé
   en dur. Mistral est au registre depuis la suppression de Wiz (2026-08-26).
 
 ### Frontend

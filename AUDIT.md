@@ -57,11 +57,13 @@ C'est le tableau à consulter avant de toucher à quoi que ce soit.
 | Aucun `if:` de job n'utilise le contexte `inputs` nu | `…::test_aucun_workflow_nutilise_le_contexte_inputs_nu` |
 | La liste des clés IA est DÉRIVÉE du registre, comme celle d'`ops.py` | `…::test_liste_ia_derivee_du_registre_comme_ops_py` |
 | `CLOUDFLARE_API_TOKEN` ne va jamais sans `CLOUDFLARE_ACCOUNT_ID` | `…::test_cloudflare_a_son_identifiant_de_compte` |
-| `GROQ_API_KEY_3` n'atteint QUE le settlement, sous le nom `GROQ_API_KEY` | `…::test_settlement_voit_groq_3_sous_le_nom_groq_et_rien_dautre` |
+| Aucun pool ne transmet une clé Groq ou Tavily (supprimées le 2026-09-02) | `…::test_aucun_pool_ne_transmet_groq_ou_tavily` |
 | Le step REPRICE ne reçoit aucune clé payante (lisible dans le YAML) | `…::test_le_step_reprice_ne_peut_mecaniquement_rien_depenser` |
 | `readonly` ne détient aucun jeton d'écriture | `…::test_readonly_ne_detient_aucun_jeton_decriture` |
-| Le pool `settlement` porte les clés api-sports (sinon score cherché par LLM) | `…::test_le_settlement_porte_les_cles_de_resultats` |
-| Le score vient d'api-sports, sans aucun appel d'IA | `tests/test_settlement_deterministe.py::TestScoreSansIA::test_le_score_vient_dapi_sports_sans_aucun_appel_ia` |
+| Le pool `settlement` porte les clés de résultats (api-sports, TheSportsDB) | `…::test_le_settlement_porte_les_cles_de_resultats` |
+| Le score vient d'api-sports puis de sources structurées — JAMAIS d'un LLM | `tests/test_settlement.py::TestFetchMatchResult::test_no_ai_layer_involved` |
+| Un score en direct (statut non terminé) ne règle jamais | `tests/test_score_sources.py::TestTheSportsDB::test_un_score_en_direct_ne_regle_pas` |
+| La recherche d'équipe TheSportsDB ne décide jamais seule (cas Pastoreo) | `…::test_une_mauvaise_equipe_du_flou_ne_regle_rien` |
 | Deux matchs candidats → refus, jamais un WIN/LOSS deviné | `…::test_deux_candidats_font_REFUSER_pas_deviner` |
 | Un audit qui ne règle rien alerte et repousse la purge | `…::TestAuditSterile`, `…::TestPurgeNeDetruitPasLechantillon` |
 | `expired` n'est plus terminal : chaque audit relance la recherche web | `tests/test_relance_expires.py` |
@@ -107,7 +109,6 @@ C'est le tableau à consulter avant de toucher à quoi que ce soit.
 | `deploy` est le seul job à porter un `environment:` | `…::test_le_deploiement_est_le_seul_job_a_porter_un_environnement` |
 | La closing line d'exchange lit le prix de l'EXCHANGE, jamais le prix d'entrée | `tests/test_closing_line_exchange.py::test_le_prix_capture_est_celui_de_lexchange_pas_le_pinnacle_dentree` |
 | Football sans prix de nul : refus, jamais de repli sur le moneyline | `…::test_football_sans_prix_de_nul_est_refuse` |
-| Un prix de clôture exact n'est pas ré-estimé par l'oracle avant 90 min | `…::test_needs_refresh_protege_un_prix_exchange_recent` |
 | Le prix soft d'entrée est EXÉCUTABLE, jamais dévigorisé | `tests/test_prix_executable.py::TestToBinaryRendLePrixExecutable` |
 | Le prix exécutable est toujours SOUS le prix dévigorisé | `…::test_le_prix_executable_est_toujours_sous_le_prix_devigorise` |
 | Football sans nul : refus, jamais de repli sur le moneyline | `…::test_football_sans_nul_est_refuse_jamais_rabattu_sur_le_moneyline` |
@@ -122,10 +123,7 @@ C'est le tableau à consulter avant de toucher à quoi que ce soit.
 | `learning_layer` dérive son point mort de `constants.TAX_RATE` | `tests/test_learning_layer.py::TestBreakevenUsesOperatorTaxRate` |
 | La courbe d'équité du disjoncteur est nette de taxe | `tests/test_taxe_reelle.py::TestDrawdownFiscalise` |
 | `tax_engine.DEFAULT_TAX_RATE` est DÉRIVÉ de `constants.TAX_RATE` | `tests/test_taxe_reelle.py::TestUnSeulTaux` |
-| Le repêchage oracle est à ZÉRO par défaut (prix sharp inventé par un LLM) | `tests/test_oracle_inerte.py::TestLeDefautEstZero` |
-| Aucun mode de scan ne rétablit `MAX_ORACLE` | `…::TestAucunModeNeLeRetablit` |
-| L'appel à l'oracle reste gardé par son budget (vérifié sur l'AST) | `…::TestLappelResteGardeParLeBudget` |
-| Le code de l'oracle reste VIVANT, débranché et non supprimé | `…::TestLeCodeResteVivant` |
+| L'oracle LLM n'existe plus (supprimé le 2026-09-02 avec Groq/Tavily) | `tests/test_closing_line.py::TestCaptureClosingLines::test_loracle_web_nexiste_plus` |
 | L'exchange est confronté à Pinnacle même quand celui-ci existe | `tests/test_contre_expertise_exchange.py::TestLaContreExpertiseARemplaceLeContinue` |
 | Deux avis sharp trop divergents REFUSENT le match entier | `…::TestLeRefusPorteSurLeMatchEntier` |
 | La divergence sharp se mesure en POINTS de probabilité | `…::TestLaDivergenceSeMesureEnPointsDeProbabilite` |

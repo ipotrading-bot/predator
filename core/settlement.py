@@ -2,31 +2,29 @@
 core/settlement.py — PAIM v8.5 — Match Settlement Engine
 Trouve le score réel d'un match → WIN/LOSS/PUSH → `status='settled'`.
 
-DEUX CHEMINS, DANS CET ORDRE (2026-08-26).
+CHAÎNE 100 % DÉTERMINISTE, DANS CET ORDRE (2026-09-02) :
 
 1. `core/api_sports.fetch_results` — le score est un CHAMP de la réponse
    `/fixtures?date=`, déterministe et gratuit, UNE requête par journée quel que
    soit le nombre de matchs. Les résultats d'une journée sont mémorisés le
    temps du run : régler 52 signaux du même jour coûte 1 requête, pas 52.
-2. Recherche web (Groq/Tavily, `core/ai_search.py`) — DERNIER RECOURS, pour ce
-   qu'api-sports ne couvre pas.
+2. `core/score_sources.fetch_score` — MLB statsapi (officiel, sans clé) puis
+   TheSportsDB (voie par équipe), mêmes gardes.
 
-POURQUOI CET ORDRE. Jusqu'ici la recherche web était l'unique chemin. Mesuré le
-2026-08-26 : le taux de résolution réelle est tombé de 65 % (23 août) à 11 %
-(24-26 août) parce que ses DEUX quotas gratuits ont lâché en même temps —
-Tavily au plafond de plan (HTTP 432) et le `compound-mini` de Groq en limite
-par minute. Un audit a rendu « 0 settled | 52 skipped », en vert. Et un signal
-non réglé est purgé à 48 h en `expired`, ligne que `learning_layer._clv_stats`
-exclut : une panne de recherche ne retardait pas l'apprentissage, elle
-DÉTRUISAIT l'échantillon.
+IL N'Y A PLUS DE RECHERCHE WEB. Jusqu'au 2026-09-02 le dernier recours était
+Groq compound-mini + Tavily : deux quotas gratuits qui ont lâché ENSEMBLE deux
+fois en une semaine (26/08 et 01/09 — « AUDIT STÉRILE — 0 réglé »), pour une
+information qui existe en champ dans des API gratuites. Décision opérateur du
+2026-09-02 : Groq et Tavily sont supprimés du pipeline. Un score introuvable
+laisse la ligne repasser au prochain audit — l'attente n'est pas définitive,
+un WIN/LOSS faux l'est.
 """
-import json
 import logging
 import re
 from datetime import timedelta
 
-from core.ai_search import ai_available, ai_search_complete
 from core.api_sports import fetch_results
+from core.score_sources import fetch_score
 from core.paim_engine import strict_team_match
 from core.db import log_to_ledger, update_signal_fields
 from core.paim_engine import resolve_selection_side
@@ -100,64 +98,15 @@ def result_from_api_sports(match_name: str, sport: str, match_date: str) -> dict
 
 def fetch_match_result(match_name: str, sport: str, match_date: str = "") -> dict | None:
     """
-    Score final d'un match terminé, api-sports d'abord puis recherche web.
+    Score final d'un match terminé — api-sports d'abord, puis la chaîne
+    déterministe de core/score_sources (MLB statsapi, TheSportsDB).
     Returns {"home_score": int, "away_score": int, "completed": True} or None.
+    None veut dire « pas trouvé aujourd'hui », jamais un état terminal.
     """
     exact = result_from_api_sports(match_name, sport, match_date)
     if exact:
         return exact
-
-    if not ai_available():
-        return None
-
-    sport_ctx = {"soccer": "football/soccer",
-                 "basketball": "NBA basketball",
-                 "euroleague_basketball": "Euroleague basketball",
-                 "americanfootball": "NFL american football",
-                 # NCAAF : « NFL » biaiserait la recherche vers la mauvaise ligue
-                 "college_football": "NCAA college football",
-                 "tennis": "tennis"}.get(sport, sport)
-    context = match_name + (f" (date: {match_date})" if match_date else "")
-
-    prompt = (
-        f"Search the web to find the FINAL SCORE of this {sport_ctx} match:\n"
-        f"{context}\n\n"
-        f"Return ONLY valid JSON. If match finished:\n"
-        f'{{"completed":true,"home_score":2,"away_score":1}}\n'
-        f"If not finished or not found:\n"
-        f'{{"completed":false}}'
-    )
-
-    text = ai_search_complete(
-        prompt,
-        queries=[f"{match_name} {sport_ctx} final score result {match_date}".strip()],
-        label=f"Settlement/{match_name}",
-        max_tokens=500, temperature=0.0, timeout=45,
-        # Lane SACRÉE : sa réserve journalière ne peut être entamée par aucune
-        # autre lane. Le 2026-08-02, le scan avait épuisé le TPD Groq et le
-        # settlement n'a plus rien réglé de la journée — ledger vide,
-        # /performance figé. Voir AI_SETTLEMENT_RESERVE dans core/ai_router.py.
-        lane="settlement",
-    )
-    if not text:
-        return None
-
-    try:
-        text  = re.sub(r'```(?:json)?|```', '', text)
-        m     = re.search(r'\{[^{}]+\}', text)
-        if not m:
-            log.warning("settlement no-JSON [%s]: text=%r", match_name, text[:200])
-            return None
-        data  = json.loads(m.group())
-        if data.get("completed"):
-            return {
-                "home_score": int(data.get("home_score", 0)),
-                "away_score": int(data.get("away_score", 0)),
-                "completed": True,
-            }
-    except Exception as e:
-        log.error("settlement parse [%s]: %s", match_name, e)
-    return None
+    return fetch_score(match_name, sport, match_date)
 
 
 def determine_outcome(sport: str, market_key: str, selection_name: str,

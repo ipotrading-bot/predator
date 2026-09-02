@@ -13,11 +13,13 @@ trace the flow by hand. This skill is that trace, pre-done.
 ## Data flow (in order)
 
 1. **Odds ingestion** — `core/odds_api.py` (Tier 1, real Pinnacle+1XBet via The Odds
-   API) → `core/harvester.py` (Tier 2/3, recherche web + MMA/eSports/alt sports) →
-   `core/oracle.py` (repli match par match, max 3 appels/scan). **Gemini a été
-   SUPPRIMÉ du repo le 2026-07-21 (commit 0a7332e)** : toute la recherche passe
-   par `core/ai_search.py` (Groq + Tavily). Si un diagnostic vous ramène à
-   Gemini, c'est cette skill qui était périmée, pas le code.
+   API) → `core/harvester.py` (Tier 2 : LineFeed + api-sports + odds-api.io +
+   titan007, enrichi par l'exchange Matchbook). **La recherche web a été
+   SUPPRIMÉE le 2026-09-02 avec Groq/Tavily** (avant elle, Gemini l'avait été
+   le 2026-07-21) : plus d'oracle LLM, plus de `fetch_pinnacle_prices`, plus
+   d'estimateur Tier 3 — un match sans prix sharp RÉEL est écarté. Si un
+   diagnostic vous ramène à Groq/Tavily/oracle, c'est cette skill qui était
+   périmée, pas le code.
 2. **Signal generation** — `run_engine.py` `run()` calls `_process_h2h` /
    `_process_totals` / `_process_spreads`, which call into `core/math_engine.py`
    (devigging: `calc_dnb`, `devig_prob`, `to_binary`) and `core/paim_engine.py`
@@ -35,9 +37,12 @@ trace the flow by hand. This skill is that trace, pre-done.
    `ai_learning_ledger` and the `/performance` page for months — check this file
    first if either looks empty again.
 4. **Audit** — `run_audit.py` → `core/audit_engine.py` (`run()`, cron: every 6h).
-   Pass 1: `core/settlement.py` (`settle_signal`, score réel via `core/ai_search.py` — Groq/Tavily) →
-   `status='settled'`. Pass 2 fallback: CLV vs current Pinnacle line via
-   `core/oracle.py` → `status='closed'` (real closing line) or `'expired'` (proxy).
+   Pass 1: `core/settlement.py` (`settle_signal`, score réel 100 % DÉTERMINISTE :
+   api-sports puis `core/score_sources.py` — MLB statsapi, TheSportsDB par
+   équipe ; ZÉRO appel IA depuis le 2026-09-02) → `status='settled'`.
+   Pass 2 fallback: CLV depuis la closing line DÉJÀ capturée par les scans
+   (colonne `closing_pinnacle_price`, sources oddsapi/exchange) →
+   `status='closed'`, sinon `'expired'` (proxy).
    Every successful path inserts one row into `ai_learning_ledger`.
 5. **Learning layer** — `core/learning_layer.py` `compute_and_save()`, called at the
    end of `audit_engine.run()`. Reads last 50 `ai_learning_ledger` rows per sport,
@@ -89,8 +94,8 @@ sans log). Quatre mécanismes v10.3 (commit « fix: key pool… ») :
   inaccessible » partait 40×/jour sans jamais le dire. Horodatages dans `meta`
   (`alert_*`).
 - **Coupe-circuit harvest** — `meta.harvest_empty_at` : un Tier 2 vide n'est
-  pas retenté avant `HARVEST_EMPTY_TTL_H` (3h). Préserve le TPD Groq pour le
-  settlement (qui en a besoin pour les scores). Tests :
+  pas retenté avant `HARVEST_EMPTY_TTL_H` (3h). (Il préservait le TPD Groq ;
+  depuis le 2026-09-02 il n'épargne plus que du temps et le LineFeed.) Tests :
   `tests/test_engine_circuit_breaker.py`.
 - **API-Football utile** — `/odds` PAR DATE paginé (≤ 7 req/cycle au lieu de
   50+) et **Pinnacle extrait de la réponse** (`odds_pinnacle`) → signaux foot
@@ -120,7 +125,7 @@ laissez-passer là où l'IP est refusée) — ou Matchbook, qui ne filtre pas.
 | 2 | **odds-api.io** (`core/odds_api_io.py`) | soft (1X2 + totals + handicaps) | `ODDS_API_IO_KEY` + pool `ODDS_API_IO_KEYS` | 500/jour et 2 books PAR COMPTE |
 | 2 | **Titan007** (`core/titan007.py`) | soft **et** sharp, foot | aucune | ~500/jour (tolérance) |
 | 2bis | LineFeed 1xbet/Melbet | soft | aucune | bloqué par IP |
-| 3 | recherche web (`core/ai_search.py`) | sharp estimé | Groq/Tavily | quotas morts régulièrement |
+| ~~3~~ | ~~recherche web~~ | — | — | SUPPRIMÉE le 2026-09-02 (Groq/Tavily retirés du pipeline) |
 
 `python scripts/ops.py sources` sonde tout cela sans dépenser un crédit —
 c'est la commande à lancer AVANT tout diagnostic « pourquoi 0 signal ».
@@ -193,10 +198,10 @@ verrouillées par `tests/test_engine_circuit_breaker.py` :
 **L'enrichissement par l'exchange tourne DEUX fois par scan.** Le Tier 1.5
 s'exécute avant le Tier 2 ; les matchs d'odds-api.io/api-sports n'existent
 pas encore à ce moment-là. Le second appel a lieu juste avant
-`fetch_pinnacle_prices()`, donc chaque match servi par l'exchange est un
-match de moins à chercher sur le web (quota Groq préservé pour le
-settlement). Supprimer l'un des deux appels rétablit silencieusement la
-panne du 2026-08-20.
+le tri sharp du Tier 2, donc chaque match servi par l'exchange est un match
+de plus qui garde son edge calculable au lieu de partir en « Échec prix
+Sharp ». Supprimer l'un des deux appels rétablit silencieusement la panne
+du 2026-08-20.
 
 **Matchbook — ce qu'il faut savoir avant d'y toucher.** Le milieu back/lay
 donne une marge d'environ 0,1 % (meilleure que Pinnacle, ~2 %), d'où son rôle
@@ -379,7 +384,7 @@ couche de mise, publiés quand même). Depuis :
 | `scan.yml` — `golden` | horaire (H+25), 24/j | scan de mouvement de ligne à T-120min, **Tier 1 OddsAPI depuis le 2026-09-01** (`ODDS_API=1` posé par `scripts/ci_scan_mode.py`, dépense bornée par le rythme mensuel de `core/scan_windows.py`), purge à chaque run, lit `meta.scan_request` (bouton Scan → promu en scan **standard** depuis le 2026-09-01). Fantôme **baseball** (`SHADOW_SPORTS`) LEVÉ le 2026-09-01 — seul `SHADOW_GOLDEN_HOUR` reste. **Ses signaux partent en FANTÔME depuis le 2026-08-06** (`SHADOW_GOLDEN_HOUR`) : persistés et réglés, jamais recommandés — 39% de réussite pour 54,5% requis, p=0,007. Porte aussi le step **REPRICE** (section dédiée) — gratuit, non fantôme, avec un pool de secrets qui ne contient aucune clé payante. Ne PAS ajouter de poller dédié pour compenser la latence du bouton Scan — c'est l'erreur du 2026-07-07. |
 | `scan.yml` — `standard` | **8x/jour sur les FENÊTRES FAVORABLES** (02/06/09/12/17/19/21/23 UTC) depuis le 2026-08-22 (était 12x/2h uniforme) | scan complet, fenêtre **24h**. Placement = `core/scan_windows.py` ; cadence dimensionnée sur le budget des sources gratuites — voir « L'arbitrage de cadence » |
 | `scan.yml` — `deep` | **2x/jour (05:33, 17:33)** depuis le 2026-08-22 (était 4) | **fenêtre 24h elle aussi** — `HOURS_AHEAD: "24"` explicite. Ce qui reste « deep » = `MAX_MATCHES=100` et `_QUOTA_DEEP`, pas l'horizon. |
-| `scan.yml` — `guerrilla` | **2x/jour (09:47, 21:47)** depuis le 2026-08-22 (était toutes les 2h) | scan sans OddsAPI (sources gratuites + recherche web renforcée, horizon 48h venu du CODE et non d'une variable) — c'est lui, pas un bouton, qui consomme le TPD Groq quand les sources sont mortes ; le coupe-circuit `harvest_empty_at` le neutralise 3h après un Tier 2 vide |
+| `scan.yml` — `guerrilla` | **2x/jour (09:47, 21:47)** depuis le 2026-08-22 (était toutes les 2h) | scan sans OddsAPI (sources gratuites, caches raccourcis, horizon 48h venu du CODE et non d'une variable) ; le coupe-circuit `harvest_empty_at` le neutralise 3h après un Tier 2 vide |
 | `scan.yml` — passe closing line | **à la fin de chaque tick** (36/j) | `run_closing_line.py`, `continue-on-error` : une passe ratée n'annule pas le scan déjà persisté |
 | `audit.yml` | toutes les 6h | settlement + CLV + couche d'apprentissage. **Ne pas renommer ce fichier** : `api/index.py` le déclenche par son nom. |
 | `closing_line.yml` | **3 ticks/h (H+14/34/54)** depuis le 2026-08-26 (était `4-59/10`, 144/j) | capture de la ligne de clôture, cadence alignée sur `CLOSING_LINE_REFRESH_MIN`. **Hors du verrou d'écriture** — voir CLAUDE.md pour la justification exacte, la version courte (« aucune ligne en commun ») étant fausse. |

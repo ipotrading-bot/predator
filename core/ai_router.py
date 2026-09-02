@@ -95,17 +95,16 @@ log = logging.getLogger("PREDATOR.ai_router")
 FILTER        = "filter"          # tri rapide de candidats, latence < 1 s
 ANALYZE       = "analyze"         # analyse contextuelle profonde
 TRANSLATE_CJK = "translate_cjk"   # alias d'équipes CJK (mission 3)
-SEARCH_READ   = "search_read"     # recherche / lecture web
-SETTLEMENT    = "settlement"      # SACRÉE — voir plus bas
 
 # La lane WIZ a été RETIRÉE le 2026-08-26 avec la page et le moteur Wiz
-# (décision opérateur : « la page wiz ne me sert pas »). Elle était
-# mono-fournisseur par construction — Mistral seul, domaine de panne isolé —
-# et portait à ce titre une exception dans refresh_catalogues(). Mistral n'est
-# plus une exception : il rejoint le registre ci-dessous comme fournisseur
-# ordinaire des lanes de SIGNAUX, ce qui est précisément la réallocation
-# demandée. Une lane de moins, une exception de moins.
-LANES = (FILTER, ANALYZE, TRANSLATE_CJK, SEARCH_READ, SETTLEMENT)
+# (décision opérateur : « la page wiz ne me sert pas »). Les lanes
+# SEARCH_READ et SETTLEMENT ont été RETIRÉES le 2026-09-02 avec Groq/Tavily :
+# le settlement lit désormais des API de scores structurées
+# (core/score_sources.py) et plus rien dans le pipeline ne fait de recherche
+# web — une lane sans consommateur ne ferait qu'alerter à tort quand ses
+# fournisseurs tombent. La réserve settlement (AI_SETTLEMENT_RESERVE, tenue
+# en négatif depuis le 2026-08-02) est partie avec elle.
+LANES = (FILTER, ANALYZE, TRANSLATE_CJK)
 
 # Circuit breaker par fournisseur : 3 échecs consécutifs → 30 min de repos.
 BREAKER_THRESHOLD = int(os.environ.get("AI_BREAKER_THRESHOLD", "3"))
@@ -185,44 +184,13 @@ class Provider:
 # limite du fournisseur : on veut basculer avant de se faire couper, jamais
 # après (leçon du compte api-sports SUSPENDU le 2026-08-20).
 REGISTRY: tuple = (
-    # ── Historique, préférés de leurs lanes actuelles (compat ascendante) ──
-    Provider(
-        name="groq", base_url="https://api.groq.com/openai/v1",
-        env_key="GROQ_API_KEY",
-        # Ordre établi par INFÉRENCE RÉELLE le 2026-08-26, aux plafonds SERRÉS
-        # de ce pipeline (max_tokens=80 pour un alias, 300 pour l'oracle) —
-        # même règle que Gemini et OpenRouter ci-dessous : les instruct
-        # d'abord, jamais un modèle de raisonnement en tête.
-        #
-        # CE JOUR-LÀ, `llama-3.3-70b-versatile` ET `llama-3.1-8b-instant` ont
-        # disparu du catalogue Groq (14 modèles, aucun llama de génération) :
-        # le routeur écartait donc Groq à chaque run — « AUCUNE préférence au
-        # catalogue » — et le pipeline perdait ses lanes FILTER/ANALYZE/
-        # SETTLEMENT/SEARCH_READ sans que rien ne soit cassé.
-        #
-        # Mesuré sur « traduis 曼城 », max_tokens=16 puis 80 :
-        #   qwen/qwen3.8-27b     → « Manchester City » aux DEUX plafonds ✅
-        #   qwen/qwen3.6-27b     → crache un bloc <think>, finish=length ❌
-        #   openai/gpt-oss-20b   → contenu VIDE aux deux plafonds       ❌
-        #   openai/gpt-oss-120b  → vide à 16, correct seulement dès ~200 ❌
-        # Les gpt-oss restent en repli : ils sont sains, mais seulement pour
-        # les appels qui laissent de la marge (settlement à 2048).
-        models=("qwen/qwen3.8-27b", "openai/gpt-oss-120b", "openai/gpt-oss-20b"),
-        lanes=(FILTER, ANALYZE, SETTLEMENT, SEARCH_READ),
-        # 160 et non 400 : la vraie contrainte de Groq n'est pas un nombre de
-        # requetes mais 100 000 TOKENS PAR JOUR, comptes PAR ORGANISATION (une
-        # 2e cle du meme compte ne rachete rien). Les appels de ce pipeline
-        # tournent autour de 600 tokens (lots Pinnacle de 25 matchs, contextes
-        # Tavily), soit ~165 appels avant epuisement. Un budget de 400 laissait
-        # croire a une reserve qui n'existe pas : on aurait continue d'appeler
-        # apres l'epuisement du TPD, et surtout on aurait epuise le TPD sur des
-        # completions simples alors que compound-mini en a besoin.
-        rpm=30, daily_requests=160, daily_tokens=100_000,
-        note="TPD 100k compte PAR ORGANISATION, pas par cle. SEUL fournisseur du "
-             "registre a porter groq/compound-mini (recherche web integree) : son "
-             "quota est donc irremplacable, d'ou un budget serre et la reserve "
-             "settlement qui ampute les autres lanes.",
-    ),
+    # Groq a été RETIRÉ du registre le 2026-09-02 (décision opérateur, avec
+    # Tavily) : son TPD de 100k tokens/jour par organisation s'épuisait chaque
+    # soir, son compound-mini ne servait que la recherche web — supprimée —
+    # et le settlement, son dernier consommateur critique, est devenu
+    # déterministe (core/score_sources.py). Ne pas le réenrôler sans décision
+    # opérateur explicite.
+    #
     # ── Palier gratuit permanent, sans carte — priorité 1 ──
     # ⚠️ CERBRAS ET SAMBANOVA : `payment_required`, TRANCHÉ PAR L'INFÉRENCE.
     # Leur catalogue répond 200 avec une vraie clé, mais le premier appel
@@ -237,7 +205,7 @@ REGISTRY: tuple = (
         name="cerebras", base_url="https://api.cerebras.ai/v1",
         env_key="CEREBRAS_API_KEY",
         models=("gpt-oss-120b", "gemma-4-31b"),
-        lanes=(FILTER, ANALYZE, SETTLEMENT, SEARCH_READ),
+        lanes=(FILTER, ANALYZE),
         rpm=30, daily_requests=250, terms_flag="payment_required",
         note="cle valide, catalogue 200 (2 modeles), mais inference 402 "
              "payment_required — verifie le 2026-08-22",
@@ -274,7 +242,7 @@ REGISTRY: tuple = (
                 "@cf/zai-org/glm-4.7-flash",
                 "@cf/openai/gpt-oss-120b",
                 "@cf/deepseek-ai/deepseek-v4-flash-0731"),
-        lanes=(FILTER, ANALYZE, SEARCH_READ, TRANSLATE_CJK, SETTLEMENT),
+        lanes=(FILTER, ANALYZE, TRANSLATE_CJK),
         rpm=0, daily_requests=200,
         note="10 000 neurons/j. Demande AUSSI CLOUDFLARE_ACCOUNT_ID : l'identifiant "
              "de compte est dans l'URL. Catalogue sous /ai/models/search, inference "
@@ -284,7 +252,7 @@ REGISTRY: tuple = (
         name="nebius", base_url="https://api.studio.nebius.ai/v1",
         env_key="NEBIUS_API_KEY",
         models=("Qwen/Qwen3-32B", "meta-llama/Llama-3.3-70B-Instruct"),
-        lanes=(FILTER, ANALYZE, TRANSLATE_CJK, SEARCH_READ),
+        lanes=(FILTER, ANALYZE, TRANSLATE_CJK),
         rpm=0, daily_requests=150,
         note="credits gratuits a l'inscription ; catalogue derriere cle (401 sans cle). "
              "Nebius a renomme « AI Studio » en « Token Factory » : api.studio.nebius.ai "
@@ -299,7 +267,7 @@ REGISTRY: tuple = (
         models=("Qwen/Qwen3-32B-TEE",
                 "deepseek-ai/DeepSeek-V4-Flash-0731-TEE",
                 "zai-org/GLM-5.2-TEE"),
-        lanes=(FILTER, ANALYZE, TRANSLATE_CJK, SEARCH_READ, SETTLEMENT),
+        lanes=(FILTER, ANALYZE, TRANSLATE_CJK),
         rpm=0, daily_requests=150, terms_flag="payment_required",
         note="catalogue PUBLIC lisible (14 modeles) mais inference 402 sur TOUS : "
              "« Quota exceeded and account balance is $0.0 ». Compte a crediter. "
@@ -331,7 +299,7 @@ REGISTRY: tuple = (
                 "nvidia/nemotron-3-super-120b-a12b:free",
                 "z-ai/glm-5.2:free",
                 "liquid/lfm-2.5-2.6b:free"),
-        lanes=(ANALYZE, FILTER, TRANSLATE_CJK, SEARCH_READ),
+        lanes=(ANALYZE, FILTER, TRANSLATE_CJK),
         # 40 et non 150 : l'endpoint /key confirme `is_free_tier: true` et
         # `total_credits: 0`. Le palier gratuit d'OpenRouter plafonne à ~50
         # requetes/jour (1000 apres un credit unique de 10 $). Un budget
@@ -351,7 +319,7 @@ REGISTRY: tuple = (
         # en 11 tokens, llama-3.3-70b en 42.
         models=("deepseek-ai/deepseek-v4-flash-0731",
                 "meta/llama-3.3-70b-instruct"),
-        lanes=(ANALYZE, FILTER, SEARCH_READ),
+        lanes=(ANALYZE, FILTER),
         rpm=40, daily_requests=200, terms_flag="evaluation",
         note="102 modeles, cle testee OK le 2026-08-22. terms_flag VERIFIE (et non "
              "plus suppose) : NVIDIA reserve le palier gratuit au developpement, "
@@ -364,7 +332,7 @@ REGISTRY: tuple = (
         name="sambanova", base_url="https://api.sambanova.ai/v1",
         env_key="SAMBANOVA_API_KEY",
         models=("Meta-Llama-3.3-70B-Instruct", "DeepSeek-V3.2", "gpt-oss-120b"),
-        lanes=(FILTER, ANALYZE, SETTLEMENT, SEARCH_READ),
+        lanes=(FILTER, ANALYZE),
         rpm=60, daily_requests=200, terms_flag="payment_required",
         note="catalogue 200 (7 modeles) mais inference 402 PAYMENT_METHOD_REQUIRED, "
              "balance_units=0 — carte OBLIGATOIRE, verifie le 2026-08-22",
@@ -374,7 +342,7 @@ REGISTRY: tuple = (
         env_key="OVH_AI_API_KEY",
         models=("Meta-Llama-3_3-70B-Instruct", "Qwen3-32B",
                 "Mistral-Small-3.2-24B-Instruct-2506"),
-        lanes=(FILTER, ANALYZE, TRANSLATE_CJK, SEARCH_READ),
+        lanes=(FILTER, ANALYZE, TRANSLATE_CJK),
         rpm=0, daily_requests=150,
         note="24 modeles (2026-08-22) ; souverainete UE",
     ),
@@ -385,7 +353,7 @@ REGISTRY: tuple = (
         # preference d'origine, n'existe pas chez Scaleway.
         models=("llama-3.3-70b-instruct", "gemma-4-26b-a4b-it",
                 "glm-5.2", "mistral-small-3.2-24b-instruct-2506"),
-        lanes=(FILTER, ANALYZE, SEARCH_READ, TRANSLATE_CJK),
+        lanes=(FILTER, ANALYZE, TRANSLATE_CJK),
         rpm=0, daily_requests=150, terms_flag="quota_zero",
         note="souverainete UE. Cle testee le 2026-08-22 : le catalogue repond 200 "
              "(15 modeles) mais TOUTE inference rend 429 « INSUFFICIENT QUOTA », y "
@@ -403,7 +371,7 @@ REGISTRY: tuple = (
         # donne donc acces qu'a une PARTIE du catalogue — mettre un modele
         # payant en tete aurait ecarte le fournisseur a chaque run.
         models=("gpt-oss:120b", "gemma4:31b", "glm-5.2", "kimi-k3"),
-        lanes=(SETTLEMENT, ANALYZE, TRANSLATE_CJK),
+        lanes=(ANALYZE, TRANSLATE_CJK),
         rpm=0, daily_requests=100,
         catalog_path="/models",
         note="19 modeles au catalogue mais tous ne sont pas dans le palier gratuit "
@@ -829,26 +797,17 @@ def refresh_catalogues(alert=None) -> dict:
 
 
 # ── Routage ──────────────────────────────────────────────────────────
-
-# RÉSERVE SETTLEMENT — sacrée.
-# Le 2026-08-02, le TPD Groq a été épuisé par le scan et le settlement n'a
-# plus rien pu régler de la journée : le ledger est resté vide et /performance
-# figé. La réserve est donc gardée EN NÉGATIF : les lanes autres que
-# SETTLEMENT voient leur budget amputé de la réserve, si bien qu'elles
-# s'arrêtent avant d'entamer ce qui lui est dû. Personne ne « prend » la
-# réserve : les autres n'y ont simplement jamais accès.
-SETTLEMENT_RESERVE = int(os.environ.get("AI_SETTLEMENT_RESERVE", "80"))
+# (La « réserve settlement » AI_SETTLEMENT_RESERVE, tenue en négatif depuis
+# le 2026-08-02, est partie le 2026-09-02 avec la lane SETTLEMENT : le
+# settlement ne consomme plus un seul token d'IA.)
 
 
 def budget_left(p: Provider, lane: str) -> int:
     """Requêtes restantes pour ce fournisseur DANS CETTE LANE."""
+    del lane
     if not p.daily_requests:
-        return 1 if lane == SETTLEMENT else 1
-    spent = daily_quota.spent(p.bucket)
-    ceiling = p.daily_requests
-    if lane != SETTLEMENT and SETTLEMENT in p.lanes:
-        ceiling = max(0, ceiling - SETTLEMENT_RESERVE)
-    return max(0, ceiling - spent)
+        return 1
+    return max(0, p.daily_requests - daily_quota.spent(p.bucket))
 
 
 # Marge de tolerance sur la cadence : a 30 % de la journee ecoulee, un
@@ -876,8 +835,6 @@ def _pacing(p: Provider, lane: str, now: datetime | None = None) -> tuple:
     ceiling = p.daily_requests
     if not ceiling:
         return False, 1.0
-    if lane != SETTLEMENT and SETTLEMENT in p.lanes:
-        ceiling = max(1, ceiling - SETTLEMENT_RESERVE)
     spent = daily_quota.spent(p.bucket)
     autorise = ceiling * (_day_fraction(now) + PACING_HEADROOM)
     return spent > autorise, max(0.0, (ceiling - spent) / ceiling)

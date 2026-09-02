@@ -1,12 +1,12 @@
 """
-tests/test_ai_providers.py — la chaîne de repli de `core/ai_search.py` passe
-désormais par `core/ai_router.py` (mission 4).
+tests/test_ai_providers.py — la façade `core/ai_search.py` délègue TOUT au
+routeur (`core/ai_router.py`) depuis la suppression de Groq/Tavily (2026-09-02).
 
 Ce qui était testé ici depuis la mission 2 — clé absente = fournisseur
 ignoré, budget épuisé = fournisseur suivant, quota compté dans meta — n'a pas
 disparu : c'est le ROUTEUR qui le porte, et `tests/test_ai_router.py` le
 vérifie sur le registre réel. Il reste ici ce qui appartient vraiment à
-ai_search : la délégation, le cache et les paliers de modèles Groq.
+ai_search : la délégation, le cache, et l'absence de tout client direct.
 """
 from core import ai_router, ai_search, daily_quota
 
@@ -21,8 +21,7 @@ class _R:
                 "usage": {"total_tokens": 12}}
 
 
-def _no_groq(monkeypatch):
-    monkeypatch.setattr(ai_search, "_groq_keys", lambda: [])
+def _sans_cache(monkeypatch):
     monkeypatch.setattr(ai_search, "_cache_get", lambda k: None)
     monkeypatch.setattr(ai_search, "_cache_put", lambda k, t: None)
 
@@ -49,7 +48,7 @@ def _inert_health(monkeypatch):
 
 class TestDelegationAuRouteur:
     def test_sans_aucune_cle_aucun_appel_nest_tente(self, monkeypatch):
-        _no_groq(monkeypatch); _quota(monkeypatch); _inert_health(monkeypatch)
+        _sans_cache(monkeypatch); _quota(monkeypatch); _inert_health(monkeypatch)
         for p in ai_router.REGISTRY:
             monkeypatch.delenv(p.env_key, raising=False)
         calls = []
@@ -58,17 +57,17 @@ class TestDelegationAuRouteur:
         assert ai_search.ai_complete("q") is None
         assert calls == []
         assert ai_search.providers_available() == []
+        assert ai_search.ai_available() is False
 
     def test_providers_available_lit_le_registre_du_routeur(self, monkeypatch):
         for p in ai_router.REGISTRY:
             monkeypatch.delenv(p.env_key, raising=False)
         monkeypatch.setenv("OPENROUTER_API_KEY", "o")
-        monkeypatch.setenv("GROQ_API_KEY", "g")
-        # Groq est exclu : `providers_available` désigne le REPLI derrière lui.
         assert ai_search.providers_available() == ["openrouter"]
+        assert ai_search.ai_available() is True
 
-    def test_le_repli_sert_la_reponse_et_compte_le_quota(self, monkeypatch):
-        _no_groq(monkeypatch); added = _quota(monkeypatch); _inert_health(monkeypatch)
+    def test_le_routeur_sert_la_reponse_et_compte_le_quota(self, monkeypatch):
+        _sans_cache(monkeypatch); added = _quota(monkeypatch); _inert_health(monkeypatch)
         for p in ai_router.REGISTRY:
             monkeypatch.delenv(p.env_key, raising=False)
         monkeypatch.setenv("OPENROUTER_API_KEY", "o")
@@ -83,7 +82,7 @@ class TestDelegationAuRouteur:
         assert added == [("ai_openrouter", 1)]
 
     def test_le_routeur_en_panne_ne_remonte_jamais_dexception(self, monkeypatch):
-        _no_groq(monkeypatch); _quota(monkeypatch)
+        _sans_cache(monkeypatch); _quota(monkeypatch)
         def boom(*a, **k):
             raise RuntimeError("routeur casse")
         monkeypatch.setattr(ai_router, "route", boom)
@@ -106,10 +105,9 @@ class TestConsumptionReduction:
     def test_cache_hit_makes_no_call_at_all(self, monkeypatch):
         monkeypatch.setattr(ai_search, "_cache_get", lambda k: "cached!")
         calls = []
-        monkeypatch.setattr(ai_search, "_groq_post", lambda *a, **k: calls.append(1) or "x")
-        monkeypatch.setattr(ai_search.requests, "post", lambda *a, **k: calls.append(1) or _R())
+        monkeypatch.setattr(ai_search, "_fallback_post",
+                            lambda *a, **k: calls.append(1) or "x")
         assert ai_search.ai_complete("same prompt") == "cached!"
-        assert ai_search.ai_search_complete("same prompt", ["q"]) == "cached!"
         assert calls == []
 
     def test_cache_key_is_normalised(self):
@@ -117,32 +115,16 @@ class TestConsumptionReduction:
         b = ai_search._cache_key("find the score", ["q2", "q1"])
         assert a == b and a.startswith("ai_cache_")
 
-    def test_both_tiers_follow_registry_order(self, monkeypatch):
-        """Les DEUX paliers suivent l'ordre du registre — plus d'inversion.
+    def test_le_palier_choisit_la_lane_du_routeur(self, monkeypatch):
+        """`tier` ne réordonne plus des modèles : il choisit la LANE du
+        routeur — "light" → filter, "heavy" → analyze."""
+        _sans_cache(monkeypatch)
+        lanes = []
 
-        Avant le 2026-08-26, « light » mettait le petit modèle devant le gros
-        pour filtrer vite et pas cher. Le catalogue Groq d'alors offrait deux
-        modèles INSTRUCT, l'inversion était sans risque. Il n'en offre plus
-        qu'un : les suivants sont des modèles de RAISONNEMENT, qui rendent un
-        contenu VIDE sous les plafonds serrés du filtrage (max_tokens=80,
-        mesuré). Inverser l'ordre pour « light » ferait donc échouer EN
-        SILENCE l'estimateur et le dictionnaire d'alias — ses deux appelants.
-
-        `tier` reste utile : il choisit la lane du repli (`_TIER_LANE`).
-        """
-        monkeypatch.setattr(ai_search, "_cache_get", lambda k: None)
-        monkeypatch.setattr(ai_search, "_cache_put", lambda k, t: None)
-        order = []
-
-        def groq_post(model, *a, **k):
-            order.append(model); return "t"
-        monkeypatch.setattr(ai_search, "_groq_post", groq_post)
+        def fake(messages, max_tokens, temperature, timeout, label, lane="analyze"):
+            lanes.append(lane); return "t"
+        monkeypatch.setattr(ai_search, "_fallback_post", fake)
         ai_search.ai_complete("q", tier="light")
         ai_search.ai_complete("q", tier="heavy")
-        tete = ai_router.by_name("groq").models[0]
-        assert order == [tete, tete]
-
-    def test_estimator_uses_the_light_tier(self):
-        import inspect
-        from core import harvester
-        assert 'tier="light"' in inspect.getsource(harvester.fetch_estimated_prices)
+        ai_search.ai_complete("q", lane="translate_cjk")
+        assert lanes == ["filter", "analyze", "translate_cjk"]

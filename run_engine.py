@@ -2,7 +2,7 @@
 run_engine.py — PREDATOR PAIM v8.8 — Hunter Multi-Sport + Portfolio Balancer
 Markets: h2h (NBA/Tennis) | spreads (NBA/Soccer) | totals (all)
 Sharp filter: Prob. Sharp (Power devigged, see core/math_engine.py) >= threshold per market type
-Pipeline: OddsAPI → Web Search (Groq/Tavily) → AI Estimator → AH0.0/ML/PS/OU → Edge → Balancer → Supabase
+Pipeline: OddsAPI → sources gratuites (api-sports/odds-api.io/titan007/Matchbook) → AH0.0/ML/PS/OU → Edge → Balancer → Supabase
 All timestamps : UTC/GMT — no local-time contamination.
 """
 import hashlib
@@ -20,8 +20,7 @@ from dotenv import load_dotenv
 from core.db import (get_db, MissingCredentialsError,
                      log_to_ledger as _log_to_ledger,
                      is_unique_violation as _is_unique_violation)
-from core.harvester import fetch_matches, fetch_pinnacle_prices, fetch_estimated_prices, fetch_betfair_prices
-from core.ai_search import ai_dead as gemini_quota_dead
+from core.harvester import fetch_matches, fetch_betfair_prices
 from core.closing_line import capture_from_exchange, capture_from_scan
 from core.matchbook import fetch_matchbook_prices
 # Appariement slate ↔ exchange : déplacé dans core/ le 2026-08-26 pour que
@@ -41,7 +40,6 @@ from core.odds_api import (fetch_odds, pool_status as _odds_pool_status,
 from core.scan_windows import (SpendPolicy as _SpendPolicy, CYCLE_DAYS as _ODDS_CYCLE_DAYS,
                                daily_allowance as _odds_daily_allowance)
 from core.constants import CLOSING_LINE_WINDOW_MIN as _CLOSING_LINE_WINDOW_MIN
-from core.oracle import get_pinnacle_price, MAX_ORACLE_DEFAULT as _MAX_ORACLE_DEFAULT
 from core.run_contract import terminer as _terminer_run, verdict_de_fin
 from core.learning_layer import load_thresholds as _load_thresholds
 from core.learning_layer import load_segment_thresholds as _load_segment_thresholds
@@ -276,32 +274,12 @@ _TTL_SOFT_SLATE = float(os.environ.get("CACHE_SOFT_SLATE_TTL_H", "4"))
 # (géoblocage US non constaté en test, voir core/matchbook.py).
 _MATCHBOOK_OFF = os.environ.get("MATCHBOOK_OFF", "") == "1"
 
-# Nombre de repêchages oracle (1 appel IA chacun) quand la recherche groupée
-# n'a pas trouvé de ligne Pinnacle pour un match. Le défaut vaut ZÉRO depuis le
-# 2026-08-27 : un prix « Pinnacle » produit par un LLM ne peut pas servir de
-# référence sharp. La valeur vit dans `core.oracle`, à côté du code qu'elle
-# gouverne, plutôt qu'en dur ici — voir sa docstring pour le raisonnement et
-# pour les deux chemins que ce réglage NE couvre pas.
-_MAX_ORACLE = int(os.environ.get("MAX_ORACLE", str(_MAX_ORACLE_DEFAULT)))
-
 # Divergence tolérée entre DEUX avis sharp indépendants (Pinnacle et
 # l'exchange), en POINTS de probabilité. Au-delà, le match entier est refusé :
 # voir `core.constants.EXCHANGE_DIVERGENCE_PTS` pour la mesure qui la fonde et
 # pour ce qu'elle ne couvre pas encore.
 _EXCHANGE_DIVERGENCE_PTS = float(
     os.environ.get("EXCHANGE_DIVERGENCE_PTS", str(_EXCHANGE_DIVERGENCE_DEFAULT)))
-
-# Sports absents du plan OddsAPI : la recherche web est leur SEULE source de
-# prix sharp. Le budget oracle doit leur revenir en premier — il se dépensait
-# dans l'ordre de la liste, or SPORT_IDS énumère le foot en premier et le MMA
-# en dernier, donc les 3 slots partaient toujours au foot. Run 30766186188 :
-# les 6 combats UFC récupérés chez Melbet (Blachowicz, Rakic, de Ridder…) sont
-# tous tombés en « Échec prix Sharp » sans qu'un seul appel oracle soit tenté.
-# Plus AUCUN sport hors OddsAPI depuis le 2026-08-22 : eSports/tabletennis/
-# volleyball/handball retirés (Phase 0), MMA passé sur flux OddsAPI réel
-# (Phase 1). Conservé vide pour la priorité du Tier 3 (oracle) : tout sport
-# ajouté ici passerait devant les autres dans la file de l'oracle.
-_NO_ODDSAPI_SPORTS: frozenset = frozenset()
 
 SPORT_EMOJI  = {
     "soccer": "⚽", "tennis": "🎾", "basketball": "🏀", "boxing": "🥊",
@@ -1031,9 +1009,9 @@ def _enrich_from_exchange(items: list, prices: dict, log) -> int:
     calculable, donc sans signal (constaté sur le run Golden Hour du
     2026-08-20 19:07 : 10 marchés Matchbook chargés, 0 match à enrichir).
 
-    Le second appel a lieu AVANT `fetch_pinnacle_prices()` : chaque match
-    servi par l'exchange est un match de moins à faire chercher sur le web,
-    donc du quota Groq économisé pour le settlement.
+    Le second appel a lieu AVANT le tri sharp du Tier 2 : chaque match servi
+    par l'exchange est un match de plus qui garde son edge calculable au lieu
+    d'être écarté « Échec prix Sharp ».
 
     ⚠️ N'écrit toujours RIEN dans le prix de clôture : `capture_from_exchange`
     reçoit le dict de prix BRUT, jamais ces matchs enrichis (voir sa
@@ -1524,97 +1502,83 @@ def _process_h2h(m, name, sport, league, home, away, emoji, signals, sb, now, lo
     prob_min    = SHARP_PROB_BY_MARKET.get("h2h_soccer" if sport == "soccer" else "h2h", 0.52)
     sources_found: dict = {}
 
-    if "_oracle_price" in m:
-        pin_price = m["_oracle_price"]
-        executable_price, _, soft_fav = to_binary(m["odds_1xbet"], sport, home, away)
-        pin_fav = m.get("_oracle_team", "")
-        # Strict Matching: if oracle returned no team name, outcome alignment
-        # is unverifiable — discard rather than risk a cross-outcome comparison.
-        if not pin_fav:
-            log.info("DISCARD | %s %s — oracle team unknown, outcome alignment unverifiable", emoji, name)
+    # La branche `_oracle_price` (prix « Pinnacle » rendu par un LLM, sans
+    # contre-cote pour deviguer) a été SUPPRIMÉE le 2026-09-02 avec l'oracle
+    # web-search : plus rien ne pose cette clé.
+    executable_price, _, soft_fav = to_binary(m["odds_1xbet"], sport, home, away)
+    # Strict Matching: lock Pinnacle lookup to the same position as 1XBet
+    # (fav_key "1"=home, "2"=away). Never run to_binary() on Pinnacle
+    # independently — it could pick a different favourite and silently
+    # compare Como's 1XBet odd against Parma's Pinnacle odd.
+    fav_key = "1" if soft_fav == home else "2"
+    opp_key = "2" if fav_key == "1" else "1"
+    po = m.get("odds_pinnacle", {})
+    if sport == "soccer":
+        from core.math_engine import calc_dnb
+        # Pinnacle DNB — correct 3-arg formula (fav, opp, draw)
+        pin_fav_raw = float(po.get(fav_key, 0) or 0)
+        pin_opp_raw = float(po.get(opp_key, 0) or 0)
+        pin_draw    = float(po.get("X", 0) or 0)
+        pin_price = calc_dnb(pin_fav_raw, pin_opp_raw, pin_draw)
+        dnb_other = calc_dnb(pin_opp_raw, pin_fav_raw, pin_draw)
+
+        # Weighted Power devig: build source prices for BOTH sides
+        source_prices_fav = {"pinnacle": pin_price}
+        source_prices_opp = {"pinnacle": dnb_other}
+        # `odds_exchange` est posé par _enrich_from_exchange UNIQUEMENT
+        # quand l'exchange s'accorde avec Pinnacle : sa contribution est
+        # donc bornée par EXCHANGE_DIVERGENCE_PTS, par construction.
+        for src_key, src_name in (("odds_circa", "circa"), ("odds_cris", "cris"),
+                                  ("odds_exchange", "exchange")):
+            so = m.get(src_key) or {}
+            s_fav  = float(so.get(fav_key, 0) or 0)
+            s_opp  = float(so.get(opp_key, 0) or 0)
+            s_draw = float(so.get("X", 0) or 0)
+            sp_f = calc_dnb(s_fav, s_opp, s_draw)
+            sp_o = calc_dnb(s_opp, s_fav, s_draw)
+            if sp_f > 1.01:
+                source_prices_fav[src_name] = sp_f
+            if sp_o > 1.01:
+                source_prices_opp[src_name] = sp_o
+
+        con_fav, sources_found, is_volatile, consensus_score = calculate_consensus_price(source_prices_fav, sport)
+        if is_volatile:
+            log.info("VOLATILE | %s %s — CV>1.2%% — DISCARD", emoji, name)
             return
-        # Oracle returns a single-source price with no opposing-side odd to
-        # devig against, so we can't compute a true Power-devigged probability.
-        # Naive implied prob (1/price) is a conservative stand-in: unlike a
-        # hardcoded 1.0, it still trips the sharp_prob quality gate below
-        # and doesn't inflate the Kelly stake to the theoretical maximum.
-        sharp_prob = round(1 / pin_price, 4) if pin_price > 1.01 else 0.0
-        sharp_cons = sharp_prob   # proba implicite vigorisée = déjà une borne basse
+        con_opp, _, _, _ = calculate_consensus_price(source_prices_opp, sport)
+        if con_fav > 1.01:
+            pin_price = con_fav
+        if con_opp > 1.01:
+            dnb_other = con_opp
+        sharp_prob, sharp_cons = devig_bounds(pin_price, dnb_other)
     else:
-        executable_price, _, soft_fav = to_binary(m["odds_1xbet"], sport, home, away)
-        # Strict Matching: lock Pinnacle lookup to the same position as 1XBet
-        # (fav_key "1"=home, "2"=away). Never run to_binary() on Pinnacle
-        # independently — it could pick a different favourite and silently
-        # compare Como's 1XBet odd against Parma's Pinnacle odd.
-        fav_key = "1" if soft_fav == home else "2"
-        opp_key = "2" if fav_key == "1" else "1"
-        po = m.get("odds_pinnacle", {})
-        if sport == "soccer":
-            from core.math_engine import calc_dnb
-            # Pinnacle DNB — correct 3-arg formula (fav, opp, draw)
-            pin_fav_raw = float(po.get(fav_key, 0) or 0)
-            pin_opp_raw = float(po.get(opp_key, 0) or 0)
-            pin_draw    = float(po.get("X", 0) or 0)
-            pin_price = calc_dnb(pin_fav_raw, pin_opp_raw, pin_draw)
-            dnb_other = calc_dnb(pin_opp_raw, pin_fav_raw, pin_draw)
+        pin_price = float(po.get(fav_key, 0) or 0)
+        opp_price = float(po.get(opp_key, 0) or 0)
 
-            # Weighted Power devig: build source prices for BOTH sides
-            source_prices_fav = {"pinnacle": pin_price}
-            source_prices_opp = {"pinnacle": dnb_other}
-            # `odds_exchange` est posé par _enrich_from_exchange UNIQUEMENT
-            # quand l'exchange s'accorde avec Pinnacle : sa contribution est
-            # donc bornée par EXCHANGE_DIVERGENCE_PTS, par construction.
-            for src_key, src_name in (("odds_circa", "circa"), ("odds_cris", "cris"),
-                                      ("odds_exchange", "exchange")):
-                so = m.get(src_key) or {}
-                s_fav  = float(so.get(fav_key, 0) or 0)
-                s_opp  = float(so.get(opp_key, 0) or 0)
-                s_draw = float(so.get("X", 0) or 0)
-                sp_f = calc_dnb(s_fav, s_opp, s_draw)
-                sp_o = calc_dnb(s_opp, s_fav, s_draw)
-                if sp_f > 1.01:
-                    source_prices_fav[src_name] = sp_f
-                if sp_o > 1.01:
-                    source_prices_opp[src_name] = sp_o
+        # Weighted Power devig: build source prices for BOTH sides
+        source_prices_fav = {"pinnacle": pin_price}
+        source_prices_opp = {"pinnacle": opp_price}
+        for src_key, src_name in (("odds_circa", "circa"), ("odds_cris", "cris"),
+                                  ("odds_exchange", "exchange")):
+            so = m.get(src_key) or {}
+            sp_f = float(so.get(fav_key, 0) or 0)
+            sp_o = float(so.get(opp_key, 0) or 0)
+            if sp_f > 1.01:
+                source_prices_fav[src_name] = sp_f
+            if sp_o > 1.01:
+                source_prices_opp[src_name] = sp_o
 
-            con_fav, sources_found, is_volatile, consensus_score = calculate_consensus_price(source_prices_fav, sport)
-            if is_volatile:
-                log.info("VOLATILE | %s %s — CV>1.2%% — DISCARD", emoji, name)
-                return
-            con_opp, _, _, _ = calculate_consensus_price(source_prices_opp, sport)
-            if con_fav > 1.01:
-                pin_price = con_fav
-            if con_opp > 1.01:
-                dnb_other = con_opp
-            sharp_prob, sharp_cons = devig_bounds(pin_price, dnb_other)
-        else:
-            pin_price = float(po.get(fav_key, 0) or 0)
-            opp_price = float(po.get(opp_key, 0) or 0)
+        con_fav, sources_found, is_volatile, consensus_score = calculate_consensus_price(source_prices_fav, sport)
+        if is_volatile:
+            log.info("VOLATILE | %s %s — CV>1.2%% — DISCARD", emoji, name)
+            return
+        con_opp, _, _, _ = calculate_consensus_price(source_prices_opp, sport)
+        if con_fav > 1.01:
+            pin_price = con_fav
+        opp_for_devig = con_opp if con_opp > 1.01 else opp_price
+        sharp_prob, sharp_cons = devig_bounds(pin_price, opp_for_devig)
 
-            # Weighted Power devig: build source prices for BOTH sides
-            source_prices_fav = {"pinnacle": pin_price}
-            source_prices_opp = {"pinnacle": opp_price}
-            for src_key, src_name in (("odds_circa", "circa"), ("odds_cris", "cris"),
-                                      ("odds_exchange", "exchange")):
-                so = m.get(src_key) or {}
-                sp_f = float(so.get(fav_key, 0) or 0)
-                sp_o = float(so.get(opp_key, 0) or 0)
-                if sp_f > 1.01:
-                    source_prices_fav[src_name] = sp_f
-                if sp_o > 1.01:
-                    source_prices_opp[src_name] = sp_o
-
-            con_fav, sources_found, is_volatile, consensus_score = calculate_consensus_price(source_prices_fav, sport)
-            if is_volatile:
-                log.info("VOLATILE | %s %s — CV>1.2%% — DISCARD", emoji, name)
-                return
-            con_opp, _, _, _ = calculate_consensus_price(source_prices_opp, sport)
-            if con_fav > 1.01:
-                pin_price = con_fav
-            opp_for_devig = con_opp if con_opp > 1.01 else opp_price
-            sharp_prob, sharp_cons = devig_bounds(pin_price, opp_for_devig)
-
-        pin_fav = soft_fav  # Same outcome guaranteed — no cross-book mismatch possible
+    pin_fav = soft_fav  # Same outcome guaranteed — no cross-book mismatch possible
 
     if executable_price <= 1.01 or pin_price <= 1.01:
         return
@@ -2367,10 +2331,14 @@ def run():
         except Exception as e:
             log.warning("load_sport_ranking: %s — ordre par défaut", e)
 
-    # ══ SOURCE PIPELINE — 3 NIVEAUX ══════════════════════════════════
+    # ══ SOURCE PIPELINE — 2 NIVEAUX ══════════════════════════════════
     # Tier 1: The Odds API  → real 1XBet + Pinnacle, même event (idéal)
-    # Tier 2: Recherche web → batch Pinnacle (groq/compound-mini + Tavily)
-    # Tier 3: Estimateur IA → probabilités internes, toujours disponible
+    # Tier 2: sources réelles gratuites → harvest soft (LineFeed) + api-sports
+    #         + odds-api.io + titan007, enrichis par l'exchange (Matchbook).
+    # Les anciens Tier 2 « recherche web Pinnacle » et Tier 3 « estimateur
+    # IA » ont été SUPPRIMÉS le 2026-09-02 avec Groq/Tavily : un prix sharp
+    # généré par un LLM n'est pas une observation (cf. A6, oracle). Un match
+    # sans prix sharp RÉEL est écarté.
 
     matches        = []
     xbet_matches   = []   # declared here so Tier 3 can reuse Tier 2's result safely
@@ -2555,10 +2523,8 @@ def run():
     # modes ; gardien : tests/test_oddsapi_obsolete.py.
 
     # ── REPRICE : seuls les matchs repricés par l'exchange continuent ────
-    # Aucune recherche web n'est autorisée en reprice : un match que
-    # Matchbook ne couvre pas (et sans Pinnacle réel conservé du scan
-    # complet) est simplement écarté — fetch_pinnacle_prices n'est JAMAIS
-    # atteint dans ce mode, le quota Groq/Tavily reste au settlement.
+    # Un match que Matchbook ne couvre pas (et sans Pinnacle réel conservé
+    # du scan complet) est simplement écarté.
     if REPRICE:
         before = len(matches)
         matches = [m for m in matches
@@ -2576,7 +2542,7 @@ def run():
             return
         sharp_source = "Matchbook/Reprice"
 
-    # ── Tier 2: recherche web (Groq/Tavily) — activé si OddsAPI vide/GUERRILLA ──
+    # ── Tier 2: sources réelles gratuites — activé si OddsAPI vide/GUERRILLA ──
     # Gardé sur `tier1_ok` et non sur `matches` : les blocs MMA/eSports/sports
     # alternatifs ci-dessus alimentent `matches` AVANT ce test, donc un seul
     # combat trouvé suffisait à sauter tout le harvest Melbet. Run 30768093911 :
@@ -2587,31 +2553,30 @@ def run():
     if not tier1_ok and not REPRICE:
         # Coupe-circuit : une tentative vide il y a < HARVEST_EMPTY_TTL_H ne
         # se rejoue pas — voir le bloc « Horodatages meta » plus haut. Quand
-        # LineFeed, Tavily et Groq sont morts ensemble, 40 runs/jour ne
-        # trouveront pas plus que 8, mais brûleront le quota du settlement.
+        # le LineFeed est mort, 40 runs/jour ne trouveront pas plus que 8.
         skipped_age = _harvest_recently_empty(sb)
         if skipped_age is not None:
-            # Le coupe-circuit ne vise QUE le harvest coûteux (LineFeed +
-            # recherche web Groq/Tavily, dont le quota est partagé avec le
-            # settlement). api-sports est authentifié par clé, gratuit, et
-            # dispose d'un quota PROPRE par sport : le sauter ne protège
-            # rien et prive le scan de sa dernière source réelle. Constaté
-            # en production le 2026-08-20 (run 18:30) — le coupe-circuit
-            # posé le matin même court-circuitait api-sports par ricochet.
-            log.warning("📡 Tier 2 — harvest web SAUTÉ : dernière tentative vide il y a "
-                        "%.1fh (< %.0fh) — quota Groq/Tavily préservé ; api-sports "
-                        "et odds-api.io restent interrogés (authentifiés par clé, "
+            # Le coupe-circuit ne vise QUE le harvest LineFeed (proxys
+            # instables, réponses lentes). api-sports est authentifié par
+            # clé, gratuit, et dispose d'un quota PROPRE par sport : le
+            # sauter ne protège rien et prive le scan de sa dernière source
+            # réelle. Constaté en production le 2026-08-20 (run 18:30) — le
+            # coupe-circuit posé le matin même court-circuitait api-sports
+            # par ricochet.
+            log.warning("📡 Tier 2 — harvest LineFeed SAUTÉ : dernière tentative vide "
+                        "il y a %.1fh (< %.0fh) — api-sports, odds-api.io et "
+                        "titan007 restent interrogés (authentifiés par clé, "
                         "quotas séparés, gratuits)",
                         skipped_age, _HARVEST_EMPTY_TTL_H)
             # Titan007 fait partie du chemin économique pour la même raison
-            # qu'api-sports/odds-api.io : budget journalier propre, aucun
-            # quota partagé avec Groq/Tavily. L'oublier ici reproduit le bug
-            # corrigé par a0767c8 (source saine court-circuitée par ricochet).
+            # qu'api-sports/odds-api.io : budget journalier propre. L'oublier
+            # ici reproduit le bug corrigé par a0767c8 (source saine
+            # court-circuitée par ricochet).
             xbet_matches = (_api_sports_all(hours_ahead=hours_ahead)
                             + _odds_api_io_all(hours_ahead=hours_ahead)
                             + _titan007_fetch(hours_ahead=hours_ahead))
         else:
-            log.info("📡 Tier 2 — Harvest Melbet + api-sports + recherche web Pinnacle...")
+            log.info("📡 Tier 2 — Harvest Melbet + api-sports + odds-api.io + titan007...")
             xbet_matches = fetch_matches()
             _note_harvest_result(sb, xbet_matches)
         # Abandon seulement si RIEN n'a été trouvé nulle part : depuis que ce
@@ -2634,8 +2599,6 @@ def run():
                        "(api-sports, odds-api.io, titan007, Matchbook, harvest soft) "
                        "sans résultat. OddsAPI est obsolète : ce n'est PAS une "
                        "histoire de clé.")
-            if gemini_quota_dead():
-                msg += "\n⚠️ Quota IA journalier épuisé (Groq) — fallback recherche web indisponible."
             log.warning(msg)
             # Dédupliqué : ce message partait à CHAQUE run (40/jour) sans
             # jamais nommer la cause ; une fois par _ALERT_TTL_H avec la cause
@@ -2662,103 +2625,36 @@ def run():
             _enrich_from_exchange(xbet_matches, betfair_prices, log)
 
         if xbet_matches:
-            log.info("%d matchs Melbet | Requête Pinnacle → recherche web...", len(xbet_matches))
-        # Les matchs qui arrivent DÉJÀ prixés côté sharp (API-Football livre
-        # Pinnacle dans la même réponse) ne passent pas par la recherche web.
-        pinnacle_map = fetch_pinnacle_prices([m for m in xbet_matches if not m.get("odds_pinnacle")])
-
-        MAX_ORACLE = _MAX_ORACLE
-        oracle_used = 0
-        # Les sports hors OddsAPI passent devant : un match de foot écarté ici
-        # sera repris par le prochain scan Tier 1, un combat UFC ne le sera
-        # jamais. L'ordre de `matches` n'a pas d'incidence en aval,
-        # _portfolio_balance() re-trie par edge décroissant.
+            log.info("%d matchs Tier 2 chargés — tri sharp réel...", len(xbet_matches))
         # Melbet expose le MMA (sport_id=5) et OddsAPI (mma_mixed_martial_arts)
         # livre la même carte : les deux sources peuvent rendre le même
         # événement. Le doublon compterait deux fois dans le quota par sport
         # de _portfolio_balance().
         seen = {m.get("match", "").strip().lower() for m in matches}
-        # Ordre de dépense du budget : (1) les sports hors OddsAPI, seule
-        # occasion qu'ils auront jamais d'être prixés ; (2) à égalité, le sport
-        # dont le ledger montre la meilleure réussite. Un sport absent du
-        # classement (historique insuffisant) se place entre les deux plutôt
-        # qu'en dernier — il est INCONNU, pas mauvais, et le reléguer
-        # l'empêcherait d'acquérir l'historique qui le départagerait.
-        def _oracle_rank(m: dict) -> tuple[int, int]:
-            sport = m.get("sport") or ""
-            tier = 0 if sport in _NO_ODDSAPI_SPORTS else 1
-            try:
-                return tier, sport_ranking.index(sport)
-            except ValueError:
-                return tier, len(sport_ranking)
-
-        oracle_order = sorted(
-            (m for m in xbet_matches[:MAX_MATCHES]
-             if m.get("match", "").strip().lower() not in seen),
-            key=_oracle_rank,
-        )
-        for m in oracle_order:
-            pin_odds = m.get("odds_pinnacle") or pinnacle_map.get(m["match"])
-            if pin_odds:
-                m["odds_pinnacle"] = pin_odds
+        # Un match sans prix sharp RÉEL (api-sports/titan007/odds500 ou
+        # enrichissement exchange) est écarté — les repêchages par recherche
+        # web (fetch_pinnacle_prices) et par oracle LLM ont été SUPPRIMÉS le
+        # 2026-09-02 avec Groq/Tavily : une cote générée n'est pas une
+        # observation, et c'est précisément la fabrique à faux edge d'A6.
+        for m in xbet_matches[:MAX_MATCHES]:
+            if m.get("match", "").strip().lower() in seen:
+                continue
+            if m.get("odds_pinnacle"):
                 matches.append(m)
-            elif oracle_used < MAX_ORACLE:
-                oracle_used += 1  # count the attempt, not just successes — else a run of
-                                  # failures never trips MAX_ORACLE and every remaining
-                                  # match falls through to an uncapped oracle call
-                sport = m.get("sport", "soccer")
-                pin_price, pin_team = get_pinnacle_price(
-                    m["match"], sport=sport, league=m.get("league", "")
-                )
-                if pin_price and pin_price > 1.01:
-                    m["_oracle_price"] = pin_price
-                    m["_oracle_team"]  = pin_team or ""
-                    matches.append(m)
-                    log.info("ORACLE  | %s — %.3f", m["match"], pin_price)
-                else:
-                    no_pin_count += 1
-                    log.warning("⚠️ %s ignoré : Échec prix Sharp", m["match"])
             else:
                 no_pin_count += 1
                 log.warning("⚠️ %s ignoré : Échec prix Sharp", m["match"])
 
         if matches:
-            sharp_source = "Search/Pinnacle"
+            sharp_source = "Tier2/Sharp"
             log.info("✅ Tier 2 OK — %d matchs avec prix Sharp", len(matches))
 
-    # ── Tier 3: Estimateur IA — fallback direct si Tier 1 vide ───
-    if not matches:
-        # MMA a déjà appelé la recherche web au-dessus — petite pause anti rate-limit
-        time.sleep(20)
-        log.info("🧠 Tier 3 — Estimateur IA (connaissance interne, marge 2%%)...")
-        if not xbet_matches:
-            xbet_matches = fetch_matches()
-        if not xbet_matches:
-            msg = "📡 PREDATOR v8.8: 0 matchs — toutes sources épuisées."
-            if gemini_quota_dead():
-                msg += "\n⚠️ Quota IA journalier épuisé (Groq)."
-            log.warning(msg)
-            _telegram(msg)
-            if sb:
-                _heartbeat(sb, now, 0, 0)
-            if credentials_failed:
-                raise SystemExit(1)
-            return
-        estimated_map = fetch_estimated_prices(xbet_matches)
-        for m in xbet_matches[:MAX_MATCHES]:
-            est_odds = estimated_map.get(m["match"])
-            if est_odds:
-                m["odds_pinnacle"] = est_odds
-                m["_estimated"]    = True
-                matches.append(m)
-        if matches:
-            sharp_source = "AI/Estimateur"
-            log.info("✅ Tier 3 OK — %d matchs estimés (non-arbitrage, value)", len(matches))
-
+    # L'ancien Tier 3 « estimateur IA » (cotes de mémoire d'entraînement,
+    # marquées _estimated) a été SUPPRIMÉ le 2026-09-02 — même décision que
+    # l'oracle : le moteur ne compare plus jamais un prix soft réel à un prix
+    # sharp inventé.
     if not matches:
         msg = "📡 PREDATOR v8.8: 0 signaux — toutes sources épuisées."
-        if gemini_quota_dead():
-            msg += "\n⚠️ Quota IA journalier épuisé (Groq)."
         log.warning(msg)
         _telegram(msg)
         if sb:

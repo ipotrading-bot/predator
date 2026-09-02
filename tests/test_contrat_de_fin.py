@@ -163,8 +163,6 @@ class TestLauditSterileSortEnEchec:
                 return type("R", (), {"data": []})()
 
         monkeypatch.setattr(ae, "get_db", lambda write=False: _SB())
-        monkeypatch.setattr(ae, "ai_available", lambda: True)
-        monkeypatch.setattr(ae, "gemini_quota_dead", lambda: False)
         monkeypatch.setattr(ae, "fetch_pending", lambda _sb: pending)
         monkeypatch.setattr(ae, "_learn", lambda _sb: None)
         monkeypatch.setattr(ae, "_signaler_audit_sterile", lambda *_a, **_k: None)

@@ -247,14 +247,15 @@ def test_unknown_match_is_left_untouched():
 
 
 def test_tier2_matches_are_enriched_before_the_web_search():
-    """Le Tier 1.5 tourne AVANT le Tier 2 : sans ce second passage, les
-    matchs d'odds-api.io repartaient sans prix sharp (run du 19:07)."""
+    """Le Tier 1.5 tourne AVANT le tri sharp du Tier 2 : sans ce second
+    passage, les matchs d'odds-api.io repartaient sans prix sharp (run du
+    19:07) — écartés « Échec prix Sharp » alors que Matchbook les cotait."""
     import inspect
     src = inspect.getsource(eng.run)
     after_t2 = src[src.index("xbet_matches = fetch_matches()"):]
     call = after_t2.index("_enrich_from_exchange(xbet_matches")
-    search = after_t2.index("fetch_pinnacle_prices(")
-    assert call < search, "l'exchange doit servir AVANT de payer une recherche web"
+    tri = after_t2.index("for m in xbet_matches[:MAX_MATCHES]")
+    assert call < tri, "l'exchange doit servir AVANT le tri sharp"
 
 
 # ── Appariement des noms entre fournisseurs ───────────────────────────

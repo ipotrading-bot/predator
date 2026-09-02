@@ -36,7 +36,9 @@ class TestWiring:
     def test_web_search_mma_fetcher_is_gone(self):
         assert not hasattr(harvester, "fetch_mma_events")
         assert not hasattr(run_engine, "fetch_mma_events")
-        assert run_engine._NO_ODDSAPI_SPORTS == frozenset()
+        # _NO_ODDSAPI_SPORTS a disparu le 2026-09-02 avec la file oracle
+        # qu'il priorisait.
+        assert not hasattr(run_engine, "_NO_ODDSAPI_SPORTS")
 
     def test_portfolio_and_golden_hour_cover_them(self):
         assert "mma" in run_engine._QUOTA_FAST and "boxing" in run_engine._QUOTA_FAST

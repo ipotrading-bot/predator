@@ -12,7 +12,9 @@ Mesuré le 2026-08-27 : 199 lignes du ledger et 56 signaux dans cet état, soit
 `learning_layer._clv_stats` exclut les expirés.
 
 CE QUE FAIT CE MODULE. À la fin de chaque audit, il reprend un lot de lignes
-expirées et REFAIT la recherche, web comprise. Deux populations, parce qu'une
+expirées et REFAIT la recherche de score (chaîne déterministe : api-sports,
+MLB statsapi, TheSportsDB — la recherche web a été supprimée le 2026-09-02
+avec Groq/Tavily). Deux populations, parce qu'une
 ligne expirée peut avoir perdu son signal :
   - les signaux `status='expired'` encore présents → `settle_signal`, donc le
     vrai chemin (patch de la ligne + insert au ledger + idempotence) ;
@@ -49,7 +51,6 @@ import logging
 import os
 from datetime import datetime, timezone
 
-from core.ai_search import ai_available
 from core.settlement import determine_outcome, fetch_match_result, settle_signal
 
 log = logging.getLogger(__name__)
@@ -94,13 +95,6 @@ def _issue(match: str, sport: str, market_key: str, selection: str,
 def relancer(sb, budget: int | None = None) -> dict:
     """Retente un lot de lignes expirées. Rend un compte-rendu chiffré."""
     faits = {"signaux": 0, "ledger": 0, "sans_score": 0, "indecidable": 0}
-    if not ai_available():
-        # Pas d'erreur : sans fournisseur, la recherche web est impossible et
-        # laisser la ligne `expired` est le comportement correct — elle
-        # repassera au prochain audit.
-        log.info("RELANCE — aucun fournisseur IA disponible, lot sauté")
-        return faits
-
     budget = RELANCE_BUDGET if budget is None else budget
     if budget <= 0:
         return faits
@@ -157,8 +151,11 @@ def relancer(sb, budget: int | None = None) -> dict:
             restant[0] -= 1
             try:
                 # Pas de date : le ledger ne porte pas le coup d'envoi une fois
-                # le signal purgé. api-sports refusera (il lui faut une date),
-                # la recherche web prend le relais — c'est le but.
+                # le signal purgé. api-sports refusera (il lui faut une date) ;
+                # la voie PAR ÉQUIPE de TheSportsDB (core/score_sources) prend
+                # le relais — l'appariement des deux noms sur un événement
+                # UNIQUE des 15 derniers résultats reste exigé, deux
+                # confrontations de la même paire font refuser.
                 res = fetch_match_result(row.get("match", ""), row.get("sport") or "soccer", "")
                 if not res or not res.get("completed"):
                     faits["sans_score"] += 1

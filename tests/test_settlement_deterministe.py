@@ -34,13 +34,12 @@ def _fixture(home, away, hs, as_, fid=1):
 
 class TestScoreSansIA:
     def test_le_score_vient_dapi_sports_sans_aucun_appel_ia(self, monkeypatch):
-        """Le chemin nominal ne doit toucher NI Groq NI Tavily."""
+        """Le chemin nominal ne paie même pas la chaîne de repli."""
         monkeypatch.setattr(settlement, "fetch_results",
                             lambda jour, sport: [_fixture("Moss FK", "Stabaek", 2, 1)])
         def _interdit(*a, **k):
-            raise AssertionError("la recherche web ne doit pas être appelée")
-        monkeypatch.setattr(settlement, "ai_search_complete", _interdit)
-        monkeypatch.setattr(settlement, "ai_available", lambda: True)
+            raise AssertionError("le repli ne doit pas être appelé")
+        monkeypatch.setattr(settlement, "fetch_score", _interdit)
 
         r = settlement.fetch_match_result("Moss FK vs Stabaek", "soccer", "2026-08-25")
         assert r == {"home_score": 2, "away_score": 1, "completed": True,
@@ -53,7 +52,6 @@ class TestScoreSansIA:
         monkeypatch.setattr(settlement, "fetch_results",
                             lambda jour, sport: appels.append((jour, sport)) or
                             [_fixture("A FC", "B FC", 1, 0), _fixture("C FC", "D FC", 3, 3)])
-        monkeypatch.setattr(settlement, "ai_available", lambda: False)
         for m in ("A FC vs B FC", "C FC vs D FC"):
             assert settlement.fetch_match_result(m, "soccer", "2026-08-25")
         assert len(appels) == 1, f"{len(appels)} requêtes pour une seule journée"
@@ -63,7 +61,6 @@ class TestScoreSansIA:
         qui tenait déjà l'enrichissement d'exchange à zéro."""
         monkeypatch.setattr(settlement, "fetch_results",
                             lambda jour, sport: [_fixture("Deportivo Macara", "Delfin SC", 0, 2)])
-        monkeypatch.setattr(settlement, "ai_available", lambda: False)
         r = settlement.fetch_match_result("CSD Macara vs Delfin SC", "soccer", "2026-08-25")
         assert r["away_score"] == 2
 
@@ -73,7 +70,7 @@ class TestScoreSansIA:
         monkeypatch.setattr(settlement, "fetch_results", lambda jour, sport: [
             _fixture("Racing Club", "Boca Juniors", 1, 0, 1),
             _fixture("Racing Club II", "Boca Juniors II", 0, 4, 2)])
-        monkeypatch.setattr(settlement, "ai_available", lambda: False)
+        monkeypatch.setattr(settlement, "fetch_score", lambda *a: None)
         assert settlement.fetch_match_result("Racing Club vs Boca Juniors",
                                              "soccer", "2026-08-25") is None
 
@@ -82,25 +79,25 @@ class TestScoreSansIA:
         calendrier : ne chercher que `match_date` en raterait la moitié."""
         monkeypatch.setattr(settlement, "fetch_results", lambda jour, sport:
                             [_fixture("Palmeiras", "Flamengo", 2, 2)] if jour == "2026-08-26" else [])
-        monkeypatch.setattr(settlement, "ai_available", lambda: False)
+        monkeypatch.setattr(settlement, "fetch_score", lambda *a: None)
         assert settlement.fetch_match_result("Palmeiras vs Flamengo", "soccer", "2026-08-25")
 
-    def test_la_recherche_web_reste_le_repli(self, monkeypatch):
-        """api-sports ne couvre pas tout : le chemin IA ne disparaît pas."""
+    def test_la_chaine_score_sources_reste_le_repli(self, monkeypatch):
+        """api-sports ne couvre pas tout : MLB statsapi / TheSportsDB
+        (core/score_sources) prennent le relais — plus aucune IA (2026-09-02)."""
         monkeypatch.setattr(settlement, "fetch_results", lambda jour, sport: [])
-        monkeypatch.setattr(settlement, "ai_available", lambda: True)
-        monkeypatch.setattr(settlement, "ai_search_complete",
-                            lambda *a, **k: '{"completed":true,"home_score":4,"away_score":0}')
+        monkeypatch.setattr(settlement, "fetch_score",
+                            lambda *a: {"completed": True, "home_score": 4,
+                                        "away_score": 0, "source": "thesportsdb"})
         r = settlement.fetch_match_result("Obscure FC vs Inconnu SC", "mma", "2026-08-25")
-        assert r["home_score"] == 4 and "source" not in r
+        assert r["home_score"] == 4 and r["source"] == "thesportsdb"
 
     def test_aucune_source_ne_fait_pas_planter(self, monkeypatch):
         monkeypatch.setattr(settlement, "fetch_results", lambda jour, sport: [])
-        monkeypatch.setattr(settlement, "ai_available", lambda: False)
+        monkeypatch.setattr(settlement, "fetch_score", lambda *a: None)
         assert settlement.fetch_match_result("A vs B", "soccer", "2026-08-25") is None
 
-    def test_un_nom_sans_separateur_est_ignore_sans_erreur(self, monkeypatch):
-        monkeypatch.setattr(settlement, "ai_available", lambda: False)
+    def test_un_nom_sans_separateur_est_ignore_sans_erreur(self):
         assert settlement.result_from_api_sports("MatchSansVs", "soccer", "2026-08-25") is None
         assert settlement.result_from_api_sports("A vs B", "soccer", "") is None
 
@@ -212,7 +209,7 @@ class TestReserveDeBudget:
         a.fetch_results("2026-08-25", "soccer")
         assert appels, "le settlement doit encore pouvoir lire dans sa réserve"
 
-    def test_reserve_epuisee_retombe_sur_la_recherche_web(self, monkeypatch):
+    def test_reserve_epuisee_rend_vide_sans_planter(self, monkeypatch):
         from core import api_sports as a
         monkeypatch.setattr(a, "_usage_get", lambda sport: a.DAILY_BUDGET)
         monkeypatch.setattr(a, "_key_for", lambda sport: "k")

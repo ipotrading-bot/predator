@@ -244,6 +244,49 @@ Render, proxy à IP dédiée, ou runner auto-hébergé en Europe).
 
 ---
 
+## 4. Groq/Tavily — nettoyer les secrets GitHub ⏳ CÔTÉ CODE FAIT le 2026-09-02
+
+Groq et Tavily sont SUPPRIMÉS du pipeline (décision opérateur du 2026-09-02,
+récit dans INCIDENTS.md § « Groq et Tavily SUPPRIMÉS »). Plus aucun workflow
+ne transmet ces clés (gardien :
+`tests/test_ci_env.py::test_aucun_pool_ne_transmet_groq_ou_tavily`), mais les
+SECRETS GitHub, eux, existent encore — inertes, et un secret inerte finit
+toujours par être rebranché par erreur.
+
+### Le geste
+
+```bash
+for s in GROQ_API_KEY GROQ_API_KEY_2 GROQ_API_KEY_3 GROQ_API_KEY_4 \
+         GROQ_API_KEY_5 TAVILY_API_KEY; do
+  gh secret delete "$s" 2>/dev/null && echo "supprimé : $s"
+done
+```
+
+Optionnel : fermer les comptes Groq (5 organisations) et Tavily eux-mêmes —
+plus rien ici ne les consomme.
+
+### Optionnel — TheSportsDB Patreon
+
+La source de scores TheSportsDB tourne sur la clé publique gratuite (« 123 »).
+Un compte Patreon (thesportsdb.com, quelques $/mois) lève les limites et
+débloque `eventsday` complet ; poser alors la clé :
+
+```bash
+gh secret set THESPORTSDB_API_KEY   # et/ou app_secrets via ops.py
+```
+
+### Vérifier
+
+Le premier `audit.yml` après le déploiement doit régler les signaux en
+attente sans une seule ligne « compound-mini » ni « Tavily » dans son log —
+chercher à la place `SETTLE api-sports`, `SETTLE mlb_statsapi`,
+`SETTLE thesportsdb`. ⚠️ Si le log montre des erreurs réseau sur
+statsapi.mlb.com/thesportsdb.com depuis les runners (leçon ESPN : filtrage
+par IP possible), router par `FREE_SOURCES_PROXY` — la plomberie de
+`core/net.py` existe déjà.
+
+---
+
 ## Le goulot qui suit — à surveiller
 
 odds500 est débloquée, mais **le pont d'alias n'a encore rien produit.**
