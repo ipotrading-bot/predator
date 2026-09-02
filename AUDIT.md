@@ -178,6 +178,16 @@ C'est le tableau à consulter avant de toucher à quoi que ce soit.
 | Le bloc d'amorçage est DÉRIVÉ du pool, jamais listé | `…::test_lamorcage_est_DERIVE_du_pool_jamais_liste` |
 | Le préflight COMPLET tourne là où les clés sont présentes | `…::TestLePreflightCompletTourneOuSontLesCles` |
 | Seuls `scan` et `settlement` ont des contrôles au-delà des fondations | `…::test_seuls_scan_et_settlement_ont_des_controles_au_dela_des_fondations` |
+| `.claude/settings.json` et `.mcp.json` sont du JSON valide ; scripts de hooks existants et exécutables | `tests/test_claude_config.py::TestLesFichiersDeConfigSontValides`, `…::TestLesScriptsReferencesExistent` |
+| Aucune mention de Wiz ni chemin machine (`/workspaces/`) sous `.claude/` | `…::TestAucuneMentionMorteNiCheminMachine` |
+| Le serveur MCP Supabase est épinglé (pas de `@latest`) et `--read-only` | `…::TestLeServeurMcpEstEpingle` |
+| Règle n°1 mécanique : `toJSON(secrets)` refusé à l'écriture d'un workflow | `…::TestGuardWorkflows` + `.claude/hooks/guard_workflows.sh` |
+| Règle n°3 mécanique : nom de modèle IA refusé hors `ai_router.py`/tests | `…::TestGuardAiModels` + `.claude/hooks/guard_ai_models.sh` |
+| Règle n°11 mécanique : `TAX_RATE`/`SHADOW_SPORTS` exigent une confirmation | `…::TestGuardOperatorDecisions` + `.claude/hooks/guard_operator_decisions.sh` |
+| Règle n°9 mécanique : suppressions Supabase refusées via MCP, écritures confirmées | `…::TestGuardSupabaseWrites` + `.claude/hooks/guard_supabase_writes.sh` |
+| Commandes destructrices refusées même enfouies dans une commande composée | `…::TestGuardBash` + `.claude/hooks/guard_bash.sh` |
+| L'agent `migration-author` ne peut écrire QUE `sql/migrate_v*.sql` | `…::TestGuardMigrationWrites` + `.claude/hooks/guard_migration_writes.sh` |
+| Un `.py` modifié est linté à l'édition ; la suite tourne avant tout arrêt de session | `…::TestLintOnEdit`, `…::TestVerifyBeforeStop` |
 
 L'**invariant des sport-keys** (4 fichiers : `core/odds_api.py`,
 `core/learning_layer.py`, `api/index.py`) est décrit

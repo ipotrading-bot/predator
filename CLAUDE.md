@@ -9,13 +9,17 @@ Calcul en crons GitHub Actions ; dashboard en lecture seule.
 - `INCIDENTS.md` — **ce qui a déjà cassé, et pourquoi.** À LIRE AVANT DE
   DIAGNOSTIQUER, et avant de toucher sources, couche IA, workflows ou
   seuils : une règle dont on ignore la raison finit contournée.
-- `AUDIT.md` — carte des invariants et de leurs tests gardiens. À lire avant
-  d'ajouter un sport, un fournisseur IA, une route ou un workflow.
-- Skill `predator-pipeline` — carte du flux, invariant des sport-keys
-  (4 fichiers synchrones), purge (`status='active'` obligatoire), cadences
-  cron, zone jouable 2-24 h pour toute analyse du ledger.
-- Sub-agent `predator-diagnostician` — tout audit pipeline/santé (isole les
-  gros logs).
+- `AUDIT.md` — invariants → tests gardiens. À lire avant d'ajouter un sport,
+  un fournisseur IA, une route ou un workflow.
+- `.claude/rules/` — le DÉTAIL des règles, chargé par chemin (workflows,
+  couche IA, dashboard, sql, apprentissage).
+- `.claude/hooks/` — les règles dures en CODE (deny/ask mécaniques, lint,
+  suite avant arrêt) ; README dedans, gardien `tests/test_claude_config.py`.
+- Skills : `predator-pipeline` (carte du flux), `-add-sport`, `-migration`,
+  `-ci-env`, `-incident`, `-release`, `-dashboard-check`.
+- Sub-agents : `predator-diagnostician` (tout audit pipeline/santé),
+  `test-runner`, `migration-author`, `ledger-analyst`, `incident-scribe`,
+  `ci-log-digger`.
 
 ## Commandes
 
@@ -24,11 +28,12 @@ Calcul en crons GitHub Actions ; dashboard en lecture seule.
 - Dashboard local : skill `predator-dashboard-check` (mode démo)
 - Comptes externes : `docs/actions_operateur.md`
 - Piloter Supabase/Vercel : `python scripts/ops.py doctor|status|supabase …|vercel …`
-  (credentials dans `.env`, gitignoré ; CLIs `supabase`/`vercel` aussi
-  installables). `ops.py ai` fait un VRAI appel — seul diagnostic qui tranche
-  sur un fournisseur IA.
+  (credentials dans `.env`, gitignoré). `ops.py ai` fait un VRAI appel — seul
+  diagnostic qui tranche sur un fournisseur IA. MCP Supabase épinglé et en
+  LECTURE SEULE (`.mcp.json`).
 - Pas de build. Le push ne déploie pas (déploiement Git Vercel DÉSACTIVÉ,
-  `vercel.json`) : le job `deploy` de `ci.yml` pousse en CLI si la suite est verte.
+  `vercel.json`) : le job `deploy` de `ci.yml` pousse en CLI si la suite est
+  verte.
 
 ## Architecture (fichiers clés)
 
@@ -38,14 +43,14 @@ Calcul en crons GitHub Actions ; dashboard en lecture seule.
 - `core/audit_engine.py` + `settlement.py` + `score_sources.py` — règlement
   (0 IA), CLV, ledger
 - `core/learning_layer.py` — seuils (`meta.threshold_<sport>`, **APPLIQUÉS**
-  au min_edge du scan, époque *A6*) ; verdicts (≥30 réglés, Wilson vs
-  rentabilité) loggés, jamais appliqués ; hebdo `scripts/weekly_report.py`
+  au min_edge du scan, époque *A6*) ; verdicts loggés, jamais appliqués ;
+  hebdo `scripts/weekly_report.py`
 - `core/scan_windows.py` — fenêtres favorables (UTC) + politique de dépense
-- `core/constants.py` — taxe, Kelly, `SCAN_TIMEOUTS` (budget par mode de scan)
+- `core/constants.py` — taxe, Kelly, `SCAN_TIMEOUTS`
 - `core/run_contract.py` — un run qui n'a pas fait son travail sort en ÉCHEC
 - `api/index.py` + `templates/*.html` — dashboard Flask
-- `scripts/ci_env.py` — quels secrets atteignent quel job (pools dérivés du
-  registre IA) ; `scripts/ci_scan_mode.py` — quel cron donne quel mode de scan
+- `scripts/ci_env.py` — quels secrets atteignent quel job ;
+  `scripts/ci_scan_mode.py` — quel cron donne quel mode de scan
 
 ## Conventions
 
@@ -60,29 +65,27 @@ Calcul en crons GitHub Actions ; dashboard en lecture seule.
 
 ## Règles dures — jamais à rediscuter
 
-Chacune a coûté une panne. Le récit et la justification sont dans
-`INCIDENTS.md`, à la section nommée.
+Détail dans `.claude/rules/` (chargé par chemin), justification dans
+`INCIDENTS.md` (section citée), application mécanique dans `.claude/hooks/`.
 
-1. ⛔ **JAMAIS `${{ toJSON(secrets) }}` dans un workflow.** GitHub refuse de
-   le faire tourner : zéro job, aucun log — *Les blocs de secrets*.
+1. ⛔ **JAMAIS `${{ toJSON(secrets) }}` dans un workflow** : GitHub refuse de
+   le faire tourner, zéro job, aucun log — *Les blocs de secrets*.
 2. Les blocs `env:` des workflows sont **générés** par `python scripts/ci_env.py
-   --write`, jamais écrits à la main, et posés par STEP.
-3. Ne **jamais** coder un nom de modèle IA en dur hors de `core/ai_router.py` —
-   *Couche IA*.
-4. `.python-version` vaut 3.12 et **appartient à Vercel**. L'« aligner » sur
-   3.11 casse le déploiement — *Deux interpréteurs*.
-5. Une suite verte ne prouve **rien** sur le déploiement. Après toute retouche
-   de `vercel.json`, `.python-version`, `requirements*.txt` ou `api/index.py` :
-   `ops.py vercel deployments` puis `curl …/api/health`.
-6. Ne **jamais** tenir à la main une liste qui existe ailleurs : on la dérive,
-   ou un test la compare à sa source — *Listes qui divergent*.
+   --write`, posés par STEP — jamais écrits à la main.
+3. Aucun nom de modèle IA en dur hors de `core/ai_router.py` — *Couche IA*.
+4. `.python-version` vaut 3.12 et **appartient à Vercel** ; l'« aligner »
+   casse le déploiement — *Deux interpréteurs*.
+5. Une suite verte ne prouve **rien** sur le déploiement : skill
+   `predator-release` après toute retouche de fichier de déploiement.
+6. Ne **jamais** tenir à la main une liste qui existe ailleurs : dériver, ou
+   test gardien — *Listes qui divergent*.
 7. **Jamais un taux de réussite nu** : toujours Wilson + point mort après taxe.
-8. Ne pas réintroduire Wiz (`/wiz`, `core/wiz_*`, `wiz_analysis`) — supprimé le
-   2026-08-26, sans archive.
-9. Archiver, **jamais supprimer sèchement** des lignes de résultats : seule
-   trace empirique, les ignorer crée un biais de survie.
-10. Aucun seuil numérique d'émission n'est modifié sans mesure sur des lignes
-    réglées POSTÉRIEURES à la correction en cours — *A6*.
-11. `TAX_RATE`, `SHADOW_SPORTS` et le périmètre sportif sont des décisions
-    opérateur ; ne pas les modifier sans instruction explicite dans la
-    session courante — *TAX_RATE remis à 0.20 contre instruction*.
+8. Ne pas réintroduire Wiz (`/wiz`, `core/wiz_*`, `wiz_analysis`) — supprimé
+   le 2026-08-26, sans archive.
+9. Archiver, **jamais supprimer sèchement** des lignes de résultats (biais de
+   survie).
+10. Aucun seuil d'émission modifié sans mesure sur des lignes réglées
+    POSTÉRIEURES à la correction en cours — *A6*.
+11. `TAX_RATE`, `SHADOW_SPORTS` et le périmètre sportif = décisions
+    opérateur, instruction explicite exigée dans la session courante —
+    *TAX_RATE remis à 0.20 contre instruction*.
