@@ -287,6 +287,23 @@ par IP possible), router par `FREE_SOURCES_PROXY` — la plomberie de
 
 ---
 
+## 5. api-sports — nouveau compte ✅ FAIT le 2026-09-02
+
+Le compte suspendu le 2026-08-20 l'était pour de bon (voir §2bis) et sa
+suspension affamait le settlement : audit en échec 8 runs sur 12 depuis le
+30/08, `settlement_starved_at` frais, apprentissage gelé faute de lignes
+réglées. L'opérateur a créé un nouveau compte gratuit
+(dashboard.api-football.com) et fourni la clé en session ; posée dans
+`app_secrets` :
+
+    python scripts/ops.py supabase secrets set API_SPORTS_KEY <clé>
+
+Vérifié dans la foulée par `ops.py sources` : les 4 sports répondent OK,
+plan Free 0/100. `core/secret_store.py` lisant Supabase avant
+l'environnement, aucun redéploiement ni secret GitHub n'a été nécessaire.
+La preuve finale est l'audit suivant : des lignes `SETTLE api-sports` au
+log et plus de `RUN STÉRILE`.
+
 ## Le goulot qui suit — à surveiller
 
 odds500 est débloquée, mais **le pont d'alias n'a encore rien produit.**
