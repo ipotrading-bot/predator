@@ -668,6 +668,14 @@ Usage : `curl -X POST https://predator-two.vercel.app/api/audit/run -H "X-Predat
   `BETTERSTACK_*`, `PREDATOR_SECRET`…) — conservées **exprès**, chacune avec
   une mention `⚠️ UNUSED` datée. Elles servent de pierre tombale : sans
   elles, quelqu'un les réintroduit de bonne foi.
+- **Closing line des totals/spreads Tier 2 : limite STRUCTURELLE** (mesuré
+  2026-09-02, 0/14 tarifés sur 7 jours). Un signal d'une ligue hors
+  `SPORT_KEYS` n'existe pas dans le payload OddsAPI (`capture_from_scan`)
+  et la voie exchange est h2h-only par contrat (il faut la MÊME ligne que
+  le pari — `_line_market_close`). Aucune voie de capture n'existe : à
+  accepter, pas à « réparer » — sauf à payer une source qui cote ces
+  lignes. Le compteur `count_missed_closing_lines` documente désormais
+  ses vraies causes (stock, pas flux).
 
 ---
 

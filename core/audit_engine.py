@@ -273,12 +273,19 @@ def count_missed_closing_lines(sb) -> int:
     captured — i.e. signals nothing will ever be able to price again.
 
     Exists because the original bug was silent: the job found zero candidates
-    and exited green for a month while capturing nothing. A non-zero count
-    here is the symptom that the schedule is too sparse for the window.
+    and exited green for a month while capturing nothing.
 
-    Counts every market, not just h2h: since core/closing_line.py prices
-    totals/spreads off the scan feed, an unpriced totals signal is now a real
-    miss rather than a structural impossibility."""
+    Counts every market, not just h2h. ⚠️ Ce compte est un STOCK, pas un
+    flux : une ligne reste `active` après kickoff tant que le settlement ne
+    l'a pas réglée, donc les mêmes signaux sont recomptés à chaque run — un
+    chiffre stable qui revient n'est PAS « 4-5 pertes par scan ». Causes
+    réelles mesurées le 2026-09-02 (cadence du cron vérifiée SAINE) :
+    (a) signaux Tier 2 hors SPORT_KEYS — invisibles au payload OddsAPI, et
+    la voie exchange est h2h-only, donc leurs totals/spreads n'ont AUCUNE
+    voie de capture (limite structurelle, 0/14 sur 7 jours) ;
+    (b) signaux émis à moins de ~20 min du kickoff, nés après la dernière
+    passe de capture ;
+    (c) famine de settlement qui fait stagner le stock."""
     now = datetime.now(timezone.utc)
     try:
         res = (sb.table("signals")
@@ -355,11 +362,17 @@ def run_closing_lines():
     # for a month. Surface the signals it can no longer ever price.
     missed = count_missed_closing_lines(sb)
     if missed:
-        log.warning("CLOSING LINE — %d active h2h signal(s) passed kickoff with no "
-                    "closing price: the schedule is firing too rarely for a %d-min "
-                    "window. Check the closing_line.yml cadence and the post-scan "
-                    "pass in scan.yml.",
-                    missed, CLOSING_LINE_WINDOW_MIN)
+        # Libellé corrigé le 2026-09-02 : l'ancien accusait la cadence du
+        # cron (« firing too rarely ») et ne parlait que de h2h — les deux
+        # étaient faux et orientaient le diagnostic vers la mauvaise piste.
+        # Voir la docstring de count_missed_closing_lines pour les causes.
+        log.warning("CLOSING LINE — %d signal(s) actifs (tous marchés) passés "
+                    "kickoff sans clôture. C'est un STOCK recompté à chaque "
+                    "run, pas un flux : causes probables — Tier 2 hors "
+                    "payload (totals/spreads sans voie de capture), émission "
+                    "née après la dernière passe de capture, ou settlement "
+                    "en famine qui fait stagner ces lignes en `active`.",
+                    missed)
     log.info("━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━")
 
 

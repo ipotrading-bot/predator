@@ -729,6 +729,48 @@ elle en sort, un alias faux = un signal émis ET réglé sur le mauvais match.
 Gardiens : `tests/test_source_adapter.py::TestLaLigueEstExigeeSurLeCheminDeConfiance`,
 `tests/test_free_sources.py::TestLeSlateDeConfianceExigeLaLigue`.
 
+### 500.com sert son mur anti-bot en HTTP 200 — odds500 meurt sans un WARNING (2026-09-02)
+
+DIAGNOSTIQUÉ, PAS CORRIGÉ — le statu quo est le choix par défaut, la
+décision finale appartient à l'opérateur.
+
+Symptôme : odds500 rend « 0 matchs au calendrier » sur TOUS les runs depuis
+le 2026-09-01 ~11:40 UTC. Dernier run vivant : 33489971035 à 09:00
+(16 matchs) ; premier mort : 33503697780 à 11:40. Aucun WARNING nulle part :
+le run contract ne voit rien, car `[]` est un retour « propre » — `_get` n'a
+pas échoué, le parseur n'a juste rien trouvé.
+
+Cause établie (MESURÉ le 2026-09-02, 2 requêtes de diagnostic) : 500.com a
+déployé un challenge anti-bot Tencent EdgeOne servi en **HTTP 200** — une
+page de **987 octets** de JS obfusqué (cookies `EO_Bot_Ssid`/`__tst_status`)
+au lieu des ~288 Ko du calendrier ; rejouer la requête avec les cookies
+calculés escalade vers une page « Security Verification » de **1 978
+octets**. Le parseur (`_ROW_RE` sur `<tr data-fid=…>`) rend légitimement 0.
+Le mur couvre l'IP datacenter ET la sortie Webshare UK. Ce que ce N'EST PAS,
+mesuré aussi : pas un re-filtrage de l'IP du proxy, pas le proxy gratuit qui
+rate 1/3 des requêtes (cet aléa est TRANSITOIRE et loggue un WARNING après
+3 tentatives ; ici, 200 persistant sur tous les runs), et pas le mode ombre
+(`meta.source_scorecard_odds500` : matched=244, shadow=false, promue à
+100 matchs / 0.00 pt de divergence médiane, errors=0 — la source était
+PROMUE quand le mur est tombé). C'est exactement la « panne INDISCERNABLE
+d'un blocage réel » que l'entrée du proxy (ci-dessous) redoutait — sauf
+qu'ici le blocage est réel.
+
+Ce qui a été fait : le diagnostic ci-dessus, rien d'autre. Ce qui n'a PAS
+été fait, et pourquoi : exécuter le challenge JS demanderait un navigateur
+headless ou un service de déblocage — coût et fragilité, décision opérateur ;
+l'alternative est l'abandon de fait. Le code reste en place : il rend `[]`
+sans nuire (~1 requête gaspillée par run) et le scorecard rétrogradera la
+source de lui-même si le mur persiste.
+
+⛔ NE PAS couper `FREE_SOURCES=0` pour « nettoyer » : ce coupe-circuit
+tuerait aussi 7M et les marchés de prédiction, qui vont bien.
+
+Gardien : aucun nouveau — le comportement « 200 avec 0 ligne = silence » est
+celui, documenté, de `core/odds500.py` (`_get` lignes 188-210,
+`fetch_fixtures` lignes 245-290) : une RÉPONSE du serveur n'est pas un échec
+de transport, et le parseur qui ne trouve rien rend `[]`.
+
 ### Le proxy gratuit rate une requête sur trois — et ça coûtait la source (2026-08-28)
 
 Mesuré au lendemain du déblocage, trois GET identiques sur 500.com à travers

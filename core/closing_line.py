@@ -161,6 +161,7 @@ def capture_from_exchange(sb, matches: list[dict], exchange_prices: dict,
     # `kickoff >= now` is load-bearing, same as capture_from_scan: once the
     # match has started the exchange quotes an in-play price.
     in_window: dict[str, tuple] = {}
+    sans_cote = 0
     for m in matches:
         kickoff = _parse_time(m.get("commence_time"))
         if not kickoff or not (now <= kickoff <= horizon):
@@ -170,8 +171,17 @@ def capture_from_exchange(sb, matches: list[dict], exchange_prices: dict,
             continue
         row = lookup_exchange(m, exchange_prices)
         if not (row and float(row.get("1") or 0) > 1.01 and float(row.get("2") or 0) > 1.01):
+            # Branche muette jusqu'au 2026-09-02 : un signal MLB à T-20 min
+            # a perdu sa clôture ici sans une ligne de log, alors que le
+            # scan venait d'apparier le même match sur Matchbook. Un compte
+            # agrégé suffit — logger chaque match sans cote spammerait
+            # (l'exchange ne cote pas tout, c'est l'état normal).
+            sans_cote += 1
             continue
         in_window[mid] = (m, row, kickoff)
+    if sans_cote:
+        log.info("CLOSE SKIP | %d match(s) en fenêtre sans cote exchange "
+                 "exploitable (appariement raté ou marché non coté)", sans_cote)
     if not in_window:
         return 0
 
