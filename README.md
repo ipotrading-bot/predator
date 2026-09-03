@@ -75,7 +75,7 @@ mauvais endroit.
 | `/ledger` | Bilan CLV par sport, seuils d'edge appris |
 | `/audit` | Distribution d'alpha par sport, verdicts de promotion/retrait |
 | `/performance` | WIN/LOSS/PUSH depuis `ai_learning_ledger`, score de Brier |
-| `/system` | Calculateur de paris système, pré-rempli avec les signaux actifs |
+| `/system` | Calculateur de paris système, pré-rempli avec les signaux actifs ; panneau Scénarios (retour pire/meilleur cas pour k bons sur N, point mort, marge composée indicative) — des retours conditionnels, jamais des probabilités |
 
 Pas de build, pas de bundler : Jinja + CSS + JavaScript inline. Le dashboard
 n'écrit qu'une chose, une demande de scan dans `meta` (`/api/scan`, cooldown
