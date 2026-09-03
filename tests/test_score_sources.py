@@ -275,7 +275,7 @@ class TestESPN:
     def test_sport_sans_chemin_saute_la_voie(self, monkeypatch):
         appels = []
         monkeypatch.setattr(ss, "_get_json", lambda *a, **k: appels.append(1) or {"events": []})
-        assert ss.result_from_espn("Ding Meng vs Cam Nelson", "mma", "2026-08-30") is None
+        assert ss.result_from_espn("Fury vs Usyk", "boxing", "2026-08-30") is None
         assert ss.result_from_espn("Alcaraz vs Sinner", "tennis", "2026-08-30") is None
         assert not appels
 

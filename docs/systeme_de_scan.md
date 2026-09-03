@@ -31,6 +31,15 @@ toutes les 10 minutes et relance un tick **reprice** si le scan est en retard
 de plus de 75 min. Un standard manqué n'est pas rejoué : le suivant vient
 dans ≤ 5 h, ou tu appuies sur « Scanner ».
 
+## Ce qui n'entre PAS (depuis le 3 septembre 2026, ta décision)
+
+- Un match dont le prix sharp n'est qu'une copie d'une source soft, sans
+  marché d'exchange derrière : **marché mort**, écarté.
+- Un match qu'aucun de nos outils de règlement ne connaît (api-sports, MLB,
+  ESPN) : **non réglable**, écarté. Boxe et tennis n'ont plus de source de
+  scores et ne sortent plus ; le MMA se règle via ESPN.
+- Le log de chaque scan le dit en une ligne : `PÉRIMÈTRE | n matchs → vivants → réglables`.
+
 ## Ce que tu vois
 
 - **Dashboard, « Dernier scan »** : rafraîchi par les deux modes. Le nombre de

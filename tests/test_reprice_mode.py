@@ -168,6 +168,13 @@ def cabler_reprice(monkeypatch):
                         lambda _sigs, _log, _sb=None: [])
     monkeypatch.setattr(eng, "_last_look_reprice", lambda s, _log: s)
     monkeypatch.setattr(eng, "_telegram", lambda t: telegrams.append(t))
+    # Périmètre (2026-09-03) : la réglabilité interroge ESPN — pas de réseau
+    # ici, le match du slate est tenu pour réglable (gardé par
+    # tests/test_perimetre.py).
+    monkeypatch.setattr(eng, "_fixtures_espn",
+                        lambda sport, a, b: [{"competitions": [{"competitors": [
+                            {"homeAway": "home", "team": {"displayName": "Boca Juniors"}},
+                            {"homeAway": "away", "team": {"displayName": "River Plate"}}]}]}])
 
     # Sentinelles : toute source payante ou recherche web fait ÉCHOUER le test.
     for fn in ("fetch_odds", "fetch_matches",

@@ -1340,6 +1340,51 @@ Premier geste après déploiement : `python scripts/ops.py ai`.
 Gardien : `tests/test_ai_router.py::TestLanes`.
 
 
+### Périmètre : marchés morts et ligues non réglables BANNIS (2026-09-03)
+
+Décision opérateur, dans ses mots : « ligues sans sources fiables,
+artefacts et marchés morts à bannir ; garder prix sharps réels avec
+liquidité et ligues réglables avec nos outils ». La question posée était
+« doit-on délaisser les ligues mineures maintenant que les grands
+championnats commencent ? » — et la réponse mesurée était non : la ligue la
+plus perdante du ledger est la Primera División argentine (10–12), pas une
+division mineure ; en revanche 8 des 14 signaux en souffrance de règlement
+ce jour-là venaient de divisions qu'aucune source gratuite ne couvre
+(Azerbaïdjan 1. Liga, Kakkonen finlandaise, coupe de Géorgie, playoffs U20
+NSW…). Un pari qu'on ne peut pas régler n'apprend rien, gonfle les expirés
+et nourrit le biais de survie. La frontière utile n'est pas « mineur /
+majeur », c'est « tarifable et réglable / ni l'un ni l'autre ».
+
+Deux gardes DÉRIVÉES des données du run, aucune liste de ligues à la main
+(règle n°6), dans `run_engine._filtrer_perimetre`, AVANT la photographie
+du slate (un match banni ne revient pas par le cache du tick reprice) :
+
+1. **MARCHÉ VIVANT** — un match du Tier 2 n'entre que si un exchange
+   confirme son prix sharp (`odds_exchange` par la contre-expertise, ou
+   `_exchange` par le bouche-trou de `_enrich_from_exchange`). L'exchange ne
+   publie un marché qu'avec back ET lay serrés (`core/matchbook.py`,
+   MAX_SPREAD_RATIO) : c'est la liquidité mesurée. Une copie « Pinnacle »
+   d'api-sports/titan007 sans marché d'exchange derrière est un prix que
+   personne ne prend — un marché mort, la fabrique d'edge d'artefact d'A6.
+   Le Tier 1 OddsAPI (sans `_soft_source`) est un flux Pinnacle réel : il
+   passe. Mesuré sur le scan standard de 14:38 : Matchbook confirmait 14
+   matchs du Tier 2.
+2. **RÉGLABLE** — api-sports règle ses propres fixtures dans la fenêtre de
+   son plan, MLB statsapi règle le baseball, ESPN règle ce qu'il LISTE
+   (`core/score_sources.fixtures_espn`, à venir compris, une requête par
+   sport présent sur la fenêtre des coups d'envoi du run). Tout le reste est
+   refusé, et ESPN muet sur un sport qu'il couvre (panne) vaut REFUS, pas
+   laisser-passer : le tick suivant réessaie dans l'heure. Conséquence
+   assumée : la BOXE et le TENNIS, sans source de scores structurée, ne
+   sortent plus (le MMA, lui, se règle désormais par le drapeau `winner`
+   des combats ESPN, à deux athlètes sans `homeAway`).
+
+Chaque refus est loggé (`MARCHÉ MORT |`, `NON RÉGLABLE |`, bilan
+`PÉRIMÈTRE | n → vivants → réglables`). Le volume de signaux va BAISSER —
+c'est le but — et la première mesure honnête est le bilan `PÉRIMÈTRE` des
+prochains scans, à relire avant de toucher quoi que ce soit.
+Gardiens : `tests/test_perimetre.py`, `tests/test_score_sources.py::TestESPN`.
+
 ### ESPN, source de scores OUVERTE, avant TheSportsDB ; api-sports sauté hors de son plan (2026-09-03)
 
 Deux audits stériles le même jour (10:38 et 15:45 UTC, run 33774472425 :

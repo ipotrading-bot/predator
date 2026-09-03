@@ -59,6 +59,7 @@ def scan_env(monkeypatch):
     monkeypatch.setattr(eng, "_suggest_systems_by_window",
                         lambda _sigs, _log, _sb=None: [])
     monkeypatch.setattr(eng, "_telegram", lambda t: telegrams.append(t))
+    monkeypatch.setattr(eng, "_fixtures_espn", lambda sport, a, b: [])   # pas de réseau
 
     # Sources payantes / alertes de pool : toute sollicitation fait ÉCHOUER.
     for fn in ("fetch_odds", "_alert_oddsapi_pool_levels",

@@ -84,7 +84,7 @@ _TSDB_PUBLIC_KEY = "123"
 MLB_DAILY_BUDGET = int(os.environ.get("MLB_STATSAPI_DAILY_BUDGET", "80"))
 # ESPN ne publie aucune limite ; une requête couvre une fenêtre de 3 jours et
 # TOUT un sport, donc un audit en consomme quelques-unes. Borne prudente.
-ESPN_DAILY_BUDGET = int(os.environ.get("ESPN_DAILY_BUDGET", "200"))
+ESPN_DAILY_BUDGET = int(os.environ.get("ESPN_DAILY_BUDGET", "400"))
 TSDB_DAILY_BUDGET = int(os.environ.get("THESPORTSDB_DAILY_BUDGET", "150"))
 _MLB_BUCKET = "mlb_results"
 _ESPN_BUCKET = "espn_results"
@@ -106,6 +106,10 @@ _ESPN_PATHS = {
     "college_football":      ["football/college-football"],
     "aussierules":           ["australian-football/afl"],
     "rugbyleague":           ["rugby-league/3"],          # NRL
+    # MMA : une carte = un événement, chaque combat = une « competition » à
+    # deux ATHLÈTES (pas de homeAway) avec un drapeau `winner` une fois
+    # terminé. Réglé 1-0 / 0-1 dans l'ordre des combattants du signal.
+    "mma":                   ["mma/ufc"],
 }
 # User-Agent ESPN. MESURÉ le 2026-09-03 depuis ce Codespace : « PREDATOR/1.0 »
 # et un UA de navigateur reçoivent 403, « curl/8.5.0 », « Python-urllib/3.11 »
@@ -301,10 +305,38 @@ def _espn_events(path: str, fenetre: str) -> list:
 
 def _espn_noms(competitor: dict) -> list[str]:
     """Les libellés sous lesquels ESPN désigne une équipe (displayName,
-    shortDisplayName, name, location) — l'appariement strict en essaie un."""
+    shortDisplayName, name, location) ou un athlète (fullName, displayName,
+    shortName) — l'appariement strict en essaie un."""
     team = competitor.get("team") or {}
+    ath = competitor.get("athlete") or {}
     return [n for n in (team.get("displayName"), team.get("shortDisplayName"),
-                        team.get("name"), team.get("location")) if n]
+                        team.get("name"), team.get("location"),
+                        ath.get("fullName"), ath.get("displayName"), ath.get("shortName")) if n]
+
+
+def _espn_competitions(ev: dict) -> list:
+    """Un événement d'équipe porte UNE competition ; une carte MMA en porte
+    une par combat. On les parcourt toutes."""
+    return list(ev.get("competitions") or [])
+
+
+def _espn_paire(comp: dict, home: str, away: str) -> tuple[dict, dict] | None:
+    """(compétiteur domicile, compétiteur extérieur) si les deux noms du
+    signal s'apparient strictement — par `homeAway` quand ESPN le donne,
+    sinon (athlètes) dans les deux ordres ; None sinon."""
+    comps = comp.get("competitors") or []
+    dom, ext = _espn_camp(comp, "home"), _espn_camp(comp, "away")
+    if dom and ext:
+        paires = [(dom, ext)]
+    elif len(comps) == 2:
+        paires = [(comps[0], comps[1]), (comps[1], comps[0])]
+    else:
+        return None
+    for a, b in paires:
+        if (any(strict_team_match(home, n) for n in _espn_noms(a))
+                and any(strict_team_match(away, n) for n in _espn_noms(b))):
+            return a, b
+    return None
 
 
 def _espn_camp(competition: dict, camp: str) -> dict | None:
@@ -315,23 +347,68 @@ def _espn_camp(competition: dict, camp: str) -> dict | None:
 
 
 def _espn_candidat(ev: dict, home: str, away: str) -> tuple[int, int] | None:
-    """(home_score, away_score) si l'événement est TERMINÉ et que ses deux
-    équipes s'apparient strictement aux deux noms du signal ; None sinon."""
-    comp = (ev.get("competitions") or [{}])[0]
-    statut = (comp.get("status") or {}).get("type") or {}
-    if not (statut.get("completed") and statut.get("state") == "post"):
-        return None
-    dom, ext = _espn_camp(comp, "home"), _espn_camp(comp, "away")
-    if not dom or not ext:
-        return None
-    if not any(strict_team_match(home, n) for n in _espn_noms(dom)):
-        return None
-    if not any(strict_team_match(away, n) for n in _espn_noms(ext)):
-        return None
+    """(home_score, away_score) si UNE competition de l'événement est TERMINÉE
+    et que ses deux compétiteurs s'apparient strictement aux deux noms du
+    signal ; None sinon. Sans score chiffré (combat MMA), le drapeau `winner`
+    donne 1-0 / 0-1 — un combat sans vainqueur déclaré (no contest, nul)
+    ne règle pas."""
+    trouves = []
+    for comp in _espn_competitions(ev):
+        statut = (comp.get("status") or {}).get("type") or {}
+        if not (statut.get("completed") and statut.get("state") == "post"):
+            continue
+        paire = _espn_paire(comp, home, away)
+        if not paire:
+            continue
+        a, b = paire
+        try:
+            trouves.append((int(a.get("score")), int(b.get("score"))))
+            continue
+        except (TypeError, ValueError):
+            pass
+        if a.get("winner") is True and not b.get("winner"):
+            trouves.append((1, 0))
+        elif b.get("winner") is True and not a.get("winner"):
+            trouves.append((0, 1))
+    return trouves[0] if len(trouves) == 1 else None
+
+
+def _espn_fenetre_entre(date_min: str, date_max: str) -> str | None:
+    """`dates=AAAAMMJJ-AAAAMMJJ` couvrant [date_min − 1 j, date_max + 1 j]."""
     try:
-        return int(dom.get("score")), int(ext.get("score"))
+        a = datetime.fromisoformat(date_min[:10]) - timedelta(days=1)
+        b = datetime.fromisoformat(date_max[:10]) + timedelta(days=1)
     except (TypeError, ValueError):
         return None
+    if b < a:
+        a, b = b, a
+    return f"{a:%Y%m%d}-{b:%Y%m%d}"
+
+
+def fixtures_espn(sport: str, date_min: str, date_max: str) -> list | None:
+    """Tous les événements ESPN (à venir, en cours, terminés) du sport sur la
+    fenêtre — UNE requête par chemin. None si le sport n'a pas de chemin ESPN
+    (aucune vérification possible), [] si ESPN n'a rien rendu."""
+    chemins = _ESPN_PATHS.get((sport or "").lower())
+    fenetre = _espn_fenetre_entre(date_min, date_max)
+    if not chemins or not fenetre:
+        return None
+    out: list = []
+    for path in chemins:
+        out.extend(_espn_events(path, fenetre))
+    return out
+
+
+def fixture_connue(match_name: str, events: list) -> bool:
+    """Le match (les DEUX noms, appariés strictement) figure-t-il dans ces
+    événements ESPN, quel que soit leur état ? C'est le test de
+    RÉGLABILITÉ : ce qu'ESPN liste avant le coup d'envoi, il le règle après."""
+    parts = _split(match_name)
+    if not parts:
+        return False
+    home, away = parts
+    return any(_espn_paire(comp, home, away) is not None
+               for ev in events for comp in _espn_competitions(ev))
 
 
 def result_from_espn(match_name: str, sport: str, match_date: str) -> dict | None:

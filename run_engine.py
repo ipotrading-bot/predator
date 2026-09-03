@@ -34,6 +34,7 @@ from core.math_engine import (to_binary, devig_bounds, is_round_number_line, dev
                               executable_price as _executable_price)
 from core.tax_engine import optimal_stake_fraction as _optimal_stake_fraction
 from core.learning_layer import _PLAYABLE_MIN_MINUTES
+from core.score_sources import fixtures_espn as _fixtures_espn, fixture_connue as _fixture_connue
 from core.odds_api import (fetch_odds, pool_status as _odds_pool_status,
                            pool_counters as _odds_pool_counters,
                            pool_totals as _odds_pool_totals,
@@ -1845,6 +1846,96 @@ def _process_spreads(m, name, sport, league, home, away, emoji, signals, sb, now
     signals.extend(_keep_best_side(sides, log, emoji, name))
 
 
+# ── PÉRIMÈTRE : prix sharp réel avec liquidité, ligue réglable (2026-09-03) ──
+#
+# Décision opérateur, dans ses mots : « ligues sans sources fiables,
+# artefacts et marchés morts à bannir ; garder prix sharps réels avec
+# liquidité et ligues réglables avec nos outils ». Deux gardes DÉRIVÉES des
+# données du run — aucune liste de ligues tenue à la main (règle n°6) :
+#
+#   1. MARCHÉ VIVANT — le prix sharp d'un match du Tier 2 doit être confirmé
+#      par un EXCHANGE (Matchbook/Betfair : contre-expertise `odds_exchange`
+#      ou bouche-trou `_exchange`). L'exchange ne publie un marché qu'avec un
+#      back ET un lay serrés (core/matchbook.py, MAX_SPREAD_RATIO) : c'est la
+#      liquidité mesurée. Une copie « Pinnacle » d'une source soft sans
+#      marché d'exchange derrière est un prix que personne ne prend — un
+#      marché mort, la fabrique d'edge d'artefact d'A6. Le Tier 1 (OddsAPI,
+#      sans `_soft_source`) est un flux Pinnacle réel : il passe.
+#   2. RÉGLABLE — le match doit être réglable par nos outils : api-sports le
+#      règle dans la fenêtre de son plan (les matchs qu'IL a servis sont ses
+#      fixtures), MLB statsapi règle le baseball, ESPN règle ce qu'il LISTE
+#      (core/score_sources.fixtures_espn : à venir compris). Un match
+#      qu'aucune de ces sources ne connaît sortirait en `expired` : mesuré le
+#      2026-09-03, 8 signaux sur 14 en souffrance venaient de divisions
+#      qu'aucune source gratuite ne couvre (Azerbaïdjan, Finlande D3,
+#      Géorgie, U20 australiens…). Sports sans source de scores (boxe,
+#      tennis) : refusés — un pari qu'on ne peut pas régler n'apprend rien.
+#      ESPN muet sur un sport qu'il couvre (panne) → REFUS, pas laisser-
+#      passer : le tick suivant réessaie dans l'heure.
+#
+# Les deux gardes LOGGENT chaque match écarté (tests/test_tier2_toujours.py :
+# un gate qui jette en silence est la panne n°1 du dépôt).
+
+def _marche_vivant(m: dict) -> bool:
+    if not m.get("_soft_source"):
+        return True                      # Tier 1 OddsAPI : Pinnacle réel
+    return bool(m.get("odds_exchange") or m.get("_exchange"))
+
+
+def _reglable(m: dict, fixtures_par_sport: dict) -> bool:
+    sport = (m.get("sport") or "").lower()
+    if sport == "baseball":
+        return True                      # MLB statsapi, sans clé
+    if str(m.get("_soft_source") or "").startswith("api-sports"):
+        return True                      # fixture api-sports : réglée par api-sports
+    events = fixtures_par_sport.get(sport)
+    if not events:                       # None (pas de source) ou [] (ESPN muet)
+        return False
+    return _fixture_connue(m.get("match") or "", events)
+
+
+def _filtrer_perimetre(matches: list, log) -> list:
+    """Applique les deux gardes du périmètre, loggue chaque refus, rend les
+    matchs conservés. Une requête ESPN par sport présent, sur une fenêtre
+    couvrant tous les coups d'envoi du run (cache de run, budget partagé)."""
+    vivants = []
+    for m in matches:
+        if _marche_vivant(m):
+            vivants.append(m)
+        else:
+            log.info("MARCHÉ MORT | %s (%s) — prix sharp de %s sans marché d'exchange "
+                     "derrière : personne ne le prend, écarté", m.get("match", "?"),
+                     m.get("league", "?"), m.get("_soft_source"))
+    fixtures_par_sport: dict[str, list | None] = {}
+    for sport in {(m.get("sport") or "").lower() for m in vivants}:
+        dates = sorted(str(m.get("commence_time") or "")[:10]
+                       for m in vivants if (m.get("sport") or "").lower() == sport
+                       and m.get("commence_time"))
+        if not dates:
+            fixtures_par_sport[sport] = None
+            continue
+        try:
+            fixtures_par_sport[sport] = _fixtures_espn(sport, dates[0], dates[-1])
+        except Exception as e:                                    # noqa: BLE001
+            log.warning("PÉRIMÈTRE | ESPN %s : %s — sport traité comme muet", sport, e)
+            fixtures_par_sport[sport] = []
+    gardes = []
+    for m in vivants:
+        if _reglable(m, fixtures_par_sport):
+            gardes.append(m)
+        else:
+            sport = (m.get("sport") or "").lower()
+            raison = ("aucune source de scores pour ce sport"
+                      if fixtures_par_sport.get(sport) is None
+                      else "ESPN muet sur ce sport (panne ?)" if fixtures_par_sport.get(sport) == []
+                      else "absent des sources de scores (ligue non couverte)")
+            log.info("NON RÉGLABLE | %s (%s, %s) — %s, écarté",
+                     m.get("match", "?"), m.get("league", "?"), sport, raison)
+    log.info("PÉRIMÈTRE | %d matchs → %d marchés vivants → %d réglables",
+             len(matches), len(vivants), len(gardes))
+    return gardes
+
+
 # ── Portfolio Balancer ────────────────────────────────────────────────
 
 def _minutes_avant_coup_denvoi(s: dict) -> float | None:
@@ -2639,6 +2730,18 @@ def run():
         msg = "📡 PREDATOR v8.8: 0 signaux — toutes sources épuisées."
         log.warning(msg)
         _telegram(msg)
+        if sb:
+            _heartbeat(sb, now, 0, 0)
+        if credentials_failed:
+            raise SystemExit(1)
+        return
+
+    # ── Périmètre : marchés vivants, ligues réglables (2026-09-03) ────────
+    # AVANT la photographie du slate : un match banni ne doit pas revenir
+    # par le cache du tick reprice suivant.
+    matches = _filtrer_perimetre(matches, log)
+    if not matches:
+        log.warning("PÉRIMÈTRE | aucun match ne passe les gardes (marché vivant + réglable)")
         if sb:
             _heartbeat(sb, now, 0, 0)
         if credentials_failed:
