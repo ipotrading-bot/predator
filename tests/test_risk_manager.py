@@ -106,8 +106,10 @@ class _FakeSB:
         return list(self._meta_by_key.values())
 
 
-def _active_signal(kelly_pct):
-    return {"kelly_pct": kelly_pct, "status": "active"}
+def _active_signal(kelly_pct, is_shadow=False):
+    # `is_shadow` est NOT NULL DEFAULT false en base (sql/migrate_v10_12) :
+    # la fixture porte la même valeur par défaut que la ligne réelle.
+    return {"kelly_pct": kelly_pct, "status": "active", "is_shadow": is_shadow}
 
 
 def _ledger_row(outcome, kelly_pct=10.0, odds=2.0, created_at="2026-07-01T00:00:00",
@@ -374,3 +376,11 @@ class TestB4UneCoteManquanteNestPasInventee:
                 _ledger_row("LOSS", kelly_pct=10,
                             created_at="2026-07-01T00:02:00")]
         assert risk_manager.rolling_drawdown(rows) > 0.0
+
+
+class TestFantomesHorsExposition:
+    def test_un_fantome_ne_compte_pas_dans_lexposition(self):
+        """Un signal jamais recommandé n'engage aucun capital : le compter
+        réduisait la marge (headroom) des paris réellement conseillés."""
+        sb = _FakeSB(signals=[_active_signal(5.0), _active_signal(40.0, is_shadow=True)])
+        assert risk_manager.get_current_exposure(sb, bankroll=100) == 5.0

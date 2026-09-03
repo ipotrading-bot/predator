@@ -1579,6 +1579,49 @@ Correction : `run_rapport._a_venir` — même règle que le dashboard. Un signal
 sans coup d'envoi lisible est conservé (on ne sait pas), pas jeté.
 Gardien : `tests/test_rapport_signaux_a_venir.py`.
 
+### Les fantômes s'affichaient sur le dashboard comme des paris à poser (2026-09-03)
+
+Depuis le 2026-08-04, les signaux de la golden hour (< T-2h) sont FANTÔMES :
+mesurés, réglés, appris, mais retirés de Telegram (`SHADOW_GOLDEN_HOUR`,
+`run_engine._shadow_partition`). Le fantôme n'était qu'un filtre sur la liste
+envoyée à Telegram ; la ligne partait en base en `status='active'` SANS
+MARQUEUR (le commentaire de `SHADOW_SPORTS` le disait : « rien ne les
+distingue au niveau de la ligne »). Or `/`, `/api/signals` (donc `/system`) et
+`/audit` listent `status='active'` : ils montraient les fantômes comme des
+paris à poser. L'opérateur pariait dessus depuis le dashboard, et perdait sur
+la tranche que le système avait mesurée perdante. Mesuré le 2026-09-03 sur
+septembre : 17 des 27 actifs, 19 des 22 réglés étaient des fantômes (8–11).
+
+Trois anomalies corrigées ensemble :
+
+1. **Le fantôme devient une colonne** — `signals.is_shadow` + `shadow_reason`,
+   `ai_learning_ledger.is_shadow`, mêmes colonnes sur les deux archives
+   (`sql/migrate_v10_12_signals_shadow.sql`, APPLIQUÉE : 189 signaux et 276
+   lignes de ledger marqués, aucune supprimée). La partition tourne AVANT la
+   persistance et marque chaque signal ; le dashboard, l'API et `/audit`
+   filtrent `is_shadow = false` ; `log_to_ledger` recopie le drapeau, et
+   `/performance` le préfère à la zone horaire (`perf_view.is_phantom`).
+2. **La règle T-2h vaut par SIGNAL, plus seulement par mode de run** — la
+   mesure du 2026-08-04 (39 % de réussite) portait sur la TRANCHE horaire, mais
+   le fantôme n'était appliqué qu'au mode `golden` : un scan standard tiré à
+   13:54 pour un match de 15:00 émettait un signal T-66 min recommandé, envoyé,
+   affiché. `_shadow_reason` : `shadow_sport` → `golden_hour` → `t_minus_2h`
+   (borne IMPORTÉE de `learning_layer._PLAYABLE_MIN_MINUTES`, règle n°6).
+3. **Le rafraîchissement écrasait la mesure** — un re-scan du même
+   (match, marché) réécrit `scanned_at` ; 309 lignes l'avaient postérieur à
+   `created_at`. Conséquences : (a) le drapeau est FIGÉ à la première insertion
+   (`_FIGES_AU_RAFRAICHISSEMENT`) — une recommandation envoyée à T-6h revue à
+   T-1h par le tick golden ne devient pas fantôme, sinon le dashboard cacherait
+   un pari déjà posé ; (b) `time_to_match_minutes` se mesure depuis
+   `created_at`, plus depuis `scanned_at` — les lignes anciennes du ledger
+   portent encore l'ancienne mesure (le backfill le dit), toute analyse par zone
+   sur elles surestime les fantômes.
+
+Le heartbeat `meta.last_scan.signals` compte désormais les RECOMMANDÉS :
+« 12 signaux » pour 0 visible faisait chercher une panne d'affichage.
+Gardien : `tests/test_signaux_fantomes.py` (partition avant `_save`, drapeau
+figé, ledger, filtres, migration sans DELETE).
+
 ### Une version, un seul endroit
 
 `DASHBOARD_VERSION` (`api/index.py`), injectée

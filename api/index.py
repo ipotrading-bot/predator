@@ -286,7 +286,15 @@ def dashboard():
     try:
         sb = _db()
         if sb:
-            res = sb.table("signals").select("*").eq("status", "active").order("created_at", desc=True).limit(200).execute()
+            # `is_shadow = false` : les FANTÔMES (golden hour / T-2h, mesurés
+            # mais jamais recommandés — run_engine._shadow_partition) ne sont
+            # pas des paris à poser. Jusqu'au 2026-09-03 rien ne les
+            # distinguait en base et la page les affichait comme les autres,
+            # alors que Telegram les taisait : l'opérateur pariait dessus.
+            # sql/migrate_v10_12_signals_shadow.sql.
+            res = (sb.table("signals").select("*").eq("status", "active")
+                   .eq("is_shadow", False)
+                   .order("created_at", desc=True).limit(200).execute())
             raw = res.data or []
 
             # Deduplicate: keep NEWEST signal per (match_id, market_key).
@@ -538,6 +546,7 @@ def audit():
                 act_res = (sb.table("signals")
                            .select("sport,edge_pct,sharp_prob,kelly_pct,risk_flag,scanned_at,match,market,selection_name,xbet_odd,pinnacle_price")
                            .eq("status", "active")
+                           .eq("is_shadow", False)
                            .order("scanned_at", desc=True)
                            .limit(300)
                            .execute())
@@ -840,7 +849,10 @@ def api_signals():
         sb = _db()
         if not sb:
             return jsonify({"error": "no db"}), 503
+        # Même filtre fantôme que la page d'accueil — cette API alimente une
+        # interface de mise (/system), un fantôme n'y a pas sa place.
         res = (sb.table("signals").select("*").eq("status", "active")
+               .eq("is_shadow", False)
                .order("created_at", desc=True).limit(200).execute())
         rows = res.data or []
         if request.args.get("all") not in ("1", "true", "yes"):

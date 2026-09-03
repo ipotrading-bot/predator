@@ -313,6 +313,21 @@ def league_breakdown(rows: list[dict], tax_rate: float, min_n: int = 5) -> list[
     return out
 
 
+def is_phantom(r: dict) -> bool:
+    """Ce pari a-t-il été recommandé, ou seulement mesuré ?
+
+    Le drapeau `is_shadow` (sql/migrate_v10_12, recopié du signal au
+    règlement) fait foi quand il est là : il dit ce que le moteur a DÉCIDÉ à
+    l'émission. Sans lui (ligne d'avant la migration, fixture), on retombe sur
+    la zone horaire — golden (< T-2h) ou > 24 h — qui est une approximation :
+    elle se calcule depuis `time_to_match_minutes`, longtemps mesuré au
+    DERNIER rafraîchissement et non à la première émission."""
+    flag = r.get("is_shadow")
+    if flag is not None:
+        return bool(flag)
+    return playable_zone(r) in ("golden", "hors")
+
+
 def recommended_rows(rows: list[dict]) -> list[dict]:
     """Les lignes qu'un lecteur a pu JOUER : zone recommandée (T-2h … T-24h)
     et lignes sans `time_to_match_minutes` (l'inconnu est conservé, comme dans
@@ -323,12 +338,12 @@ def recommended_rows(rows: list[dict]) -> list[dict]:
     jour-là, septembre affichait 52 % de réussite dont 4–0 sur les paris
     recommandés et 8–11 sur des fantômes — la page jugeait le système sur des
     paris qu'il n'avait conseillés à personne."""
-    return [r for r in rows if playable_zone(r) in ("zone", "nc")]
+    return [r for r in rows if not is_phantom(r)]
 
 
 def phantom_rows(rows: list[dict]) -> list[dict]:
-    """Le complément de `recommended_rows` : golden hour et > 24 h."""
-    return [r for r in rows if playable_zone(r) in ("golden", "hors")]
+    """Le complément de `recommended_rows` — voir `is_phantom`."""
+    return [r for r in rows if is_phantom(r)]
 
 
 def market_breakdown(rows: list[dict], tax_rate: float, min_n: int = 5) -> list[dict]:

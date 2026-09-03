@@ -33,6 +33,7 @@ from core.math_engine import (to_binary, devig_bounds, is_round_number_line, dev
                               dnb_leg_split as _dnb_leg_split,
                               executable_price as _executable_price)
 from core.tax_engine import optimal_stake_fraction as _optimal_stake_fraction
+from core.learning_layer import _PLAYABLE_MIN_MINUTES
 from core.odds_api import (fetch_odds, pool_status as _odds_pool_status,
                            pool_counters as _odds_pool_counters,
                            pool_totals as _odds_pool_totals,
@@ -420,7 +421,17 @@ def _refresh_ai_catalogues() -> None:
 
 
 # Columns optional at DB level — strip only as last-resort fallback
-_OPTIONAL_COLS = {"selection_name", "kelly_pct", "advice", "sharp_sources", "consensus_score", "correlation_group"}
+_OPTIONAL_COLS = {"selection_name", "kelly_pct", "advice", "sharp_sources", "consensus_score", "correlation_group",
+                  # sql/migrate_v10_12_signals_shadow.sql — posées à l'émission, voir _shadow_partition
+                  "is_shadow", "shadow_reason"}
+
+# Le drapeau FANTÔME est figé à la PREMIÈRE insertion : un rafraîchissement
+# (même match/marché revu par un tick ultérieur, typiquement golden à T-1h)
+# ne doit jamais transformer une recommandation déjà envoyée en fantôme — le
+# dashboard la cacherait alors que l'opérateur l'a peut-être déjà jouée. Le
+# cas inverse (fantôme qui redeviendrait recommandé) n'existe pas : un tick
+# ultérieur est toujours plus proche du coup d'envoi.
+_FIGES_AU_RAFRAICHISSEMENT = frozenset({"is_shadow", "shadow_reason"})
 
 
 def _save(sb, signal) -> bool:
@@ -486,7 +497,8 @@ def _save(sb, signal) -> bool:
         est alors libre et il faut retenter l'INSERT, pas abandonner le signal.
         """
         champs = {k: v for k, v in payload.items()
-                  if k not in ("match_id", "market_key")}
+                  if k not in ("match_id", "market_key")
+                  and k not in _FIGES_AU_RAFRAICHISSEMENT}
         try:
             res = (sb.table("signals").update(champs)
                    .eq("status", "active").eq("match_id", mid)
@@ -1915,20 +1927,66 @@ def _process_spreads(m, name, sport, league, home, away, emoji, signals, sb, now
 
 # ── Portfolio Balancer ────────────────────────────────────────────────
 
-def _shadow_partition(signals: list, golden_hour: bool) -> tuple[list, list]:
-    """Sépare (à_recommander, fantômes) — voir SHADOW_SPORTS en tête de fichier.
+def _minutes_avant_coup_denvoi(s: dict) -> float | None:
+    """match_time − scanned_at en minutes, None si l'un des deux manque ou ne
+    se lit pas. L'inconnu n'est pas classé fantôme (même contrat que
+    learning_layer.playable_rows : on ne peut pas prouver qu'il est hors zone)."""
+    mt, sc = s.get("match_time"), s.get("scanned_at")
+    if not mt or not sc:
+        return None
+    try:
+        a = datetime.fromisoformat(str(mt).replace("Z", "+00:00"))
+        b = datetime.fromisoformat(str(sc).replace("Z", "+00:00"))
+        return (a - b).total_seconds() / 60
+    except (TypeError, ValueError):
+        return None
 
-    Les fantômes ne sont PAS jetés : l'appelant les a déjà persistés, ils
-    seront réglés et appris comme les autres. Seule la recommandation
-    Telegram s'arrête. `golden_hour` est passé en paramètre plutôt que lu
-    depuis le flag global pour que la règle soit testable sans manipuler
-    l'environnement du processus.
+
+def _shadow_reason(s: dict, golden_hour: bool) -> str | None:
+    """Pourquoi ce signal est fantôme — None s'il est à recommander.
+
+    Trois raisons, dans l'ordre :
+      · `shadow_sport`  — sport listé dans SHADOW_SPORTS (décision opérateur) ;
+      · `golden_hour`   — run en mode golden (SHADOW_GOLDEN_HOUR) : tout le run ;
+      · `t_minus_2h`    — le signal lui-même est à moins de
+        core.learning_layer._PLAYABLE_MIN_MINUTES du coup d'envoi, QUEL QUE
+        SOIT le mode du run. C'est la règle qui manquait (2026-09-03) : la
+        mesure du 2026-08-04 (39 % de réussite sur la tranche T-2h) portait sur
+        la TRANCHE HORAIRE, mais le fantôme n'était appliqué qu'au MODE golden —
+        un scan standard tiré à 13:54 pour un match de 15:00 émettait un signal
+        T-66 min recommandé, envoyé, affiché. Borne IMPORTÉE, pas recopiée
+        (règle n°6) : le moteur, la couche d'apprentissage et /performance
+        découpent au même endroit.
     """
-    golden_shadowed = SHADOW_GOLDEN_HOUR and golden_hour
+    if s.get("sport") in SHADOW_SPORTS:
+        return "shadow_sport"
+    if SHADOW_GOLDEN_HOUR and golden_hour:
+        return "golden_hour"
+    minutes = _minutes_avant_coup_denvoi(s)
+    if SHADOW_GOLDEN_HOUR and minutes is not None and minutes < _PLAYABLE_MIN_MINUTES:
+        return "t_minus_2h"
+    return None
+
+
+def _shadow_partition(signals: list, golden_hour: bool) -> tuple[list, list]:
+    """Sépare (à_recommander, fantômes) et MARQUE chaque signal
+    (`is_shadow`, `shadow_reason`) — voir SHADOW_SPORTS en tête de fichier.
+
+    Appelée AVANT la persistance depuis le 2026-09-03 : le drapeau part en
+    base avec le signal (sql/migrate_v10_12_signals_shadow.sql), et le
+    dashboard filtre dessus. Avant cela, rien au niveau de la ligne ne
+    distinguait un fantôme : /api/signals et la page d'accueil montraient
+    comme paris à poser des signaux que Telegram, lui, taisait. Les fantômes
+    ne sont PAS jetés : ils sont persistés, réglés et appris comme les autres.
+    `golden_hour` est passé en paramètre plutôt que lu depuis le flag global
+    pour que la règle soit testable sans manipuler l'environnement.
+    """
     kept, shadowed = [], []
     for s in signals:
-        (shadowed if golden_shadowed or s.get("sport") in SHADOW_SPORTS
-         else kept).append(s)
+        raison = _shadow_reason(s, golden_hour)
+        s["is_shadow"] = raison is not None
+        s["shadow_reason"] = raison
+        (shadowed if raison else kept).append(s)
     return kept, shadowed
 
 
@@ -2770,6 +2828,20 @@ def run():
         log.info("Allocation: %s", " | ".join(
             f"{SPORT_EMOJI.get(sp,'🎯')} {sp}={n}" for sp, n in sport_counts.items()))
 
+    # ── Mode FANTÔME — AVANT la persistance (2026-09-03) ──────────────
+    # Le drapeau doit partir en base avec la ligne : c'est lui que le
+    # dashboard filtre. Tout est persisté, réglé et appris — seule la
+    # recommandation sortante (Telegram, dashboard) s'arrête. Pas de message
+    # Telegram : un fantôme est un réglage permanent, pas un incident.
+    recommandes, shadowed = _shadow_partition(signals, GOLDEN_HOUR)
+    if shadowed:
+        by_reason: dict[str, int] = {}
+        for s in shadowed:
+            k = f"{s.get('sport', '?')}/{s.get('shadow_reason')}"
+            by_reason[k] = by_reason.get(k, 0) + 1
+        log.info("FANTÔME | %d signaux mesurés mais non recommandés (%s)",
+                 len(shadowed), " ".join(f"{k}={n}" for k, n in sorted(by_reason.items())))
+
     # ── B. Bulk-save balanced signals to Supabase ─────────────────────
     saved_count = 0
     if sb and signals:
@@ -2807,12 +2879,12 @@ def run():
         # global check above can dilute/hide that. Signals still persist to
         # Supabase for settlement/learning either way (see comment above);
         # only the outward Telegram recommendation is filtered.
-        emit_signals = signals
+        emit_signals = recommandes
         if sb:
-            paused_sports = {s for s in {sig.get("sport") for sig in signals}
+            paused_sports = {s for s in {sig.get("sport") for sig in recommandes}
                              if s and _risk_manager.check_circuit_breaker_by_sport(sb, s)}
             if paused_sports:
-                emit_signals = [s for s in signals if s.get("sport") not in paused_sports]
+                emit_signals = [s for s in recommandes if s.get("sport") not in paused_sports]
                 log.warning("Sport circuit breaker active for %s — excluded from Telegram systems",
                            ", ".join(sorted(paused_sports)))
                 _telegram(
@@ -2821,23 +2893,8 @@ def run():
                     f"(drawdown roulant > {_risk_manager.DRAWDOWN_LIMIT_PCT*100:.0f}%).\n"
                     f"Autres sports non affectés — reprise manuelle uniquement pour ces sports."
                 )
-        # Mode FANTÔME — segments mesurés déficitaires (voir SHADOW_SPORTS /
-        # SHADOW_GOLDEN_HOUR en tête de fichier pour les chiffres). Filtré
-        # ici, au même endroit et pour la même raison que le disjoncteur
-        # ci-dessus : tout reste persisté, réglé et appris, seule la
-        # recommandation sortante s'arrête. Pas de message Telegram — un
-        # fantôme est un réglage permanent, pas un incident à annoncer à
-        # chaque scan.
-        emit_signals, shadowed = _shadow_partition(emit_signals, GOLDEN_HOUR)
-        if shadowed:
-            by_sport: dict[str, int] = {}
-            for s in shadowed:
-                by_sport[s.get("sport", "?")] = by_sport.get(s.get("sport", "?"), 0) + 1
-            log.info("FANTÔME | %d signaux mesurés mais non recommandés (%s)%s",
-                     len(shadowed),
-                     " ".join(f"{sp}={n}" for sp, n in sorted(by_sport.items())),
-                     " — golden_hour intégral" if (SHADOW_GOLDEN_HOUR and GOLDEN_HOUR) else "")
-
+        # (La partition fantôme a eu lieu AVANT la persistance, section B :
+        # `emit_signals` ne contient déjà que des recommandés.)
         if shadowed and not emit_signals:
             # Run intégralement fantôme (cas normal de golden_hour, 24×/jour).
             # Surtout NE PAS appeler _telegram_systems ici : sur une liste vide
@@ -2865,7 +2922,9 @@ def run():
              len(candidates), len(signals), len(elite))
     log.info("━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━")
     if sb:
-        _heartbeat(sb, now, len(matches), len(signals))
+        # Compte des RECOMMANDÉS : c'est ce que le dashboard affiche ; annoncer
+        # « 12 signaux » pour 0 visible ferait chercher une panne d'affichage.
+        _heartbeat(sb, now, len(matches), len(recommandes))
 
     # CONTRAT DE FIN (B5). `saved_count` ne vaut 0 avec `signals` non vide que
     # si CHAQUE écriture a échoué — c'est l'incident du 2026-07-07, ~17 h de

@@ -344,16 +344,24 @@ def log_to_ledger(sb, sig: dict, clv: float, outcome: str) -> None:
     until applied, the insert retries once with those columns stripped
     (same optional_cols pattern as update_signal_fields)."""
     match_time = sig.get("match_time")
-    scanned_at = sig.get("scanned_at")
+    # Distance au coup d'envoi depuis la PREMIÈRE insertion (`created_at`,
+    # posée par la base et jamais réécrite), pas depuis `scanned_at`, que
+    # chaque rafraîchissement du même (match, marché) écrase. Mesuré le
+    # 2026-09-03 : 309 lignes de `signals` avaient un scanned_at postérieur à
+    # leur created_at — une recommandation émise à T-6h et revue à T-1h par le
+    # tick golden entrait au ledger avec time_to_match_minutes = 60, donc
+    # comptée « fantôme » par toute analyse par zone. Repli sur scanned_at
+    # pour un signal qui n'aurait pas de created_at (fixture, ligne ancienne).
+    depart = sig.get("created_at") or sig.get("scanned_at")
     ttm = None
-    if match_time and scanned_at:
+    if match_time and depart:
         try:
             from datetime import datetime as _dt
-            mt = _dt.fromisoformat(match_time.replace("Z", "+00:00"))
-            sc = _dt.fromisoformat(scanned_at.replace("Z", "+00:00"))
+            mt = _dt.fromisoformat(str(match_time).replace("Z", "+00:00"))
+            sc = _dt.fromisoformat(str(depart).replace("Z", "+00:00"))
             ttm = int((mt - sc).total_seconds() / 60)
         except Exception:
-            log.debug("_ttm parse failed for match_time=%s scanned_at=%s", match_time, scanned_at)
+            log.debug("_ttm parse failed for match_time=%s depart=%s", match_time, depart)
     # signals.sharp_sources is TEXT holding a JSON string (see _emit in
     # run_engine.py), but ai_learning_ledger.sharp_sources is jsonb
     # (sql/migrate_v9_10_ledger_consensus.sql). Inserting the raw string would
@@ -379,6 +387,9 @@ def log_to_ledger(sb, sig: dict, clv: float, outcome: str) -> None:
         "sharp_prob":             sig.get("sharp_prob"),
         "sharp_sources":          sharp_sources,
         "consensus_score":        sig.get("consensus_score"),
+        # Drapeau FANTÔME recopié du signal (sql/migrate_v10_12) : /performance
+        # n'a plus à le deviner depuis time_to_match_minutes.
+        "is_shadow":              bool(sig.get("is_shadow", False)),
     }
     payload = {
         "signal_id":             sig.get("id"),

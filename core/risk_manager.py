@@ -88,7 +88,10 @@ def get_current_exposure(sb, bankroll: float) -> float:
     channels, not just a proxy for one of them.
     """
     try:
-        res = sb.table("signals").select("kelly_pct").eq("status", "active").execute()
+        # Un fantôme (is_shadow, jamais recommandé) n'est pas une exposition :
+        # le compter réduisait la marge des paris réellement conseillés.
+        res = (sb.table("signals").select("kelly_pct").eq("status", "active")
+               .eq("is_shadow", False).execute())
         rows = res.data or []
     except Exception as e:
         log.error("get_current_exposure: %s — assuming 0 exposure", e)

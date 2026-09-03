@@ -275,9 +275,14 @@ def run():
         # bi-horaire re-listerait indéfiniment TOUS les signaux vivants.
         # created_at est fiable depuis que _save met à jour en place (il porte
         # la PREMIÈRE émission, jamais rajeuni par un re-scan).
+        # is_shadow = false : le digest est une RECOMMANDATION. Jusqu'au
+        # 2026-09-03 il relistait les fantômes (golden hour / T-2h) que le
+        # moteur venait de taire — la même tranche mesurée perdante repartait
+        # sur Telegram par la porte du rapport. sql/migrate_v10_12.
         res = (sb.table("signals")
                .select("*")
                .eq("status", "active")
+               .eq("is_shadow", False)
                .gte("created_at", cutoff)
                .order("edge_pct", desc=True)
                .limit(30)
