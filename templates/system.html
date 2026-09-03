@@ -266,6 +266,79 @@ function bucketOf(R) {
 const bucketColor = { loss: C.loss, void: C.voidC, partial: C.partial, win: C.win };
 
 /* ---------------------------------------------------------------
+   SCÉNARIOS — dérivés du moteur (fonctions pures, sans UI)
+   Ce que le calculateur ne disait pas : AVANT de miser, que rend le
+   système si k sélections sur N sont gagnantes ? Ce sont des RETOURS
+   CONDITIONNELS (« si k gagnent, alors… »), jamais des probabilités ni
+   un taux de réussite (règle 7 de CLAUDE.md). Tout passe par
+   kCombinations et comboReturnFactor du bloc MATH, sur des sélections
+   simulées (k statuts "won", N-k "lost") — le moteur reste inchangé.
+--------------------------------------------------------------- */
+
+// Retour total d'un système M/N pour un jeu de sélections données, avec la
+// même règle que `computed` : tous les paliers de min(m, N) à N, chaque
+// combinaison mise `stake`. Rend { mise, retour }.
+function systemReturn(sels, m, stake) {
+  const n = sels.length;
+  const idx = sels.map((_, i) => i);
+  let mise = 0;
+  let retour = 0;
+  for (let j = Math.max(1, Math.min(m, n)); j <= n; j++) {
+    for (const indices of kCombinations(idx, j)) {
+      mise += stake;
+      retour += comboReturnFactor(indices.map((i) => sels[i])) * stake;
+    }
+  }
+  return { mise, retour };
+}
+
+// Pour k = 0..N sélections gagnantes : pire cas (les k cotes les plus BASSES
+// gagnent), meilleur cas (les k plus HAUTES), sur le système M/N et la mise
+// courants. Le pire cas est bien minimal : chaque terme du retour est un
+// produit de cotes, et prendre les k plus petites minimise chaque terme.
+// Les statuts saisis sont ignorés — seules les cotes comptent.
+// Rend [{ k, mise, worst, best, profitWorst, profitBest }], [] si N = 0.
+function scenariosByWinners(selections, m, stake) {
+  const n = selections.length;
+  if (n === 0) return [];
+  const asc = selections.map((s) => Number(s.odds) || 1.01).sort((a, b) => a - b);
+  const desc = [...asc].reverse();
+  const simulate = (winningOdds, losingOdds) =>
+    [...winningOdds.map((o) => ({ odds: o, status: "won" })),
+     ...losingOdds.map((o) => ({ odds: o, status: "lost" }))];
+  const out = [];
+  for (let k = 0; k <= n; k++) {
+    const worstSet = simulate(asc.slice(0, k), asc.slice(k));
+    const bestSet = simulate(desc.slice(0, k), desc.slice(k));
+    const w = systemReturn(worstSet, m, stake);
+    const b = systemReturn(bestSet, m, stake);
+    out.push({ k, mise: w.mise, worst: w.retour, best: b.retour,
+               profitWorst: w.retour - w.mise, profitBest: b.retour - w.mise });
+  }
+  return out;
+}
+
+// Point mort : plus petit k dont le retour PIRE CAS couvre la mise totale.
+// Rend { k, tooShort } — tooShort vaut true quand il faut TOUTES les
+// sélections (k = N) : N-1 bons ne couvrent pas la mise, les cotes sont trop
+// courtes pour un système. Rend null si aucun k ne couvre la mise.
+function breakEven(scenarios) {
+  if (!scenarios || scenarios.length === 0) return null;
+  const n = scenarios.length - 1;
+  const hit = scenarios.find((sc) => sc.worst >= sc.mise - 1e-9);
+  if (!hit) return null;
+  return { k: hit.k, tooShort: hit.k === n };
+}
+
+// Marge composée par palier, à titre indicatif : (1 + m)^k − 1, m en
+// fraction (0.05 pour 5 %). Ce n'est pas une probabilité : c'est ce que
+// vaudrait une marge m répétée k fois si elle était réelle à chaque jambe.
+function compoundMargin(m, k) {
+  const marge = Number(m) || 0;
+  return Math.pow(1 + marge, Math.max(0, k)) - 1;
+}
+
+/* ---------------------------------------------------------------
    UI ATOMS
 --------------------------------------------------------------- */
 function Panel({ title, children, right }) {

@@ -73,3 +73,36 @@ class TestBalisesEquilibrees:
         ouverts = len(re.findall(rf"<{tag}\b(?![^>]*/>)", jsx))
         fermes  = len(re.findall(rf"</{tag}>", jsx))
         assert ouverts == fermes, f"<{tag}> : {ouverts} ouvert(s), {fermes} fermé(s)"
+
+
+class TestScenariosDerivesDuMoteur:
+    """Chantier « scénarios » (2026-09-03) : les retours conditionnels par
+    nombre de gagnants se calculent avec kCombinations/comboReturnFactor, à
+    côté du bloc MATH, JAMAIS dedans — « moteur inchangé » est une règle
+    d'opérateur, ce test la rend mécanique."""
+
+    MATH_FUNCTIONS = ("kCombinations", "legBranches", "comboReturnFactor",
+                      "comboMaxFactor", "bucketOf")
+
+    def _bloc_math(self, jsx: str) -> str:
+        debut = jsx.index("MATH — combinatoire")
+        return jsx[debut:jsx.index("SCÉNARIOS — dérivés du moteur")]
+
+    def test_le_bloc_math_contient_exactement_ses_cinq_fonctions(self, jsx):
+        bloc = self._bloc_math(jsx)
+        assert "moteur inchangé" in bloc
+        assert re.findall(r"^function (\w+)\(", bloc, re.M) == list(self.MATH_FUNCTIONS)
+
+    def test_les_fonctions_de_scenarios_existent_apres_le_bloc_math(self, jsx):
+        fin_math = jsx.index("SCÉNARIOS — dérivés du moteur")
+        for fn in ("systemReturn", "scenariosByWinners", "breakEven", "compoundMargin"):
+            pos = jsx.index(f"function {fn}(")
+            assert pos > fin_math, f"{fn} doit vivre HORS du bloc MATH"
+
+    def test_les_scenarios_passent_par_le_moteur(self, jsx):
+        debut = jsx.index("SCÉNARIOS — dérivés du moteur")
+        bloc = jsx[debut:jsx.index("UI ATOMS")]
+        assert "kCombinations(" in bloc and "comboReturnFactor(" in bloc
+        # Des retours CONDITIONNELS, jamais des probabilités (règle 7) : le
+        # bloc le dit en toutes lettres.
+        assert "jamais des probabilités" in bloc
