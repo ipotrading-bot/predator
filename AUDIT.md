@@ -62,6 +62,7 @@ C'est le tableau à consulter avant de toucher à quoi que ce soit.
 | `readonly` ne détient aucun jeton d'écriture | `…::test_readonly_ne_detient_aucun_jeton_decriture` |
 | Le pool `settlement` porte les clés de résultats (api-sports, TheSportsDB) | `…::test_le_settlement_porte_les_cles_de_resultats` |
 | Le score vient d'api-sports puis de sources structurées — JAMAIS d'un LLM | `tests/test_settlement.py::TestFetchMatchResult::test_no_ai_layer_involved` |
+| ESPN (ouvert, sans clé) règle AVANT TheSportsDB, avec le même contrat (deux noms, candidat unique, terminé) ; api-sports n'est pas appelé hors de la fenêtre de son plan gratuit | `tests/test_score_sources.py::TestESPN`, `::TestChaineAvecESPN`, `tests/test_settlement.py::…::test_api_sports_saute_hors_de_la_fenetre_du_plan_gratuit` |
 | Un score en direct (statut non terminé) ne règle jamais | `tests/test_score_sources.py::TestTheSportsDB::test_un_score_en_direct_ne_regle_pas` |
 | La recherche d'équipe TheSportsDB ne décide jamais seule (cas Pastoreo) | `…::test_une_mauvaise_equipe_du_flou_ne_regle_rien` |
 | Deux matchs candidats → refus, jamais un WIN/LOSS deviné | `…::test_deux_candidats_font_REFUSER_pas_deviner` |

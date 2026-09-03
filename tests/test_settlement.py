@@ -43,6 +43,23 @@ class TestFetchMatchResult:
         monkeypatch.setattr(settlement, "fetch_score", lambda *a: None)
         assert settlement.fetch_match_result("A vs B", "soccer", "2026-09-01") is None
 
+    def test_api_sports_saute_hors_de_la_fenetre_du_plan_gratuit(self, monkeypatch):
+        """Audit 33774472425 : 15 lookups brûlés sur des refus certains
+        (« Free plans do not have access to this date »). Hors J-1, on ne
+        paie plus api-sports : sources ouvertes directement."""
+        from datetime import datetime, timezone
+        now = datetime(2026, 9, 3, 15, 45, tzinfo=timezone.utc)
+        assert settlement._hors_fenetre_api_sports("2026-08-31", now) is True
+        assert settlement._hors_fenetre_api_sports("2026-09-02", now) is False
+        assert settlement._hors_fenetre_api_sports("2026-09-03", now) is False
+        assert settlement._hors_fenetre_api_sports("n'importe quoi", now) is False
+        appels = []
+        monkeypatch.setattr(settlement, "_resultats_du_jour",
+                            lambda sport, jour: appels.append(jour) or [])
+        monkeypatch.setattr(settlement, "_hors_fenetre_api_sports", lambda d, now=None: True)
+        assert settlement.result_from_api_sports("A FC vs B FC", "soccer", "2026-08-31") is None
+        assert not appels, "hors fenêtre : aucun lookup api-sports"
+
     def test_no_ai_layer_involved(self):
         """Gardien de la suppression : le module settlement n'importe plus
         rien de core.ai_search — un score ne passe JAMAIS par un LLM."""

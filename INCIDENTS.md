@@ -1340,6 +1340,49 @@ Premier geste après déploiement : `python scripts/ops.py ai`.
 Gardien : `tests/test_ai_router.py::TestLanes`.
 
 
+### ESPN, source de scores OUVERTE, avant TheSportsDB ; api-sports sauté hors de son plan (2026-09-03)
+
+Deux audits stériles le même jour (10:38 et 15:45 UTC, run 33774472425 :
+« 0 réglé sur 15 éligibles »). Le log dit tout : « api-sports[soccer]
+résultats 2026-08-31 : Free plans do not have access to this date, try from
+2026-09-02 to 2026-09-04 » (15 des 25 lookups du jour brûlés sur des refus
+CERTAINS — le plan gratuit ne sert que J-1 … J+1) puis
+« score_sources[tsdb_results]: budget journalier atteint (150) ». Décision
+opérateur : « pour les résultats chercher sources open, pas TheSportsDB ».
+
+MESURÉ avant d'écrire : le scoreboard public ESPN
+(`site.api.espn.com/apis/site/v2/sports/<sport>/<ligue>/scoreboard?dates=A-B`)
+est SANS CLÉ, sans compte, sans quota publié ; `soccer/all` rend TOUTES les
+ligues de foot du monde en UNE requête par fenêtre de 3 jours (702
+événements terminés du 29 au 31 août, de la Premier League à la J.League),
+avec `status.type.completed`/`state`, camps `homeAway` et scores. Essai réel
+sur les 14 signaux en souffrance du jour : 6 réglables du premier coup
+(J.League, Premiership écossaise, Championship, Colombie D1, Paraguay — et
+l'expiré « AD Pasto vs Deportivo Pereira » du 31 août, 1-2). Les 8 autres
+sont des divisions que ni ESPN ni personne de gratuit ne couvre (1. Lig
+turque, Vtora Liga, coupes roumaine/italienne C, Azerbaïdjan, Finlande D3,
+Géorgie) : ils suivent le chemin normal actif → expired → relance.
+
+⚠️ PIÈGE MESURÉ : ESPN filtre sur la FORME du User-Agent, pas sur l'adresse —
+« PREDATOR/1.0 » et un UA de navigateur reçoivent 403, « curl/8.5.0 »,
+« Python-urllib/3.11 » et « produit/version (+url) » reçoivent 200. C'est
+la « leçon ESPN/SofaScore » de l'entrée suivante, résolue : ce n'était pas
+Azure, c'était l'en-tête. `_ESPN_USER_AGENT` (surchargeable par
+`ESPN_USER_AGENT`), requête routée par `core.net` (relais/proxy `ESPN_PROXY`
+ou `FREE_SOURCES_PROXY` si la règle change).
+
+Fait : `core/score_sources.result_from_espn` (même contrat : deux noms
+appariés strictement, candidat unique, statut terminé, None sur panne ;
+cache de run par (chemin, fenêtre) ; budget `espn_results` 200/j), chaîne
+`fetch_score` = MLB (baseball) → ESPN → TheSportsDB ; table `_ESPN_PATHS`
+par sport (soccer/all, nba, wnba, euroleague, nhl, mlb, nfl,
+college-football, afl, NRL) — MMA/boxe/tennis absents (athlètes, pas
+d'équipes) ; `core/settlement._hors_fenetre_api_sports` : hors
+J-`API_SPORTS_FREE_WINDOW_DAYS` (1), api-sports n'est plus appelé et ses
+lookups sont préservés pour les matchs de la veille.
+Gardiens : `tests/test_score_sources.py::TestESPN`, `::TestChaineAvecESPN`,
+`tests/test_settlement.py::…::test_api_sports_saute_hors_de_la_fenetre_du_plan_gratuit`.
+
 ### Groq et Tavily SUPPRIMÉS — le settlement est déterministe (2026-09-02)
 
 Décision opérateur, dans ses mots : « j'en ai marre de groq et tavily

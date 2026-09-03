@@ -20,8 +20,9 @@ laisse la ligne repasser au prochain audit — l'attente n'est pas définitive,
 un WIN/LOSS faux l'est.
 """
 import logging
+import os
 import re
-from datetime import timedelta
+from datetime import datetime, timedelta, timezone
 
 from core.api_sports import fetch_results
 from core.score_sources import fetch_score
@@ -52,6 +53,27 @@ def _resultats_du_jour(sport: str, jour: str) -> list:
     return _CACHE_RESULTATS[cle]
 
 
+# Fenêtre du PLAN GRATUIT api-sports autour d'aujourd'hui, en jours. Mesuré le
+# 2026-09-03 (audit 33774472425) : « Free plans do not have access to this
+# date, try from 2026-09-02 to 2026-09-04 » — soit J-1 … J+1. Chaque appel
+# hors fenêtre brûlait un lookup du budget journalier pour un refus certain
+# (15/25 consommés pour 0 réglé). Au-delà, on passe DIRECTEMENT aux sources
+# ouvertes (core/score_sources). Un plan payant relève la valeur par l'env.
+API_SPORTS_FREE_WINDOW_DAYS = int(os.environ.get("API_SPORTS_FREE_WINDOW_DAYS", "1"))
+
+
+def _hors_fenetre_api_sports(match_date: str, now: datetime | None = None) -> bool:
+    """True si `match_date` est plus vieux que J-API_SPORTS_FREE_WINDOW_DAYS.
+    Une date illisible n'est pas jugée hors fenêtre (on laisse la voie
+    normale décider)."""
+    try:
+        d = datetime.fromisoformat(match_date[:10]).date()
+    except (TypeError, ValueError):
+        return False
+    aujourdhui = (now or datetime.now(timezone.utc)).date()
+    return (aujourdhui - d).days > API_SPORTS_FREE_WINDOW_DAYS
+
+
 def result_from_api_sports(match_name: str, sport: str, match_date: str) -> dict | None:
     """Score final depuis le calendrier api-sports, sans aucune IA.
 
@@ -66,6 +88,11 @@ def result_from_api_sports(match_name: str, sport: str, match_date: str) -> dict
     signal l'a demandé.
     """
     if not match_date or " vs " not in match_name:
+        return None
+    if _hors_fenetre_api_sports(match_date):
+        log.info("SETTLE api-sports SAUTÉ | %s — %s hors de la fenêtre du plan gratuit "
+                 "(J-%d) : sources ouvertes directement", match_name, match_date,
+                 API_SPORTS_FREE_WINDOW_DAYS)
         return None
     home, away = (p.strip() for p in match_name.split(" vs ", 1))
     if len(home) < 3 or len(away) < 3:
@@ -98,8 +125,9 @@ def result_from_api_sports(match_name: str, sport: str, match_date: str) -> dict
 
 def fetch_match_result(match_name: str, sport: str, match_date: str = "") -> dict | None:
     """
-    Score final d'un match terminé — api-sports d'abord, puis la chaîne
-    déterministe de core/score_sources (MLB statsapi, TheSportsDB).
+    Score final d'un match terminé — api-sports d'abord (dans la fenêtre de
+    son plan), puis la chaîne déterministe de core/score_sources (MLB
+    statsapi, ESPN, TheSportsDB).
     Returns {"home_score": int, "away_score": int, "completed": True} or None.
     None veut dire « pas trouvé aujourd'hui », jamais un état terminal.
     """

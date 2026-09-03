@@ -10,10 +10,20 @@ et un parseur de JSON approximatif pour une information qui existe en champ.
 Décision opérateur du 2026-09-02 : Groq et Tavily sont SUPPRIMÉS du pipeline,
 le settlement est déterministe de bout en bout.
 
-DEUX SOURCES, APRÈS api-sports (qui reste l'étage 1, dans core/settlement.py) :
+TROIS SOURCES, APRÈS api-sports (qui reste l'étage 1, dans core/settlement.py) :
 
   1. MLB statsapi (statsapi.mlb.com) — officiel, sans clé, une requête par
      journée pour tout le slate. Ne sert que le baseball MLB.
+  1bis. ESPN (site.api.espn.com, 2026-09-03) — scoreboard public SANS CLÉ,
+     ni compte, ni quota publié. `soccer/all` rend TOUTES les ligues de foot
+     du monde en UNE requête par fenêtre de dates (mesuré : 702 événements
+     terminés sur 3 jours, de la Premier League à la J.League) ; les autres
+     sports ont un slug par compétition (`_ESPN_PATHS`). Décision opérateur :
+     « pour les résultats chercher sources open, pas TheSportsDB » — ESPN
+     passe AVANT TheSportsDB, qui reste en dernier recours. Statut TERMINÉ =
+     `status.type.completed` ET `state == "post"`. Les sports d'athlètes
+     (MMA, boxe, tennis) n'ont pas de score par équipe sur ce flux : absents
+     de la table, ils sautent cette voie.
   2. TheSportsDB — clé publique gratuite « 123 » (surchargée par
      THESPORTSDB_API_KEY pour un compte Patreon). ⚠️ La requête « tous les
      matchs du jour » (eventsday) est PLAFONNÉE À 3 ÉVÉNEMENTS en gratuit —
@@ -54,12 +64,13 @@ import urllib.parse
 import urllib.request
 from datetime import datetime, timedelta
 
-from core import daily_quota
+from core import daily_quota, net
 from core.paim_engine import strict_team_match
 
 log = logging.getLogger("PREDATOR.score_sources")
 
 MLB_URL = "https://statsapi.mlb.com/api/v1/schedule"
+ESPN_BASE = "https://site.api.espn.com/apis/site/v2/sports"
 TSDB_BASE = "https://www.thesportsdb.com/api/v1/json"
 
 # Clé publique documentée par TheSportsDB pour les tests/le gratuit. Un compte
@@ -71,9 +82,45 @@ _TSDB_PUBLIC_KEY = "123"
 # suspendu le 2026-08-20 : on bascule avant de se faire couper). statsapi ne
 # publie pas de limite ; TheSportsDB gratuit tolère ~30 req/min.
 MLB_DAILY_BUDGET = int(os.environ.get("MLB_STATSAPI_DAILY_BUDGET", "80"))
+# ESPN ne publie aucune limite ; une requête couvre une fenêtre de 3 jours et
+# TOUT un sport, donc un audit en consomme quelques-unes. Borne prudente.
+ESPN_DAILY_BUDGET = int(os.environ.get("ESPN_DAILY_BUDGET", "200"))
 TSDB_DAILY_BUDGET = int(os.environ.get("THESPORTSDB_DAILY_BUDGET", "150"))
 _MLB_BUCKET = "mlb_results"
+_ESPN_BUCKET = "espn_results"
 _TSDB_BUCKET = "tsdb_results"
+
+# Sport interne → chemins de scoreboard ESPN à interroger, dans l'ordre.
+# `soccer/all` couvre toutes les ligues de football en une requête ; les
+# autres sports n'ont pas d'agrégat et se listent par compétition (vérifiés
+# un à un le 2026-09-03 : chacun rend des événements terminés avec score).
+# Un sport absent saute la voie ESPN (MMA/boxe/tennis : athlètes, pas
+# d'équipes ni de score au sens de ce module).
+_ESPN_PATHS = {
+    "soccer":                ["soccer/all"],
+    "basketball":            ["basketball/nba", "basketball/wnba"],
+    "euroleague_basketball": ["basketball/euroleague"],
+    "hockey":                ["hockey/nhl"],
+    "baseball":              ["baseball/mlb"],
+    "americanfootball":      ["football/nfl"],
+    "college_football":      ["football/college-football"],
+    "aussierules":           ["australian-football/afl"],
+    "rugbyleague":           ["rugby-league/3"],          # NRL
+}
+# User-Agent ESPN. MESURÉ le 2026-09-03 depuis ce Codespace : « PREDATOR/1.0 »
+# et un UA de navigateur reçoivent 403, « curl/8.5.0 », « Python-urllib/3.11 »
+# et un UA de la forme « produit/version (+url) » reçoivent 200. Le pare-feu
+# d'ESPN filtre donc sur la FORME de l'en-tête, pas sur l'adresse (les runners
+# GitHub sont sur Azure comme ce Codespace). Surchargeable par l'env si la
+# règle change encore — sans redéploiement.
+_ESPN_USER_AGENT = os.environ.get(
+    "ESPN_USER_AGENT", "predator-settlement/1.0 (+https://github.com/ipotrading-bot/predator)")
+_SOURCE_HEADERS = {"espn": {"User-Agent": _ESPN_USER_AGENT}}
+
+# Fenêtre de dates sans `match_date` (relance d'une ligne de ledger sans
+# date) : les N derniers jours. Court, sinon la paire unique exigée devient
+# ambiguë dès qu'un même duo a rejoué.
+_ESPN_JOURS_SANS_DATE = 3
 
 _TIMEOUT = int(os.environ.get("SCORE_SOURCES_TIMEOUT", "15"))
 
@@ -108,6 +155,7 @@ _TSDB_SPORTS = {
 
 # Caches de RUN (un audit règle des dizaines de matchs de la même journée).
 _CACHE_MLB: dict[str, list] = {}
+_CACHE_ESPN: dict[tuple[str, str], list] = {}
 _CACHE_TSDB_TEAMS: dict[str, list] = {}
 _CACHE_TSDB_EVENTS: dict[str, list] = {}
 
@@ -115,20 +163,33 @@ _CACHE_TSDB_EVENTS: dict[str, list] = {}
 def reset_cache() -> None:
     """Vide les caches de run (tests, runs longs)."""
     _CACHE_MLB.clear()
+    _CACHE_ESPN.clear()
     _CACHE_TSDB_TEAMS.clear()
     _CACHE_TSDB_EVENTS.clear()
 
 
-def _get_json(url: str, bucket: str, budget: int) -> dict | None:
-    """GET JSON avec budget partagé. None sur toute panne — jamais d'exception."""
+def _get_json(url: str, bucket: str, budget: int, source: str | None = None) -> dict | None:
+    """GET JSON avec budget partagé. None sur toute panne — jamais d'exception.
+
+    `source` (ex. « espn ») route la requête par `core.net` : relais ou proxy
+    `{SOURCE}_PROXY` / `FREE_SOURCES_PROXY` s'ils sont configurés — la
+    parade documentée si les runners GitHub se font refuser (leçon
+    ESPN/SofaScore, INCIDENTS.md). Sans `source`, chemin direct inchangé."""
     if daily_quota.spent(bucket) >= budget:
         log.warning("score_sources[%s]: budget journalier atteint (%d) — requête sautée",
                     bucket, budget)
         return None
     try:
-        req = urllib.request.Request(url, headers={"User-Agent": "PREDATOR/1.0"})
-        with urllib.request.urlopen(req, timeout=_TIMEOUT) as resp:
-            body = resp.read()
+        headers = dict(_SOURCE_HEADERS.get(source or "", {"User-Agent": "PREDATOR/1.0"}))
+        if source:
+            url_reelle, headers = net.prepare(source, url, headers)
+            req = urllib.request.Request(url_reelle, headers=headers)
+            with net.open_with_retry(source, req, _TIMEOUT) as resp:
+                body = resp.read()
+        else:
+            req = urllib.request.Request(url, headers=headers)
+            with urllib.request.urlopen(req, timeout=_TIMEOUT) as resp:
+                body = resp.read()
         daily_quota.add(bucket, 1)
         return json.loads(body.decode("utf-8", errors="replace"))
     except Exception as e:                                        # noqa: BLE001
@@ -209,6 +270,95 @@ def result_from_mlb(match_name: str, match_date: str) -> dict | None:
             log.info("SETTLE SKIP | %s — %d matchs MLB correspondent, on ne devine pas",
                      match_name, len(candidats))
             return None
+    return None
+
+
+# ── 1bis. ESPN (scoreboard public, sans clé) ─────────────────────────
+
+def _espn_fenetre(match_date: str) -> str | None:
+    """`dates=AAAAMMJJ-AAAAMMJJ` : veille → lendemain autour de la date, ou
+    les _ESPN_JOURS_SANS_DATE derniers jours sans date."""
+    if match_date:
+        try:
+            d = datetime.fromisoformat(match_date)
+        except ValueError:
+            return None
+        debut, fin = d - timedelta(days=1), d + timedelta(days=1)
+    else:
+        fin = datetime.utcnow()
+        debut = fin - timedelta(days=_ESPN_JOURS_SANS_DATE)
+    return f"{debut:%Y%m%d}-{fin:%Y%m%d}"
+
+
+def _espn_events(path: str, fenetre: str) -> list:
+    cle = (path, fenetre)
+    if cle not in _CACHE_ESPN:
+        url = f"{ESPN_BASE}/{path}/scoreboard?dates={fenetre}&limit=1000"
+        data = _get_json(url, _ESPN_BUCKET, ESPN_DAILY_BUDGET, source="espn") or {}
+        _CACHE_ESPN[cle] = list(data.get("events") or [])
+    return _CACHE_ESPN[cle]
+
+
+def _espn_noms(competitor: dict) -> list[str]:
+    """Les libellés sous lesquels ESPN désigne une équipe (displayName,
+    shortDisplayName, name, location) — l'appariement strict en essaie un."""
+    team = competitor.get("team") or {}
+    return [n for n in (team.get("displayName"), team.get("shortDisplayName"),
+                        team.get("name"), team.get("location")) if n]
+
+
+def _espn_camp(competition: dict, camp: str) -> dict | None:
+    for c in competition.get("competitors") or []:
+        if c.get("homeAway") == camp:
+            return c
+    return None
+
+
+def _espn_candidat(ev: dict, home: str, away: str) -> tuple[int, int] | None:
+    """(home_score, away_score) si l'événement est TERMINÉ et que ses deux
+    équipes s'apparient strictement aux deux noms du signal ; None sinon."""
+    comp = (ev.get("competitions") or [{}])[0]
+    statut = (comp.get("status") or {}).get("type") or {}
+    if not (statut.get("completed") and statut.get("state") == "post"):
+        return None
+    dom, ext = _espn_camp(comp, "home"), _espn_camp(comp, "away")
+    if not dom or not ext:
+        return None
+    if not any(strict_team_match(home, n) for n in _espn_noms(dom)):
+        return None
+    if not any(strict_team_match(away, n) for n in _espn_noms(ext)):
+        return None
+    try:
+        return int(dom.get("score")), int(ext.get("score"))
+    except (TypeError, ValueError):
+        return None
+
+
+def result_from_espn(match_name: str, sport: str, match_date: str) -> dict | None:
+    """Score final via le scoreboard public ESPN — même contrat que les autres
+    voies : les DEUX noms appariés strictement, candidat UNIQUE, statut
+    terminé seulement, None sur panne."""
+    parts = _split(match_name)
+    if not parts:
+        return None
+    home, away = parts
+    chemins = _ESPN_PATHS.get((sport or "").lower())
+    fenetre = _espn_fenetre(match_date)
+    if not chemins or not fenetre:
+        return None
+    vus: dict[str, tuple[int, int]] = {}
+    for path in chemins:
+        for ev in _espn_events(path, fenetre):
+            score = _espn_candidat(ev, home, away)
+            if score is not None:
+                vus[str(ev.get("id") or f"{path}|{ev.get('date')}")] = score
+    if len(vus) == 1:
+        hs, as_ = next(iter(vus.values()))
+        log.info("SETTLE espn | %s | %d-%d (0 appel IA)", match_name, hs, as_)
+        return {"home_score": hs, "away_score": as_, "completed": True, "source": "espn"}
+    if len(vus) > 1:
+        log.info("SETTLE SKIP | %s — %d événements ESPN correspondent, on ne devine pas",
+                 match_name, len(vus))
     return None
 
 
@@ -312,4 +462,7 @@ def fetch_score(match_name: str, sport: str, match_date: str = "") -> dict | Non
         r = result_from_mlb(match_name, match_date)
         if r:
             return r
+    r = result_from_espn(match_name, sport, match_date)
+    if r:
+        return r
     return result_from_thesportsdb(match_name, sport, match_date)

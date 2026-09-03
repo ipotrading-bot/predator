@@ -17,8 +17,9 @@ paths:
   seuil/plafond périmé déjà posé, la couche ne faisant que des upserts).
   La refonte EV du 2026-08-22 a changé l'échelle d'`edge_pct` : rien ne se
   convertit, tout se re-mesure.
-- Le settlement est 100 % DÉTERMINISTE (api-sports puis
-  `core/score_sources.py` — ZÉRO IA, gardien
+- Le settlement est 100 % DÉTERMINISTE (api-sports dans la fenêtre de son
+  plan, puis `core/score_sources.py` : MLB statsapi, ESPN ouvert, TheSportsDB
+  en dernier — ZÉRO IA, gardien
   `test_no_ai_layer_involved`). Il ne devine JAMAIS : deux candidats →
   refus ; score en direct → refus ; introuvable → la ligne RESTE
   expirée et sera relancée (`core/relance_expires.py`). Un WIN/LOSS faux

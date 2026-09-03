@@ -21,6 +21,14 @@ from core import settlement
 
 
 @pytest.fixture(autouse=True)
+def _fenetre_api_sports_ouverte(monkeypatch):
+    """Ces cas utilisent des dates fixes (août 2026) : sans ceci, la garde de
+    fenêtre du plan gratuit (settlement._hors_fenetre_api_sports, 2026-09-03)
+    les ferait sauter api-sports et le test deviendrait dépendant du jour."""
+    monkeypatch.setattr(settlement, "API_SPORTS_FREE_WINDOW_DAYS", 100_000)
+
+
+@pytest.fixture(autouse=True)
 def _cache_neuf():
     settlement.reset_cache()
     yield

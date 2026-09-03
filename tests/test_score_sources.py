@@ -181,16 +181,150 @@ class TestBudgetsEtChaine:
         vus = []
         monkeypatch.setattr(ss, "result_from_mlb",
                             lambda *a: vus.append("mlb") or None)
+        monkeypatch.setattr(ss, "result_from_espn",
+                            lambda *a: vus.append("espn") or None)
         monkeypatch.setattr(ss, "result_from_thesportsdb",
                             lambda *a: vus.append("tsdb") or None)
         ss.fetch_score("A FC vs B FC", "soccer", "2026-09-01")
-        assert vus == ["tsdb"]
+        assert vus == ["espn", "tsdb"]
         vus.clear()
         ss.fetch_score("A vs B", "baseball", "2026-09-01")
-        assert vus == ["mlb", "tsdb"]
+        assert vus == ["mlb", "espn", "tsdb"]
 
     def test_settlement_jamais_etale(self):
         """Étaler le settlement est une faute (incident 2026-08-28) : ce
         module tient des budgets journaliers mais AUCUN rythme horaire."""
         import inspect
         assert "paced_allowance" not in inspect.getsource(ss)
+
+
+# ── ESPN (2026-09-03) ────────────────────────────────────────────────
+
+def _espn_ev(home, away, hs, as_, completed=True, state="post", eid="e1",
+             home_names=None, away_names=None):
+    def team(name, names):
+        t = {"displayName": name}
+        if names:
+            t.update(names)
+        return t
+    return {"id": eid, "date": "2026-08-31T19:00Z", "competitions": [{
+        "status": {"type": {"completed": completed, "state": state}},
+        "competitors": [
+            {"homeAway": "home", "score": str(hs), "team": team(home, home_names)},
+            {"homeAway": "away", "score": str(as_), "team": team(away, away_names)},
+        ]}]}
+
+
+def _espn_router(events_by_path):
+    def fake(url, bucket, budget, source=None):
+        assert bucket == ss._ESPN_BUCKET and source == "espn"
+        for path, evs in events_by_path.items():
+            if f"/{path}/scoreboard" in url:
+                return {"events": evs}
+        return {"events": []}
+    return fake
+
+
+class TestESPN:
+    def test_score_final_unique_regle(self, monkeypatch):
+        monkeypatch.setattr(ss, "_get_json", _espn_router({
+            "soccer/all": [_espn_ev("Defensa y Justicia", "Platense", 1, 0),
+                           _espn_ev("Estudiantes", "Newell's Old Boys", 0, 0, eid="e2")]}))
+        r = ss.result_from_espn("Defensa y Justicia vs Platense", "soccer", "2026-08-31")
+        assert r == {"home_score": 1, "away_score": 0, "completed": True, "source": "espn"}
+
+    def test_une_requete_par_fenetre_et_par_chemin(self, monkeypatch):
+        """`soccer/all` couvre toutes les ligues : deux signaux de la même
+        fenêtre ne coûtent qu'UNE requête (cache de run)."""
+        appels = []
+        def fake(url, bucket, budget, source=None):
+            appels.append(url); return {"events": [_espn_ev("A FC", "B FC", 2, 2)]}
+        monkeypatch.setattr(ss, "_get_json", fake)
+        ss.result_from_espn("A FC vs B FC", "soccer", "2026-08-31")
+        ss.result_from_espn("C FC vs D FC", "soccer", "2026-08-31")
+        assert len(appels) == 1 and "dates=20260830-20260901" in appels[0]
+        assert "/soccer/all/scoreboard" in appels[0]
+
+    def test_un_score_en_direct_ne_regle_pas(self, monkeypatch):
+        for completed, state in ((False, "in"), (True, "in"), (False, "post")):
+            ss.reset_cache()
+            monkeypatch.setattr(ss, "_get_json", _espn_router({
+                "soccer/all": [_espn_ev("A FC", "B FC", 1, 0, completed=completed, state=state)]}))
+            assert ss.result_from_espn("A FC vs B FC", "soccer", "2026-08-31") is None
+
+    def test_deux_candidats_font_refuser(self, monkeypatch):
+        monkeypatch.setattr(ss, "_get_json", _espn_router({
+            "soccer/all": [_espn_ev("A FC", "B FC", 1, 0, eid="e1"),
+                           _espn_ev("A FC", "B FC", 0, 3, eid="e2")]}))
+        assert ss.result_from_espn("A FC vs B FC", "soccer", "2026-08-31") is None
+
+    def test_les_deux_equipes_doivent_sapparier(self, monkeypatch):
+        """Un seul nom apparié ne suffit pas (leçon Pasto/Pastoreo)."""
+        monkeypatch.setattr(ss, "_get_json", _espn_router({
+            "soccer/all": [_espn_ev("Deportivo Pasto", "Deportivo Pereira", 2, 1)]}))
+        assert ss.result_from_espn("Deportivo Pasto vs Atletico Nacional", "soccer", "2026-08-31") is None
+
+    def test_les_libelles_courts_despn_sont_essayes(self, monkeypatch):
+        monkeypatch.setattr(ss, "_get_json", _espn_router({
+            "rugby-league/3": [_espn_ev("Gold Coast Titans", "South Sydney Rabbitohs", 22, 42,
+                                        home_names={"shortDisplayName": "Titans"},
+                                        away_names={"shortDisplayName": "Rabbitohs"})]}))
+        r = ss.result_from_espn("Titans vs Rabbitohs", "rugbyleague", "2026-08-30")
+        assert r and (r["home_score"], r["away_score"]) == (22, 42)
+
+    def test_sport_sans_chemin_saute_la_voie(self, monkeypatch):
+        appels = []
+        monkeypatch.setattr(ss, "_get_json", lambda *a, **k: appels.append(1) or {"events": []})
+        assert ss.result_from_espn("Ding Meng vs Cam Nelson", "mma", "2026-08-30") is None
+        assert ss.result_from_espn("Alcaraz vs Sinner", "tennis", "2026-08-30") is None
+        assert not appels
+
+    def test_sans_date_fenetre_recente_et_paire_unique(self, monkeypatch):
+        appels = []
+        def fake(url, bucket, budget, source=None):
+            appels.append(url); return {"events": [_espn_ev("A FC", "B FC", 1, 1)]}
+        monkeypatch.setattr(ss, "_get_json", fake)
+        r = ss.result_from_espn("A FC vs B FC", "soccer", "")
+        assert r and r["home_score"] == 1
+        assert "dates=" in appels[0] and "-" in appels[0].split("dates=")[1]
+
+    def test_panne_reseau_rend_none(self, monkeypatch):
+        monkeypatch.setattr(ss, "_get_json", lambda *a, **k: None)
+        assert ss.result_from_espn("A FC vs B FC", "soccer", "2026-08-31") is None
+
+    def test_la_requete_passe_par_core_net(self, monkeypatch):
+        """Routage par `core.net` (relais / proxy `ESPN_PROXY`) : la parade
+        si les runners GitHub sont refusés — sans toucher au code."""
+        from core import daily_quota
+        monkeypatch.setattr(daily_quota, "spent", lambda b: 0)
+        monkeypatch.setattr(daily_quota, "add", lambda b, n: None)
+        vus = {}
+        class _Resp:
+            def __enter__(self): return self
+            def __exit__(self, *a): return False
+            def read(self): return b'{"events": []}'
+        monkeypatch.setattr(ss.net, "prepare", lambda src, url, h: vus.setdefault("prepare", src) and (url, h))
+        monkeypatch.setattr(ss.net, "open_with_retry", lambda src, req, t: vus.setdefault("open", src) and _Resp())
+        assert ss._get_json("https://x/y", ss._ESPN_BUCKET, 10, source="espn") == {"events": []}
+        assert vus == {"prepare": "espn", "open": "espn"}
+
+
+class TestChaineAvecESPN:
+    def test_espn_avant_thesportsdb(self, monkeypatch):
+        """Décision opérateur 2026-09-03 : sources OUVERTES d'abord, TheSportsDB
+        en dernier recours."""
+        vus = []
+        monkeypatch.setattr(ss, "result_from_mlb", lambda *a: vus.append("mlb") or None)
+        monkeypatch.setattr(ss, "result_from_espn", lambda *a: vus.append("espn") or None)
+        monkeypatch.setattr(ss, "result_from_thesportsdb", lambda *a: vus.append("tsdb") or None)
+        ss.fetch_score("A FC vs B FC", "soccer", "2026-09-01")
+        assert vus == ["espn", "tsdb"]
+        vus.clear()
+        ss.fetch_score("A vs B", "baseball", "2026-09-01")
+        assert vus == ["mlb", "espn", "tsdb"]
+
+    def test_espn_qui_trouve_court_circuite_thesportsdb(self, monkeypatch):
+        monkeypatch.setattr(ss, "result_from_espn", lambda *a: {"home_score": 1, "away_score": 0,
+                                                                "completed": True, "source": "espn"})
+        monkeypatch.setattr(ss, "result_from_thesportsdb", lambda *a: (_ for _ in ()).throw(AssertionError("TSDB appelé")))
+        assert ss.fetch_score("A FC vs B FC", "soccer", "2026-09-01")["source"] == "espn"
