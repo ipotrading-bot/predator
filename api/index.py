@@ -37,9 +37,13 @@ from flask import Flask, jsonify, render_template, request, send_from_directory
 from core.perf_view import (ALL_MONTHS as _ALL_MONTHS,
                             filter_rows as _perf_filter_rows,
                             league_breakdown as _league_breakdown,
+                            market_breakdown as _market_breakdown,
                             month_label as _month_label,
                             monthly_summary as _monthly_summary,
+                            phantom_rows as _phantom_rows,
                             pick_month as _pick_month,
+                            playable_zone as _playable_zone,
+                            recommended_rows as _recommended_rows,
                             resolution_rate as _resolution_rate,
                             rows_of_month as _rows_of_month,
                             shown_months as _perf_shown_months)
@@ -637,6 +641,7 @@ def performance():
     monthly: list   = []   # une carte par mois affiché (core/perf_view.monthly_summary)
     leagues: list   = []   # ventilation par ligue du mois sélectionné, perdantes d'abord
     leagues_hidden  = 0    # ligues sous _LEAGUE_MIN_N paris, non listées
+    markets: list   = []   # ventilation par marché du mois sélectionné, perdants d'abord
     global_s: dict  = {}
     # Mois sélectionné par le menu déroulant `?mois=YYYY-MM` (ou « tout »).
     # Validé contre la fenêtre affichée : une valeur hors fenêtre — faute de
@@ -670,8 +675,18 @@ def performance():
                 # (meta.threshold_<sport>) et par `scripts/weekly_report.py`.
                 # Quatre appels Supabase de moins par chargement de page.
 
-                settled = [r for r in rows if r.get("outcome") in ("WIN", "LOSS", "PUSH")]
-                decisive = [r for r in rows if r.get("outcome") in ("WIN", "LOSS")]
+                # BANDEAU = PARIS RECOMMANDÉS SEULEMENT (2026-09-03). Le
+                # ledger garde aussi les fantômes de la golden hour (< T-2h,
+                # SHADOW_GOLDEN_HOUR : réglés, jamais envoyés). Les compter
+                # dans la réussite jugeait le système sur des paris que
+                # personne n'a joués — septembre affichait 52 % pour 4–0 sur
+                # les recommandés et 8–11 sur les fantômes. Ils restent
+                # comptés À PART (global_s["phantoms"]) et visibles dans
+                # l'historique avec leur étiquette.
+                reco     = _recommended_rows(rows)
+                ghosts   = [r for r in _phantom_rows(rows) if r.get("outcome") in ("WIN", "LOSS")]
+                settled = [r for r in reco if r.get("outcome") in ("WIN", "LOSS", "PUSH")]
+                decisive = [r for r in reco if r.get("outcome") in ("WIN", "LOSS")]
                 # Le tableau HISTORIQUE ne montre que les matchs dont le
                 # résultat est connu (demande opérateur) — les stats plus haut
                 # continuent de se baser sur `rows` complet, y compris les
@@ -703,9 +718,9 @@ def performance():
                 # together — clv_is_real tells the template which one it is
                 # looking at, so the page can't quietly label the entry edge
                 # as CLV.
-                clv_real = [r["clv_pct_real"] for r in rows if r.get("clv_pct_real") is not None]
-                clv_all  = clv_real or [r["clv_final"] for r in rows if r.get("clv_final") is not None]
-                edges    = [r["initial_edge"] for r in rows if r.get("initial_edge") is not None]
+                clv_real = [r["clv_pct_real"] for r in reco if r.get("clv_pct_real") is not None]
+                clv_all  = clv_real or [r["clv_final"] for r in reco if r.get("clv_final") is not None]
+                edges    = [r["initial_edge"] for r in reco if r.get("initial_edge") is not None]
 
                 # Task 4: never show a win rate without its Wilson 95% CI
                 # and the tax-adjusted breakeven probability for the
@@ -718,7 +733,10 @@ def performance():
                 breakeven = p_breakeven(avg_odds, _TAX_RATE) if avg_odds else None
 
                 global_s = {
-                    "total":        len(rows),
+                    "total":        len(reco),
+                    "phantoms":     {"n": len(ghosts),
+                                     "wins": sum(1 for r in ghosts if r["outcome"] == "WIN"),
+                                     "losses": sum(1 for r in ghosts if r["outcome"] == "LOSS")},
                     "settled":      len(settled),
                     "wins":         wins,
                     "losses":       losses,
@@ -790,12 +808,24 @@ def performance():
                 leagues_hidden = (len(_league_breakdown(scope, _TAX_RATE, min_n=1))
                                   - len(leagues))
 
+                # PAR MARCHÉ — mesuré le 2026-09-03, les pertes se concentrent
+                # par marché (spreads extérieur, unders basket) plus que par
+                # ligue ; sans ce tableau le lecteur chercherait le levier au
+                # mauvais endroit. Même contrat que PAR LIGUE.
+                markets = _market_breakdown(scope, _TAX_RATE, min_n=_LEAGUE_MIN_N)
+
+                # Étiquette de zone sur chaque ligne de l'historique : le
+                # lecteur voit quels matchs étaient des fantômes.
+                for r in history:
+                    r["_zone"] = _playable_zone(r)
+
     except Exception as e:
         log.error("Performance: %s", e)
 
     return render_template("performance.html", rows=rows, history=history,
                            global_s=global_s, monthly=monthly,
                            leagues=leagues, leagues_hidden=leagues_hidden,
+                           markets=markets,
                            league_min_n=_LEAGUE_MIN_N,
                            months=[(m, _month_label(m)) for m in months],
                            mois=mois, all_months=_ALL_MONTHS,

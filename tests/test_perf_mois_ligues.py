@@ -205,3 +205,39 @@ class TestZoneJouable:
         assert lg["zones"]["hors"] == {"wins": 1, "losses": 0}
         carte = monthly_summary(rows, 0.0)[0]
         assert carte["zones"]["golden"]["losses"] == 3
+
+
+class TestRecommandesEtMarches:
+    """2026-09-03, second lot : le bandeau ne compte que les paris RECOMMANDÉS,
+    les fantômes golden hour sont à part, et un tableau PAR MARCHÉ existe."""
+
+    def test_recommandes_gardent_lincertain_et_ecartent_les_fantomes(self):
+        rows = [_r("2026-09", "WIN", time_to_match_minutes=30),     # golden
+                _r("2026-09", "WIN", time_to_match_minutes=600),    # zone
+                _r("2026-09", "WIN", time_to_match_minutes=3000),   # hors
+                _r("2026-09", "WIN")]                               # inconnu
+        reco = perf_view.recommended_rows(rows)
+        assert [perf_view.playable_zone(r) for r in reco] == ["zone", "nc"]
+        assert [perf_view.playable_zone(r) for r in perf_view.phantom_rows(rows)] == ["golden", "hors"]
+        assert len(reco) + len(perf_view.phantom_rows(rows)) == len(rows)
+
+    def test_par_marche_perdants_dabord_et_repli_market(self):
+        rows = ([_r("2026-09", "LOSS", 1.9, market_type="spreads_away")] * 5
+                + [_r("2026-09", "WIN", 1.9, market="h2h")] * 5)
+        tab = perf_view.market_breakdown(rows, 0.0, 5)
+        assert [m["market"] for m in tab] == ["spreads_away", "h2h"]
+        assert tab[0]["p_breakeven"] is not None and "win_rate_lo" in tab[0]
+        assert perf_view.market_breakdown([_r("2026-09", "WIN")] * 2, 0.0, 5) == []
+
+    def test_la_route_separe_recommandes_et_fantomes(self):
+        import api.index as dash
+        src = inspect.getsource(dash.performance)
+        assert "_recommended_rows(rows)" in src and "_phantom_rows(rows)" in src
+        assert '"phantoms"' in src and "_market_breakdown(" in src
+        # les agrégats du bandeau partent de `reco`, plus de `rows`
+        assert "for r in reco if r.get(\"outcome\") in (\"WIN\", \"LOSS\")" in src
+
+    def test_le_gabarit_montre_fantomes_et_marches(self):
+        g = (RACINE / "templates" / "performance.html").read_text(encoding="utf-8")
+        assert "global_s.phantoms" in g and "markets" in g and "mk.p_breakeven" in g
+        assert "r._zone == 'golden'" in g

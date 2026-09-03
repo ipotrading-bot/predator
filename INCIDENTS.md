@@ -245,7 +245,14 @@ est REVENU le 2026-09-03, demande opérateur, une fois qu'il y a eu deux mois
 mois choisi dans un menu déroulant, tableau PAR LIGUE « perdantes d'abord »
 — `core/perf_view.monthly_summary/league_breakdown/pick_month`, gardien
 `tests/test_perf_mois_ligues.py`. Le menu ne propose que `shown_months()` :
-il ne rouvre pas juillet.) Mais la règle « jamais
+il ne rouvre pas juillet. Même jour, second lot : le BANDEAU ne compte plus
+que les paris RECOMMANDÉS — `perf_view.recommended_rows`, zone T-2h…T-24h
+plus l'inconnu, comme `playable_rows` — et les fantômes golden hour sont
+rendus À PART. Mesure qui l'a imposé : septembre affichait 52 % pour 4–0 sur
+les recommandés et 8–11 sur des fantômes que personne n'avait joués ; août
+110–68 de fantômes contre 75–44 recommandés. Un tableau PAR MARCHÉ s'ajoute,
+parce que les pertes se concentraient par marché — spreads extérieur et
+unders basket — plus que par ligue.) Mais la règle « jamais
 un taux de réussite nu » TIENT TOUJOURS : Wilson + seuil rentable après
 taxe sont désormais rendus en une phrase française (« il faut 57 % pour
 être rentable, et 85 paris ne suffisent pas à le prouver »). Ne pas

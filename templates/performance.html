@@ -148,7 +148,7 @@
   <div class="page-hdr">
     <div class="page-title">&#9660; PERFORMANCE</div>
     <div class="page-sub">
-      depuis <b>août 2026</b>
+      depuis <b>août 2026</b> &middot; paris recommandés (T-2h à T-24h)
     </div>
   </div>
 
@@ -166,6 +166,14 @@
     <div class="wr-hero-s">
       {{ global_s.wins }} gagnés &middot; {{ global_s.losses }} perdus
     </div>
+    {# Les fantômes de la golden hour (< T-2h, jamais envoyés) sont réglés
+       comme les autres mais ne sont PAS dans le chiffre du dessus : les y
+       mettre jugerait le système sur des paris que personne n'a joués. #}
+    {% if global_s.phantoms and global_s.phantoms.n %}
+    <div class="wr-hero-s" style="color:var(--t2);font-weight:500;font-size:12px">
+      à part : {{ global_s.phantoms.wins }}&ndash;{{ global_s.phantoms.losses }} sur {{ global_s.phantoms.n }} fantômes golden hour, jamais envoyés
+    </div>
+    {% endif %}
     {# Verdict en une pastille. La regle « jamais un taux nu » tient : le
        seuil rentable apres taxe reste affiche, en cinq mots. #}
     {% if global_s.above_breakeven %}
@@ -344,6 +352,40 @@
   <div class="perf-note small">Aucune ligue à {{ league_min_n }} paris réglés ou plus en {{ mois_label }}{% if leagues_hidden %} ({{ leagues_hidden }} ligue(s) sous ce nombre){% endif %}.</div>
   {% endif %}
 
+  {# ── Par marché ──────────────────────────────────────────────────
+     Mesuré le 2026-09-03 : les pertes se concentrent par MARCHÉ (spreads
+     extérieur, unders basket) plus que par ligue. Même lecture que PAR
+     LIGUE : perdants d'abord, verdict par l'intervalle. #}
+  {% if markets %}
+  <div class="sec-hdr">&#9632; PAR MARCHÉ <em>{{ mois_label }}</em></div>
+  <div class="tbl-outer">
+    <table class="perf-table wide">
+      <thead>
+        <tr><th>Marché</th><th>Paris</th><th>Réussite</th><th>Seuil</th><th>Cote</th><th>Unités</th><th>Perdus hors zone</th><th>Verdict</th></tr>
+      </thead>
+      <tbody>
+        {% for mk in markets %}
+        <tr>
+          <td style="color:var(--t1);font-weight:600;white-space:nowrap">{{ sport_emoji.get(mk.sport, '🎯') }} {{ mk.market }}</td>
+          <td style="font-family:var(--font-data)">{{ mk.wins }}&ndash;{{ mk.losses }}</td>
+          <td style="font-family:var(--font-data);font-weight:700;color:var(--t1)">{{ "%.0f"|format(mk.win_rate) }}%
+            <div class="lg-ci">IC {{ "%.0f"|format(mk.win_rate_lo) }}&ndash;{{ "%.0f"|format(mk.win_rate_hi) }} %</div></td>
+          <td style="font-family:var(--font-data)">{% if mk.p_breakeven is not none %}{{ "%.0f"|format(mk.p_breakeven) }}%{% else %}&mdash;{% endif %}</td>
+          <td style="font-family:var(--font-data)">{% if mk.avg_odds %}{{ "%.2f"|format(mk.avg_odds) }}{% else %}&mdash;{% endif %}</td>
+          <td style="font-family:var(--font-data);font-weight:700;color:{{ 'var(--green)' if mk.pnl_units >= 0 else 'var(--red)' }}">{{ "%+.2f"|format(mk.pnl_units) }}</td>
+          <td style="font-family:var(--font-data);color:var(--t2)">{{ mk.losses_out_of_zone }}/{{ mk.losses }}</td>
+          <td>
+            {% if mk.below_breakeven %}<span class="lg-v bad">PERDANT</span>
+            {% elif mk.above_breakeven %}<span class="lg-v good">RENTABLE</span>
+            {% else %}<span class="lg-v na">non démontré{% if mk.n < 30 %} (n&lt;30){% endif %}</span>{% endif %}
+          </td>
+        </tr>
+        {% endfor %}
+      </tbody>
+    </table>
+  </div>
+  {% endif %}
+
   {% if history %}
   <div class="sec-hdr">&#9632; HISTORIQUE <em>{{ history|length }} paris réglés &middot; {{ mois_label }}</em></div>
   <div class="tbl-outer">
@@ -371,6 +413,8 @@
             {% if oc == 'WIN' %}<span class="oc-win">✓ GAGNÉ</span>
             {% elif oc == 'LOSS' %}<span class="oc-loss">✗ PERDU</span>
             {% else %}<span class="oc-exp">en attente</span>{% endif %}
+            {% if r._zone == 'golden' %}<div style="color:var(--t3);font-size:9px;margin-top:2px">fantôme T-2h, non envoyé</div>
+            {% elif r._zone == 'hors' %}<div style="color:var(--t3);font-size:9px;margin-top:2px">&gt; 24 h, hors zone</div>{% endif %}
           </td>
           <td class="ts">{{ r.created_at[:10] if r.created_at else '—' }}</td>
         </tr>

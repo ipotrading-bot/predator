@@ -311,3 +311,47 @@ def league_breakdown(rows: list[dict], tax_rate: float, min_n: int = 5) -> list[
         out.append(d)
     out.sort(key=lambda d: (d["pnl_units"], -d["n"], d["league"]))
     return out
+
+
+def recommended_rows(rows: list[dict]) -> list[dict]:
+    """Les lignes qu'un lecteur a pu JOUER : zone recommandée (T-2h … T-24h)
+    et lignes sans `time_to_match_minutes` (l'inconnu est conservé, comme dans
+    `learning_layer.playable_rows`). Les fantômes golden hour (< T-2h, jamais
+    envoyés) et les lignes à plus de 24 h en sortent.
+
+    C'est la base du bandeau de /performance depuis le 2026-09-03 : mesuré ce
+    jour-là, septembre affichait 52 % de réussite dont 4–0 sur les paris
+    recommandés et 8–11 sur des fantômes — la page jugeait le système sur des
+    paris qu'il n'avait conseillés à personne."""
+    return [r for r in rows if playable_zone(r) in ("zone", "nc")]
+
+
+def phantom_rows(rows: list[dict]) -> list[dict]:
+    """Le complément de `recommended_rows` : golden hour et > 24 h."""
+    return [r for r in rows if playable_zone(r) in ("golden", "hors")]
+
+
+def market_breakdown(rows: list[dict], tax_rate: float, min_n: int = 5) -> list[dict]:
+    """Réussite par (sport, marché), la plus PERDANTE en premier — même contrat
+    que `league_breakdown`. `market_type` d'abord, `market` en repli : les deux
+    colonnes coexistent dans le ledger selon l'époque d'écriture.
+
+    Mesuré le 2026-09-03 sur août+septembre : les pertes se concentraient par
+    MARCHÉ plus que par ligue (spreads extérieur et unders basket 3–6 chacun,
+    spreads extérieur soccer 9–9 à cote 1,94) — un tableau par ligue seul
+    aurait fait chercher le levier au mauvais endroit."""
+    groupes: dict[tuple[str, str], list[dict]] = {}
+    for r in rows:
+        mkt = (r.get("market_type") or r.get("market") or "").strip() or "(sans marché)"
+        groupes.setdefault((r.get("sport") or "", mkt), []).append(r)
+    out = []
+    for (sport, mkt), lignes in groupes.items():
+        decisifs = [r for r in lignes if r.get("outcome") in _DECISIF]
+        if len(decisifs) < max(min_n, 1):
+            continue
+        d = _bloc_decisif(decisifs, tax_rate)
+        d.update({"sport": sport, "market": mkt,
+                  "expired": sum(1 for r in lignes if r.get("outcome") == "expired")})
+        out.append(d)
+    out.sort(key=lambda d: (d["pnl_units"], -d["n"], d["market"]))
+    return out
