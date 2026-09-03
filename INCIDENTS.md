@@ -239,7 +239,13 @@ Gardien de la méthode : `tests/test_replay_ledger_executable.py::TestCalibratio
 
 plus de seuils
 appris, ni de cycle d'apprentissage, ni de calibration Brier, ni de
-découpage mensuel — rouages internes, pas résultats. Mais la règle « jamais
+découpage mensuel — rouages internes, pas résultats. (Le découpage mensuel
+est REVENU le 2026-09-03, demande opérateur, une fois qu'il y a eu deux mois
+à montrer : cartes PAR MOIS avec Wilson + point mort, historique limité au
+mois choisi dans un menu déroulant, tableau PAR LIGUE « perdantes d'abord »
+— `core/perf_view.monthly_summary/league_breakdown/pick_month`, gardien
+`tests/test_perf_mois_ligues.py`. Le menu ne propose que `shown_months()` :
+il ne rouvre pas juillet.) Mais la règle « jamais
 un taux de réussite nu » TIENT TOUJOURS : Wilson + seuil rentable après
 taxe sont désormais rendus en une phrase française (« il faut 57 % pour
 être rentable, et 85 paris ne suffisent pas à le prouver »). Ne pas

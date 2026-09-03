@@ -88,6 +88,43 @@
 .oc-loss { display:inline-block; padding:2px 9px; border-radius:100px; font-size:9px; font-weight:700; background:rgba(251,78,110,.08); color:var(--red);    border:1px solid rgba(251,78,110,.2); }
 .oc-exp  { display:inline-block; padding:2px 9px; border-radius:100px; font-size:9px; font-weight:700; background:transparent; color:var(--t3); border:1px solid var(--bd2); font-style:italic; }
 
+/* PAR MOIS — une carte par mois affiché (rétablie le 2026-09-03). */
+.month-grid { display: grid; grid-template-columns: 1fr; gap: 10px; padding: 0 16px 8px; }
+@media (min-width: 640px) { .month-grid { grid-template-columns: repeat(2, 1fr); gap: 12px; padding: 0 24px 8px; } }
+@media (min-width: 960px) { .month-grid { grid-template-columns: repeat(3, 1fr); } }
+.mc { background: var(--bg1); border: 1px solid var(--bd); border-radius: var(--r); padding: 14px 15px; }
+.mc.on { border-color: var(--bd3); }
+.mc-month { font-size: 11px; font-weight: 700; color: var(--t1); margin-bottom: 12px; text-transform: capitalize;
+  display: flex; justify-content: space-between; align-items: center; }
+.mc-wr { font-size: 10px; font-weight: 700; padding: 2px 9px; border-radius: 100px; font-family: var(--font-data); }
+.wr-good { background: rgba(0,232,127,.08);  color: var(--green);  border: 1px solid rgba(0,232,127,.2); }
+.wr-ok   { background: rgba(245,197,24,.08); color: var(--yellow); border: 1px solid rgba(245,197,24,.2); }
+.wr-bad  { background: rgba(251,78,110,.08); color: var(--red);    border: 1px solid rgba(251,78,110,.2); }
+.wr-none { background: transparent;          color: var(--t3);     border: 1px solid var(--bd2); }
+.mc-stats { display: flex; gap: 8px; margin-bottom: 10px; }
+.mc-stat { flex: 1; }
+.mc-sv { font-size: 18px; font-weight: 800; line-height: 1; font-family: var(--font-data); }
+.mc-sl { font-size: 8px; color: var(--t2); text-transform: uppercase; letter-spacing: .5px; margin-top: 4px; }
+.mc-foot { padding-top: 8px; border-top: 1px solid var(--bd); display: flex; justify-content: space-between; gap: 8px;
+  font-size: 9.5px; color: var(--t2); font-family: var(--font-data); flex-wrap: wrap; }
+
+/* Menu déroulant du mois — pilote PAR LIGUE et HISTORIQUE. */
+.mois-bar { margin: 8px 16px 0; padding: 12px 14px; display: flex; align-items: center; gap: 12px; flex-wrap: wrap;
+  background: var(--bg1); border: 1px solid var(--bd); border-radius: 8px; }
+@media (min-width: 640px) { .mois-bar { margin: 8px 24px 0; } }
+.mois-bar label { font-size: 10px; font-weight: 600; letter-spacing: 1.5px; text-transform: uppercase; color: var(--t2); }
+.mois-bar select { flex: 1; min-width: 180px; max-width: 320px; padding: 8px 10px; font: 600 13px var(--font);
+  color: var(--t1); background: var(--bg2); border: 1px solid var(--bd2); border-radius: 6px; }
+.mois-bar .hint { font-size: 11px; color: var(--t2); flex-basis: 100%; }
+
+/* PAR LIGUE — verdict par ligne, Wilson contre point mort. */
+.lg-v { display:inline-block; padding:2px 9px; border-radius:100px; font-size:9px; font-weight:700; white-space:nowrap; }
+.lg-v.bad  { background:rgba(251,78,110,.08); color:var(--red);   border:1px solid rgba(251,78,110,.2); }
+.lg-v.good { background:rgba(0,232,127,.08);  color:var(--green); border:1px solid rgba(0,232,127,.2); }
+.lg-v.na   { background:transparent; color:var(--t2); border:1px solid var(--bd2); }
+.lg-ci { color: var(--t2); font-size: 10px; font-family: var(--font-data); }
+.perf-note.small { margin-top: 0; font-size: 11.5px; }
+
 .perf-empty { text-align: center; padding: 80px 20px; color: var(--t2); font-size: 12px; line-height: 2.6; }
 .perf-empty-icon { font-size: 32px; color: var(--bd2); margin-bottom: 14px; }
 </style>
@@ -186,6 +223,47 @@
     </div>
   </div>
 
+  {# ── Par mois ────────────────────────────────────────────────────
+     Rétabli le 2026-09-03 (demande opérateur). Chaque carte porte son
+     intervalle de Wilson et son point mort : une pastille verte veut dire
+     « intervalle ENTIER au-dessus du point mort », rouge « entier en
+     dessous », jaune « rien de démontré » — jamais un taux nu (règle n°7). #}
+  {% if monthly %}
+  <div class="sec-hdr">&#9632; PAR MOIS <em>{{ monthly|length }} mois depuis août 2026</em></div>
+  <div class="month-grid">
+    {% for m in monthly %}
+    {% set wr_cls = 'wr-none' if m.win_rate is none else ('wr-good' if m.above_breakeven else ('wr-bad' if m.below_breakeven else 'wr-ok')) %}
+    <div class="mc {{ 'on' if m.month == mois }}">
+      <div class="mc-month">
+        {{ m.label }}
+        <span class="mc-wr {{ wr_cls }}">{% if m.win_rate is not none %}{{ "%.1f"|format(m.win_rate) }}%{% else %}&mdash;{% endif %}</span>
+      </div>
+      <div class="mc-stats">
+        <div class="mc-stat"><div class="mc-sv" style="color:var(--green)">{{ m.wins }}</div><div class="mc-sl">Gagnés</div></div>
+        <div class="mc-stat"><div class="mc-sv" style="color:var(--red)">{{ m.losses }}</div><div class="mc-sl">Perdus</div></div>
+        <div class="mc-stat"><div class="mc-sv" style="color:{{ 'var(--green)' if m.pnl_units >= 0 else 'var(--red)' }}">{{ "%+.1f"|format(m.pnl_units) }}</div><div class="mc-sl">Unités<br>(mise 1 u)</div></div>
+        <div class="mc-stat"><div class="mc-sv" style="color:var(--t2)">{{ m.expired }}</div><div class="mc-sl">Expirés</div></div>
+      </div>
+      <div class="mc-foot">
+        {% if m.win_rate is not none %}
+        <span>IC 95 % {{ "%.0f"|format(m.win_rate_lo) }}&ndash;{{ "%.0f"|format(m.win_rate_hi) }} %{% if m.p_breakeven is not none %} &middot; seuil {{ "%.0f"|format(m.p_breakeven) }} %{% endif %}</span>
+        {% else %}<span>aucun pari décisif</span>{% endif %}
+        {% if m.avg_clv is not none %}
+        <span>{{ 'CLV' if m.clv_is_real else 'edge' }} {{ "%+.2f"|format(m.avg_clv) }} % ({{ m.clv_n }})</span>
+        {% endif %}
+        {# Le ledger mêle paris RECOMMANDÉS (T-2h…T-24h) et fantômes de la
+           golden hour (< T-2h, jamais envoyés) : la carte sépare les deux,
+           sinon le taux du mois juge le système sur des paris qu'il n'a
+           pas conseillés. #}
+        {% if m.n %}
+        <span title="gagnés–perdus">recommandés {{ m.zones.zone.wins }}&ndash;{{ m.zones.zone.losses }} &middot; fantômes T-2h {{ m.zones.golden.wins }}&ndash;{{ m.zones.golden.losses }}{% if m.zones.hors.wins + m.zones.hors.losses %} &middot; &gt;24 h {{ m.zones.hors.wins }}&ndash;{{ m.zones.hors.losses }}{% endif %}{% if m.zones.nc.wins + m.zones.nc.losses %} &middot; inconnu {{ m.zones.nc.wins }}&ndash;{{ m.zones.nc.losses }}{% endif %}</span>
+        {% endif %}
+      </div>
+    </div>
+    {% endfor %}
+  </div>
+  {% endif %}
+
   {% if global_s.by_sport %}
   <div class="sec-hdr">&#9632; PAR SPORT</div>
   <div class="tbl-outer">
@@ -206,8 +284,68 @@
   </div>
   {% endif %}
 
+  {# ── Mois affiché ───────────────────────────────────────────────
+     Pilote PAR LIGUE et HISTORIQUE. Par défaut le mois courant ; août
+     reste accessible ici, et seulement ici (les valeurs proposées sont
+     exactement `shown_months()` — juillet, archivé, n'y figure pas). #}
+  <div class="mois-bar">
+    <label for="mois-select">Mois affiché</label>
+    <select id="mois-select" onchange="location.search='?mois='+encodeURIComponent(this.value)">
+      {% for v, lbl in months %}
+      <option value="{{ v }}"{% if v == mois %} selected{% endif %}>{{ lbl }}</option>
+      {% endfor %}
+      <option value="{{ all_months }}"{% if mois == all_months %} selected{% endif %}>tous les mois depuis août 2026</option>
+    </select>
+    <span class="hint">Les chiffres du haut de page restent sur toute la période ; la liste des matchs et les ligues ci-dessous ne montrent que <b>{{ mois_label }}</b>.</span>
+  </div>
+
+  {# ── Par ligue ───────────────────────────────────────────────────
+     « Quelles ligues perdent plus souvent ? » — perdantes d'abord (P&L à
+     mise plate croissant). Le tableau CLASSE dès {{ league_min_n }} paris
+     mais ne CONCLUT que par l'intervalle de Wilson contre le point mort :
+     sous 30 paris, presque tout reste « non démontré », et c'est voulu. #}
+  <div class="sec-hdr">&#9632; PAR LIGUE <em>{{ mois_label }}</em></div>
+  {% if leagues %}
+  <div class="tbl-outer">
+    <table class="perf-table wide">
+      <thead>
+        <tr><th>Ligue</th><th>Paris</th><th>Réussite</th><th>Seuil</th><th>Cote</th><th>Unités</th><th>Perdus hors zone</th><th>Expirés</th><th>Verdict</th></tr>
+      </thead>
+      <tbody>
+        {% for lg in leagues %}
+        <tr>
+          <td style="color:var(--t1);font-weight:600;white-space:nowrap">{{ sport_emoji.get(lg.sport, '🎯') }} {{ lg.league }}</td>
+          <td style="font-family:var(--font-data)">{{ lg.wins }}&ndash;{{ lg.losses }}</td>
+          <td style="font-family:var(--font-data);font-weight:700;color:var(--t1)">{{ "%.0f"|format(lg.win_rate) }}%
+            <div class="lg-ci">IC {{ "%.0f"|format(lg.win_rate_lo) }}&ndash;{{ "%.0f"|format(lg.win_rate_hi) }} %</div></td>
+          <td style="font-family:var(--font-data)">{% if lg.p_breakeven is not none %}{{ "%.0f"|format(lg.p_breakeven) }}%{% else %}&mdash;{% endif %}</td>
+          <td style="font-family:var(--font-data)">{% if lg.avg_odds %}{{ "%.2f"|format(lg.avg_odds) }}{% else %}&mdash;{% endif %}</td>
+          <td style="font-family:var(--font-data);font-weight:700;color:{{ 'var(--green)' if lg.pnl_units >= 0 else 'var(--red)' }}">{{ "%+.2f"|format(lg.pnl_units) }}</td>
+          {# Perdus hors de la zone recommandée (fantômes T-2h ou > 24 h) :
+             si presque toutes les pertes sont là, la ligue n'est pas en
+             cause — c'est le moment d'émission qui l'est. #}
+          <td style="font-family:var(--font-data);color:var(--t2)" title="golden {{ lg.zones.golden.losses }} · >24 h {{ lg.zones.hors.losses }} · inconnu {{ lg.zones.nc.losses }}">{{ lg.losses_out_of_zone }}/{{ lg.losses }}</td>
+          <td style="font-family:var(--font-data);color:{{ 'var(--red)' if lg.expired else 'var(--t2)' }}">{{ lg.expired }}</td>
+          <td>
+            {% if lg.below_breakeven %}<span class="lg-v bad">PERDANTE</span>
+            {% elif lg.above_breakeven %}<span class="lg-v good">RENTABLE</span>
+            {% else %}<span class="lg-v na">non démontré{% if lg.n < 30 %} (n&lt;30){% endif %}</span>{% endif %}
+          </td>
+        </tr>
+        {% endfor %}
+      </tbody>
+    </table>
+  </div>
+  <div class="perf-note small">
+    {{ leagues|length }} ligue(s) à {{ league_min_n }} paris ou plus{% if leagues_hidden %} ; <strong>{{ leagues_hidden }}</strong> autre(s) sous ce nombre, non classées{% endif %}.
+    Les noms de ligue sont ceux des sources : une même compétition peut apparaître sous deux libellés selon le palier qui a émis le signal.
+  </div>
+  {% else %}
+  <div class="perf-note small">Aucune ligue à {{ league_min_n }} paris réglés ou plus en {{ mois_label }}{% if leagues_hidden %} ({{ leagues_hidden }} ligue(s) sous ce nombre){% endif %}.</div>
+  {% endif %}
+
   {% if history %}
-  <div class="sec-hdr">&#9632; HISTORIQUE <em>{{ history|length }} paris réglés</em></div>
+  <div class="sec-hdr">&#9632; HISTORIQUE <em>{{ history|length }} paris réglés &middot; {{ mois_label }}</em></div>
   <div class="tbl-outer">
     <table class="perf-table wide">
       <thead>
@@ -240,6 +378,9 @@
       </tbody>
     </table>
   </div>
+  {% else %}
+  <div class="sec-hdr">&#9632; HISTORIQUE <em>{{ mois_label }}</em></div>
+  <div class="perf-note small">Aucun pari réglé en {{ mois_label }} pour l'instant. Les autres mois restent accessibles dans le menu ci-dessus.</div>
   {% endif %}
 
   {% else %}

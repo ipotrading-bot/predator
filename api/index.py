@@ -34,8 +34,15 @@ from flask import Flask, jsonify, render_template, request, send_from_directory
 # seuils appris, dernier cycle d'apprentissage, calibration de Brier. Ces
 # mesures existent toujours — elles vivent dans la base et dans
 # scripts/weekly_report.py — elles ne sont simplement plus rendues ici.
-from core.perf_view import (filter_rows as _perf_filter_rows,
-                            resolution_rate as _resolution_rate)
+from core.perf_view import (ALL_MONTHS as _ALL_MONTHS,
+                            filter_rows as _perf_filter_rows,
+                            league_breakdown as _league_breakdown,
+                            month_label as _month_label,
+                            monthly_summary as _monthly_summary,
+                            pick_month as _pick_month,
+                            resolution_rate as _resolution_rate,
+                            rows_of_month as _rows_of_month,
+                            shown_months as _perf_shown_months)
 from core.constants import TAX_RATE as _TAX_RATE
 from core.db import get_db as _get_db_client
 from core.stats_utils import p_breakeven, wilson_ci
@@ -617,19 +624,37 @@ def audit():
 # ── JSON API ─────────────────────────────────────────────────────────
 
 
+# Une ligue entre dans le tableau PAR LIGUE à partir de ce nombre de paris
+# décisifs ; en dessous le classement ne trie que du bruit. Ce n'est PAS le
+# seuil de verdict (n ≥ 30, core/learning_layer) — seulement celui d'affichage.
+_LEAGUE_MIN_N = 5
+
+
 @app.route("/performance")
 def performance():
     rows: list      = []
-    history: list   = []   # sous-ensemble de `rows` affiché dans le tableau HISTORIQUE
+    history: list   = []   # paris réglés (WIN|LOSS) du MOIS SÉLECTIONNÉ
+    monthly: list   = []   # une carte par mois affiché (core/perf_view.monthly_summary)
+    leagues: list   = []   # ventilation par ligue du mois sélectionné, perdantes d'abord
+    leagues_hidden  = 0    # ligues sous _LEAGUE_MIN_N paris, non listées
     global_s: dict  = {}
+    # Mois sélectionné par le menu déroulant `?mois=YYYY-MM` (ou « tout »).
+    # Validé contre la fenêtre affichée : une valeur hors fenêtre — faute de
+    # frappe, mois archivé, juillet — retombe sur le mois courant. Le menu est
+    # la seule porte vers août, et il ne propose que `shown_months()`.
+    months = _perf_shown_months()
+    mois = _pick_month(request.args.get("mois"), months)
     try:
         sb = _db()
         if sb:
-            res = (sb.table("ai_learning_ledger")
-                   .select("*")
-                   .order("created_at", desc=True)
-                   .limit(500)
-                   .execute())
+            q = sb.table("ai_learning_ledger").select("*")
+            if months:
+                # Borne SQL sur le plus ancien mois affiché. Le `limit(500)`
+                # d'origine, sans borne, tronquait août (≈400 lignes) dès que
+                # septembre s'y ajoutait : les lignes les plus anciennes du
+                # mois archivé sortaient de leur propre carte sans le dire.
+                q = q.gte("created_at", f"{months[-1]}-01")
+            res = q.order("created_at", desc=True).limit(1000).execute()
             # Mission 2 (2026-08-22) : sports retirés et mois archivés
             # n'apparaissent plus — filtre d'AFFICHAGE (core/perf_view.py),
             # rien n'est supprimé du ledger.
@@ -658,7 +683,12 @@ def performance():
                 # `settled` (donc le compte des pushes) sert encore aux stats
                 # plus haut. Les taux se calculent déjà sur `decisive`
                 # (WIN|LOSS), ils sont donc inchangés par ce masquage.
-                history = [r for r in settled if r.get("outcome") != "PUSH"]
+                # HISTORIQUE et PAR LIGUE se limitent au mois sélectionné
+                # (2026-09-03, demande opérateur : août « archivé », accessible
+                # par le menu) ; le bandeau du haut et PAR SPORT restent sur
+                # la fenêtre entière, et le disent (« depuis août 2026 »).
+                scope   = _rows_of_month(rows, mois)
+                history = [r for r in scope if r.get("outcome") in ("WIN", "LOSS")]
                 wins    = sum(1 for r in settled if r.get("outcome") == "WIN")
                 losses  = sum(1 for r in settled if r.get("outcome") == "LOSS")
                 pushes  = sum(1 for r in settled if r.get("outcome") == "PUSH")
@@ -742,19 +772,35 @@ def performance():
                 # Brier reste calculé et suivi côté pipeline, table
                 # `brier_scores`, et repris dans le rapport hebdomadaire.)
 
-                # (Retiré le 2026-08-22 : la section « PAR MOIS » quittait
-                # la page. Depuis que l'époque du système est fixée à août
-                # 2026 — core/perf_view.PERF_START_MONTH — il n'y a qu'UN
-                # mois à montrer, et une grille de cartes pour une seule
-                # carte répète simplement les chiffres déjà en haut de page.
-                # Le découpage mensuel reste disponible dans le rapport
-                # hebdomadaire, scripts/weekly_report.py.)
+                # PAR MOIS — retirée le 2026-08-22 (un seul mois à montrer,
+                # la carte répétait le haut de page), RÉTABLIE le 2026-09-03
+                # à la demande de l'opérateur : il y a maintenant deux mois,
+                # et la carte d'août est le seul endroit où son bilan reste
+                # lisible une fois la liste des matchs passée à septembre.
+                # Wilson + point mort sur chaque carte (règle dure n°7).
+                monthly = _monthly_summary(rows, _TAX_RATE)
+
+                # PAR LIGUE — « quelles ligues perdent plus souvent ? »
+                # (2026-09-03). Perdantes d'abord. Le tableau ne CLASSE que
+                # les ligues à _LEAGUE_MIN_N paris ; il ne CONCLUT sur aucune
+                # sous n ≥ 30 (le verdict est celui de l'intervalle de Wilson
+                # contre le point mort, jamais un taux nu). Les libellés de
+                # ligue sont ceux des sources, non normalisés — règle n°6.
+                leagues = _league_breakdown(scope, _TAX_RATE, min_n=_LEAGUE_MIN_N)
+                leagues_hidden = (len(_league_breakdown(scope, _TAX_RATE, min_n=1))
+                                  - len(leagues))
 
     except Exception as e:
         log.error("Performance: %s", e)
 
     return render_template("performance.html", rows=rows, history=history,
-                           global_s=global_s,
+                           global_s=global_s, monthly=monthly,
+                           leagues=leagues, leagues_hidden=leagues_hidden,
+                           league_min_n=_LEAGUE_MIN_N,
+                           months=[(m, _month_label(m)) for m in months],
+                           mois=mois, all_months=_ALL_MONTHS,
+                           mois_label=("depuis août 2026" if mois == _ALL_MONTHS
+                                       else _month_label(mois or "")),
                            sport_emoji=_SPORT_EMOJI, sport_label=_SPORT_LABEL)
 
 
