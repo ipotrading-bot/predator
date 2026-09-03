@@ -140,7 +140,9 @@ def favorable_leagues(now: datetime | None = None) -> set[str]:
 
 # ── Rythme mensuel (2026-09-01) ───────────────────────────────────────
 # Décision opérateur : « 1 mois seulement, maximum d'utilisation, suffisant
-# pour tenir 30 jours ». Le pool (5 comptes × 500) doit être DÉPENSÉ EN
+# pour tenir 30 jours ». Le pool (n comptes gratuits × 500 — 5 le 2026-09-01,
+# 6 depuis le 2026-09-03 ; la taille se LIT dans app_secrets, jamais ici) doit
+# être DÉPENSÉ EN
 # ENTIER sur le cycle, jamais avant sa fin. Ce n'est pas le gouverneur retiré
 # le 2026-08-01 (« ne pas rationner ») : celui-ci étalait un budget que
 # l'opérateur voulait brûler ; celui-là vise 100 % du pool, à la bonne

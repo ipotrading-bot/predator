@@ -575,8 +575,10 @@ def pool_known_remaining() -> int | None:
 def pool_total_remaining(explicit: str | None = None) -> int | None:
     """Crédits restants du POOL ENTIER : sonde (0 crédit) chaque clé pas
     encore observée dans ce process, puis somme des vivantes. Une clé qui ne
-    répond pas est marquée morte, comme dans _next_live_key. Cinq GET /sports
-    gratuits par run, pour piloter 2 500 crédits : c'est le bon échange."""
+    répond pas est marquée morte, comme dans _next_live_key. Un GET /sports
+    gratuit par clé et par run, pour piloter tout le pool : c'est le bon
+    échange (et l'allocation du jour, core/scan_windows, se recalcule seule
+    quand une clé entre ou sort du pool)."""
     for k in candidate_keys(explicit):
         if k in _dead_keys or k in _key_remaining:
             continue
