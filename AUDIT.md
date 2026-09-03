@@ -77,6 +77,7 @@ C'est le tableau à consulter avant de toucher à quoi que ce soit.
 | Le Tier 2 tourne à CHAQUE tick — jamais conditionné au succès du Tier 1 (seul REPRICE exempte) ; les gates décisifs (LOWPROB) et la purge loggent ce qu'ils jettent | `tests/test_tier2_toujours.py` |
 | Toute table `_archive` créée dans `sql/` est refermée (RLS + REVOKE anon) — liste DÉRIVÉE des CREATE TABLE, jamais tenue à la main | `tests/test_migrations_rls.py` |
 | Un signal FANTÔME (`is_shadow`, posé AVANT la persistance, figé au rafraîchissement) n'apparaît ni sur `/`, ni sur `/api/signals`, ni sur `/audit`, ni dans le digest Telegram ; la règle T-2h vaut par signal, borne importée de `learning_layer` | `tests/test_signaux_fantomes.py` |
+| Le digest Telegram liste les recommandés encore jouables (🆕 nés depuis `REPORT_WINDOW_H`, aligné sur le cron de `reports.yml` par test, ⏳ rappels), se tait sans pari et moteur vivant ; le scan standard compte ses écartés au lieu de se taire ; aucun libellé de session | `tests/test_rapport_digest.py`, `tests/test_telegram_format.py` |
 | Le curseur tourne : toutes les lignes sont couvertes, pas seulement les 12 premières | `…::TestLeBudgetEtLeCurseur` |
 | Une panne de relance ne fait pas échouer un audit qui a réglé | `…::test_une_panne_de_relance_ne_fait_pas_echouer_laudit` |
 | Le pool `scan` porte les relais des sources filtrées par IP | `…::test_le_pool_scan_porte_les_relais_des_sources_filtrees_par_ip` |

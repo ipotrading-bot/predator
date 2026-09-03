@@ -2044,16 +2044,6 @@ def _urgency_sort(s: dict, now) -> tuple:
     except (ValueError, OverflowError):
         pass
     return (1, 9999.0, -(s.get("edge_pct") or 0))
-_SESSION_ICON = {"EU-OPEN": "📈", "EU-MID": "⚡", "EU-CLOSE": "🎯", "OVERNIGHT": "🌙"}
-
-
-def _session_icon(session: str) -> str:
-    for k, v in _SESSION_ICON.items():
-        if k in session:
-            return v
-    return ""
-
-
 def _window_key(sig: dict) -> str:
     """Hourly bucket (YYYY-MM-DDTHH) for grouping signals into one system
     suggestion — combining a match kicking off in 2h with one in 2 days
@@ -2259,8 +2249,23 @@ def _favourite(leg: dict) -> str:
     return away if is_home else home
 
 
-def _telegram_systems(systems: list, now, session: str, matches: int,
-                      sharp_source: str, no_pin_count: int):
+def _ecartes(shadowed: list) -> str:
+    """' · 2 écarté(s) (< 2 h)' — les fantômes du run, comptés par raison.
+    Vide sans fantôme. Le nombre explique la pauvreté d'un scan au lieu de
+    la cacher : « 13 matchs, aucun pari » et « 13 matchs, 1 écarté (< 2 h) »
+    ne se lisent pas pareil."""
+    if not shadowed:
+        return ""
+    libelle = {"t_minus_2h": "< 2 h", "shadow_sport": "sport en observation"}
+    par_raison: dict[str, int] = {}
+    for s in shadowed:
+        r = libelle.get(s.get("shadow_reason") or "", "fantôme")
+        par_raison[r] = par_raison.get(r, 0) + 1
+    return "".join(f" · {n} écarté(s) ({r})" for r, n in sorted(par_raison.items()))
+
+
+def _telegram_systems(systems: list, now, matches: int, no_pin_count: int,
+                      shadowed: list | None = None):
     """Send tax-viable system suggestions only, one per time window.
     Individual signals are still persisted to Supabase for settlement/
     learning (see run()) — Telegram now only ever recommends a combo that
@@ -2271,21 +2276,22 @@ def _telegram_systems(systems: list, now, session: str, matches: int,
     and euro EV are deliberately gone: bankroll sizing printed "Mise 0€ · EV
     net taxe +0.01€" on every line, which is noise at best and misleading at
     worst. Value is expressed as a percentage, which needs no bankroll.
+    Plus de libellé de session (2026-09-03) : « EU-CLOSE 🎯 🎯 » était du
+    jargon interne, l'icône y figurait deux fois.
     """
-    sess   = session.strip()
-    icon   = _session_icon(sess)
+    ecartes = _ecartes(shadowed or [])
 
     if not systems:
         _telegram(
-            f"⚫ PREDATOR · {now.strftime('%H:%M')} UTC · {sess} {icon}\n"
-            f"Aucun pari de valeur · {matches} matchs analysés"
+            f"⚫ PREDATOR · {now.strftime('%H:%M')} UTC\n"
+            f"Aucun pari recommandé · {matches} matchs analysés{ecartes}"
         )
         return
 
     no_pin = f"\n⚠️ {no_pin_count} sans confirmation Pinnacle" if no_pin_count > 0 else ""
     header = (
-        f"📡 *PREDATOR* · {now.strftime('%H:%M')} UTC · {sess} {icon}\n"
-        f"{len(systems)} pari(s) de valeur · {matches} matchs analysés{no_pin}\n"
+        f"📡 *PREDATOR* · {now.strftime('%H:%M')} UTC\n"
+        f"{len(systems)} pari(s) recommandé(s) · {matches} matchs analysés{ecartes}{no_pin}\n"
     )
 
     def _system_urgency(sys_):
@@ -2830,8 +2836,9 @@ def run():
     # ── Mode FANTÔME — AVANT la persistance (2026-09-03) ──────────────
     # Le drapeau doit partir en base avec la ligne : c'est lui que le
     # dashboard filtre. Tout est persisté, réglé et appris — seule la
-    # recommandation sortante (Telegram, dashboard) s'arrête. Pas de message
-    # Telegram : un fantôme est un réglage permanent, pas un incident.
+    # recommandation sortante (Telegram, dashboard) s'arrête. Pas d'alerte
+    # Telegram (un fantôme est un réglage permanent, pas un incident) : le
+    # scan standard se contente de COMPTER ses écartés dans son bilan.
     recommandes, shadowed = _shadow_partition(signals)
     if shadowed:
         by_reason: dict[str, int] = {}
@@ -2894,27 +2901,23 @@ def run():
                 )
         # (La partition fantôme a eu lieu AVANT la persistance, section B :
         # `emit_signals` ne contient déjà que des recommandés.)
-        if shadowed and not emit_signals:
-            # Run intégralement fantôme (tous les signaux à moins de 2 h du
-            # coup d'envoi, ou d'un sport fantôme). Surtout NE PAS appeler
-            # _telegram_systems ici : sur une liste vide il annonce « Aucun
-            # pari de valeur », ce qui serait un mensonge — il y en avait, on
-            # a décidé de ne pas les recommander.
-            log.info("FANTÔME | run intégralement fantôme — aucun message Telegram")
+        systems = _suggest_systems_by_window(emit_signals, log, sb)
+        systems = _last_look_reprice(systems, log)
+        already_announced = len(systems)
+        systems = _dedup_systems_for_telegram(sb, systems)
+        already_announced -= len(systems)
+        if REPRICE and not systems:
+            # Un tick REPRICE sans rien de NEUF se tait — sinon le mode
+            # horaire enverrait ~23 « Aucun pari recommandé »/jour, ou
+            # ré-annoncerait le même combo à chaque tick.
+            log.info("💹 REPRICE — rien de neuf à annoncer (%d déjà signalé(s), %d fantôme(s))",
+                     already_announced, len(shadowed))
         else:
-            systems = _suggest_systems_by_window(emit_signals, log, sb)
-            systems = _last_look_reprice(systems, log)
-            already_announced = len(systems)
-            systems = _dedup_systems_for_telegram(sb, systems)
-            already_announced -= len(systems)
-            if REPRICE and not systems:
-                # Un tick REPRICE sans rien de NEUF se tait — sinon le mode
-                # horaire enverrait ~23 « Aucun pari de valeur »/jour, ou
-                # ré-annoncerait le même combo à chaque tick.
-                log.info("💹 REPRICE — rien de neuf à annoncer (%d déjà signalé(s))",
-                         already_announced)
-            else:
-                _telegram_systems(systems, now, session, len(matches), sharp_source, no_pin_count)
+            # Un scan STANDARD parle toujours, même intégralement fantôme :
+            # « 13 matchs analysés · 1 écarté (< 2 h) » est le bilan honnête
+            # du run — jusqu'au 2026-09-03 il se taisait, et l'opérateur ne
+            # savait pas si le scan avait tourné.
+            _telegram_systems(systems, now, len(matches), no_pin_count, shadowed)
 
     elite = [s for s in signals if s["edge_pct"] >= ELITE_EDGE]
     log.info("Done. %d candidates | %d balanced | %d elite.",

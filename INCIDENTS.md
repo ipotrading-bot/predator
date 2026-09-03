@@ -1836,6 +1836,54 @@ Le heartbeat `meta.last_scan.signals` compte désormais les RECOMMANDÉS :
 Gardien : `tests/test_signaux_fantomes.py` (partition avant `_save`, drapeau
 figé, ledger, filtres, migration sans DELETE).
 
+### Telegram après les fantômes : douze « Aucun signal actif » par jour, et le scan muet (2026-09-03)
+
+Le 3 septembre au soir, l'opérateur : « toujours aussi peu de signaux, depuis
+ce matin pauvreté encore ». Mesuré sur la journée : 18 signaux, tous
+football, 11 recommandés, 7 fantômes (T-2h) ; les scans du soir (16:04,
+19:50, 21:00) intégralement fantômes. Sur Telegram, la journée ressemblait à
+ceci : le digest bi-horaire envoyait « 📭 Aucun signal actif dans les 2
+dernières heures — le moteur scanne toutes les 2h, vérifiez Predator Engine »
+(un workflow qui n'existe plus, une cadence qui n'est plus la bonne) douze
+fois par jour, tandis que les scans standard intégralement fantômes se
+taisaient — l'opérateur ne savait pas s'ils avaient tourné. Et un pari
+recommandé à 04:53 pour 18:45 (Toulouse–Lille) n'a été annoncé qu'une fois,
+dans le digest de 06:35 : la fenêtre `created_at` de 2 h l'écartait ensuite,
+alors que la doc promettait « les paris encore jouables ».
+
+Trois corrections, une règle : **un message Telegram dit ce que le run a
+vu, jamais ce qu'il a décidé de taire.**
+
+1. **Le digest liste les paris RECOMMANDÉS encore jouables**, sans fenêtre
+   sur `created_at` : 🆕 ceux nés depuis le digest précédent
+   (`REPORT_WINDOW_H`, aligné sur le cron par test), ⏳ ceux déjà annoncés.
+   Rien à lister et moteur vivant : silence — le scan standard dit déjà
+   « aucun pari » à chacun de ses huit passages. Moteur muet depuis plus de
+   2 h : alerte, vers le workflow qui existe. Le bloc « Performance réelle »
+   du digest est parti avec : il lisait les 200 dernières lignes du ledger
+   sans séparer fantômes et recommandés (voir *golden hour = fantômes dans
+   le ledger*) — un taux mélangé, douze fois par jour.
+2. **Le scan standard parle toujours**, même intégralement fantôme :
+   « Aucun pari recommandé · 13 matchs analysés · 1 écarté (< 2 h) ». Le
+   compte des écartés explique la pauvreté au lieu de la cacher. Le tick
+   REPRICE reste muet sans combiné neuf (sinon 23 messages/jour).
+3. **Plus de libellé de session** dans l'en-tête (« EU-CLOSE 🎯 🎯 » :
+   jargon, icône doublée). `_telegram_systems(systems, now, matches,
+   no_pin_count, shadowed)` — `session` et `sharp_source` n'y servaient
+   plus.
+
+Ce qui explique la pauvreté elle-même, ce jour-là, n'est PAS Telegram et
+n'a pas été touché (règles 10 et 11) : (a) api-sports de nouveau
+« account suspended » — le compte posé le 2026-09-02 ; (b) le rythme
+OddsAPI à 81 crédits/jour, dont les runs golden (supprimés le soir même)
+consommaient la moitié : 4 ligues payées par scan standard ; (c) le
+périmètre décidé le jour même (marchés morts, ligues réglables) : 40 matchs
+→ 13 ; (d) les crons 19:03 et 21:03 tombent à moins de 2 h des coups d'envoi
+Big 5 (20:45/21:00) : les crédits qu'ils dépensent sur ces ligues
+(`core/scan_windows` 17:00–22:00) n'achètent que des fantômes.
+
+Gardiens : `tests/test_rapport_digest.py`, `tests/test_telegram_format.py`.
+
 ### Une version, un seul endroit
 
 `DASHBOARD_VERSION` (`api/index.py`), injectée

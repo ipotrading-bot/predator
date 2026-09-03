@@ -66,8 +66,7 @@ def _system(legs, **over):
 class TestNoStakeNoBankroll:
     @pytest.mark.parametrize("banned", ["Mise", "1000€", "EV net", "Kelly", "€"])
     def test_engine_message_is_money_free(self, sent, banned):
-        run_engine._telegram_systems([_system([_sig()])], NOW, "OVERNIGHT", 46,
-                                     "OddsAPI/Pinnacle", 0)
+        run_engine._telegram_systems([_system([_sig()])], NOW, 46, 0)
         assert banned not in sent[0]
 
     @pytest.mark.parametrize("banned", ["Mise", "1000€", "Kelly", "€"])
@@ -122,19 +121,40 @@ class TestFavourite:
 
 class TestEmptyAndCombo:
     def test_no_systems_message_stays_one_short_line(self, sent):
-        run_engine._telegram_systems([], NOW, "EU-CLOSE", 8, "OddsAPI/Pinnacle", 0)
-        assert "Aucun pari de valeur · 8 matchs analysés" in sent[0]
+        run_engine._telegram_systems([], NOW, 8, 0)
+        assert "Aucun pari recommandé · 8 matchs analysés" in sent[0]
         assert "€" not in sent[0]
+        assert "écarté" not in sent[0]
+
+    def test_no_session_jargon_in_header(self, sent):
+        # « EU-CLOSE 🎯 🎯 » : libellé interne, icône doublée — parti le 2026-09-03.
+        run_engine._telegram_systems([], NOW, 8, 0)
+        run_engine._telegram_systems([_system([_sig()])], NOW, 8, 0)
+        for msg in sent:
+            for jargon in ("EU-CLOSE", "OVERNIGHT", "EU-OPEN", "EU-MID"):
+                assert jargon not in msg
+
+    def test_fully_phantom_run_counts_its_discards(self, sent):
+        # Un scan standard intégralement fantôme ne se tait plus : il compte.
+        fantomes = [_sig(shadow_reason="t_minus_2h"), _sig(shadow_reason="t_minus_2h"),
+                    _sig(shadow_reason="shadow_sport")]
+        run_engine._telegram_systems([], NOW, 13, 0, fantomes)
+        assert "Aucun pari recommandé · 13 matchs analysés" in sent[0]
+        assert "2 écarté(s) (< 2 h)" in sent[0]
+        assert "1 écarté(s) (sport en observation)" in sent[0]
+
+    def test_header_with_systems_also_counts_discards(self, sent):
+        run_engine._telegram_systems([_system([_sig()])], NOW, 13, 0,
+                                     [_sig(shadow_reason="t_minus_2h")])
+        assert "1 pari(s) recommandé(s) · 13 matchs analysés · 1 écarté(s) (< 2 h)" in sent[0]
 
     def test_combo_shows_combined_odds_and_value(self, sent):
         legs = [_sig(), _sig(match="A vs B", selection_name="A", sharp_prob=0.55)]
         run_engine._telegram_systems([_system(legs, combined_odds=6.46,
-                                              combined_prob=0.166)],
-                                     NOW, "OVERNIGHT", 46, "OddsAPI/Pinnacle", 0)
+                                              combined_prob=0.166)], NOW, 46, 0)
         assert "*Combiné* `@ 6.46`" in sent[0]
         assert "+7.2%" in sent[0]          # 6.46 × 0.166 − 1
 
     def test_single_leg_has_no_combined_line(self, sent):
-        run_engine._telegram_systems([_system([_sig()])], NOW, "OVERNIGHT", 46,
-                                     "OddsAPI/Pinnacle", 0)
+        run_engine._telegram_systems([_system([_sig()])], NOW, 46, 0)
         assert "Combiné" not in sent[0]

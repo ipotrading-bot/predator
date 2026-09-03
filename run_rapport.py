@@ -1,12 +1,16 @@
 """
-run_rapport.py — PREDATOR PAIM v8.5 — Rapport Telegram 06:05 & 18:05 UTC
-Triggered by .github/workflows/reports.yml (job `rapport`) after each main
-scan window.
+run_rapport.py — PREDATOR PAIM — digest Telegram toutes les 2 h (H+35)
+Déclenché par .github/workflows/reports.yml (job `rapport`).
 
-Envoie un récapitulatif des signaux actifs, un bloc par pari :
-  - Événement, favori (h2h uniquement), sélection, cote, heure du match, valeur
-  - Aucune mise ni bankroll — supprimées sur demande opérateur (2026-07-21)
-  - Alerte erreur si aucun scan récent ou Supabase KO
+Un seul message, une seule règle (2026-09-03) : la liste des paris
+RECOMMANDÉS encore jouables — coup d'envoi devant nous, jamais un fantôme.
+  - 🆕 les signaux nés depuis le digest précédent (REPORT_WINDOW_H) ;
+  - ⏳ ceux déjà annoncés et toujours jouables, en rappel.
+  - Événement, favori (h2h uniquement), sélection, cote, heure, valeur.
+  - Aucune mise ni bankroll — supprimées sur demande opérateur (2026-07-21).
+  - Rien à lister et moteur vivant : SILENCE (le scan standard dit déjà
+    « aucun pari recommandé » à chacun de ses passages).
+  - Moteur muet depuis plus de SCAN_STALE_H ou Supabase KO : alerte.
 """
 import logging
 import os
@@ -20,7 +24,6 @@ from core.constants import ELITE_EDGE as _ELITE_EDGE
 from core.db import get_db
 from core.paim_engine import resolve_selection_side as _resolve_side
 from core.learning_layer import load_learning_summary as _load_learning_summary
-from core.stats_utils import p_breakeven as _p_breakeven, wilson_ci as _wilson_ci
 
 load_dotenv()
 
@@ -47,21 +50,16 @@ SPORT_EMOJI    = {
     "rugby": "🏉", "rugbyleague": "🏉", "aussierules": "🦘",
     "volleyball": "🏐", "tabletennis": "🏓", "handball": "🤾",
 }
-SPORT_ORDER    = ["soccer", "basketball", "hockey", "baseball", "americanfootball",
-                  "euroleague_basketball", "rugbyleague", "aussierules", "mma", "boxing"]
 ELITE_EDGE     = _ELITE_EDGE
 SCAN_STALE_H   = 2      # Alerte si aucun scan depuis X heures
 
-# Fenêtre de signaux couverte par un rapport. Doit rester ALIGNÉE sur le cron
-# du job `rapport` de reports.yml (toutes les 2h depuis le 2026-08-06) : à
-# 6h, chaque signal
-# était réenvoyé par trois rapports consécutifs et l'opérateur ne pouvait plus
-# distinguer une nouvelle occasion d'un rappel. Si le cron change, changer ici.
+# « Nouveau » = né depuis le digest précédent. Doit rester ALIGNÉ sur le cron
+# du job `rapport` de reports.yml (toutes les 2 h). Si le cron change,
+# changer ici — sinon un signal est 🆕 deux fois, ou jamais.
 REPORT_WINDOW_H = 2
 
-# (Retiré 2026-08-06 — Coupe du Monde terminée, instruction opérateur : le bloc
-# « 🏆 COUPE DU MONDE 2026 » du rapport, son seuil d'edge dédié à 2,0% et la
-# détection par mots-clés de ligue sont partis avec.)
+# Telegram limite un message à 4096 chars.
+_BUDGET = 4000
 
 
 def _send(text: str):
@@ -83,15 +81,18 @@ def _send(text: str):
         log.error("Telegram erreur: %s", e)
 
 
-def _match_dt(s: dict) -> datetime | None:
-    raw = s.get("match_time") or ""
+def _parse_dt(raw) -> datetime | None:
     if not raw:
         return None
     try:
-        mt = datetime.fromisoformat(str(raw).replace("Z", "+00:00"))
+        dt = datetime.fromisoformat(str(raw).replace("Z", "+00:00"))
     except ValueError:
         return None
-    return mt if mt.tzinfo else mt.replace(tzinfo=timezone.utc)
+    return dt if dt.tzinfo else dt.replace(tzinfo=timezone.utc)
+
+
+def _match_dt(s: dict) -> datetime | None:
+    return _parse_dt(s.get("match_time") or "")
 
 
 def _a_venir(signals: list, now: datetime) -> list:
@@ -108,6 +109,28 @@ def _a_venir(signals: list, now: datetime) -> list:
         if mt is None or mt > now:
             out.append(s)
     return out
+
+
+def _partitionner(signals: list, now: datetime) -> tuple[list, list]:
+    """(nouveaux, rappels) — nouveau = créé depuis le digest précédent.
+
+    `created_at` porte la PREMIÈRE émission (run_engine._save met à jour en
+    place) : un re-scan du même pari ne le rajeunit pas en 🆕. Chaque liste
+    est triée par coup d'envoi (le plus proche d'abord), les sans-horaire à
+    la fin. Un signal sans `created_at` lisible compte comme nouveau —
+    mieux vaut un doublon qu'un pari jamais annoncé.
+    """
+    cutoff = now - timedelta(hours=REPORT_WINDOW_H)
+    nouveaux, rappels = [], []
+    for s in signals:
+        c = _parse_dt(s.get("created_at"))
+        (nouveaux if c is None or c >= cutoff else rappels).append(s)
+
+    def _ko(s):
+        mt = _match_dt(s)
+        return (mt is None, mt or now)
+
+    return sorted(nouveaux, key=_ko), sorted(rappels, key=_ko)
 
 
 def _kickoff(s: dict, now: datetime) -> str:
@@ -168,58 +191,58 @@ def _signal_line(s: dict, now: datetime) -> str | None:
     return line
 
 
-def _performance_block(sb) -> str:
+def _composer(nouveaux: list, rappels: list, now: datetime,
+              stale: bool = False, learning: list | None = None) -> str | None:
+    """Le message du digest, ou None s'il n'y a rien à dire.
+
+    Deux sections, 🆕 puis ⏳, chaque ligne au format opérateur. On tronque
+    entre deux paris complets, jamais au milieu d'une entité Markdown (un
+    `*gras*` coupé affiche des astérisques littéraux). Moteur muet + rien à
+    lister : le message ne contient que l'alerte.
     """
-    Recent real performance (outcome-driven, Task 4) — Wilson 95% CI and
-    tax-adjusted breakeven probability, never a bare win rate. Pulled from
-    ai_learning_ledger (permanent record), not `signals` (purged ~48h).
-    """
-    try:
-        res = (sb.table("ai_learning_ledger")
-               .select("outcome, odds")
-               .order("created_at", desc=True)
-               .limit(200)
-               .execute())
-        rows = res.data or []
-    except Exception as e:
-        log.warning("Performance block: %s", e)
-        return ""
+    if not nouveaux and not rappels and not stale:
+        return None
 
-    decisive = [r for r in rows if r.get("outcome") in ("WIN", "LOSS")]
-    if len(decisive) < 10:
-        return ""
+    header = f"🎯 *PREDATOR* · {now.strftime('%d/%m %H:%M')} UTC\n"
+    if stale:
+        header += f"⚠️ _Moteur muet depuis plus de {SCAN_STALE_H} h — vérifiez GitHub Actions → Predator Scan_\n"
+    if not nouveaux and not rappels:
+        return header
 
-    wins = sum(1 for r in decisive if r["outcome"] == "WIN")
-    lo, hi = _wilson_ci(wins, len(decisive))
-    odds_vals = [r["odds"] for r in decisive if r.get("odds")]
-    avg_odds = sum(odds_vals) / len(odds_vals) if odds_vals else None
-    breakeven = _p_breakeven(avg_odds) if avg_odds else None
+    counts = []
+    if nouveaux:
+        counts.append(f"🆕 `{len(nouveaux)}` nouveau(x)")
+    if rappels:
+        counts.append(f"⏳ `{len(rappels)}` encore jouable(s)")
+    header += " · ".join(counts) + "\n"
 
-    win_rate = wins / len(decisive) * 100
-    line = (
-        f"📈 *Performance réelle* (derniers {len(decisive)} paris réglés)\n"
-        f"   `{win_rate:.1f}%` — IC 95% `[{lo*100:.1f}% – {hi*100:.1f}%]`\n"
-    )
-    if breakeven is not None:
-        status = "✅ confirmé rentable" if lo > breakeven else "⚠️ pas encore confirmé"
-        line += f"   Seuil rentable net taxe: `{breakeven*100:.1f}%` — {status}\n"
+    footer = "\n🔥 Élite | ✅ Value | 📌 Faible"
+    if learning:
+        footer += "\n\n🧠 *Learning* (dernier cycle)\n" + "".join(f"   • {l}\n" for l in learning[:5])
 
-    # core/learning_layer.py's compute_and_save() persists a plain-language
-    # summary of what it changed last audit cycle (threshold moves, edge-band
-    # warnings) — surfacing it here means a threshold correction is
-    # something the operator actually sees, not just a GitHub Actions log
-    # line nobody reads.
-    try:
-        summary = _load_learning_summary(sb)
-    except Exception as e:
-        log.warning("Learning summary: %s", e)
-        summary = []
-    if summary:
-        line += "\n🧠 *Learning* (dernier cycle)\n"
-        for s in summary[:5]:
-            line += f"   • {s}\n"
+    budget = _BUDGET - len(header) - len(footer) - 80
+    body = ""
+    truncated = False
+    for titre, groupe in (("🆕 *Nouveaux*", nouveaux), ("⏳ *Encore jouables*", rappels)):
+        if not groupe:
+            continue
+        bloc = f"\n{titre}\n"
+        if len(body) + len(bloc) > budget:
+            truncated = True
+            break
+        body += bloc
+        for s in groupe:
+            line = _signal_line(s, now)
+            if len(body) + len(line) > budget:
+                truncated = True
+                break
+            body += line
+        if truncated:
+            break
+    if truncated:
+        body += "…_(liste tronquée — voir le dashboard)_\n"
 
-    return line + "\n"
+    return header + body + footer
 
 
 def run():
@@ -241,51 +264,36 @@ def run():
         )
         return
 
-    # ── Vérification heartbeat (dernier scan récent ?) ────────────────
-    last_scan_at = None
+    # ── Heartbeat : le moteur a-t-il tourné récemment ? ───────────────
+    stale = True
     try:
         res = sb.table("meta").select("value").eq("key", "last_scan").limit(1).execute()
         if res.data:
             import json
-            meta = json.loads(res.data[0]["value"])
-            last_scan_at = meta.get("at")
+            last_dt = _parse_dt(json.loads(res.data[0]["value"]).get("at"))
+            if last_dt is not None:
+                age_h = (now - last_dt).total_seconds() / 3600
+                stale = age_h > SCAN_STALE_H
+                if stale:
+                    log.warning("Dernier scan il y a %.1fh — moteur potentiellement en erreur", age_h)
     except Exception as e:
         log.warning("Meta heartbeat: %s", e)
 
-    stale = False
-    if last_scan_at:
-        try:
-            from datetime import datetime as _dt
-            last_dt = _dt.fromisoformat(last_scan_at.replace("Z", "+00:00"))
-            age_h = (now - last_dt).total_seconds() / 3600
-            if age_h > SCAN_STALE_H:
-                stale = True
-                log.warning("Dernier scan il y a %.1fh — moteur potentiellement en erreur", age_h)
-        except Exception:
-            pass
-    else:
-        stale = True
-
-    # ── Récupération signaux actifs ───────────────────────────────────
-    signals = []
+    # ── Signaux RECOMMANDÉS encore jouables ───────────────────────────
+    # is_shadow = false : le digest est une RECOMMANDATION. Jusqu'au
+    # 2026-09-03 il relistait les fantômes (T-2h) que le moteur venait de
+    # taire — la même tranche mesurée perdante repartait sur Telegram par la
+    # porte du rapport. sql/migrate_v10_12.
+    # Pas de fenêtre sur created_at : un pari émis à 05:00 pour 18:45 doit
+    # rester listé jusqu'au coup d'envoi (en ⏳), sinon l'opérateur ne le
+    # voit qu'une fois et demande « où sont mes signaux ? ».
     try:
-        cutoff = (now - timedelta(hours=REPORT_WINDOW_H)).isoformat()
-        # created_at et non scanned_at : le mode REPRICE rafraîchit scanned_at
-        # de tout le slate chaque heure — filtré sur scanned_at, chaque rapport
-        # bi-horaire re-listerait indéfiniment TOUS les signaux vivants.
-        # created_at est fiable depuis que _save met à jour en place (il porte
-        # la PREMIÈRE émission, jamais rajeuni par un re-scan).
-        # is_shadow = false : le digest est une RECOMMANDATION. Jusqu'au
-        # 2026-09-03 il relistait les fantômes (golden hour / T-2h) que le
-        # moteur venait de taire — la même tranche mesurée perdante repartait
-        # sur Telegram par la porte du rapport. sql/migrate_v10_12.
         res = (sb.table("signals")
                .select("*")
                .eq("status", "active")
                .eq("is_shadow", False)
-               .gte("created_at", cutoff)
-               .order("edge_pct", desc=True)
-               .limit(30)
+               .order("match_time", desc=False)
+               .limit(60)
                .execute())
         signals = _a_venir(res.data or [], now)
     except Exception as e:
@@ -297,88 +305,23 @@ def run():
         )
         return
 
-    log.info("%d signaux actifs (%d dernières heures)", len(signals), REPORT_WINDOW_H)
+    nouveaux, rappels = _partitionner(signals, now)
+    log.info("%d paris jouables : %d nouveaux (< %d h), %d rappels",
+             len(signals), len(nouveaux), REPORT_WINDOW_H, len(rappels))
 
-    # ── Construction du message ───────────────────────────────────────
-    # 12 rapports/jour depuis le passage au cron 2h : « MATIN / SOIR » ne
-    # distinguait plus rien, six rapports partageaient le même libellé.
-    slot  = ("🌙 NUIT"       if now.hour < 6  else
-             "☀️ MATIN"      if now.hour < 12 else
-             "🌤 APRÈS-MIDI" if now.hour < 18 else
-             "🌆 SOIR")
-    date  = now.strftime("%d/%m/%Y")
-    heure = now.strftime("%H:%M")
+    # core/learning_layer.py::compute_and_save persiste un résumé en clair de
+    # ce que le dernier audit a changé (seuils) : ici, l'opérateur le voit.
+    try:
+        learning = _load_learning_summary(sb) or []
+    except Exception as e:
+        log.warning("Learning summary: %s", e)
+        learning = []
 
-    elite = [s for s in signals if (s.get("edge_pct") or 0) >= ELITE_EDGE]
-
-    header = (
-        f"🎯 *PREDATOR — {slot} {date} {heure} UTC*\n"
-        f"━━━━━━━━━━━━━━━━━━━━━━━━━━\n"
-    )
-
-    if stale:
-        header += f"⚠️ _Moteur inactif depuis +{SCAN_STALE_H}h — vérifiez GitHub Actions_\n\n"
-
-    if not signals:
-        msg = (
-            header +
-            f"📭 *Aucun signal actif* dans les {REPORT_WINDOW_H} dernières heures.\n\n"
-            "_Le moteur scanne toutes les 2h. "
-            "Si ce message répète, vérifiez GitHub Actions → Predator Engine._"
-        )
-        _send(msg)
-        log.info("Rapport envoyé — 0 signaux")
+    msg = _composer(nouveaux, rappels, now, stale=stale, learning=learning)
+    if msg is None:
+        log.info("Rien à annoncer, moteur vivant — silence")
         return
-
-    # Stats globales
-    best_edge = max((s.get("edge_pct") or 0) for s in signals)
-    summary = (
-        f"📊 `{len(signals)}` signaux · `{len(elite)}` élite ≥2.5% · "
-        f"Meilleur edge: `+{best_edge:.1f}%`\n\n"
-    )
-    summary += _performance_block(sb)
-
-    # Groupement par sport
-    by_sport: dict = {}
-    for s in signals:
-        sp = s.get("sport", "soccer")
-        by_sport.setdefault(sp, []).append(s)
-
-    footer = "━━━━━━━━━━━━━━━━━━━━━━━━━━\n🔥 Élite | ✅ Value | 📌 Faible"
-
-    # Telegram limite un message à 4096 chars. Chaque bloc sport ci-dessous
-    # est une unité *entités-balancées* (les `*gras*`/`` `code` `` s'ouvrent
-    # ET se ferment à l'intérieur du même bloc) — on tronque donc entre deux
-    # blocs complets, jamais au milieu d'une chaîne, pour ne pas couper une
-    # entité en deux et faire apparaître des astérisques/underscores littéraux
-    # au lieu du gras/italique attendu (bug corrigé : l'ancienne version
-    # faisait `msg[:3970]` en aveugle, sans savoir où tombait la coupe).
-    budget = 4000 - len(header) - len(summary) - len(footer) - 80
-    body = ""
-    truncated = False
-    ordered_sports = list(SPORT_ORDER) + sorted(s for s in by_sport if s not in SPORT_ORDER)
-    for sport in ordered_sports:
-        group = by_sport.get(sport, [])
-        if not group:
-            continue
-        emoji = SPORT_EMOJI.get(sport, "🎯")
-        block = f"{emoji} *{sport.upper()}* — {len(group)} signal(s)\n"
-        for s in group:
-            line = _signal_line(s, now)
-            if line:
-                block += line + "\n"
-        if len(body) + len(block) > budget:
-            truncated = True
-            break
-        body += block
-
-    if truncated:
-        body += "…_(liste tronquée — voir le dashboard pour tous les signaux)_\n\n"
-
-    msg = header + summary + body + footer
-
     _send(msg)
-    log.info("Rapport envoyé — %d signaux, %d élite", len(signals), len(elite))
     log.info("━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━")
 
 

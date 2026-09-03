@@ -47,9 +47,15 @@ dans ≤ 5 h, ou tu appuies sur « Scanner ».
 - **Dashboard, liste des paris** : uniquement les signaux RECOMMANDÉS. Un
   signal à moins de 2 h du coup d'envoi est un « fantôme » : mesuré, réglé,
   appris, mais jamais recommandé ni affiché (colonne `is_shadow`).
-- **Telegram** : le standard annonce un combiné (ou « aucun pari de valeur ») ;
-  le reprice ne parle que s'il a quelque chose de NEUF ; le digest toutes les
-  2 h liste les paris encore jouables.
+- **Telegram**, trois messages et pas un de plus :
+  - le scan **standard** parle à chaque passage : « N pari(s) recommandé(s) »
+    avec le combiné, ou « Aucun pari recommandé · 13 matchs analysés ·
+    1 écarté (< 2 h) » — le compte des écartés est le bilan honnête du run ;
+  - le **reprice** ne parle que s'il a un combiné NEUF ;
+  - le **digest** toutes les 2 h liste les paris recommandés encore jouables :
+    🆕 ceux nés depuis le digest précédent, ⏳ ceux déjà annoncés. Rien à
+    lister et moteur vivant : il se tait. Moteur muet depuis plus de 2 h :
+    il alerte.
 - **Bouton « Scanner »** : ramassé au tick suivant (≤ 1 h). Si c'est un tick
   reprice, il devient un scan standard complet. Il n'y a pas de poller dédié,
   et il ne faut pas en ajouter (incident du 2026-07-07 : 288 déclenchements
