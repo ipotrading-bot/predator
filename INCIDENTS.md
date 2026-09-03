@@ -1440,6 +1440,24 @@ lookups sont préservés pour les matchs de la veille.
 Gardiens : `tests/test_score_sources.py::TestESPN`, `::TestChaineAvecESPN`,
 `tests/test_settlement.py::…::test_api_sports_saute_hors_de_la_fenetre_du_plan_gratuit`.
 
+### odds500 derrière un mur anti-bot EdgeOne depuis le 1er septembre (2026-09-03)
+
+`ops.py sources` disait « odds500 KO — 0 matchs au calendrier » et le quota
+journalier était tombé de 400 (30 août) à 14 (3 septembre) sans qu'aucun log
+n'accuse quoi que ce soit. Lu à la main via le relais : le calendrier n'est
+plus une page mais un script obfusqué de ~1 ko qui pose un cookie
+`EO_Bot_Ssid` — le défi JavaScript de Tencent EdgeOne. Sans moteur JS, la
+source est MUETTE, relais Cloudflare ou pas ; ce n'est plus un filtrage par
+IP (celui-là, le relais le contournait), c'est une porte fermée à tout
+client qui n'exécute pas de JavaScript.
+
+Fait : `core/odds500.mur_anti_bot` reconnaît le défi et `_get` rend None en
+loggant « MUR ANTI-BOT » en clair — plus jamais « 0 match » pour une panne.
+Pas fait, et c'est une DÉCISION OPÉRATEUR : retirer la mission 3 odds500
+(module, relais, scorecard, alias chinois) si le mur dure, ou la garder
+dormante (coût : 1 à 2 requêtes de calendrier par scan). Gardien :
+`tests/test_odds500.py::TestMurAntiBot`.
+
 ### Le LineFeed 1xbet/Melbet/22bet retiré du harvest (2026-09-03)
 
 Même décision opérateur (« si une source est inutilisable, il faut la

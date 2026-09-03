@@ -207,7 +207,25 @@ def _get(url: str) -> str | None:
         return None
     # gb18030 est un sur-ensemble de gb2312 : il décode aussi les caractères
     # rares (noms d'équipes sud-américains translittérés) que gb2312 refuse.
-    return raw.decode("gb18030", "replace")
+    html = raw.decode("gb18030", "replace")
+    if mur_anti_bot(html):
+        # Mesuré le 2026-09-03 : depuis le 1er septembre, 500.com ne rend plus
+        # le calendrier mais un script obfusqué (~1 ko) qui pose un cookie
+        # « EO_Bot_Ssid » — un défi JavaScript de Tencent EdgeOne. Sans moteur
+        # JS, la source est MUETTE, relais ou pas. Le dire en clair plutôt
+        # que de logguer « 0 match au calendrier » comme si le slate était
+        # vide : c'est ce silence qui a caché trois jours de panne.
+        log.warning("odds500: MUR ANTI-BOT (défi EdgeOne, cookie EO_Bot_Ssid) sur %s — "
+                    "source muette, aucun match ne peut être lu ; à retirer si ça dure",
+                    url.rsplit("/", 1)[-1] or url)
+        return None
+    return html
+
+
+def mur_anti_bot(html: str) -> bool:
+    """Le corps est-il un défi JavaScript plutôt qu'une page du site ?"""
+    return "EO_Bot_Ssid" in html or (len(html) < 4000 and "<title>" not in html
+                                     and "<script>" in html[:200])
 
 
 def _odd(val) -> float:

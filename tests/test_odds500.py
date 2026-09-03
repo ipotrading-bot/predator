@@ -329,3 +329,29 @@ class TestDoctrineDesEndpoints:
     def test_cadence_conforme(self):
         """≤ 1 requête / 2 s, comme annoncé dans le User-Agent."""
         assert odds500.REQUEST_DELAY >= 2.0
+
+
+class TestMurAntiBot:
+    """Depuis le 2026-09-01, 500.com rend un défi JavaScript EdgeOne (cookie
+    EO_Bot_Ssid, ~1 ko de script obfusqué) à la place du calendrier. Il faut
+    le NOMMER : « 0 match au calendrier » a caché trois jours de panne."""
+
+    DEFI = ('<script>function a(a){function n(){for(var a={wQzOV:_0x649a("0x4")},'
+            'n=0;;){switch(n[e++]){case"0":t+="EO_Bot_Ssid=";continue;}}}</script>')
+
+    def test_le_defi_est_reconnu(self):
+        assert odds500.mur_anti_bot(self.DEFI) is True
+        assert odds500.mur_anti_bot("<html><title>竞彩</title><div class='fenxi'>…</div></html>") is False
+
+    def test_get_rend_none_et_le_dit(self, monkeypatch, caplog):
+        import logging
+
+        class _Resp:
+            def __enter__(self): return self
+            def __exit__(self, *a): return False
+            def read(self): return TestMurAntiBot.DEFI.encode("gb18030")
+        monkeypatch.setattr(odds500.net, "prepare", lambda src, url, h: (url, h))
+        monkeypatch.setattr(odds500.net, "open_with_retry", lambda src, req, t: _Resp())
+        with caplog.at_level(logging.WARNING, logger="PREDATOR.odds500"):
+            assert odds500._get(odds500.FIXTURES_URL) is None
+        assert "MUR ANTI-BOT" in caplog.text
