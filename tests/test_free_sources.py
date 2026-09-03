@@ -273,7 +273,7 @@ class TestLesDeuxChemainsQuiManquaient:
         cn = _match()                                     # 曼联 vs 赫尔城, Pinnacle
         trusted = dict(_match(mid="t1", home="Manchester United", away="Hull City",
                               needs=False))
-        trusted["_alias_source"] = "api_sports"
+        trusted["_alias_source"] = "titan007"
         cn_fx = [FS._as_fixture(cn, "odds500")]
         bilan = FS.learn_from_trusted(cn_fx, [trusted])
         assert seen == {"source": "odds500", "n": 1, "via": "trusted"}

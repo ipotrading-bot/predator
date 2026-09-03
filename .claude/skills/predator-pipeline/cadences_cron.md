@@ -6,7 +6,7 @@
 ## L'arbitrage de cadence (2026-08-22)
 
 Quand le pool OddsAPI est mort, CHAQUE scan paie sur les budgets journaliers
-des sources gratuites : api-sports 80 req/sport (~8 scans), odds-api.io 400
+des sources gratuites : (api-sports, retirée le 2026-09-03), odds-api.io 400
 (~14), titan007 500 (~12, 41 req/scan). À 12 engine + 12 guerrilla + 4 deep,
 le budget entier partait avant 08:30 UTC — dernier signal du 2026-08-21 émis
 à 08:24, soirée européenne à sec. Cadences réduites à 8+2+2 = 12 scans

@@ -3,8 +3,8 @@ tests/test_settlement.py — core/settlement.py : chaîne de scores DÉTERMINIST
 et calcul d'issue (determine_outcome).
 
 2026-09-02 : la recherche web (Groq compound-mini + Tavily) a été SUPPRIMÉE du
-settlement — le score vient d'api-sports puis de core/score_sources (MLB
-statsapi, TheSportsDB). Les anciennes classes TestAiSearchFallbackChain et
+settlement — le score vient de core/score_sources (MLB statsapi, ESPN,
+TheSportsDB) ; api-sports, premier étage jusqu'au 2026-09-03, est retiré. Les anciennes classes TestAiSearchFallbackChain et
 TestGroqKeyRotation sont parties avec le transport qu'elles testaient ; la
 chaîne de repli testée ici est celle des SOURCES STRUCTURÉES.
 
@@ -14,23 +14,11 @@ import core.settlement as settlement
 
 
 class TestFetchMatchResult:
-    """L'ordre de la chaîne : api-sports d'abord (1 requête par journée),
-    puis core/score_sources.fetch_score. None = « pas trouvé aujourd'hui »,
-    jamais un état terminal."""
+    """La chaîne : core/score_sources.fetch_score, et rien d'autre. None =
+    « pas trouvé aujourd'hui », jamais un état terminal. api-sports en était
+    le premier étage jusqu'au 2026-09-03 (deux comptes suspendus, retiré)."""
 
-    def test_api_sports_first_short_circuits_the_chain(self, monkeypatch):
-        appels = []
-        monkeypatch.setattr(settlement, "result_from_api_sports",
-                            lambda *a: {"home_score": 2, "away_score": 1,
-                                        "completed": True, "source": "api_sports"})
-        monkeypatch.setattr(settlement, "fetch_score",
-                            lambda *a: appels.append(1) or None)
-        res = settlement.fetch_match_result("Spain vs Belgium", "soccer", "2026-09-01")
-        assert res["home_score"] == 2 and res["source"] == "api_sports"
-        assert not appels, "api-sports a trouvé : la chaîne ne doit rien payer de plus"
-
-    def test_falls_back_to_score_sources(self, monkeypatch):
-        monkeypatch.setattr(settlement, "result_from_api_sports", lambda *a: None)
+    def test_score_sources_is_the_whole_chain(self, monkeypatch):
         monkeypatch.setattr(settlement, "fetch_score",
                             lambda *a: {"home_score": 0, "away_score": 3,
                                         "completed": True, "source": "thesportsdb"})
@@ -39,26 +27,17 @@ class TestFetchMatchResult:
                        "completed": True, "source": "thesportsdb"}
 
     def test_nothing_found_returns_none(self, monkeypatch):
-        monkeypatch.setattr(settlement, "result_from_api_sports", lambda *a: None)
         monkeypatch.setattr(settlement, "fetch_score", lambda *a: None)
         assert settlement.fetch_match_result("A vs B", "soccer", "2026-09-01") is None
 
-    def test_api_sports_saute_hors_de_la_fenetre_du_plan_gratuit(self, monkeypatch):
-        """Audit 33774472425 : 15 lookups brûlés sur des refus certains
-        (« Free plans do not have access to this date »). Hors J-1, on ne
-        paie plus api-sports : sources ouvertes directement."""
-        from datetime import datetime, timezone
-        now = datetime(2026, 9, 3, 15, 45, tzinfo=timezone.utc)
-        assert settlement._hors_fenetre_api_sports("2026-08-31", now) is True
-        assert settlement._hors_fenetre_api_sports("2026-09-02", now) is False
-        assert settlement._hors_fenetre_api_sports("2026-09-03", now) is False
-        assert settlement._hors_fenetre_api_sports("n'importe quoi", now) is False
-        appels = []
-        monkeypatch.setattr(settlement, "_resultats_du_jour",
-                            lambda sport, jour: appels.append(jour) or [])
-        monkeypatch.setattr(settlement, "_hors_fenetre_api_sports", lambda d, now=None: True)
-        assert settlement.result_from_api_sports("A FC vs B FC", "soccer", "2026-08-31") is None
-        assert not appels, "hors fenêtre : aucun lookup api-sports"
+    def test_api_sports_est_parti(self):
+        """Décision opérateur 2026-09-03 : « vivre sans api-football ». Une
+        source morte laissée en place coûte du budget et fait croire à une
+        capacité (leçon LineFeed) : plus aucune trace ici."""
+        import inspect
+        src = inspect.getsource(settlement)
+        for absent in ("api_sports", "result_from_api_sports", "fetch_results"):
+            assert absent not in src.replace("api-sports en était", "").replace("core/api_sports", "")
 
     def test_no_ai_layer_involved(self):
         """Gardien de la suppression : le module settlement n'importe plus

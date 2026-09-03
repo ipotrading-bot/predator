@@ -7,8 +7,7 @@ Deux gardes DÉRIVÉES, aucune liste de ligues à la main :
   - MARCHÉ VIVANT : un match du Tier 2 n'entre que si un exchange confirme
     son prix sharp (`odds_exchange` ou `_exchange`) — la liquidité mesurée
     par core/matchbook.py ; le Tier 1 OddsAPI passe (Pinnacle réel) ;
-  - RÉGLABLE : api-sports (ses propres fixtures), MLB statsapi (baseball), ou
-    ESPN qui LISTE le match (à venir compris) ; sinon refus, ESPN muet
+  - RÉGLABLE : MLB statsapi (baseball), ou ESPN qui LISTE le match (à venir compris) ; sinon refus, ESPN muet
     compris (panne = refus, le tick suivant réessaie).
 Chaque refus est loggé (tests/test_tier2_toujours.py).
 """
@@ -42,7 +41,7 @@ class TestMarcheVivant:
         assert eng._marche_vivant(_m(soft=None)) is True
 
     def test_copie_pinnacle_sans_exchange_est_un_marche_mort(self):
-        assert eng._marche_vivant(_m(soft="api-sports/soccer")) is False
+        assert eng._marche_vivant(_m(soft="odds-api.io")) is False
         assert eng._marche_vivant(_m(soft="titan007")) is False
 
     def test_exchange_confirme_ou_bouche_trou_passe(self):
@@ -51,9 +50,13 @@ class TestMarcheVivant:
 
 
 class TestReglable:
-    def test_api_sports_et_baseball_sont_reglables_par_construction(self):
-        assert eng._reglable(_m(soft="api-sports/soccer"), {}) is True
+    def test_le_baseball_est_reglable_par_construction(self):
         assert eng._reglable(_m(sport="baseball", soft="titan007"), {}) is True
+
+    def test_plus_de_passe_droit_api_sports(self):
+        # 2026-09-03 : api-sports retirée — un match qu'ESPN ne liste pas est
+        # refusé, quelle que soit sa source soft.
+        assert eng._reglable(_m(soft="api-sports/soccer"), {}) is False
 
     def test_espn_doit_lister_le_match(self):
         fx = {"soccer": [_ev("A FC", "B FC")]}

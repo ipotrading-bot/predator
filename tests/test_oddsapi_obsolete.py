@@ -70,7 +70,6 @@ def scan_env(monkeypatch):
     monkeypatch.setattr(eng, "_harvest_recently_empty", lambda _sb: None)
     monkeypatch.setattr(eng, "_note_harvest_result", lambda _sb, _m: None)
     monkeypatch.setattr(eng, "fetch_matches", lambda: [])
-    monkeypatch.setattr(eng, "_api_sports_all", lambda **_k: [])
     monkeypatch.setattr(eng, "_odds_api_io_all", lambda **_k: [])
     monkeypatch.setattr(eng, "_titan007_fetch", lambda **_k: [])
     monkeypatch.setattr(eng, "fetch_matchbook_prices", lambda **_k: {})

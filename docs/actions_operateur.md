@@ -308,12 +308,15 @@ log et plus de `RUN STÉRILE`.
 moins de 100 requêtes par API et par jour — donc pas pour le quota, pour la
 règle « un compte gratuit par personne » (INCIDENTS.md « api-sports, deux
 comptes suspendus »). Ne PAS refaire un troisième compte gratuit : il
-retombera. Les deux issues sont à ta main : (a) un plan payant api-football
-(le premier palier suffit largement : le moteur reste borné à 80/jour et
-≤ 9/min par construction), clé posée par la même commande `secrets set` ;
-(b) vivre sans — titan007 + Matchbook portent le sharp Tier 2, ESPN/MLB le
-règlement. Le moteur alerte sur Telegram le jour même d'une suspension et
-coupe la source pour la journée.
+retombera. **Décision prise le 2026-09-03 : vivre sans.** `core/api_sports.py`
+est supprimé, `API_SPORTS_KEY` retirée d'`app_secrets`, les pools de secrets
+ne transmettent plus aucune clé api-sports. titan007 + Matchbook portent le
+sharp Tier 2, ESPN/MLB statsapi/TheSportsDB le règlement.
+
+Reste à faire de ton côté (403 depuis un Codespace) : supprimer les secrets
+GitHub `API_FOOTBALL_KEY`, `API_SPORTS_KEY`, `API_BASKETBALL_KEY`,
+`API_BASEBALL_KEY` (Settings → Secrets → Actions). Ils ne sont plus lus,
+c'est du ménage, pas une urgence.
 
 ## 6. Secrets GitHub des fournisseurs IA retirés — à SUPPRIMER (2026-09-03)
 

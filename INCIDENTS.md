@@ -1910,8 +1910,19 @@ Ce que le code garantit désormais (`core/api_sports.py`) :
    settlement compris ; `run_engine` envoie UNE alerte Telegram par 24 h.
    Le lendemain, un seul appel re-sonde le compte.
 
-Gardiens : `tests/test_api_sports.py::test_suspended_account_stops_every_call_for_the_day`,
-`::test_suspension_persistee_entre_runs_via_daily_quota`, `::test_la_cadence_espace_les_requetes`.
+**Décision opérateur, le soir même : « vivre sans api-football ».** La source
+est RETIRÉE du dépôt (`core/api_sports.py` et ses garde-fous du matin
+supprimés, `API_SPORTS_KEY` effacée d'`app_secrets`, pools de secrets
+régénérés sans aucune clé api-sports, périmètre sans passe-droit : un match
+n'est réglable que si ESPN le liste ou si c'est du baseball). Aucun sport ne
+sort du périmètre : ESPN couvre foot, basket, hockey, NFL, NCAAF, AFL, NRL,
+MMA, tennis, MLB statsapi le baseball. Ce que le Tier 2 perd : le Pinnacle
+« gratuit » sur ~100 % des fixtures foot d'api-sports — titan007 et Matchbook
+portent désormais tout le sharp Tier 2. Ne pas refaire un compte gratuit.
+Gardiens : `tests/test_settlement.py::TestFetchMatchResult::test_api_sports_est_parti`,
+`tests/test_ci_env.py::test_aucune_cle_api_sports_dans_les_pools`,
+`tests/test_perimetre.py::TestReglable::test_plus_de_passe_droit_api_sports`,
+`tests/test_engine_circuit_breaker.py::test_breaker_still_queries_the_cheap_sources`.
 
 ### Un crédit OddsAPI n'achète jamais un fantôme ; les crons recalés ; Telegram en simples (2026-09-03)
 

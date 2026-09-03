@@ -4,8 +4,8 @@ name: Predator Audit
 # ⚠️ NE PAS RENOMMER CE FICHIER : api/index.py (/api/audit/run) le déclenche
 # par son nom via l'API GitHub (…/actions/workflows/audit.yml/dispatches).
 #
-# Pool `settlement` (scripts/ci_env.py) : Supabase RW + clés de RÉSULTATS
-# (api-sports, TheSportsDB optionnelle). AUCUNE clé IA : le settlement est
+# Pool `settlement` (scripts/ci_env.py) : Supabase RW + clé de RÉSULTATS
+# (TheSportsDB optionnelle ; ESPN et MLB statsapi sans clé). AUCUNE clé IA : le settlement est
 # déterministe depuis le 2026-09-02 (Groq/Tavily supprimés du pipeline).
 
 on:
@@ -45,10 +45,6 @@ jobs:
           SUPABASE_SERVICE_KEY: ${{ secrets.SUPABASE_SERVICE_KEY }}
           TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
           TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID }}
-          API_FOOTBALL_KEY: ${{ secrets.API_FOOTBALL_KEY }}
-          API_SPORTS_KEY: ${{ secrets.API_SPORTS_KEY }}
-          API_BASKETBALL_KEY: ${{ secrets.API_BASKETBALL_KEY }}
-          API_BASEBALL_KEY: ${{ secrets.API_BASEBALL_KEY }}
           THESPORTSDB_API_KEY: ${{ secrets.THESPORTSDB_API_KEY }}
           # ▲ fin du bloc généré (pool `settlement`)
         run: |

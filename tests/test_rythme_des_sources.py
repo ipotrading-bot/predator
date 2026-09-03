@@ -31,7 +31,7 @@ import re
 
 import pytest
 
-from core import (api_sports, daily_quota, odds500,
+from core import (daily_quota, odds500,
                   odds_api_io, prediction_markets, score_sources, sevenm,
                   titan007)
 
@@ -40,7 +40,6 @@ from core import (api_sports, daily_quota, odds500,
 # compound-mini ont été supprimés avec la recherche web — il ne dépense plus
 # aucun budget de source, le routeur IA porte les siens.
 SOURCES_BUDGETEES = {
-    "core/api_sports.py":   api_sports,
     "core/odds_api_io.py":  odds_api_io,
     "core/titan007.py":     titan007,
 }

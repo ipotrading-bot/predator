@@ -13,16 +13,16 @@ trace the flow by hand. This skill is that trace, pre-done.
 ## La carte en dix lignes
 
 1. **Ingestion** — Tier 1 OddsAPI (`core/odds_api.py`, rallumé le 2026-09-01,
-   rythme mensuel) puis Tier 2 (`core/harvester.py` : api-sports, odds-api.io,
-   titan007, sources gratuites), enrichi par l'exchange Matchbook (sharp).
+   rythme mensuel) puis Tier 2 (`core/harvester.py` : odds-api.io,
+   titan007, sources gratuites — api-sports retirée le 2026-09-03), enrichi par l'exchange Matchbook (sharp).
    Plus AUCUNE recherche web ni oracle LLM depuis le 2026-09-02.
 2. **Signaux** — `run_engine.py` : devig (`core/math_engine.py`), edge = EV
    vraie au prix EXÉCUTABLE, consensus (`core/paim_engine.py`), écriture
    Supabase `signals` (`status='active'`).
 3. **Purge** — en tête de chaque run, TOUJOURS scopée `status='active'` :
    une purge non scopée a déjà affamé le ledger des mois durant.
-4. **Audit** (6 h) — settlement 100 % déterministe (api-sports puis
-   `core/score_sources.py`, ZÉRO IA), CLV, une ligne
+4. **Audit** (6 h) — settlement 100 % déterministe (`core/score_sources.py` :
+   MLB statsapi, ESPN, TheSportsDB — ZÉRO IA), CLV, une ligne
    `ai_learning_ledger` par chemin réussi.
 5. **Apprentissage** — `core/learning_layer.py` : seuils `meta.threshold_*`
    APPLIQUÉS au min_edge du scan (époque A6) ; verdicts loggés, jamais

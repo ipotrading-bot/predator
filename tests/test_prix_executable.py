@@ -11,8 +11,6 @@ une divergence d'opinion entre books dont le coût de transaction n'avait jamais
 correspond donc à une façon précise dont le défaut pourrait revenir :
 
   · `to_binary` re-dévigorisant le côté soft (la panne elle-même) ;
-  · `extract_prices` réassemblant un 1X2 issue par issue (edge fabriqué qui
-    s'ajoute au précédent) ;
   · le repricing de dernière minute relisant une cote 1X2 brute (la marge du
     book passe alors pour un mouvement de ligne favorable) ;
   · `advice` taisant qu'un DNB synthétique engage DEUX jambes (l'opérateur
@@ -24,7 +22,6 @@ from datetime import datetime, timedelta, timezone
 import pytest
 
 import run_engine
-from core.api_sports import _favourite_side, extract_prices
 from core.math_engine import (calc_dnb, dnb_leg_split, executable_price,
                               synthetic_dnb, to_binary)
 
@@ -141,57 +138,11 @@ class TestExecutablePriceEstLePointUnique:
         assert executable_price({"1": 1.8, "X": 3.4, "2": 4.0}, "soccer", "X") == 0.0
 
 
-# ── extract_prices : un seul book ────────────────────────────────────────
 
 def _bk(name, o1, ox, o2):
     values = [{"value": "Home", "odd": str(o1)}, {"value": "Draw", "odd": str(ox)},
               {"value": "Away", "odd": str(o2)}]
     return {"name": name, "bets": [{"name": "Match Winner", "values": values}]}
-
-
-class TestLineShoppingSurLePrixFinal:
-    def test_le_bloc_rendu_appartient_a_un_book_reel(self):
-        a = _bk("Bwin", 2.30, 3.40, 2.80)
-        b = _bk("Unibet", 2.20, 3.50, 3.00)
-        soft, _ = extract_prices([a, b], draw=True)
-        assert soft in ({"1": 2.30, "X": 3.40, "2": 2.80},
-                        {"1": 2.20, "X": 3.50, "2": 3.00})
-        # L'assemblage que produisait l'ancien max par issue :
-        assert soft != {"1": 2.30, "X": 3.50, "2": 3.00}
-
-    def test_cest_le_prix_executable_qui_departage_pas_la_cote_nue(self):
-        # B a un favori MOINS cher mais un nul bien plus généreux : son DNB
-        # exécutable est meilleur. Trier sur la cote nue choisirait A.
-        a = _bk("A", 1.80, 3.20, 4.50)
-        b = _bk("B", 1.78, 8.00, 4.40)
-        assert synthetic_dnb(1.78, 8.00) > synthetic_dnb(1.80, 3.20)
-        soft, _ = extract_prices([a, b], draw=True)
-        assert soft == {"1": 1.78, "X": 8.00, "2": 4.40}
-
-    def test_le_book_sharp_ne_gonfle_jamais_le_soft(self):
-        soft, sharp = extract_prices(
-            [_bk("Pinnacle", 2.50, 3.20, 2.90), _bk("Bwin", 2.30, 3.40, 2.80)],
-            draw=True)
-        assert sharp == {"1": 2.50, "X": 3.20, "2": 2.90}
-        assert soft == {"1": 2.30, "X": 3.40, "2": 2.80}
-
-    def test_sans_book_soft_il_ny_a_pas_de_prix_soft(self):
-        soft, sharp = extract_prices([_bk("Pinnacle", 2.50, 3.20, 2.90)], draw=True)
-        assert soft is None and sharp is not None
-
-    def test_le_favori_se_decide_au_consensus_pas_sur_un_seul_book(self):
-        # Deux books font le domicile favori, un seul l'extérieur : le
-        # consensus doit tenir, sinon l'ordre de la réponse HTTP déciderait.
-        books = [{"1": 4.00, "X": 3.5, "2": 1.85},
-                 {"1": 1.80, "X": 3.5, "2": 4.20},
-                 {"1": 1.82, "X": 3.5, "2": 4.10}]
-        assert _favourite_side(books) == "1"
-
-    def test_un_book_sans_nul_ne_peut_pas_gagner_le_shopping(self):
-        sans_nul = _bk("SansNul", 1.50, 0.0, 4.00)
-        avec_nul = _bk("AvecNul", 1.45, 3.60, 4.10)
-        soft, _ = extract_prices([sans_nul, avec_nul], draw=True)
-        assert soft == {"1": 1.45, "X": 3.60, "2": 4.10}
 
 
 # ── Le chemin d'émission ─────────────────────────────────────────────────

@@ -20,7 +20,7 @@
    ───────────────────                    ──────────────────────────────
    OddsAPI      (rallumé 2026-09-01)      Registre de 11 fournisseurs
    Matchbook    (sharp, sans clé)         Lanes : FILTER / ANALYZE /
-   api-sports   (soft)                            TRANSLATE_CJK
+   odds-api.io  (soft)                            TRANSLATE_CJK
    odds.500.com (gratuit, mode ombre)     (les lanes SEARCH_READ et
    7M           (noms d'équipes)           SETTLEMENT sont parties avec
    Kalshi / Polymarket (consensus)         Groq/Tavily le 2026-09-02)
@@ -95,7 +95,7 @@ de 120 s), ramassée par `scan.yml` au tick suivant (32/jour, donc ≤ ~1 h) et 
   Groq → 42 après correction).
 - **Le settlement ne consomme plus un token d'IA** (2026-09-02) — le score
   vient d'API structurées ([`core/score_sources.py`](core/score_sources.py) :
-  api-sports, MLB statsapi, TheSportsDB). Groq et Tavily, dont les quotas
+  MLB statsapi, ESPN, TheSportsDB). Groq et Tavily, dont les quotas
   gratuits lâchaient ensemble, sont supprimés du pipeline ; l'ancienne
   « réserve settlement » n'a plus d'objet.
 - **Mistral** y est entré le 2026-08-26, avec la suppression de Wiz : il en
@@ -168,7 +168,7 @@ http://localhost:5000
 | `SUPABASE_URL` / `SUPABASE_KEY` / `SUPABASE_SERVICE_KEY` | Supabase (anon pour lire, service_role pour écrire) | ✅ |
 | `TELEGRAM_BOT_TOKEN` / `TELEGRAM_CHAT_ID` | Notifications Telegram | ✅ |
 | `GROQ_API_KEY` / `TAVILY_API_KEY` | Recherche web (settlement + prix Pinnacle de repli) | ❌ |
-| `API_SPORTS_KEY` / `ODDS_API_IO_KEY` (+ pool `ODDS_API_IO_KEYS`) | Books soft authentifiés par clé (Tier 2) | ❌ |
+| `ODDS_API_IO_KEY` (+ pool `ODDS_API_IO_KEYS`) | Books soft authentifiés par clé (Tier 2) | ❌ |
 | `MISTRAL_API_KEY` | Fournisseur du registre IA — lanes `filter` / `analyze` | ❌ |
 | `NFL_SEASON_START` | Date d'ouverture NFL (défaut `2026-09-10`) — pas de scan de présaison | ❌ |
 | `ODDS_API_RESERVE_CREDITS` / `BACKGROUND_MIN_INTERVAL_MIN` | Politique de dépense OddsAPI (`core/scan_windows.py`) — défauts 60 / 180 | ❌ |
@@ -180,7 +180,7 @@ budget crédits avant/après, carte des crons, boucle de calibration) est docume
 ### Obtenir les Clés API
 
 1. **The-Odds API** — [the-odds-api.com](https://the-odds-api.com/) (500 crédits/mois/clé — prévoir un pool de 3-4 clés)
-2. **api-sports** — [api-sports.io](https://api-sports.io/) · **odds-api.io** — [odds-api.io](https://odds-api.io/)
+2. **odds-api.io** — [odds-api.io](https://odds-api.io/) (api-sports retirée le 2026-09-03 : deux comptes gratuits suspendus)
 4. **Supabase** — [supabase.com](https://supabase.com/) (Plan gratuit)
 5. **Mistral** (optionnel) — [console.mistral.ai](https://console.mistral.ai/)
 
@@ -301,7 +301,6 @@ predator/
 │   ├── odds_api.py          # Tier 1 — The Odds API (Pinnacle + 1XBet réel), POOL de clés
 │   ├── odds_api_io.py       # Tier 2 — odds-api.io (books soft authentifiés)
 │   ├── matchbook.py         # Sharp, sans clé
-│   ├── api_sports.py        # Soft (API_FOOTBALL_KEY / API_SPORTS_KEY)
 │   ├── harvester.py         # Orchestration de la collecte + appariement
 │   ├── free_sources.py      # Sources gratuites — appelé EN DERNIER par harvester
 │   ├── source_adapter.py    # Cadre commun : appariement temps+ligue+STRUCTURE, divergence en POINTS

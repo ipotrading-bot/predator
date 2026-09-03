@@ -30,7 +30,6 @@ import os
 import requests
 from datetime import datetime, timedelta, timezone
 
-from core.api_sports import PROVIDERS as _AS_PROVIDERS, fetch_sport as _as_fetch_sport
 from core.odds_api_io import SPORTS as _OAI_SPORTS, fetch_sport as _oai_fetch_sport
 from core.titan007 import SPORT_ID as _T7_SPORT_ID, fetch_matches as _t7_fetch
 from core.paim_engine import strict_team_match
@@ -74,25 +73,6 @@ def _fuzzy_match_event(candidate: dict, pool: list[dict]) -> dict | None:
     return None
 
 
-# sport_id harvester -> nom de sport api-sports (core/api_sports.py).
-# Le baseball (6) et le hockey (7) n'existent QUE par cette voie côté Tier 2,
-# alors qu'ils sont scannés en Tier 1 et appris par la couche d'apprentissage
-# — c'est précisément le trou que l'incident d'août 2026 a révélé.
-_API_SPORTS_BY_ID = {p["sport_id"]: name for name, p in _AS_PROVIDERS.items()}
-
-
-def _fetch_from_api_sports(sport_id: int) -> list:
-    """Famille api-sports.io — fournisseur indépendant d'OddsAPI :
-    authentifié par CLÉ, donc non filtré par IP (les runners GitHub sont
-    bloqués par le LineFeed 1xbet — retiré depuis —, pas par api-sports —
-    vérifié le 2026-08-20). Peut ramener un prix sharp (`odds_pinnacle`)
-    dans la même réponse, auquel cas aucune recherche web n'est nécessaire."""
-    sport = _API_SPORTS_BY_ID.get(sport_id)
-    if not sport:
-        return []
-    return _as_fetch_sport(sport)
-
-
 # sport_id harvester -> nom de sport odds-api.io (core/odds_api_io.py).
 _ODDS_API_IO_BY_ID = {cfg[1]: name for name, cfg in _OAI_SPORTS.items()}
 
@@ -110,8 +90,8 @@ def _fetch_from_odds_api_io(sport_id: int) -> list:
 
 def _fetch_multi_book(sport_id: int) -> list:
     """
-    Task 6 — line shopping: fetch every configured soft source (api-sports,
-    odds-api.io, titan007, odds500) for this sport and, for each real-world
+    Task 6 — line shopping: fetch every configured soft source (odds-api.io,
+    titan007, odds500) for this sport and, for each real-world
     match found on 2+ of them, keep
     the BEST (highest) price per outcome across all of them — not just
     whichever book happened to respond first. `_soft_source` on the
@@ -123,11 +103,8 @@ def _fetch_multi_book(sport_id: int) -> list:
     as-is (identical behavior to the old single-book fetch).
     """
     per_book: dict[str, list] = {}
-    # (LineFeed 1xbet/Melbet/22bet retiré le 2026-09-03 — voir l'en-tête.)
-    as_matches = _fetch_from_api_sports(sport_id)
-    if as_matches:
-        per_book["api_sports"] = as_matches
-
+    # (LineFeed 1xbet/Melbet/22bet et api-sports retirés le 2026-09-03 —
+    # voir l'en-tête ; api-sports : deux comptes gratuits suspendus.)
     oai_matches = _fetch_from_odds_api_io(sport_id)
     if oai_matches:
         per_book["odds_api_io"] = oai_matches
@@ -173,7 +150,7 @@ def _fetch_multi_book(sport_id: int) -> list:
             # ou une heure de coup d'envoi n'existent que chez certaines
             # sources, et l'ancienne fusion ne recopiait que les prix soft —
             # un match trouvé d'abord sur le LineFeed perdait donc le prix
-            # Pinnacle qu'api-sports apportait, c'est-à-dire le signal.
+            # Pinnacle qu'une autre source apportait, c'est-à-dire le signal.
             for extra in ("odds_pinnacle", "commence_time", "league",
                           "spreads_1xbet", "totals_1xbet",
                           "spreads_pinnacle", "totals_pinnacle"):
@@ -237,7 +214,7 @@ def fetch_matches():
     # L'union des sports que les sources soft savent servir — dérivée de
     # leurs propres tables, jamais recopiée ici. Le foot (titan007) est
     # dans les deux premières de toute façon.
-    ids = set(_API_SPORTS_BY_ID) | set(_ODDS_API_IO_BY_ID) | {_T7_SPORT_ID}
+    ids = set(_ODDS_API_IO_BY_ID) | {_T7_SPORT_ID}
     for sport_id in sorted(ids):
         all_matches.extend(_fetch_multi_book(sport_id))
     return all_matches

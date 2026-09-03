@@ -340,11 +340,10 @@ def sources():
     parce que rien ne répondait à « qu'est-ce qui marche, là, maintenant ».
 
     Aucune sonde ne consomme de crédit facturé : OddsAPI /v4/sports est
-    gratuit, api-sports /status aussi. (La sonde LineFeed 1xbet/Melbet/22bet
-    est partie avec la source, retirée le 2026-09-03.)
+    gratuit. (Les sondes LineFeed 1xbet/Melbet/22bet et api-sports sont
+    parties avec leurs sources, retirées le 2026-09-03.)
     """
     from core.odds_api import candidate_keys, probe_key            # noqa: E402
-    from core.api_sports import PROVIDERS, _key_for                # noqa: E402
     from core.ai_search import ai_available                        # noqa: E402
 
     print("── Tier 1 · The Odds API (sharp Pinnacle + soft 1xbet) ──")
@@ -354,28 +353,6 @@ def sources():
     for i, k in enumerate(keys, 1):
         ok, detail = probe_key(k)
         print(f"  #{i} …{k[-4:]}  {'VIVANTE' if ok else 'MORTE  '}  {detail}")
-
-    print("── Tier 2 · api-sports.io (clé = pas de filtrage IP) ──")
-    for sport, prov in PROVIDERS.items():
-        key = _key_for(sport)
-        if not key:
-            print(f"  {sport:<11} pas de clé ({'/'.join(prov['keys'])})")
-            continue
-        try:
-            r = requests.get(f"https://{prov['host']}/status",
-                             headers={"x-apisports-key": key}, timeout=15)
-            body = r.json() if r.text else {}
-            errs = body.get("errors") or {}
-            resp = body.get("response") or {}
-            sub  = (resp.get("subscription") or {})
-            req  = (resp.get("requests") or {})
-            if errs:
-                print(f"  {sport:<11} REFUS {str(errs)[:70]}")
-            else:
-                print(f"  {sport:<11} OK  plan={sub.get('plan', '?')} "
-                      f"{req.get('current', '?')}/{req.get('limit_day', '?')} req aujourd'hui")
-        except Exception as e:
-            print(f"  {sport:<11} ERREUR {e}")
 
     print("── Tier 1.5 · Matchbook Exchange (sharp, sans clé) ──")
     from core.matchbook import probe as mb_probe, fetch_matchbook_prices   # noqa: E402

@@ -1,15 +1,14 @@
 """
-core/settlement.py — PAIM v8.5 — Match Settlement Engine
+core/settlement.py — PAIM — Match Settlement Engine
 Trouve le score réel d'un match → WIN/LOSS/PUSH → `status='settled'`.
 
-CHAÎNE 100 % DÉTERMINISTE, DANS CET ORDRE (2026-09-02) :
-
-1. `core/api_sports.fetch_results` — le score est un CHAMP de la réponse
-   `/fixtures?date=`, déterministe et gratuit, UNE requête par journée quel que
-   soit le nombre de matchs. Les résultats d'une journée sont mémorisés le
-   temps du run : régler 52 signaux du même jour coûte 1 requête, pas 52.
-2. `core/score_sources.fetch_score` — MLB statsapi (officiel, sans clé) puis
-   TheSportsDB (voie par équipe), mêmes gardes.
+CHAÎNE 100 % DÉTERMINISTE (2026-09-02), portée par `core/score_sources.fetch_score` :
+MLB statsapi (officiel, sans clé), ESPN (ouvert, sans clé), puis TheSportsDB
+(voie par équipe) — deux noms appariés strictement, candidat unique, match
+terminé, sinon None. api-sports en était le premier étage jusqu'au
+2026-09-03 : deux comptes gratuits suspendus (INCIDENTS.md « api-sports, deux
+comptes suspendus »), décision opérateur « vivre sans » — la source est
+retirée du dépôt.
 
 IL N'Y A PLUS DE RECHERCHE WEB. Jusqu'au 2026-09-02 le dernier recours était
 Groq compound-mini + Tavily : deux quotas gratuits qui ont lâché ENSEMBLE deux
@@ -20,13 +19,9 @@ laisse la ligne repasser au prochain audit — l'attente n'est pas définitive,
 un WIN/LOSS faux l'est.
 """
 import logging
-import os
 import re
-from datetime import datetime, timedelta, timezone
 
-from core.api_sports import fetch_results
 from core.score_sources import fetch_score
-from core.paim_engine import strict_team_match
 from core.db import log_to_ledger, update_signal_fields
 from core.paim_engine import resolve_selection_side
 
@@ -34,106 +29,14 @@ log = logging.getLogger("PREDATOR.settlement")
 
 _SETTLEMENT_OPTIONAL = frozenset({"outcome", "settled_at"})
 
-# Résultats api-sports déjà téléchargés pendant CE run : {(sport, jour): [...]}.
-# Un audit règle des dizaines de matchs de la même journée ; sans ce cache,
-# chaque signal coûterait une requête et le budget de 100/jour partirait en
-# une passe.
-_CACHE_RESULTATS: dict[tuple, list] = {}
-
-
-def reset_cache() -> None:
-    """Vide le cache de résultats (tests, et runs longs)."""
-    _CACHE_RESULTATS.clear()
-
-
-def _resultats_du_jour(sport: str, jour: str) -> list:
-    cle = (sport, jour)
-    if cle not in _CACHE_RESULTATS:
-        _CACHE_RESULTATS[cle] = fetch_results(jour, sport)
-    return _CACHE_RESULTATS[cle]
-
-
-# Fenêtre du PLAN GRATUIT api-sports autour d'aujourd'hui, en jours. Mesuré le
-# 2026-09-03 (audit 33774472425) : « Free plans do not have access to this
-# date, try from 2026-09-02 to 2026-09-04 » — soit J-1 … J+1. Chaque appel
-# hors fenêtre brûlait un lookup du budget journalier pour un refus certain
-# (15/25 consommés pour 0 réglé). Au-delà, on passe DIRECTEMENT aux sources
-# ouvertes (core/score_sources). Un plan payant relève la valeur par l'env.
-API_SPORTS_FREE_WINDOW_DAYS = int(os.environ.get("API_SPORTS_FREE_WINDOW_DAYS", "1"))
-
-
-def _hors_fenetre_api_sports(match_date: str, now: datetime | None = None) -> bool:
-    """True si `match_date` est plus vieux que J-API_SPORTS_FREE_WINDOW_DAYS.
-    Une date illisible n'est pas jugée hors fenêtre (on laisse la voie
-    normale décider)."""
-    try:
-        d = datetime.fromisoformat(match_date[:10]).date()
-    except (TypeError, ValueError):
-        return False
-    aujourdhui = (now or datetime.now(timezone.utc)).date()
-    return (aujourdhui - d).days > API_SPORTS_FREE_WINDOW_DAYS
-
-
-def result_from_api_sports(match_name: str, sport: str, match_date: str) -> dict | None:
-    """Score final depuis le calendrier api-sports, sans aucune IA.
-
-    Apparie sur les DEUX noms d'équipe avec `strict_team_match` — le même
-    rapprochement que partout ailleurs dans ce dépôt — et n'accepte qu'un
-    candidat UNIQUE : deux prétendants signifient qu'on ne sait pas lequel est
-    le bon, et régler le mauvais match écrirait un WIN/LOSS faux et
-    définitif dans le ledger. Le refus est le comportement correct.
-
-    Le match peut avoir été joué la veille en UTC (coup d'envoi tardif) : on
-    regarde `match_date` ET le lendemain, qui est déjà en cache si un autre
-    signal l'a demandé.
-    """
-    if not match_date or " vs " not in match_name:
-        return None
-    if _hors_fenetre_api_sports(match_date):
-        log.info("SETTLE api-sports SAUTÉ | %s — %s hors de la fenêtre du plan gratuit "
-                 "(J-%d) : sources ouvertes directement", match_name, match_date,
-                 API_SPORTS_FREE_WINDOW_DAYS)
-        return None
-    home, away = (p.strip() for p in match_name.split(" vs ", 1))
-    if len(home) < 3 or len(away) < 3:
-        return None
-
-    jours = [match_date]
-    try:
-        from datetime import datetime as _dt
-        veille = _dt.fromisoformat(match_date) - timedelta(days=1)
-        lendemain = _dt.fromisoformat(match_date) + timedelta(days=1)
-        jours += [lendemain.strftime("%Y-%m-%d"), veille.strftime("%Y-%m-%d")]
-    except ValueError:
-        pass
-
-    for jour in jours:
-        candidats = [r for r in _resultats_du_jour(sport, jour)
-                     if strict_team_match(home, r["home"]) and strict_team_match(away, r["away"])]
-        if len(candidats) == 1:
-            r = candidats[0]
-            log.info("SETTLE api-sports | %s | %d-%d (0 appel IA)",
-                     match_name, r["home_score"], r["away_score"])
-            return {"home_score": r["home_score"], "away_score": r["away_score"],
-                    "completed": True, "source": "api_sports"}
-        if len(candidats) > 1:
-            log.info("SETTLE SKIP | %s — %d matchs api-sports correspondent, on ne devine pas",
-                     match_name, len(candidats))
-            return None
-    return None
-
 
 def fetch_match_result(match_name: str, sport: str, match_date: str = "") -> dict | None:
     """
-    Score final d'un match terminé — api-sports d'abord (dans la fenêtre de
-    son plan), puis la chaîne déterministe de core/score_sources (MLB
-    statsapi, ESPN, TheSportsDB).
+    Score final d'un match terminé — chaîne déterministe de core/score_sources
+    (MLB statsapi, ESPN, TheSportsDB).
     Returns {"home_score": int, "away_score": int, "completed": True} or None.
     None veut dire « pas trouvé aujourd'hui », jamais un état terminal.
     """
-    exact = result_from_api_sports(match_name, sport, match_date)
-    if exact:
-        return exact
     return fetch_score(match_name, sport, match_date)
 
 

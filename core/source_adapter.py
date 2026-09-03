@@ -3,7 +3,7 @@ core/source_adapter.py — cadre commun des sources de cotes.
 
 CE QUE ÇA RÉSOUT
 ----------------
-Chaque source branchée jusqu'ici (odds_api, odds_api_io, api_sports, matchbook,
+Chaque source branchée jusqu'ici (odds_api, odds_api_io, matchbook,
 titan007) a réinventé son propre budget, son propre format de sortie et sa
 propre idée de ce qu'est « le même match ». Tant qu'il y avait deux sources,
 c'était tenable. À six, deux problèmes deviennent structurels :
@@ -96,7 +96,7 @@ SHADOW_MAX_MEDIAN_PTS  = float(os.environ.get("SOURCE_SHADOW_MAX_MED_PTS", "2.0"
 # règle : le gratuit vient en repli du Tier 1 payant, jamais à sa place, et la
 # recherche web (budget IA) reste le dernier recours.
 CALL_ORDER = ("odds_api", "odds500", "titan007", "matchbook",
-              "api_sports", "odds_api_io", "prediction_markets", "web_search")
+              "odds_api_io", "prediction_markets", "web_search")
 
 
 @dataclass(frozen=True)

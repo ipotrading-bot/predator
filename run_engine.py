@@ -2,7 +2,7 @@
 run_engine.py — PREDATOR PAIM v8.8 — Hunter Multi-Sport + Portfolio Balancer
 Markets: h2h (NBA/Tennis) | spreads (NBA/Soccer) | totals (all)
 Sharp filter: Prob. Sharp (Power devigged, see core/math_engine.py) >= threshold per market type
-Pipeline: OddsAPI → sources gratuites (api-sports/odds-api.io/titan007/Matchbook) → AH0.0/ML/PS/OU → Edge → Balancer → Supabase
+Pipeline: OddsAPI → sources gratuites (odds-api.io/titan007/Matchbook) → AH0.0/ML/PS/OU → Edge → Balancer → Supabase
 All timestamps : UTC/GMT — no local-time contamination.
 """
 import hashlib
@@ -26,7 +26,6 @@ from core.matchbook import fetch_matchbook_prices
 # Appariement slate ↔ exchange : déplacé dans core/ le 2026-08-26 pour que
 # core/closing_line.py puisse s'en servir sans importer la racine.
 from core.exchange_match import lookup_exchange as _lookup_exchange
-from core.api_sports import fetch_all as _api_sports_all, is_suspended as _api_sports_suspended
 from core.odds_api_io import fetch_all as _odds_api_io_all
 from core.titan007 import fetch_matches as _titan007_fetch
 from core.math_engine import (to_binary, devig_bounds, is_round_number_line, devig as _devig,
@@ -67,7 +66,7 @@ load_dotenv()
 # ── OddsAPI DÉCLARÉ OBSOLÈTE — décision opérateur du 2026-08-26 ──────
 # Predator ne s'appuie plus sur une source de cotes PAYANTE. Le Tier 1 est
 # éteint par défaut : chaque scan part directement sur les sources gratuites
-# (api-sports, odds-api.io, titan007, Matchbook, harvest soft).
+# (odds-api.io, titan007, Matchbook, harvest soft).
 #
 # POURQUOI un interrupteur plutôt qu'une suppression : `core/odds_api.py`
 # n'est pas qu'une source, c'est aussi le VOCABULAIRE des sports — ses
@@ -1870,9 +1869,8 @@ def _process_spreads(m, name, sport, league, home, away, emoji, signals, sb, now
 #      marché d'exchange derrière est un prix que personne ne prend — un
 #      marché mort, la fabrique d'edge d'artefact d'A6. Le Tier 1 (OddsAPI,
 #      sans `_soft_source`) est un flux Pinnacle réel : il passe.
-#   2. RÉGLABLE — le match doit être réglable par nos outils : api-sports le
-#      règle dans la fenêtre de son plan (les matchs qu'IL a servis sont ses
-#      fixtures), MLB statsapi règle le baseball, ESPN règle ce qu'il LISTE
+#   2. RÉGLABLE — le match doit être réglable par nos outils : MLB statsapi
+#      règle le baseball, ESPN règle ce qu'il LISTE
 #      (core/score_sources.fixtures_espn : à venir compris). Un match
 #      qu'aucune de ces sources ne connaît sortirait en `expired` : mesuré le
 #      2026-09-03, 8 signaux sur 14 en souffrance venaient de divisions
@@ -1895,8 +1893,6 @@ def _reglable(m: dict, fixtures_par_sport: dict) -> bool:
     sport = (m.get("sport") or "").lower()
     if sport == "baseball":
         return True                      # MLB statsapi, sans clé
-    if str(m.get("_soft_source") or "").startswith("api-sports"):
-        return True                      # fixture api-sports : réglée par api-sports
     events = fixtures_par_sport.get(sport)
     if not events:                       # None (pas de source) ou [] (ESPN muet)
         return False
@@ -2252,7 +2248,7 @@ def run():
 
     # ══ SOURCE PIPELINE — 2 NIVEAUX ══════════════════════════════════
     # Tier 1: The Odds API  → real 1XBet + Pinnacle, même event (idéal)
-    # Tier 2: sources réelles gratuites → api-sports + odds-api.io + titan007
+    # Tier 2: sources réelles gratuites → odds-api.io + titan007
     #         + odds-api.io + titan007, enrichis par l'exchange (Matchbook).
     # Les anciens Tier 2 « recherche web Pinnacle » et Tier 3 « estimateur
     # IA » ont été SUPPRIMÉS le 2026-09-02 avec Groq/Tavily : un prix sharp
@@ -2469,43 +2465,32 @@ def run():
         # mesure de consensus : c'est ce que le coupe-circuit épargne.
         skipped_age = _harvest_recently_empty(sb)
         if skipped_age is not None:
-            # api-sports, odds-api.io et titan007 sont authentifiés par clé,
+            # odds-api.io et titan007 sont authentifiés par clé / tolérés,
             # gratuits, avec un quota PROPRE par sport : les sauter ne
             # protège rien et prive le scan de ses sources réelles. Constaté
             # en production le 2026-08-20 (run 18:30) — le coupe-circuit posé
             # le matin même court-circuitait api-sports par ricochet.
             log.warning("📡 Tier 2 — harvest complet SAUTÉ (line shopping, odds500, "
                         "consensus) : dernière tentative vide il y a %.1fh (< %.0fh) — "
-                        "api-sports, odds-api.io et titan007 restent interrogés en direct",
+                        "odds-api.io et titan007 restent interrogés en direct",
                         skipped_age, _HARVEST_EMPTY_TTL_H)
             # Titan007 fait partie du chemin économique pour la même raison
             # qu'api-sports/odds-api.io : budget journalier propre. L'oublier
             # ici reproduit le bug corrigé par a0767c8 (source saine
             # court-circuitée par ricochet).
-            xbet_matches = (_api_sports_all(hours_ahead=hours_ahead)
-                            + _odds_api_io_all(hours_ahead=hours_ahead)
+            xbet_matches = (_odds_api_io_all(hours_ahead=hours_ahead)
                             + _titan007_fetch(hours_ahead=hours_ahead))
         else:
-            log.info("📡 Tier 2 — Harvest api-sports + odds-api.io + titan007 (+ odds500 en ombre)...")
+            log.info("📡 Tier 2 — Harvest odds-api.io + titan007 (+ odds500 en ombre)...")
             xbet_matches = fetch_matches()
             _note_harvest_result(sb, xbet_matches)
-        if _api_sports_suspended():
-            # Compte suspendu = action HUMAINE (plan payant ou abandon de la
-            # source), le jour même — le 2026-09-03 l'opérateur l'a appris
-            # avec une journée de retard, par le log.
-            _alert_once(sb, "alert_api_sports_suspended",
-                        "🔑 *api-sports : compte suspendu* — la source est coupée pour la "
-                        "journée (scan et settlement). Un compte gratuit refait après "
-                        "suspension retombe sous 24 h : voir INCIDENTS.md « api-sports, "
-                        "deux comptes suspendus ». Sans api-sports, le sharp Tier 2 tient "
-                        "sur titan007 + Matchbook.", ttl_h=24.0)
         # Abandon seulement si RIEN n'a été trouvé nulle part : depuis que ce
         # tier n'est plus gardé par `matches`, il peut s'exécuter alors que la
         # recherche MMA/eSports/alternatifs a déjà rempli `matches`. Sortir ici
         # jetterait ces événements-là.
         if not xbet_matches and not matches:
             if ODDS_API_ENABLED:
-                msg = "📡 PREDATOR: 0 matchs trouvés — Tier 1 vide et harvest (api-sports/odds-api.io/titan007) sans résultat."
+                msg = "📡 PREDATOR: 0 matchs trouvés — Tier 1 vide et harvest (odds-api.io/titan007) sans résultat."
                 # Cause OddsAPI : n'a de sens que si on l'interroge encore.
                 # Obsolète, un pool mort n'explique plus rien — l'afficher
                 # enverrait chercher une clé dont le pipeline n'a plus besoin.
@@ -2516,7 +2501,7 @@ def run():
                             f"`python scripts/rotate_odds_key.py --add <clé>`")
             else:
                 msg = ("📡 PREDATOR: 0 matchs trouvés — sources gratuites "
-                       "(api-sports, odds-api.io, titan007, Matchbook, harvest soft) "
+                       "(odds-api.io, titan007, Matchbook, harvest soft) "
                        "sans résultat. OddsAPI est obsolète : ce n'est PAS une "
                        "histoire de clé.")
             log.warning(msg)

@@ -3,7 +3,7 @@ core/daily_quota.py — compteur de requêtes par jour, partagé entre les runs.
 
 POURQUOI
 --------
-Les sources gratuites se comptent en requêtes PAR JOUR (api-sports : 100 par
+Les sources gratuites se comptent en requêtes PAR JOUR (odds-api.io : 500 par jour, TheSportsDB, ESPN ; api-sports — retirée — faisait 100 par
 sport ; odds-api.io : 500), alors que ce pipeline lance ~40 scans quotidiens
 depuis des processus séparés. Aucun d'eux ne sait ce que les autres ont
 dépensé : un garde-fou local à un run ne protège rien.

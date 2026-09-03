@@ -26,8 +26,8 @@ name: Predator Scan
 # bornée par le RYTHME MENSUEL (core/scan_windows), sur 8 ticks/jour.
 #
 # Cadence : 8 + 24 = 32 invocations/jour, dont 8 scans complets. Ne pas
-# remonter sans recalculer le budget des sources gratuites (api-sports
-# 80/sport, odds-api.io 400, titan007 500 → 8-14 scans complets/jour).
+# remonter sans recalculer le budget des sources gratuites (odds-api.io 400,
+# titan007 500 → 12-14 scans complets/jour).
 # JAMAIS de nouveau schedule (2026-07-07 : la surcharge de schedules fait
 # dériver tous les crons du repo). GitHub ne garantit pas la ponctualité
 # (mesuré : 0,48 exécution/h pour un cron horaire) — le chien de garde
@@ -118,7 +118,6 @@ jobs:
           TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID }}
           ODDS_API_KEY: ${{ secrets.ODDS_API_KEY }}
           ODDS_API_KEYS: ${{ secrets.ODDS_API_KEYS }}
-          API_FOOTBALL_KEY: ${{ secrets.API_FOOTBALL_KEY }}
           BETFAIR_APP_KEY: ${{ secrets.BETFAIR_APP_KEY }}
           BETFAIR_USERNAME: ${{ secrets.BETFAIR_USERNAME }}
           BETFAIR_PASSWORD: ${{ secrets.BETFAIR_PASSWORD }}
@@ -131,9 +130,6 @@ jobs:
           FREE_SOURCES_RELAY_TOKEN: ${{ secrets.FREE_SOURCES_RELAY_TOKEN }}
           ODDS500_RELAY: ${{ secrets.ODDS500_RELAY }}
           SEVENM_RELAY: ${{ secrets.SEVENM_RELAY }}
-          API_SPORTS_KEY: ${{ secrets.API_SPORTS_KEY }}
-          API_BASKETBALL_KEY: ${{ secrets.API_BASKETBALL_KEY }}
-          API_BASEBALL_KEY: ${{ secrets.API_BASEBALL_KEY }}
           THESPORTSDB_API_KEY: ${{ secrets.THESPORTSDB_API_KEY }}
           COHERE_API_KEY: ${{ secrets.COHERE_API_KEY }}
           GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY }}

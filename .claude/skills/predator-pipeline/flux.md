@@ -72,7 +72,7 @@ laissez-passer là où l'IP est refusée) — ou Matchbook, qui ne filtre pas.
 | 1 | The Odds API (`core/odds_api.py`) | sharp + soft | pool `ODDS_API_KEYS` | 500/mois par clé |
 | 1.5 | **Matchbook** (`core/matchbook.py`) | **sharp** (1X2 + totals + handicaps) | aucune | 700 req/min |
 | 1.5 | Betfair (`core/harvester.py`) | sharp | 499 £ + géobloqué US | inopérant sur Actions |
-| 2 | **api-sports** (`core/api_sports.py`) | soft **et** sharp (Pinnacle) | `API_SPORTS_KEY` | 100/jour PAR sport |
+| ~~2~~ | ~~api-sports~~ | — | — | RETIRÉE le 2026-09-03 (deux comptes gratuits suspendus) |
 | 2 | **odds-api.io** (`core/odds_api_io.py`) | soft (1X2 + totals + handicaps) | `ODDS_API_IO_KEY` + pool `ODDS_API_IO_KEYS` | 500/jour et 2 books PAR COMPTE |
 | 2 | **Titan007** (`core/titan007.py`) | soft **et** sharp, foot | aucune | ~500/jour (tolérance) |
 | 2bis | LineFeed 1xbet/Melbet | soft | aucune | bloqué par IP |
@@ -98,7 +98,8 @@ API propre demande 499 £ ET refuse les IP américaines ; chez odds-api.io les
 books sharp/exchanges sont réservés aux plans payants (HTTP 403 explicite).
 Matchbook tient ce rôle — ne pas repayer cette recherche.
 
-**api-sports — les paramètres réels, vérifiés le 2026-08-20.** La première
+**api-sports — RETIRÉE le 2026-09-03** (INCIDENTS.md « api-sports, deux comptes
+suspendus »). Paramètres réels conservés pour mémoire, vérifiés le 2026-08-20. La première
 implémentation les avait devinés d'après la doc, et les quatre sports
 répondaient « refus applicatif » :
 - le calendrier n'accepte que `date=` (un appel par journée). `from`/`to`

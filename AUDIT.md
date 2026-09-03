@@ -60,11 +60,11 @@ C'est le tableau à consulter avant de toucher à quoi que ce soit.
 | Aucun pool ne transmet une clé Groq ou Tavily (supprimées le 2026-09-02) | `…::test_aucun_pool_ne_transmet_groq_ou_tavily` |
 | Le step REPRICE ne reçoit aucune clé payante (lisible dans le YAML) | `…::test_le_step_reprice_ne_peut_mecaniquement_rien_depenser` |
 | `readonly` ne détient aucun jeton d'écriture | `…::test_readonly_ne_detient_aucun_jeton_decriture` |
-| Le pool `settlement` porte les clés de résultats (api-sports, TheSportsDB) | `…::test_le_settlement_porte_les_cles_de_resultats` |
-| Le score vient d'api-sports puis de sources structurées — JAMAIS d'un LLM | `tests/test_settlement.py::TestFetchMatchResult::test_no_ai_layer_involved` |
-| Périmètre d'émission : un match du Tier 2 n'entre que si un exchange confirme son prix sharp (marché vivant) ET si api-sports/MLB/ESPN peut le régler (ESPN liste le match) ; chaque refus est loggé, ESPN muet = refus | `tests/test_perimetre.py` |
+| Le pool `settlement` porte les clés de résultats (TheSportsDB ; ESPN et MLB sans clé) et AUCUN pool ne porte une clé api-sports (retirée le 2026-09-03) | `…::test_le_settlement_porte_les_cles_de_resultats`, `…::test_aucune_cle_api_sports_dans_les_pools` |
+| Le score vient de sources structurées (`core/score_sources`) — JAMAIS d'un LLM, plus d'api-sports | `tests/test_settlement.py::TestFetchMatchResult::test_no_ai_layer_involved` |
+| Périmètre d'émission : un match du Tier 2 n'entre que si un exchange confirme son prix sharp (marché vivant) ET si MLB/ESPN peut le régler (ESPN liste le match) ; chaque refus est loggé, ESPN muet = refus | `tests/test_perimetre.py` |
 | Le calculateur `/system` affiche des retours CONDITIONNELS (si k bons sur N : pire cas, meilleur cas, point mort, marge composée indicative), jamais des probabilités ni un taux de réussite ; le bloc MATH reste exactement ses cinq fonctions | `tests/test_system_page.py::TestScenariosDerivesDuMoteur` |
-| ESPN (ouvert, sans clé) règle AVANT TheSportsDB, avec le même contrat (deux noms, candidat unique, terminé) ; api-sports n'est pas appelé hors de la fenêtre de son plan gratuit | `tests/test_score_sources.py::TestESPN`, `::TestChaineAvecESPN`, `tests/test_settlement.py::…::test_api_sports_saute_hors_de_la_fenetre_du_plan_gratuit` |
+| ESPN (ouvert, sans clé) règle AVANT TheSportsDB, avec le même contrat (deux noms, candidat unique, terminé) | `tests/test_score_sources.py::TestESPN`, `::TestChaineAvecESPN`, `tests/test_settlement.py::…::test_api_sports_saute_hors_de_la_fenetre_du_plan_gratuit` |
 | Un score en direct (statut non terminé) ne règle jamais | `tests/test_score_sources.py::TestTheSportsDB::test_un_score_en_direct_ne_regle_pas` |
 | La recherche d'équipe TheSportsDB ne décide jamais seule (cas Pastoreo) | `…::test_une_mauvaise_equipe_du_flou_ne_regle_rien` |
 | Deux matchs candidats → refus, jamais un WIN/LOSS deviné | `…::test_deux_candidats_font_REFUSER_pas_deviner` |
@@ -79,7 +79,6 @@ C'est le tableau à consulter avant de toucher à quoi que ce soit.
 | Un signal FANTÔME (`is_shadow`, posé AVANT la persistance, figé au rafraîchissement) n'apparaît ni sur `/`, ni sur `/api/signals`, ni sur `/audit`, ni dans le digest Telegram ; la règle T-2h vaut par signal, borne importée de `learning_layer` | `tests/test_signaux_fantomes.py` |
 | Le digest Telegram liste les recommandés encore jouables (🆕 nés depuis `REPORT_WINDOW_H`, aligné sur le cron de `reports.yml` par test, ⏳ rappels), se tait sans pari et moteur vivant ; le scan standard compte ses écartés au lieu de se taire ; aucun libellé de session | `tests/test_rapport_digest.py`, `tests/test_telegram_format.py` |
 | Un crédit OddsAPI n'achète jamais un fantôme : le pré-vol compte les matchs JOUABLES (T-2h + marge, borne importée de `learning_layer`) et saute une ligue qui n'en a plus ; chaque fenêtre favorable contient au moins un cron standard | `tests/test_odds_api_preflight.py`, `tests/test_scan_windows.py` |
-| api-sports : ≤ 9 requêtes/min, et un compte « suspended » n'est plus interrogé de la journée (compartiment partagé), tous sports et settlement compris | `tests/test_api_sports.py` |
 | Telegram annonce CHAQUE pari recommandé en simple, une fois (dédup 24 h par pari) — aucun combiné ne conditionne l'annonce | `tests/test_telegram_format.py::TestEmptyAndSingles`, `tests/test_reprice_mode.py` |
 | Le curseur tourne : toutes les lignes sont couvertes, pas seulement les 12 premières | `…::TestLeBudgetEtLeCurseur` |
 | Une panne de relance ne fait pas échouer un audit qui a réglé | `…::test_une_panne_de_relance_ne_fait_pas_echouer_laudit` |

@@ -38,7 +38,7 @@ TROIS SOURCES, APRÈS api-sports (qui reste l'étage 1, dans core/settlement.py)
      introuvable par cette voie — cause n°1 des `expired` de ligues mineures,
      que le compte Patreon (~9 $/mois) lèverait sans toucher au code.
 
-LE MÊME CONTRAT QUE result_from_api_sports, ET IL NE SE DISCUTE PAS :
+LE MÊME CONTRAT POUR CHAQUE VOIE, ET IL NE SE DISCUTE PAS :
   - appariement `strict_team_match` sur les DEUX équipes du MÊME événement.
     La recherche d'équipe seule ne suffit PAS : mesuré le 2026-09-02,
     searchteams("AD Pasto") rend « Pastoreo » (sans ligue) et
@@ -459,20 +459,15 @@ def fixtures_espn(sport: str, date_min: str, date_max: str) -> list | None:
     return out
 
 
-# Sports que règle api-sports sur son plan (core/api_sports.fetch_results :
-# soccer, basketball, baseball, hockey). Repris ici pour que la liste des
-# sports RÉGLABLES vive en un seul endroit, à côté des autres voies.
-_API_SPORTS_SPORTS = frozenset({"soccer", "basketball", "baseball", "hockey"})
-
-
 def sports_reglables() -> frozenset:
     """Les sports pour lesquels au moins UNE voie de règlement existe :
-    api-sports, MLB statsapi (baseball) ou un chemin ESPN. Un sport absent
-    d'ici — boxe, tennis — ne peut pas être réglé : le périmètre le refuse
-    à l'émission (run_engine._reglable) et la politique de dépense ne paie
-    plus ses cotes (core/scan_windows.SpendPolicy) — un crédit OddsAPI sur un
-    match qu'on ne saura jamais régler est un crédit perdu deux fois."""
-    return frozenset(_ESPN_PATHS) | _API_SPORTS_SPORTS | {"baseball"}
+    MLB statsapi (baseball) ou un chemin ESPN. Un sport absent d'ici — boxe —
+    ne peut pas être réglé : le périmètre le refuse à l'émission
+    (run_engine._reglable) et la politique de dépense ne paie plus ses cotes
+    (core/scan_windows.SpendPolicy) — un crédit OddsAPI sur un match qu'on ne
+    saura jamais régler est un crédit perdu deux fois. (api-sports, qui
+    réglait ses propres fixtures, est retiré depuis le 2026-09-03.)"""
+    return frozenset(_ESPN_PATHS) | {"baseball"}
 
 
 def fixture_connue(match_name: str, events: list, min_sides: int = 1) -> bool:
@@ -482,9 +477,8 @@ def fixture_connue(match_name: str, events: list, min_sides: int = 1) -> bool:
     suffit. Mesuré le 2026-09-03 (scan de 19:43) : avec les deux noms exigés,
     « VfB Stuttgart vs 1. FC Köln » était refusé comme « ligue non couverte »
     parce qu'ESPN écrit « FC Cologne » — un faux négatif sur la Bundesliga.
-    Un match couvert par ESPN sous un autre libellé reste réglable par
-    api-sports dans sa fenêtre ; le règlement ESPN, lui, exige toujours les
-    deux noms (`_espn_paire`). `min_sides=2` redonne le test strict."""
+    Le règlement ESPN, lui, exige toujours les deux noms (`_espn_paire`).
+    `min_sides=2` redonne le test strict."""
     parts = _split(match_name)
     if not parts:
         return False

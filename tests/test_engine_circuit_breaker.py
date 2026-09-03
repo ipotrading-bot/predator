@@ -99,21 +99,21 @@ def test_pool_dead_alert_names_the_cause(monkeypatch):
     assert len(sent) == 1 and "aucune clé" in sent[0]
 
 
-def test_breaker_still_queries_api_sports(monkeypatch):
-    """Le coupe-circuit protège le quota Groq/Tavily, pas la source gratuite.
+def test_breaker_still_queries_the_cheap_sources(monkeypatch):
+    """Le coupe-circuit protège le harvest coûteux, pas les sources à budget
+    propre.
 
     Constaté en production (run engine du 2026-08-20 18:30) : le harvest
-    entier était sauté, donc api-sports — gratuit, quota propre — ne
-    tournait pas, et le scan restait sans aucune source.
+    entier était sauté, donc la source à quota propre ne tournait pas, et le
+    scan restait sans aucune source. (api-sports, retirée le 2026-09-03.)
     """
     import inspect
     src = inspect.getsource(eng.run)
     head = src[src.index("skipped_age = _harvest_recently_empty(sb)"):]
     branch = head[:head.index("else:")]
-    assert "_api_sports_all(" in branch, "api-sports doit rester appelé quand le harvest est sauté"
-    assert "_odds_api_io_all(" in branch, (
-        "odds-api.io aussi : c'est la source SOFT principale, et la sauter "
-        "quand api-sports est en panne laisse le scan sans aucune source")
+    assert "_odds_api_io_all(" in branch, "odds-api.io est la source SOFT principale"
+    assert "_titan007_fetch(" in branch, "titan007 porte le sharp Tier 2 hors Europe"
+    assert "_api_sports_all(" not in branch, "api-sports est retirée (2026-09-03)"
     assert "fetch_matches()" not in branch, "le harvest web coûteux doit rester sauté"
 
 

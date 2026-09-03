@@ -63,8 +63,7 @@ def _jwt(role):
 
 def _secrets(**extra):
     base = {"SUPABASE_URL": "https://x.supabase.co", "SUPABASE_KEY": "anon",
-            "SUPABASE_SERVICE_KEY": _jwt("service_role"),
-            "API_FOOTBALL_KEY": "f"}
+            "SUPABASE_SERVICE_KEY": _jwt("service_role")}
     base.update(extra)
     return base
 
@@ -106,8 +105,8 @@ def test_liste_ia_derivee_du_registre_comme_ops_py():
 
 
 def test_le_settlement_porte_les_cles_de_resultats():
-    """Le score final vient d'API structurées (api-sports `/fixtures?date=`,
-    MLB statsapi sans clé, TheSportsDB), pas d'un LLM — c'est l'UNIQUE chemin
+    """Le score final vient d'API structurées (MLB statsapi et ESPN sans clé,
+    TheSportsDB), pas d'un LLM — c'est l'UNIQUE chemin
     depuis la suppression de la recherche web (2026-09-02). Une capacité non
     câblée meurt SANS ERREUR ; c'est tout l'objet de ce fichier."""
     env = ci_env.env_for("settlement", {})
@@ -193,9 +192,13 @@ def test_preflight_odds_api_key_nest_plus_requise():
     assert not _erreurs("scan", _secrets(ODDS_API_KEY=""))
 
 
-def test_preflight_avertit_sur_sources_de_repli_absentes():
-    s = _secrets(); del s["API_FOOTBALL_KEY"]
-    assert any(lvl == "warning" and "API_FOOTBALL_KEY" in m for lvl, m in ci_env.check("scan", s))
+def test_aucune_cle_api_sports_dans_les_pools():
+    """2026-09-03 : api-sports retirée (deux comptes gratuits suspendus). Une
+    clé encore transmise ferait croire à une capacité qui n'existe plus."""
+    for pool in ci_env.POOLS:
+        for k in ci_env.env_for(pool, {}):
+            assert not k.startswith(("API_SPORTS", "API_FOOTBALL", "API_BASKETBALL",
+                                     "API_BASEBALL")), (pool, k)
 
 
 # ── Cron → mode ───────────────────────────────────────────────────────
@@ -476,13 +479,20 @@ class TestLePreflightCompletTourneOuSontLesCles:
         constats = ci_env.check("scan", {}, amorcage=True)
         assert any(lvl == "error" for lvl, _ in constats)
 
-    def test_le_preflight_COMPLET_lui_avertit_encore(self):
-        """Sans quoi le déplacement aurait perdu l'empreinte Groq et les
-        alertes de sources de repli."""
+    def test_le_preflight_COMPLET_lui_avertit_encore(self, monkeypatch):
+        """Sans quoi le déplacement aurait perdu les alertes de sources de
+        repli. Plus aucun pool n'en déclare depuis le retrait d'api-sports
+        (2026-09-03) : on vérifie le MÉCANISME sur un pool augmenté."""
         secrets = {"SUPABASE_URL": "u", "SUPABASE_KEY": "k",
                    "SUPABASE_SERVICE_KEY": "sb_secret_x"}
-        constats = ci_env.check("scan", secrets, amorcage=False)
-        assert any(lvl in ("warning", "notice") for lvl, _ in constats)
+        assert not [m for lvl, m in ci_env.check("scan", secrets, amorcage=False)
+                    if lvl in ("warning", "error")]
+        monkeypatch.setitem(ci_env.POOLS, "scan",
+                            {**ci_env.POOLS["scan"], "warn_missing": ("REPLI_KEY",)})
+        assert any(lvl == "warning" and "REPLI_KEY" in m
+                   for lvl, m in ci_env.check("scan", secrets, amorcage=False))
+        assert not [m for lvl, m in ci_env.check("scan", secrets, amorcage=True)
+                    if lvl in ("warning", "error")], "l'amorçage reste aveugle aux replis"
 
     @pytest.mark.parametrize("wf,pool", [("scan.yml", "scan"),
                                          ("audit.yml", "settlement")])
@@ -500,7 +510,10 @@ class TestLePreflightCompletTourneOuSontLesCles:
         préflight — ce test le signalerait."""
         riches = {p for p, spec in ci_env.POOLS.items()
                   if spec.get("warn_missing")}
-        assert riches == {"scan", "settlement"}, riches
+        # Vide depuis le retrait d'api-sports (2026-09-03) : la seule source
+        # de repli déclarée était API_FOOTBALL_KEY. L'invariant reste : rien
+        # en dehors de scan/settlement.
+        assert riches <= {"scan", "settlement"}, riches
 
 
 class TestLactionComposite:

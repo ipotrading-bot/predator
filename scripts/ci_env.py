@@ -87,15 +87,15 @@ SUPABASE_RW = SUPABASE_RO + ("SUPABASE_SERVICE_KEY",)
 TELEGRAM = ("TELEGRAM_BOT_TOKEN", "TELEGRAM_CHAT_ID")
 # ODDS_API_KEY(S) restent câblées mais ne sont plus REQUISES (OddsAPI obsolète
 # depuis le 2026-08-26) : ne jamais les remettre en garde bloquante.
-ODDS_SOURCES = ("ODDS_API_KEY", "ODDS_API_KEYS", "API_FOOTBALL_KEY")
-# Clés de RÉSULTATS du settlement (2026-08-26, élargies 2026-09-02). Le score
-# final est un champ d'API structurée : api-sports (`/fixtures?date=`), MLB
-# statsapi (sans clé) et TheSportsDB (clé publique « 123 », THESPORTSDB_API_KEY
-# pour un compte Patreon). Une capacité non câblée est une capacité morte, et
-# elle meurt SANS ERREUR.
-RESULTS_SOURCES = ("API_FOOTBALL_KEY", "API_SPORTS_KEY",
-                   "API_BASKETBALL_KEY", "API_BASEBALL_KEY",
-                   "THESPORTSDB_API_KEY")
+ODDS_SOURCES = ("ODDS_API_KEY", "ODDS_API_KEYS")
+# Clés de RÉSULTATS du settlement (2026-08-26, réduites 2026-09-03). Le score
+# final est un champ d'API structurée : MLB statsapi et ESPN (sans clé),
+# TheSportsDB (clé publique « 123 », THESPORTSDB_API_KEY pour un compte
+# Patreon). api-sports (API_FOOTBALL/SPORTS/BASKETBALL/BASEBALL_KEY) est
+# RETIRÉ le 2026-09-03 — deux comptes gratuits suspendus, décision opérateur
+# « vivre sans ». Une capacité non câblée est une capacité morte, et elle
+# meurt SANS ERREUR.
+RESULTS_SOURCES = ("THESPORTSDB_API_KEY",)
 BETFAIR = ("BETFAIR_APP_KEY", "BETFAIR_USERNAME", "BETFAIR_PASSWORD",
            "BETFAIR_CERT", "BETFAIR_CERT_KEY")
 # Sources filtrées par IP (core/net.py) : proxy OU relais Cloudflare Worker.
@@ -106,7 +106,7 @@ RELAYS = ("FREE_SOURCES_PROXY", "ODDS500_PROXY", "SEVENM_PROXY",
 # settlement (GROQ_API_KEY_3) et TAVILY_API_KEY ont été SUPPRIMÉS le
 # 2026-09-02 avec Groq/Tavily. Les contrôles `groq_pool`/`groq_fingerprint`
 # sont partis avec eux.
-FALLBACK_SOURCES = ("API_FOOTBALL_KEY",)
+FALLBACK_SOURCES: tuple = ()
 
 
 def _companions_of(keys) -> tuple:
@@ -148,11 +148,10 @@ POOLS: dict[str, dict] = {
         passthrough=_uniq(SUPABASE_RW, BETFAIR),
         required=SUPABASE_RW, service_role=True),
     "settlement": dict(
-        # AUCUNE clé IA : le settlement est déterministe (api-sports, MLB
-        # statsapi sans clé, TheSportsDB clé publique) depuis le 2026-09-02.
+        # AUCUNE clé IA : le settlement est déterministe (MLB statsapi, ESPN
+        # sans clé, TheSportsDB clé publique) depuis le 2026-09-02.
         passthrough=_uniq(SUPABASE_RW, TELEGRAM, RESULTS_SOURCES),
-        required=SUPABASE_RW, service_role=True,
-        warn_missing=("API_FOOTBALL_KEY",)),
+        required=SUPABASE_RW, service_role=True),
     "reprice": dict(
         passthrough=_uniq(SUPABASE_RW, TELEGRAM),
         required=SUPABASE_RW, service_role=True),

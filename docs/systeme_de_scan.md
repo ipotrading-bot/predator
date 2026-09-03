@@ -44,7 +44,7 @@ dans ≤ 5 h, ou tu appuies sur « Scanner ».
 
 - Un match dont le prix sharp n'est qu'une copie d'une source soft, sans
   marché d'exchange derrière : **marché mort**, écarté.
-- Un match qu'aucun de nos outils de règlement ne connaît (api-sports, MLB,
+- Un match qu'aucun de nos outils de règlement ne connaît (MLB statsapi,
   ESPN) : **non réglable**, écarté. Boxe et tennis n'ont plus de source de
   scores et ne sortent plus ; le MMA se règle via ESPN.
 - Le log de chaque scan le dit en une ligne : `PÉRIMÈTRE | n matchs → vivants → réglables`.
