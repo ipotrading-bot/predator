@@ -1383,6 +1383,18 @@ Chaque refus est loggé (`MARCHÉ MORT |`, `NON RÉGLABLE |`, bilan
 `PÉRIMÈTRE | n → vivants → réglables`). Le volume de signaux va BAISSER —
 c'est le but — et la première mesure honnête est le bilan `PÉRIMÈTRE` des
 prochains scans, à relire avant de toucher quoi que ce soit.
+
+PREMIÈRE MESURE, scan standard de 19:43 UTC le jour même : 40 matchs avec
+prix sharp → 20 marchés vivants → 13 réglables, 1 signal émis. Et un FAUX
+NÉGATIF dedans : « VfB Stuttgart vs 1. FC Köln » refusé comme « ligue non
+couverte » — ESPN écrit « FC Cologne », et « Tepatitlán FC » pour
+« Tepatitlan de Morelos ». Corrigé le soir même : le test de COUVERTURE
+(`fixture_connue`) accepte UN nom apparié strictement, accents repliés
+(`_fold`), dans la fenêtre ; le RÈGLEMENT ESPN (`_espn_paire`) exige
+toujours les deux noms — un match couvert sous un autre libellé reste
+réglable par api-sports dans sa fenêtre. Audit de 20:28 le même jour, premier
+avec ESPN depuis les runners : 7 réglés (0 aux deux audits précédents),
+aucun 403. Gardien : `tests/test_perimetre.py::TestCouvertureTolerante`.
 Gardiens : `tests/test_perimetre.py`, `tests/test_score_sources.py::TestESPN`.
 
 ### ESPN, source de scores OUVERTE, avant TheSportsDB ; api-sports sauté hors de son plan (2026-09-03)

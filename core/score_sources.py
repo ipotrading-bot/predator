@@ -60,6 +60,7 @@ from __future__ import annotations
 import json
 import logging
 import os
+import unicodedata
 import urllib.parse
 import urllib.request
 from datetime import datetime, timedelta
@@ -320,10 +321,21 @@ def _espn_competitions(ev: dict) -> list:
     return list(ev.get("competitions") or [])
 
 
-def _espn_paire(comp: dict, home: str, away: str) -> tuple[dict, dict] | None:
-    """(compétiteur domicile, compétiteur extérieur) si les deux noms du
-    signal s'apparient strictement — par `homeAway` quand ESPN le donne,
-    sinon (athlètes) dans les deux ordres ; None sinon."""
+def _fold(s: str) -> str:
+    """Sans diacritiques, en minuscules : « Tepatitlán » = « Tepatitlan ».
+    ESPN accentue (ou pas) à sa façon ; les sources de cotes aussi."""
+    return "".join(c for c in unicodedata.normalize("NFKD", s or "")
+                   if not unicodedata.combining(c)).lower()
+
+
+def _meme_equipe(nom_signal: str, competitor: dict) -> bool:
+    return any(strict_team_match(_fold(nom_signal), _fold(n)) for n in _espn_noms(competitor))
+
+
+def _espn_cotes(comp: dict, home: str, away: str) -> tuple[int, dict, dict] | None:
+    """(nombre de côtés appariés, compétiteur domicile, extérieur) pour le
+    meilleur ordre — par `homeAway` quand ESPN le donne, sinon (athlètes)
+    dans les deux ordres ; None si la competition n'a pas deux compétiteurs."""
     comps = comp.get("competitors") or []
     dom, ext = _espn_camp(comp, "home"), _espn_camp(comp, "away")
     if dom and ext:
@@ -332,10 +344,21 @@ def _espn_paire(comp: dict, home: str, away: str) -> tuple[dict, dict] | None:
         paires = [(comps[0], comps[1]), (comps[1], comps[0])]
     else:
         return None
+    meilleur = None
     for a, b in paires:
-        if (any(strict_team_match(home, n) for n in _espn_noms(a))
-                and any(strict_team_match(away, n) for n in _espn_noms(b))):
-            return a, b
+        n = int(_meme_equipe(home, a)) + int(_meme_equipe(away, b))
+        if meilleur is None or n > meilleur[0]:
+            meilleur = (n, a, b)
+    return meilleur
+
+
+def _espn_paire(comp: dict, home: str, away: str) -> tuple[dict, dict] | None:
+    """(compétiteur domicile, compétiteur extérieur) si les DEUX noms du
+    signal s'apparient strictement (accents repliés) ; None sinon. C'est le
+    contrat du RÈGLEMENT : un seul nom ne règle jamais (leçon Pastoreo)."""
+    cotes = _espn_cotes(comp, home, away)
+    if cotes and cotes[0] == 2:
+        return cotes[1], cotes[2]
     return None
 
 
@@ -415,16 +438,26 @@ def sports_reglables() -> frozenset:
     return frozenset(_ESPN_PATHS) | _API_SPORTS_SPORTS | {"baseball"}
 
 
-def fixture_connue(match_name: str, events: list) -> bool:
-    """Le match (les DEUX noms, appariés strictement) figure-t-il dans ces
-    événements ESPN, quel que soit leur état ? C'est le test de
-    RÉGLABILITÉ : ce qu'ESPN liste avant le coup d'envoi, il le règle après."""
+def fixture_connue(match_name: str, events: list, min_sides: int = 1) -> bool:
+    """Le match figure-t-il dans ces événements ESPN, quel que soit leur état ?
+    C'est le test de COUVERTURE d'une ligue par nos outils, pas un règlement :
+    par défaut UN nom apparié strictement (accents repliés) dans la fenêtre
+    suffit. Mesuré le 2026-09-03 (scan de 19:43) : avec les deux noms exigés,
+    « VfB Stuttgart vs 1. FC Köln » était refusé comme « ligue non couverte »
+    parce qu'ESPN écrit « FC Cologne » — un faux négatif sur la Bundesliga.
+    Un match couvert par ESPN sous un autre libellé reste réglable par
+    api-sports dans sa fenêtre ; le règlement ESPN, lui, exige toujours les
+    deux noms (`_espn_paire`). `min_sides=2` redonne le test strict."""
     parts = _split(match_name)
     if not parts:
         return False
     home, away = parts
-    return any(_espn_paire(comp, home, away) is not None
-               for ev in events for comp in _espn_competitions(ev))
+    for ev in events:
+        for comp in _espn_competitions(ev):
+            cotes = _espn_cotes(comp, home, away)
+            if cotes and cotes[0] >= max(1, min_sides):
+                return True
+    return False
 
 
 def result_from_espn(match_name: str, sport: str, match_date: str) -> dict | None:

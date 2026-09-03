@@ -167,3 +167,35 @@ class TestDepenseSurSportsReglables:
         assert pol.reglables == set(ss.sports_reglables())
         assert "tennis" not in pol.reglables and "boxing" not in pol.reglables
         assert {"soccer", "mma"} <= pol.reglables
+
+
+class TestCouvertureTolerante:
+    """Faux négatif mesuré le 2026-09-03 : ESPN anglicise (« FC Cologne »)
+    et accentue (« Tepatitlán ») ; le test de COUVERTURE accepte un seul nom
+    strict, accents repliés — le RÈGLEMENT, lui, exige toujours les deux."""
+
+    def test_un_seul_nom_suffit_a_la_couverture(self):
+        evs = [_ev("VfB Stuttgart", "FC Cologne")]
+        assert ss.fixture_connue("VfB Stuttgart vs 1. FC Köln", evs) is True
+        assert ss.fixture_connue("VfB Stuttgart vs 1. FC Köln", evs, min_sides=2) is False
+        assert ss.fixture_connue("Bayern vs Dortmund", evs) is False
+
+    def test_les_accents_sont_replies(self):
+        evs = [_ev("Tepatitlán FC", "Dorados de Sinaloa")]
+        assert ss.fixture_connue("Tepatitlan de Morelos vs CSyD Dorados de Sinaloa", evs) is True
+        assert ss._fold("Tepatitlán") == "tepatitlan"
+
+    def test_le_reglement_exige_toujours_les_deux_noms(self, monkeypatch):
+        ev = {"id": "e1", "competitions": [{"status": {"type": {"state": "post", "completed": True}},
+              "competitors": [{"homeAway": "home", "score": "2", "team": {"displayName": "VfB Stuttgart"}},
+                              {"homeAway": "away", "score": "1", "team": {"displayName": "FC Cologne"}}]}]}
+        monkeypatch.setattr(ss, "_get_json", lambda *a, **k: {"events": [ev]})
+        ss.reset_cache()
+        assert ss.result_from_espn("VfB Stuttgart vs 1. FC Köln", "soccer", "2026-09-04") is None
+        ss.reset_cache()
+        r = ss.result_from_espn("VfB Stuttgart vs FC Cologne", "soccer", "2026-09-04")
+        assert r and (r["home_score"], r["away_score"]) == (2, 1)
+
+    def test_la_garde_reglable_utilise_la_couverture_tolerante(self):
+        fx = {"soccer": [_ev("VfB Stuttgart", "FC Cologne")]}
+        assert eng._reglable(_m(match="VfB Stuttgart vs 1. FC Köln"), fx) is True
