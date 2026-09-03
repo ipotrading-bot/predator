@@ -355,3 +355,20 @@ def market_breakdown(rows: list[dict], tax_rate: float, min_n: int = 5) -> list[
         out.append(d)
     out.sort(key=lambda d: (d["pnl_units"], -d["n"], d["market"]))
     return out
+
+
+def sport_breakdown(rows: list[dict], tax_rate: float) -> list[dict]:
+    """Réussite par sport, même bloc que les mois et les ligues (Wilson, point
+    mort, unités à mise plate), trié par unités croissantes. Remplace le calcul
+    qui vivait en ligne dans api/index.py : une seule formule pour toute la page."""
+    groupes: dict[str, list[dict]] = {}
+    for r in rows:
+        if r.get("outcome") in _DECISIF and r.get("sport"):
+            groupes.setdefault(r["sport"], []).append(r)
+    out = []
+    for sport, decisifs in groupes.items():
+        d = _bloc_decisif(decisifs, tax_rate)
+        d["sport"] = sport
+        out.append(d)
+    out.sort(key=lambda d: (d["pnl_units"], d["sport"]))
+    return out

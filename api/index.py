@@ -42,11 +42,11 @@ from core.perf_view import (ALL_MONTHS as _ALL_MONTHS,
                             monthly_summary as _monthly_summary,
                             phantom_rows as _phantom_rows,
                             pick_month as _pick_month,
-                            playable_zone as _playable_zone,
                             recommended_rows as _recommended_rows,
                             resolution_rate as _resolution_rate,
                             rows_of_month as _rows_of_month,
-                            shown_months as _perf_shown_months)
+                            shown_months as _perf_shown_months,
+                            sport_breakdown as _sport_breakdown)
 from core.constants import TAX_RATE as _TAX_RATE
 from core.db import get_db as _get_db_client
 from core.stats_utils import p_breakeven, wilson_ci
@@ -702,7 +702,7 @@ def performance():
                 # (2026-09-03, demande opérateur : août « archivé », accessible
                 # par le menu) ; le bandeau du haut et PAR SPORT restent sur
                 # la fenêtre entière, et le disent (« depuis août 2026 »).
-                scope   = _rows_of_month(rows, mois)
+                scope   = _rows_of_month(reco, mois)
                 history = [r for r in scope if r.get("outcome") in ("WIN", "LOSS")]
                 wins    = sum(1 for r in settled if r.get("outcome") == "WIN")
                 losses  = sum(1 for r in settled if r.get("outcome") == "LOSS")
@@ -766,24 +766,9 @@ def performance():
                 # la page, dans le sens précis qui flatte le moteur.
                 global_s["resolution"] = _resolution_rate(rows)
 
-                # Per-sport win rate + Wilson CI + breakeven
-                sport_perf: dict = {}
-                for sport in sorted(set(r.get("sport", "") for r in decisive) - {""}):
-                    sv = [r for r in decisive if r.get("sport") == sport]
-                    sw = sum(1 for r in sv if r["outcome"] == "WIN")
-                    slo, shi = wilson_ci(sw, len(sv))
-                    sodds = [r["odds"] for r in sv if r.get("odds")]
-                    savg  = sum(sodds) / len(sodds) if sodds else None
-                    sbreak = p_breakeven(savg, _TAX_RATE) if savg else None
-                    sport_perf[sport] = {
-                        "n":              len(sv),
-                        "win_rate":       round(sw / len(sv) * 100, 1),
-                        "win_rate_lo":    round(slo * 100, 1),
-                        "win_rate_hi":    round(shi * 100, 1),
-                        "p_breakeven":    round(sbreak * 100, 1) if sbreak is not None else None,
-                        "above_breakeven": (sbreak is not None and slo > sbreak),
-                    }
-                global_s["by_sport"] = sport_perf
+                # Par sport — même bloc (Wilson, point mort, unités) que les
+                # mois et les ligues : core/perf_view.sport_breakdown.
+                global_s["by_sport"] = _sport_breakdown(reco, _TAX_RATE)
 
                 # (Retiré le 2026-08-22 : le tableau de CALIBRATION — Brier
                 # par tranche de confiance — quittait la page. Le score de
@@ -796,7 +781,13 @@ def performance():
                 # et la carte d'août est le seul endroit où son bilan reste
                 # lisible une fois la liste des matchs passée à septembre.
                 # Wilson + point mort sur chaque carte (règle dure n°7).
-                monthly = _monthly_summary(rows, _TAX_RATE)
+                monthly = _monthly_summary(reco, _TAX_RATE)
+                # Fantômes du mois, à part sur la carte (jamais dans son taux).
+                for m in monthly:
+                    gm = [r for r in ghosts if (r.get("created_at") or "")[:7] == m["month"]]
+                    m["phantoms"] = {"wins": sum(1 for r in gm if r["outcome"] == "WIN"),
+                                     "losses": sum(1 for r in gm if r["outcome"] == "LOSS")}
+                global_s["pnl_units"] = round(sum(m["pnl_units"] for m in monthly), 2)
 
                 # PAR LIGUE — « quelles ligues perdent plus souvent ? »
                 # (2026-09-03). Perdantes d'abord. Le tableau ne CLASSE que
@@ -814,10 +805,6 @@ def performance():
                 # mauvais endroit. Même contrat que PAR LIGUE.
                 markets = _market_breakdown(scope, _TAX_RATE, min_n=_LEAGUE_MIN_N)
 
-                # Étiquette de zone sur chaque ligne de l'historique : le
-                # lecteur voit quels matchs étaient des fantômes.
-                for r in history:
-                    r["_zone"] = _playable_zone(r)
 
     except Exception as e:
         log.error("Performance: %s", e)

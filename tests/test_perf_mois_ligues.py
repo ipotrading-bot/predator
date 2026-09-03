@@ -166,8 +166,8 @@ class TestBranchement:
             assert v in g, v
         # Règle n°7 rendue : Wilson et point mort sur les cartes ET les ligues
         assert g.count("win_rate_lo") >= 2 and g.count("p_breakeven") >= 3
-        # Recommandés et fantômes T-2h séparés sur les cartes ET par ligue
-        assert "m.zones.zone" in g and "m.zones.golden" in g and "lg.losses_out_of_zone" in g
+        # Fantômes T-2h à part sur les cartes et dans les tuiles, jamais dans un taux
+        assert "m.phantoms" in g and "global_s.phantoms" in g
 
     def test_le_menu_ne_propose_que_la_fenetre(self):
         """Les options du menu sont `months` (= shown_months) + « tout » :
@@ -234,10 +234,30 @@ class TestRecommandesEtMarches:
         src = inspect.getsource(dash.performance)
         assert "_recommended_rows(rows)" in src and "_phantom_rows(rows)" in src
         assert '"phantoms"' in src and "_market_breakdown(" in src
-        # les agrégats du bandeau partent de `reco`, plus de `rows`
+        # les agrégats, les cartes, le détail : tout part de `reco`, plus de `rows`
         assert "for r in reco if r.get(\"outcome\") in (\"WIN\", \"LOSS\")" in src
+        assert "_monthly_summary(reco" in src and "_rows_of_month(reco" in src
+        assert "_sport_breakdown(reco" in src
 
     def test_le_gabarit_montre_fantomes_et_marches(self):
         g = (RACINE / "templates" / "performance.html").read_text(encoding="utf-8")
-        assert "global_s.phantoms" in g and "markets" in g and "mk.p_breakeven" in g
-        assert "r._zone == 'golden'" in g
+        assert "global_s.phantoms" in g and "markets" in g
+        # Un seul gabarit de tableau (macro) pour ligues et marchés — pas deux copies
+        assert g.count("{% macro tableau(") == 1 and "tableau(markets" in g and "tableau(leagues" in g
+        # Le menu est dans l'en-tête, sans phrase d'explication
+        assert "Les chiffres du haut de page" not in g
+
+
+class TestParSport:
+    def test_meme_bloc_que_les_mois_et_les_ligues(self):
+        rows = ([_r("2026-09", "WIN", 1.6, sport="soccer")] * 6
+                + [_r("2026-09", "LOSS", 1.9, sport="basketball")] * 3)
+        tab = perf_view.sport_breakdown(rows, 0.0)
+        assert [d["sport"] for d in tab] == ["basketball", "soccer"]   # perdant d'abord
+        assert tab[0]["pnl_units"] == -3.0 and tab[1]["p_breakeven"] is not None
+        assert "win_rate_lo" in tab[1] and "wilson_ci(" not in inspect.getsource(perf_view.sport_breakdown)
+
+    def test_la_route_ne_recalcule_plus_par_sport_en_ligne(self):
+        import api.index as dash
+        src = inspect.getsource(dash.performance)
+        assert "sport_perf" not in src
