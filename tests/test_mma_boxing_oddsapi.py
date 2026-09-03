@@ -40,10 +40,11 @@ class TestWiring:
         # qu'il priorisait.
         assert not hasattr(run_engine, "_NO_ODDSAPI_SPORTS")
 
-    def test_portfolio_and_golden_hour_cover_them(self):
-        assert "mma" in run_engine._QUOTA_FAST and "boxing" in run_engine._QUOTA_FAST
-        assert "mma_mixed_martial_arts" in run_engine.GOLDEN_SPORT_KEYS
-        assert "boxing_boxing" in run_engine.GOLDEN_SPORT_KEYS
+    def test_portfolio_and_sport_keys_cover_them(self):
+        from core.odds_api import SPORT_KEYS
+        assert "mma" in run_engine.SPORT_QUOTA and "boxing" in run_engine.SPORT_QUOTA
+        assert "mma_mixed_martial_arts" in SPORT_KEYS
+        assert "boxing_boxing" in SPORT_KEYS
 
 
 class _Resp:

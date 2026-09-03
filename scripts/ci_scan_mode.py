@@ -7,6 +7,9 @@ scripts/ci_env.py --pool scan, donc avec les secrets Supabase du pool dans l'env
     python scripts/ci_scan_mode.py            # écrit $GITHUB_ENV / $GITHUB_OUTPUT / $GITHUB_STEP_SUMMARY
     python scripts/ci_scan_mode.py --dry-run  # n'écrit rien, n'appelle pas Supabase, imprime la décision
 
+Deux modes (2026-09-03) : `standard` (scan complet, 8×/jour) et `reprice`
+(tick horaire gratuit). Le bouton « Scanner » promeut reprice → standard.
+
 Entrées (env, posées par le workflow — aucune n'est un secret) :
     GITHUB_EVENT_NAME   schedule | workflow_dispatch
     SCHEDULE            ${{ github.event.schedule }}  (vide hors schedule)
@@ -23,60 +26,33 @@ import argparse
 import os
 import sys
 
-# ── Cron → mode. Les minutes sont décalées entre elles et vis-à-vis de
-# closing_line.yml (H+14/34/54) — voir les commentaires de scan.yml. ──
+# ── Cron → mode. DEUX modes depuis le 2026-09-03 (décision opérateur :
+# « trop de workflows et de process ») — golden, deep et guerrilla sont
+# supprimés, voir INCIDENTS.md « Cinq modes de scan, deux qui servent ».
+# Les minutes sont décalées vis-à-vis de closing_line.yml (H+14/34/54). ──
 CRON_MODES = {
-    "3 2,6,9,12,17,19,21,23 * * *": "standard",   # fenêtres favorables (core/scan_windows.py)
-    "25 * * * *":                    "golden",     # T-120 min, horaire, + REPRICE + closing pass
-    "33 5,17 * * *":                 "deep",       # MAX_MATCHES=100, quotas élargis, 24 h
-    "47 9,21 * * *":                 "guerrilla",  # recherche web renforcée, 48 h
+    "3 2,6,9,12,17,19,21,23 * * *": "standard",   # scan complet 24 h, fenêtres favorables (core/scan_windows.py)
+    "25 * * * *":                    "reprice",    # horaire, GRATUIT : slate soft en cache vs Matchbook
 }
-MODES = ("standard", "golden", "deep", "guerrilla", "reprice")
+MODES = ("standard", "reprice")
 
 # Variables lues par run_engine.py (évaluées à l'import du module).
-# Valeurs reportées telles quelles depuis engine/golden_hour/deep_scan/
-# guerrilla.yml au 2026-08-26 — vérifiées une à une, aucune n'a été inventée.
 # OddsAPI (Tier 1) RALLUMÉ le 2026-09-01, décision opérateur — clé posée dans
 # app_secrets.ODDS_API_KEYS. Le défaut du module reste 0 (obsolescence du
 # 2026-08-26, tests/test_oddsapi_obsolete.py) : c'est ICI, et seulement ici,
-# que le flag est posé. GUERRILLA et REPRICE n'ont pas de Tier 1 par
-# construction (run_engine.py le teste avant le flag). GOLDEN porte le
-# Tier 1 depuis le 2026-09-01, décision opérateur (pool de 2 500 crédits) :
-# fenêtre 2 h, le pré-vol gratuit rend 0 ligue peuplée la plupart des ticks,
-# et le rythme mensuel (core/scan_windows) borne la dépense sur le pool
-# entier — ce n'est pas le nombre de ticks qui compte. Un tick golden à
-# T-2h est là où la ligne bouge et où la closing line se capture sur le
-# payload payé.
+# que le flag est posé, pour `standard` seulement. REPRICE n'a pas de Tier 1
+# par construction (run_engine.py le teste avant le flag, et son pool de
+# secrets ne contient aucune clé payante). La dépense est bornée par le
+# rythme mensuel (core/scan_windows), sur 8 ticks/jour.
 TIER1_ENV = {"ODDS_API": "1"}
 
 MODE_ENV: dict[str, dict[str, str]] = {
     "standard": {**TIER1_ENV},
-    "golden": {**TIER1_ENV, "GOLDEN_HOUR": "1"},
-    # HOURS_AHEAD explicite : run_engine.py le lit avec un défaut de 24, mais
-    # deep_scan.yml le posait déjà en clair — on ne change pas ce contrat.
-    "deep": {**TIER1_ENV, "DEEP_SCAN": "1", "HOURS_AHEAD": "24"},
-    # GUERRILLA ne pose PAS HOURS_AHEAD : son horizon de 48 h vient du code
-    # (run_engine.py, branche `elif GUERRILLA`), pas du workflow. L'y écrire
-    # ferait diverger deux sources de vérité pour la même valeur.
-    "guerrilla": {
-        "GUERRILLA": "1",
-        # Le renforcement recherche web (SEARCH_MAX_TOKENS, PINNACLE_BATCH,
-        # PINNACLE_TAVILY_QUERIES, TAVILY_RUN_BUDGET — et avant lui
-        # MAX_ORACLE, retiré le 2026-08-27) est PARTI le 2026-09-02 avec la
-        # suppression de Groq/Tavily : plus aucune variable de ce mode ne
-        # gouverne une recherche web, il n'y en a plus.
-        "CACHE_MMA_TTL_H": "4",            # défaut 8
-        # eSports a été RETIRÉ du périmètre le 2026-08-22 (RETIRED_SPORTS) :
-        # cette variable est morte, elle l'était déjà dans guerrilla.yml. On
-        # la reporte à l'identique plutôt que de la retirer en douce dans un
-        # commit qui parle de CI.
-        "CACHE_ESPORTS_TTL_H": "4",        # défaut 8
-        "CACHE_ALT_TTL_H": "1.5",          # défaut 4 — slate ITTF tourne en ~1 h
-        "CACHE_EMPTY_TTL_H": "1.5",        # défaut 3 — un vide dû à une clé morte
-    },
-    # REPRICE=1 est posé par le step lui-même (scan.yml), pas ici : ce mode
-    # ne lance pas de scan complet.
-    "reprice": {},
+    # REPRICE=1 vit ICI (table unique mode → variables, règle n°6), plus dans
+    # le step YAML : jusqu'au 2026-09-03 le tick horaire portait DEUX
+    # run_engine (scan golden puis REPRICE) et le step devait poser le flag
+    # lui-même. Un seul run_engine par tick désormais.
+    "reprice": {"REPRICE": "1"},
 }
 
 
@@ -94,19 +70,16 @@ def resolve(event_name: str, schedule: str, input_mode: str) -> str:
 
 
 def promote(mode: str, manual: bool) -> str:
-    """Bouton « Scanner » du dashboard : un tick golden (fenêtre 2 h) est promu
-    en scan complet ; les autres modes sont déjà des scans complets.
+    """Bouton « Scanner » du dashboard : un tick reprice (horaire, sans scan)
+    est promu en scan complet `standard` ; un tick standard l'est déjà.
 
-    Le flag est désormais lu par les 36 ticks (contre 24 avant, golden seuls) :
-    un clic tombant sur un tick standard/deep/guerrilla est donc consommé sans
-    promotion — mais ces modes SONT déjà des scans complets, le clic obtient
-    bien un scan. Seule la « saveur » varie. Ne pas ajouter de poller dédié
-    pour rendre la promotion systématique : c'est l'erreur du 2026-07-07.
-
-    Promotion en STANDARD depuis le 2026-09-01 (décision opérateur) : guerrilla
-    n'a pas de Tier 1 par construction et ne rendait que du foot ; le bouton
-    doit donner un scan complet, tous sports, OddsAPI compris."""
-    return "standard" if (manual and mode == "golden") else mode
+    Le flag est lu par les 32 ticks : un clic tombant sur un tick standard est
+    consommé sans promotion — le clic obtient bien un scan complet. Ne pas
+    ajouter de poller dédié pour rendre la promotion plus rapide : c'est
+    l'erreur du 2026-07-07 (288 déclenchements/jour). Le rattrapage du chien
+    de garde Cloudflare dispatche `reprice` : il passe par ici aussi, donc un
+    clic en attente est honoré même sur un rattrapage."""
+    return "standard" if (manual and mode == "reprice") else mode
 
 
 def env_for(mode: str, hours_ahead: str = "") -> dict[str, str]:

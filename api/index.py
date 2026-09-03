@@ -75,7 +75,7 @@ DASHBOARD_VERSION = "10.5"
 # Instants de tir des scans pour le compte à rebours « prochain scan » du
 # dashboard, DÉRIVÉS de scripts/ci_scan_mode.py::CRON_MODES — la seule table
 # cron → mode du dépôt (règle n°6 : le template annonçait « toutes les 30 min »
-# alors que le tick golden est horaire depuis le 2026-07-23). Rappel : c'est
+# alors que le tick horaire l'est depuis le 2026-07-23). Rappel : c'est
 # l'heure PLANIFIÉE ; le scheduler GitHub sous-livre et le chien de garde
 # Cloudflare rattrape derrière (INCIDENTS.md).
 def _scan_cron_specs() -> list:
@@ -1000,9 +1000,9 @@ def health():
 # devient invisible mais pas muette — voir l'incident du 10→20 août 2026.)
 
 
-# scan.yml lit ce flag à CHAQUE tick (36/jour) depuis la refonte du
-# 2026-08-26, contre 24 auparavant : la latence tombe sous l'heure. Un tick
-# `golden` est promu en scan complet ; les autres modes en sont déjà un.
+# scan.yml lit ce flag à CHAQUE tick (32/jour depuis le 2026-09-03 : 8
+# standard + 24 reprice) : la latence reste sous l'heure. Un tick `reprice`
+# est promu en scan `standard` complet ; un standard en est déjà un.
 _SCAN_REQUEST_COOLDOWN_S = 120
 
 # ── Limite de débit par IP sur /api/scan (C2, 2026-08-27) ────────────────

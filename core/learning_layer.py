@@ -200,13 +200,15 @@ def load_sport_verdicts(sb) -> dict[str, dict]:
 #
 # Le hors-zone est le SEUL segment significatif du ledger, et il n'est plus
 # jouable : >24h ne sort plus du scan (fenêtre ramenée à 24h, commit 1552f1d)
-# et <2h part en fantôme (SHADOW_GOLDEN_HOUR dans run_engine.py). Le laisser
+# et <2h part en fantôme PAR SIGNAL (run_engine._shadow_reason, raison
+# `t_minus_2h`, borne importée d'ici — le mode de run golden n'existe plus
+# depuis le 2026-09-03). Le laisser
 # dans l'apprentissage faisait donc monter les seuils à cause de pertes que le
 # système ne subit plus — soccer était jugé sur 50,0% de réussite alors que sa
 # zone jouable en fait 65,1%.
 #
-# Bornes alignées sur run_engine.py (SHADOW_GOLDEN_HOUR à T-2h, fenêtre de scan
-# à 24h) : si l'une des deux bouge, bouger l'autre.
+# La borne basse est IMPORTÉE par run_engine._shadow_reason ; la haute suit la
+# fenêtre de scan (24h) : si celle-ci bouge, bouger l'autre.
 _PLAYABLE_MIN_MINUTES = 120     # T-2h — en deçà, c'est la golden hour, en fantôme
 _PLAYABLE_MAX_MINUTES = 1440    # T-24h — au-delà, le scan ne va plus chercher
 

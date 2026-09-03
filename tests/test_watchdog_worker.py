@@ -85,14 +85,17 @@ def test_les_seuils_restent_au_dessus_de_la_cadence_des_crons():
             "le chien de garde tirerait plus vite que le schedule qu'il supplée")
 
 
-def test_scan_nest_rattrape_quen_golden_et_le_mode_existe():
+def test_scan_nest_rattrape_quen_reprice_et_le_mode_existe():
+    """`reprice` (2026-09-03, ex-`golden`) : gratuit par construction — son
+    pool ne porte aucune clé payante — et il honore un clic « Scanner » en
+    attente (promotion reprice → standard)."""
     scan = next(w for w in _watch_table() if w["file"] == "scan.yml")
-    assert scan["inputs"] == {"mode": "golden"}, (
-        "rattraper un autre mode que golden dépense les budgets journaliers "
+    assert scan["inputs"] == {"mode": "reprice"}, (
+        "rattraper un autre mode que reprice dépense les budgets journaliers "
         "des sources gratuites en DOUBLE du cron GitHub quand il finit par tirer")
     import importlib
     ci_scan_mode = importlib.import_module("scripts.ci_scan_mode")
-    assert "golden" in ci_scan_mode.MODES
+    assert "reprice" in ci_scan_mode.MODES
 
 
 def test_linput_de_reports_est_une_option_declaree():

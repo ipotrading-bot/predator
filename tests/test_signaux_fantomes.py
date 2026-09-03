@@ -36,37 +36,44 @@ def _sig(sport="soccer", minutes=600, **extra):
 
 class TestRaisonDuFantome:
     def test_zone_recommandee_pas_de_raison(self):
-        assert eng._shadow_reason(_sig(minutes=600), golden_hour=False) is None
+        assert eng._shadow_reason(_sig(minutes=600)) is None
 
     def test_t_moins_2h_est_fantome_quel_que_soit_le_mode(self):
         """La règle qui manquait : un scan STANDARD à T-66 min émettait un
         signal recommandé, envoyé, affiché — alors que la mesure du fantôme
         portait sur la tranche horaire, pas sur le mode du run."""
-        assert eng._shadow_reason(_sig(minutes=66), golden_hour=False) == "t_minus_2h"
-        assert eng._shadow_reason(_sig(minutes=_PLAYABLE_MIN_MINUTES - 1), golden_hour=False) == "t_minus_2h"
-        assert eng._shadow_reason(_sig(minutes=_PLAYABLE_MIN_MINUTES), golden_hour=False) is None
+        assert eng._shadow_reason(_sig(minutes=66)) == "t_minus_2h"
+        assert eng._shadow_reason(_sig(minutes=_PLAYABLE_MIN_MINUTES - 1)) == "t_minus_2h"
+        assert eng._shadow_reason(_sig(minutes=_PLAYABLE_MIN_MINUTES)) is None
 
     def test_la_borne_est_importee_pas_recopiee(self):
         src = inspect.getsource(eng._shadow_reason)
         assert "_PLAYABLE_MIN_MINUTES" in src and "120" not in src
 
-    def test_mode_golden_couvre_tout_le_run(self):
-        assert eng._shadow_reason(_sig(minutes=600), golden_hour=True) == "golden_hour"
+    def test_aucune_raison_par_mode(self, monkeypatch):
+        """2026-09-03 : la raison `golden_hour` (tout le run) est partie avec
+        le mode. La règle est par SIGNAL seulement — REPRICE ou pas."""
+        for reprice in (False, True):
+            monkeypatch.setattr(eng, "REPRICE", reprice)
+            assert eng._shadow_reason(_sig(minutes=600)) is None
+            assert eng._shadow_reason(_sig(minutes=30)) == "t_minus_2h"
+        corps = inspect.getsource(eng._shadow_reason).split('"""')[2]
+        assert "golden_hour" not in corps
 
     def test_sport_fantome_prime(self, monkeypatch):
         monkeypatch.setattr(eng, "SHADOW_SPORTS", {"baseball"})
-        assert eng._shadow_reason(_sig("baseball", minutes=600), golden_hour=False) == "shadow_sport"
+        assert eng._shadow_reason(_sig("baseball", minutes=600)) == "shadow_sport"
 
     def test_linconnu_nest_pas_classe_fantome(self):
-        assert eng._shadow_reason(_sig(minutes=None), golden_hour=False) is None
-        assert eng._shadow_reason(_sig(match_time="n'importe quoi"), golden_hour=False) is None
+        assert eng._shadow_reason(_sig(minutes=None)) is None
+        assert eng._shadow_reason(_sig(match_time="n'importe quoi")) is None
         assert eng._minutes_avant_coup_denvoi({"match_time": "x", "scanned_at": SCAN}) is None
 
 
 class TestPartitionMarque:
     def test_chaque_signal_porte_son_drapeau(self):
         sigs = [_sig(minutes=600), _sig(minutes=30)]
-        kept, shadowed = eng._shadow_partition(sigs, golden_hour=False)
+        kept, shadowed = eng._shadow_partition(sigs)
         assert [s["is_shadow"] for s in sigs] == [False, True]
         assert kept[0]["shadow_reason"] is None and shadowed[0]["shadow_reason"] == "t_minus_2h"
 
@@ -75,7 +82,7 @@ class TestPartitionMarque:
         partition vient avant la boucle _save, et Telegram part des
         recommandés."""
         src = inspect.getsource(eng.run)
-        assert src.index("_shadow_partition(signals, GOLDEN_HOUR)") < src.index("if _save(sb, s):")
+        assert src.index("_shadow_partition(signals)") < src.index("if _save(sb, s):")
         assert "emit_signals = recommandes" in src
         assert "_heartbeat(sb, now, len(matches), len(recommandes))" in src
 

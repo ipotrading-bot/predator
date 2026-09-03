@@ -1465,7 +1465,7 @@ Il ne dispatche un `workflow_dispatch` de rattrapage QUE si le dernier run du
 workflow est démontrablement en retard (seuil > cadence nominale, gardé par
 `tests/test_watchdog_worker.py`). Ce n'est PAS l'erreur du 2026-07-07 : on
 n'ajoute aucun schedule GitHub, on vit HORS du scheduler défaillant. Deux
-règles à ne pas défaire : `scan.yml` n'est rattrapé qu'en `golden` (gratuit —
+règles à ne pas défaire : `scan.yml` n'est rattrapé qu'en `reprice` depuis le 2026-09-03 (avant : `golden`, gratuit —
 rattraper standard/deep/guerrilla doublerait la dépense des budgets des
 sources gratuites), et les seuils restent au-dessus des cadences (le chien de
 garde ne peut pas tirer plus vite que le schedule qu'il supplée). Le PAT est
@@ -1490,6 +1490,60 @@ attrape `Exception` ne le voit passer, et `finally` s'exécute quand même. Le
 comportement voulu — sortie, traceback, exit 1, run en ÉCHEC par le contrat —
 est celui qu'on croyait avoir depuis le 2026-08-27.
 Gardien : `tests/test_timeout_par_mode.py::TestLeTimeoutNestPasAvalable`.
+
+### Cinq modes de scan, deux qui servent — golden, deep et guerrilla supprimés (2026-09-03)
+
+Symptôme : l'opérateur ne comprend plus ce qui tourne (« trop de workflows
+et de process, je ne comprends pas golden, guerrilla… »). Et il avait
+raison de ne pas comprendre, parce que trois des cinq modes ne servaient à
+rien de rentable :
+
+- **golden** (T-2h, 24 runs/jour, cron `25 * * * *`) était 100 % FANTÔME PAR
+  CONSTRUCTION depuis `SHADOW_GOLDEN_HOUR` (2026-08-04 : 39 % de réussite
+  sur la tranche pour 54,5 % requis, p=0,007) — vingt-quatre runs par jour
+  dont aucun ne pouvait recommander quoi que ce soit, et qui portaient le
+  Tier 1 OddsAPI depuis le 2026-09-01 : des crédits dépensés sur une tranche
+  que le système ne joue pas. C'est lui qui a créé les fantômes affichés par
+  erreur (entrée précédente).
+- **deep** (2 runs/jour) : un standard avec `MAX_MATCHES=100` et des quotas
+  élargis, MÊME fenêtre de 24 h ; tué deux fois par timeout, jamais de mesure
+  de rendement.
+- **guerrilla** (2 runs/jour) : horizon 48 h sans Tier 1 — la tranche 24-48 h
+  fait −62,8 % (p=0,0023) et sort de la zone jouable ; ses quatre variables
+  `CACHE_*_TTL_H` n'avaient plus aucun lecteur.
+
+Fait : `scripts/ci_scan_mode.py` n'a plus que DEUX lignes — `standard`
+(scan complet, 8×/jour, fenêtres favorables, inchangé) et `reprice`
+(horaire, gratuit, `REPRICE=1` posé par `MODE_ENV` et plus par le step
+YAML) ; `scan.yml` deux crons, dispatch `[standard, reprice]`, un seul
+`run_engine.py` par tick ; `run_engine.py` sans `DEEP_SCAN`/`GOLDEN_HOUR`/
+`GUERRILLA`, sans `GOLDEN_SPORT_KEYS`, un seul `SPORT_QUOTA`,
+`MAX_MATCHES = 50`, horizon 24 h unique ; `SCAN_TIMEOUTS` à deux entrées ;
+`SpendPolicy` sans `imminent_mode` ; la règle fantôme T-2h vaut PAR SIGNAL
+(`_shadow_reason`, deux raisons), plus aucune par mode ; le bouton Scanner
+promeut reprice → standard ; le chien de garde rattrape en `reprice`.
+32 invocations/jour au lieu de 60, 8 scans payants au lieu de 34, 0 fantôme
+créé par mode. Doc opérateur : `docs/systeme_de_scan.md`.
+
+Pas fait, et dit : le TTL du slate soft reste à 4 h (deux ticks reprice
+muets/jour, 06:25 et 16:25 — `CACHE_SOFT_SLATE_TTL_H=5` se pose sans code
+si on veut zéro tick muet, après mesure) ; `SHADOW_GOLDEN_HOUR` garde son
+NOM (c'est celui de la tranche dans perf_view/learning_layer, pas du mode) ;
+les lignes `shadow_reason='golden_hour'` restent en base (règle n°9) ; la
+closing line sur payload payé à T-2h ne tourne plus qu'aux 8 ticks standard
+— entre deux, exchange (h2h) et `closing_line.yml` ; perte non mesurée, à
+lire dans la couverture CLV totals/spreads du rapport hebdo.
+
+⚠️ Ordre de déploiement : le Worker Cloudflare (`scripts/deploy_watchdog_worker.py`,
+geste opérateur) AVANT le merge — `reprice` existe des deux côtés, alors
+qu'un Worker resté en `golden` ferait échouer chaque rattrapage
+(`mode inconnu : 'golden'`) toutes les 75 min de retard GitHub.
+
+Gardiens : `tests/test_ci_env.py::test_il_ny_a_que_deux_modes`,
+`…::test_le_dispatch_de_scan_yml_noffre_que_les_modes_connus`,
+`…::test_reprice_vient_de_mode_env_pas_du_yaml`, `tests/test_timeout_par_mode.py`
+(`SCAN_TIMEOUTS == MODES`, anciens drapeaux absents), `tests/test_watchdog_worker.py`,
+`tests/test_signaux_fantomes.py::TestRaisonDuFantome::test_aucune_raison_par_mode`.
 
 ### Le verrou `predator-signals-write` ne contient plus `closing_line.yml`
 
@@ -1606,6 +1660,8 @@ Trois anomalies corrigées ensemble :
    le fantôme n'était appliqué qu'au mode `golden` : un scan standard tiré à
    13:54 pour un match de 15:00 émettait un signal T-66 min recommandé, envoyé,
    affiché. `_shadow_reason` : `shadow_sport` → `golden_hour` → `t_minus_2h`
+   (la raison `golden_hour` est partie avec le mode le 2026-09-03 — deux
+   raisons, toutes deux par signal)
    (borne IMPORTÉE de `learning_layer._PLAYABLE_MIN_MINUTES`, règle n°6).
 3. **Le rafraîchissement écrasait la mesure** — un re-scan du même
    (match, marché) réécrit `scanned_at` ; 309 lignes l'avaient postérieur à

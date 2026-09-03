@@ -216,11 +216,11 @@ class TestRythme:
         assert intraday_cap(240, self.EVENING) == 240
         assert intraday_cap(240, _utc(2026, 9, 2, 23, 30)) == 240
 
-    def _pol(self, allowance, spent=0.0, exempt=(), imminent=False):
+    def _pol(self, allowance, spent=0.0, exempt=()):
         noted = []
         p = SpendPolicy(lambda _k: None, lambda _k: None, exempt_sports=exempt,
                         allowance=allowance, spent_today=spent,
-                        note_spent=noted.append, imminent_mode=imminent)
+                        note_spent=noted.append)
         return p, noted
 
     def test_fenetre_favorable_bornee_par_le_plafond_du_jour(self):
@@ -255,13 +255,6 @@ class TestRythme:
         ok, why = p.allow("soccer_epl", "soccer", self.NIGHT, 2000, cost=1)
         assert not ok and "closing line imminente mais" in p.skipped[0][1]
         assert EXEMPT_SHARE == pytest.approx(1.1)
-
-    def test_golden_t_2h_est_au_rang_fenetre(self):
-        # 01:00, EPL hors fenêtre : de fond en standard, rang fenêtre en golden
-        std, _ = self._pol(allowance=240)
-        assert std.allow("soccer_epl", "soccer", self.NIGHT, 2000, cost=3)[1] == "scan de fond"
-        gold, _ = self._pol(allowance=240, imminent=True)
-        assert gold.allow("soccer_epl", "soccer", self.NIGHT, 2000, cost=3)[1] == "golden T-2h"
 
     def test_sans_allocation_rien_ne_change(self):
         p, _ = self._pol(allowance=None, spent=10_000)
@@ -368,11 +361,11 @@ def test_build_spend_policy_porte_le_rythme(monkeypatch):
     sb = FakeSB()
     monkeypatch.setattr(eng, "_odds_pool_total_remaining", lambda: 2400)
     monkeypatch.setattr(eng, "_sports_with_imminent_signals", lambda _sb, _now: {"mma"})
-    monkeypatch.setattr(eng, "GOLDEN_HOUR", True)
     now = datetime.now(timezone.utc)
     pol = eng._build_spend_policy(sb, now)
     assert pol.allowance == pytest.approx(2400 / 30, rel=0.01)
-    assert pol.imminent_mode and pol.exempt_sports == {"mma"}
+    assert pol.exempt_sports == {"mma"}
+    assert not hasattr(pol, "imminent_mode")   # le rang « golden T-2h » est parti avec le mode
     pol.note_paid("soccer_epl", 3)
     assert eng._oddsapi_spent_today(sb, now) == 3.0
     assert eng._build_spend_policy(None, now) is None

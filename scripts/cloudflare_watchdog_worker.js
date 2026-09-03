@@ -21,11 +21,14 @@
 //    le plus fréquent du workflow — le chien de garde ne peut donc jamais
 //    tirer plus vite que le schedule qu'il supplée (closing_line garde son
 //    invariant CLOSING_LINE_REFRESH_MIN) ;
-//  - scan.yml n'est rattrapé qu'en mode `golden` (tick horaire GRATUIT :
-//    sans OddsAPI il sort avant le Tier 2, mais porte purge, heartbeat,
-//    REPRICE et la passe closing line). Rattraper standard/deep/guerrilla
-//    doublerait la dépense des budgets journaliers des sources gratuites —
-//    voir « L'arbitrage de cadence » (skill predator-pipeline) ;
+//  - scan.yml n'est rattrapé qu'en mode `reprice` (tick horaire GRATUIT :
+//    aucune clé payante dans son pool ; il porte purge, heartbeat, closing
+//    line d'exchange, et honore un clic « Scanner » en attente en devenant
+//    un scan standard). Rattraper `standard` doublerait la dépense des
+//    budgets journaliers des sources gratuites quand le cron GitHub finit
+//    par tirer — voir « L'arbitrage de cadence » (skill predator-pipeline).
+//    (Jusqu'au 2026-09-03 c'était `golden`, décrit ici comme gratuit alors
+//    qu'il portait OddsAPI depuis le 2026-09-01.) ;
 //  - aucun secret dans ce fichier : le PAT est un secret du Worker
 //    (WATCHDOG_PAT), posé par scripts/deploy_watchdog_worker.py.
 //
@@ -36,7 +39,7 @@ const REPO = "ipotrading-bot/predator";
 // stale_min = cadence nominale du cron + marge. Le Worker passe toutes les
 // 10 min : le retard maximal de détection est stale_min + 10.
 const WATCH = [
-  { file: "scan.yml",         stale_min: 75,  inputs: { mode: "golden" } },
+  { file: "scan.yml",         stale_min: 75,  inputs: { mode: "reprice" } },
   { file: "closing_line.yml", stale_min: 25,  inputs: {} },
   { file: "audit.yml",        stale_min: 370, inputs: {} },
   { file: "reports.yml",      stale_min: 130, inputs: { report: "rapport" } },

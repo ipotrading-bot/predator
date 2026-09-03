@@ -223,40 +223,52 @@ def test_dispatch_prend_le_mode_demande():
         ci_mode.resolve("workflow_dispatch", "", "turbo")
 
 
-def test_flag_manuel_promeut_golden_seulement():
-    """Bouton Scan = scan STANDARD depuis le 2026-09-01 : guerrilla n'a pas
-    de Tier 1 et ne rendait que du foot ; le bouton doit donner un scan
-    complet tous sports."""
-    assert ci_mode.promote("golden", True) == "standard"
-    assert ci_mode.promote("deep", True) == "deep"
-    assert ci_mode.promote("golden", False) == "golden"
+def test_flag_manuel_promeut_reprice_seulement():
+    """Bouton Scan = scan STANDARD complet : un tick reprice (horaire, sans
+    scan) qui trouve le flag devient un standard ; un standard l'est déjà."""
+    assert ci_mode.promote("reprice", True) == "standard"
+    assert ci_mode.promote("standard", True) == "standard"
+    assert ci_mode.promote("reprice", False) == "reprice"
 
 
 def test_env_de_mode():
-    assert ci_mode.env_for("golden") == {"ODDS_API": "1", "GOLDEN_HOUR": "1"}
-    assert ci_mode.env_for("deep") == {"ODDS_API": "1", "DEEP_SCAN": "1", "HOURS_AHEAD": "24"}
-    assert ci_mode.env_for("guerrilla")["GUERRILLA"] == "1"
+    assert ci_mode.env_for("standard") == {"ODDS_API": "1"}
     assert ci_mode.env_for("standard", "12") == {"ODDS_API": "1", "HOURS_AHEAD": "12"}
-    assert ci_mode.env_for("reprice") == {}
+    assert ci_mode.env_for("reprice") == {"REPRICE": "1"}
 
 
 def test_le_tier_1_est_rallume_par_le_workflow_pas_par_le_module():
-    """Rallumage OddsAPI du 2026-09-01 : le flag vit dans MODE_ENV. Le défaut
-    du module reste 0 (tests/test_oddsapi_obsolete.py). Golden porte le
-    Tier 1 (décision opérateur, pool de 2 500 crédits ; le rythme mensuel de
-    core/scan_windows borne la dépense, pas le nombre de ticks). Seuls
-    GUERRILLA et REPRICE restent sans, par construction."""
+    """Rallumage OddsAPI du 2026-09-01 : le flag vit dans MODE_ENV, pour
+    `standard` seulement. Le défaut du module reste 0
+    (tests/test_oddsapi_obsolete.py). REPRICE reste sans, par construction."""
     assert ci_mode.TIER1_ENV == {"ODDS_API": "1"}
-    for mode in ("standard", "golden", "deep"):
-        assert ci_mode.env_for(mode).get("ODDS_API") == "1", mode
-    for mode in ("guerrilla", "reprice"):
-        assert "ODDS_API" not in ci_mode.env_for(mode), mode
+    assert ci_mode.env_for("standard").get("ODDS_API") == "1"
+    assert "ODDS_API" not in ci_mode.env_for("reprice")
 
 
-def test_guerrilla_ne_fige_pas_son_horizon_dans_le_workflow():
-    """Les 48 h de guerrilla viennent de run_engine.py, pas d'une variable :
-    les poser ici créerait une seconde source de vérité pour la même valeur."""
-    assert "HOURS_AHEAD" not in ci_mode.MODE_ENV["guerrilla"]
+def test_il_ny_a_que_deux_modes():
+    """2026-09-03, décision opérateur : golden, deep et guerrilla sont
+    supprimés. Un mode réintroduit sans cron (ou un cron sans mode) échoue
+    ici — la table cron → mode est la seule source de vérité (règle n°6)."""
+    assert set(ci_mode.MODES) == {"standard", "reprice"}
+    assert set(ci_mode.CRON_MODES.values()) == set(ci_mode.MODES)
+    assert set(ci_mode.MODE_ENV) == set(ci_mode.MODES)
+
+
+def test_le_dispatch_de_scan_yml_noffre_que_les_modes_connus():
+    wf = yaml.safe_load((RACINE / ".github" / "workflows" / "scan.yml").read_text(encoding="utf-8"))
+    on = wf.get("on") or wf.get(True)
+    options = on["workflow_dispatch"]["inputs"]["mode"]["options"]
+    assert list(options) == list(ci_mode.MODES)
+
+
+def test_reprice_vient_de_mode_env_pas_du_yaml():
+    """REPRICE=1 est posé par ci_scan_mode (table unique), plus par le step :
+    un flag de mode écrit à la main dans le YAML serait une seconde table."""
+    assert ci_mode.MODE_ENV["reprice"] == {"REPRICE": "1"}
+    texte = (RACINE / ".github" / "workflows" / "scan.yml").read_text(encoding="utf-8")
+    code = "\n".join(l for l in texte.splitlines() if not l.strip().startswith("#"))
+    assert "REPRICE: '1'" not in code and "GOLDEN_HOUR" not in code
 
 
 def test_closing_line_cadence_alignee_sur_refresh_min():

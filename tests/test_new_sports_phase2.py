@@ -50,8 +50,7 @@ class TestWiring:
         served = set(SPORT_KEYS.values())
         assert served <= set(KELLY_FRACTION), served - set(KELLY_FRACTION)
         assert served <= set(SPORT_DEFAULTS), served - set(SPORT_DEFAULTS)
-        assert served <= set(run_engine._QUOTA_FAST), served - set(run_engine._QUOTA_FAST)
-        assert served <= set(run_engine._QUOTA_DEEP)
+        assert served <= set(run_engine.SPORT_QUOTA), served - set(run_engine.SPORT_QUOTA)
         assert served <= set(run_engine.SPORT_EMOJI)
 
 

@@ -9,23 +9,23 @@ Calcul en crons GitHub Actions ; dashboard en lecture seule.
 - `INCIDENTS.md` — **ce qui a déjà cassé, et pourquoi.** À LIRE AVANT DE
   DIAGNOSTIQUER, et avant de toucher sources, couche IA, workflows ou
   seuils : une règle dont on ignore la raison finit contournée.
-- `AUDIT.md` — invariants → tests gardiens. À lire avant d'ajouter un sport,
-  un fournisseur IA, une route ou un workflow.
+- `docs/systeme_de_scan.md` — le scan en 2 modes, pour l'opérateur.
+- `AUDIT.md` — invariants → tests gardiens. À lire avant tout ajout (sport,
+  fournisseur IA, route, workflow).
 - `.claude/rules/` — le DÉTAIL des règles, chargé par chemin (workflows,
   couche IA, dashboard, sql, apprentissage).
 - `.claude/hooks/` — les règles dures en CODE (deny/ask mécaniques, lint,
   suite avant arrêt) ; README dedans, gardien `tests/test_claude_config.py`.
 - Skills : `predator-pipeline` (carte du flux), `-add-sport`, `-migration`,
   `-ci-env`, `-incident`, `-release`, `-dashboard-check`.
-- Sub-agents : `predator-diagnostician` (tout audit pipeline/santé),
-  `test-runner`, `migration-author`, `ledger-analyst`, `incident-scribe`,
-  `ci-log-digger`.
+- Sub-agents : `predator-diagnostician` (audit pipeline/santé), `test-runner`,
+  `migration-author`, `ledger-analyst`, `incident-scribe`, `ci-log-digger`.
 
 ## Commandes
 
-- Tests : `python -m pytest tests/ -q` (~40 s, doit rester à 0 échec).
+- Tests : `python -m pytest tests/ -q` (~40 s, 0 échec).
 - Lint : `python -m pyflakes $(git ls-files '*.py')`
-- Dashboard local : skill `predator-dashboard-check` (mode démo)
+- Dashboard local : skill `predator-dashboard-check`
 - Comptes externes : `docs/actions_operateur.md`
 - Piloter Supabase/Vercel : `python scripts/ops.py doctor|status|supabase …|vercel …`
   (credentials dans `.env`, gitignoré). `ops.py ai` fait un VRAI appel — seul
@@ -80,8 +80,7 @@ Détail dans `.claude/rules/` (chargé par chemin), justification dans
 6. Ne **jamais** tenir à la main une liste qui existe ailleurs : dériver, ou
    test gardien — *Listes qui divergent*.
 7. **Jamais un taux de réussite nu** : toujours Wilson + point mort après taxe.
-8. Ne pas réintroduire Wiz (`/wiz`, `core/wiz_*`, `wiz_analysis`) — supprimé
-   le 2026-08-26, sans archive.
+8. Ne pas réintroduire Wiz (`/wiz`, `core/wiz_*`) — supprimé le 2026-08-26.
 9. Archiver, **jamais supprimer sèchement** des lignes de résultats (biais de
    survie).
 10. Aucun seuil d'émission modifié sans mesure sur des lignes réglées

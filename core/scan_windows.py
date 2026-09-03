@@ -18,10 +18,10 @@ TROIS RÈGLES, toutes loggées (aucun scan utile supprimé en silence) :
 2. hors fenêtre favorable, jamais deux scans payants de la MÊME ligue à
    moins de BACKGROUND_MIN_INTERVAL_MIN (180 min) d'intervalle. Pourquoi
    180 : c'est la cadence du mode `standard` de scan.yml depuis le
-   2026-08-22 (8 ticks sur les fenêtres favorables) — un tick golden
-   hour (horaire, fenêtre 2h) entre deux scans engine ne repaie donc plus
-   une ligue au repos ; dans une fenêtre favorable il la repaie, et c'est
-   voulu (c'est là que la ligne bouge) ;
+   2026-08-22 (8 ticks sur les fenêtres favorables) — le tick horaire
+   `reprice` ne paie rien, seul le standard atteint ce module ; dans une
+   fenêtre favorable une ligue est repayée, et c'est voulu (c'est là que
+   la ligne bouge) ;
 3. garde de réserve : si le pool descend sous RESERVE_CREDITS, seuls les
    scans en fenêtre favorable et ceux qui servent la capture de closing
    line (sports avec un signal actif à < CLOSING_LINE_WINDOW_MIN du coup
@@ -173,17 +173,17 @@ class SpendPolicy:
 
     Rythme mensuel (optionnel) : `allowance` (crédits du jour), `spent_today`
     (déjà engagés aujourd'hui, toutes exécutions confondues) et `note_spent`
-    (persiste les crédits payés). `imminent_mode=True` (golden hour, fenêtre
-    T-2h) : toute ligue peuplée est traitée au rang « fenêtre favorable » —
-    à deux heures du coup d'envoi, la ligne bouge partout.
-    Sans politique (None), core/odds_api.fetch_odds paie comme avant.
+    (persiste les crédits payés). (Le rang « golden T-2h », qui traitait toute
+    ligue peuplée au rang fenêtre en mode golden, est parti avec ce mode le
+    2026-09-03.) Sans politique (None), core/odds_api.fetch_odds paie comme
+    avant.
     """
 
     def __init__(self, last_paid_age_min, note_paid, exempt_sports=frozenset(),
                  min_interval_min: int = BACKGROUND_MIN_INTERVAL_MIN,
                  reserve_credits: int = RESERVE_CREDITS, log=None,
                  allowance: float | None = None, spent_today: float = 0.0,
-                 note_spent=None, imminent_mode: bool = False):
+                 note_spent=None):
         self._age = last_paid_age_min
         self._note = note_paid
         self._note_spent = note_spent
@@ -194,7 +194,6 @@ class SpendPolicy:
         self.allowance = allowance if PACING_ENABLED else None
         self.spent_today = float(spent_today)
         self.engaged = 0.0            # crédits accordés par allow() dans CE scan
-        self.imminent_mode = imminent_mode
         self.skipped: list[tuple[str, str]] = []   # (sport_key, raison) — pour le rapport
 
     # ── Rythme ──
@@ -228,8 +227,8 @@ class SpendPolicy:
                 return True, "closing line imminente"
             self._skip(sport_key, "closing line imminente mais " + why)
             return False, why
-        if self.imminent_mode or is_favorable(sport_key, now):
-            rank = "golden T-2h" if self.imminent_mode else "fenêtre favorable"
+        if is_favorable(sport_key, now):
+            rank = "fenêtre favorable"
             ok, why = self._within(cost, 1.0, now, intraday=True)
             if ok:
                 self.engaged += cost

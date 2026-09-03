@@ -15,10 +15,11 @@ Ce que ces tests verrouillent, et pourquoi chacun :
    chaque scan, pour toujours.
 3. Le message « 0 matchs » n'accuse plus une clé — il enverrait chercher un
    secret dont le moteur n'a plus besoin.
-4. GOLDEN_HOUR ne sort plus prématurément. Sa sortie anticipée supposait un
-   Tier 1 vivant ; sans OddsAPI `matches` est TOUJOURS vide à cet endroit, et
-   la garde faisait de golden_hour.yml un no-op horaire permanent (déjà
-   constaté en prod avant la décision, run 32965494280).
+4. Un Tier 1 vide descend au Tier 2. La sortie anticipée « 0 event OddsAPI »
+   supposait un Tier 1 vivant ; sans lui `matches` est TOUJOURS vide à cet
+   endroit, et la garde faisait de l'ancien tick horaire un no-op permanent
+   (constaté en prod, run 32965494280). Le mode golden a disparu le
+   2026-09-03, l'invariant reste pour le standard.
 5. `ODDS_API=1` rallume tout — l'obsolescence est une décision, pas une
    amputation.
 """
@@ -42,9 +43,6 @@ def scan_env(monkeypatch):
 
     monkeypatch.setattr(eng, "ODDS_API_ENABLED", False)
     monkeypatch.setattr(eng, "REPRICE", False)
-    monkeypatch.setattr(eng, "GUERRILLA", False)
-    monkeypatch.setattr(eng, "GOLDEN_HOUR", False)
-    monkeypatch.setattr(eng, "DEEP_SCAN", False)
     monkeypatch.delenv("BETFAIR_APP_KEY", raising=False)
 
     # Contrat D3 : rend le budget armé (journalisé par run()).
@@ -117,20 +115,10 @@ class TestOddsApiObsolete:
         assert "clé(s) OddsAPI" not in msg
         assert "obsolète" in msg
 
-    def test_golden_hour_ne_sort_plus_prematurement(self, scan_env, monkeypatch):
-        """Sans OddsAPI, `matches` est toujours vide à la sortie anticipée.
-        La laisser active rendait golden_hour.yml muet une fois par heure."""
-        monkeypatch.setattr(eng, "GOLDEN_HOUR", True)
-        vus = []
-        monkeypatch.setattr(eng, "fetch_matches", lambda: vus.append("tier2") or [])
-        eng.run()
-        assert vus == ["tier2"], "le Tier 2 n'a pas été atteint en GOLDEN_HOUR"
-
-    def test_golden_hour_tier_1_allume_mais_vide_descend_au_tier_2(self, scan_env, monkeypatch):
-        """Rallumage du 2026-09-01 : un Tier 1 vivant qui rend 0 event dans
-        T-2h ne doit plus court-circuiter les sources gratuites — elles
-        portent tout le volume, et le tick golden tire 24 fois par jour."""
-        monkeypatch.setattr(eng, "GOLDEN_HOUR", True)
+    def test_tier_1_allume_mais_vide_descend_au_tier_2(self, scan_env, monkeypatch):
+        """Rallumage du 2026-09-01 : un Tier 1 vivant qui rend 0 event ne
+        doit pas court-circuiter les sources gratuites — elles portent tout
+        le volume."""
         monkeypatch.setattr(eng, "ODDS_API_ENABLED", True)
         monkeypatch.setattr(eng, "fetch_odds", lambda **_k: [])
         monkeypatch.setattr(eng, "_build_spend_policy", lambda _sb, _now: None)
@@ -139,7 +127,7 @@ class TestOddsApiObsolete:
         vus = []
         monkeypatch.setattr(eng, "fetch_matches", lambda: vus.append("tier2") or [])
         eng.run()
-        assert vus == ["tier2"], "Tier 1 vide en GOLDEN_HOUR : le Tier 2 doit être atteint"
+        assert vus == ["tier2"], "Tier 1 vide : le Tier 2 doit être atteint"
 
     def test_odds_api_1_rallume_le_tier_1(self, scan_env, monkeypatch):
         """L'obsolescence est un interrupteur, pas une amputation."""

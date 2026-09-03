@@ -58,12 +58,11 @@ import core.risk_manager as _risk_manager
 
 load_dotenv()
 
-# ── Deep-scan mode (DEEP_SCAN=1) ─────────────────────────────────────
-# Triggered by .github/workflows/scan.yml (mode `deep`) or manually.
-# Lifts per-sport quotas + scans 48h ahead with up to 100 events.
-DEEP_SCAN    = os.environ.get("DEEP_SCAN",    "0") == "1"
-GOLDEN_HOUR  = os.environ.get("GOLDEN_HOUR", "0") == "1"
-GUERRILLA    = os.environ.get("GUERRILLA",   "0") == "1"  # skip OddsAPI → Tier 2 direct
+# ── DEUX modes de scan (2026-09-03) : `standard` (scan complet, ODDS_API=1
+# posé par scripts/ci_scan_mode.py) et `reprice` (REPRICE=1, tick horaire
+# gratuit). Les drapeaux DEEP_SCAN / GOLDEN_HOUR / GUERRILLA ont été
+# SUPPRIMÉS avec leurs modes — voir INCIDENTS.md « Cinq modes de scan, deux
+# qui servent ». Un ancien workflow qui les poserait est simplement ignoré.
 
 # ── OddsAPI DÉCLARÉ OBSOLÈTE — décision opérateur du 2026-08-26 ──────
 # Predator ne s'appuie plus sur une source de cotes PAYANTE. Le Tier 1 est
@@ -86,9 +85,9 @@ GUERRILLA    = os.environ.get("GUERRILLA",   "0") == "1"  # skip OddsAPI → Tie
 # Réactivation explicite, sans autre changement : ODDS_API=1
 #
 # RALLUMÉ le 2026-09-01 (décision opérateur, nouvelle clé dans le pool) : le
-# flag est posé par scripts/ci_scan_mode.py::TIER1_ENV pour standard, golden
-# et deep ; la dépense est bornée par le rythme mensuel (core/scan_windows,
-# _build_spend_policy), pas par le nombre de ticks. Le DÉFAUT reste 0 — verrouillé par tests/test_oddsapi_obsolete.py —
+# flag est posé par scripts/ci_scan_mode.py::TIER1_ENV pour `standard`
+# seulement ; la dépense est bornée par le rythme mensuel (core/scan_windows,
+# _build_spend_policy), sur 8 ticks/jour. Le DÉFAUT reste 0 — verrouillé par tests/test_oddsapi_obsolete.py —
 # pour qu'un `python run_engine.py` local ou un futur workflow ne dépense
 # jamais un crédit sans l'avoir demandé.
 ODDS_API_ENABLED = os.environ.get("ODDS_API", "0") == "1"
@@ -172,31 +171,21 @@ def _timeout_handler(signum, frame):
 
 
 def _mode_courant() -> str:
-    """La clé de mode, dans l'ORDRE DE PRIORITÉ de `run()`.
+    """La clé de mode : `reprice` si REPRICE=1, sinon `standard`.
 
-    REPRICE prime : si deux drapeaux sont posés ensemble par un dispatch
-    manuel, le mode le plus restrictif l'emporte — même règle qu'en tête de
-    `run()`, et c'est pour cela que cette fonction existe plutôt qu'une
-    seconde chaîne de `if` recopiée à côté. Une règle en double finit toujours
-    par diverger ; c'est la panne la plus fréquente de ce dépôt.
+    Une seule fonction pour le dire — `run()` et `_arm_global_timeout` la
+    lisent tous deux plutôt que de recopier la règle : une règle en double
+    finit toujours par diverger, c'est la panne la plus fréquente de ce dépôt.
     """
-    if REPRICE:
-        return "reprice"
-    if GUERRILLA:
-        return "guerrilla"
-    if GOLDEN_HOUR:
-        return "golden"
-    if DEEP_SCAN:
-        return "deep"
-    return "standard"
+    return "reprice" if REPRICE else "standard"
 
 
 def _arm_global_timeout(mode: str | None = None) -> int:
     """Filet SIGALRM au mieux, dimensionné sur le MODE (D3).
 
-    Une valeur unique de 540 s servait les cinq modes : neuf fois la médiane
-    d'un tick golden, et moins que la durée normale d'un deep ou d'un
-    guerrilla — 32990495899 est mort dessus en toutes lettres. Voir
+    Une valeur unique de 540 s servait autrefois tous les modes : neuf fois
+    la médiane d'un tick horaire, et moins que la durée normale d'un scan
+    complet — 32990495899 est mort dessus en toutes lettres. Voir
     `core.constants.SCAN_TIMEOUTS` pour les mesures.
 
     Se dégrade en silence (avertissement, moteur sans borne dure) plutôt que
@@ -250,23 +239,10 @@ _EDGE_CEILINGS: dict[str, float] = {}
 # ne l'était, donc ce dict reste vide et rien ne change.
 _ODDS_CEILINGS: dict[str, float] = {}
 
-# Fast mode (default): 20 events, tight quota — speed over coverage
-# Deep mode (DEEP_SCAN=1): 100 events, wide quota — plus de matchs dans la
-# MÊME fenêtre de 24h que le mode normal (les deux fenêtres ont été alignées
-# le 2026-08-04, voir le bloc hours_ahead plus bas) : deep ne va plus chercher
-# plus LOIN, il creuse plus PROFOND sur la même journée.
-MAX_MATCHES = 100 if DEEP_SCAN else 50
+# 50 événements par scan complet. (Le mode `deep` à 100 événements a été
+# supprimé le 2026-09-03 : même fenêtre de 24 h, jamais de mesure de rendement.)
+MAX_MATCHES = 50
 
-# ── TTL des caches sports-hors-OddsAPI (heures) ──────────────────────
-# Défauts calés sur le partage de TPD Groq avec le tick golden/le settlement.
-# Ils sont surdimensionnés pour le table tennis : le slate ITTF tourne toutes
-# les 30-60 min, donc à 4h de TTL un scan sur deux ne voyait qu'une carte déjà
-# jouée. Le mode `guerrilla`, qui a son propre budget, les raccourcit par
-# l'env (scripts/ci_scan_mode.py::MODE_ENV).
-# TTL d'un résultat VIDE. eSports et sports alternatifs n'ont pas de feed
-# Melbet dans ce flux : si la recherche rend zéro (clé Groq morte, par ex.),
-# le vide reste en cache et le sport est muet jusqu'à expiration.
-_TTL_EMPTY   = float(os.environ.get("CACHE_EMPTY_TTL_H",   "3"))
 # TTL du slate soft photographié par les scans complets pour le mode REPRICE.
 # Au-delà, le prix soft est trop vieux pour prétendre être jouable : on
 # préfère un tick REPRICE muet à un edge calculé contre une cote fantôme.
@@ -290,50 +266,11 @@ SPORT_EMOJI  = {
     "college_football": "🏈",
 }
 
-# Golden Hour — T-120min — 7 sports à lag maximal et volume élevé (juin 2026)
-# Budget : 72 exec/j (*/20) × 7 sports = 504 req/j max | ~15 120 req/mois.
-# Sélection : Pinnacle+1XBet confirmés + mouvement de ligne pré-match élevé.
-#
-# WC 2026 (début 11/06) : 3-4 matchs/jour → fenêtres 2h très actives
-# KBO/NPB : 09:00–13:00 UTC → lag Asie sur books EU = prime pour Predator
-# Copa Lib : 21:00–23:00 UTC → SA evening, lag 1XBet bien documenté
-# NBA/NHL Finals : 22:00–02:00 UTC → tip-off windows, mouvement max
-GOLDEN_SPORT_KEYS = {
-    # (Retiré 2026-08-06 — Coupe du Monde terminée, instruction opérateur.)
-    "soccer_conmebol_copa_libertadores":    "soccer",      # Copa Lib — lag SA maximal
-    "soccer_brazil_campeonato":             "soccer",      # Brasileirão — quotidien
-    "soccer_usa_mls":                       "soccer",      # MLS — actif juin–août
-    "soccer_argentina_primera_division":    "soccer",      # Liga Argentina — marché SA sharp
-    "soccer_mexico_ligamx":                 "soccer",      # Liga MX — actif été
-    "soccer_epl":                           "soccer",      # EPL — reprise 21/08, Pinnacle+1xBet ✓
-    "soccer_spain_la_liga":                 "soccer",      # La Liga — reprise 16/08, Pinnacle+1xBet ✓
-    "soccer_germany_bundesliga":            "soccer",      # Bundesliga — reprise 28/08, Pinnacle+1xBet ✓
-    "soccer_italy_serie_a":                 "soccer",      # Serie A — reprise 22/08, Pinnacle+1xBet ✓
-    "soccer_france_ligue_one":              "soccer",      # Ligue 1 — reprise 22/08, Pinnacle+1xBet ✓
-    "basketball_nba":                       "basketball",  # NBA Finals
-    "basketball_wnba":                      "basketball",  # WNBA — remplit le créneau NBA off-season
-    "icehockey_nhl":                        "hockey",      # NHL Cup Finals
-    "baseball_mlb":                         "baseball",    # MLB — 10+ matchs/jour
-    "baseball_kbo":                         "baseball",    # KBO Corée — lag Asie ✓
-    "baseball_npb":                         "baseball",    # NPB Japon — lag Asie ✓
-    "aussierules_afl":                      "aussierules", # AFL — fenêtre AU morning
-    "rugbyleague_nrl":                      "rugbyleague", # NRL — fenêtre AU evening
-    "mma_mixed_martial_arts":               "mma",         # cartes ven-dim ; 0 crédit hors carte (pré-vol)
-    "boxing_boxing":                        "boxing",      # idem
-    # Phase 2 — 0 crédit tant que la saison/phase de ligue n'a pas commencé
-    "americanfootball_nfl":                 "americanfootball",
-    "soccer_uefa_champs_league":            "soccer",
-    "soccer_uefa_europa_league":            "soccer",
-    "basketball_euroleague":                "euroleague_basketball",
-    # Phase 3 — NCAAF (tennis : clés dynamiques injectées par fetch_odds)
-    "americanfootball_ncaaf":               "college_football",
-}
-
 # Portfolio Balancer — quotas max par sport par scan (6 sport-types actifs uniquement,
 # pas à confondre avec les 19 SPORT_KEYS d'odds_api.py — voir constants.py KELLY_FRACTION)
 # Baseball élevé : MLB+KBO+NPB = 3 ligues simultanées (~19 events/fetch)
 # Soccer élevé  : FIFA WC 2026 + Copa Lib + Brasileirão + MLS
-_QUOTA_FAST = {
+SPORT_QUOTA = {
     "soccer":      20,   # WC(5)+Copa Lib(2)+Brasileirão(2)+MLS(2)
     "baseball":    10,   # MLB(5) + KBO(3) + NPB(2)
     "basketball":   8,   # NBA Finals
@@ -347,21 +284,6 @@ _QUOTA_FAST = {
     "college_football":      6,   # NCAAF — 50+ matchs/week-end, concentrés sam.
     "tennis":                8,   # Slams : 64–128 matchs par tour
 }
-_QUOTA_DEEP = {
-    "soccer":      30,
-    "baseball":    16,
-    "basketball":  12,
-    "hockey":       8,
-    "rugbyleague":  8,
-    "aussierules":  8,
-    "mma":          6,
-    "boxing":       3,
-    "americanfootball":      10,
-    "euroleague_basketball":  8,
-    "college_football":      10,
-    "tennis":                12,
-}
-SPORT_QUOTA = _QUOTA_DEEP if DEEP_SCAN else _QUOTA_FAST
 # Telegram report order — sports les plus générateurs de signaux en tête
 _SPORT_ORDER = ["soccer", "basketball", "hockey", "baseball", "americanfootball",
                 "college_football", "tennis",
@@ -861,14 +783,12 @@ def _build_spend_policy(sb, now):
         log.info("RYTHME | pool inconnu — pas de rythme ce run, politique classique")
     else:
         log.info("RYTHME | pool %d crédits, %.1f j restants du cycle → allocation %.0f/j ; "
-                 "engagés aujourd'hui %.0f%s", pool_total, days_left, allowance, spent,
-                 " | golden T-2h au rang fenêtre" if GOLDEN_HOUR else "")
+                 "engagés aujourd'hui %.0f", pool_total, days_left, allowance, spent)
 
     return _SpendPolicy(_age_min, _note,
                         exempt_sports=_sports_with_imminent_signals(sb, now),
                         log=log, allowance=allowance, spent_today=spent,
-                        note_spent=lambda cost: _oddsapi_note_spent(sb, now, cost),
-                        imminent_mode=GOLDEN_HOUR)
+                        note_spent=lambda cost: _oddsapi_note_spent(sb, now, cost))
 
 
 _SYSTEM_ALERT_TTL_H = float(os.environ.get("SYSTEM_ALERT_TTL_H", "6"))
@@ -1942,33 +1862,33 @@ def _minutes_avant_coup_denvoi(s: dict) -> float | None:
         return None
 
 
-def _shadow_reason(s: dict, golden_hour: bool) -> str | None:
+def _shadow_reason(s: dict) -> str | None:
     """Pourquoi ce signal est fantôme — None s'il est à recommander.
 
-    Trois raisons, dans l'ordre :
+    Deux raisons, dans l'ordre, et TOUTES DEUX par SIGNAL (aucune ne dépend
+    du mode du run) :
       · `shadow_sport`  — sport listé dans SHADOW_SPORTS (décision opérateur) ;
-      · `golden_hour`   — run en mode golden (SHADOW_GOLDEN_HOUR) : tout le run ;
-      · `t_minus_2h`    — le signal lui-même est à moins de
-        core.learning_layer._PLAYABLE_MIN_MINUTES du coup d'envoi, QUEL QUE
-        SOIT le mode du run. C'est la règle qui manquait (2026-09-03) : la
-        mesure du 2026-08-04 (39 % de réussite sur la tranche T-2h) portait sur
-        la TRANCHE HORAIRE, mais le fantôme n'était appliqué qu'au MODE golden —
-        un scan standard tiré à 13:54 pour un match de 15:00 émettait un signal
-        T-66 min recommandé, envoyé, affiché. Borne IMPORTÉE, pas recopiée
-        (règle n°6) : le moteur, la couche d'apprentissage et /performance
-        découpent au même endroit.
+      · `t_minus_2h`    — le signal est à moins de
+        core.learning_layer._PLAYABLE_MIN_MINUTES du coup d'envoi. La mesure
+        du 2026-08-04 (39 % de réussite sur la tranche T-2h) portait sur la
+        TRANCHE HORAIRE ; jusqu'au 2026-09-03 le fantôme n'était appliqué
+        qu'au MODE golden — un scan standard tiré à 13:54 pour un match de
+        15:00 émettait un signal T-66 min recommandé, envoyé, affiché. Borne
+        IMPORTÉE, pas recopiée (règle n°6) : le moteur, la couche
+        d'apprentissage et /performance découpent au même endroit.
+    La raison `golden_hour` (tout le run en mode golden) a disparu avec le
+    mode le 2026-09-03 ; les lignes qui la portent en base sont de l'histoire,
+    jamais réécrites (règle n°9).
     """
     if s.get("sport") in SHADOW_SPORTS:
         return "shadow_sport"
-    if SHADOW_GOLDEN_HOUR and golden_hour:
-        return "golden_hour"
     minutes = _minutes_avant_coup_denvoi(s)
     if SHADOW_GOLDEN_HOUR and minutes is not None and minutes < _PLAYABLE_MIN_MINUTES:
         return "t_minus_2h"
     return None
 
 
-def _shadow_partition(signals: list, golden_hour: bool) -> tuple[list, list]:
+def _shadow_partition(signals: list) -> tuple[list, list]:
     """Sépare (à_recommander, fantômes) et MARQUE chaque signal
     (`is_shadow`, `shadow_reason`) — voir SHADOW_SPORTS en tête de fichier.
 
@@ -1978,12 +1898,10 @@ def _shadow_partition(signals: list, golden_hour: bool) -> tuple[list, list]:
     distinguait un fantôme : /api/signals et la page d'accueil montraient
     comme paris à poser des signaux que Telegram, lui, taisait. Les fantômes
     ne sont PAS jetés : ils sont persistés, réglés et appris comme les autres.
-    `golden_hour` est passé en paramètre plutôt que lu depuis le flag global
-    pour que la règle soit testable sans manipuler l'environnement.
     """
     kept, shadowed = [], []
     for s in signals:
-        raison = _shadow_reason(s, golden_hour)
+        raison = _shadow_reason(s)
         s["is_shadow"] = raison is not None
         s["shadow_reason"] = raison
         (shadowed if raison else kept).append(s)
@@ -2336,21 +2254,7 @@ def run():
     now     = datetime.now(timezone.utc)
     session = _market_session(now.hour)
     log.info("━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━")
-    # REPRICE en TÊTE : si deux flags sont posés ensemble par erreur (dispatch
-    # manuel), le mode le plus restrictif — zéro source payante — l'emporte.
-    if REPRICE:
-        mode = "REPRICE 💹 Matchbook vs slate soft"
-        if GOLDEN_HOUR or GUERRILLA:
-            log.warning("REPRICE posé avec GOLDEN_HOUR/GUERRILLA — REPRICE prime, "
-                        "les autres flags sont ignorés")
-    elif GUERRILLA:
-        mode = "GUERRILLA 🥷 Sans OddsAPI"
-    elif GOLDEN_HOUR:
-        mode = "GOLDEN HOUR ⚡ T-120min"
-    elif DEEP_SCAN:
-        mode = "DEEP 48h"
-    else:
-        mode = "FAST 72h"
+    mode = "REPRICE 💹 Matchbook vs slate soft" if REPRICE else "STANDARD 24h"
     log.info("PAIM v8.8 — %s | Multi-Sport + Portfolio Balancer | Session: %s | "
              "budget %ds", mode, session, budget)
     _refresh_ai_catalogues()
@@ -2431,25 +2335,16 @@ def run():
     tier1_ok       = False  # OddsAPI a-t-il rendu quelque chose ? Voir le Tier 2.
 
     # ── Tier 1: The Odds API ──────────────────────────────────────────
+    # Horizon unique de 24 h pour les deux modes (HOURS_AHEAD reste
+    # surchargeable par le dispatch). Les horizons 2 h (golden) et 48 h
+    # (guerrilla) sont partis avec leurs modes le 2026-09-03.
+    hours_ahead = int(os.environ.get("HOURS_AHEAD", 24))
     if REPRICE:
-        hours_ahead = int(os.environ.get("HOURS_AHEAD", 24))
         log.info("💹 REPRICE — slate soft en cache + Matchbook frais, zéro source payante")
-    elif GUERRILLA:
-        hours_ahead = int(os.environ.get("HOURS_AHEAD", 48))
-        log.info("🥷 GUERRILLA — OddsAPI ignoré, Tier 2 direct (1XBet + Pinnacle/recherche web)")
     elif not ODDS_API_ENABLED:
-        # OddsAPI obsolète : le Tier 1 ne s'exécute plus. GOLDEN_HOUR garde
-        # sa fenêtre T-120min, qui a du sens pour les sources gratuites aussi
-        # (c'est l'approche du coup d'envoi qu'elle vise, pas un fournisseur).
-        hours_ahead = 2 if GOLDEN_HOUR else int(os.environ.get("HOURS_AHEAD", 24))
-        log.info("🚫 OddsAPI OBSOLÈTE — Tier 1 éteint, sources gratuites "
-                 "uniquement (%dh window)%s",
-                 hours_ahead, " | GOLDEN HOUR" if GOLDEN_HOUR else "")
-    elif GOLDEN_HOUR:
-        hours_ahead  = 2  # T-120min window only
-        scan_keys    = GOLDEN_SPORT_KEYS
-        log.info("⚡ GOLDEN HOUR — OddsAPI (%dh window) | %d sports ciblés: %s",
-                 hours_ahead, len(scan_keys), " ".join(scan_keys.keys()))
+        # Tier 1 éteint (ODDS_API absent) : sources gratuites uniquement.
+        log.info("🚫 OddsAPI éteint — Tier 1 sauté, sources gratuites "
+                 "uniquement (%dh window)", hours_ahead)
     else:
         # Fenêtre ramenée 72h/48h → 24h le 2026-08-04. Deux mesures, pas une
         # intuition :
@@ -2474,8 +2369,6 @@ def run():
         # ici, on cesse d'acheter une tranche mesurée déficitaire. Élargir reste
         # possible sans toucher au code via HOURS_AHEAD — le filtre J+72h de
         # _emit() plus haut reste en place précisément pour ce cas.
-        hours_ahead = int(os.environ.get("HOURS_AHEAD", 24))
-        scan_keys   = None  # Use default SPORT_KEYS (19 ligues)
         log.info("⚡ Tier 1 — The Odds API (%dh window)...", hours_ahead)
 
     # ODDS_API_ENABLED en tête : obsolète = aucun appel, et surtout AUCUNE
@@ -2483,10 +2376,9 @@ def run():
     # automatique — c'est voulu : un pool mort n'est plus une panne, c'est
     # l'état nominal. Sans ça, Telegram recevrait « rotation requise » à
     # chaque scan, pour toujours (même leçon que le mode REPRICE muet).
-    if ODDS_API_ENABLED and not GUERRILLA and not REPRICE:
+    if ODDS_API_ENABLED and not REPRICE:
         spend_policy = _build_spend_policy(sb, now)
-        oddsapi_events = fetch_odds(hours_ahead=hours_ahead, sport_keys=scan_keys,
-                                    spend_policy=spend_policy)
+        oddsapi_events = fetch_odds(hours_ahead=hours_ahead, spend_policy=spend_policy)
         if spend_policy is not None and spend_policy.skipped:
             log.info("DÉPENSE | %d ligue(s) peuplée(s) non payée(s) ce scan : %s",
                      len(spend_policy.skipped),
@@ -2594,17 +2486,14 @@ def run():
     else:
         log.info("💹 Exchange: 0 marché sharp (Betfair absent/refusé, Matchbook vide ou géobloqué)")
 
-    # ── Golden Hour : PLUS de sortie anticipée sur « 0 event OddsAPI » ──
-    # Jusqu'au 2026-09-01 un tick golden dont le Tier 1 rendait 0 event dans
-    # T-2h sortait ici (« lignes stables »). Ce raisonnement datait d'un Tier 2
-    # fait de recherche web (lente, rate-limitée). Depuis, le Tier 2 c'est
-    # api-sports, odds-api.io, titan007 et Matchbook — les sources qui portent
-    # TOUT le volume depuis l'obsolescence d'OddsAPI (2026-08-26). Rallumer
-    # le Tier 1 avec cette garde aurait rendu ces sources muettes 24 fois par
-    # jour dès que le pool est vide, hors fenêtre, ou simplement sans match
-    # dans 2 h — exactement le no-op horaire déjà constaté en prod (run
-    # 32965494280). Un Tier 1 vide descend donc au Tier 2 dans TOUS les
-    # modes ; gardien : tests/test_oddsapi_obsolete.py.
+    # ── Un Tier 1 vide descend au Tier 2, toujours ──────────────────────
+    # Jusqu'au 2026-09-01 un tick dont le Tier 1 rendait 0 event sortait ici
+    # (« lignes stables »). Ce raisonnement datait d'un Tier 2 fait de
+    # recherche web (lente, rate-limitée). Depuis, le Tier 2 c'est api-sports,
+    # odds-api.io, titan007 et Matchbook — les sources qui portent TOUT le
+    # volume. Une sortie anticipée les rendrait muettes dès que le pool est
+    # vide ou hors fenêtre (no-op constaté en prod, run 32965494280).
+    # Gardien : tests/test_oddsapi_obsolete.py.
 
     # ── REPRICE : seuls les matchs repricés par l'exchange continuent ────
     # Un match que Matchbook ne couvre pas (et sans Pinnacle réel conservé
@@ -2757,12 +2646,11 @@ def run():
         return
 
     # ── Photographie du slate soft pour le mode REPRICE ──────────────────
-    # Chaque scan COMPLET (engine/deep/guerrilla) écrit ici. Ni golden hour
-    # (fenêtre 2h, slate partiel — il ÉCRASERAIT le slate 24h du dernier
-    # scan complet), ni reprice (ré-écrire rafraîchirait updated_at à chaque
-    # tick horaire : le TTL ne serait jamais atteint et des cotes soft
-    # mortes seraient repricées indéfiniment).
-    if sb and not GOLDEN_HOUR and not REPRICE:
+    # Chaque scan COMPLET (standard) écrit ici ; jamais reprice (ré-écrire
+    # rafraîchirait updated_at à chaque tick horaire : le TTL ne serait
+    # jamais atteint et des cotes soft mortes seraient repricées
+    # indéfiniment).
+    if sb and not REPRICE:
         try:
             slate = _trim_soft_slate(matches)
             _set_cached(sb, "cache_soft_slate", slate)
@@ -2833,7 +2721,7 @@ def run():
     # dashboard filtre. Tout est persisté, réglé et appris — seule la
     # recommandation sortante (Telegram, dashboard) s'arrête. Pas de message
     # Telegram : un fantôme est un réglage permanent, pas un incident.
-    recommandes, shadowed = _shadow_partition(signals, GOLDEN_HOUR)
+    recommandes, shadowed = _shadow_partition(signals)
     if shadowed:
         by_reason: dict[str, int] = {}
         for s in shadowed:
@@ -2896,11 +2784,11 @@ def run():
         # (La partition fantôme a eu lieu AVANT la persistance, section B :
         # `emit_signals` ne contient déjà que des recommandés.)
         if shadowed and not emit_signals:
-            # Run intégralement fantôme (cas normal de golden_hour, 24×/jour).
-            # Surtout NE PAS appeler _telegram_systems ici : sur une liste vide
-            # il annonce « Aucun pari de valeur », ce qui serait un mensonge —
-            # il y en avait, on a décidé de ne pas les recommander — et ce
-            # serait 24 notifications/jour de bruit.
+            # Run intégralement fantôme (tous les signaux à moins de 2 h du
+            # coup d'envoi, ou d'un sport fantôme). Surtout NE PAS appeler
+            # _telegram_systems ici : sur une liste vide il annonce « Aucun
+            # pari de valeur », ce qui serait un mensonge — il y en avait, on
+            # a décidé de ne pas les recommander.
             log.info("FANTÔME | run intégralement fantôme — aucun message Telegram")
         else:
             systems = _suggest_systems_by_window(emit_signals, log, sb)

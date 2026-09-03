@@ -76,7 +76,7 @@ class TestInvariantDesQuatreFichiers:
         for s in self.NOUVEAUX:
             assert s in KELLY_FRACTION, s
             assert s in SPORT_DEFAULTS, s
-            assert s in run_engine._QUOTA_FAST and s in run_engine._QUOTA_DEEP, s
+            assert s in run_engine.SPORT_QUOTA, s
             assert s in run_engine.SPORT_EMOJI, s
             assert s in run_engine._SPORT_ORDER, s
             for tbl in (_SPORT_EMOJI, _SPORT_LABEL, _SPORT_LABEL_SHORT, _SPORT_ORDER):

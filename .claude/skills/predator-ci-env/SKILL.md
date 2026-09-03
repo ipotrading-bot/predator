@@ -34,8 +34,9 @@ récit est dans INCIDENTS.md, « Les blocs de secrets ».
 
 ## Le mode d'un tick de scan
 
-`scripts/ci_scan_mode.py::CRON_MODES` déduit le mode (standard/golden/deep/
-guerrilla) du cron qui a tiré, et `TIER1_ENV` y pose `ODDS_API=1` par mode.
+`scripts/ci_scan_mode.py::CRON_MODES` déduit le mode (`standard` ou
+`reprice` — deux modes depuis le 2026-09-03) du cron qui a tiré ; `MODE_ENV`
+pose `ODDS_API=1` pour standard et `REPRICE=1` pour reprice.
 Un cron ajouté à `scan.yml` sans sa ligne fait échouer le run ET le test
 (`test_la_table_cron_mode_est_exactement_les_crons_de_scan_yml`).
 

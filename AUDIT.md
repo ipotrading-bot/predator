@@ -79,9 +79,10 @@ C'est le tableau à consulter avant de toucher à quoi que ce soit.
 | Le pool `scan` porte les relais des sources filtrées par IP | `…::test_le_pool_scan_porte_les_relais_des_sources_filtrees_par_ip` |
 | Le préflight refuse une `SUPABASE_SERVICE_KEY` qui n'est pas `service_role` | `…::test_preflight_refuse_une_cle_qui_nest_pas_service_role` |
 | `ODDS_API_KEY` n'est PLUS requise (la garde échouait fermé) | `…::test_preflight_odds_api_key_nest_plus_requise` |
-| Le Tier 1 est rallumé par `MODE_ENV` (standard/golden/deep), jamais par défaut ni en guerrilla/reprice | `…::test_le_tier_1_est_rallume_par_le_workflow_pas_par_le_module` |
+| Le Tier 1 est rallumé par `MODE_ENV` (standard seulement), jamais par défaut ni en reprice | `…::test_le_tier_1_est_rallume_par_le_workflow_pas_par_le_module` |
 | Rythme mensuel OddsAPI : allocation = pool ÷ jours restants, plafond intra-journée, parts par priorité, ligues les plus peuplées d'abord | `tests/test_scan_windows.py::TestRythme`, `…::test_fetch_odds_sert_les_ligues_les_plus_peuplees_d_abord`, `…::test_build_spend_policy_porte_le_rythme` |
-| GOLDEN_HOUR avec Tier 1 allumé mais vide descend quand même au Tier 2 | `tests/test_oddsapi_obsolete.py::…::test_golden_hour_tier_1_allume_mais_vide_descend_au_tier_2` |
+| Un Tier 1 allumé mais vide descend quand même au Tier 2 | `tests/test_oddsapi_obsolete.py::…::test_tier_1_allume_mais_vide_descend_au_tier_2` |
+| Il n'y a que DEUX modes de scan (`standard`, `reprice`), exactement les crons de `scan.yml`, les options du dispatch et les budgets `SCAN_TIMEOUTS` ; `REPRICE=1` vient de `MODE_ENV`, jamais du YAML ; le chien de garde rattrape `scan.yml` en `reprice` ; la règle fantôme T-2h vaut par SIGNAL, aucune par mode | `tests/test_ci_env.py::test_il_ny_a_que_deux_modes`, `…::test_le_dispatch_de_scan_yml_noffre_que_les_modes_connus`, `…::test_reprice_vient_de_mode_env_pas_du_yaml`, `tests/test_timeout_par_mode.py`, `tests/test_watchdog_worker.py`, `tests/test_signaux_fantomes.py::TestRaisonDuFantome::test_aucune_raison_par_mode` |
 | Chaque cron de `scan.yml` a sa ligne dans `CRON_MODES` | `…::test_la_table_cron_mode_est_exactement_les_crons_de_scan_yml` |
 | `closing_line.yml` ne tire jamais plus vite que `CLOSING_LINE_REFRESH_MIN` | `…::test_closing_line_cadence_alignee_sur_refresh_min` |
 | `ops.py::_AI_SECRETS` couvre tout le registre | `…::test_secrets_push_couvre_tout_le_registre` |
@@ -103,7 +104,7 @@ C'est le tableau à consulter avant de toucher à quoi que ce soit.
 | La fenêtre reste glissante AU-DESSUS de l'époque (pas figée) | `…::test_la_fenetre_reste_glissante_au_dessus_de_lepoque` |
 | L'archivage ne touche jamais un signal `active` | `…::test_le_script_darchivage_de_juillet_existe_et_narchive_pas_a_laveugle` |
 | Tout sport-type servi a Kelly/seuil/quotas/emoji/labels — y compris `tennis`, invisible au test statique | `tests/test_new_sports_phase3.py::TestInvariantDesQuatreFichiers` |
-| Les clés tennis sont dynamiques (jamais statiques dans `SPORT_KEYS`/`GOLDEN_SPORT_KEYS`) et injectées dans `fetch_odds` | `tests/test_tennis_discovery.py::TestInjectionDansFetchOdds` |
+| Les clés tennis sont dynamiques (jamais statiques dans `SPORT_KEYS`) et injectées dans `fetch_odds` | `tests/test_tennis_discovery.py::TestInjectionDansFetchOdds` |
 | Un seul `GET /sports` par scan (la découverte réutilise la sonde) | `…::test_un_seul_get_sports_par_scan` + `tests/test_odds_api_keypool.py` |
 | NCAAF a son sport-type dédié, Kelly < NFL, contexte de settlement « NCAA » | `tests/test_new_sports_phase3.py::TestNCAAF` |
 | `.python-version` reste sur la version de **Vercel** (3.12), jamais « alignée » sur les workflows | `tests/test_workflow_secrets.py::test_python_version_appartient_a_vercel` |

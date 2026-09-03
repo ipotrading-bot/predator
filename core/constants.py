@@ -146,17 +146,18 @@ MAX_DB_RETRIES       = 3        # Attempts — max retries before giving up
 # attendre tout ce qui suit. C'est ce qui interdit de simplement tout mettre
 # à la valeur du mode le plus lent.
 #
-# ⚠️ Ces bornes sont des GARDE-FOUS, pas des durées attendues : pour deep et
-# guerrilla on ne connaît pas la durée naturelle, seulement qu'elle dépasse
-# 570 s puisque c'est là qu'on les a coupés. La marge est donc large, bornée
-# par le `timeout-minutes` du job (30 min) auquel il faut laisser de quoi
-# faire la passe closing line et le REPRICE.
+# ⚠️ Ces bornes sont des GARDE-FOUS, pas des durées attendues. La marge est
+# large, bornée par le `timeout-minutes` du job (30 min) auquel il faut
+# laisser de quoi faire la passe closing line.
+#
+# golden, deep et guerrilla ont été SUPPRIMÉS le 2026-09-03 (deux modes,
+# décision opérateur — INCIDENTS.md « Cinq modes de scan, deux qui servent ») ;
+# leurs lignes du tableau restent comme mesure historique. La table doit
+# rester EXACTEMENT l'ensemble de scripts/ci_scan_mode.MODES
+# (tests/test_timeout_par_mode.py).
 SCAN_TIMEOUTS = {
-    "reprice":    300,   # aucune source payante, aucune recherche web
-    "golden":     600,   # tick horaire, doit rendre le verrou vite
-    "standard":   900,
-    "deep":      1200,
-    "guerrilla": 1200,   # recherche web renforcée — le mode le plus lent
+    "reprice":    300,   # aucune source payante, 12-15 s mesurés
+    "standard":   900,   # scan complet, médiane 389 s, max 591 s
 }
 # Repli pour un mode inconnu, et valeur historique. Volontairement le budget
 # `standard` : un mode non répertorié n'a aucune raison d'être plus généreux

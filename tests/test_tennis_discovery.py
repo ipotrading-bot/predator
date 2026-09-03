@@ -130,8 +130,6 @@ class TestInjectionDansFetchOdds:
         """Sinon deux sources de vérité : la clé statique serait morte onze
         mois sur douze et contredirait la dynamique le douzième."""
         assert not [k for k in odds_api.SPORT_KEYS if k.startswith("tennis_")]
-        import run_engine
-        assert not [k for k in run_engine.GOLDEN_SPORT_KEYS if k.startswith("tennis_")]
 
 
 class TestFenetreParPrefixe:

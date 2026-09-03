@@ -79,7 +79,7 @@ mauvais endroit.
 
 Pas de build, pas de bundler : Jinja + CSS + JavaScript inline. Le dashboard
 n'écrit qu'une chose, une demande de scan dans `meta` (`/api/scan`, cooldown
-de 120 s), ramassée par `scan.yml` au tick suivant (36/jour, donc ≤ ~1 h).
+de 120 s), ramassée par `scan.yml` au tick suivant (32/jour, donc ≤ ~1 h) et transformée en scan complet.
 
 ### 🧠 Couche IA
 
@@ -500,9 +500,11 @@ réellement mesuré, et où :
 
 ### DevOps
 - **GitHub Actions** — 6 workflows (`scan`, `audit`, `closing_line`,
-  `reports`, `tools`, `ci`) ; tout le calcul y tourne. Les quatre anciens
-  workflows de scan ont fusionné dans `scan.yml` le 2026-08-26 — le mode
-  vient du cron qui a tiré ([`scripts/ci_scan_mode.py`](scripts/ci_scan_mode.py)).
+  `reports`, `tools`, `ci`) ; tout le calcul y tourne. `scan.yml` n'a que
+  DEUX modes depuis le 2026-09-03 — `standard` (8 scans complets/jour) et
+  `reprice` (tick horaire gratuit) — déduits du cron qui a tiré
+  ([`scripts/ci_scan_mode.py`](scripts/ci_scan_mode.py)). Explication pour
+  l'opérateur : [`docs/systeme_de_scan.md`](docs/systeme_de_scan.md).
 - **Vercel** — le dashboard N'EST PAS déployé par le push lui-même : le
   déploiement Git est désactivé dans `vercel.json`
   (`git.deploymentEnabled.main: false`) et c'est le job `deploy` de `ci.yml`

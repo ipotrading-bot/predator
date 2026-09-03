@@ -150,8 +150,6 @@ def cabler_reprice(monkeypatch):
     telegrams = []
 
     monkeypatch.setattr(eng, "REPRICE", True)
-    monkeypatch.setattr(eng, "GOLDEN_HOUR", False)
-    monkeypatch.setattr(eng, "GUERRILLA", False)
     monkeypatch.delenv("BETFAIR_APP_KEY", raising=False)
 
     # Le bouchon honore le nouveau contrat (D3) : la fonction rend le budget
@@ -298,10 +296,11 @@ class TestTrimSoftSlate:
         assert row["totals_1xbet"]["point"] == 2.5      # la principale survit
 
 def test_full_scan_writes_trimmed_slate(reprice_env, monkeypatch):
-    """Un scan NON-reprice photographie le slate pour le tick suivant."""
+    """Un scan STANDARD (ici sans Tier 1, pour ne rien payer) photographie
+    le slate pour le tick reprice suivant."""
     sb, _t, _mb = reprice_env
     monkeypatch.setattr(eng, "REPRICE", False)
-    monkeypatch.setattr(eng, "GUERRILLA", True)
+    monkeypatch.setattr(eng, "ODDS_API_ENABLED", False)
     match = dict(_slate_match(), junk_key="drop-me")
     monkeypatch.setattr(eng, "fetch_matches", lambda: [match])
     eng.run()

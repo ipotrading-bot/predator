@@ -1,8 +1,10 @@
 """
 tests/test_timeout_par_mode.py — PHASE D3.
 
-Une valeur unique de 540 s servait les cinq modes de scan. Mesuré sur
-l'historique des runs avant la fusion dans scan.yml :
+Une valeur unique de 540 s servait tous les modes de scan. Mesuré sur
+l'historique des runs avant la fusion dans scan.yml (golden, deep et
+guerrilla ont été supprimés le 2026-09-03 ; leurs mesures restent, elles
+justifient la borne standard) :
 
     golden      médiane  58 s, max 454 s   → 540 s = 9× la médiane
     standard    médiane 389 s, max 591 s   → frôle le plafond
@@ -47,29 +49,23 @@ def desarme():
 
 
 def _poser_mode(monkeypatch, **flags):
-    for nom in ("REPRICE", "GUERRILLA", "GOLDEN_HOUR", "DEEP_SCAN"):
-        monkeypatch.setattr(run_engine, nom, flags.get(nom, False))
+    monkeypatch.setattr(run_engine, "REPRICE", flags.get("REPRICE", False))
 
 
 class TestLaTableDesBudgets:
     def test_chaque_mode_du_pipeline_a_son_budget(self):
-        """Les cinq modes de scripts/ci_scan_mode.py::MODES, exactement.
-        Un mode ajouté sans budget retomberait sur le repli en silence."""
+        """Les modes de scripts/ci_scan_mode.py::MODES, exactement (deux
+        depuis le 2026-09-03). Un mode ajouté sans budget retomberait sur le
+        repli en silence ; un budget orphelin serait un mode fantôme."""
         from scripts.ci_scan_mode import MODES
         assert set(SCAN_TIMEOUTS) == set(MODES)
 
     def test_lordre_des_budgets_suit_lordre_des_durees_mesurees(self):
-        """reprice (12-15 s) < golden (méd. 58 s) < standard (méd. 389 s)
-        ≤ deep/guerrilla (tués à ~570 s, durée naturelle inconnue)."""
+        """reprice (12-15 s) < standard (méd. 389 s, max 591 s) — et le
+        standard garde une marge au-dessus de son maximum mesuré."""
         t = SCAN_TIMEOUTS
-        assert t["reprice"] < t["golden"] < t["standard"] <= t["deep"]
-        assert t["standard"] <= t["guerrilla"]
-
-    def test_deep_et_guerrilla_depassent_ce_qui_les_tuait(self):
-        """570 s mesurés au moment de la coupure : un budget ≤ 600 les
-        retuerait au même endroit."""
-        assert SCAN_TIMEOUTS["deep"] > 600
-        assert SCAN_TIMEOUTS["guerrilla"] > 600
+        assert t["reprice"] < t["standard"]
+        assert t["standard"] > 600
 
     def test_aucun_budget_ne_depasse_la_part_du_job(self):
         """scan.yml donne 30 min au JOB entier : setup, scan, passe closing
@@ -88,36 +84,30 @@ class TestLaTableDesBudgets:
 
 
 class TestLaResolutionDuMode:
-    def test_chaque_drapeau_seul_donne_son_mode(self, monkeypatch):
-        for flag, attendu in (("REPRICE", "reprice"), ("GUERRILLA", "guerrilla"),
-                              ("GOLDEN_HOUR", "golden"), ("DEEP_SCAN", "deep")):
-            _poser_mode(monkeypatch, **{flag: True})
-            assert run_engine._mode_courant() == attendu
+    def test_reprice_donne_reprice(self, monkeypatch):
+        _poser_mode(monkeypatch, REPRICE=True)
+        assert run_engine._mode_courant() == "reprice"
 
     def test_aucun_drapeau_donne_standard(self, monkeypatch):
         _poser_mode(monkeypatch)
         assert run_engine._mode_courant() == "standard"
 
-    def test_reprice_prime_sur_tout(self, monkeypatch):
-        """Même règle qu'en tête de run() : sur un dispatch manuel qui pose
-        deux drapeaux, le mode le plus restrictif — zéro source payante —
-        l'emporte. Si les deux chaînes de priorité divergeaient, le moteur
-        tournerait en REPRICE avec le budget d'un autre mode."""
-        _poser_mode(monkeypatch, REPRICE=True, GUERRILLA=True, DEEP_SCAN=True)
-        assert run_engine._mode_courant() == "reprice"
-
-    def test_guerrilla_prime_sur_golden_comme_dans_run(self, monkeypatch):
-        _poser_mode(monkeypatch, GUERRILLA=True, GOLDEN_HOUR=True)
-        assert run_engine._mode_courant() == "guerrilla"
+    def test_les_anciens_drapeaux_nexistent_plus(self):
+        """golden, deep et guerrilla sont partis le 2026-09-03 : un module qui
+        les relirait ferait revivre un mode sans cron ni budget."""
+        for nom in ("GOLDEN_HOUR", "GUERRILLA", "DEEP_SCAN", "GOLDEN_SPORT_KEYS", "_QUOTA_DEEP"):
+            assert not hasattr(run_engine, nom), nom
 
 
 class TestLArmement:
     def test_le_budget_arme_est_celui_du_mode(self, monkeypatch, desarme):
-        _poser_mode(monkeypatch, GOLDEN_HOUR=True)
-        assert run_engine._arm_global_timeout() == SCAN_TIMEOUTS["golden"]
+        _poser_mode(monkeypatch, REPRICE=True)
+        assert run_engine._arm_global_timeout() == SCAN_TIMEOUTS["reprice"]
+        _poser_mode(monkeypatch)
+        assert run_engine._arm_global_timeout() == SCAN_TIMEOUTS["standard"]
 
     def test_un_mode_explicite_gagne_sur_les_drapeaux(self, monkeypatch, desarme):
-        _poser_mode(monkeypatch, GUERRILLA=True)
+        _poser_mode(monkeypatch)
         assert run_engine._arm_global_timeout("reprice") == SCAN_TIMEOUTS["reprice"]
 
     def test_un_mode_inconnu_retombe_sur_le_repli(self, monkeypatch, desarme):
@@ -128,21 +118,21 @@ class TestLArmement:
         """`signal.alarm(0)` rend le reliquat de l'alarme précédente : après
         l'armement il doit être > 0, sinon la fonction rend un budget qu'elle
         n'a pas posé."""
-        _poser_mode(monkeypatch, DEEP_SCAN=True)
+        _poser_mode(monkeypatch)
         run_engine._arm_global_timeout()
         assert signal_module.alarm(0) > 0
 
     def test_le_message_de_timeout_cite_le_budget_arme(self, monkeypatch, desarme, caplog):
         """L'opérateur qui lit « exceeded 540 seconds » sur un budget de
-        1200 chercherait la mauvaise constante."""
+        900 chercherait la mauvaise constante."""
         import logging
-        _poser_mode(monkeypatch, GUERRILLA=True)
+        _poser_mode(monkeypatch)
         run_engine._arm_global_timeout()
         with caplog.at_level(logging.ERROR, logger="PREDATOR"):
             with pytest.raises(run_engine.EngineTimeout) as exc:
                 run_engine._timeout_handler(signal_module.SIGALRM, None)
-        assert str(SCAN_TIMEOUTS["guerrilla"]) in str(exc.value)
-        assert any(str(SCAN_TIMEOUTS["guerrilla"]) in r.getMessage() for r in caplog.records)
+        assert str(SCAN_TIMEOUTS["standard"]) in str(exc.value)
+        assert any(str(SCAN_TIMEOUTS["standard"]) in r.getMessage() for r in caplog.records)
 
 
 class TestLeTimeoutNestPasAvalable:

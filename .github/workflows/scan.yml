@@ -1,35 +1,37 @@
 name: Predator Scan
 
 # ──────────────────────────────────────────────────────────────────
-# UN SEUL WORKFLOW pour les quatre anciens (engine / golden_hour / deep_scan /
-# guerrilla) : tous lançaient `python run_engine.py`, seuls changeaient le cron
-# et deux ou trois variables de mode. Le mode est déduit du cron qui a tiré
-# (scripts/ci_scan_mode.py, testé) ; les secrets ne sont plus listés ici mais
-# calculés par pool (scripts/ci_env.py, testé) depuis le registre IA.
+# DEUX MODES, un seul workflow (2026-09-03, décision opérateur : « trop de
+# workflows et de process ») — docs/systeme_de_scan.md pour l'opérateur.
 #
-# Chaque tick fait, dans l'ordre :
-#   1. scan du mode (sauf mode reprice)
-#   2. passe de closing line — c'est le moment logique : les signaux viennent
-#      d'être émis, et le tick golden (T-120 min) est dans la bande de
-#      resserrement (CLOSING_LINE_TIGHTEN_MIN = 90). Gratuit : même runner.
-#   3. REPRICE (tick golden seulement, hors demande manuelle) avec un pool de
-#      secrets qui ne contient AUCUNE clé payante.
+#   standard  8×/jour aux fenêtres favorables : scan COMPLET, horizon 24 h,
+#             Tier 1 OddsAPI + Tier 2 gratuit, puis passe de closing line.
+#   reprice   toutes les heures, GRATUIT : reprend le slate soft photographié
+#             par le dernier standard, le re-tarife contre Matchbook/Betfair,
+#             capte la closing line d'exchange, se tait s'il n'y a rien de
+#             neuf. Son pool de secrets ne contient AUCUNE clé payante.
 #
-# OddsAPI (Tier 1, payant, 500 crédits/mois PAR CLÉ) : déclaré obsolète le
-# 2026-08-26, RALLUMÉ le 2026-09-01 — le flag ODDS_API=1 est posé par
-# scripts/ci_scan_mode.py (MODE_ENV) pour standard/golden/deep, jamais ici.
-# La dépense est bornée par le RYTHME MENSUEL (core/scan_windows : allocation
-# du jour = pool restant ÷ jours restants), pas par le nombre de ticks —
-# c'est ce qui permet au golden (24 ticks/jour) d'avoir un Tier 1 sans vider
-# le pool. GUERRILLA tourne sans Tier 1 par construction (horizon 48 h,
-# caches raccourcis) ; REPRICE ne dépense rien.
+# Le mode est déduit du cron qui a tiré (scripts/ci_scan_mode.py, testé) ; les
+# secrets sont calculés par pool (scripts/ci_env.py, testé). Le bouton
+# « Scanner » du dashboard pose meta.scan_request, lu à chaque tick : un tick
+# reprice qui le trouve devient un scan standard complet.
 #
-# Cadence : 8 + 24 + 2 + 2 = 36 scans/jour. Ne pas remonter sans recalculer le
-# budget des sources gratuites (api-sports 80/sport, odds-api.io 400, titan007
-# 500 → 8-14 scans complets/jour — au 2026-08-21 tout partait avant 08:30 UTC).
+# Supprimés le 2026-09-03 : golden (T-2h, 24/j — 100 % fantôme par
+# construction et coûteux en crédits), deep (standard avec 100 matchs, jamais
+# mesuré), guerrilla (48 h : tranche mesurée perdante). INCIDENTS.md « Cinq
+# modes de scan, deux qui servent ».
+#
+# OddsAPI (Tier 1, payant) : le flag ODDS_API=1 est posé par
+# scripts/ci_scan_mode.py (MODE_ENV) pour standard, jamais ici. La dépense est
+# bornée par le RYTHME MENSUEL (core/scan_windows), sur 8 ticks/jour.
+#
+# Cadence : 8 + 24 = 32 invocations/jour, dont 8 scans complets. Ne pas
+# remonter sans recalculer le budget des sources gratuites (api-sports
+# 80/sport, odds-api.io 400, titan007 500 → 8-14 scans complets/jour).
 # JAMAIS de nouveau schedule (2026-07-07 : la surcharge de schedules fait
 # dériver tous les crons du repo). GitHub ne garantit pas la ponctualité
-# (mesuré : 0,48 exécution/h pour un cron horaire).
+# (mesuré : 0,48 exécution/h pour un cron horaire) — le chien de garde
+# Cloudflare rattrape en `reprice`.
 # ──────────────────────────────────────────────────────────────────
 
 on:
@@ -42,20 +44,16 @@ on:
     # NHL/MMA · 06 KBO/NPB/AFL/NRL · 09 Asie/AU · 12 fond EU · 17 Big 5 + LdC
     # · 19 Big 5 soirée · 21 SA + MLB · 23 NBA/NHL
     - cron: '3 2,6,9,12,17,19,21,23 * * *'
-    # GOLDEN — T-120 min, toutes les heures. Absorbe le bouton « Scanner »
-    # du dashboard (flag meta.scan_request, lu à chaque tick).
+    # REPRICE — toutes les heures, gratuit. Absorbe le bouton « Scanner »
+    # du dashboard (flag meta.scan_request, lu à chaque tick → scan standard).
     - cron: '25 * * * *'
-    # DEEP — MAX_MATCHES=100, quotas par sport élargis, horizon 24 h.
-    - cron: '33 5,17 * * *'
-    # GUERRILLA — horizon 48 h, caches raccourcis.
-    - cron: '47 9,21 * * *'
   workflow_dispatch:
     inputs:
       mode:
         description: Mode de scan
         type: choice
         default: standard
-        options: [standard, golden, deep, guerrilla, reprice]
+        options: [standard, reprice]
       hours_ahead:
         description: Horizon en heures (vide = défaut du mode)
         type: string
@@ -179,16 +177,12 @@ jobs:
         run: python run_closing_line.py
 
       - name: REPRICE — Matchbook vs slate soft en cache
-        # Accroché au tick golden (jamais de schedule dédié). Sauté sur une
-        # demande manuelle : le scan complet vient de rafraîchir le slate.
-        # Le pool `reprice` ne contient que Supabase + Telegram : garantie
-        # MÉCANIQUE que ce step ne peut rien dépenser (tests/test_ci_env.py).
-        if: >-
-          steps.mode.outputs.mode == 'reprice' ||
-          (steps.mode.outputs.mode == 'golden' && steps.mode.outputs.manual != 'true')
+        # Le tick horaire. REPRICE=1 vient de $GITHUB_ENV (ci_scan_mode.py,
+        # MODE_ENV). Le pool `reprice` ne contient que Supabase + Telegram :
+        # garantie MÉCANIQUE que ce step ne peut rien dépenser
+        # (tests/test_ci_env.py). Un seul run_engine par tick.
+        if: steps.mode.outputs.mode == 'reprice'
         env:
-          REPRICE: '1'
-          GOLDEN_HOUR: '0'   # posé dans $GITHUB_ENV par le step mode — REPRICE prime
           # ▼ GÉNÉRÉ par `python scripts/ci_env.py --write` — pool `reprice`. NE PAS ÉDITER.
           SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
           SUPABASE_KEY: ${{ secrets.SUPABASE_KEY }}

@@ -173,7 +173,7 @@ en clair.
 
 ## Le mode REPRICE (2026-08-22) — l'odds screen gratuit
 
-`REPRICE=1` (step accroché au tick `golden` de `scan.yml`, chaque heure) relit le slate soft
+`REPRICE=1` (mode `reprice` de `scan.yml`, cron horaire H+25 depuis le 2026-09-03 ; avant, step accroché au tick golden) relit le slate soft
 photographié par les scans complets dans `meta.cache_soft_slate` (TTL 4h,
 `CACHE_SOFT_SLATE_TTL_H`) et le recompare à un prix sharp **Matchbook
 frais** — gratuit, sans clé, 700 req/min. Émission NON fantôme. Invariants
@@ -183,8 +183,8 @@ verrouillés par `tests/test_reprice_mode.py` :
   le coupe-circuit `harvest_empty_at` n'est ni lu ni écrit ; un cache vide
   sort en silence (heartbeat, zéro alerte). L'absence des clés payantes dans
   l'env du step est la garantie mécanique.
-- Le slate est écrit par les scans COMPLETS uniquement (ni golden hour —
-  fenêtre 2h partielle — ni reprice, sinon TTL immortel), trimé par
+- Le slate est écrit par les scans COMPLETS (`standard`) uniquement — jamais
+  par reprice, sinon TTL immortel —, trimé par
   `_trim_soft_slate` : le sharp d'exchange et les prix `_estimated` n'y sont
   JAMAIS sérialisés (l'exchange doit repricer frais à chaque tick).
 - `_save` fait depuis le même jour select-then-update-or-insert scopé
