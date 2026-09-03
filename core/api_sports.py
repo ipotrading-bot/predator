@@ -52,6 +52,7 @@ n'ont pas pu être vérifiées live faute de clé dans le sandbox — la premiè
 exécution le dira, chaque cycle loggant une ligne « api-sports[<sport>] ».
 """
 import logging
+import time
 import os
 from datetime import datetime, timedelta, timezone
 
@@ -147,6 +148,45 @@ SCAN_BUDGET = max(1, DAILY_BUDGET - RESULTS_RESERVE)
 # garantit que le premier scan du jour part toujours, et le rythme ne
 # s'applique qu'aux SCANS : fetch_results garde sa réserve intacte.
 CYCLE_COST = int(os.environ.get("API_SPORTS_CYCLE_COST", "10"))
+
+# ── DEUX GARDE-FOUS DE COMPTE (2026-09-03) ────────────────────────────
+# Le compte créé le 2026-09-02 a été trouvé SUSPENDU moins de 24 h plus
+# tard, à moins de 100 requêtes par API et par jour — donc PAS pour le quota
+# journalier. Ce que le code peut garantir, il le garantit ici :
+#   1. jamais plus de ~9 requêtes par minute (limite du plan gratuit :
+#      10/min) — REQUEST_SPACING_S entre deux appels, quel que soit l'appelant ;
+#   2. dès la première réponse « suspended », plus AUCUN appel de la journée,
+#      pour tous les sports et pour le settlement (compartiment partagé
+#      core/daily_quota, donc entre les runs) — le 2026-09-03 les audits ont
+#      réinterrogé un compte suspendu quatre fois par run, toute la journée.
+# Ce que le code ne peut PAS garantir : une suspension pour conditions
+# d'utilisation (plusieurs comptes gratuits). Voir INCIDENTS.md.
+REQUEST_SPACING_S = float(os.environ.get("API_SPORTS_REQUEST_SPACING_S", "6.5"))
+_SUSPENDED_BUCKET = "api_sports_suspended"
+_last_request_at = 0.0
+_suspended_this_process = False
+
+
+def _throttle() -> None:
+    """Espace deux requêtes d'au moins REQUEST_SPACING_S (limite 10/min)."""
+    global _last_request_at
+    wait = _last_request_at + REQUEST_SPACING_S - time.monotonic()
+    if wait > 0:
+        time.sleep(wait)
+    _last_request_at = time.monotonic()
+
+
+def is_suspended() -> bool:
+    """Le compte a répondu « suspended » aujourd'hui — on ne le réinterroge pas."""
+    return _suspended_this_process or daily_quota.spent(_SUSPENDED_BUCKET) > 0
+
+
+def _note_suspended(sport: str, errs) -> None:
+    global _suspended_this_process
+    _suspended_this_process = True
+    daily_quota.add(_SUSPENDED_BUCKET, 1)
+    log.error("api-sports[%s]: COMPTE SUSPENDU (%s) — plus aucun appel api-sports "
+              "aujourd'hui, tous sports et settlement compris", sport, str(errs)[:120])
 
 
 def scan_allowance(now: datetime | None = None) -> int:
@@ -362,6 +402,9 @@ def fetch_sport(sport: str, api_key: str | None = None, hours_ahead: int = 24) -
                   sport, "/".join(prov["keys"]))
         return []
 
+    if is_suspended():
+        log.warning("api-sports[%s]: compte suspendu aujourd'hui — source ignorée", sport)
+        return []
     spent = _usage_get(sport)
     if spent >= SCAN_BUDGET:
         log.warning("api-sports[%s]: budget de SCAN atteint (%d/%d) — cycle ignoré. "
@@ -394,6 +437,7 @@ def fetch_sport(sport: str, api_key: str | None = None, hours_ahead: int = 24) -
         # `from`/`to` exigent un `league`+`season` côté foot et n'existent pas
         # du tout ailleurs (vérifié en direct le 2026-08-20 — l'ancien appel
         # renvoyait un refus applicatif sur les quatre sports).
+        _throttle()
         r = requests.get(f"{base}/{prov['schedule']}", headers=headers, timeout=15,
                          params={"date": now.strftime("%Y-%m-%d"), "timezone": "UTC"})
         used += 1
@@ -423,6 +467,9 @@ def fetch_sport(sport: str, api_key: str | None = None, hours_ahead: int = 24) -
             # L'ancienne implémentation le lisait comme un succès vide : dix
             # jours sans une seule ligne de log (constaté le 2026-08-20).
             _usage_add(sport, used)
+            if "suspend" in str(errs).lower():
+                _note_suspended(sport, errs)
+                return []
             log.warning("api-sports[%s]: refus applicatif %s", sport, str(errs)[:160])
             return []
         schedule = body.get("response", []) or []
@@ -435,6 +482,7 @@ def fetch_sport(sport: str, api_key: str | None = None, hours_ahead: int = 24) -
     # chercher le lendemain aussi, sinon la moitié tardive du slate manque.
     if until.strftime("%Y-%m-%d") != now.strftime("%Y-%m-%d"):
         try:
+            _throttle()
             r2 = requests.get(f"{base}/{prov['schedule']}", headers=headers, timeout=15,
                               params={"date": until.strftime("%Y-%m-%d"), "timezone": "UTC"})
             used += 1
@@ -520,6 +568,7 @@ def fetch_sport(sport: str, api_key: str | None = None, hours_ahead: int = 24) -
                     stopped = f"garde quota ({remaining} restantes)"
                     break
                 try:
+                    _throttle()
                     r = requests.get(f"{base}/odds", headers=headers, timeout=15,
                                      params={"date": day, "page": page, "timezone": "UTC"})
                 except Exception as e:
@@ -626,6 +675,9 @@ def fetch_results(jour: str, sport: str = "soccer", api_key: str | None = None) 
     if not key:
         log.debug("api-sports[%s] résultats : pas de clé — recherche web en repli", sport)
         return []
+    if is_suspended():
+        log.warning("api-sports[%s] résultats : compte suspendu aujourd'hui — repli", sport)
+        return []
     spent = _usage_get(sport)
     if spent >= DAILY_BUDGET:
         log.warning("api-sports[%s] résultats : plafond TOTAL atteint (%d/%d) — même la "
@@ -634,6 +686,7 @@ def fetch_results(jour: str, sport: str = "soccer", api_key: str | None = None) 
         return []
 
     try:
+        _throttle()
         r = requests.get(f"https://{prov['host']}/{prov['schedule']}",
                          headers={"x-apisports-key": key}, timeout=15,
                          params={"date": jour, "timezone": "UTC"})

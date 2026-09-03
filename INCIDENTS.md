@@ -1884,6 +1884,74 @@ Big 5 (20:45/21:00) : les crédits qu'ils dépensent sur ces ligues
 
 Gardiens : `tests/test_rapport_digest.py`, `tests/test_telegram_format.py`.
 
+### api-sports, deux comptes suspendus — le second en moins de 24 h (2026-09-03)
+
+Le compte du 2026-08-20 avait été suspendu « pour dépassement ». Le compte
+créé le 2026-09-02 à 06:50 (nouveau compte gratuit, clé posée dans
+`app_secrets`) répondait encore à 03:07 le 2026-09-03 et était SUSPENDU à
+06:10 — moins de 24 h, à MOINS de 100 requêtes par API et par jour (le
+budget partagé était à 36/64 sur le foot, 59/100 sur le basket). Ce n'est
+donc pas le quota journalier : c'est la règle « un compte gratuit par
+personne » — un compte refait après suspension retombe. Aucun code
+n'empêche cela ; la décision est à l'opérateur (plan payant, ou vivre sans :
+titan007 + Matchbook portent le sharp Tier 2, ESPN/MLB le règlement).
+Et pendant toute la journée, scans et audits ont réinterrogé le compte
+suspendu — quatre appels par audit, sans une alerte : l'opérateur l'a appris
+par le log, le soir.
+
+Ce que le code garantit désormais (`core/api_sports.py`) :
+
+1. **Cadence** : jamais plus d'une requête toutes les `REQUEST_SPACING_S`
+   (6,5 s → ≤ 9/min, limite 10/min du plan gratuit), quel que soit
+   l'appelant — scan, `fetch_results`, sondes ;
+2. **Coupe-circuit** : dès la première réponse « suspended », un
+   compartiment partagé `core/daily_quota` (`api_sports_suspended`, remis à
+   zéro à minuit UTC) coupe TOUS les appels de la journée, tous sports et
+   settlement compris ; `run_engine` envoie UNE alerte Telegram par 24 h.
+   Le lendemain, un seul appel re-sonde le compte.
+
+Gardiens : `tests/test_api_sports.py::test_suspended_account_stops_every_call_for_the_day`,
+`::test_suspension_persistee_entre_runs_via_daily_quota`, `::test_la_cadence_espace_les_requetes`.
+
+### Un crédit OddsAPI n'achète jamais un fantôme ; les crons recalés ; Telegram en simples (2026-09-03)
+
+Suite directe de « Telegram après les fantômes » (causes b, c, d), sur
+instruction opérateur : « optimiser rythme OddsAPI, régler le décalage des
+crons aux meilleurs moments, oublier les combinés ».
+
+1. **Pré-vol OddsAPI** (`core/odds_api._events_in_window`) : l'appel gratuit
+   `/events` rend maintenant (matchs, dont JOUABLES) — jouable = coup
+   d'envoi à T-2h + `PLAYABLE_MARGIN_MIN` (30 min, retard de livraison
+   mesuré des crons GitHub) ou plus tard, borne IMPORTÉE de
+   `core/learning_layer._PLAYABLE_MIN_MINUTES` (règle n°6). Une ligue dont
+   plus aucun match n'est jouable n'est PAS payée (« fantômes par
+   construction », loggée, crédits comptés dans « économisés ») ; les autres
+   sont triées et priorisées sur leurs matchs jouables. Le 2026-09-03, les
+   scans de 16:04, 19:50 et 21:00 avaient payé le Big 5 pour des matchs à
+   moins de 2 h : 100 % fantômes.
+2. **Crons standard** : `3 6,9,11,13,16,19,21,23` (était 2, 6, 9, 12, 17, 19,
+   21, 23). Chaque heure est T-2h30..6h d'un bloc de coups d'envoi ; la
+   carte `core/scan_windows._WINDOWS` est recalée sur ces heures (une
+   fenêtre = l'heure d'un SCAN, pas celle du match) et un test vérifie que
+   chaque fenêtre contient au moins un cron standard. 02:03 (US tardif déjà
+   commencé), 17:03/19:03/21:03 sur le Big 5 (coups d'envoi 16:45–19:30 UTC
+   en septembre) ne produisaient que des fantômes. Trois ticks reprice muets
+   par construction : 03:25, 04:25, 05:25.
+3. **Telegram en paris simples** : `run_engine._telegram_signals` envoie
+   CHAQUE pari recommandé, classé par urgence, dédupliqué par pari
+   (`_dedup_signals_for_telegram`, 24 h : le scan annonce, le digest
+   rappelle). Partis avec : `_suggest_systems_by_window`,
+   `_last_look_reprice` (re-tarification via un LineFeed déjà retiré),
+   `_dedup_systems_for_telegram`, le combiné viable après taxe comme
+   CONDITION d'annonce. `core/tax_engine` reste (mesures, tests) mais ne
+   gouverne plus ce que Telegram montre. Les gates d'émission (edge, EV,
+   plafonds) sont inchangées : ce qui est persisté est ce qui est annoncé.
+
+Gardiens : `tests/test_odds_api_preflight.py`, `tests/test_scan_windows.py`
+(`test_aucune_fenetre_a_moins_de_2h_dun_cron_standard_inutile`),
+`tests/test_ci_env.py`, `tests/test_telegram_format.py::TestEmptyAndSingles`,
+`tests/test_reprice_mode.py::test_dedup_signals_for_telegram`.
+
 ### Une version, un seul endroit
 
 `DASHBOARD_VERSION` (`api/index.py`), injectée

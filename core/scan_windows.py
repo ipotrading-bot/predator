@@ -44,45 +44,60 @@ RESERVE_CREDITS = int(os.environ.get("ODDS_API_RESERVE_CREDITS", "60"))
 # ── Carte des fenêtres favorables (UTC) ───────────────────────────────
 # (jours, heure_début, heure_fin) — heure_fin exclue ; une fenêtre qui passe
 # minuit est écrite en deux morceaux. jours : 0=lundi … 6=dimanche, None=tous.
+# Une fenêtre est l'heure d'un SCAN (T-2h30 à T-6h du coup d'envoi), pas
+# l'heure du match — voir le bloc de la carte ci-dessous.
 _ALL = None
+# ── Carte recalée sur les 8 scans standard (2026-09-03) ───────────────
+# Scans : 06:03 · 09:03 · 11:03 · 13:03 · 16:03 · 19:03 · 21:03 · 23:03 UTC
+# (scripts/ci_scan_mode.py). Une fenêtre = les scans qui tombent entre
+# T-2h30 et ~T-6h des coups d'envoi de la ligue : assez tôt pour que le
+# signal sorte RECOMMANDÉ (T-2h = fantôme, core/learning_layer), assez tard
+# pour que la ligne soit mûre. Un scan à moins de 2 h des coups d'envoi
+# n'achetait que des fantômes — mesuré le 2026-09-03 : les scans de 16:04,
+# 19:50 et 21:00 étaient 100 % fantômes sur le Big 5 (coups d'envoi
+# 16:45–19:30 UTC en septembre). Le pré-vol de core/odds_api saute de toute
+# façon une ligue dont plus aucun match n'est jouable : la fenêtre dit OÙ
+# le crédit vaut le plus, le pré-vol empêche de le perdre.
+# Jours : 0=lundi … 6=dimanche ; heure_fin exclue.
 _WINDOWS: dict[str, list[tuple]] = {
-    # KBO/NPB : lag Asie documenté 06:00–13:00
-    "baseball_kbo":                      [(_ALL, 6, 13)],
-    "baseball_npb":                      [(_ALL, 6, 13)],
-    # Big 5 + coupes d'Europe : soirée européenne 17:00–22:00
-    "soccer_epl":                        [(_ALL, 17, 22)],
-    "soccer_spain_la_liga":              [(_ALL, 17, 22)],
-    "soccer_germany_bundesliga":         [(_ALL, 17, 22)],
-    "soccer_italy_serie_a":              [(_ALL, 17, 22)],
-    "soccer_france_ligue_one":           [(_ALL, 17, 22)],
-    "soccer_uefa_champs_league":         [(_ALL, 17, 22)],
-    "soccer_uefa_europa_league":         [(_ALL, 17, 22)],
-    # Euroleague : jeudi/vendredi soir
-    "basketball_euroleague":             [((3, 4), 17, 22)],
-    # Amérique du Sud + MLB : 21:00–02:00
-    "soccer_brazil_campeonato":          [(_ALL, 21, 24), (_ALL, 0, 2)],
-    "soccer_conmebol_copa_libertadores": [(_ALL, 21, 24), (_ALL, 0, 2)],
-    "soccer_argentina_primera_division": [(_ALL, 21, 24), (_ALL, 0, 2)],
-    "soccer_mexico_ligamx":              [(_ALL, 21, 24), (_ALL, 0, 2)],
-    "soccer_usa_mls":                    [(_ALL, 21, 24), (_ALL, 0, 2)],
-    "baseball_mlb":                      [(_ALL, 21, 24), (_ALL, 0, 2)],
-    # NFL : jeudi soir US (= vendredi 00:20 UTC), dimanche 17:00/20:15/00:20,
-    # lundi 00:15 UTC
-    "americanfootball_nfl":              [((4,), 0, 4), ((6,), 16, 24), ((0,), 0, 4)],
-    # NBA/WNBA/NHL : tip-off 22:00–04:00
-    "basketball_nba":                    [(_ALL, 22, 24), (_ALL, 0, 4)],
-    "basketball_wnba":                   [(_ALL, 22, 24), (_ALL, 0, 4)],
-    "icehockey_nhl":                     [(_ALL, 22, 24), (_ALL, 0, 4)],
-    # Australie : journée/soirée AU = matin UTC
-    "aussierules_afl":                   [(_ALL, 2, 12)],
-    "rugbyleague_nrl":                   [(_ALL, 5, 12)],
-    # Combat : vendredi–dimanche autour des cartes
-    "mma_mixed_martial_arts":            [((4, 5, 6), 0, 24)],
-    "boxing_boxing":                     [((4, 5, 6), 0, 24)],
-    # NCAAF : jeudi/vendredi soir US (= 22:00 UTC → 05:00 UTC) et samedi
-    # toute la journée/nuit US — le gros du volume.
-    "americanfootball_ncaaf":            [((3, 4), 22, 24), ((4, 5), 0, 5),
-                                          ((5,), 16, 24), ((6,), 0, 5)],
+    # KBO/NPB : coups d'envoi 09:00–10:30 UTC → scan de 06:03 seulement
+    "baseball_kbo":                      [(_ALL, 5, 8)],
+    "baseball_npb":                      [(_ALL, 5, 8)],
+    # Big 5 + coupes d'Europe : soirée 16:45–19:30 UTC → 13:03 et 16:03 ;
+    # week-end, coups d'envoi dès 11:30 → 09:03 et 11:03 en plus
+    "soccer_epl":                        [((5, 6), 9, 13), (_ALL, 13, 17)],
+    "soccer_spain_la_liga":              [((5, 6), 9, 13), (_ALL, 13, 17)],
+    "soccer_germany_bundesliga":         [((5, 6), 9, 13), (_ALL, 13, 17)],
+    "soccer_italy_serie_a":              [((5, 6), 9, 13), (_ALL, 13, 17)],
+    "soccer_france_ligue_one":           [((5, 6), 9, 13), (_ALL, 13, 17)],
+    "soccer_uefa_champs_league":         [(_ALL, 13, 17)],
+    "soccer_uefa_europa_league":         [(_ALL, 13, 17)],
+    # Euroleague : jeudi/vendredi 16:45–19:00 UTC → 13:03 et 16:03
+    "basketball_euroleague":             [((3, 4), 13, 17)],
+    # Amérique du Sud : 21:30–02:30 UTC → 19:03, 21:03, 23:03
+    "soccer_brazil_campeonato":          [(_ALL, 19, 24)],
+    "soccer_conmebol_copa_libertadores": [(_ALL, 19, 24)],
+    "soccer_argentina_primera_division": [(_ALL, 19, 24)],
+    "soccer_mexico_ligamx":              [(_ALL, 19, 24)],
+    "soccer_usa_mls":                    [(_ALL, 19, 24)],
+    # MLB : matinées 17:05–20:10 UTC → 13:03/16:03 ; soirées 23:05–02:40 → 19:03+
+    "baseball_mlb":                      [(_ALL, 13, 17), (_ALL, 19, 24)],
+    # NFL : jeudi soir US = vendredi 00:20 UTC (payé jeudi 21:03) ; dimanche
+    # 17:00 / 20:25 / 00:20 (13:03 → 23:03) ; lundi soir = mardi 00:15 (21:03)
+    "americanfootball_nfl":              [((3,), 21, 24), ((6,), 13, 24), ((0,), 21, 24)],
+    # NBA/WNBA/NHL : tip-off 23:00–03:30 UTC → 19:03, 21:03, 23:03
+    "basketball_nba":                    [(_ALL, 19, 24)],
+    "basketball_wnba":                   [(_ALL, 19, 24)],
+    "icehockey_nhl":                     [(_ALL, 19, 24)],
+    # Australie : AFL/NRL 03:00–10:00 UTC → 23:03 la veille et 06:03
+    "aussierules_afl":                   [(_ALL, 23, 24), (_ALL, 5, 8)],
+    "rugbyleague_nrl":                   [(_ALL, 23, 24), (_ALL, 5, 8)],
+    # Combat : cartes du vendredi au dimanche, 22:00–04:00 UTC → 19:03+
+    "mma_mixed_martial_arts":            [((4, 5, 6), 19, 24)],
+    "boxing_boxing":                     [((4, 5, 6), 19, 24)],
+    # NCAAF : jeudi/vendredi 23:00–03:00 UTC → 19:03+ ; samedi 16:00–04:00
+    # → 13:03 jusqu'à 23:03
+    "americanfootball_ncaaf":            [((3, 4), 19, 24), ((5,), 13, 24)],
 }
 
 # Fenêtres par PRÉFIXE de clé — pour les ligues dont la clé exacte n'existe

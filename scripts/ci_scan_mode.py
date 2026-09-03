@@ -31,7 +31,7 @@ import sys
 # supprimés, voir INCIDENTS.md « Cinq modes de scan, deux qui servent ».
 # Les minutes sont décalées vis-à-vis de closing_line.yml (H+14/34/54). ──
 CRON_MODES = {
-    "3 2,6,9,12,17,19,21,23 * * *": "standard",   # scan complet 24 h, fenêtres favorables (core/scan_windows.py)
+    "3 6,9,11,13,16,19,21,23 * * *": "standard",  # scan complet 24 h, T-2h30..6h des coups d'envoi (core/scan_windows.py)
     "25 * * * *":                    "reprice",    # horaire, GRATUIT : slate soft en cache vs Matchbook
 }
 MODES = ("standard", "reprice")

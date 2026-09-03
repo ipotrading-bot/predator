@@ -304,6 +304,17 @@ l'environnement, aucun redéploiement ni secret GitHub n'a été nécessaire.
 La preuve finale est l'audit suivant : des lignes `SETTLE api-sports` au
 log et plus de `RUN STÉRILE`.
 
+⚠️ **2026-09-03 : ce second compte a été SUSPENDU en moins de 24 h**, à
+moins de 100 requêtes par API et par jour — donc pas pour le quota, pour la
+règle « un compte gratuit par personne » (INCIDENTS.md « api-sports, deux
+comptes suspendus »). Ne PAS refaire un troisième compte gratuit : il
+retombera. Les deux issues sont à ta main : (a) un plan payant api-football
+(le premier palier suffit largement : le moteur reste borné à 80/jour et
+≤ 9/min par construction), clé posée par la même commande `secrets set` ;
+(b) vivre sans — titan007 + Matchbook portent le sharp Tier 2, ESPN/MLB le
+règlement. Le moteur alerte sur Telegram le jour même d'une suspension et
+coupe la source pour la journée.
+
 ## 6. Secrets GitHub des fournisseurs IA retirés — à SUPPRIMER (2026-09-03)
 
 Six fournisseurs sont sortis du registre `core/ai_router.py` le 2026-09-03

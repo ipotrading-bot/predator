@@ -40,10 +40,14 @@ on:
     # (tests/test_ci_env.py compare les deux). Minutes décalées entre elles
     # et vis-à-vis de closing_line.yml (H+14/34/54).
     #
-    # STANDARD — fenêtres favorables (core/scan_windows.py) : 02 SA/MLB/NBA/
-    # NHL/MMA · 06 KBO/NPB/AFL/NRL · 09 Asie/AU · 12 fond EU · 17 Big 5 + LdC
-    # · 19 Big 5 soirée · 21 SA + MLB · 23 NBA/NHL
-    - cron: '3 2,6,9,12,17,19,21,23 * * *'
+    # STANDARD — chaque heure est T-2h30 à T-6h d'un bloc de coups d'envoi
+    # (core/scan_windows.py, même carte) : 06 KBO/NPB/AFL/NRL · 09 et 11
+    # Big 5 du week-end (11:30–14:00) · 13 Big 5 soirée + MLB matinée ·
+    # 16 Big 5 19:00–19:30 · 19 SA + MLB soirée · 21 NFL/NBA/NHL 00:00 ·
+    # 23 US tardif + AFL/NRL du lendemain. Recalé le 2026-09-03 : 02/17/19/21
+    # tombaient à moins de 2 h des coups d'envoi et n'achetaient que des
+    # fantômes (INCIDENTS.md « Telegram après les fantômes », cause d).
+    - cron: '3 6,9,11,13,16,19,21,23 * * *'
     # REPRICE — toutes les heures, gratuit. Absorbe le bouton « Scanner »
     # du dashboard (flag meta.scan_request, lu à chaque tick → scan standard).
     - cron: '25 * * * *'

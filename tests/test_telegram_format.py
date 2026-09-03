@@ -56,17 +56,10 @@ def sent(monkeypatch):
     return box
 
 
-def _system(legs, **over):
-    base = {"k": len(legs), "legs": legs, "combined_odds": 3.40,
-            "combined_prob": 0.31, "stake": 0.0, "ev": 0.01, "window": "w"}
-    base.update(over)
-    return base
-
-
 class TestNoStakeNoBankroll:
     @pytest.mark.parametrize("banned", ["Mise", "1000€", "EV net", "Kelly", "€"])
     def test_engine_message_is_money_free(self, sent, banned):
-        run_engine._telegram_systems([_system([_sig()])], NOW, 46, 0)
+        run_engine._telegram_signals([_sig()], NOW, 46, 0)
         assert banned not in sent[0]
 
     @pytest.mark.parametrize("banned", ["Mise", "1000€", "Kelly", "€"])
@@ -119,17 +112,17 @@ class TestFavourite:
         assert run_engine._favourite(s) == run_rapport._favourite(s) == "Real Madrid"
 
 
-class TestEmptyAndCombo:
-    def test_no_systems_message_stays_one_short_line(self, sent):
-        run_engine._telegram_systems([], NOW, 8, 0)
+class TestEmptyAndSingles:
+    def test_no_signals_message_stays_one_short_line(self, sent):
+        run_engine._telegram_signals([], NOW, 8, 0)
         assert "Aucun pari recommandé · 8 matchs analysés" in sent[0]
         assert "€" not in sent[0]
         assert "écarté" not in sent[0]
 
     def test_no_session_jargon_in_header(self, sent):
         # « EU-CLOSE 🎯 🎯 » : libellé interne, icône doublée — parti le 2026-09-03.
-        run_engine._telegram_systems([], NOW, 8, 0)
-        run_engine._telegram_systems([_system([_sig()])], NOW, 8, 0)
+        run_engine._telegram_signals([], NOW, 8, 0)
+        run_engine._telegram_signals([_sig()], NOW, 8, 0)
         for msg in sent:
             for jargon in ("EU-CLOSE", "OVERNIGHT", "EU-OPEN", "EU-MID"):
                 assert jargon not in msg
@@ -138,23 +131,34 @@ class TestEmptyAndCombo:
         # Un scan standard intégralement fantôme ne se tait plus : il compte.
         fantomes = [_sig(shadow_reason="t_minus_2h"), _sig(shadow_reason="t_minus_2h"),
                     _sig(shadow_reason="shadow_sport")]
-        run_engine._telegram_systems([], NOW, 13, 0, fantomes)
+        run_engine._telegram_signals([], NOW, 13, 0, fantomes)
         assert "Aucun pari recommandé · 13 matchs analysés" in sent[0]
         assert "2 écarté(s) (< 2 h)" in sent[0]
         assert "1 écarté(s) (sport en observation)" in sent[0]
 
-    def test_header_with_systems_also_counts_discards(self, sent):
-        run_engine._telegram_systems([_system([_sig()])], NOW, 13, 0,
-                                     [_sig(shadow_reason="t_minus_2h")])
+    def test_header_with_signals_also_counts_discards(self, sent):
+        run_engine._telegram_signals([_sig()], NOW, 13, 0, [_sig(shadow_reason="t_minus_2h")])
         assert "1 pari(s) recommandé(s) · 13 matchs analysés · 1 écarté(s) (< 2 h)" in sent[0]
 
-    def test_combo_shows_combined_odds_and_value(self, sent):
-        legs = [_sig(), _sig(match="A vs B", selection_name="A", sharp_prob=0.55)]
-        run_engine._telegram_systems([_system(legs, combined_odds=6.46,
-                                              combined_prob=0.166)], NOW, 46, 0)
-        assert "*Combiné* `@ 6.46`" in sent[0]
-        assert "+7.2%" in sent[0]          # 6.46 × 0.166 − 1
-
-    def test_single_leg_has_no_combined_line(self, sent):
-        run_engine._telegram_systems([_system([_sig()])], NOW, 46, 0)
+    def test_every_signal_is_sent_as_a_single_no_combo(self, sent):
+        # Décision opérateur 2026-09-03 : plus de combiné, chaque pari en simple.
+        legs = [_sig(), _sig(match="A vs B", selection_name="A", sharp_prob=0.55, edge_pct=2.1)]
+        run_engine._telegram_signals(legs, NOW, 46, 0)
+        assert "2 pari(s) recommandé(s)" in sent[0]
+        assert "Real Madrid vs Barcelona" in sent[0] and "A vs B" in sent[0]
         assert "Combiné" not in sent[0]
+        assert "→ Barcelona `@ 3.40` · valeur `+5.4%`" in sent[0]
+        assert "→ A (favori) `@ 3.40` · valeur `+2.1%`" in sent[0]
+
+    def test_urgent_kickoff_first(self, sent):
+        soon = _sig(match="Soon vs Later", match_time="2026-07-21T23:30:00+00:00", edge_pct=1.5)
+        run_engine._telegram_signals([_sig(), soon], NOW, 46, 0)
+        assert sent[0].index("Soon vs Later") < sent[0].index("Real Madrid vs Barcelona")
+
+    def test_long_list_is_chunked_between_signals(self, sent):
+        many = [_sig(match=f"Club {i} Longnom vs Adversaire {i} Longnom") for i in range(80)]
+        run_engine._telegram_signals(many, NOW, 200, 0)
+        assert len(sent) > 1
+        assert all(len(m) <= 4000 for m in sent)
+        body = "".join(sent[1:])
+        assert body.count("*Club ") == body.count("valeur `+") == 80

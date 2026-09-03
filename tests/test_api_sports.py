@@ -105,6 +105,9 @@ def _no_secret_lookup(monkeypatch):
     monkeypatch.setattr(aps, "get_secret", lambda name, **kw: None)
     monkeypatch.setattr(aps, "_usage_get", lambda sport: 0)
     monkeypatch.setattr(aps, "_usage_add", lambda sport, n: None)
+    # Cadence 10/min : réelle en production, nulle ici (sinon 6,5 s par appel).
+    monkeypatch.setattr(aps, "REQUEST_SPACING_S", 0.0)
+    monkeypatch.setattr(aps, "_suspended_this_process", False)
 
 
 def test_no_key_means_no_network(monkeypatch):
@@ -411,6 +414,47 @@ def test_suspended_account_is_counted_and_reported(monkeypatch, caplog):
         assert aps.fetch_sport("soccer", api_key="k") == []
     assert spent == [1]
     assert any("suspended" in r.getMessage() for r in caplog.records)
+
+
+def test_suspended_account_stops_every_call_for_the_day(monkeypatch, caplog):
+    """2026-09-03 : le compte du 2026-09-02 suspendu en < 24 h, et chaque run
+    (scan ET audit) le réinterrogeait quatre fois. Première réponse
+    « suspended » → compartiment partagé posé, plus aucun appel du jour,
+    tous sports et fetch_results compris."""
+    calls = _wire(monkeypatch, [], {}, sched_errors={"access": "Your account is suspended"})
+    posted = []
+    monkeypatch.setattr(aps.daily_quota, "add", lambda bucket, n: posted.append((bucket, n)))
+    assert aps.fetch_sport("soccer", api_key="k") == []
+    assert (aps._SUSPENDED_BUCKET, 1) in posted
+    assert aps.is_suspended()
+    # Plus rien ne part : ni un autre sport, ni le settlement.
+    n = len(calls["schedule"])
+    assert aps.fetch_sport("basketball", api_key="k") == []
+    assert aps.fetch_results("2026-09-03", "soccer", api_key="k") == []
+    assert len(calls["schedule"]) == n
+
+
+def test_suspension_persistee_entre_runs_via_daily_quota(monkeypatch):
+    monkeypatch.setattr(aps.daily_quota, "spent",
+                        lambda bucket: 1 if bucket == aps._SUSPENDED_BUCKET else 0)
+    assert aps.is_suspended()
+    calls = _wire(monkeypatch, [], {})
+    assert aps.fetch_sport("soccer", api_key="k") == []
+    assert calls["schedule"] == []
+
+
+def test_la_cadence_espace_les_requetes(monkeypatch):
+    """Plan gratuit : 10 requêtes/minute. Deux appels consécutifs sont
+    espacés de REQUEST_SPACING_S, quel que soit l'appelant."""
+    slept = []
+    monkeypatch.setattr(aps, "REQUEST_SPACING_S", 6.5)
+    monkeypatch.setattr(aps.time, "sleep", lambda s: slept.append(s))
+    clock = iter([100.0, 100.0, 101.0, 101.0])
+    monkeypatch.setattr(aps.time, "monotonic", lambda: next(clock))
+    monkeypatch.setattr(aps, "_last_request_at", 0.0)
+    aps._throttle()
+    aps._throttle()
+    assert slept and abs(slept[-1] - 5.5) < 1e-6
 
 
 def test_game_odds_are_capped(monkeypatch):

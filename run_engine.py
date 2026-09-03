@@ -26,12 +26,11 @@ from core.matchbook import fetch_matchbook_prices
 # Appariement slate ↔ exchange : déplacé dans core/ le 2026-08-26 pour que
 # core/closing_line.py puisse s'en servir sans importer la racine.
 from core.exchange_match import lookup_exchange as _lookup_exchange
-from core.api_sports import fetch_all as _api_sports_all
+from core.api_sports import fetch_all as _api_sports_all, is_suspended as _api_sports_suspended
 from core.odds_api_io import fetch_all as _odds_api_io_all
 from core.titan007 import fetch_matches as _titan007_fetch
 from core.math_engine import (to_binary, devig_bounds, is_round_number_line, devig as _devig,
-                              dnb_leg_split as _dnb_leg_split,
-                              executable_price as _executable_price)
+                              dnb_leg_split as _dnb_leg_split)
 from core.tax_engine import optimal_stake_fraction as _optimal_stake_fraction
 from core.learning_layer import _PLAYABLE_MIN_MINUTES
 from core.score_sources import (fixtures_espn as _fixtures_espn, fixture_connue as _fixture_connue,
@@ -54,8 +53,7 @@ from core.paim_engine import (
     market_label, SHARP_PROB_BY_MARKET, calculate_consensus_price,
     correlation_group as _correlation_group, resolve_selection_side,
 )
-from core.constants import ELITE_EDGE as _ELITE_EDGE, SOCCER_ELITE_EDGE as _SOCCER_ELITE_EDGE, BASKETBALL_ELITE_EDGE as _BASKETBALL_ELITE_EDGE, risk_flag as _risk_flag, SUSPECT_EDGE as _SUSPECT_EDGE, KELLY_FRACTION as _KELLY_FRACTION, AH0_VALUE_THRESHOLD as _AH0_VALUE_THRESHOLD, PURGE_EDGE_FLOOR as _PURGE_EDGE_FLOOR, MLB_LINEUP_WINDOW_H as _MLB_LINEUP_WINDOW_H, PUSH_PROB_ROUND_LINE as _PUSH_PROB_ROUND_LINE, TAX_RATE as _TAX_RATE, BANKROLL_REF as _BANKROLL_REF, EV_EDGE_FLOOR as _EV_EDGE_FLOOR, RETIRED_SPORTS as _RETIRED_SPORTS, EXCHANGE_DIVERGENCE_PTS as _EXCHANGE_DIVERGENCE_DEFAULT
-from core.tax_engine import suggest_system as _suggest_system, is_combo_tax_viable as _is_combo_tax_viable
+from core.constants import ELITE_EDGE as _ELITE_EDGE, SOCCER_ELITE_EDGE as _SOCCER_ELITE_EDGE, BASKETBALL_ELITE_EDGE as _BASKETBALL_ELITE_EDGE, risk_flag as _risk_flag, SUSPECT_EDGE as _SUSPECT_EDGE, KELLY_FRACTION as _KELLY_FRACTION, AH0_VALUE_THRESHOLD as _AH0_VALUE_THRESHOLD, PURGE_EDGE_FLOOR as _PURGE_EDGE_FLOOR, MLB_LINEUP_WINDOW_H as _MLB_LINEUP_WINDOW_H, PUSH_PROB_ROUND_LINE as _PUSH_PROB_ROUND_LINE, TAX_RATE as _TAX_RATE, EV_EDGE_FLOOR as _EV_EDGE_FLOOR, RETIRED_SPORTS as _RETIRED_SPORTS, EXCHANGE_DIVERGENCE_PTS as _EXCHANGE_DIVERGENCE_DEFAULT
 import core.risk_manager as _risk_manager
 
 load_dotenv()
@@ -801,33 +799,35 @@ def _build_spend_policy(sb, now):
                         reglables=reglables)
 
 
-_SYSTEM_ALERT_TTL_H = float(os.environ.get("SYSTEM_ALERT_TTL_H", "6"))
+_SIGNAL_ALERT_TTL_H = float(os.environ.get("SIGNAL_ALERT_TTL_H", "24"))
 
 
-def _dedup_systems_for_telegram(sb, systems: list) -> list:
-    """Écarte les systèmes déjà annoncés il y a moins de _SYSTEM_ALERT_TTL_H.
+def _signal_fingerprint(s: dict) -> str:
+    return (f"{s.get('match_id') or s.get('match', '?')}:"
+            f"{s.get('market_key', '?')}:{s.get('selection_name', '?')}")
 
-    Nécessaire depuis le mode REPRICE : le même slate est re-scanné chaque
-    heure, donc le même combo repasserait par _telegram_systems ~23x/jour.
-    La clé identifie le CONTENU du pari (jambes triées), pas le tick : un
-    combo différent — nouvelle jambe, autre sélection — repart normalement.
-    Sans Supabase, tout passe (mieux vaut un doublon qu'un silence)."""
-    if not sb or not systems:
-        return systems
+
+def _dedup_signals_for_telegram(sb, signals: list) -> list:
+    """Écarte les paris déjà annoncés il y a moins de _SIGNAL_ALERT_TTL_H.
+
+    Le tick REPRICE ré-émet le même slate chaque heure : sans ceci, chaque
+    pari repasserait sur Telegram ~23×/jour. La clé identifie le PARI
+    (match, marché, sélection), pas le tick. 24 h : un pari est annoncé UNE
+    fois par le scan ; les rappels sont l'affaire du digest (run_rapport,
+    section ⏳). Sans Supabase, tout passe (mieux vaut un doublon qu'un
+    silence)."""
+    if not sb or not signals:
+        return signals
     fresh = []
-    for sys_ in systems:
-        fingerprint = "|".join(sorted(
-            f"{leg.get('match_id') or leg.get('match', '?')}:"
-            f"{leg.get('market_key', '?')}:{leg.get('selection_name', '?')}"
-            for leg in sys_.get("legs", [])))
-        key = "alert_system_" + hashlib.md5(fingerprint.encode()).hexdigest()[:16]
+    for s in signals:
+        fp = _signal_fingerprint(s)
+        key = "alert_signal_" + hashlib.md5(fp.encode()).hexdigest()[:16]
         age = _meta_stamp_age_h(sb, key)
-        if age is not None and age < _SYSTEM_ALERT_TTL_H:
-            log.info("Système déjà annoncé il y a %.1fh — silence (%s)",
-                     age, fingerprint[:60])
+        if age is not None and age < _SIGNAL_ALERT_TTL_H:
+            log.info("Pari déjà annoncé il y a %.1fh — silence (%s)", age, fp[:60])
             continue
         _meta_stamp(sb, key, datetime.now(timezone.utc).isoformat())
-        fresh.append(sys_)
+        fresh.append(s)
     return fresh
 
 
@@ -2044,169 +2044,6 @@ def _urgency_sort(s: dict, now) -> tuple:
     except (ValueError, OverflowError):
         pass
     return (1, 9999.0, -(s.get("edge_pct") or 0))
-def _window_key(sig: dict) -> str:
-    """Hourly bucket (YYYY-MM-DDTHH) for grouping signals into one system
-    suggestion — combining a match kicking off in 2h with one in 2 days
-    into the same bet slip would blur the time-sensitive urgency that
-    makes either edge real. Signals with no match_time fall into one
-    'unscheduled' bucket rather than being silently dropped."""
-    mt = sig.get("match_time") or ""
-    return mt[:13] if mt else "unscheduled"
-
-
-def _suggest_systems_by_window(signals: list, log, sb=None) -> list:
-    """
-    Group signals by time window and ask core.tax_engine.suggest_system()
-    for the best net-of-tax-viable accumulator in each window — replacing
-    the old "alert every signal independently" model (PAIM v9.5, Task 2).
-    A window with no tax-viable combo contributes nothing; individual
-    signals are still persisted to Supabase by the caller regardless (see
-    run()) for settlement/learning, this only gates what Telegram sees.
-
-    Task 7: the bankroll passed into suggest_system() is reduced by
-    whatever's already committed to other active signals (core.risk_manager
-    exposure cap), computed once per run rather than once per window — so
-    a portfolio already at its cap naturally sizes every new system down
-    to stake=0 instead of stacking risk on top of risk.
-
-    Sizing-base note (2026-07-11, operator decision: dashboard is
-    canonical — see core.risk_manager's module docstring DESIGN NOTE for
-    the full explanation): the headroom subtracted here is computed from
-    every active signal's solo kelly_pct (each signal's own would-be
-    stake, also what the dashboard shows per-signal). The system stake
-    this function returns (one combined, numerically-optimal figure per
-    window) is no longer sized independently of that basis —
-    core.tax_engine.suggest_system() caps it at the sum of its own legs'
-    kelly_pct, so what Telegram recommends can never exceed what the
-    dashboard already implies for the same signals.
-    """
-    effective_bankroll = _BANKROLL_REF
-    if sb is not None:
-        try:
-            headroom = _risk_manager.get_exposure_headroom(sb, _BANKROLL_REF)
-            effective_bankroll = max(0.0, headroom)
-            if effective_bankroll < _BANKROLL_REF:
-                log.info("Exposure cap: %.0f/%.0f bankroll headroom remaining", effective_bankroll, _BANKROLL_REF)
-        except Exception as e:
-            log.warning("get_exposure_headroom: %s — using full bankroll", e)
-
-    windows: dict[str, list] = {}
-    for s in signals:
-        windows.setdefault(_window_key(s), []).append(s)
-
-    systems = []
-    for key, group in windows.items():
-        sports_in_group = {s.get("sport", "soccer") for s in group}
-        kelly_mult = min((_KELLY_FRACTION.get(sp, 0.12) for sp in sports_in_group), default=0.12)
-        result = _suggest_system(group, bankroll=effective_bankroll, tax_rate=_TAX_RATE,
-                                  kelly_multiplier=kelly_mult)
-        if result is None:
-            log.info("SYSTEM  | window %s — no tax-viable combo (%d candidate legs)", key, len(group))
-            continue
-        # Final go/no-go re-check right before it's ever eligible for
-        # Telegram — defense in depth even though suggest_system() already
-        # filtered every candidate combo on this internally.
-        legs_for_check = [{"true_prob": s.get("sharp_prob", 0), "odds": s.get("executable_odd", 0),
-                           "correlation_group": s.get("correlation_group")}
-                          for s in result["legs"]]
-        if not _is_combo_tax_viable(legs_for_check, tax_rate=_TAX_RATE):
-            log.warning("SYSTEM  | window %s — combo failed final tax-viability re-check, discarding", key)
-            continue
-        result["window"] = key
-        systems.append(result)
-        log.info("SYSTEM  | window %s | %d legs | combined %.2f @ %.1f%% | stake %.0f | EV +%.2f",
-                 key, result["k"], result["combined_odds"], result["combined_prob"] * 100,
-                 result["stake"], result["ev"])
-
-    return systems
-
-
-def _refresh_leg_price(leg: dict, fresh_by_sport: dict, log) -> float | None:
-    """
-    Re-derive the current soft-book price for one h2h leg from a freshly
-    re-fetched batch (Task 8). Returns None if unchanged/unresolvable —
-    only h2h is handled: totals/spreads need the same line-matching logic
-    _process_totals/_process_spreads use to pick the right price for the
-    original selection, which isn't worth duplicating for a last-look
-    check; those legs are sent at their scan-time price, unchanged.
-    """
-    if not (leg.get("market_key") or "").startswith("h2h"):
-        return None
-    from core.harvester import SPORT_IDS, _fuzzy_match_event
-    sport_id = next((sid for sid, name in SPORT_IDS.items() if name == leg.get("sport")), None)
-    fresh_events = fresh_by_sport.get(sport_id) if sport_id is not None else None
-    if not fresh_events:
-        return None
-    match = leg.get("match", "")
-    if " vs " not in match:
-        return None
-    home, away = [x.strip() for x in match.split(" vs ", 1)]
-    fresh = _fuzzy_match_event({"home": home, "away": away}, fresh_events)
-    if not fresh:
-        return None
-    sel = leg.get("selection_name") or ""
-    is_home = strict_team_match(sel, home)
-    # Le prix d'un leg est le prix EXÉCUTABLE (DNB synthétique en football).
-    # Relire la cote 1X2 brute — ce que faisait cette fonction jusqu'au
-    # 2026-08-27 — comparerait deux grandeurs différentes : la marge du book
-    # passerait pour un mouvement de ligne favorable, et le last-look
-    # laisserait passer des combos que le prix réel condamne. On reprixe donc
-    # le CÔTÉ MISÉ avec `executable_price`, la règle même qui a fixé l'entrée.
-    new_odd = _executable_price(fresh.get("odds_1xbet", {}),
-                                leg.get("sport", ""), "1" if is_home else "2")
-    return new_odd if new_odd > 1.01 else None
-
-
-def _last_look_reprice(systems: list, log) -> list:
-    """
-    Task 8 — right before Telegram send, re-fetch the soft-book price for
-    each h2h leg and re-verify the system is STILL tax-viable at CURRENT
-    prices, not the prices captured at scan time — which can be minutes
-    old by send time (this run alone adds 1.5-4s of deliberate jitter on
-    top of however long the scan/persistence steps took). A system whose
-    price moved against the bettor enough to no longer clear
-    tax_engine.is_combo_tax_viable is dropped rather than sent stale.
-    """
-    if not systems:
-        return systems
-
-    from core.harvester import SPORT_IDS, _fetch_multi_book
-
-    sport_ids_needed = {sid for sid, name in SPORT_IDS.items()
-                        if any(leg.get("sport") == name for sys_ in systems for leg in sys_["legs"])}
-    fresh_by_sport: dict = {}
-    for sid in sport_ids_needed:
-        try:
-            fresh_by_sport[sid] = _fetch_multi_book(sid)
-        except Exception as e:
-            log.warning("Last-look reprice: sport_id=%s fetch failed: %s", sid, e)
-
-    survivors = []
-    for sys_ in systems:
-        repriced_legs = []
-        changed = False
-        for leg in sys_["legs"]:
-            new_odd = _refresh_leg_price(leg, fresh_by_sport, log)
-            if new_odd and new_odd != leg.get("executable_odd"):
-                repriced_legs.append({**leg, "executable_odd": new_odd})
-                changed = True
-            else:
-                repriced_legs.append(leg)
-
-        combo_legs = [{"true_prob": leg.get("sharp_prob", 0), "odds": leg.get("executable_odd", 0),
-                       "correlation_group": leg.get("correlation_group")} for leg in repriced_legs]
-        if _is_combo_tax_viable(combo_legs, tax_rate=_TAX_RATE):
-            if changed:
-                log.info("SYSTEM  | window %s — last-look reprice applied, still viable", sys_.get("window"))
-            sys_["legs"] = repriced_legs
-            survivors.append(sys_)
-        else:
-            log.warning("SYSTEM  | window %s — cancelled at last-look, price moved against the combo",
-                       sys_.get("window"))
-
-    return survivors
-
-
 def _kickoff(leg: dict, now) -> str:
     """' · 21:00 UTC' for a match today, ' · 22/07 21:00 UTC' otherwise.
     Empty string when match_time is unusable — never a fabricated hour."""
@@ -2264,24 +2101,35 @@ def _ecartes(shadowed: list) -> str:
     return "".join(f" · {n} écarté(s) ({r})" for r, n in sorted(par_raison.items()))
 
 
-def _telegram_systems(systems: list, now, matches: int, no_pin_count: int,
-                      shadowed: list | None = None):
-    """Send tax-viable system suggestions only, one per time window.
-    Individual signals are still persisted to Supabase for settlement/
-    learning (see run()) — Telegram now only ever recommends a combo that
-    has already cleared tax_engine.is_combo_tax_viable(), or nothing.
+def _signal_block(s: dict, now) -> str:
+    """Un pari, format opérateur (2026-07-21) : événement, favori, sélection,
+    cote, coup d'envoi, valeur — rien d'autre, aucune mise."""
+    emoji = SPORT_EMOJI.get(s.get("sport", "?"), "🎯")
+    sel   = s.get("selection_name") or s.get("match", "?")
+    fav   = _favourite(s)
+    lines = [f"{emoji} *{s.get('match', '?')}*{_kickoff(s, now)}\n"]
+    if fav and fav != sel:
+        lines.append(f"   Favori : {fav}\n")
+    tag = " (favori)" if fav and fav == sel else ""
+    lines.append(f"   → {sel}{tag} `@ {s.get('executable_odd', 0):.2f}` · valeur `+{s.get('edge_pct', 0):.1f}%`\n")
+    return "".join(lines)
 
-    Format (operator request 2026-07-21, "simple lisible et compréhensible"):
-    event, favourite, pick, odds, kick-off, value — and nothing else. Stakes
-    and euro EV are deliberately gone: bankroll sizing printed "Mise 0€ · EV
-    net taxe +0.01€" on every line, which is noise at best and misleading at
-    worst. Value is expressed as a percentage, which needs no bankroll.
-    Plus de libellé de session (2026-09-03) : « EU-CLOSE 🎯 🎯 » était du
-    jargon interne, l'icône y figurait deux fois.
+
+def _telegram_signals(signals: list, now, matches: int, no_pin_count: int,
+                      shadowed: list | None = None):
+    """Envoie CHAQUE pari recommandé, en simple — décision opérateur du
+    2026-09-03 : « oublie les combinés, affiche ce qui est disponible ».
+    Jusqu'ici Telegram ne recevait qu'un combiné viable après taxe par
+    fenêtre horaire (core/tax_engine.suggest_system) : des journées entières
+    de paris persistés, mesurés, jamais annoncés. Les paris sont classés par
+    urgence (coup d'envoi < 4 h d'abord, puis par valeur).
+
+    Format (demande opérateur 2026-07-21, « simple lisible et
+    compréhensible ») : événement, favori, sélection, cote, heure, valeur —
+    aucune mise ni bankroll. Sans libellé de session (jargon).
     """
     ecartes = _ecartes(shadowed or [])
-
-    if not systems:
+    if not signals:
         _telegram(
             f"⚫ PREDATOR · {now.strftime('%H:%M')} UTC\n"
             f"Aucun pari recommandé · {matches} matchs analysés{ecartes}"
@@ -2291,49 +2139,26 @@ def _telegram_systems(systems: list, now, matches: int, no_pin_count: int,
     no_pin = f"\n⚠️ {no_pin_count} sans confirmation Pinnacle" if no_pin_count > 0 else ""
     header = (
         f"📡 *PREDATOR* · {now.strftime('%H:%M')} UTC\n"
-        f"{len(systems)} pari(s) recommandé(s) · {matches} matchs analysés{ecartes}{no_pin}\n"
+        f"{len(signals)} pari(s) recommandé(s) · {matches} matchs analysés{ecartes}{no_pin}\n"
     )
+    blocks = ["\n" + _signal_block(s, now) for s in sorted(signals, key=lambda s: _urgency_sort(s, now))]
 
-    def _system_urgency(sys_):
-        return min((_urgency_sort(leg, now) for leg in sys_["legs"]), default=(1, 9999.0, 0))
-
-    body_parts: list[str] = []
-    for i, sys_ in enumerate(sorted(systems, key=_system_urgency), start=1):
-        legs = sys_["legs"]
-        combi = "" if sys_["k"] == 1 else f" — combiné {sys_['k']} sélections"
-        lines: list[str] = [f"\n🎯 *Pari {i}*{combi}\n"]
-        for leg in legs:
-            emoji = SPORT_EMOJI.get(leg.get("sport", "?"), "🎯")
-            sel   = leg.get("selection_name") or leg["match"]
-            lines.append(f"{emoji} *{leg.get('match', '?')}*{_kickoff(leg, now)}\n")
-            # Ligne "Favori" seulement quand le favori n'est PAS le pari —
-            # sinon elle répète mot pour mot la ligne suivante.
-            fav = _favourite(leg)
-            if fav and fav != sel:
-                lines.append(f"   Favori : {fav}\n")
-            tag = " (favori)" if fav and fav == sel else ""
-            lines.append(f"   → {sel}{tag} `@ {leg['executable_odd']:.2f}` · valeur `+{leg.get('edge_pct', 0):.1f}%`\n")
-        if sys_["k"] > 1:
-            combo_value = (sys_["combined_odds"] * sys_["combined_prob"] - 1) * 100
-            lines.append(f"   *Combiné* `@ {sys_['combined_odds']:.2f}` · valeur `+{combo_value:.1f}%`\n")
-        body_parts.append("".join(lines))
-
-    body = "".join(body_parts)
-    # Telegram 4096-char limit: send in chunks if needed
-    full = header + body
+    # Telegram : 4096 caractères par message — on coupe entre deux paris,
+    # jamais au milieu d'une entité Markdown.
+    full = header + "".join(blocks)
     if len(full) <= 4000:
         _telegram(full)
-    else:
-        _telegram(header)
-        chunk = ""
-        for part in body_parts:
-            if len(chunk) + len(part) > 3800:
-                _telegram(chunk)
-                chunk = part
-            else:
-                chunk += part
-        if chunk.strip():
+        return
+    _telegram(header)
+    chunk = ""
+    for part in blocks:
+        if len(chunk) + len(part) > 3800:
             _telegram(chunk)
+            chunk = part
+        else:
+            chunk += part
+    if chunk.strip():
+        _telegram(chunk)
 
 
 def _segment_min_edge(dyn_thresholds: dict, dyn_segment_thresholds: dict,
@@ -2664,6 +2489,16 @@ def run():
             log.info("📡 Tier 2 — Harvest api-sports + odds-api.io + titan007 (+ odds500 en ombre)...")
             xbet_matches = fetch_matches()
             _note_harvest_result(sb, xbet_matches)
+        if _api_sports_suspended():
+            # Compte suspendu = action HUMAINE (plan payant ou abandon de la
+            # source), le jour même — le 2026-09-03 l'opérateur l'a appris
+            # avec une journée de retard, par le log.
+            _alert_once(sb, "alert_api_sports_suspended",
+                        "🔑 *api-sports : compte suspendu* — la source est coupée pour la "
+                        "journée (scan et settlement). Un compte gratuit refait après "
+                        "suspension retombe sous 24 h : voir INCIDENTS.md « api-sports, "
+                        "deux comptes suspendus ». Sans api-sports, le sharp Tier 2 tient "
+                        "sur titan007 + Matchbook.", ttl_h=24.0)
         # Abandon seulement si RIEN n'a été trouvé nulle part : depuis que ce
         # tier n'est plus gardé par `matches`, il peut s'exécuter alors que la
         # recherche MMA/eSports/alternatifs a déjà rempli `matches`. Sortir ici
@@ -2900,16 +2735,15 @@ def run():
                     f"Autres sports non affectés — reprise manuelle uniquement pour ces sports."
                 )
         # (La partition fantôme a eu lieu AVANT la persistance, section B :
-        # `emit_signals` ne contient déjà que des recommandés.)
-        systems = _suggest_systems_by_window(emit_signals, log, sb)
-        systems = _last_look_reprice(systems, log)
-        already_announced = len(systems)
-        systems = _dedup_systems_for_telegram(sb, systems)
-        already_announced -= len(systems)
-        if REPRICE and not systems:
+        # `emit_signals` ne contient déjà que des recommandés.) Chaque pari
+        # part en SIMPLE, une fois (dédup 24 h) — plus de combiné.
+        already_announced = len(emit_signals)
+        a_annoncer = _dedup_signals_for_telegram(sb, emit_signals)
+        already_announced -= len(a_annoncer)
+        if REPRICE and not a_annoncer:
             # Un tick REPRICE sans rien de NEUF se tait — sinon le mode
             # horaire enverrait ~23 « Aucun pari recommandé »/jour, ou
-            # ré-annoncerait le même combo à chaque tick.
+            # ré-annoncerait les mêmes paris à chaque tick.
             log.info("💹 REPRICE — rien de neuf à annoncer (%d déjà signalé(s), %d fantôme(s))",
                      already_announced, len(shadowed))
         else:
@@ -2917,7 +2751,7 @@ def run():
             # « 13 matchs analysés · 1 écarté (< 2 h) » est le bilan honnête
             # du run — jusqu'au 2026-09-03 il se taisait, et l'opérateur ne
             # savait pas si le scan avait tourné.
-            _telegram_systems(systems, now, len(matches), no_pin_count, shadowed)
+            _telegram_signals(a_annoncer, now, len(matches), no_pin_count, shadowed)
 
     elite = [s for s in signals if s["edge_pct"] >= ELITE_EDGE]
     log.info("Done. %d candidates | %d balanced | %d elite.",

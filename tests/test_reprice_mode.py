@@ -164,9 +164,6 @@ def cabler_reprice(monkeypatch):
     monkeypatch.setattr(eng, "_load_sport_ranking", lambda _sb: [])
     monkeypatch.setattr(eng.time, "sleep", lambda _s: None)
     monkeypatch.setattr(eng._risk_manager, "check_circuit_breaker", lambda _sb: False)
-    monkeypatch.setattr(eng, "_suggest_systems_by_window",
-                        lambda _sigs, _log, _sb=None: [])
-    monkeypatch.setattr(eng, "_last_look_reprice", lambda s, _log: s)
     monkeypatch.setattr(eng, "_telegram", lambda t: telegrams.append(t))
     # Périmètre (2026-09-03) : la réglabilité interroge ESPN — pas de réseau
     # ici, le match du slate est tenu pour réglable (gardé par
@@ -316,15 +313,14 @@ def test_full_scan_writes_trimmed_slate(reprice_env, monkeypatch):
     assert "junk_key" not in slate[0]
 
 
-def test_dedup_systems_for_telegram(reprice_env):
+def test_dedup_signals_for_telegram(reprice_env):
+    """Un pari est annoncé UNE fois (24 h) ; le tick REPRICE horaire ne le
+    répète pas ; un pari différent n'est pas bloqué."""
     sb, _t, _mb = reprice_env
-    system = {"k": 1, "legs": [{"match_id": "rp1", "market_key": "h2h",
-                                "selection_name": "Boca Juniors"}]}
-    first = eng._dedup_systems_for_telegram(sb, [system])
-    assert first == [system], "premier passage : le combo part"
-    second = eng._dedup_systems_for_telegram(sb, [system])
-    assert second == [], "même combo dans le TTL : silence"
-    other = {"k": 1, "legs": [{"match_id": "rp9", "market_key": "h2h",
-                               "selection_name": "River Plate"}]}
-    assert eng._dedup_systems_for_telegram(sb, [other]) == [other], \
-        "un combo DIFFÉRENT n'est pas bloqué"
+    sig = {"match_id": "rp1", "market_key": "h2h", "selection_name": "Boca Juniors"}
+    assert eng._dedup_signals_for_telegram(sb, [sig]) == [sig], "premier passage : le pari part"
+    assert eng._dedup_signals_for_telegram(sb, [sig]) == [], "même pari dans le TTL : silence"
+    other = {"match_id": "rp9", "market_key": "h2h", "selection_name": "River Plate"}
+    assert eng._dedup_signals_for_telegram(sb, [other]) == [other], \
+        "un pari DIFFÉRENT n'est pas bloqué"
+    assert eng._SIGNAL_ALERT_TTL_H >= 24, "les rappels sont l'affaire du digest, pas du scan"

@@ -56,8 +56,6 @@ def scan_env(monkeypatch):
     monkeypatch.setattr(eng, "_load_sport_ranking", lambda _sb: [])
     monkeypatch.setattr(eng.time, "sleep", lambda _s: None)
     monkeypatch.setattr(eng._risk_manager, "check_circuit_breaker", lambda _sb: False)
-    monkeypatch.setattr(eng, "_suggest_systems_by_window",
-                        lambda _sigs, _log, _sb=None: [])
     monkeypatch.setattr(eng, "_telegram", lambda t: telegrams.append(t))
     monkeypatch.setattr(eng, "_fixtures_espn", lambda sport, a, b: [])   # pas de réseau
 

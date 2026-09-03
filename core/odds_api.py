@@ -27,6 +27,12 @@ import requests
 from datetime import datetime, timedelta, timezone
 
 from core.secret_store import get_secret
+# Borne T-2h du fantôme (core/learning_layer, règle n°6 : une seule copie).
+from core.learning_layer import _PLAYABLE_MIN_MINUTES as PLAYABLE_MIN_MINUTES
+
+# Retard de livraison des crons GitHub, mesuré jusqu'à ~40 min : un match à
+# T-2h05 au moment du pré-vol sera à T-1h30 quand le signal sortira.
+PLAYABLE_MARGIN_MIN = int(os.environ.get("ODDS_API_PLAYABLE_MARGIN_MIN", "30"))
 
 log = logging.getLogger("PREDATOR.odds_api")
 
@@ -391,13 +397,19 @@ def _parse_event(ev: dict, sport_type: str) -> dict | None:
 # vide de toute façon. Ce n'est pas du rationnement — aucun scan utile n'est
 # refusé, jamais.
 
-def _events_in_window(api_key: str, sport_key: str,
-                      time_from: str, time_to: str) -> int | None:
-    """Nombre de matchs de cette ligue dans la fenêtre — 0 crédit.
+def _events_in_window(api_key: str, sport_key: str, time_from: str, time_to: str,
+                      playable_from: str | None = None) -> tuple[int | None, int | None]:
+    """(matchs dans la fenêtre, dont JOUABLES) pour cette ligue — 0 crédit.
 
-    Renvoie None si l'appel échoue : on ne sait pas, donc on laisse le scan
-    payant décider. Ne jamais transformer une panne du pré-vol en « pas de
-    match » — ce serait une panne silencieuse du pipeline entier.
+    Jouable = coup d'envoi à `playable_from` ou après (T-2h + marge) : un
+    match plus proche sortirait FANTÔME par construction (2026-09-03), donc
+    un crédit payé pour lui n'achète aucun pari. Un match sans horaire
+    lisible compte comme jouable — on ne sait pas. Sans `playable_from`,
+    les deux nombres sont égaux.
+
+    Renvoie (None, None) si l'appel échoue : on ne sait pas, donc on laisse
+    le scan payant décider. Ne jamais transformer une panne du pré-vol en
+    « pas de match » — ce serait une panne silencieuse du pipeline entier.
     """
     try:
         r = requests.get(
@@ -408,13 +420,19 @@ def _events_in_window(api_key: str, sport_key: str,
             timeout=10,
         )
         if r.status_code == 404:
-            return 0          # hors saison
+            return 0, 0          # hors saison
         if r.status_code != 200:
-            return None
-        return len(r.json() or [])
+            return None, None
+        events = r.json() or []
+        if not playable_from:
+            return len(events), len(events)
+        playable = sum(1 for ev in events
+                       if not (isinstance(ev, dict) and ev.get("commence_time"))
+                       or str(ev["commence_time"]) >= playable_from)
+        return len(events), playable
     except Exception as e:
         log.debug("preflight %s: %s", sport_key, e)
-        return None
+        return None, None
 
 
 # ── Pool de clés OddsAPI (v10.3) ──────────────────────────────────────
@@ -709,6 +727,9 @@ def fetch_odds(api_key: str | None = None, hours_ahead: int = 24,
     until     = now + timedelta(hours=hours_ahead)
     time_from = now.strftime("%Y-%m-%dT%H:%M:%SZ")
     time_to   = until.strftime("%Y-%m-%dT%H:%M:%SZ")
+    # Même format ISO « Z » que l'API : la comparaison de chaînes est exacte.
+    playable_lead = timedelta(minutes=PLAYABLE_MIN_MINUTES + PLAYABLE_MARGIN_MIN)
+    playable_from = (now + playable_lead).strftime("%Y-%m-%dT%H:%M:%SZ")
 
     # Pré-vol gratuit : on ne garde que les ligues qui ont réellement des
     # matchs dans la fenêtre, triées par volume décroissant — si un 422
@@ -719,16 +740,27 @@ def fetch_odds(api_key: str | None = None, hours_ahead: int = 24,
     saved = 0
     skipped_season = 0
     skipped_policy = 0
+    skipped_phantom: list = []
     for sport_key, sport_type in keys_to_scan.items():
         if not _season_open(sport_key, now):
             skipped_season += 1
             continue
-        n_events = _events_in_window(api_key, sport_key, time_from, time_to)
+        n_events, n_playable = _events_in_window(api_key, sport_key, time_from, time_to,
+                                                 playable_from)
         if n_events == 0:
             skipped_empty += 1
             saved += league_cost(sport_type)
             continue
-        populated.append((sport_key, sport_type, n_events if n_events is not None else 0))
+        if n_playable == 0:
+            # Tous les matchs à moins de T-2h (+ marge) : chaque signal en
+            # sortirait fantôme. Un crédit ici n'achète RIEN de recommandable
+            # — c'était le coût caché des crons de 19:03/21:03 sur le Big 5.
+            skipped_phantom.append(sport_key)
+            saved += league_cost(sport_type)
+            continue
+        # Tri et priorité sur les matchs JOUABLES : c'est eux que le crédit
+        # achète. Pré-vol en panne (None) : 0 pour le tri, mais on paie.
+        populated.append((sport_key, sport_type, n_playable if n_playable is not None else 0))
     # Les plus peuplées d'abord — AVANT la politique de dépense : quand le
     # rythme du jour n'autorise que quelques ligues, ce sont celles qui
     # rapportent le plus de matchs par crédit qui passent, pas les premières
@@ -747,9 +779,12 @@ def fetch_odds(api_key: str | None = None, hours_ahead: int = 24,
                 skipped_policy += 1
                 continue
         scan_plan.append((sport_key, sport_type, n_events))
-    if skipped_empty:
-        log.info("Pré-vol gratuit : %d/%d ligues sans match dans la fenêtre — "
-                 "%d crédits économisés", skipped_empty, len(keys_to_scan), saved)
+    if skipped_empty or skipped_phantom:
+        log.info("Pré-vol gratuit : %d/%d ligues sans match dans la fenêtre, %d dont tous "
+                 "les matchs sont à moins de %d min (fantômes par construction : %s) — "
+                 "%d crédits économisés", skipped_empty, len(keys_to_scan),
+                 len(skipped_phantom), PLAYABLE_MIN_MINUTES + PLAYABLE_MARGIN_MIN,
+                 " ".join(skipped_phantom) or "—", saved)
     if skipped_season:
         log.info("Hors saison : %d ligue(s) avant leur date d'ouverture (SEASON_OPENS) — "
                  "0 crédit, 0 appel", skipped_season)

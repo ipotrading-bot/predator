@@ -19,31 +19,64 @@ def _utc(y, mo, d, h, mi=0):
 
 
 class TestWindowsMap:
-    def test_kbo_morning_utc(self):
-        assert is_favorable("baseball_kbo", _utc(2026, 8, 25, 8))        # mardi 08:00
+    """Carte recalée le 2026-09-03 : une fenêtre = l'heure d'un SCAN standard
+    (06/09/11/13/16/19/21/23) situé T-2h30..6h AVANT les coups d'envoi de
+    la ligue — un scan à moins de 2 h n'achetait que des fantômes."""
+
+    def test_kbo_scan_du_matin_seulement(self):
+        assert is_favorable("baseball_kbo", _utc(2026, 8, 25, 6))         # mardi 06:03
+        assert not is_favorable("baseball_kbo", _utc(2026, 8, 25, 9))     # 09:03 : T-30 min
         assert not is_favorable("baseball_kbo", _utc(2026, 8, 25, 15))
 
-    def test_big5_european_evening(self):
-        assert is_favorable("soccer_epl", _utc(2026, 8, 25, 19))
+    def test_big5_paye_avant_la_soiree_jamais_pendant(self):
+        # Coups d'envoi 16:45–19:30 UTC : 13:03 et 16:03 oui, 19:03 non.
+        assert is_favorable("soccer_epl", _utc(2026, 8, 25, 13))
+        assert is_favorable("soccer_epl", _utc(2026, 8, 25, 16))
+        assert not is_favorable("soccer_epl", _utc(2026, 8, 25, 19))
         assert not is_favorable("soccer_epl", _utc(2026, 8, 25, 4))
 
-    def test_south_america_and_mlb_cross_midnight(self):
+    def test_big5_week_end_des_le_matin(self):
+        assert is_favorable("soccer_epl", _utc(2026, 8, 29, 9))            # samedi 09:03
+        assert not is_favorable("soccer_epl", _utc(2026, 8, 25, 9))        # mardi 09:03
+
+    def test_south_america_and_mlb_evening(self):
+        assert is_favorable("soccer_brazil_campeonato", _utc(2026, 8, 25, 19))
         assert is_favorable("soccer_brazil_campeonato", _utc(2026, 8, 25, 23))
-        assert is_favorable("baseball_mlb", _utc(2026, 8, 26, 1))
+        assert is_favorable("baseball_mlb", _utc(2026, 8, 25, 21))
+        assert is_favorable("baseball_mlb", _utc(2026, 8, 25, 13))         # matinées US
+        assert not is_favorable("baseball_mlb", _utc(2026, 8, 26, 1))      # 01:00 : matchs commencés
         assert not is_favorable("baseball_mlb", _utc(2026, 8, 26, 10))
 
     def test_nfl_sunday_and_monday_night(self):
-        assert is_favorable("americanfootball_nfl", _utc(2026, 9, 13, 18))   # dimanche
-        assert is_favorable("americanfootball_nfl", _utc(2026, 9, 14, 1))    # lundi 01:00 (SNF)
+        assert is_favorable("americanfootball_nfl", _utc(2026, 9, 13, 13))   # dimanche 13:03 (17:00)
+        assert is_favorable("americanfootball_nfl", _utc(2026, 9, 13, 21))   # dimanche 21:03 (SNF 00:20)
+        assert is_favorable("americanfootball_nfl", _utc(2026, 9, 14, 21))   # lundi 21:03 (MNF)
         assert not is_favorable("americanfootball_nfl", _utc(2026, 9, 15, 18))  # mardi
 
     def test_euroleague_thursday_friday_only(self):
-        assert is_favorable("basketball_euroleague", _utc(2026, 10, 1, 19))   # jeudi
-        assert not is_favorable("basketball_euroleague", _utc(2026, 9, 28, 19))  # lundi
+        assert is_favorable("basketball_euroleague", _utc(2026, 10, 1, 13))   # jeudi 13:03
+        assert not is_favorable("basketball_euroleague", _utc(2026, 10, 1, 19))
+        assert not is_favorable("basketball_euroleague", _utc(2026, 9, 28, 13))  # lundi
 
     def test_combat_sports_weekend(self):
-        assert is_favorable("mma_mixed_martial_arts", _utc(2026, 8, 22, 3))   # samedi
-        assert not is_favorable("boxing_boxing", _utc(2026, 8, 25, 3))        # mardi
+        assert is_favorable("mma_mixed_martial_arts", _utc(2026, 8, 22, 21))   # samedi 21:03
+        assert not is_favorable("boxing_boxing", _utc(2026, 8, 25, 21))        # mardi
+
+    def test_australie_veille_et_matin(self):
+        assert is_favorable("aussierules_afl", _utc(2026, 8, 28, 23))          # vendredi 23:03
+        assert is_favorable("rugbyleague_nrl", _utc(2026, 8, 29, 6))           # samedi 06:03
+        assert not is_favorable("aussierules_afl", _utc(2026, 8, 29, 9))
+
+    def test_aucune_fenetre_a_moins_de_2h_dun_cron_standard_inutile(self):
+        # Chaque fenêtre contient au moins une heure de scan standard —
+        # sinon la ligue ne serait jamais payée au rang « fenêtre ».
+        from scripts.ci_scan_mode import CRON_MODES
+        from core.scan_windows import _WINDOWS
+        hours = {int(h) for c, m in CRON_MODES.items() if m == "standard"
+                 for h in c.split()[1].split(",")}
+        for key, windows in _WINDOWS.items():
+            for _days, start, end in windows:
+                assert any(start <= h < end for h in hours), (key, start, end)
 
     def test_unknown_league_is_never_favorable(self):
         assert not is_favorable("soccer_mars_league", _utc(2026, 8, 25, 19))
@@ -73,7 +106,7 @@ class TestSpendPolicy:
 
     def test_favorable_window_always_pays(self):
         pol = _Policy(ages={"soccer_epl": 10}).p
-        ok, why = pol.allow("soccer_epl", "soccer", _utc(2026, 8, 25, 19), 5)
+        ok, why = pol.allow("soccer_epl", "soccer", _utc(2026, 8, 25, 13), 5)
         assert ok and "favorable" in why
 
     def test_background_respects_min_interval(self):
@@ -90,7 +123,7 @@ class TestSpendPolicy:
     def test_reserve_guard_spaces_background_only(self):
         low = RESERVE_CREDITS - 1
         assert not _Policy().p.allow("soccer_epl", "soccer", self.BG_TIME, low)[0]
-        assert _Policy().p.allow("soccer_epl", "soccer", _utc(2026, 8, 25, 19), low)[0]
+        assert _Policy().p.allow("soccer_epl", "soccer", _utc(2026, 8, 25, 13), low)[0]
         assert _Policy(exempt={"soccer"}).p.allow("soccer_epl", "soccer", self.BG_TIME, low)[0]
 
     def test_closing_line_exemption_beats_the_interval(self):
@@ -224,19 +257,21 @@ class TestRythme:
         return p, noted
 
     def test_fenetre_favorable_bornee_par_le_plafond_du_jour(self):
-        p, _ = self._pol(allowance=24, spent=0)     # 01:00 → plafond 24 × 3/24 = 3
-        ok, why = p.allow("baseball_mlb", "baseball", self.NIGHT, 2000, cost=2)
+        dawn = _utc(2026, 9, 2, 5)                   # 05:00 : KBO/NPB en fenêtre
+        p, _ = self._pol(allowance=12, spent=0)     # plafond 12 × 7/24 = 3,5
+        ok, why = p.allow("baseball_kbo", "baseball", dawn, 2000, cost=2)
         assert ok and why == "fenêtre favorable"
-        ok, why = p.allow("soccer_brazil_campeonato", "soccer", self.NIGHT, 2000, cost=3)
-        assert not ok and "rythme" in why and "plafond 3" in why
+        ok, why = p.allow("baseball_npb", "baseball", dawn, 2000, cost=3)
+        assert not ok and "rythme" in why
         assert p.skipped and "fenêtre favorable mais" in p.skipped[0][1]
 
     def test_le_soir_le_plafond_est_l_allocation_entiere(self):
-        late = _utc(2026, 9, 2, 21, 30)              # EPL en fenêtre, plafond 24 × 23,5/24 = 23,5
+        late = _utc(2026, 9, 2, 21, 30)              # SA en fenêtre, plafond 24 × 23,5/24 = 23,5
         p, _ = self._pol(allowance=24, spent=15)
-        assert p.allow("soccer_epl", "soccer", late, 2000, cost=3)[0]      # 18
-        assert p.allow("soccer_epl", "soccer", late, 2000, cost=3)[0]      # 21
-        assert not p.allow("soccer_epl", "soccer", late, 2000, cost=3)[0]  # 24 > 23,5
+        sa = "soccer_brazil_campeonato"
+        assert p.allow(sa, "soccer", late, 2000, cost=3)[0]      # 18
+        assert p.allow(sa, "soccer", late, 2000, cost=3)[0]      # 21
+        assert not p.allow(sa, "soccer", late, 2000, cost=3)[0]  # 24 > 23,5
         assert p.engaged == 6                        # comptés dans CE scan, avant paiement
 
     def test_le_fond_ne_prend_que_sa_part(self):
