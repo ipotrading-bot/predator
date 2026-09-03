@@ -73,7 +73,11 @@ class TestRegistre:
         `401 {"code":"wrong_api_key"}`, donc il est vivant. Il est rétabli."""
         noms = {p.name for p in R.REGISTRY}
         assert "github" not in noms and "github_models" not in noms
-        assert "cerebras" in noms
+        # Cerebras a finalement été RETIRÉ le 2026-09-03 (402 payment_required
+        # à l'inférence, décision opérateur) — avec chutes, sambanova, scaleway,
+        # cloudflare et zhipu. Ne pas les réenrôler sans inférence réelle.
+        for mort in ("cerebras", "chutes", "sambanova", "scaleway", "cloudflare", "zhipu"):
+            assert mort not in noms, mort
 
     def test_les_endpoints_anonymes_ne_sont_pas_enroles(self):
         """Même défaut fatal que les sources sans clé de l'incident d'août :
@@ -100,7 +104,6 @@ class TestConditionsDUtilisation:
     def test_les_fournisseurs_non_commerciaux_sont_marques(self):
         flagged = {p.name: p.terms_flag for p in R.REGISTRY if p.terms_flag}
         assert flagged["cohere"] == "non_commercial"
-        assert flagged["zhipu"] == "non_commercial"
         assert flagged["nvidia_nim"] == "evaluation"
 
     def test_un_fournisseur_marque_est_exclu_de_la_production(self, monkeypatch):
@@ -163,10 +166,8 @@ class TestAlerteDeLane:
 
     def test_deux_fournisseurs_sains_ne_declenchent_rien(self, monkeypatch):
         monkeypatch.setenv("OPENROUTER_API_KEY", "o")
-        monkeypatch.setenv("SAMBANOVA_API_KEY", "s")
         monkeypatch.setenv("OVH_AI_API_KEY", "v")
         monkeypatch.setenv("MODELSCOPE_API_KEY", "m")
-        monkeypatch.setenv("SCALEWAY_API_KEY", "sc")
         monkeypatch.setenv("OLLAMA_API_KEY", "ol")
         monkeypatch.setattr(R, "fetch_catalog", lambda p, timeout=None: set())
         rapport = R.refresh_catalogues(alert=None)
@@ -237,7 +238,7 @@ class TestDisjoncteur:
     def test_une_reponse_invalide_compte_comme_un_echec_et_passe_au_suivant(self, monkeypatch):
         """JSON invalide = fournisseur en panne du point de vue du pipeline."""
         monkeypatch.setenv("OPENROUTER_API_KEY", "o")
-        monkeypatch.setenv("SAMBANOVA_API_KEY", "s")
+        monkeypatch.setenv("NVIDIA_NIM_API_KEY", "s")
         monkeypatch.setattr(R, "fetch_catalog", lambda p, timeout=None: set())
         vus = []
 
@@ -251,7 +252,7 @@ class TestDisjoncteur:
             _json.loads(t)
             return True
         text, prov = R.route([], R.ANALYZE, allow_flagged=True, validator=valide)
-        assert text == '{"ok":1}' and prov == "sambanova"
+        assert text == '{"ok":1}' and prov == "nvidia_nim"
         assert len(vus) == 2
 
 
@@ -303,7 +304,7 @@ class TestLanes:
         """Double emploi avec la mission 3 : un modèle chinois résout un nom
         d'équipe CJK mieux qu'un Llama généraliste, et pour rien."""
         noms = [p.name for p in R.REGISTRY if R.TRANSLATE_CJK in p.lanes]
-        assert "zhipu" in noms and "modelscope" in noms
+        assert "modelscope" in noms and "siliconflow" in noms
 
     def test_mistral_est_au_registre_pour_les_lanes_de_signaux(self):
         """L'INVERSE de la règle d'avant, et c'est voulu.
@@ -375,25 +376,36 @@ class TestDocumentation:
 
 
 class TestGabaritsDURL:
-    """Cloudflare porte son identifiant de compte DANS l'URL."""
+    """Un fournisseur peut porter une variable d'env DANS son URL (c'était
+    Cloudflare et son identifiant de compte, retiré le 2026-09-03 ; le
+    mécanisme reste, testé sur un fournisseur synthétique)."""
+
+    def _essai(self, monkeypatch):
+        p = R.Provider(name="essai", base_url="https://x/${ESSAI_ACCOUNT}/ai",
+                       env_key="ESSAI_KEY", chat_path="/v1/chat/completions",
+                       models=("m",), lanes=(R.ANALYZE,))
+        monkeypatch.setattr(R, "REGISTRY", (p,))
+        return p
 
     def test_les_variables_sont_substituees(self, monkeypatch):
-        monkeypatch.setenv("CLOUDFLARE_ACCOUNT_ID", "abc123")
-        cf = R.by_name("cloudflare")
-        assert "abc123" in cf.resolved_base and "${" not in cf.resolved_base
-        assert cf.chat_url.endswith("/ai/v1/chat/completions")
+        p = self._essai(monkeypatch)
+        monkeypatch.setenv("ESSAI_ACCOUNT", "abc123")
+        assert "abc123" in p.resolved_base and "${" not in p.resolved_base
+        assert p.chat_url.endswith("/ai/v1/chat/completions")
 
     def test_une_cle_sans_son_identifiant_de_compte_est_ignoree(self, monkeypatch):
         """Sinon on appellerait une URL contenant littéralement `${...}` et on
         logguerait un échec réseau incompréhensible."""
-        monkeypatch.setenv("CLOUDFLARE_API_TOKEN", "t")
-        monkeypatch.delenv("CLOUDFLARE_ACCOUNT_ID", raising=False)
-        assert "cloudflare" not in [p.name for p in R.active_providers()]
+        self._essai(monkeypatch)
+        monkeypatch.setenv("ESSAI_KEY", "t")
+        monkeypatch.delenv("ESSAI_ACCOUNT", raising=False)
+        assert "essai" not in [p.name for p in R.active_providers()]
 
     def test_avec_les_deux_le_fournisseur_est_actif(self, monkeypatch):
-        monkeypatch.setenv("CLOUDFLARE_API_TOKEN", "t")
-        monkeypatch.setenv("CLOUDFLARE_ACCOUNT_ID", "abc123")
-        assert "cloudflare" in [p.name for p in R.active_providers()]
+        self._essai(monkeypatch)
+        monkeypatch.setenv("ESSAI_KEY", "t")
+        monkeypatch.setenv("ESSAI_ACCOUNT", "abc123")
+        assert "essai" in [p.name for p in R.active_providers()]
 
 
 class TestCouvertureDesLanes:
@@ -560,17 +572,16 @@ class TestRepartitionSur24h:
     """
 
     def _trois(self, monkeypatch, spent):
-        for n in ("GEMINI_API_KEY", "CLOUDFLARE_API_TOKEN",
-                  "CLOUDFLARE_ACCOUNT_ID", "OPENROUTER_API_KEY"):
+        for n in ("GEMINI_API_KEY", "OLLAMA_API_KEY", "OPENROUTER_API_KEY"):
             monkeypatch.setenv(n, "x")
         monkeypatch.setattr(R, "fetch_catalog", lambda p, timeout=None: set())
         monkeypatch.setattr(daily_quota, "spent", lambda b: spent.get(b, 0))
 
     def test_le_moins_servi_passe_en_premier(self, monkeypatch):
-        self._trois(monkeypatch, {"ai_gemini": 190, "ai_cloudflare": 10,
+        self._trois(monkeypatch, {"ai_gemini": 190, "ai_ollama_cloud": 10,
                                   "ai_openrouter": 20})
         ordre = [p.name for p, _ in R.lane_providers(R.ANALYZE)]
-        assert ordre[0] == "cloudflare"          # 10/200 consommé
+        assert ordre[0] == "ollama_cloud"        # 10/100 consommé
         assert ordre[-1] == "gemini"             # 190/200 consommé
 
     def test_lordre_du_registre_departage_a_egalite(self, monkeypatch):
@@ -640,8 +651,9 @@ class TestCalibration24h:
         sa réserve s'épuisait pendant que les autres restaient intacts.
         """
         from datetime import datetime, timedelta, timezone
-        for n in ("GEMINI_API_KEY", "CLOUDFLARE_API_TOKEN", "CLOUDFLARE_ACCOUNT_ID",
-                  "OPENROUTER_API_KEY", "OLLAMA_API_KEY"):
+        # Quatre fournisseurs de production configurés (cloudflare, retiré le
+        # 2026-09-03, est remplacé par nebius dans la simulation).
+        for n in ("GEMINI_API_KEY", "OPENROUTER_API_KEY", "OLLAMA_API_KEY", "NEBIUS_API_KEY"):
             monkeypatch.setenv(n, "x")
         monkeypatch.setattr(R, "fetch_catalog", lambda p, timeout=None: set())
         spent = {}

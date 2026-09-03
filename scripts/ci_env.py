@@ -77,7 +77,10 @@ AI_KEYS = tuple(sorted(p.env_key for p in REGISTRY))
 PRODUCTION_KEYS = tuple(sorted(p.env_key for p in PRODUCTION_SAFE))
 # Cloudflare Workers AI : l'URL contient l'id de compte, le jeton seul donne
 # une URL malformée — panne plus obscure qu'une clé absente.
-COMPANIONS = {"CLOUDFLARE_API_TOKEN": ("CLOUDFLARE_ACCOUNT_ID",)}
+# (Cloudflare Workers AI, seul fournisseur à compagnon — CLOUDFLARE_ACCOUNT_ID
+# dans l'URL — a été retiré du registre le 2026-09-03 : clé refusée. La
+# mécanique reste pour le prochain fournisseur qui en aurait besoin.)
+COMPANIONS: dict[str, tuple[str, ...]] = {}
 
 SUPABASE_RO = ("SUPABASE_URL", "SUPABASE_KEY")
 SUPABASE_RW = SUPABASE_RO + ("SUPABASE_SERVICE_KEY",)

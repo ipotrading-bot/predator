@@ -571,6 +571,10 @@ Mesuré le 2026-08-22, avec la méthode :
   `ZHIPU_API_KEY` rend **401 « token expired or incorrect »** — la clé est
   périmée. Impact nul (Zhipu est `non_commercial`, donc hors production), à
   renouveler ou à retirer du `.env` au choix de l'opérateur.
+  **Tranché le 2026-09-03** (décision opérateur, ré-mesuré par `ops.py ai`) :
+  cerebras, chutes, sambanova, scaleway, cloudflare (401 désormais) et zhipu
+  sont RETIRÉS du registre — 11 fournisseurs, 8 sans clause restrictive.
+  Voir INCIDENTS.md « Six fournisseurs IA morts retirés du registre ».
 - **`team_aliases`** existe en base (12 lignes) : la migration `v10_3` est
   bien appliquée, contrairement à ce que `CLAUDE.md` laissait entendre.
 - **Aucun TODO/FIXME/HACK** dans le code de production.

@@ -131,9 +131,6 @@ jobs:
           API_BASKETBALL_KEY: ${{ secrets.API_BASKETBALL_KEY }}
           API_BASEBALL_KEY: ${{ secrets.API_BASEBALL_KEY }}
           THESPORTSDB_API_KEY: ${{ secrets.THESPORTSDB_API_KEY }}
-          CEREBRAS_API_KEY: ${{ secrets.CEREBRAS_API_KEY }}
-          CHUTES_API_KEY: ${{ secrets.CHUTES_API_KEY }}
-          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
           COHERE_API_KEY: ${{ secrets.COHERE_API_KEY }}
           GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY }}
           MISTRAL_API_KEY: ${{ secrets.MISTRAL_API_KEY }}
@@ -143,12 +140,8 @@ jobs:
           OLLAMA_API_KEY: ${{ secrets.OLLAMA_API_KEY }}
           OPENROUTER_API_KEY: ${{ secrets.OPENROUTER_API_KEY }}
           OVH_AI_API_KEY: ${{ secrets.OVH_AI_API_KEY }}
-          SAMBANOVA_API_KEY: ${{ secrets.SAMBANOVA_API_KEY }}
-          SCALEWAY_API_KEY: ${{ secrets.SCALEWAY_API_KEY }}
           SILICONFLOW_API_KEY: ${{ secrets.SILICONFLOW_API_KEY }}
           UPSTAGE_API_KEY: ${{ secrets.UPSTAGE_API_KEY }}
-          ZHIPU_API_KEY: ${{ secrets.ZHIPU_API_KEY }}
-          CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
           # ▲ fin du bloc généré (pool `scan`)
         run: |
           # Préflight COMPLET : ce step est le seul à porter le pool entier

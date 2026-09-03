@@ -49,7 +49,11 @@ CLES_PAYANTES = TOUTES_CLES_IA \
 # doit plus jamais les transmettre — les réintroduire serait rebrancher une
 # capacité retirée sur décision opérateur.
 CLES_SUPPRIMEES = {"GROQ_API_KEY", "GROQ_API_KEY_2", "GROQ_API_KEY_3",
-                   "GROQ_API_KEY_4", "GROQ_API_KEY_5", "TAVILY_API_KEY"}
+                   "GROQ_API_KEY_4", "GROQ_API_KEY_5", "TAVILY_API_KEY",
+                   # Fournisseurs IA morts retirés le 2026-09-03 (402 / 429 / 401)
+                   "CEREBRAS_API_KEY", "CHUTES_API_KEY", "SAMBANOVA_API_KEY",
+                   "SCALEWAY_API_KEY", "CLOUDFLARE_API_TOKEN", "CLOUDFLARE_ACCOUNT_ID",
+                   "ZHIPU_API_KEY"}
 
 
 def _jwt(role):
@@ -75,7 +79,9 @@ def test_tout_fournisseur_de_production_atteint_le_pool_scan():
     assert not manquants, f"pool scan ne transmet pas {manquants} — capacité morte SANS ERREUR"
 
 
-def test_cloudflare_a_son_identifiant_de_compte():
+def test_chaque_jeton_a_compagnon_voyage_avec_lui():
+    """(Cloudflare, seul cas connu, a été retiré le 2026-09-03 ; la garde
+    reste pour le prochain fournisseur à identifiant de compte.)"""
     env = ci_env.env_for("scan", {})
     for jeton, compagnons in ci_env.COMPANIONS.items():
         if jeton in env:

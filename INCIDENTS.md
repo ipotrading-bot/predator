@@ -1440,6 +1440,26 @@ lookups sont préservés pour les matchs de la veille.
 Gardiens : `tests/test_score_sources.py::TestESPN`, `::TestChaineAvecESPN`,
 `tests/test_settlement.py::…::test_api_sports_saute_hors_de_la_fenetre_du_plan_gratuit`.
 
+### Six fournisseurs IA morts retirés du registre (2026-09-03)
+
+Décision opérateur : « supprimer les IA non opérationnelles comme zhipu et
+cloudflare ». Vérifié par appel RÉEL le jour même (`python scripts/ops.py ai`,
+seul diagnostic qui tranche) : 4 fournisseurs configurés sur 12 répondaient
+(gemini, ollama_cloud, cohere, upstage). Retirés du registre
+(`core/ai_router.py`), donc des pools CI (`ci_env.py --write`) :
+cerebras, chutes, sambanova (402 payment_required — carte obligatoire),
+scaleway (429 INSUFFICIENT QUOTA — quota à zéro), cloudflare (401 clé
+refusée), zhipu (401 token expired). Un fournisseur mort au registre coûte un
+appel raté par run et une ligne de log qui fait croire à une capacité.
+Gardés : openrouter et nvidia_nim (erreurs transitoires ce jour-là, vivants
+auparavant), cohere et upstage (répondent, marqués hors production par leurs
+CGU), et les cinq jamais configurés (nebius, ovh, modelscope, siliconflow,
+mistral) — des options, pas des pannes. Le registre passe de 17 à 11, dont 8
+sans clause restrictive ; le minimum de 2 fournisseurs sains par lane tient.
+Geste opérateur restant : supprimer les secrets GitHub correspondants
+(docs/actions_operateur.md §6). Gardiens : `tests/test_ai_router.py`
+(fournisseurs morts absents), `tests/test_ci_env.py::CLES_SUPPRIMEES`.
+
 ### Groq et Tavily SUPPRIMÉS — le settlement est déterministe (2026-09-02)
 
 Décision opérateur, dans ses mots : « j'en ai marre de groq et tavily

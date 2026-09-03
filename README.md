@@ -18,7 +18,7 @@
 ```
    SOURCES DE COTES                       COUCHE IA (core/ai_router.py)
    ───────────────────                    ──────────────────────────────
-   OddsAPI      (rallumé 2026-09-01)      Registre de 17 fournisseurs
+   OddsAPI      (rallumé 2026-09-01)      Registre de 11 fournisseurs
    Matchbook    (sharp, sans clé)         Lanes : FILTER / ANALYZE /
    api-sports   (soft)                            TRANSLATE_CJK
    odds.500.com (gratuit, mode ombre)     (les lanes SEARCH_READ et
@@ -84,7 +84,7 @@ de 120 s), ramassée par `scan.yml` au tick suivant (32/jour, donc ≤ ~1 h) et 
 ### 🧠 Couche IA
 
 - **Routeur multi-fournisseurs** ([`core/ai_router.py`](core/ai_router.py)) —
-  registre de 17 fournisseurs, dont 9 utilisables en production (les autres
+  registre de 11 fournisseurs, dont 8 utilisables en production (les autres
   portent un `terms_flag` : usage non commercial, évaluation, ou palier
   gratuit fermé). Aucun nom de modèle n'est codé en dur : chaque lane déclare
   une liste de préférences et le routeur retient le premier modèle qui existe
@@ -327,7 +327,7 @@ predator/
 │   ├── stats_utils.py       # Brier, Wilson, bucketisation
 │   ├── perf_view.py         # Filtrage des lignes de /performance
 │   │  ── Couche IA ───────────────────────────────────────────────────
-│   ├── ai_router.py         # Registre 17 fournisseurs, lanes, disjoncteur, budgets
+│   ├── ai_router.py         # Registre 11 fournisseurs, lanes, disjoncteur, budgets
 │   ├── ai_search.py         # Façade de complétion IA (délègue au routeur)
 │   ├── daily_quota.py       # Comptage des budgets journaliers
 │   │  ── Infrastructure ──────────────────────────────────────────────
@@ -477,8 +477,8 @@ réellement mesuré, et où :
   `tests/test_workflow_secrets.py`. Aucun build.
 - **Flask + Jinja** — dashboard, servi en serverless sur Vercel
 - **Supabase** (PostgreSQL) — seul état persistant
-- **Routeur IA maison** ([`core/ai_router.py`](core/ai_router.py)) — 17
-  fournisseurs enregistrés, 9 utilisables en production ; aucun modèle codé
+- **Routeur IA maison** ([`core/ai_router.py`](core/ai_router.py)) — 11
+  fournisseurs enregistrés, 8 utilisables en production ; aucun modèle codé
   en dur. Mistral est au registre depuis la suppression de Wiz (2026-08-26).
 
 ### Frontend

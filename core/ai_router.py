@@ -191,25 +191,20 @@ REGISTRY: tuple = (
     # déterministe (core/score_sources.py). Ne pas le réenrôler sans décision
     # opérateur explicite.
     #
+    # ── SIX FOURNISSEURS RETIRÉS le 2026-09-03 (décision opérateur :
+    # « supprimer les IA non opérationnelles ») — vérifiés par appel RÉEL le
+    # jour même (`ops.py ai`) :
+    #   cerebras, chutes, sambanova → 402 payment_required (carte obligatoire)
+    #   scaleway                    → 429 INSUFFICIENT QUOTA (quota à zéro)
+    #   cloudflare                  → 401 clé refusée
+    #   zhipu                       → 401 token expired or incorrect
+    # Un fournisseur mort au registre coûte un appel raté par run et une ligne
+    # de log qui fait croire à une capacité. La leçon du 402 reste : un
+    # catalogue lisible ne prouve PAS qu'un fournisseur est utilisable, seul
+    # un appel d'inférence tranche. Ne pas les réenrôler sans une inférence
+    # réelle réussie.
+    #
     # ── Palier gratuit permanent, sans carte — priorité 1 ──
-    # ⚠️ CERBRAS ET SAMBANOVA : `payment_required`, TRANCHÉ PAR L'INFÉRENCE.
-    # Leur catalogue répond 200 avec une vraie clé, mais le premier appel
-    # d'inférence rend 402 :
-    #   Cerebras  → {"code":"payment_required"} sur ses 2 modèles
-    #   SambaNova → {"code":"PAYMENT_METHOD_REQUIRED","balance_units":0}
-    # C'est la leçon qui complète celle du 403 : un catalogue lisible ne prouve
-    # PAS qu'un fournisseur est utilisable. Seul un appel d'inférence tranche.
-    # Marqués `payment_required` → exclus de la production, gardés au registre
-    # pour que personne ne repaie l'enquête.
-    Provider(
-        name="cerebras", base_url="https://api.cerebras.ai/v1",
-        env_key="CEREBRAS_API_KEY",
-        models=("gpt-oss-120b", "gemma-4-31b"),
-        lanes=(FILTER, ANALYZE),
-        rpm=30, daily_requests=250, terms_flag="payment_required",
-        note="cle valide, catalogue 200 (2 modeles), mais inference 402 "
-             "payment_required — verifie le 2026-08-22",
-    ),
     Provider(
         name="gemini",
         base_url="https://generativelanguage.googleapis.com/v1beta/openai",
@@ -230,25 +225,6 @@ REGISTRY: tuple = (
              "palier gratuit. Ce fournisseur ne sert donc JAMAIS la lane SEARCH_READ.",
     ),
     Provider(
-        name="cloudflare",
-        base_url="https://api.cloudflare.com/client/v4/accounts/${CLOUDFLARE_ACCOUNT_ID}/ai",
-        env_key="CLOUDFLARE_API_TOKEN",
-        chat_path="/v1/chat/completions",
-        catalog_path="/models/search?per_page=100",
-        # Catalogue constaté le 2026-08-22 : 29 modèles texte, dont GLM-4.7-Flash
-        # et GLM-5.2 — d'où la lane CJK, que ce fournisseur sert aussi bien que
-        # Zhipu et sans clause non commerciale.
-        models=("@cf/meta/llama-3.3-70b-instruct-fp8-fast",
-                "@cf/zai-org/glm-4.7-flash",
-                "@cf/openai/gpt-oss-120b",
-                "@cf/deepseek-ai/deepseek-v4-flash-0731"),
-        lanes=(FILTER, ANALYZE, TRANSLATE_CJK),
-        rpm=0, daily_requests=200,
-        note="10 000 neurons/j. Demande AUSSI CLOUDFLARE_ACCOUNT_ID : l'identifiant "
-             "de compte est dans l'URL. Catalogue sous /ai/models/search, inference "
-             "sous /ai/v1 — d'ou chat_path.",
-    ),
-    Provider(
         name="nebius", base_url="https://api.studio.nebius.ai/v1",
         env_key="NEBIUS_API_KEY",
         models=("Qwen/Qwen3-32B", "meta-llama/Llama-3.3-70B-Instruct"),
@@ -258,20 +234,6 @@ REGISTRY: tuple = (
              "Nebius a renomme « AI Studio » en « Token Factory » : api.studio.nebius.ai "
              "et api.tokenfactory.nebius.com repondent tous deux 401 (donc vivants) — "
              "si l'un est retire un jour, basculer sur l'autre.",
-    ),
-    Provider(
-        name="chutes", base_url="https://llm.chutes.ai/v1",
-        env_key="CHUTES_API_KEY",
-        # Noms EXACTS du catalogue (suffixe -TEE, constate le 2026-08-22) :
-        # sans lui, l'API rend 404 « model not found ».
-        models=("Qwen/Qwen3-32B-TEE",
-                "deepseek-ai/DeepSeek-V4-Flash-0731-TEE",
-                "zai-org/GLM-5.2-TEE"),
-        lanes=(FILTER, ANALYZE, TRANSLATE_CJK),
-        rpm=0, daily_requests=150, terms_flag="payment_required",
-        note="catalogue PUBLIC lisible (14 modeles) mais inference 402 sur TOUS : "
-             "« Quota exceeded and account balance is $0.0 ». Compte a crediter. "
-             "Verifie le 2026-08-22.",
     ),
     Provider(
         name="openrouter", base_url="https://openrouter.ai/api/v1",
@@ -329,15 +291,6 @@ REGISTRY: tuple = (
              "est de la production. Exclu des lanes de production, sans exception.",
     ),
     Provider(
-        name="sambanova", base_url="https://api.sambanova.ai/v1",
-        env_key="SAMBANOVA_API_KEY",
-        models=("Meta-Llama-3.3-70B-Instruct", "DeepSeek-V3.2", "gpt-oss-120b"),
-        lanes=(FILTER, ANALYZE),
-        rpm=60, daily_requests=200, terms_flag="payment_required",
-        note="catalogue 200 (7 modeles) mais inference 402 PAYMENT_METHOD_REQUIRED, "
-             "balance_units=0 — carte OBLIGATOIRE, verifie le 2026-08-22",
-    ),
-    Provider(
         name="ovh", base_url="https://oai.endpoints.kepler.ai.cloud.ovh.net/v1",
         env_key="OVH_AI_API_KEY",
         models=("Meta-Llama-3_3-70B-Instruct", "Qwen3-32B",
@@ -345,22 +298,6 @@ REGISTRY: tuple = (
         lanes=(FILTER, ANALYZE, TRANSLATE_CJK),
         rpm=0, daily_requests=150,
         note="24 modeles (2026-08-22) ; souverainete UE",
-    ),
-    Provider(
-        name="scaleway", base_url="https://api.scaleway.ai/v1",
-        env_key="SCALEWAY_API_KEY",
-        # Noms EXACTS du catalogue (15 modeles, 2026-08-22). `qwen3-32b`, ma
-        # preference d'origine, n'existe pas chez Scaleway.
-        models=("llama-3.3-70b-instruct", "gemma-4-26b-a4b-it",
-                "glm-5.2", "mistral-small-3.2-24b-instruct-2506"),
-        lanes=(FILTER, ANALYZE, TRANSLATE_CJK),
-        rpm=0, daily_requests=150, terms_flag="quota_zero",
-        note="souverainete UE. Cle testee le 2026-08-22 : le catalogue repond 200 "
-             "(15 modeles) mais TOUTE inference rend 429 « INSUFFICIENT QUOTA », y "
-             "compris sur un appel isole apres 70 s d'attente — ce n'est donc pas "
-             "une rafale mais un quota a ZERO. Les Generative APIs Scaleway "
-             "n'accordent de quota qu'a un compte VALIDE. A retester une fois le "
-             "compte valide : le catalogue, lui, est riche (glm-5.2 pour le CJK).",
     ),
     Provider(
         name="ollama_cloud", base_url="https://ollama.com/v1",
@@ -394,20 +331,8 @@ REGISTRY: tuple = (
              "1000 appels/mois ; cle d'essai NON COMMERCIALE — hors production.",
     ),
     # ── Asie — priorité 2, excellents en CJK (double emploi mission 3) ──
-    Provider(
-        name="zhipu", base_url="https://api.z.ai/api/paas/v4",
-        env_key="ZHIPU_API_KEY",
-        models=("glm-4.7-flash", "glm-4.5-flash"),
-        lanes=(TRANSLATE_CJK, FILTER),
-        rpm=0, daily_requests=200, terms_flag="non_commercial",
-        note="GLM-Flash gratuit ; carve-out recherche/non-commercial. ⚠️ DEUX cles "
-             "essayees le 2026-08-22, toutes deux refusees en 401 « token expired or "
-             "incorrect » sur api.z.ai ET open.bigmodel.cn. Les cles Zhipu sont de la "
-             "forme {id}.{secret} ; celles fournies etaient du hex 32 sans point, "
-             "donc vraisemblablement une moitie seulement. Sans consequence : "
-             "Cloudflare sert GLM-4.7-Flash et GLM-5.2 pour la lane CJK, sans clause "
-             "non commerciale.",
-    ),
+    # (zhipu retiré le 2026-09-03 : clés refusées ; la lane CJK reste servie
+    # par modelscope, siliconflow, upstage, gemini, ollama_cloud, cohere.)
     Provider(
         name="modelscope", base_url="https://api-inference.modelscope.cn/v1",
         env_key="MODELSCOPE_API_KEY",

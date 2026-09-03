@@ -304,6 +304,25 @@ l'environnement, aucun redéploiement ni secret GitHub n'a été nécessaire.
 La preuve finale est l'audit suivant : des lignes `SETTLE api-sports` au
 log et plus de `RUN STÉRILE`.
 
+## 6. Secrets GitHub des fournisseurs IA retirés — à SUPPRIMER (2026-09-03)
+
+Six fournisseurs sont sortis du registre `core/ai_router.py` le 2026-09-03
+(cerebras, chutes, sambanova, scaleway, cloudflare Workers AI, zhipu — voir
+INCIDENTS.md). Plus aucun workflow ne les nomme (`ci_env.py --write`
+rejoué, gardien `tests/test_ci_env.py::CLES_SUPPRIMEES`). Les secrets, eux,
+restent posés côté GitHub tant qu'on ne les retire pas à la main :
+
+    Settings → Secrets and variables → Actions → supprimer
+    CEREBRAS_API_KEY, CHUTES_API_KEY, SAMBANOVA_API_KEY, SCALEWAY_API_KEY,
+    ZHIPU_API_KEY, CLOUDFLARE_API_TOKEN, CLOUDFLARE_ACCOUNT_ID
+
+⚠️ `CLOUDFLARE_API_TOKEN` / `CLOUDFLARE_ACCOUNT_ID` servent ENCORE en local
+(fichier de credentials gitignoré) aux scripts du Worker chien de garde et
+du relais (`scripts/deploy_watchdog_worker.py`,
+`scripts/relay_smart_placement.py`) : on les retire de GitHub, pas du poste.
+Un secret inutile posé n'est pas une panne, c'est une capacité qu'on croit
+avoir.
+
 ## Le goulot qui suit — à surveiller
 
 odds500 est débloquée, mais **le pont d'alias n'a encore rien produit.**
