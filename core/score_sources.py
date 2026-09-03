@@ -111,6 +111,11 @@ _ESPN_PATHS = {
     # deux ATHLÈTES (pas de homeAway) avec un drapeau `winner` une fois
     # terminé. Réglé 1-0 / 0-1 dans l'ordre des combattants du signal.
     "mma":                   ["mma/ufc"],
+    # Tennis : le scoreboard rend le TOURNOI comme unique événement, avec ses
+    # tableaux dans `groupings[].competitions[]` (2×239 matchs à l'US Open),
+    # chaque match daté, à deux athlètes, drapeau `winner`. Les deux chemins
+    # rendent le même tournoi mixte ; les matchs sont dédoublonnés par id.
+    "tennis":                ["tennis/atp", "tennis/wta"],
 }
 # User-Agent ESPN. MESURÉ le 2026-09-03 depuis ce Codespace : « PREDATOR/1.0 »
 # et un UA de navigateur reçoivent 403, « curl/8.5.0 », « Python-urllib/3.11 »
@@ -300,7 +305,14 @@ def _espn_events(path: str, fenetre: str) -> list:
     if cle not in _CACHE_ESPN:
         url = f"{ESPN_BASE}/{path}/scoreboard?dates={fenetre}&limit=1000"
         data = _get_json(url, _ESPN_BUCKET, ESPN_DAILY_BUDGET, source="espn") or {}
-        _CACHE_ESPN[cle] = list(data.get("events") or [])
+        events = list(data.get("events") or [])
+        # Les tournois (tennis) rendent leurs tableaux entiers : on borne dès
+        # ici les competitions à la fenêtre, une fois pour tout le run.
+        for ev in events:
+            if ev.get("groupings"):
+                ev["competitions"] = _espn_competitions(ev, fenetre)
+                ev["groupings"] = []
+        _CACHE_ESPN[cle] = events
     return _CACHE_ESPN[cle]
 
 
@@ -315,10 +327,29 @@ def _espn_noms(competitor: dict) -> list[str]:
                         ath.get("fullName"), ath.get("displayName"), ath.get("shortName")) if n]
 
 
-def _espn_competitions(ev: dict) -> list:
+def _dans_fenetre(date_iso: str | None, fenetre: str) -> bool:
+    """`date_iso` (ESPN, ex. 2026-08-24T15:05Z) tombe-t-elle dans
+    `AAAAMMJJ-AAAAMMJJ` ? Une date illisible n'est pas gardée."""
+    try:
+        jour = datetime.fromisoformat(str(date_iso)[:10]).strftime("%Y%m%d")
+        debut, fin = fenetre.split("-")
+        return debut <= jour <= fin
+    except (TypeError, ValueError):
+        return False
+
+
+def _espn_competitions(ev: dict, fenetre: str | None = None) -> list:
     """Un événement d'équipe porte UNE competition ; une carte MMA en porte
-    une par combat. On les parcourt toutes."""
-    return list(ev.get("competitions") or [])
+    une par combat ; un tournoi de tennis les range dans `groupings` (un par
+    tableau) et le scoreboard rend TOUT le tournoi quelle que soit la date
+    demandée — on ne garde alors que les matchs datés DANS la fenêtre."""
+    out = list(ev.get("competitions") or [])
+    for g in ev.get("groupings") or []:
+        for comp in g.get("competitions") or []:
+            if fenetre and not _dans_fenetre(comp.get("date"), fenetre):
+                continue
+            out.append(comp)
+    return out
 
 
 def _fold(s: str) -> str:
@@ -374,8 +405,10 @@ def _espn_candidat(ev: dict, home: str, away: str) -> tuple[int, int] | None:
     et que ses deux compétiteurs s'apparient strictement aux deux noms du
     signal ; None sinon. Sans score chiffré (combat MMA), le drapeau `winner`
     donne 1-0 / 0-1 — un combat sans vainqueur déclaré (no contest, nul)
-    ne règle pas."""
+    ne règle pas. Une même competition rendue deux fois (même id, deux
+    chemins ou deux tableaux) ne compte qu'une fois."""
     trouves = []
+    vus_ids: set = set()
     for comp in _espn_competitions(ev):
         statut = (comp.get("status") or {}).get("type") or {}
         if not (statut.get("completed") and statut.get("state") == "post"):
@@ -383,6 +416,10 @@ def _espn_candidat(ev: dict, home: str, away: str) -> tuple[int, int] | None:
         paire = _espn_paire(comp, home, away)
         if not paire:
             continue
+        if comp.get("id") in vus_ids:
+            continue
+        if comp.get("id"):
+            vus_ids.add(comp["id"])
         a, b = paire
         try:
             trouves.append((int(a.get("score")), int(b.get("score"))))
@@ -460,6 +497,13 @@ def fixture_connue(match_name: str, events: list, min_sides: int = 1) -> bool:
     return False
 
 
+def _espn_cle(ev: dict, home: str, away: str, path: str) -> str:
+    for comp in _espn_competitions(ev):
+        if comp.get("id") and _espn_paire(comp, home, away) is not None:
+            return str(comp["id"])
+    return str(ev.get("id") or f"{path}|{ev.get('date')}")
+
+
 def result_from_espn(match_name: str, sport: str, match_date: str) -> dict | None:
     """Score final via le scoreboard public ESPN — même contrat que les autres
     voies : les DEUX noms appariés strictement, candidat UNIQUE, statut
@@ -477,7 +521,9 @@ def result_from_espn(match_name: str, sport: str, match_date: str) -> dict | Non
         for ev in _espn_events(path, fenetre):
             score = _espn_candidat(ev, home, away)
             if score is not None:
-                vus[str(ev.get("id") or f"{path}|{ev.get('date')}")] = score
+                # Clé = id de la competition appariée quand elle en a un (tennis :
+                # atp et wta rendent le même tournoi), sinon celui de l'événement.
+                vus[_espn_cle(ev, home, away, path)] = score
     if len(vus) == 1:
         hs, as_ = next(iter(vus.values()))
         log.info("SETTLE espn | %s | %d-%d (0 appel IA)", match_name, hs, as_)

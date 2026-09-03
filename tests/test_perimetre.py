@@ -112,7 +112,7 @@ class TestESPNFixtures:
         ss.reset_cache()
         evs = ss.fixtures_espn("soccer", "2026-09-04", "2026-09-05")
         assert len(evs) == 1 and appels[0].endswith("dates=20260903-20260906&limit=1000")
-        assert ss.fixtures_espn("tennis", "2026-09-04", "2026-09-05") is None
+        assert ss.fixtures_espn("boxing", "2026-09-04", "2026-09-05") is None
         assert ss.fixture_connue("A FC vs B FC", evs) and not ss.fixture_connue("X vs Y", evs)
 
     def test_combat_mma_regle_par_le_vainqueur(self, monkeypatch):
@@ -144,8 +144,8 @@ class TestESPNFixtures:
 class TestDepenseSurSportsReglables:
     def test_sports_reglables_derives_des_voies_de_reglement(self):
         r = ss.sports_reglables()
-        assert {"soccer", "basketball", "baseball", "hockey", "mma", "americanfootball"} <= r
-        assert "tennis" not in r and "boxing" not in r
+        assert {"soccer", "basketball", "baseball", "hockey", "mma", "americanfootball", "tennis"} <= r
+        assert "boxing" not in r and "darts" not in r
 
     def test_la_politique_de_depense_ne_paie_pas_un_sport_non_reglable(self):
         from datetime import datetime, timezone
@@ -165,8 +165,8 @@ class TestDepenseSurSportsReglables:
         monkeypatch.setattr(eng, "_sports_with_imminent_signals", lambda _sb, _now: set())
         pol = eng._build_spend_policy(FakeSB(), datetime.now(timezone.utc))
         assert pol.reglables == set(ss.sports_reglables())
-        assert "tennis" not in pol.reglables and "boxing" not in pol.reglables
-        assert {"soccer", "mma"} <= pol.reglables
+        assert "boxing" not in pol.reglables
+        assert {"soccer", "mma", "tennis"} <= pol.reglables
 
 
 class TestCouvertureTolerante:
@@ -199,3 +199,46 @@ class TestCouvertureTolerante:
     def test_la_garde_reglable_utilise_la_couverture_tolerante(self):
         fx = {"soccer": [_ev("VfB Stuttgart", "FC Cologne")]}
         assert eng._reglable(_m(match="VfB Stuttgart vs 1. FC Köln"), fx) is True
+
+
+class TestTennisESPN:
+    """Le scoreboard tennis rend le TOURNOI entier (groupings) quelle que soit
+    la date : seuls les matchs datés dans la fenêtre comptent, un match rendu
+    par atp ET wta ne compte qu'une fois, et le vainqueur règle 1-0."""
+
+    def _tournoi(self):
+        def comp(cid, date, a, b, winner_a):
+            return {"id": cid, "date": date, "status": {"type": {"state": "post", "completed": True}},
+                    "competitors": [{"athlete": {"displayName": a}, "winner": winner_a},
+                                    {"athlete": {"displayName": b}, "winner": not winner_a}]}
+        return {"id": "usopen", "date": "2026-08-24T04:00Z", "groupings": [
+            {"grouping": {"displayName": "Men's Singles"}, "competitions": [
+                comp("m1", "2026-09-02T15:00Z", "Botic van de Zandschulp", "Alex de Minaur", False),
+                comp("m2", "2026-08-24T15:05Z", "Botic van de Zandschulp", "Jacob Fearnley", True)]},
+            {"grouping": {"displayName": "Women's Singles"}, "competitions": [
+                comp("w1", "2026-09-02T16:00Z", "Clara Burel", "Ma YeXin", True)]}]}
+
+    def test_seuls_les_matchs_dans_la_fenetre_comptent(self, monkeypatch):
+        monkeypatch.setattr(ss, "_get_json", lambda *a, **k: {"events": [self._tournoi()]})
+        ss.reset_cache()
+        r = ss.result_from_espn("Botic van de Zandschulp vs Alex de Minaur", "tennis", "2026-09-02")
+        assert r and (r["home_score"], r["away_score"]) == (0, 1)
+        # le match du 24 août (hors fenêtre) n'est pas vu : pas de second candidat
+        ss.reset_cache()
+        assert ss.result_from_espn("Botic van de Zandschulp vs Jacob Fearnley", "tennis", "2026-09-02") is None
+
+    def test_atp_et_wta_rendent_le_meme_tournoi_sans_doublon(self, monkeypatch):
+        appels = []
+        def fake(url, bucket, budget, source=None):
+            appels.append(url); return {"events": [self._tournoi()]}
+        monkeypatch.setattr(ss, "_get_json", fake)
+        ss.reset_cache()
+        r = ss.result_from_espn("Clara Burel vs Ma YeXin", "tennis", "2026-09-02")
+        assert r and (r["home_score"], r["away_score"]) == (1, 0)
+        assert len(appels) == 2          # atp + wta interrogés, un seul candidat retenu
+
+    def test_le_tennis_est_reglable_et_paye(self):
+        assert "tennis" in ss.sports_reglables()
+        fx = {"tennis": [self._tournoi()]}
+        # fixtures_espn borne déjà à la fenêtre ; ici on vérifie la couverture
+        assert eng._reglable(_m(match="Clara Burel vs Ma YeXin", sport="tennis", soft=None), fx) is True
