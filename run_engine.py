@@ -34,8 +34,9 @@ from core.math_engine import (to_binary, devig_bounds, is_round_number_line, dev
                               executable_price as _executable_price)
 from core.tax_engine import optimal_stake_fraction as _optimal_stake_fraction
 from core.learning_layer import _PLAYABLE_MIN_MINUTES
-from core.score_sources import fixtures_espn as _fixtures_espn, fixture_connue as _fixture_connue
-from core.odds_api import (fetch_odds, pool_status as _odds_pool_status,
+from core.score_sources import (fixtures_espn as _fixtures_espn, fixture_connue as _fixture_connue,
+                                sports_reglables as _sports_reglables)
+from core.odds_api import (SPORT_KEYS, fetch_odds, pool_status as _odds_pool_status,
                            pool_counters as _odds_pool_counters,
                            pool_totals as _odds_pool_totals,
                            pool_total_remaining as _odds_pool_total_remaining)
@@ -786,10 +787,18 @@ def _build_spend_policy(sb, now):
         log.info("RYTHME | pool %d crédits, %.1f j restants du cycle → allocation %.0f/j ; "
                  "engagés aujourd'hui %.0f", pool_total, days_left, allowance, spent)
 
+    # Seuls les sports RÉGLABLES sont payés (liste dérivée de
+    # core/score_sources, jamais écrite ici) : le périmètre refuserait de
+    # toute façon les matchs des autres (boxe, tennis) à l'émission.
+    reglables = _sports_reglables()
+    log.info("RYTHME | cotes payées pour les sports réglables seulement : %s ; non payés : %s",
+             " ".join(sorted(reglables & set(SPORT_KEYS.values()))),
+             " ".join(sorted(set(SPORT_KEYS.values()) - reglables)) or "—")
     return _SpendPolicy(_age_min, _note,
                         exempt_sports=_sports_with_imminent_signals(sb, now),
                         log=log, allowance=allowance, spent_today=spent,
-                        note_spent=lambda cost: _oddsapi_note_spent(sb, now, cost))
+                        note_spent=lambda cost: _oddsapi_note_spent(sb, now, cost),
+                        reglables=reglables)
 
 
 _SYSTEM_ALERT_TTL_H = float(os.environ.get("SYSTEM_ALERT_TTL_H", "6"))

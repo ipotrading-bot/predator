@@ -139,3 +139,31 @@ class TestESPNFixtures:
         monkeypatch.setattr(ss, "_get_json", lambda *a, **k: {"events": [ev]})
         ss.reset_cache()
         assert ss.result_from_espn("Ding Meng vs Cam Nelson", "mma", "2026-08-30") is None
+
+
+class TestDepenseSurSportsReglables:
+    def test_sports_reglables_derives_des_voies_de_reglement(self):
+        r = ss.sports_reglables()
+        assert {"soccer", "basketball", "baseball", "hockey", "mma", "americanfootball"} <= r
+        assert "tennis" not in r and "boxing" not in r
+
+    def test_la_politique_de_depense_ne_paie_pas_un_sport_non_reglable(self):
+        from datetime import datetime, timezone
+        from core.scan_windows import SpendPolicy
+        p = SpendPolicy(lambda _k: None, lambda _k: None, allowance=240,
+                        reglables={"soccer", "basketball"})
+        now = datetime(2026, 9, 3, 16, 0, tzinfo=timezone.utc)
+        ok, why = p.allow("tennis_atp_us_open", "tennis", now, 2000, cost=3)
+        assert not ok and "non réglable" in why and p.engaged == 0
+        assert p.skipped and p.skipped[0][0] == "tennis_atp_us_open"
+        assert p.allow("soccer_epl", "soccer", now, 2000, cost=3)[0]
+
+    def test_build_spend_policy_derive_les_non_reglables(self, monkeypatch):
+        from datetime import datetime, timezone
+        from tests.test_engine_circuit_breaker import FakeSB
+        monkeypatch.setattr(eng, "_odds_pool_total_remaining", lambda: 2400)
+        monkeypatch.setattr(eng, "_sports_with_imminent_signals", lambda _sb, _now: set())
+        pol = eng._build_spend_policy(FakeSB(), datetime.now(timezone.utc))
+        assert pol.reglables == set(ss.sports_reglables())
+        assert "tennis" not in pol.reglables and "boxing" not in pol.reglables
+        assert {"soccer", "mma"} <= pol.reglables

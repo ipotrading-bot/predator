@@ -183,11 +183,18 @@ class SpendPolicy:
                  min_interval_min: int = BACKGROUND_MIN_INTERVAL_MIN,
                  reserve_credits: int = RESERVE_CREDITS, log=None,
                  allowance: float | None = None, spent_today: float = 0.0,
-                 note_spent=None):
+                 note_spent=None, reglables=None):
         self._age = last_paid_age_min
         self._note = note_paid
         self._note_spent = note_spent
         self.exempt_sports = set(exempt_sports)
+        # Sports RÉGLABLES (core/score_sources.sports_reglables) : liste
+        # d'autorisation, `None` = pas de contrôle. Un sport hors liste (boxe,
+        # tennis — y compris les clés dynamiques que SPORT_KEYS ne connaît pas)
+        # n'est pas payé : le périmètre refuserait ses matchs à l'émission, et
+        # un crédit sur un pari qu'on ne saura jamais régler est perdu deux
+        # fois (2026-09-03 : tennis US Open payé à 16:01 pour rien).
+        self.reglables = None if reglables is None else set(reglables)
         self.min_interval = min_interval_min
         self.reserve = reserve_credits
         self.log = log
@@ -220,6 +227,10 @@ class SpendPolicy:
 
     def allow(self, sport_key: str, sport_type: str, now: datetime,
               pool_remaining: int | None, cost: float = 3.0) -> tuple[bool, str]:
+        if self.reglables is not None and sport_type not in self.reglables:
+            reason = "sport non réglable (aucune source de scores) — pas payé"
+            self._skip(sport_key, reason)
+            return False, reason
         if sport_type in self.exempt_sports:
             ok, why = self._within(cost, EXEMPT_SHARE, now, intraday=False)
             if ok:

@@ -399,6 +399,22 @@ def fixtures_espn(sport: str, date_min: str, date_max: str) -> list | None:
     return out
 
 
+# Sports que règle api-sports sur son plan (core/api_sports.fetch_results :
+# soccer, basketball, baseball, hockey). Repris ici pour que la liste des
+# sports RÉGLABLES vive en un seul endroit, à côté des autres voies.
+_API_SPORTS_SPORTS = frozenset({"soccer", "basketball", "baseball", "hockey"})
+
+
+def sports_reglables() -> frozenset:
+    """Les sports pour lesquels au moins UNE voie de règlement existe :
+    api-sports, MLB statsapi (baseball) ou un chemin ESPN. Un sport absent
+    d'ici — boxe, tennis — ne peut pas être réglé : le périmètre le refuse
+    à l'émission (run_engine._reglable) et la politique de dépense ne paie
+    plus ses cotes (core/scan_windows.SpendPolicy) — un crédit OddsAPI sur un
+    match qu'on ne saura jamais régler est un crédit perdu deux fois."""
+    return frozenset(_ESPN_PATHS) | _API_SPORTS_SPORTS | {"baseball"}
+
+
 def fixture_connue(match_name: str, events: list) -> bool:
     """Le match (les DEUX noms, appariés strictement) figure-t-il dans ces
     événements ESPN, quel que soit leur état ? C'est le test de
