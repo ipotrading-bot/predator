@@ -2421,7 +2421,7 @@ def run():
 
     # ══ SOURCE PIPELINE — 2 NIVEAUX ══════════════════════════════════
     # Tier 1: The Odds API  → real 1XBet + Pinnacle, même event (idéal)
-    # Tier 2: sources réelles gratuites → harvest soft (LineFeed) + api-sports
+    # Tier 2: sources réelles gratuites → api-sports + odds-api.io + titan007
     #         + odds-api.io + titan007, enrichis par l'exchange (Matchbook).
     # Les anciens Tier 2 « recherche web Pinnacle » et Tier 3 « estimateur
     # IA » ont été SUPPRIMÉS le 2026-09-02 avec Groq/Tavily : un prix sharp
@@ -2632,21 +2632,20 @@ def run():
     # cache, coupe-circuit ni lu ni écrit, aucune alerte « 0 matchs ».
     if not REPRICE:
         # Coupe-circuit : une tentative vide il y a < HARVEST_EMPTY_TTL_H ne
-        # se rejoue pas — voir le bloc « Horodatages meta » plus haut. Quand
-        # le LineFeed est mort, 40 runs/jour ne trouveront pas plus que 8.
+        # se rejoue pas — voir le bloc « Horodatages meta » plus haut. Depuis
+        # le retrait du LineFeed (2026-09-03), le harvest COMPLET ne diffère
+        # du chemin direct que par le line shopping, odds500 (relais) et la
+        # mesure de consensus : c'est ce que le coupe-circuit épargne.
         skipped_age = _harvest_recently_empty(sb)
         if skipped_age is not None:
-            # Le coupe-circuit ne vise QUE le harvest LineFeed (proxys
-            # instables, réponses lentes). api-sports est authentifié par
-            # clé, gratuit, et dispose d'un quota PROPRE par sport : le
-            # sauter ne protège rien et prive le scan de sa dernière source
-            # réelle. Constaté en production le 2026-08-20 (run 18:30) — le
-            # coupe-circuit posé le matin même court-circuitait api-sports
-            # par ricochet.
-            log.warning("📡 Tier 2 — harvest LineFeed SAUTÉ : dernière tentative vide "
-                        "il y a %.1fh (< %.0fh) — api-sports, odds-api.io et "
-                        "titan007 restent interrogés (authentifiés par clé, "
-                        "quotas séparés, gratuits)",
+            # api-sports, odds-api.io et titan007 sont authentifiés par clé,
+            # gratuits, avec un quota PROPRE par sport : les sauter ne
+            # protège rien et prive le scan de ses sources réelles. Constaté
+            # en production le 2026-08-20 (run 18:30) — le coupe-circuit posé
+            # le matin même court-circuitait api-sports par ricochet.
+            log.warning("📡 Tier 2 — harvest complet SAUTÉ (line shopping, odds500, "
+                        "consensus) : dernière tentative vide il y a %.1fh (< %.0fh) — "
+                        "api-sports, odds-api.io et titan007 restent interrogés en direct",
                         skipped_age, _HARVEST_EMPTY_TTL_H)
             # Titan007 fait partie du chemin économique pour la même raison
             # qu'api-sports/odds-api.io : budget journalier propre. L'oublier
@@ -2656,7 +2655,7 @@ def run():
                             + _odds_api_io_all(hours_ahead=hours_ahead)
                             + _titan007_fetch(hours_ahead=hours_ahead))
         else:
-            log.info("📡 Tier 2 — Harvest Melbet + api-sports + odds-api.io + titan007...")
+            log.info("📡 Tier 2 — Harvest api-sports + odds-api.io + titan007 (+ odds500 en ombre)...")
             xbet_matches = fetch_matches()
             _note_harvest_result(sb, xbet_matches)
         # Abandon seulement si RIEN n'a été trouvé nulle part : depuis que ce
@@ -2665,7 +2664,7 @@ def run():
         # jetterait ces événements-là.
         if not xbet_matches and not matches:
             if ODDS_API_ENABLED:
-                msg = "📡 PREDATOR: 0 matchs trouvés — Tier 1 vide et harvest (1xbet/Melbet/API-Football/recherche web) sans résultat."
+                msg = "📡 PREDATOR: 0 matchs trouvés — Tier 1 vide et harvest (api-sports/odds-api.io/titan007) sans résultat."
                 # Cause OddsAPI : n'a de sens que si on l'interroge encore.
                 # Obsolète, un pool mort n'explique plus rien — l'afficher
                 # enverrait chercher une clé dont le pipeline n'a plus besoin.

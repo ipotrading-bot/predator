@@ -1,9 +1,16 @@
 """
-core/harvester.py — PAIM v7.5 — Guerrilla Mode
-Soft source : 1XBet direct feed (JSON) + api-sports + odds-api.io + titan007
+core/harvester.py — Tier 2 : sources soft gratuites, line shopping
+Soft source : api-sports + odds-api.io + titan007 (+ odds500 en mode ombre)
 Sharp source: Pinnacle via api-sports, exchange (Matchbook/Betfair)
-Sports: 1=Soccer, 3=Tennis, 4=Basketball
 All timestamps : UTC/GMT.
+
+2026-09-03 : le LineFeed 1xbet/Melbet/22bet est RETIRÉ (décision opérateur :
+« si une source est inutilisable, il faut la dégager »). Bloqué par IP depuis
+les runners GitHub depuis août (HTTP 203 / 404 sur chaque URL, mesuré encore
+le 2026-09-03 19:44), il coûtait pourtant à chaque scan 9 requêtes × 2-5 s de
+sommeil PAR SPORT — ~36 s de budget moteur pour rien, quatre fois par scan.
+Les books soft 1xbet/Bet365 arrivent par odds-api.io (authentifié, non
+filtré par IP) ; la clé `odds_1xbet` garde son nom historique.
 
 2026-09-02 : la recherche web (Groq compound-mini + Tavily) est SUPPRIMÉE du
 harvest — décision opérateur, avec le retrait de Groq/Tavily de tout le
@@ -20,8 +27,6 @@ le moteur émet (cf. A6). Un match sans prix sharp RÉEL est écarté, point.
 import hashlib
 import logging
 import os
-import time
-import random
 import requests
 from datetime import datetime, timedelta, timezone
 
@@ -35,48 +40,6 @@ log = logging.getLogger("PREDATOR.harvester")
 
 SPORT_IDS = {1: "soccer", 3: "tennis", 4: "basketball", 5: "mma"}
 
-XBET_FEED_TPLS = [
-    "https://1xbet.com/LineFeed/Get1x2?sport={sport_id}&count=50&lng=en&mode=4&partner=157",
-    "https://1xbet.com/LineFeed/Get1x2?sport={sport_id}&count=50&lng=en&mode=4",
-    "https://1xbet.com/LineFeed/Get1x2?sport={sport_id}&count=50&lng=en&mode=4&country=255",
-    "https://1xbet.com/LineFeed/Get1x2?sport={sport_id}&count=50&lng=en&mode=1&partner=157",
-    "https://1xbet.com/LineFeed/Get1x2?sport={sport_id}&count=50&lng=en&mode=1",
-    "https://1xbet.cm/LineFeed/Get1x2?sport={sport_id}&count=50&lng=en&mode=4",
-]
-
-# Task 6 — additional soft books for line shopping. Melbet/22bet are widely
-# documented as running the same LineFeed backend as 1xbet (same platform
-# family, near-identical site/app), so the endpoint SHAPE below mirrors
-# XBET_FEED_TPLS exactly — but the exact URL/partner id for each was NOT
-# live-verified from this sandbox: outbound requests to 1xbet.com itself
-# get Cloudflare-redirected to /en/block from this environment's IP (bot/geo
-# gate), so even the already-working 1xbet integration can't be exercised
-# here, let alone a brand-new one. _fetch_from_book() below degrades to []
-# on any failure (same as the pre-existing 1xbet behavior), so a wrong URL
-# here just means that book contributes nothing — confirm these actually
-# return data (check the Predator Engine GitHub Actions logs for
-# "Melbet <sport> OK" / "22bet <sport> OK" lines) before relying on them.
-MELBET_FEED_TPLS = [
-    "https://melbet.com/LineFeed/Get1x2?sport={sport_id}&count=50&lng=en&mode=4&partner=169",
-    "https://melbet.com/LineFeed/Get1x2?sport={sport_id}&count=50&lng=en&mode=4",
-]
-BET22_FEED_TPLS = [
-    "https://22bet.com/LineFeed/Get1x2?sport={sport_id}&count=50&lng=en&mode=4",
-]
-
-# name -> (url templates, referer) — extend this dict to add more books;
-# _fetch_multi_book() below iterates it generically.
-SOFT_BOOKS = {
-    "1xbet":  (XBET_FEED_TPLS,  "https://1xbet.com/en/line/"),
-    "melbet": (MELBET_FEED_TPLS, "https://melbet.com/en/line/"),
-    "22bet":  (BET22_FEED_TPLS,  "https://22bet.com/en/line/"),
-}
-HEADERS = {
-    "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36",
-    "Accept": "application/json, text/plain, */*",
-    "Accept-Language": "en-US,en;q=0.9",
-    "Referer": "https://1xbet.com/en/line/",
-}
 def _odd(val):
     try:
         f = float(val)
@@ -100,64 +63,6 @@ def _stable_id(prefix: str, home: str, away: str, when: str = "") -> str:
     return f"ai_{prefix}_" + hashlib.sha1(raw.encode()).hexdigest()[:12]
 
 
-def _parse_xbet_json(data, sport_id):
-    sport_name = SPORT_IDS.get(sport_id, "unknown")
-    matches = []
-    for event in data.get("Value", []):
-        try:
-            home = str(event.get("O1", "")).strip()
-            away = str(event.get("O2", "")).strip()
-            if not home or not away:
-                continue
-            o1 = _odd(event.get("C1"))
-            ox = _odd(event.get("C2"))
-            o2 = _odd(event.get("C3"))
-            if o1 == 0.0 and o2 == 0.0:
-                continue
-            matches.append({
-                "id":         str(event.get("CI", f"{home}_{away}")),
-                "match":      f"{home} vs {away}",
-                "home":       home,
-                "away":       away,
-                "league":     str(event.get("L", "Unknown")),
-                "sport":      sport_name,
-                "sport_id":   sport_id,
-                "odds_1xbet": {"1": o1, "X": ox, "2": o2},
-            })
-        except Exception:
-            continue
-    return matches
-
-
-def _fetch_from_book(book: str, url_templates: list, referer: str, sport_id: int) -> list:
-    """Try each URL variant for one soft book with a small random delay.
-    Returns list of matches (odds keyed "odds_1xbet" regardless of book —
-    see _fetch_multi_book for why) or [] on total failure. Generalized
-    from the original 1xbet-only fetch (Task 6) so the same retry/parse
-    logic covers every book in SOFT_BOOKS without duplication."""
-    sport_name = SPORT_IDS.get(sport_id, str(sport_id))
-    headers = {**HEADERS, "Referer": referer}
-    for tpl in url_templates:
-        url = tpl.format(sport_id=sport_id)
-        try:
-            time.sleep(random.uniform(2, 5))
-            r = requests.get(url, headers=headers, timeout=15)
-            if r.status_code == 200:
-                data = r.json()
-                matches = _parse_xbet_json(data, sport_id)
-                if matches:
-                    log.info("%s %s OK: %d matches via %s", book, sport_name, len(matches), url.split("?")[0])
-                    return matches
-                log.info("%s %s: HTTP 200 mais 0 match exploitable via %s", book, sport_name, url.split("?")[0])
-            else:
-                # Un 403/429/5xx silencieux a caché pendant dix jours (août
-                # 2026) que le LineFeed bloquait les runners GitHub — on le dit.
-                log.warning("%s %s: HTTP %d via %s", book, sport_name, r.status_code, url.split("?")[0])
-        except Exception as e:
-            log.warning("%s %s fail (%s): %s", book, sport_name, url.split("?")[0], e)
-    return []
-
-
 def _fuzzy_match_event(candidate: dict, pool: list[dict]) -> dict | None:
     """Find `candidate`'s counterpart in `pool` by team-name fuzzy match
     (core.paim_engine.strict_team_match) — used to line up the same
@@ -170,17 +75,16 @@ def _fuzzy_match_event(candidate: dict, pool: list[dict]) -> dict | None:
 
 
 # sport_id harvester -> nom de sport api-sports (core/api_sports.py).
-# Le foot (1) et le basket (4) recoupent le LineFeed ; le baseball (6) et le
-# hockey (7) n'existent QUE par cette voie côté Tier 2, alors qu'ils sont
-# scannés en Tier 1 et appris par la couche d'apprentissage — c'est
-# précisément le trou que l'incident d'août 2026 a révélé.
+# Le baseball (6) et le hockey (7) n'existent QUE par cette voie côté Tier 2,
+# alors qu'ils sont scannés en Tier 1 et appris par la couche d'apprentissage
+# — c'est précisément le trou que l'incident d'août 2026 a révélé.
 _API_SPORTS_BY_ID = {p["sport_id"]: name for name, p in _AS_PROVIDERS.items()}
 
 
 def _fetch_from_api_sports(sport_id: int) -> list:
-    """Famille api-sports.io — fournisseur indépendant d'OddsAPI ET du
-    LineFeed : authentifié par CLÉ, donc non filtré par IP (les runners
-    GitHub sont bloqués par 1xbet/ESPN/SofaScore, pas par api-sports —
+    """Famille api-sports.io — fournisseur indépendant d'OddsAPI :
+    authentifié par CLÉ, donc non filtré par IP (les runners GitHub sont
+    bloqués par le LineFeed 1xbet — retiré depuis —, pas par api-sports —
     vérifié le 2026-08-20). Peut ramener un prix sharp (`odds_pinnacle`)
     dans la même réponse, auquel cas aucune recherche web n'est nécessaire."""
     sport = _API_SPORTS_BY_ID.get(sport_id)
@@ -195,8 +99,8 @@ _ODDS_API_IO_BY_ID = {cfg[1]: name for name, cfg in _OAI_SPORTS.items()}
 
 def _fetch_from_odds_api_io(sport_id: int) -> list:
     """odds-api.io — accès AUTHENTIFIÉ aux books soft (1xbet & co.), donc
-    non filtré par IP, là où le LineFeed de ces mêmes books est bloqué
-    depuis les runners GitHub. Fournit h2h + spreads + totals, et un prix
+    non filtré par IP — c'est par ici que 1xbet/Bet365 arrivent depuis le
+    retrait du LineFeed direct. Fournit h2h + spreads + totals, et un prix
     sharp si un exchange fait partie des books sélectionnés."""
     sport = _ODDS_API_IO_BY_ID.get(sport_id)
     if not sport:
@@ -206,8 +110,9 @@ def _fetch_from_odds_api_io(sport_id: int) -> list:
 
 def _fetch_multi_book(sport_id: int) -> list:
     """
-    Task 6 — line shopping: fetch every configured soft book (SOFT_BOOKS)
-    for this sport and, for each real-world match found on 2+ books, keep
+    Task 6 — line shopping: fetch every configured soft source (api-sports,
+    odds-api.io, titan007, odds500) for this sport and, for each real-world
+    match found on 2+ of them, keep
     the BEST (highest) price per outcome across all of them — not just
     whichever book happened to respond first. `_soft_source` on the
     returned match records which book contributed each surviving price
@@ -218,14 +123,7 @@ def _fetch_multi_book(sport_id: int) -> list:
     as-is (identical behavior to the old single-book fetch).
     """
     per_book: dict[str, list] = {}
-    # Le LineFeed ne connaît que les ids de SPORT_IDS ; l'interroger pour un
-    # sport qu'il ne couvre pas coûte 3 books x 6 URLs de sleep pour rien.
-    if sport_id in SPORT_IDS:
-        for book, (tpls, referer) in SOFT_BOOKS.items():
-            found = _fetch_from_book(book, tpls, referer, sport_id)
-            if found:
-                per_book[book] = found
-
+    # (LineFeed 1xbet/Melbet/22bet retiré le 2026-09-03 — voir l'en-tête.)
     as_matches = _fetch_from_api_sports(sport_id)
     if as_matches:
         per_book["api_sports"] = as_matches
@@ -330,20 +228,17 @@ def _fetch_from_odds500(sport_id: int, trusted: list) -> list[dict]:
 
 def fetch_matches():
     """Fetch matches for all configured sports, line-shopping the best
-    price per outcome across every book in SOFT_BOOKS (Task 6). Returns
-    combined list.
+    price per outcome across every soft source (Task 6). Returns combined list.
 
     Un sport dont aucun book ne rend rien reste VIDE : le repli « demande à
     un LLM d'inventer le slate et ses cotes » a été supprimé le 2026-09-02
     avec Groq/Tavily. Rien trouvé veut dire rien, pas « demande à un modèle »."""
     all_matches = []
-    for sport_id in SPORT_IDS:
-        all_matches.extend(_fetch_multi_book(sport_id))
-
-    # Sports couverts par api-sports mais absents du LineFeed (baseball,
-    # hockey).
-    extra_ids = (set(_API_SPORTS_BY_ID) | set(_ODDS_API_IO_BY_ID)) - set(SPORT_IDS)
-    for sport_id in sorted(extra_ids):
+    # L'union des sports que les sources soft savent servir — dérivée de
+    # leurs propres tables, jamais recopiée ici. Le foot (titan007) est
+    # dans les deux premières de toute façon.
+    ids = set(_API_SPORTS_BY_ID) | set(_ODDS_API_IO_BY_ID) | {_T7_SPORT_ID}
+    for sport_id in sorted(ids):
         all_matches.extend(_fetch_multi_book(sport_id))
     return all_matches
 

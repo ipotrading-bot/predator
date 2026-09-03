@@ -343,7 +343,6 @@ predator/
 ├── run_rapport.py           # Rapport Telegram (toutes les 2 h)
 ├── run_monte_carlo.py       # Simulation
 ├── backfill_ledger.py       # Réparation ponctuelle d'ai_learning_ledger
-├── validator.py             # Health-check manuel (volontairement non importé)
 ├── scripts/
 │   ├── ops.py               # Piloter Supabase/Vercel/secrets (doctor, status, ai…)
 │   ├── weekly_report.py     # Rapport hebdo de vérité (lundi 07:00 UTC)

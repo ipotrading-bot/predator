@@ -1,9 +1,9 @@
 """
 tests/test_harvester.py — core/harvester.py multi-book line shopping
 (Task 6): _fetch_multi_book() must keep the best price per outcome across
-every soft book that found the same real-world match, and correctly
-attribute provenance via _soft_source. No live HTTP calls — _fetch_from_book
-is monkeypatched with synthetic per-book responses.
+every soft source that found the same real-world match, and correctly
+attribute provenance via _soft_source. No live HTTP calls — the per-source
+fetchers are monkeypatched with synthetic responses.
 """
 import core.harvester as harvester
 
@@ -36,85 +36,72 @@ class TestFuzzyMatchEvent:
 
 
 class TestFetchMultiBook:
-    def test_single_book_passes_through_unchanged(self, monkeypatch):
-        def fake_fetch(book, tpls, referer, sport_id):
-            return [_match("Team A", "Team B", 2.0, 3.2, 3.5)] if book == "1xbet" else []
+    """Line shopping entre les sources soft VIVANTES : api-sports et
+    odds-api.io (le LineFeed 1xbet/Melbet/22bet a été retiré le 2026-09-03 —
+    bloqué par IP depuis les runners, il ne rendait plus rien depuis août)."""
 
-        monkeypatch.setattr(harvester, "_fetch_from_book", fake_fetch)
+    def _cabler(self, monkeypatch, api_sports=(), odds_api_io=()):
+        monkeypatch.setattr(harvester, "_fetch_from_api_sports", lambda sid: list(api_sports))
+        monkeypatch.setattr(harvester, "_fetch_from_odds_api_io", lambda sid: list(odds_api_io))
+        monkeypatch.setattr(harvester, "_t7_fetch", lambda: [])
+        monkeypatch.setattr(harvester, "_fetch_from_odds500", lambda sid, trusted: [])
+        monkeypatch.setattr(harvester, "_measure_consensus", lambda sid, merged: None)
+
+    def test_single_source_passes_through_unchanged(self, monkeypatch):
+        self._cabler(monkeypatch, api_sports=[_match("Team A", "Team B", 2.0, 3.2, 3.5)])
         result = harvester._fetch_multi_book(1)
-
         assert len(result) == 1
-        assert result[0]["_soft_source"] == "1xbet"
+        assert result[0]["_soft_source"] == "api_sports"
         assert result[0]["odds_1xbet"] == {"1": 2.0, "X": 3.2, "2": 3.5}
 
-    def test_keeps_best_price_per_outcome_across_books(self, monkeypatch):
-        def fake_fetch(book, tpls, referer, sport_id):
-            if book == "1xbet":
-                return [_match("Team A", "Team B", 2.00, 3.10, 3.50)]
-            if book == "melbet":
-                return [_match("Team A", "Team B", 2.10, 3.00, 3.60)]
-            return []
-
-        monkeypatch.setattr(harvester, "_fetch_from_book", fake_fetch)
+    def test_keeps_best_price_per_outcome_across_sources(self, monkeypatch):
+        self._cabler(monkeypatch,
+                     api_sports=[_match("Team A", "Team B", 2.00, 3.10, 3.50)],
+                     odds_api_io=[_match("Team A", "Team B", 2.10, 3.00, 3.60)])
         result = harvester._fetch_multi_book(1)
-
         assert len(result) == 1   # same real-world match, not duplicated
         odds = result[0]["odds_1xbet"]
-        assert odds["1"] == 2.10   # melbet had the better price
-        assert odds["X"] == 3.10   # 1xbet had the better price
-        assert odds["2"] == 3.60   # melbet had the better price
+        assert odds["1"] == 2.10   # odds-api.io had the better price
+        assert odds["X"] == 3.10   # api-sports had the better price
+        assert odds["2"] == 3.60
 
-    def test_soft_source_records_which_books_contributed(self, monkeypatch):
-        def fake_fetch(book, tpls, referer, sport_id):
-            if book == "1xbet":
-                return [_match("Team A", "Team B", 2.00, 3.10, 3.50)]
-            if book == "melbet":
-                return [_match("Team A", "Team B", 2.10, 3.00, 3.60)]
-            return []
-
-        monkeypatch.setattr(harvester, "_fetch_from_book", fake_fetch)
+    def test_soft_source_records_which_sources_contributed(self, monkeypatch):
+        self._cabler(monkeypatch,
+                     api_sports=[_match("Team A", "Team B", 2.00, 3.10, 3.50)],
+                     odds_api_io=[_match("Team A", "Team B", 2.10, 3.00, 3.60)])
         result = harvester._fetch_multi_book(1)
+        assert set(result[0]["_soft_source"].split("+")) == {"api_sports", "odds_api_io"}
 
-        sources = set(result[0]["_soft_source"].split("+"))
-        assert sources == {"1xbet", "melbet"}
-
-    def test_match_unique_to_one_book_still_included(self, monkeypatch):
+    def test_match_unique_to_one_source_still_included(self, monkeypatch):
         # Distinct, realistic team names — placeholders like "Team A"/"Team
         # C" share enough characters ("team ") to false-positive under
-        # strict_team_match's fuzzy-ratio fallback, which isn't what this
-        # test is trying to exercise.
-        def fake_fetch(book, tpls, referer, sport_id):
-            if book == "1xbet":
-                return [_match("Arsenal", "Chelsea", 2.0, 3.2, 3.5)]
-            if book == "melbet":
-                return [_match("Bayern Munich", "Dortmund", 1.9, 3.3, 4.0)]
-            return []
-
-        monkeypatch.setattr(harvester, "_fetch_from_book", fake_fetch)
+        # strict_team_match's fuzzy-ratio fallback.
+        self._cabler(monkeypatch,
+                     api_sports=[_match("Arsenal", "Chelsea", 2.0, 3.2, 3.5)],
+                     odds_api_io=[_match("Bayern Munich", "Dortmund", 1.9, 3.3, 4.0)])
         result = harvester._fetch_multi_book(1)
+        assert {r["match"] for r in result} == {"Arsenal vs Chelsea", "Bayern Munich vs Dortmund"}
 
-        assert len(result) == 2
-        matches = {r["match"] for r in result}
-        assert matches == {"Arsenal vs Chelsea", "Bayern Munich vs Dortmund"}
-
-    def test_no_books_respond_returns_empty(self, monkeypatch):
-        monkeypatch.setattr(harvester, "_fetch_from_book", lambda *a, **k: [])
+    def test_no_sources_respond_returns_empty(self, monkeypatch):
+        self._cabler(monkeypatch)
         assert harvester._fetch_multi_book(1) == []
 
-    def test_worse_price_on_second_book_does_not_override(self, monkeypatch):
-        def fake_fetch(book, tpls, referer, sport_id):
-            if book == "1xbet":
-                return [_match("Team A", "Team B", 2.20, 3.10, 3.50)]
-            if book == "melbet":
-                return [_match("Team A", "Team B", 2.00, 3.00, 3.40)]
-            return []
-
-        monkeypatch.setattr(harvester, "_fetch_from_book", fake_fetch)
+    def test_worse_price_on_second_source_does_not_override(self, monkeypatch):
+        self._cabler(monkeypatch,
+                     api_sports=[_match("Team A", "Team B", 2.20, 3.10, 3.50)],
+                     odds_api_io=[_match("Team A", "Team B", 2.00, 3.00, 3.40)])
         result = harvester._fetch_multi_book(1)
-
-        # 1xbet was strictly better on every outcome -> stays sole source.
         assert result[0]["odds_1xbet"] == {"1": 2.20, "X": 3.10, "2": 3.50}
-        assert result[0]["_soft_source"] == "1xbet"
+        assert result[0]["_soft_source"] == "api_sports"
+
+    def test_le_linefeed_est_parti(self):
+        """Une source morte laissée en place coûte du budget moteur et fait
+        croire à une capacité : plus aucun gabarit d'URL LineFeed ici."""
+        import inspect
+        src = inspect.getsource(harvester)
+        for nom in ("SOFT_BOOKS", "XBET_FEED_TPLS", "_fetch_from_book", "_parse_xbet_json"):
+            assert not hasattr(harvester, nom), nom
+        assert "LineFeed/Get1x2" not in src
 
 
 class TestStableId:

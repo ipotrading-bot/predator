@@ -340,7 +340,8 @@ def sources():
     parce que rien ne répondait à « qu'est-ce qui marche, là, maintenant ».
 
     Aucune sonde ne consomme de crédit facturé : OddsAPI /v4/sports est
-    gratuit, api-sports /status aussi, et le LineFeed n'a pas de quota.
+    gratuit, api-sports /status aussi. (La sonde LineFeed 1xbet/Melbet/22bet
+    est partie avec la source, retirée le 2026-09-03.)
     """
     from core.odds_api import candidate_keys, probe_key            # noqa: E402
     from core.api_sports import PROVIDERS, _key_for                # noqa: E402
@@ -394,18 +395,6 @@ def sources():
     from core.titan007 import probe as t7_probe                        # noqa: E402
     ok, detail = t7_probe()
     print(f"  {'OK' if ok else 'KO'} — {detail}")
-
-    print("── Tier 2 bis · LineFeed 1xbet/Melbet/22bet (sans clé → filtré par IP) ──")
-    from core.harvester import SOFT_BOOKS                           # noqa: E402
-    for book, (tpls, referer) in SOFT_BOOKS.items():
-        url = tpls[0].format(sport_id=1)
-        try:
-            r = requests.get(url, timeout=12, headers={
-                "User-Agent": "Mozilla/5.0", "Referer": referer})
-            n = len((r.json() or {}).get("Value") or []) if r.status_code == 200 else 0
-            print(f"  {book:<8} HTTP {r.status_code}  {n} matchs")
-        except Exception as e:
-            print(f"  {book:<8} injoignable ({type(e).__name__})")
 
     # Sources gratuites Asie + marchés de prédiction. Elles manquaient à cette
     # sonde alors que ce sont précisément celles qui meurent en silence : c'est

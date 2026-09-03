@@ -1440,6 +1440,26 @@ lookups sont préservés pour les matchs de la veille.
 Gardiens : `tests/test_score_sources.py::TestESPN`, `::TestChaineAvecESPN`,
 `tests/test_settlement.py::…::test_api_sports_saute_hors_de_la_fenetre_du_plan_gratuit`.
 
+### Le LineFeed 1xbet/Melbet/22bet retiré du harvest (2026-09-03)
+
+Même décision opérateur (« si une source est inutilisable, il faut la
+dégager »), même jour. Le LineFeed direct des books soft était bloqué par IP
+depuis les runners GitHub depuis août (documenté ici même, « LineFeed/ESPN/
+SofaScore sont morts ») mais restait CÂBLÉ : mesuré sur le scan standard de
+19:43, neuf requêtes en HTTP 203/404 pour le seul football, chacune
+précédée d'un sommeil de 2 à 5 s — ~36 s de budget moteur perdues par sport,
+quatre fois par scan, à ne rien rendre. Une source morte laissée en place
+coûte du temps et fait croire à une capacité.
+
+Retirés de `core/harvester.py` : les gabarits d'URL, `SOFT_BOOKS`,
+`_fetch_from_book`, `_parse_xbet_json`, les en-têtes de navigateur. Les
+books soft (1xbet, Bet365) arrivent par odds-api.io (authentifié, non filtré
+par IP) ; `fetch_matches` itère l'union DÉRIVÉE des sports que servent
+api-sports, odds-api.io et titan007. La clé `odds_1xbet` garde son nom
+historique dans tout le pipeline (slate, ledger). `validator.py`, script
+manuel qui sondait ce feed, suit. Gardien :
+`tests/test_harvester.py::TestFetchMultiBook::test_le_linefeed_est_parti`.
+
 ### Six fournisseurs IA morts retirés du registre (2026-09-03)
 
 Décision opérateur : « supprimer les IA non opérationnelles comme zhipu et
