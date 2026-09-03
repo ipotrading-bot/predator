@@ -447,6 +447,10 @@ function SystemBetCalculator() {
   const taxRate = 20;
   const taxBase = "net_system"; // 'net_system' | 'per_line'
   const [activeCell, setActiveCell] = useState(null);
+  // Marge par jambe pour la note de marge composée (indicatif). Champ texte
+  // brut, même raison que la mise : pouvoir vider et retaper sans repli.
+  const [marginInput, setMarginInput] = useState("5");
+  const marginPct = Math.max(0, Math.min(100, parseFloat(marginInput) || 0));
   const [signalsStatus, setSignalsStatus] = useState("loading"); // loading | error | empty | `ok:N`
   const [availableSignals, setAvailableSignals] = useState([]);
   const [pickerOpen, setPickerOpen] = useState(false);
@@ -546,6 +550,12 @@ function SystemBetCalculator() {
     const netAfterTax = totalRetour - taxAmount;
     return { byFold, totalLignes, totalMise, totalRetour, totalProfit, maxRSystem, taxAmount, netAfterTax };
   }, [selections, sortedFolds, stake, taxEnabled, taxRate, taxBase]);
+
+  // Scénarios « si k gagnent » : retours CONDITIONNELS sur le système M/N et
+  // la mise courants — jamais des probabilités (règle 7 de CLAUDE.md).
+  const scenarios = useMemo(() => scenariosByWinners(selections, Math.min(sysM, n), stake),
+                            [selections, sysM, n, stake]);
+  const pointMort = useMemo(() => breakEven(scenarios), [scenarios]);
 
   const fmt = (v) => `${v.toLocaleString("fr-FR", { minimumFractionDigits: 2, maximumFractionDigits: 2 })} ${currency}`;
 
@@ -773,6 +783,93 @@ function SystemBetCalculator() {
                       <span style={{ color: C.text, fontFamily: MONO }} className="text-base font-semibold">{fmt(computed.netAfterTax)}</span>
                     </div>
                   )}
+                </Panel>
+
+                {/* Scénarios — retours conditionnels par nombre de gagnants.
+                    Ce que le calculateur ne disait pas : AVANT de miser, que
+                    rend le système si k sélections sur N sont bonnes ? Pire cas
+                    = les k cotes les plus basses gagnent, meilleur cas = les k
+                    plus hautes. Ce ne sont PAS des probabilités ni un taux de
+                    réussite (règle 7) — le libellé le dit. */}
+                <Panel
+                  title="Scénarios"
+                  right={<span style={{ color: C.faint, fontFamily: SANS }} className="text-xs">retours conditionnels — pas des probabilités</span>}
+                >
+                  <p style={{ color: C.muted }} className="text-xs mb-3">
+                    Si <span style={{ color: C.text, fontFamily: MONO }}>k</span> sélections sur {n} sont bonnes, sur le système {Math.min(sysM, n)}/{n} et la mise {fmt(stake)} par ligne.
+                    Pire cas : les k cotes les plus basses gagnent. Meilleur cas : les k plus hautes.
+                  </p>
+                  <div className="overflow-x-auto">
+                    <table className="w-full text-xs" style={{ fontFamily: MONO, borderCollapse: "collapse" }}>
+                      <thead>
+                        <tr style={{ color: C.muted, fontFamily: SANS }}>
+                          <th className="text-left py-1 pr-2">k bons</th>
+                          <th className="text-right py-1 px-2">Pire cas</th>
+                          <th className="text-right py-1 px-2">Meilleur cas</th>
+                          <th className="text-right py-1 px-2">Profit net (pire)</th>
+                          <th className="text-right py-1 pl-2">Marge composée</th>
+                        </tr>
+                      </thead>
+                      <tbody>
+                        {scenarios.map((sc) => {
+                          const estPointMort = pointMort && pointMort.k === sc.k;
+                          const couvre = sc.worst >= sc.mise - 1e-9;
+                          return (
+                            <tr key={sc.k}
+                              style={{ borderTop: `1px solid ${C.borderSoft}`, background: estPointMort ? "rgba(198,161,91,0.10)" : "transparent" }}>
+                              <td className="py-1 pr-2" style={{ color: estPointMort ? C.gold : C.text }}>
+                                {sc.k}/{n}{estPointMort ? " ◆" : ""}
+                              </td>
+                              <td className="text-right py-1 px-2" style={{ color: couvre ? C.win : C.loss }}>{fmt(sc.worst)}</td>
+                              <td className="text-right py-1 px-2" style={{ color: C.text }}>{fmt(sc.best)}</td>
+                              <td className="text-right py-1 px-2" style={{ color: sc.profitWorst >= 0 ? C.win : C.loss }}>
+                                {sc.profitWorst >= 0 ? "+" : ""}{fmt(sc.profitWorst)}
+                              </td>
+                              <td className="text-right py-1 pl-2" style={{ color: C.faint }}>
+                                {(compoundMargin(marginPct / 100, sc.k) * 100).toFixed(1)} %
+                              </td>
+                            </tr>
+                          );
+                        })}
+                      </tbody>
+                    </table>
+                  </div>
+
+                  {/* Point mort : plus petit k dont le PIRE cas couvre la mise totale. */}
+                  <div style={{ borderTop: `1px solid ${C.borderSoft}` }} className="mt-3 pt-3 space-y-2">
+                    {pointMort ? (
+                      <div className="flex items-center justify-between text-xs">
+                        <span style={{ color: C.muted }}>Point mort (pire cas ≥ mise totale)</span>
+                        <span style={{ color: C.gold, fontFamily: MONO }} className="font-semibold">◆ {pointMort.k} bons sur {n}</span>
+                      </div>
+                    ) : (
+                      <div style={{ color: C.loss }} className="text-xs">Aucun nombre de bons ne couvre la mise totale en pire cas.</div>
+                    )}
+                    {pointMort && pointMort.tooShort && (
+                      <div style={{ background: "rgba(229,86,107,0.10)", border: `1px solid ${C.loss}`, color: C.loss }}
+                        className="text-xs px-2.5 py-1.5 rounded-md">
+                        Cotes trop courtes pour un système : {n - 1} bons sur {n} ne couvrent pas la mise.
+                      </div>
+                    )}
+                  </div>
+
+                  {/* Marge composée, indicative : (1 + m)^k − 1, m saisi par l'opérateur. */}
+                  <div style={{ borderTop: `1px solid ${C.borderSoft}` }} className="mt-3 pt-3 grid grid-cols-2 gap-3 items-end">
+                    <Field label="Marge par jambe (%) — indicatif">
+                      <input type="number" min="0" max="100" step="0.5" value={marginInput}
+                        onChange={(e) => setMarginInput(e.target.value)}
+                        onBlur={() => setMarginInput(String(marginPct))}
+                        style={inputStyle} className="text-sm rounded-md px-2 py-1.5" />
+                    </Field>
+                    <div style={{ color: C.faint }} className="text-xs">
+                      Marge composée = (1 + m)<sup>k</sup> − 1. Une hypothèse, pas une mesure.
+                      {n >= 5 && (
+                        <div style={{ color: C.partial }} className="mt-1">
+                          ⚠ N ≥ 5 : la marge composée grossit vite, elle ne dit rien de la chance de gagner.
+                        </div>
+                      )}
+                    </div>
+                  </div>
                 </Panel>
 
                 <Panel title="Détail par palier & combinaisons">

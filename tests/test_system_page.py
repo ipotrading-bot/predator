@@ -106,3 +106,20 @@ class TestScenariosDerivesDuMoteur:
         # Des retours CONDITIONNELS, jamais des probabilités (règle 7) : le
         # bloc le dit en toutes lettres.
         assert "jamais des probabilités" in bloc
+
+    def test_le_panneau_scenarios_et_le_champ_marge_sont_rendus(self, jsx):
+        """Commit 2 : le panneau existe, il porte le libellé « pas des
+        probabilités » (règle 7), le point mort et le champ de marge."""
+        assert 'title="Scénarios"' in jsx
+        assert "retours conditionnels — pas des probabilités" in jsx
+        assert "Point mort" in jsx and "Cotes trop courtes pour un système" in jsx
+        assert "Marge par jambe (%)" in jsx and "compoundMargin(" in jsx
+        assert "N ≥ 5" in jsx
+        # Les scénarios de l'UI viennent des fonctions pures, pas d'un recalcul
+        assert "scenariosByWinners(selections" in jsx and "breakEven(scenarios)" in jsx
+
+    @pytest.mark.parametrize("tag", ["table", "thead", "tbody", "tr", "th", "td", "p", "label", "sup"])
+    def test_les_balises_du_panneau_sont_equilibrees(self, jsx, tag):
+        ouverts = len(re.findall(rf"<{tag}\b(?![^>]*/>)", jsx))
+        fermes = len(re.findall(rf"</{tag}>", jsx))
+        assert ouverts == fermes, f"<{tag}> : {ouverts} ouvert(s), {fermes} fermé(s)"
