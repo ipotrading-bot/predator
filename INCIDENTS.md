@@ -1330,6 +1330,73 @@ trace. Football sans prix de nul = REFUS (jamais de repli sur le moneyline :
 comparer une entrée DNB à une clôture ML donne un CLV faux et silencieux).
 Gardien : `tests/test_closing_line_exchange.py`.
 
+### Un U21 héritait de la couverture ESPN de son club senior (2026-09-04)
+
+Symptôme : des signaux émis comme « réglables » qui ne se règlent JAMAIS. Ils
+restent `active` jusqu'à `EXPIRE_AFTER_H` (36 h) et rejouent à chaque audit.
+
+Cause : `core.paim_engine.strict_team_match` (seuil 0,60, containment après
+normalisation) appariait `Sheffield Wednesday Reserve U21` →
+`Sheffield Wednesday`, `Wigan Athletic U21` → `Wigan Athletic`,
+`Manly United FC U20` → `Manly United`. Or la garde de couverture
+`core.score_sources.fixture_connue` accepte UN seul nom apparié depuis le
+2026-09-03 (`min_sides=1`, tolérance ajoutée pour rattraper le faux négatif
+« 1. FC Köln » / « FC Cologne » d'ESPN) : un match de jeunes héritait donc de
+la couverture ESPN du club senior et passait le périmètre. Mais
+`result_from_espn` exige les DEUX noms (`_espn_paire`) et ne les trouve
+jamais.
+
+MESURÉ le 2026-09-04 : `Sheffield Wednesday Reserve U21 vs Wigan Athletic U21`
+(England Amateur - U21 Professional Development League) émis à 04:46, donc
+APRÈS la garde de périmètre du 09-03. 10 signaux `active` derrière leur coup
+d'envoi, le plus vieux avec un kickoff au 2026-09-02 16:00.
+
+Fait : `strict_team_match` compare d'abord l'ÉTAGE du club (`_niveau` :
+catégorie d'âge U17–U23, réserve/II/B, féminines) et refuse d'emblée deux
+étages différents, quelle que soit la ressemblance. Le marqueur d'étage est
+ensuite RETIRÉ avant la comparaison des noms (`_sans_etage`), sinon il casse
+le containment qui marchait sans lui : « Lyon » ⊂ « Olympique Lyonnais » est
+vrai, « Lyon U19 » ⊄ « Olympique Lyonnais U19 » ne l'est plus.
+
+⚠️ Le correctif est dans la primitive PARTAGÉE, donc il vaut aussi côté COTES
+(harvester, matchbook, `exchange_match`, run_engine) — et c'est là qu'il
+compte le plus : apparier un U21 au match senior lierait le prix d'un match
+aux cotes d'un autre. Vérifié qu'il ne change RIEN au cas Köln/Cologne (déjà
+False avant : c'est la raison d'être de `min_sides=1`).
+
+Gardien : `tests/test_score_sources.py::TestLEtageDuClubNestJamaisHerite`.
+
+### Le repli TheSportsDB brûlait son budget sur des matchs irrécupérables (2026-09-04)
+
+Symptôme : `AUDIT STÉRILE — 0 réglé sur 15 éligibles`, deux fois le
+2026-09-03 (runs 33745407441 à 10:38 et 33774472425 à 15:45).
+
+Cause : `core.score_sources.fetch_score` essaie MLB statsapi, puis ESPN, puis
+TheSportsDB en DERNIER étage — donc tout signal qu'ESPN ne couvre pas y tombe.
+Comme un échec de règlement laisse la ligne `active` jusqu'à `EXPIRE_AFTER_H`
+(36 h) et que l'audit tourne toutes les 6 h, chaque signal irrécupérable y
+consommait ~6 requêtes sur un budget journalier de 150 (`TSDB_DAILY_BUDGET`).
+
+MESURÉ : `meta.quota_tsdb_results_20260903 = 150` (saturé) dès 10:38 ;
+`…_20260904 = 99` dès 02:51 pour seulement DEUX audits. Les lignes coupables
+sont des divisions que personne de gratuit ne couvre — Finlande Kakkonen,
+Bulgarie Vtora Liga, U20 NSW, Coppa Italia Serie C, Cupa României. ESPN, lui,
+était à 22/200. Le gaspillage ne coûtait pas seulement : il BLOQUAIT le
+règlement de matchs parfaitement réglables.
+
+Fait : `TSDB_RETRY_WINDOW_H = 12` (`core/audit_engine.py`). Au-delà de 12 h
+après le coup d'envoi, le repli TheSportsDB n'est plus tenté
+(`fetch_score(..., tsdb_ok=False)`) — une source qui n'a pas publié le score
+en 12 h ne le publiera pas au 6e essai. Pas fait, et dit : ESPN et MLB
+statsapi, larges, continuent seuls jusqu'à l'expiration, donc AUCUNE voie de
+règlement n'est perdue, seulement des requêtes gaspillées ; un signal
+indatable garde son repli.
+
+⚠️ `TSDB_RETRY_WINDOW_H` doit rester bien SOUS `EXPIRE_AFTER_H` (36) :
+au-dessus, le réglage n'aurait aucun effet.
+
+Gardien : `tests/test_audit_retry.py::TestLeRepliTheSportsDBEstBorne`.
+
 
 ## Couche IA
 
@@ -1774,6 +1841,60 @@ Gardiens : `tests/test_ci_env.py::test_il_ny_a_que_deux_modes`,
 (`SCAN_TIMEOUTS == MODES`, anciens drapeaux absents), `tests/test_watchdog_worker.py`,
 `tests/test_signaux_fantomes.py::TestRaisonDuFantome::test_aucune_raison_par_mode`.
 
+### Le chien de garde surveillait un FICHIER, pas un MODE (2026-09-04)
+
+Symptôme : les scans `standard` — les payants, 8 par jour — n'arrivaient pas,
+ou arrivaient très en retard, et AUCUNE alerte ne se déclenchait.
+
+Cause : `scripts/cloudflare_watchdog_worker.js` surveillait
+`{ file: "scan.yml", stale_min: 75 }`, c'est-à-dire l'âge du DERNIER run du
+fichier, tous modes confondus. Depuis la fusion des deux modes dans un seul
+workflow (entrée précédente, 2026-09-03), `scan.yml` porte aussi le cron
+reprice horaire `25 * * * *` — et le chien de garde dispatche lui-même des
+reprice. `scan.yml` n'est donc JAMAIS vieux de 75 min. Un cron `standard`
+perdu n'était pas seulement « non rattrapé », ce que le commentaire du Worker
+présentait comme un arbitrage de dépense : il était INDÉTECTABLE.
+
+MESURÉ le 2026-09-04, mode par mode via
+`gh api repos/ipotrading-bot/predator/actions/runs/<id>/jobs` — sur les 4
+créneaux standard dus depuis le recalage du 09-03 :
+- 19:03 livré à 19:43 (+40 min, run 33798089167) ;
+- 21:03 JAMAIS livré — le run de 21:45 (33809682848) est un reprice promu par
+  le bouton « Scanner » ;
+- 23:03 livré à 00:50 (+1 h 47, run 33823394679) ;
+- 06:03 toujours pas livré à 08:50.
+Pendant ce temps ~10 reprice/jour étaient dispatchés, tous déclarés « frais ».
+Chiffré : 31 crédits OddsAPI consommés dans la journée pour une allocation de
+118/j, titan007 à 12/500. Le run de 00:50 (créneau 23:03) visait T-43 min :
+35 matchs, 0 signal.
+
+Fait : `scan.yml` porte un `run-name` qui EXPOSE le mode (`Scan standard` /
+`Scan reprice`), lisible dans `gh run list` comme dans l'API ; le Worker gagne
+une table `CRENEAUX` distincte de `WATCH`, délai de grâce 25 min.
+
+⚠️ Les deux tables ne mesurent pas la même chose et l'une ne remplace pas
+l'autre : `WATCH` = FRAÎCHEUR, valable seulement pour une cadence RÉGULIÈRE ;
+`CRENEAUX` = CRÉNEAU DÛ, obligatoire pour le standard dont les écarts vont de
+2 h à 7 h. Un seuil de fraîcheur supérieur au plus petit écart (120 min)
+tirerait dans le trou de nuit 23:03→06:03, soit exactement aux heures que le
+recalage du 09-03 avait écartées.
+⚠️ Un reprice promu par le bouton « Scanner » garde le nom `Scan reprice` — le
+nom est figé au démarrage du run, la promotion se décide dans un step : il
+n'honore donc PAS le créneau aux yeux du chien de garde.
+⛔ Ne jamais diagnostiquer la cadence de scan en COMPTANT les runs : compter
+les MODES.
+
+DÉCISION OPÉRATEUR du 2026-09-04 : rattraper `standard` malgré le coût.
+L'arbitrage inverse datait du 2026-08-22 et avait été écrit quand le pool
+OddsAPI était MORT ; la mesure ci-dessus l'inverse.
+
+Gardiens :
+`tests/test_watchdog_worker.py::test_les_creneaux_surveilles_sont_exactement_ceux_du_cron`,
+`…::test_le_delai_de_grace_reste_sous_le_plus_petit_ecart`,
+`…::test_le_run_name_surveille_est_bien_celui_que_le_workflow_produit`,
+`…::test_les_crons_cites_par_le_run_name_existent_avec_ce_mode`,
+`…::test_la_fraicheur_ne_rattrape_scan_quen_reprice`.
+
 ### Le verrou `predator-signals-write` ne contient plus `closing_line.yml`
 
 raison courante (« aucune ligne en commun ») est FAUSSE : `purge_rules`
@@ -2033,6 +2154,21 @@ Gardiens : `tests/test_odds_api_preflight.py`, `tests/test_scan_windows.py`
 (`test_aucune_fenetre_a_moins_de_2h_dun_cron_standard_inutile`),
 `tests/test_ci_env.py`, `tests/test_telegram_format.py::TestEmptyAndSingles`,
 `tests/test_reprice_mode.py::test_dedup_signals_for_telegram`.
+
+### Le heartbeat datait les compteurs du mauvais tick (2026-09-04)
+
+`run_engine._heartbeat` reporte volontairement `matches`/`signals` du dernier
+scan réel quand un tick n'a rien scanné (correctif du 2026-08-28 : le step
+REPRICE écrasait « 41 matchs » par « 0 » six secondes après le scan). Mais il
+rafraîchissait `at` en même temps, et le dashboard affichait le couple comme
+un tout. MESURÉ le 2026-09-04 : « Dernier scan 07:30 UTC · 33 analysés » alors
+que le tick de 07:30 était un reprice qui n'avait rien analysé — les 33
+dataient de 04:46. Ajout de `scan_at`, qui DATE les compteurs ; `at` reste
+l'heure du dernier tick (le compte à rebours « prochain scan » en dépend).
+⚠️ Le report demeure — ne pas le retirer, c'est le correctif du 08-28.
+Gardien : `tests/test_reprice_mode.py::test_reprice_empty_cache_preserves_last_scan_counts`
+— il garde le REPORT, pas `scan_at` : à ce jour aucun test n'assied la
+distinction `at` / `scan_at`, ni côté moteur ni côté template.
 
 ### Une version, un seul endroit
 

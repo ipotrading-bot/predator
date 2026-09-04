@@ -237,6 +237,43 @@ def test_reprice_empty_cache_preserves_last_scan_counts(reprice_env):
     assert hb["at"] != ancien_at, "mais il doit rafraîchir `at` (preuve de vie)"
 
 
+def test_le_tick_muet_ne_redate_pas_les_comptes_quil_reporte(reprice_env):
+    """Le report ci-dessus est le bon comportement, mais il faisait passer des
+    comptes anciens pour frais : `at` avançait avec eux et le dashboard
+    affichait le couple comme un tout. Mesuré le 2026-09-04 — « Dernier scan
+    07:30 UTC · 33 analysés » alors que le tick de 07:30 était un reprice qui
+    n'avait rien analysé, les 33 datant de 04:46.
+
+    `scan_at` date les COMPTES, `at` date le TICK. Les deux doivent diverger
+    dès qu'un tick ne scanne pas."""
+    sb, _t, _mb = reprice_env
+    scan_reel = "2026-09-04T04:46:00+00:00"
+    sb.meta["last_scan"] = {"key": "last_scan",
+                            "value": json.dumps({"at": scan_reel,
+                                                 "scan_at": scan_reel,
+                                                 "matches": 33, "signals": 2})}
+    eng.run()   # tick muet
+    hb = json.loads(sb.meta["last_scan"]["value"])
+    assert hb["scan_at"] == scan_reel, (
+        "`scan_at` doit rester celui du dernier scan RÉEL — sinon les comptes "
+        "reportés se font passer pour ceux du tick courant")
+    assert hb["at"] != scan_reel, "`at` doit avancer : c'est la preuve de vie"
+    assert hb["matches"] == 33
+
+
+def test_un_last_scan_sans_scan_at_ne_casse_pas(reprice_env):
+    """Les lignes écrites avant le 2026-09-04 n'ont pas de `scan_at` : le
+    report doit se rabattre sur `at` plutôt que de perdre la date."""
+    sb, _t, _mb = reprice_env
+    ancien = "2026-09-03T23:03:00+00:00"
+    sb.meta["last_scan"] = {"key": "last_scan",
+                            "value": json.dumps({"at": ancien,
+                                                 "matches": 12, "signals": 0})}
+    eng.run()
+    hb = json.loads(sb.meta["last_scan"]["value"])
+    assert hb["scan_at"] == ancien, "repli sur `at` quand `scan_at` manque"
+
+
 def test_reprice_expired_cache_is_a_miss(reprice_env):
     sb, _t, mb_calls = reprice_env
     sb.meta["cache_soft_slate"] = _meta_row([_slate_match()],

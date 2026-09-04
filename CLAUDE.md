@@ -10,27 +10,26 @@ Calcul en crons GitHub Actions ; dashboard en lecture seule.
   DIAGNOSTIQUER, et avant de toucher sources, couche IA, workflows ou
   seuils : une règle dont on ignore la raison finit contournée.
 - `docs/systeme_de_scan.md` — le scan en 2 modes, pour l'opérateur.
-- `AUDIT.md` — invariants → tests gardiens. À lire avant tout ajout (sport,
+- `AUDIT.md` — invariants → tests gardiens, à lire avant tout ajout (sport,
   fournisseur IA, route, workflow).
 - `.claude/rules/` — le DÉTAIL des règles, chargé par chemin (workflows,
   couche IA, dashboard, sql, apprentissage).
-- `.claude/hooks/` — les règles dures en CODE (deny/ask mécaniques, lint,
-  suite avant arrêt) ; README dedans, gardien `tests/test_claude_config.py`.
-- Skills : `predator-pipeline` (carte du flux), `-add-sport`, `-migration`,
-  `-ci-env`, `-incident`, `-release`, `-dashboard-check`.
-- Sub-agents : `predator-diagnostician` (audit pipeline/santé), `test-runner`,
-  `migration-author`, `ledger-analyst`, `incident-scribe`, `ci-log-digger`.
+- `.claude/hooks/` — les règles dures en CODE ; README dedans, gardien
+  `tests/test_claude_config.py`.
+- Skills et sub-agents : `.claude/skills/` et `.claude/agents/` — les énumérer
+  ici faisait une liste non gardée (règle 6). Commencer par
+  `predator-pipeline`, la carte du flux.
 
 ## Commandes
 
-- Tests : `python -m pytest tests/ -q` (~40 s, 0 échec).
+- Tests : `python -m pytest tests/ -q` (~10 s, 0 échec).
 - Lint : `python -m pyflakes $(git ls-files '*.py')`
 - Dashboard local : skill `predator-dashboard-check`
 - Comptes externes : `docs/actions_operateur.md`
 - Piloter Supabase/Vercel : `python scripts/ops.py doctor|status|supabase …|vercel …`
-  (credentials dans `.env`, gitignoré). `ops.py ai` fait un VRAI appel — seul
-  diagnostic qui tranche sur un fournisseur IA. MCP Supabase épinglé et en
-  LECTURE SEULE (`.mcp.json`).
+  (credentials gitignorés). `ops.py ai` fait un VRAI appel — seul diagnostic
+  qui tranche sur un fournisseur IA. MCP Supabase en LECTURE SEULE
+  (`.mcp.json`).
 - Pas de build. Le push ne déploie pas (déploiement Git Vercel DÉSACTIVÉ,
   `vercel.json`) : le job `deploy` de `ci.yml` pousse en CLI si la suite est
   verte.
@@ -88,3 +87,6 @@ Détail dans `.claude/rules/` (chargé par chemin), justification dans
 11. `TAX_RATE`, `SHADOW_SPORTS` et le périmètre sportif = décisions
     opérateur, instruction explicite exigée dans la session courante —
     *TAX_RATE remis à 0.20 contre instruction*.
+12. ⛔ Cadence d'un workflow multi-modes : surveiller le MODE (`run-name`)
+    et le CRÉNEAU DÛ, jamais la fraîcheur du fichier — *Le chien de garde
+    surveillait un FICHIER, pas un MODE*.
