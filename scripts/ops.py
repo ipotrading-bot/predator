@@ -7,6 +7,7 @@ scripts/ops.py — pilotage Supabase + Vercel depuis le terminal, sans CLI.
     python scripts/ops.py sources                     # sonde CHAQUE source de cotes : vivante ? quota ? joignable depuis cette IP ?
     python scripts/ops.py ai                          # sonde CHAQUE fournisseur IA par une INFÉRENCE réelle (catalogue ≠ utilisable)
     python scripts/ops.py secrets-push [--run]        # recopie les clés du .env vers les secrets Actions (403 depuis un Codespace)
+    python scripts/ops.py secrets-prune [--run]       # secrets Actions qu'AUCUN workflow ne lit plus (dérivé de l'historique git) → gh secret delete
 
     python scripts/ops.py supabase secrets list       # app_secrets (noms + mis à jour, jamais les valeurs)
     python scripts/ops.py supabase secrets set KEY VAL
@@ -310,6 +311,85 @@ def secrets_push(args):
         print(f"  {k:<24} {etat}")
 
 
+def _secrets_referenced(rev: str | None = None) -> set:
+    """Noms `secrets.X` lus par les workflows — à HEAD (rev=None) ou dans une
+    révision donnée. Lu par git, pas par l'API GitHub : le token d'un
+    Codespace n'a pas le droit de lister les secrets."""
+    import re
+    import subprocess
+    racine = pathlib.Path(__file__).resolve().parent.parent
+    motif = re.compile(r"secrets\.([A-Z0-9_]+)")
+    out: set = set()
+    if rev is None:
+        for f in (racine / ".github" / "workflows").glob("*.yml"):
+            out |= set(motif.findall(f.read_text(encoding="utf-8")))
+        return out
+    lst = subprocess.run(["git", "ls-tree", "-r", "--name-only", rev, ".github/workflows"],
+                         capture_output=True, text=True, cwd=racine)
+    for f in lst.stdout.split():
+        blob = subprocess.run(["git", "show", f"{rev}:{f}"], capture_output=True,
+                              text=True, cwd=racine)
+        out |= set(motif.findall(blob.stdout))
+    return out
+
+
+def secrets_orphelins() -> list:
+    """Secrets Actions qu'un workflow a lus UN JOUR et que plus aucun ne lit.
+
+    Dérivé, jamais tenu à la main (règle dure n°6) : union des `secrets.X`
+    sur toute l'histoire git des workflows, moins ceux de HEAD. C'est la
+    liste EXACTE de ce que `ci_env.py --write` et les retraits de sources
+    ont laissé derrière eux côté GitHub — LineFeed, api-sports, Groq/Tavily,
+    les six IA mortes, odds500/7M, siliconflow/upstage.
+    """
+    import subprocess
+    racine = pathlib.Path(__file__).resolve().parent.parent
+    revs = subprocess.run(["git", "rev-list", "--all", "--", ".github/workflows"],
+                          capture_output=True, text=True, cwd=racine).stdout.split()
+    jadis: set = set()
+    for rev in revs:
+        jadis |= _secrets_referenced(rev)
+    return sorted(jadis - _secrets_referenced())
+
+
+def secrets_prune(args):
+    """Supprime (ou AFFICHE, sans --run) les secrets Actions orphelins.
+
+    Même mur que `secrets-push` : le token d'un Codespace est un token d'APP
+    sans permission `secrets` — DELETE /repos/…/actions/secrets/X rend 403,
+    et le GITHUB_TOKEN d'un workflow n'a pas ce droit non plus. La commande
+    calcule donc la liste et fabrique les `gh secret delete` exacts ; `--run`
+    les exécute là où `gh` est authentifié avec un compte personnel. Un
+    secret que GitHub ne connaît pas rend 404 : ce n'est pas un échec.
+    """
+    import subprocess
+    repo = os.environ.get("GITHUB_REPOSITORY", "ipotrading-bot/predator")
+    run = "--run" in args
+    noms = secrets_orphelins()
+    if not noms:
+        print("Aucun secret orphelin : tout ce que l'histoire a lu est encore lu."); return
+    print(f"Dépôt : {repo}\n{len(noms)} secret(s) qu'aucun workflow ne lit plus :\n")
+    for k in noms:
+        print(f"gh secret delete {k} --repo {repo}")
+    print()
+    if not run:
+        print("↑ Copie ces lignes sur une machine où `gh auth status` montre ton")
+        print("  compte personnel, puis exécute-les. Ou relance ici avec --run.")
+        print(f"\nVérification : gh secret list --repo {repo}")
+        return
+    for k in noms:
+        r = subprocess.run(["gh", "secret", "delete", k, "--repo", repo],
+                           capture_output=True, text=True)
+        err = (r.stderr or "").strip()
+        if r.returncode == 0:
+            etat = "supprimé"
+        elif "404" in err or "Not Found" in err:
+            etat = "absent (déjà supprimé)"
+        else:
+            etat = f"ÉCHEC — {err[:90]}"
+        print(f"  {k:<24} {etat}")
+
+
 def ai():
     """Sonde CHAQUE fournisseur IA par une inférence réelle.
 
@@ -457,7 +537,12 @@ def main(argv):
     elif cmd == "ai":
         ai()
     elif cmd == "secrets-push":
-        secrets_push(argv[2:])
+        # `rest`, pas `argv[2:]` : `--run` est argv[1], et l'ancien découpage
+        # le perdait — la commande n'a jamais pu réellement envoyer (constaté
+        # le 2026-09-04 en ajoutant secrets-prune).
+        secrets_push(rest)
+    elif cmd == "secrets-prune":
+        secrets_prune(rest)
     elif cmd == "supabase":
         sub, a = (rest[0] if rest else ""), rest[1:]
         {"secrets": lambda: sb_secrets(a), "meta": lambda: sb_meta(a),

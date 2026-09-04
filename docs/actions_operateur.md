@@ -342,6 +342,23 @@ restent posés côté GitHub tant qu'on ne les retire pas à la main :
     CEREBRAS_API_KEY, CHUTES_API_KEY, SAMBANOVA_API_KEY, SCALEWAY_API_KEY,
     ZHIPU_API_KEY, CLOUDFLARE_API_TOKEN, CLOUDFLARE_ACCOUNT_ID
 
+**Depuis le 2026-09-04 la liste n'est plus tenue à la main** : elle se
+DÉRIVE de l'historique git des workflows (tout `secrets.X` lu un jour et
+plus lu à HEAD). Le même geste couvre LineFeed, api-sports, Groq/Tavily,
+odds500/7M, siliconflow/upstage — tout ce que les retraits ont laissé
+derrière eux :
+
+```bash
+python scripts/ops.py secrets-prune          # affiche les `gh secret delete` exacts
+python scripts/ops.py secrets-prune --run    # les exécute (compte personnel requis)
+```
+
+⛔ Depuis un Codespace la commande ne peut QUE afficher : le token est un
+token d'application sans permission `secrets` (403, constaté le 2026-09-04
+sur `gh secret list` puis sur chaque `delete`). Le GITHUB_TOKEN d'un
+workflow n'a pas ce droit non plus — aucune automatisation possible côté
+dépôt, c'est un geste de compte.
+
 ⚠️ `CLOUDFLARE_API_TOKEN` / `CLOUDFLARE_ACCOUNT_ID` servent ENCORE en local
 (fichier de credentials gitignoré) aux scripts du Worker chien de garde et
 du relais (`scripts/deploy_watchdog_worker.py`,
