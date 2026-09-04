@@ -300,11 +300,16 @@ class TestLanes:
         with pytest.raises(ValueError):
             R.route([], "lane-imaginaire")
 
-    def test_la_lane_cjk_prefere_les_modeles_chinois(self):
-        """Double emploi avec la mission 3 : un modèle chinois résout un nom
-        d'équipe CJK mieux qu'un Llama généraliste, et pour rien."""
-        noms = [p.name for p in R.REGISTRY if R.TRANSLATE_CJK in p.lanes]
-        assert "modelscope" in noms and "siliconflow" in noms
+    def test_la_lane_cjk_est_partie_avec_la_mission_3(self):
+        """TRANSLATE_CJK n'avait qu'un consommateur (team_aliases), retiré
+        le 2026-09-03 avec odds500/7M ; une lane sans consommateur ne ferait
+        qu'alerter à tort quand ses fournisseurs tombent. siliconflow et
+        upstage, qui ne servaient qu'elle, sont sortis du registre."""
+        assert not hasattr(R, "TRANSLATE_CJK")
+        assert "translate_cjk" not in R.LANES
+        noms = {p.name for p in R.REGISTRY}
+        assert not ({"siliconflow", "upstage"} & noms)
+        assert all(p.lanes for p in R.REGISTRY), "un fournisseur sans lane est mort"
 
     def test_mistral_est_au_registre_pour_les_lanes_de_signaux(self):
         """L'INVERSE de la règle d'avant, et c'est voulu.

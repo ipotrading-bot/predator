@@ -18,12 +18,12 @@
 ```
    SOURCES DE COTES                       COUCHE IA (core/ai_router.py)
    ───────────────────                    ──────────────────────────────
-   OddsAPI      (rallumé 2026-09-01)      Registre de 11 fournisseurs
-   Matchbook    (sharp, sans clé)         Lanes : FILTER / ANALYZE /
-   odds-api.io  (soft)                            TRANSLATE_CJK
-   odds.500.com (gratuit, mode ombre)     (les lanes SEARCH_READ et
-   7M           (noms d'équipes)           SETTLEMENT sont parties avec
-   Kalshi / Polymarket (consensus)         Groq/Tavily le 2026-09-02)
+   OddsAPI      (rallumé 2026-09-01)      Registre de 9 fournisseurs
+   Matchbook    (sharp, sans clé)         Lanes : FILTER / ANALYZE
+   odds-api.io  (soft)                    (SEARCH_READ et SETTLEMENT parties
+   titan007     (foot hors Europe)         avec Groq/Tavily le 2026-09-02 ;
+   Kalshi / Polymarket (consensus)         TRANSLATE_CJK avec odds500/7M
+                                           le 2026-09-03)
                                           Disjoncteur : 3 échecs → 30 min
           │                               Découverte du catalogue au run
           ▼                                        │
@@ -84,7 +84,7 @@ de 120 s), ramassée par `scan.yml` au tick suivant (32/jour, donc ≤ ~1 h) et 
 ### 🧠 Couche IA
 
 - **Routeur multi-fournisseurs** ([`core/ai_router.py`](core/ai_router.py)) —
-  registre de 11 fournisseurs, dont 8 utilisables en production (les autres
+  registre de 9 fournisseurs, dont 7 utilisables en production (les autres
   portent un `terms_flag` : usage non commercial, évaluation, ou palier
   gratuit fermé). Aucun nom de modèle n'est codé en dur : chaque lane déclare
   une liste de préférences et le routeur retient le premier modèle qui existe
@@ -302,13 +302,10 @@ predator/
 │   ├── odds_api_io.py       # Tier 2 — odds-api.io (books soft authentifiés)
 │   ├── matchbook.py         # Sharp, sans clé
 │   ├── harvester.py         # Orchestration de la collecte + appariement
-│   ├── free_sources.py      # Sources gratuites — appelé EN DERNIER par harvester
+│   ├── free_sources.py      # Consensus Kalshi/Polymarket — mesure seule, appelé EN DERNIER par harvester
 │   ├── source_adapter.py    # Cadre commun : appariement temps+ligue+STRUCTURE, divergence en POINTS
-│   ├── odds500.py           # odds.500.com — 30 books, démarre en MODE OMBRE
-│   ├── sevenm.py            # 7M — source de NOMS anglais (pas de cotes)
 │   ├── titan007.py          # Source de résultats
 │   ├── prediction_markets.py# Kalshi / Polymarket — rôle consensus
-│   ├── team_aliases.py      # Dictionnaire d'alias (clé = id numérique, jamais le libellé)
 │   │  ── Moteur de signaux ───────────────────────────────────────────
 │   ├── math_engine.py       # Devigging (Power method), calc_dnb, to_binary
 │   ├── paim_engine.py       # compute_alpha, consensus, strict_team_match
@@ -326,7 +323,7 @@ predator/
 │   ├── stats_utils.py       # Brier, Wilson, bucketisation
 │   ├── perf_view.py         # Filtrage des lignes de /performance
 │   │  ── Couche IA ───────────────────────────────────────────────────
-│   ├── ai_router.py         # Registre 11 fournisseurs, lanes, disjoncteur, budgets
+│   ├── ai_router.py         # Registre 9 fournisseurs, lanes, disjoncteur, budgets
 │   ├── ai_search.py         # Façade de complétion IA (délègue au routeur)
 │   ├── daily_quota.py       # Comptage des budgets journaliers
 │   │  ── Infrastructure ──────────────────────────────────────────────
@@ -475,8 +472,8 @@ réellement mesuré, et où :
   `tests/test_workflow_secrets.py`. Aucun build.
 - **Flask + Jinja** — dashboard, servi en serverless sur Vercel
 - **Supabase** (PostgreSQL) — seul état persistant
-- **Routeur IA maison** ([`core/ai_router.py`](core/ai_router.py)) — 11
-  fournisseurs enregistrés, 8 utilisables en production ; aucun modèle codé
+- **Routeur IA maison** ([`core/ai_router.py`](core/ai_router.py)) — 9
+  fournisseurs enregistrés, 7 utilisables en production ; aucun modèle codé
   en dur. Mistral est au registre depuis la suppression de Wiz (2026-08-26).
 
 ### Frontend

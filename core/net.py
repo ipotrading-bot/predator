@@ -17,14 +17,16 @@ EXACTEMENT le comportement qu'elle avait — aucun proxy n'est jamais imposé.
 CONFIGURATION
 -------------
     FREE_SOURCES_PROXY=http://user:pass@hote:port   # toutes les sources
-    ODDS500_PROXY=...                               # override par source
-    SEVENM_PROXY=...
+    ESPN_PROXY=...                                  # override par source
 
 Le nom de la source est celui passé à `opener_for()`. L'override par source
-gagne : 7M (px-analyse.7mdt.com) et 500.com ne sont pas hébergés au même
-endroit et peuvent très bien ne pas être bloqués ensemble — au 2026-08-26,
-7M n'a JAMAIS été appelé depuis un runner, donc sa joignabilité réelle
-depuis Azure est INCONNUE, pas « bonne ».
+gagne : deux hôtes ne sont pas forcément bloqués ensemble.
+
+CONSOMMATEUR depuis le 2026-09-03 : core/score_sources.py (ESPN, TheSportsDB,
+MLB statsapi — les scores du settlement). odds500 et 7M, pour qui ce module
+est né, sont RETIRÉES ce jour-là (mur anti-bot EdgeOne, décision opérateur) ;
+les mesures citées plus bas datent de leur époque et restent vraies du
+chemin runner → proxy.
 """
 import logging
 import os

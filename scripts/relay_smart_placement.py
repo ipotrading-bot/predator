@@ -2,6 +2,10 @@
 """
 scripts/relay_smart_placement.py — sortir le relais des colos américains.
 
+(odds500, la source dont il est question ci-dessous, est RETIRÉE le
+2026-09-03 — mur anti-bot EdgeOne. Ce script reste pour le relais générique
+de core/net.py, dont le consommateur est désormais core/score_sources.py.)
+
 LE BLOCAGE, TEL QU'IL EST ÉTABLI
 --------------------------------
 odds500 n'est pas en panne, elle est filtrée par IP. Tranché le 2026-08-26

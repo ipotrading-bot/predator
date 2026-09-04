@@ -114,13 +114,15 @@ def test_le_settlement_porte_les_cles_de_resultats():
     assert not manquants, f"le pool settlement ne transmet pas {manquants}"
 
 def test_le_pool_scan_porte_les_relais_des_sources_filtrees_par_ip():
-    """odds500 et 7M sont filtrées par IP depuis les runners (2026-08-26) : sans
-    FREE_SOURCES_RELAY/_TOKEN, core/net.py est INERTE et rien ne change — sans
-    la moindre erreur. C'est exactement le mode de panne que ce fichier existe
-    pour interdire, et CLAUDE.md en fait un invariant."""
+    """Les sources filtrées par IP depuis les runners (2026-08-26, odds500
+    à l'époque ; les sources de scores aujourd'hui) passent par core/net.py :
+    sans FREE_SOURCES_PROXY/RELAY/_TOKEN dans l'env, le module est INERTE et
+    rien ne change — sans la moindre erreur. C'est exactement le mode de
+    panne que ce fichier existe pour interdire, et CLAUDE.md en fait un
+    invariant."""
     env = ci_env.env_for("scan", {})
     manquants = sorted(set(ci_env.RELAYS) - set(env))
-    assert not manquants, f"le pool scan ne transmet pas {manquants} — odds500/7M resteraient muettes"
+    assert not manquants, f"le pool scan ne transmet pas {manquants} — la sortie réseau resterait inerte"
 
 
 # ── Cloisonnements ───────────────────────────────────────────────────

@@ -2,7 +2,7 @@
 tests/test_tier2_toujours.py — le Tier 2 tourne à CHAQUE tick (sauf REPRICE).
 
 Incident du 2026-09-02 : la garde `if not tier1_ok` faisait sauter tout le
-Tier 2 (titan007, odds-api.io, sevenm, harvest) dès qu'OddsAPI rendait UN
+Tier 2 (titan007, odds-api.io, harvest) dès qu'OddsAPI rendait UN
 event. Pendant l'US Open + la trêve internationale, le Tier 1 rendait du
 tennis sans edge et le foot hors-Europe — qui portait tout le volume —
 n'était plus jamais scanné : 26 signaux/jour avant le rallumage OddsAPI,

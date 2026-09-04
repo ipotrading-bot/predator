@@ -1,30 +1,31 @@
 """
-tests/test_free_sources_wiring.py — les trois réparations du 2026-08-26.
+tests/test_free_sources_wiring.py — la sortie réseau (core/net.py) et le
+consensus Kalshi/Polymarket, ce qui reste de la « mission 3 ».
 
-1. `core/net.py` — porte de sortie proxy pour les sources filtrées par IP.
-   odds.500.com rend HTTP 200 depuis un poste de développement et
-   `Connection refused` depuis les runners GitHub : c'est la PLAGE D'IP qui
-   est refusée, aucune correction de code ne lève ça. Le module doit donc
-   être strictement inerte tant qu'aucun proxy n'est configuré — sinon on
-   impose un proxy à des sources qui n'en ont pas besoin.
+1. `core/net.py` — porte de sortie proxy/relais pour les sources filtrées
+   par IP. Née pour odds.500.com (200 depuis un poste de dev, `Connection
+   refused` depuis les runners GitHub : la PLAGE D'IP est refusée, aucune
+   correction de code ne lève ça), elle sert aujourd'hui aux sources de
+   SCORES du settlement (core/score_sources.py, ESPN…). Le module doit
+   rester strictement inerte tant qu'aucun proxy n'est configuré — sinon
+   on impose un proxy à des sources qui n'en ont pas besoin.
 
-2. 7M — mémoire des matchs DÉJÀ JOUÉS. Mesuré sur 30 identifiants de tête du
-   sitemap : 0 échec de requête, **27 matchs terminés**, 3 utiles. Sans
-   mémoire, ces 27 sont repayés à chaque passage du curseur.
-
-3. Kalshi/Polymarket — branchés. Le module existait depuis le 2026-08-22 et
+2. Kalshi/Polymarket — branchés. Le module existait depuis le 2026-08-22 et
    n'était importé NULLE PART hors de ses tests : capacité morte en silence.
    Rôle `consensus` : il mesure, il n'émet jamais et ne modifie aucun prix.
+
+odds500, 7M et le dictionnaire d'alias sont RETIRÉS le 2026-09-03 (mur
+anti-bot EdgeOne, décision opérateur) — leurs tests avec eux.
 
 Aucun réseau (tests/conftest.py) : tout ce qui sort est stubbé.
 """
 import logging
 import os
-from datetime import datetime, timedelta, timezone
+from datetime import datetime, timezone
 
 import pytest
 
-from core import free_sources, net, sevenm
+from core import free_sources, net
 from core.source_adapter import Fixture
 
 
@@ -47,36 +48,36 @@ class TestPorteDeSortieProxy:
 
     def test_inerte_sans_configuration(self, monkeypatch):
         """Le cas nominal : aucun proxy, aucun changement de comportement."""
-        for var in ("FREE_SOURCES_PROXY", "ODDS500_PROXY", "SEVENM_PROXY"):
+        for var in ("FREE_SOURCES_PROXY", "ESPN_PROXY"):
             monkeypatch.delenv(var, raising=False)
-        assert net.proxy_for("odds500") == ""
-        assert net.opener_for("odds500") is None
+        assert net.proxy_for("espn") == ""
+        assert net.opener_for("espn") is None
 
     def test_override_par_source_bat_le_global(self, monkeypatch):
-        """500.com et 7M ne sont pas hébergés au même endroit : l'un peut
-        être bloqué sans l'autre."""
+        """Deux sources ne sont pas hébergées au même endroit : l'une peut
+        être bloquée sans l'autre."""
         monkeypatch.setenv("FREE_SOURCES_PROXY", "http://global:1")
-        monkeypatch.setenv("ODDS500_PROXY", "http://pour-500:2")
-        assert net.proxy_for("odds500") == "http://pour-500:2"
-        assert net.proxy_for("sevenm") == "http://global:1"
-        assert net.opener_for("sevenm") is not None
+        monkeypatch.setenv("ESPN_PROXY", "http://pour-espn:2")
+        assert net.proxy_for("espn") == "http://pour-espn:2"
+        assert net.proxy_for("thesportsdb") == "http://global:1"
+        assert net.opener_for("thesportsdb") is not None
 
     def test_le_message_distingue_injoignable_et_en_panne(self, monkeypatch):
         """Les deux se ressemblent dans un log de cron et n'appellent PAS la
         même action : « fournis un proxy » vs « le site a changé »."""
         monkeypatch.delenv("FREE_SOURCES_PROXY", raising=False)
-        monkeypatch.delenv("ODDS500_PROXY", raising=False)
+        monkeypatch.delenv("ESPN_PROXY", raising=False)
 
-        refus = net.describe_failure("odds500", OSError("[Errno 111] Connection refused"))
-        assert "INJOIGNABLE" in refus and "ODDS500_PROXY" in refus
+        refus = net.describe_failure("espn", OSError("[Errno 111] Connection refused"))
+        assert "INJOIGNABLE" in refus and "ESPN_PROXY" in refus
 
-        panne = net.describe_failure("odds500", ValueError("balise absente"))
+        panne = net.describe_failure("espn", ValueError("balise absente"))
         assert "INJOIGNABLE" not in panne and "balise absente" in panne
 
     def test_avec_proxy_le_message_accuse_le_proxy(self, monkeypatch):
         """Sinon on renvoie l'opérateur configurer ce qui l'est déjà."""
-        monkeypatch.setenv("ODDS500_PROXY", "http://p:1")
-        msg = net.describe_failure("odds500", OSError("Connection refused"))
+        monkeypatch.setenv("ESPN_PROXY", "http://p:1")
+        msg = net.describe_failure("espn", OSError("Connection refused"))
         assert "malgré le proxy" in msg
 
 
@@ -101,22 +102,22 @@ class TestDiagnostic403Relais:
     def test_403_relaye_accuse_l_amont_et_nomme_le_colo(self, monkeypatch):
         monkeypatch.setenv("FREE_SOURCES_RELAY", "https://r.example")
         net.reset()
-        msg = net.describe_failure("odds500", self._http403({"X-Relay-By": "predator", "cf-ray": "a314-IAD"}))
+        msg = net.describe_failure("espn", self._http403({"X-Relay-By": "predator", "cf-ray": "a314-IAD"}))
         assert "AMONT" in msg and "IAD" in msg and "jeton" in msg
 
     def test_403_du_worker_accuse_le_jeton(self, monkeypatch):
         monkeypatch.setenv("FREE_SOURCES_RELAY", "https://r.example")
         net.reset()
-        msg = net.describe_failure("odds500", self._http403({"cf-ray": "a314-LHR"}))
+        msg = net.describe_failure("espn", self._http403({"cf-ray": "a314-LHR"}))
         assert "RELAIS lui-même" in msg and "LHR" in msg and "RELAY_TOKEN" in msg
 
     def test_sans_relais_un_403_reste_un_403_ordinaire(self, monkeypatch):
-        # `_secret` lit secret_store puis l'environnement (et un .env local
-        # peut porter FREE_SOURCES_RELAY) : on coupe la résolution à la
-        # source, pas seulement les variables.
+        # `_secret` lit secret_store puis l'environnement (et un fichier de
+        # credentials local peut porter FREE_SOURCES_RELAY) : on coupe la
+        # résolution à la source, pas seulement les variables.
         monkeypatch.setattr(net, "_secret", lambda name: "")
         net.reset()
-        msg = net.describe_failure("odds500", self._http403({}))
+        msg = net.describe_failure("espn", self._http403({}))
         assert "AMONT" not in msg and "RELAIS" not in msg
 
 
@@ -124,10 +125,9 @@ class TestRepriseSurEchecPassager:
     """Un proxy gratuit et partagé rate des requêtes ; la source ne doit pas
     tomber pour autant.
 
-    Mesuré le 2026-08-28 sur le proxy qui a débloqué odds500 : trois GET
-    identiques, un timeout TLS à 40 s et deux réponses en ~1 s. Sans reprise,
-    cette requête ratée rend `_get` None, le calendrier est vide, et odds500
-    logge « 0 match dans les 24h » — indiscernable d'un blocage réel.
+    Mesuré le 2026-08-28 sur le proxy Webshare : trois GET identiques, un
+    timeout TLS à 40 s et deux réponses en ~1 s. Sans reprise, cette requête
+    ratée coûtait la source entière pour le run.
     """
 
     def test_deux_reprises_sur_des_echecs_de_transport(self, monkeypatch):
@@ -143,7 +143,7 @@ class TestRepriseSurEchecPassager:
 
         monkeypatch.setattr(net.urllib.request, "urlopen", _urlopen)
         monkeypatch.setattr(net, "opener_for", lambda source: None)
-        assert net.open_with_retry("odds500", object(), 5) == "réponse"
+        assert net.open_with_retry("espn", object(), 5) == "réponse"
         assert len(essais) == 3
 
     def test_un_403_n_est_PAS_rejoue(self, monkeypatch):
@@ -159,7 +159,7 @@ class TestRepriseSurEchecPassager:
         monkeypatch.setattr(net.urllib.request, "urlopen", _urlopen)
         monkeypatch.setattr(net, "opener_for", lambda source: None)
         with pytest.raises(net.urllib.error.HTTPError):
-            net.open_with_retry("odds500", object(), 5)
+            net.open_with_retry("espn", object(), 5)
         assert len(essais) == 1, "un 403 a été rejoué"
 
     def test_l_echec_final_remonte_a_l_appelant(self, monkeypatch):
@@ -169,16 +169,16 @@ class TestRepriseSurEchecPassager:
                             lambda req, timeout=None: (_ for _ in ()).throw(TimeoutError("ko")))
         monkeypatch.setattr(net, "opener_for", lambda source: None)
         with pytest.raises(TimeoutError):
-            net.open_with_retry("odds500", object(), 5)
+            net.open_with_retry("espn", object(), 5)
 
-    def test_les_deux_sources_du_proxy_l_utilisent(self):
-        """odds500 et 7M passent par le MÊME proxy, donc la même instabilité.
-        Une seule des deux protégée serait une liste qui diverge."""
+    def test_les_sources_de_scores_passent_par_la_reprise(self):
+        """Le settlement lit ESPN/TheSportsDB/MLB depuis les runners : c'est
+        LE consommateur de core/net.py depuis le retrait d'odds500 et 7M.
+        Une source de scores hors de ce chemin serait une liste qui diverge."""
         import inspect
-        from core import odds500, sevenm
-        for mod in (odds500, sevenm):
-            assert "open_with_retry" in inspect.getsource(mod), \
-                f"{mod.__name__} n'a pas de reprise sur échec de transport"
+        from core import score_sources
+        assert "open_with_retry" in inspect.getsource(score_sources), \
+            "core/score_sources.py n'a pas de reprise sur échec de transport"
 
 
 class TestModeRelais:
@@ -194,25 +194,25 @@ class TestModeRelais:
         monkeypatch.setattr("core.secret_store.get_secret",
                             lambda name, **_k: os.environ.get(name) or None)
         for v in ("FREE_SOURCES_RELAY", "FREE_SOURCES_RELAY_TOKEN",
-                  "ODDS500_RELAY", "SEVENM_RELAY", "ODDS500_RELAY_TOKEN"):
+                  "ESPN_RELAY", "ESPN_RELAY_TOKEN", "ESPN_PROXY"):
             monkeypatch.delenv(v, raising=False)
         yield
         net.reset()
 
     def test_inerte_sans_relais(self):
         """Cas nominal : URL et en-têtes rendus tels quels."""
-        u, h = net.prepare("odds500", "https://odds.500.com/", {"User-Agent": "X"})
-        assert u == "https://odds.500.com/"
+        u, h = net.prepare("espn", "https://site.api.espn.com/", {"User-Agent": "X"})
+        assert u == "https://site.api.espn.com/"
         assert h == {"User-Agent": "X"}
 
     def test_url_cible_encodee_et_jeton_ajoute(self, monkeypatch):
-        monkeypatch.setenv("ODDS500_RELAY", "https://w.example.workers.dev/")
+        monkeypatch.setenv("ESPN_RELAY", "https://w.example.workers.dev/")
         monkeypatch.setenv("FREE_SOURCES_RELAY_TOKEN", "s3cr3t")
-        u, h = net.prepare("odds500", "https://odds.500.com/fenxi/ouzhi-1.shtml",
+        u, h = net.prepare("espn", "https://site.api.espn.com/apis/v2/scoreboard",
                            {"User-Agent": "X"})
         # La cible est encodée : sinon son propre chemin casserait la query.
         assert u == ("https://w.example.workers.dev"
-                     "?u=https%3A%2F%2Fodds.500.com%2Ffenxi%2Fouzhi-1.shtml")
+                     "?u=https%3A%2F%2Fsite.api.espn.com%2Fapis%2Fv2%2Fscoreboard")
         assert h["X-Relay-Token"] == "s3cr3t"
         assert h["User-Agent"] == "X"          # l'UA honnête est préservé
 
@@ -220,32 +220,32 @@ class TestModeRelais:
         """La panne la plus coûteuse serait SILENCIEUSE.
 
         Le relais est PROUVÉ inopérant depuis les runners GitHub : un Worker
-        s'exécute au colo le plus proche de l'APPELANT (IAD), et 500.com
-        refuse cette IP de sortie. Avec l'ancienne précédence, un opérateur
-        qui pose un proxy pour débloquer la source voyait le relais capter
-        l'URL malgré tout — capacité payée, jamais utilisée, et pas une ligne
-        de log pour le dire.
+        s'exécute au colo le plus proche de l'APPELANT (IAD), et l'amont
+        peut refuser cette IP de sortie. Avec l'ancienne précédence, un
+        opérateur qui pose un proxy pour débloquer la source voyait le relais
+        capter l'URL malgré tout — capacité payée, jamais utilisée, et pas
+        une ligne de log pour le dire.
         """
         monkeypatch.setenv("FREE_SOURCES_RELAY", "https://w.example.dev")
         monkeypatch.setenv("FREE_SOURCES_RELAY_TOKEN", "t")
-        monkeypatch.setenv("ODDS500_PROXY", "http://u:p@eu-proxy.example:8080")
+        monkeypatch.setenv("ESPN_PROXY", "http://u:p@eu-proxy.example:8080")
         net.reset()
-        u, h = net.prepare("odds500", "https://odds.500.com/", {"User-Agent": "X"})
-        assert u == "https://odds.500.com/", "le relais a capté l'URL malgré le proxy"
+        u, h = net.prepare("espn", "https://site.api.espn.com/", {"User-Agent": "X"})
+        assert u == "https://site.api.espn.com/", "le relais a capté l'URL malgré le proxy"
         assert "X-Relay-Token" not in h
         # Et le proxy est bien celui qui sera emprunté.
-        assert net.proxy_for("odds500") == "http://u:p@eu-proxy.example:8080"
+        assert net.proxy_for("espn") == "http://u:p@eu-proxy.example:8080"
 
     def test_le_message_proxy_n_est_logge_qu_une_fois(self, monkeypatch, caplog):
         """`prepare()` est appelé à chaque requête : sans mémoire, un run
-        d'odds500 sortait quinze lignes identiques. Un log qu'on ne lit plus
-        ne sert à rien."""
+        sortait quinze lignes identiques. Un log qu'on ne lit plus ne sert à
+        rien."""
         monkeypatch.setenv("FREE_SOURCES_RELAY", "https://w.example.dev")
-        monkeypatch.setenv("ODDS500_PROXY", "http://u:p@eu.example:8080")
+        monkeypatch.setenv("ESPN_PROXY", "http://u:p@eu.example:8080")
         net.reset()
         with caplog.at_level(logging.INFO, logger="PREDATOR.net"):
             for _ in range(5):
-                net.prepare("odds500", "https://odds.500.com/", {})
+                net.prepare("espn", "https://site.api.espn.com/", {})
         lignes = [r for r in caplog.records if "proxy configuré" in r.getMessage()]
         assert len(lignes) == 1, f"{len(lignes)} lignes au lieu d'une"
 
@@ -253,10 +253,9 @@ class TestModeRelais:
         """L'inversion ne doit pas désactiver le relais pour tout le monde :
         il reste le chemin par défaut quand aucun proxy n'est posé."""
         monkeypatch.setenv("FREE_SOURCES_RELAY", "https://w.example.dev")
-        monkeypatch.delenv("ODDS500_PROXY", raising=False)
         monkeypatch.delenv("FREE_SOURCES_PROXY", raising=False)
         net.reset()
-        u, _h = net.prepare("odds500", "https://odds.500.com/", {})
+        u, _h = net.prepare("espn", "https://site.api.espn.com/", {})
         assert u.startswith("https://w.example.dev?u=")
 
     def test_les_entetes_appelants_ne_sont_pas_mutes(self, monkeypatch):
@@ -265,7 +264,7 @@ class TestModeRelais:
         monkeypatch.setenv("FREE_SOURCES_RELAY", "https://w.example.dev")
         monkeypatch.setenv("FREE_SOURCES_RELAY_TOKEN", "t")
         origine = {"User-Agent": "X"}
-        net.prepare("odds500", "https://odds.500.com/", origine)
+        net.prepare("espn", "https://site.api.espn.com/", origine)
         assert origine == {"User-Agent": "X"}
 
     def test_le_worker_garde_sa_liste_blanche_et_son_jeton(self):
@@ -273,17 +272,21 @@ class TestModeRelais:
 
         Vérifié sur la source du Worker : c'est le seul endroit où ces gardes
         vivent, et les retirer « pour tester » est exactement ce qu'il ne faut
-        pas pouvoir faire sans que la suite le dise.
+        pas pouvoir faire sans que la suite le dise. Depuis le retrait
+        d'odds500/7M la liste blanche est VIDE : le Worker ne relaie rien tant
+        qu'une source n'y inscrit pas son hôte — c'est le comportement sûr.
         """
         from pathlib import Path
         src = (Path(__file__).resolve().parent.parent
                / "scripts" / "cloudflare_relay_worker.js").read_text(encoding="utf-8")
         assert "ALLOWED_HOSTS" in src
-        for host in ("odds.500.com", "www.7msport.com", "px-analyse.7mdt.com"):
-            assert host in src, host
         assert "X-Relay-Token" in src and "RELAY_TOKEN" in src
-        # Le corps doit rester des OCTETS : `.text()` transcoderait le GB18030
-        # de 500.com en UTF-8 et rendrait tous les noms chinois illisibles.
+        liste = src.split("const ALLOWED_HOSTS")[1].split("]);")[0]
+        for host in ("odds.500.com", "7msport.com", "7mdt.com"):
+            assert host not in liste, \
+                f"{host} : source retirée le 2026-09-03, hôte encore relayé"
+        # Le corps doit rester des OCTETS : `.text()` transcoderait un corps
+        # non UTF-8 et rendrait les libellés illisibles.
         #
         # Vérifié sur le CODE, commentaires retirés : ce fichier explique
         # justement pourquoi il ne faut PAS appeler `.text()`, et une
@@ -296,69 +299,12 @@ class TestModeRelais:
         assert ".text()" not in code
 
 
-# ── 2. 7M : ne jamais repayer un match déjà joué ────────────────────────
+# ── 2. Kalshi/Polymarket branchés ───────────────────────────────────────
 
 def _fx(gid, kickoff):
-    return Fixture(source="sevenm", match_id=str(gid), kickoff=kickoff,
+    return Fixture(source="consensus", match_id=str(gid), kickoff=kickoff,
                    league="L", home="H", away="A", team_ids=("1", "2"), lang="en")
 
-
-class TestMemoireDesMatchsJoues:
-
-    @pytest.fixture(autouse=True)
-    def _stub(self, monkeypatch):
-        monkeypatch.setattr(sevenm.time, "sleep", lambda _s: None)
-        monkeypatch.setattr(sevenm.daily_quota, "spent", lambda _b: 0)
-        monkeypatch.setattr(sevenm.daily_quota, "add", lambda _b, _n=1: None)
-
-    def test_les_matchs_passes_sont_signales_a_l_appelant(self, monkeypatch):
-        now = datetime.now(timezone.utc)
-        table = {
-            "joue1": now - timedelta(hours=30),
-            "joue2": now - timedelta(hours=10),
-            "avenir": now + timedelta(hours=5),
-        }
-        monkeypatch.setattr(sevenm, "fetch_fixture",
-                            lambda gid: _fx(gid, table[gid]))
-        past = []
-        out = sevenm.fetch_fixtures(match_ids=list(table), max_matches=10,
-                                    past_out=past)
-        assert [f.match_id for f in out] == ["avenir"]
-        assert sorted(past) == ["joue1", "joue2"]
-
-    def test_sans_past_out_le_comportement_est_inchange(self, monkeypatch):
-        """Compat ascendante : l'argument est optionnel."""
-        now = datetime.now(timezone.utc)
-        monkeypatch.setattr(sevenm, "fetch_fixture",
-                            lambda gid: _fx(gid, now + timedelta(hours=2)))
-        assert len(sevenm.fetch_fixtures(match_ids=["a", "b"], max_matches=10)) == 2
-
-    def test_learn_aliases_retire_les_joues_avant_de_depenser(self, monkeypatch):
-        """Le gain est là : les identifiants mémorisés ne coûtent plus RIEN.
-
-        Sans ce filtre, le curseur les repayait à chaque passage — 27 requêtes
-        sur 30 pour des matchs terminés, mesuré le 2026-08-26.
-        """
-        monkeypatch.setattr(free_sources, "_past_get", lambda: {"joue1", "joue2"})
-        monkeypatch.setattr(free_sources, "_past_set", lambda _s: None)
-        monkeypatch.setattr(free_sources, "_cursor_get", lambda: 0)
-        monkeypatch.setattr(free_sources, "_cursor_set", lambda _v: None)
-        monkeypatch.setattr(sevenm, "fetch_match_ids",
-                            lambda: ["joue1", "joue2", "frais1", "frais2"])
-        vus = {}
-
-        def _fetch(max_matches=None, offset=0, match_ids=None, past_out=None):
-            vus["ids"] = list(match_ids or [])
-            return []
-        monkeypatch.setattr(sevenm, "fetch_fixtures", _fetch)
-        monkeypatch.setattr(free_sources.team_aliases, "canonical",
-                            lambda *_a, **_k: None)
-
-        free_sources.learn_aliases([_fx("x", datetime.now(timezone.utc))])
-        assert vus["ids"] == ["frais1", "frais2"], vus
-
-
-# ── 3. Kalshi/Polymarket branchés ───────────────────────────────────────
 
 class TestConsensusBranche:
 
@@ -403,3 +349,25 @@ class TestConsensusBranche:
             raise RuntimeError("API morte")
         monkeypatch.setattr(free_sources, "consensus_fixtures", _boom)
         assert free_sources.measure_slate_consensus(1, [{"id": "a"}]) == 0
+
+    def test_le_coupe_circuit_debranche_la_mesure(self, monkeypatch):
+        """`FREE_SOURCES=0` : aucun appel, aucune écriture."""
+        monkeypatch.setattr(free_sources, "ENABLED", False)
+
+        def _boom(_sid):
+            raise AssertionError("appel malgré FREE_SOURCES=0")
+        monkeypatch.setattr(free_sources, "consensus_fixtures", _boom)
+        assert free_sources.measure_slate_consensus(1, [{"id": "a"}]) == 0
+
+    def test_plus_aucune_source_asiatique_dans_le_depot(self):
+        """odds500, 7M et le dictionnaire d'alias sont partis le 2026-09-03 :
+        les réintroduire est une décision opérateur, pas un import qui
+        traîne."""
+        from pathlib import Path
+        core = Path(__file__).resolve().parent.parent / "core"
+        for name in ("odds500.py", "sevenm.py", "team_aliases.py"):
+            assert not (core / name).exists(), f"core/{name} est revenu"
+        import inspect
+        from core import harvester
+        src = inspect.getsource(harvester)
+        assert "fetch_odds500" not in src and "_fetch_from_odds500" not in src

@@ -43,7 +43,6 @@ class TestFetchMultiBook:
     def _cabler(self, monkeypatch, odds_api_io=(), titan007=()):
         monkeypatch.setattr(harvester, "_fetch_from_odds_api_io", lambda sid: list(odds_api_io))
         monkeypatch.setattr(harvester, "_t7_fetch", lambda: list(titan007))
-        monkeypatch.setattr(harvester, "_fetch_from_odds500", lambda sid, trusted: [])
         monkeypatch.setattr(harvester, "_measure_consensus", lambda sid, merged: None)
 
     def test_single_source_passes_through_unchanged(self, monkeypatch):

@@ -95,7 +95,7 @@ SHADOW_MAX_MEDIAN_PTS  = float(os.environ.get("SOURCE_SHADOW_MAX_MED_PTS", "2.0"
 # Ordre d'appel par scan — la discipline de quota de la mission 1 reste la
 # règle : le gratuit vient en repli du Tier 1 payant, jamais à sa place, et la
 # recherche web (budget IA) reste le dernier recours.
-CALL_ORDER = ("odds_api", "odds500", "titan007", "matchbook",
+CALL_ORDER = ("odds_api", "titan007", "matchbook",
               "odds_api_io", "prediction_markets", "web_search")
 
 

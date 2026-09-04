@@ -373,26 +373,10 @@ def sources():
     ok, detail = t7_probe()
     print(f"  {'OK' if ok else 'KO'} — {detail}")
 
-    # Sources gratuites Asie + marchés de prédiction. Elles manquaient à cette
-    # sonde alors que ce sont précisément celles qui meurent en silence : c'est
-    # ainsi qu'odds500 est restée injoignable trois jours sans que la commande
-    # censée répondre « qu'est-ce qui marche, là, maintenant » le dise.
-    print("── Sources gratuites Asie (mission 3) ──")
-    from core import net                                             # noqa: E402
-    for label, mod in (("odds500", "core.odds500"), ("sevenm", "core.sevenm")):
-        voie = ("relais Cloudflare" if net.relay_for(label)
-                else "proxy" if net.proxy_for(label) else "")
-        try:
-            probe = __import__(mod, fromlist=["probe"]).probe
-            ok, detail = probe()
-            print(f"  {label:<9} {'OK' if ok else 'KO'} — {detail}"
-                  f"{f'  [via {voie}]' if voie else '  [direct]'}")
-        except Exception as e:
-            print(f"  {label:<9} ERREUR {type(e).__name__}: {e}")
-    print("  (injoignable ici ≠ injoignable partout : ces hôtes filtrent par IP,")
-    print("   et depuis un poste de dev ça passe DÉJÀ en direct — seul un run")
-    print("   GitHub Actions tranche. Relais : FREE_SOURCES_RELAY + _TOKEN,")
-    print("   voir scripts/cloudflare_relay_worker.js. Proxy : FREE_SOURCES_PROXY.)")
+    # (Les sources gratuites Asie — odds500, 7M — sont RETIRÉES le 2026-09-03 :
+    # mur anti-bot EdgeOne sur 500.com, décision opérateur. Les marchés de
+    # prédiction, seule pièce restante de la « mission 3 », sont sondés ici
+    # parce que ce sont eux qui meurent en silence.)
 
     print("── Consensus · Kalshi & Polymarket (jamais sharp, arbitre) ──")
     from core.prediction_markets import probe as pm_probe             # noqa: E402

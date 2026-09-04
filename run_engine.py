@@ -2450,7 +2450,7 @@ def run():
     #     scanné, 0 signal — d'où le passage de `matches` à `tier1_ok` ;
     #   · run 33551932260 (2026-09-01, mesuré à l'audit du 02/09) : Tier 1
     #     rend 50 events de tennis US Open sans edge → `tier1_ok=True` →
-    #     titan007/odds-api.io/sevenm jamais interrogés, 0 signal. Volume
+    #     titan007/odds-api.io jamais interrogés, 0 signal. Volume
     #     émis : 26/j avant le rallumage OddsAPI, 4/j après — le Tier 1
     #     affamait le Tier 2 qui portait tout le volume (foot hors-Europe).
     # Le Tier 2 tourne donc SANS regarder le Tier 1 : chaque source y a son
@@ -2470,7 +2470,7 @@ def run():
             # protège rien et prive le scan de ses sources réelles. Constaté
             # en production le 2026-08-20 (run 18:30) — le coupe-circuit posé
             # le matin même court-circuitait api-sports par ricochet.
-            log.warning("📡 Tier 2 — harvest complet SAUTÉ (line shopping, odds500, "
+            log.warning("📡 Tier 2 — harvest complet SAUTÉ (line shopping, "
                         "consensus) : dernière tentative vide il y a %.1fh (< %.0fh) — "
                         "odds-api.io et titan007 restent interrogés en direct",
                         skipped_age, _HARVEST_EMPTY_TTL_H)
@@ -2481,7 +2481,7 @@ def run():
             xbet_matches = (_odds_api_io_all(hours_ahead=hours_ahead)
                             + _titan007_fetch(hours_ahead=hours_ahead))
         else:
-            log.info("📡 Tier 2 — Harvest odds-api.io + titan007 (+ odds500 en ombre)...")
+            log.info("📡 Tier 2 — Harvest odds-api.io + titan007 (+ consensus Kalshi/Polymarket)...")
             xbet_matches = fetch_matches()
             _note_harvest_result(sb, xbet_matches)
         # Abandon seulement si RIEN n'a été trouvé nulle part : depuis que ce
@@ -2536,7 +2536,7 @@ def run():
         # événement. Le doublon compterait deux fois dans le quota par sport
         # de _portfolio_balance().
         seen = {m.get("match", "").strip().lower() for m in matches}
-        # Un match sans prix sharp RÉEL (api-sports/titan007/odds500 ou
+        # Un match sans prix sharp RÉEL (OddsAPI/titan007 ou
         # enrichissement exchange) est écarté — les repêchages par recherche
         # web (fetch_pinnacle_prices) et par oracle LLM ont été SUPPRIMÉS le
         # 2026-09-02 avec Groq/Tavily : une cote générée n'est pas une

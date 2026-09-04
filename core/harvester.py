@@ -1,6 +1,6 @@
 """
 core/harvester.py — Tier 2 : sources soft gratuites, line shopping
-Soft source : api-sports + odds-api.io + titan007 (+ odds500 en mode ombre)
+Soft source : odds-api.io + titan007 ; consensus Kalshi/Polymarket (mesure seule)
 Sharp source: Pinnacle via api-sports, exchange (Matchbook/Betfair)
 All timestamps : UTC/GMT.
 
@@ -91,7 +91,7 @@ def _fetch_from_odds_api_io(sport_id: int) -> list:
 def _fetch_multi_book(sport_id: int) -> list:
     """
     Task 6 — line shopping: fetch every configured soft source (odds-api.io,
-    titan007, odds500) for this sport and, for each real-world
+    titan007) for this sport and, for each real-world
     match found on 2+ of them, keep
     the BEST (highest) price per outcome across all of them — not just
     whichever book happened to respond first. `_soft_source` on the
@@ -117,16 +117,9 @@ def _fetch_multi_book(sport_id: int) -> list:
         if t7_matches:
             per_book["titan007"] = t7_matches
 
-    # odds.500.com (mission 3) — EN DERNIER, et ce n'est pas un détail : elle
-    # se mesure CONTRE les sources déjà collectées (divergence → scorecard →
-    # promotion). Tant qu'elle est en mode ombre, `_fetch_from_odds500` rend
-    # [] : ses prix sont enregistrés et comparés, ils ne créent aucun signal.
-    # Ses libellés d'équipes sont chinois ; c'est core/free_sources.py qui les
-    # résout en noms canoniques et ÉCARTE les matchs qu'il ne sait pas nommer.
-    trusted_so_far = [m for ms in per_book.values() for m in ms]
-    o500_matches = _fetch_from_odds500(sport_id, trusted_so_far)
-    if o500_matches:
-        per_book["odds500"] = o500_matches
+    # (odds.500.com — « mission 3 », mode ombre puis promue — est RETIRÉE le
+    # 2026-09-03 avec 7M et le dictionnaire d'alias : mur anti-bot EdgeOne
+    # servi en HTTP 200 depuis le 1er septembre, décision opérateur.)
 
     if not per_book:
         return []
@@ -179,28 +172,14 @@ def _fetch_multi_book(sport_id: int) -> list:
 def _measure_consensus(sport_id: int, merged: list) -> None:
     """Confronte le slate aux marchés de prédiction — mesure seule.
 
-    Import PARESSEUX et jamais bloquant, comme `_fetch_from_odds500`.
+    Import PARESSEUX et jamais bloquant : un harvester qui ne sert pas le
+    football n'a aucune raison de payer cet import.
     """
     try:
         from core.free_sources import measure_slate_consensus
         measure_slate_consensus(sport_id, merged)
     except Exception as e:
         log.warning("consensus: %s — ignoré ce cycle", e)
-
-
-def _fetch_from_odds500(sport_id: int, trusted: list) -> list[dict]:
-    """Sources gratuites Asie (mission 3) — best-effort, jamais bloquant.
-
-    Import PARESSEUX : `core/free_sources` tire odds500 + sevenm +
-    team_aliases, et un harvester qui ne sert pas le football n'a aucune
-    raison de payer ces imports.
-    """
-    try:
-        from core.free_sources import fetch_odds500
-        return fetch_odds500(sport_id, trusted)
-    except Exception as e:
-        log.warning("odds500: %s — ignorée ce cycle", e)
-        return []
 
 
 def fetch_matches():

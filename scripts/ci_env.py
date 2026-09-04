@@ -98,10 +98,11 @@ ODDS_SOURCES = ("ODDS_API_KEY", "ODDS_API_KEYS")
 RESULTS_SOURCES = ("THESPORTSDB_API_KEY",)
 BETFAIR = ("BETFAIR_APP_KEY", "BETFAIR_USERNAME", "BETFAIR_PASSWORD",
            "BETFAIR_CERT", "BETFAIR_CERT_KEY")
-# Sources filtrées par IP (core/net.py) : proxy OU relais Cloudflare Worker.
-RELAYS = ("FREE_SOURCES_PROXY", "ODDS500_PROXY", "SEVENM_PROXY",
-          "FREE_SOURCES_RELAY", "FREE_SOURCES_RELAY_TOKEN",
-          "ODDS500_RELAY", "SEVENM_RELAY")
+# Sortie réseau des sources filtrées par IP (core/net.py) : proxy OU relais
+# Cloudflare Worker, génériques. Les overrides par source ODDS500_*/SEVENM_*
+# sont partis avec odds500 et 7M le 2026-09-03 ; core/score_sources.py (ESPN…)
+# reste le consommateur, avec `{SOURCE}_PROXY` résolu dynamiquement.
+RELAYS = ("FREE_SOURCES_PROXY", "FREE_SOURCES_RELAY", "FREE_SOURCES_RELAY_TOKEN")
 # Le pool Groq des scans (GROQ_API_KEY, _2, _4, _5), la clé de réserve du
 # settlement (GROQ_API_KEY_3) et TAVILY_API_KEY ont été SUPPRIMÉS le
 # 2026-09-02 avec Groq/Tavily. Les contrôles `groq_pool`/`groq_fingerprint`

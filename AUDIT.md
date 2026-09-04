@@ -577,9 +577,13 @@ Mesuré le 2026-08-22, avec la méthode :
   **Tranché le 2026-09-03** (décision opérateur, ré-mesuré par `ops.py ai`) :
   cerebras, chutes, sambanova, scaleway, cloudflare (401 désormais) et zhipu
   sont RETIRÉS du registre — 11 fournisseurs, 8 sans clause restrictive.
+  Puis siliconflow et upstage le même jour, avec la lane TRANSLATE_CJK
+  (odds500/7M retirées) — 9 fournisseurs, 7 sans clause restrictive.
   Voir INCIDENTS.md « Six fournisseurs IA morts retirés du registre ».
 - **`team_aliases`** existe en base (12 lignes) : la migration `v10_3` est
   bien appliquée, contrairement à ce que `CLAUDE.md` laissait entendre.
+  (Table CONSERVÉE, module `core/team_aliases.py` retiré le 2026-09-03 avec
+  odds500/7M — jamais de suppression sèche.)
 - **Aucun TODO/FIXME/HACK** dans le code de production.
 - **14 workflows, YAML valide**, tous bornés en durée, tous en Python 3.11
   (Vercel, lui, construit en 3.12 — divergence VOULUE, voir §3.8).

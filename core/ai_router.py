@@ -94,7 +94,6 @@ log = logging.getLogger("PREDATOR.ai_router")
 # un seul call site.
 FILTER        = "filter"          # tri rapide de candidats, latence < 1 s
 ANALYZE       = "analyze"         # analyse contextuelle profonde
-TRANSLATE_CJK = "translate_cjk"   # alias d'équipes CJK (mission 3)
 
 # La lane WIZ a été RETIRÉE le 2026-08-26 avec la page et le moteur Wiz
 # (décision opérateur : « la page wiz ne me sert pas »). Les lanes
@@ -103,8 +102,11 @@ TRANSLATE_CJK = "translate_cjk"   # alias d'équipes CJK (mission 3)
 # (core/score_sources.py) et plus rien dans le pipeline ne fait de recherche
 # web — une lane sans consommateur ne ferait qu'alerter à tort quand ses
 # fournisseurs tombent. La réserve settlement (AI_SETTLEMENT_RESERVE, tenue
-# en négatif depuis le 2026-08-02) est partie avec elle.
-LANES = (FILTER, ANALYZE, TRANSLATE_CJK)
+# en négatif depuis le 2026-08-02) est partie avec elle. La lane
+# TRANSLATE_CJK (alias d'équipes chinoises, « mission 3 ») est RETIRÉE le
+# 2026-09-03 avec odds500/7M/team_aliases, son seul consommateur ; siliconflow
+# et upstage, qui ne servaient qu'elle, quittent le registre avec elle.
+LANES = (FILTER, ANALYZE)
 
 # Circuit breaker par fournisseur : 3 échecs consécutifs → 30 min de repos.
 BREAKER_THRESHOLD = int(os.environ.get("AI_BREAKER_THRESHOLD", "3"))
@@ -217,7 +219,7 @@ REGISTRY: tuple = (
         # flash-lite = 4. Sous les plafonds de ce pipeline (80 tokens pour un
         # alias), flash ne rendrait jamais rien. Le lite passe donc devant.
         models=("gemini-2.5-flash-lite", "gemini-2.5-flash"),
-        lanes=(ANALYZE, FILTER, TRANSLATE_CJK),
+        lanes=(ANALYZE, FILTER),
         rpm=15, daily_requests=200,
         note="⚠️ NE PAS CONFONDRE avec le grounding Google Search, lui bien MORT en "
              "gratuit (limit:0, verifie sur 4 cles le 2026-07-21 — c'est pourquoi "
@@ -228,7 +230,7 @@ REGISTRY: tuple = (
         name="nebius", base_url="https://api.studio.nebius.ai/v1",
         env_key="NEBIUS_API_KEY",
         models=("Qwen/Qwen3-32B", "meta-llama/Llama-3.3-70B-Instruct"),
-        lanes=(FILTER, ANALYZE, TRANSLATE_CJK),
+        lanes=(FILTER, ANALYZE),
         rpm=0, daily_requests=150,
         note="credits gratuits a l'inscription ; catalogue derriere cle (401 sans cle). "
              "Nebius a renomme « AI Studio » en « Token Factory » : api.studio.nebius.ai "
@@ -261,7 +263,7 @@ REGISTRY: tuple = (
                 "nvidia/nemotron-3-super-120b-a12b:free",
                 "z-ai/glm-5.2:free",
                 "liquid/lfm-2.5-2.6b:free"),
-        lanes=(ANALYZE, FILTER, TRANSLATE_CJK),
+        lanes=(ANALYZE, FILTER),
         # 40 et non 150 : l'endpoint /key confirme `is_free_tier: true` et
         # `total_credits: 0`. Le palier gratuit d'OpenRouter plafonne à ~50
         # requetes/jour (1000 apres un credit unique de 10 $). Un budget
@@ -295,7 +297,7 @@ REGISTRY: tuple = (
         env_key="OVH_AI_API_KEY",
         models=("Meta-Llama-3_3-70B-Instruct", "Qwen3-32B",
                 "Mistral-Small-3.2-24B-Instruct-2506"),
-        lanes=(FILTER, ANALYZE, TRANSLATE_CJK),
+        lanes=(FILTER, ANALYZE),
         rpm=0, daily_requests=150,
         note="24 modeles (2026-08-22) ; souverainete UE",
     ),
@@ -308,7 +310,7 @@ REGISTRY: tuple = (
         # donne donc acces qu'a une PARTIE du catalogue — mettre un modele
         # payant en tete aurait ecarte le fournisseur a chaque run.
         models=("gpt-oss:120b", "gemma4:31b", "glm-5.2", "kimi-k3"),
-        lanes=(ANALYZE, TRANSLATE_CJK),
+        lanes=(ANALYZE,),
         rpm=0, daily_requests=100,
         catalog_path="/models",
         note="19 modeles au catalogue mais tous ne sont pas dans le palier gratuit "
@@ -325,39 +327,21 @@ REGISTRY: tuple = (
         # lane CJK.
         models=("command-a-03-2025", "command-a-plus-05-2026",
                 "command-a-translate-08-2025", "command-r7b-12-2024"),
-        lanes=(ANALYZE, TRANSLATE_CJK),
+        lanes=(ANALYZE,),
         rpm=0, daily_requests=30, terms_flag="non_commercial",
         note="cle testee OK le 2026-08-22 (command-a-03-2025, 6 tokens). "
              "1000 appels/mois ; cle d'essai NON COMMERCIALE — hors production.",
     ),
     # ── Asie — priorité 2, excellents en CJK (double emploi mission 3) ──
     # (zhipu retiré le 2026-09-03 : clés refusées ; la lane CJK reste servie
-    # par modelscope, siliconflow, upstage, gemini, ollama_cloud, cohere.)
+    # par modelscope, gemini, ollama_cloud, cohere.)
     Provider(
         name="modelscope", base_url="https://api-inference.modelscope.cn/v1",
         env_key="MODELSCOPE_API_KEY",
         models=("Qwen/Qwen3-30B-A3B", "ZhipuAI/GLM-4.7-Flash", "Qwen/Qwen3-14B"),
-        lanes=(TRANSLATE_CJK, ANALYZE),
+        lanes=(ANALYZE,),
         rpm=0, daily_requests=150,
         note="46 modeles dont toute la gamme Qwen3 + GLM-4.7-Flash (2026-08-22)",
-    ),
-    Provider(
-        name="siliconflow", base_url="https://api.siliconflow.cn/v1",
-        env_key="SILICONFLOW_API_KEY",
-        models=("Qwen/Qwen3-8B", "THUDM/glm-4-9b-chat"),
-        lanes=(TRANSLATE_CJK,),
-        rpm=0, daily_requests=100,
-        note="catalogue derriere cle (401 sans cle)",
-    ),
-    Provider(
-        name="upstage", base_url="https://api.upstage.ai/v1",
-        env_key="UPSTAGE_API_KEY",
-        # Catalogue constaté le 2026-08-22 (10 modèles) : solar-pro4 est le
-        # courant, solar-mini répond « OK » en 16 tokens.
-        models=("solar-pro4", "solar-pro2", "solar-mini"),
-        lanes=(TRANSLATE_CJK,),
-        rpm=0, daily_requests=50, terms_flag="evaluation",
-        note="credits d'essai ; utile ponctuellement pour le coreen",
     ),
     # ── Mistral — RAPATRIÉ DANS LE REGISTRE le 2026-08-26 ──────────────
     #

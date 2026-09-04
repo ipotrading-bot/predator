@@ -1,7 +1,10 @@
 # Actions opérateur — ce que le code ne peut pas faire à ta place
 
 > **État au 2026-08-27 23:00 UTC — les trois sont FAITS.**
-> 1. ✅ Proxy Webshare (sortie Londres) posé → odds500 rend 15 matchs sharp.
+> 1. ✅ Proxy Webshare (sortie Londres) posé → odds500 rendait 15 matchs sharp.
+>    ⛔ odds500 RETIRÉE le 2026-09-03 (mur anti-bot EdgeOne) avec 7M et le
+>    dictionnaire d'alias ; la plomberie proxy/relais reste pour les sources
+>    de scores (core/score_sources.py).
 > 2. ✅ Second book posé → `Slots posés (2/2) : Bet365, 1xbet`.
 > 3. ⚠️ Smart Placement activé mais INSUFFISANT (colo IAD → SEA, toujours US).
 >    C'est le proxy qui a levé le blocage, pas lui.
@@ -19,7 +22,13 @@ Tous se lancent depuis la racine du dépôt, avec le `.env` en place.
 
 ---
 
-## 1. odds500 — poser le proxy ✅ FAIT le 2026-08-27
+## 1. odds500 — poser le proxy ✅ FAIT le 2026-08-27 — ⛔ SOURCE RETIRÉE le 2026-09-03
+
+> odds.500.com sert un mur anti-bot Tencent EdgeOne en HTTP 200 depuis le
+> 2026-09-01 (INCIDENTS.md) ; retirée avec 7M et `core/team_aliases.py`,
+> décision opérateur. Cette section reste la marche à suivre pour poser un
+> proxy sur une AUTRE source filtrée par IP : `{SOURCE}_PROXY`, ex.
+> `ESPN_PROXY`, résolu par `core/net.py`.
 
 ### Le constat d'origine
 
@@ -54,9 +63,12 @@ gh secret set FREE_SOURCES_PROXY --body 'http://user:pass@hote-eu:8080'
 qu'une :
 
 ```bash
-gh secret set ODDS500_PROXY --body 'http://user:pass@hote-eu:8080'
-gh secret set SEVENM_PROXY  --body 'http://user:pass@hote-eu:8080'
+gh secret set ESPN_PROXY --body 'http://user:pass@hote-eu:8080'
 ```
+
+(`ODDS500_PROXY`/`SEVENM_PROXY` ne sont plus transmis par `scripts/ci_env.py`
+depuis le 2026-09-03 ; les secrets GitHub homonymes, s'ils existent encore,
+sont inertes et peuvent être supprimés.)
 
 ### Vérifier — la seule preuve qui compte
 
@@ -337,9 +349,11 @@ du relais (`scripts/deploy_watchdog_worker.py`,
 Un secret inutile posé n'est pas une panne, c'est une capacité qu'on croit
 avoir.
 
-## Le goulot qui suit — à surveiller
+## Le goulot qui suivait — CLOS le 2026-09-03
 
-odds500 est débloquée, mais **le pont d'alias n'a encore rien produit.**
+(odds500, 7M et le pont d'alias sont retirés ; relevé conservé pour mémoire.)
+
+odds500 était débloquée, mais **le pont d'alias n'avait encore rien produit.**
 Relevé le 2026-08-28 00:32 UTC, après plusieurs runs avec le proxy actif :
 
     team_aliases          12 lignes, inchangé depuis le 2026-08-22
@@ -373,9 +387,8 @@ python scripts/ops.py supabase sql "select count(*) from team_aliases"
   `tennis_*`). 81 des 141 refus « Échec prix Sharp » mesurés le 2026-08-27
   (Tier 1 éteint) étaient du tennis. Tier 1 rallumé le 2026-09-01 : il
   revient tant que le pool `ODDS_API_KEYS` a du crédit — et seulement là.
-- **7M** ne cote rien : c'est un dictionnaire de noms, et il n'est interrogé
-  que lorsqu'odds500 rend des fixtures à résoudre. Il suit odds500, il ne la
-  précède pas.
+- **7M** est parti avec odds500 le 2026-09-03 : un dictionnaire de noms sans
+  source à traduire.
 - **Kalshi/Polymarket** ne sont pas un gisement mais un garde-fou : ils
   mesurent et n'émettent jamais. Mesuré le 2026-08-27 : 74 marchés cotés,
   **0 apparié** au slate.

@@ -744,6 +744,8 @@ Gardiens : `tests/test_source_adapter.py::TestLaLigueEstExigeeSurLeCheminDeConfi
 
 ### 500.com sert son mur anti-bot en HTTP 200 — odds500 meurt sans un WARNING (2026-09-02)
 
+✅ TRANCHÉ le 2026-09-03 : source retirée, voir l'entrée suivante.
+
 DIAGNOSTIQUÉ, PAS CORRIGÉ — le statu quo est le choix par défaut, la
 décision finale appartient à l'opérateur.
 
@@ -783,6 +785,75 @@ Gardien : aucun nouveau — le comportement « 200 avec 0 ligne = silence » est
 celui, documenté, de `core/odds500.py` (`_get` lignes 188-210,
 `fetch_fixtures` lignes 245-290) : une RÉPONSE du serveur n'est pas un échec
 de transport, et le parseur qui ne trouve rien rend `[]`.
+
+### odds500 RETIRÉE — et tout ce qui n'existait que pour elle part avec elle (2026-09-03)
+
+Symptôme : depuis le 2026-09-01 ~11:40 UTC, odds.500.com sert un défi
+anti-bot Tencent EdgeOne (cookie `EO_Bot_Ssid`) en **HTTP 200** à la place
+du calendrier. Quota tombé de ~400 à 14 requêtes/run sans un log jusqu'au
+commit 600c000 (`mur_anti_bot()` nomme le mur). Au scan de 21:45 le 03/09,
+la ligne disait encore « odds500: MUR ANTI-BOT (défi EdgeOne …) — à retirer
+si ça dure ». Diagnostic complet dans l'entrée précédente.
+
+Décision opérateur du 2026-09-03 (« Régler 3 » sur le bilan de santé, dans
+la lignée de « si une source est inutilisable, il faut la dégager ») :
+**odds500 retirée.** Exécuter le défi JavaScript aurait demandé un
+navigateur headless ou un service de déblocage — coût et fragilité refusés.
+
+Ce qui part AVEC elle, parce que ça n'existait que pour elle :
+- `core/sevenm.py` — 7M, source de NOMS anglais pour apprendre les alias
+  des noms chinois de 500.com. Sans source chinoise, rien à traduire.
+- `core/team_aliases.py` — le dictionnaire d'alias (module). La TABLE
+  Supabase `team_aliases` (12 lignes) et `sql/migrate_v10_3_team_aliases.sql`
+  sont CONSERVÉES : jamais de suppression sèche.
+- la coordination de `core/free_sources.py` (`fetch_odds500`, `learn_aliases`,
+  `learn_from_trusted`, `resolve_names`, `measure_against`, curseur et
+  mémoire 7M) — le module ne garde que le consensus Kalshi/Polymarket, avec
+  son coupe-circuit `FREE_SOURCES=0` ;
+- la lane IA `TRANSLATE_CJK` (seul consommateur : `team_aliases.resolve_with_ai`)
+  et les deux fournisseurs qui ne servaient qu'elle, siliconflow et upstage
+  → registre à **9 fournisseurs, 7 sans clause restrictive** (README et
+  AUDIT.md recomptés, `tests/test_documentation.py` garde le compte) ;
+- les overrides `ODDS500_PROXY`/`ODDS500_RELAY`/`SEVENM_PROXY`/`SEVENM_RELAY`
+  de `scripts/ci_env.RELAYS` — `scan.yml` régénéré par `ci_env.py --write`,
+  6 lignes de secrets en moins (ces 4 + `SILICONFLOW_API_KEY` +
+  `UPSTAGE_API_KEY`) ;
+- l'entrée `odds500` de `source_adapter.CALL_ORDER`, la sonde « Sources
+  gratuites Asie » de `ops.py sources`, et la liste blanche du Worker relais
+  (`scripts/cloudflare_relay_worker.js`), désormais VIDE — un relais sans
+  hôte ne relaie rien, c'est le comportement sûr.
+
+Ce qui RESTE, et pourquoi :
+- `core/net.py` entier (proxy, relais, reprise sur échec de transport) :
+  `core/score_sources.py` (ESPN, TheSportsDB, MLB — les scores du
+  settlement) passe par `net.prepare` + `net.open_with_retry`. Le module
+  est né pour odds500 ; son consommateur est aujourd'hui le settlement.
+  `FREE_SOURCES_PROXY`/`FREE_SOURCES_RELAY`/`_TOKEN` restent dans le pool
+  `scan`.
+- `core/source_adapter.py` (Fixture, `pair_fixtures`, scorecards) sert le
+  consensus ; `core/prediction_markets.py` inchangé.
+
+Résidus Supabase laissés en place (données, pas code) :
+`meta.source_scorecard_odds500`, `meta.sevenm_sitemap_cursor`,
+`meta.sevenm_past_gids`, table `team_aliases`. Les secrets GitHub
+`ODDS500_*`, `SEVENM_*`, `SILICONFLOW_API_KEY`, `UPSTAGE_API_KEY`, s'ils
+existent, sont inertes et peuvent être supprimés (actions_operateur §6).
+
+Règle qui en découle : **une source qu'on ne peut plus LIRE n'a pas de mode
+ombre, elle a une date de sortie** ; et ce qui n'existait que pour elle
+part avec elle — sinon c'est une capacité morte en silence (motif « listes
+qui divergent », règle dure n°6).
+
+Gardiens :
+- `tests/test_free_sources_wiring.py::TestConsensusBranche::test_plus_aucune_source_asiatique_dans_le_depot`
+  (les trois modules ne reviennent pas, le harvester n'appelle plus
+  `fetch_odds500`) ;
+- `::TestModeRelais::test_le_worker_garde_sa_liste_blanche_et_son_jeton`
+  (hôtes 500.com/7M absents de la liste blanche, jeton toujours exigé) ;
+- `::TestRepriseSurEchecPassager::test_les_sources_de_scores_passent_par_la_reprise` ;
+- `tests/test_ai_router.py::TestLanes::test_la_lane_cjk_est_partie_avec_la_mission_3` ;
+- `tests/test_documentation.py` (comptes du README = registre).
+Suite : 1547 passed.
 
 ### Le proxy gratuit rate une requête sur trois — et ça coûtait la source (2026-08-28)
 

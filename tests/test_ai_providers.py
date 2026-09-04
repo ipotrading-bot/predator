@@ -126,5 +126,5 @@ class TestConsumptionReduction:
         monkeypatch.setattr(ai_search, "_fallback_post", fake)
         ai_search.ai_complete("q", tier="light")
         ai_search.ai_complete("q", tier="heavy")
-        ai_search.ai_complete("q", lane="translate_cjk")
-        assert lanes == ["filter", "analyze", "translate_cjk"]
+        ai_search.ai_complete("q", lane="filter")
+        assert lanes == ["filter", "analyze", "filter"]

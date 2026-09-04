@@ -31,8 +31,7 @@ import re
 
 import pytest
 
-from core import (daily_quota, odds500,
-                  odds_api_io, prediction_markets, score_sources, sevenm,
+from core import (daily_quota, odds_api_io, prediction_markets, score_sources,
                   titan007)
 
 # Sources qui dépensent un budget journalier ET qui alimentent un scan.
@@ -48,12 +47,8 @@ SOURCES_BUDGETEES = {
 # régression déguisée : si l'une de ces sources redevient émettrice, elle
 # rejoint la table du dessus.
 EXEMPTEES = {
-    # Filtrée par IP en amont depuis les runners GitHub (403 de 500.com sur
-    # les IP de sortie US). Rend 0 match : rien à étaler.
-    "core/odds500.py":            odds500,
-    # Source de NOMS, pas de cotes, et seulement appelée quand odds500 rend
-    # des fixtures à résoudre — donc jamais tant qu'odds500 est bloquée.
-    "core/sevenm.py":             sevenm,
+    # (odds500 et 7M, exemptées ici jusqu'au 2026-09-03, sont RETIRÉES —
+    # mur anti-bot EdgeOne sur 500.com, décision opérateur.)
     # Rôle CONSENSUS : mesure et n'émet jamais. Mesuré le 2026-08-27,
     # 74 marchés cotés et 0 apparié au slate.
     "core/prediction_markets.py": prediction_markets,

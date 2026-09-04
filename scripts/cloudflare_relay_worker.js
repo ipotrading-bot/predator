@@ -51,21 +51,25 @@
  * ---------------------------------------------------------
  *   1. curl -s -o /dev/null -w '%{http_code}\n' \
  *        -H "X-Relay-Token: <jeton>" \
- *        "https://…workers.dev?u=https%3A%2F%2Fodds.500.com%2F"
+ *        "https://…workers.dev?u=https%3A%2F%2F<hote-autorise>%2F"
  *      → 200 attendu. 403 = jeton faux ou hôte hors liste blanche.
- *        Un 502 ici veut dire que Cloudflare N'ARRIVE PAS à joindre 500.com :
+ *        Un 502 ici veut dire que Cloudflare N'ARRIVE PAS à joindre l'amont :
  *        c'est le scénario « l'edge est bloqué aussi », il faut un vrai proxy.
- *   2. python scripts/ops.py sources        → odds500 doit répondre
- *   3. un run GitHub Actions                → SEUL juge qui compte : le poste
- *      de développement joint déjà 500.com sans relais, il ne prouve rien.
+ *   2. un run GitHub Actions                → SEUL juge qui compte : le poste
+ *      de développement joint déjà l'amont sans relais, il ne prouve rien.
  *
- * COÛT : palier gratuit, 100 000 requêtes/jour. odds500 en consomme ≤ 400.
+ * COÛT : palier gratuit, 100 000 requêtes/jour.
+ *
+ * LISTE BLANCHE VIDE depuis le 2026-09-03 : odds.500.com et 7M, les hôtes
+ * pour qui ce relais a été écrit, sont retirés du pipeline (mur anti-bot
+ * EdgeOne sur 500.com, décision opérateur). Un relais sans hôte ne relaie
+ * rien — c'est le comportement sûr. Le consommateur restant de core/net.py
+ * est core/score_sources.py (ESPN, TheSportsDB, MLB) : si une de ces sources
+ * se fait refuser depuis les runners, inscrire SON hôte ici et redéployer.
  */
 
 const ALLOWED_HOSTS = new Set([
-  "odds.500.com",        // core/odds500.py — calendrier + pages de cotes
-  "www.7msport.com",     // core/sevenm.py  — sitemap des identifiants
-  "px-analyse.7mdt.com", // core/sevenm.py  — gameinfo_en.js (noms anglais)
+  // ex. "site.api.espn.com",  // core/score_sources.py — scoreboard
 ]);
 
 // En-têtes de la réponse d'origine qu'on ne recopie PAS : ils décrivent le

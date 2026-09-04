@@ -124,12 +124,8 @@ jobs:
           BETFAIR_CERT: ${{ secrets.BETFAIR_CERT }}
           BETFAIR_CERT_KEY: ${{ secrets.BETFAIR_CERT_KEY }}
           FREE_SOURCES_PROXY: ${{ secrets.FREE_SOURCES_PROXY }}
-          ODDS500_PROXY: ${{ secrets.ODDS500_PROXY }}
-          SEVENM_PROXY: ${{ secrets.SEVENM_PROXY }}
           FREE_SOURCES_RELAY: ${{ secrets.FREE_SOURCES_RELAY }}
           FREE_SOURCES_RELAY_TOKEN: ${{ secrets.FREE_SOURCES_RELAY_TOKEN }}
-          ODDS500_RELAY: ${{ secrets.ODDS500_RELAY }}
-          SEVENM_RELAY: ${{ secrets.SEVENM_RELAY }}
           THESPORTSDB_API_KEY: ${{ secrets.THESPORTSDB_API_KEY }}
           COHERE_API_KEY: ${{ secrets.COHERE_API_KEY }}
           GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY }}
@@ -140,8 +136,6 @@ jobs:
           OLLAMA_API_KEY: ${{ secrets.OLLAMA_API_KEY }}
           OPENROUTER_API_KEY: ${{ secrets.OPENROUTER_API_KEY }}
           OVH_AI_API_KEY: ${{ secrets.OVH_AI_API_KEY }}
-          SILICONFLOW_API_KEY: ${{ secrets.SILICONFLOW_API_KEY }}
-          UPSTAGE_API_KEY: ${{ secrets.UPSTAGE_API_KEY }}
           # ▲ fin du bloc généré (pool `scan`)
         run: |
           # Préflight COMPLET : ce step est le seul à porter le pool entier
