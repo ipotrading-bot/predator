@@ -59,6 +59,11 @@ SETTLEMENT_GRACE_H  = int(os.environ.get("SETTLEMENT_GRACE_H", 4))   # hours aft
 # run_engine.py's past-match purge window (48h) or a retried signal gets
 # deleted before it ever reaches the ledger.
 EXPIRE_AFTER_H      = int(os.environ.get("EXPIRE_AFTER_H", 36))
+# Heures après le coup d'envoi au-delà desquelles le repli TheSportsDB (budget
+# journalier de 150) n'est plus tenté. DOIT rester bien SOUS EXPIRE_AFTER_H :
+# la ligne continue d'être réessayée via ESPN, seule la source à budget étroit
+# décroche. Au-dessus d'EXPIRE_AFTER_H, ce réglage n'aurait aucun effet.
+TSDB_RETRY_WINDOW_H = int(os.environ.get("TSDB_RETRY_WINDOW_H", 12))
 SETTLE_BUDGET = 25     # Max settlement lookups per audit run (score APIs)
 
 _AUDIT_COLS = {"closing_line", "clv_pct", "closed_at"}
@@ -150,6 +155,42 @@ def _past_expiry(sig: dict, now: datetime) -> bool:
     return True
 
 
+def _age_h(sig: dict, now: datetime) -> float | None:
+    """Heures écoulées depuis le coup d'envoi, ou None si indatable."""
+    raw = sig.get("match_time") or ""
+    if not raw:
+        return None
+    try:
+        ts = datetime.fromisoformat(str(raw).replace("Z", "+00:00"))
+    except ValueError:
+        return None
+    if ts.tzinfo is None:
+        ts = ts.replace(tzinfo=timezone.utc)
+    return (now - ts).total_seconds() / 3600.0
+
+
+def _tsdb_encore_utile(sig: dict, now: datetime) -> bool:
+    """Le repli TheSportsDB vaut-il encore une requête pour ce signal ?
+
+    TheSportsDB a un budget JOURNALIER de 150 requêtes, et il est le dernier
+    étage de la chaîne : tout signal qu'ESPN ne couvre pas y tombe. Comme un
+    échec laisse la ligne `active` jusqu'à EXPIRE_AFTER_H (36 h), une poignée
+    de matchs que personne ne peut régler le consommait ~6 fois chacun —
+    150/150 dès 10:38 le 2026-09-03, puis deux `AUDIT STÉRILE` qui bloquaient
+    le règlement de matchs parfaitement réglables.
+
+    Une source qui n'a pas publié le score 12 h après le coup d'envoi ne le
+    publiera pas au 6e essai. Au-delà, ESPN (large, 22/200 mesuré) continue
+    seul jusqu'à l'expiration : on ne perd donc AUCUNE voie de règlement,
+    seulement des requêtes gaspillées.
+
+    Un signal indatable garde son repli : c'est le cas rare, et le refuser
+    supprimerait une voie sur une simple absence de `match_time`.
+    """
+    age = _age_h(sig, now)
+    return age is None or age < TSDB_RETRY_WINDOW_H
+
+
 def audit_one(sb, sig: dict, settle_calls: list, now: datetime) -> str:
     """
     Audit a single signal.
@@ -163,7 +204,7 @@ def audit_one(sb, sig: dict, settle_calls: list, now: datetime) -> str:
     # ── Pass 1 : Settlement via real score ───────────────────────────
     if settle_calls[0] > 0:
         settle_calls[0] -= 1
-        if settle_signal(sb, sig, now_iso):
+        if settle_signal(sb, sig, now_iso, tsdb_ok=_tsdb_encore_utile(sig, now)):
             return "settled"
         log.info("No score yet for %s — falling back to CLV audit", match)
 

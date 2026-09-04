@@ -1,5 +1,19 @@
 name: Predator Scan
 
+# Le MODE dans le nom du run. Sans ça, le mode n'est lisible qu'en ouvrant
+# les steps du job (`Scan (…)`) : le chien de garde Cloudflare ne pouvait donc
+# pas distinguer un tick reprice d'un scan standard, et l'absence d'un standard
+# était INDÉTECTABLE (2026-09-04 — les reprice horaires maintenaient toujours
+# scan.yml « frais »). `gh run list` le montre aussi désormais.
+# ⚠️ Le cron cité ici doit exister dans scripts/ci_scan_mode.py::CRON_MODES avec
+# CE mode — tests/test_watchdog_worker.py compare les deux.
+# Un tick reprice promu par le bouton « Scanner » garde le nom `Scan reprice` :
+# le nom est figé au démarrage, la promotion se décide dans un step.
+# `github.event.inputs.…` et jamais `inputs.…` nu : la forme nue n'existe pas
+# hors dispatch (tests/test_ci_env.py).
+run-name: >-
+  Scan ${{ github.event.inputs.mode || (github.event.schedule == '25 * * * *' && 'reprice' || 'standard') }}
+
 # ──────────────────────────────────────────────────────────────────
 # DEUX MODES, un seul workflow (2026-09-03, décision opérateur : « trop de
 # workflows et de process ») — docs/systeme_de_scan.md pour l'opérateur.

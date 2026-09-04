@@ -25,13 +25,13 @@ class TestScoreSansIA:
         """Le score vient d'un CHAMP (MLB statsapi, ESPN, TheSportsDB) — plus
         aucune IA (2026-09-02), plus d'api-sports (2026-09-03)."""
         monkeypatch.setattr(settlement, "fetch_score",
-                            lambda *a: {"completed": True, "home_score": 4,
+                            lambda *a, **k: {"completed": True, "home_score": 4,
                                         "away_score": 0, "source": "espn"})
         r = settlement.fetch_match_result("Obscure FC vs Inconnu SC", "soccer", "2026-08-25")
         assert r["home_score"] == 4 and r["source"] == "espn"
 
     def test_aucune_source_ne_fait_pas_planter(self, monkeypatch):
-        monkeypatch.setattr(settlement, "fetch_score", lambda *a: None)
+        monkeypatch.setattr(settlement, "fetch_score", lambda *a, **k: None)
         assert settlement.fetch_match_result("A vs B", "soccer", "2026-08-25") is None
 
 

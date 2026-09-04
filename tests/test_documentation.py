@@ -245,3 +245,62 @@ class TestLaScissionTient:
                             ".python-version",          # appartient à Vercel
                             "Wilson"):                  # jamais un taux nu
             assert prohibition in texte, f"règle dure perdue dans la scission : {prohibition}"
+
+
+class TestLesCadencesDocumenteesSuiventLesWorkflows:
+    """Les crons vivent dans `.github/workflows/`. Deux documents les
+    recopient — la table de la skill `predator-pipeline` (pour l'agent) et
+    `docs/systeme_de_scan.md` (pour l'opérateur) — et une copie diverge.
+
+    Mesuré le 2026-09-04 : la table de la skill annonçait encore les scans
+    standard à 02/06/09/12/17/19/21/23, alors que le recalage du 2026-09-03
+    les avait déplacés à 06/09/11/13/16/19/21/23. Une doc de cadence fausse
+    est pire qu'absente : c'est elle qu'on lit pour décider si un cron a
+    « raté » — donc pour décider si un scan manquant est un incident.
+
+    Les cadences courantes portent le marqueur ``cron:`…` `` ; les cadences
+    HISTORIQUES (« était 4-59/10 ») s'écrivent sans, sinon ce test réclamerait
+    qu'un workflow les porte encore.
+    """
+
+    _CADENCES = _RACINE / ".claude" / "skills" / "predator-pipeline" / "cadences_cron.md"
+    _SCAN_OPERATEUR = _RACINE / "docs" / "systeme_de_scan.md"
+
+    @staticmethod
+    def _crons_des_workflows() -> set[str]:
+        crons = set()
+        for yml in (_RACINE / ".github" / "workflows").glob("*.yml"):
+            crons |= set(re.findall(r"-\s*cron:\s*['\"]([^'\"]+)['\"]",
+                                    yml.read_text(encoding="utf-8")))
+        assert crons, "plus aucun cron dans .github/workflows/ — le dépôt ne tourne plus"
+        return crons
+
+    def test_la_table_de_la_skill_liste_exactement_les_crons_reels(self):
+        documentes = set(re.findall(r"cron:`([^`]+)`", _texte(self._CADENCES)))
+        reels = self._crons_des_workflows()
+        assert documentes == reels, (
+            f"la table de cadence diverge des workflows.\n"
+            f"  documentés mais inexistants : {sorted(documentes - reels)}\n"
+            f"  réels mais non documentés   : {sorted(reels - documentes)}\n"
+            "Corriger cadences_cron.md — un cron courant s'y écrit cron:`…`.")
+
+    def test_les_heures_de_scan_de_la_doc_operateur_sortent_du_cron(self):
+        """`docs/systeme_de_scan.md` est ce que lit l'opérateur pour savoir
+        quand un scan aurait dû tomber. Ses heures sont dérivées ici du seul
+        cron que `ci_scan_mode.py` associe à `standard`."""
+        import importlib
+        ci_scan_mode = importlib.import_module("scripts.ci_scan_mode")
+        standard = [c for c, m in ci_scan_mode.CRON_MODES.items() if m == "standard"]
+        assert len(standard) == 1, (
+            f"{len(standard)} crons `standard` — ce test suppose l'unicité, l'étendre "
+            "en connaissance de cause")
+        minute, heures = standard[0].split()[0], standard[0].split()[1]
+        attendues = {f"{int(h):02d}:{int(minute):02d}" for h in heures.split(",")}
+
+        ligne = next((l for l in _texte(self._SCAN_OPERATEUR).splitlines()
+                      if l.startswith("| Scan **standard**")), None)
+        assert ligne, "la ligne « Scan **standard** » a disparu du tableau « Quand (UTC) »"
+        annoncees = set(re.findall(r"\b(\d{2}:\d{2})\b", ligne))
+        assert annoncees == attendues, (
+            f"docs/systeme_de_scan.md annonce {sorted(annoncees)}, le cron dit "
+            f"{sorted(attendues)} ({standard[0]}).")

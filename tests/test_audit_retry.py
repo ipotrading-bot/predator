@@ -128,3 +128,68 @@ class TestPastExpiryDating:
 
     def test_undatable_signal_is_not_kept_active_forever(self):
         assert audit_engine._past_expiry(_sig(hours_ago=1, match_time="garbage"), NOW) is True
+
+
+class TestLeRepliTheSportsDBEstBorne:
+    """TheSportsDB est le DERNIER étage de la chaîne : tout signal qu'ESPN ne
+    couvre pas y tombe. Comme un échec laisse la ligne `active` jusqu'à
+    EXPIRE_AFTER_H (36 h), chaque signal irrécupérable y consommait ~6
+    requêtes sur un budget journalier de 150.
+
+    Mesuré le 2026-09-03 : 150/150 dès 10:38, puis deux runs
+    `AUDIT STÉRILE — 0 réglé sur 15 éligibles` — le budget brûlé par des
+    matchs que personne ne peut régler (Kakkonen, Vtora Liga, U20 NSW)
+    empêchait le règlement de matchs parfaitement réglables. C'est un
+    gaspillage qui BLOQUE, pas seulement qui coûte.
+    """
+
+    def _sig(self, heures_apres_coup_denvoi):
+        from datetime import datetime, timedelta, timezone
+        now = datetime(2026, 9, 4, 12, 0, tzinfo=timezone.utc)
+        ko = now - timedelta(hours=heures_apres_coup_denvoi)
+        return {"match_time": ko.isoformat()}, now
+
+    def test_le_repli_est_tente_dans_la_fenetre(self):
+        from core import audit_engine as ae
+        sig, now = self._sig(ae.TSDB_RETRY_WINDOW_H - 1)
+        assert ae._tsdb_encore_utile(sig, now)
+
+    def test_le_repli_decroche_passe_la_fenetre(self):
+        from core import audit_engine as ae
+        sig, now = self._sig(ae.TSDB_RETRY_WINDOW_H + 1)
+        assert not ae._tsdb_encore_utile(sig, now)
+
+    def test_un_signal_indatable_garde_son_repli(self):
+        """Refuser une voie de règlement sur une simple absence de
+        `match_time` transformerait un trou de données en perte sèche."""
+        from datetime import datetime, timezone
+        from core import audit_engine as ae
+        now = datetime(2026, 9, 4, 12, 0, tzinfo=timezone.utc)
+        assert ae._tsdb_encore_utile({}, now)
+        assert ae._tsdb_encore_utile({"match_time": "pas une date"}, now)
+
+    def test_la_fenetre_reste_sous_lexpiration(self):
+        """Au-dessus d'EXPIRE_AFTER_H le réglage n'aurait aucun effet : la
+        ligne serait déjà terminale avant que le repli ne décroche."""
+        from core import audit_engine as ae
+        assert 0 < ae.TSDB_RETRY_WINDOW_H < ae.EXPIRE_AFTER_H
+
+    def test_couper_le_repli_ne_coupe_pas_espn(self):
+        """La garantie qui rend ce compromis acceptable : on ne perd AUCUNE
+        voie de règlement, seulement des requêtes gaspillées. ESPN (large,
+        mesuré à 22/200) continue jusqu'à l'expiration."""
+        from core import score_sources as ss
+        appels = []
+        ss.fetch_score.__globals__["result_from_espn"] = (
+            lambda m, s, d: appels.append("espn") or None)
+        ss.fetch_score.__globals__["result_from_thesportsdb"] = (
+            lambda m, s, d: appels.append("tsdb") or None)
+        try:
+            assert ss.fetch_score("A vs B", "soccer", "2026-09-04", tsdb_ok=False) is None
+            assert appels == ["espn"], f"voies appelées : {appels}"
+            appels.clear()
+            assert ss.fetch_score("A vs B", "soccer", "2026-09-04", tsdb_ok=True) is None
+            assert appels == ["espn", "tsdb"], f"voies appelées : {appels}"
+        finally:
+            import importlib
+            importlib.reload(ss)

@@ -261,3 +261,41 @@ class TestParSport:
         import api.index as dash
         src = inspect.getsource(dash.performance)
         assert "sport_perf" not in src
+
+
+def test_aucune_colonne_morte_du_ledger_nest_relue():
+    """`actual_result` et `profit_units` sont NULL sur 462/462 lignes
+    (mesuré 2026-09-04) et personne ne les écrit ; sql/migrate_v10_0 les
+    supprime. Tant qu'elles traînent en base, le vrai risque est qu'une
+    requête ad-hoc les somme et rende zéro sans le dire.
+
+    Le P&L a UNE source : le calcul de `core.perf_view._bloc_decisif`
+    depuis `odds` + `outcome` + TAX_RATE. Rebrancher une colonne stockée
+    créerait un second chiffre qui divergerait au premier changement de
+    TAX_RATE — règle dure n°6.
+
+    La garde lit l'AST : elle vise le CODE, pas la prose. Les docstrings qui
+    expliquent pourquoi ces colonnes sont inutilisables doivent survivre —
+    c'est le commentaire qui empêche de les rebrancher de bonne foi.
+    """
+    import ast
+    import pathlib
+    racine = pathlib.Path(__file__).resolve().parent.parent
+    mortes = {"actual_result", "profit_units"}
+    fautifs = []
+    for src in list(racine.glob("*.py")) + list((racine / "core").glob("*.py")) \
+            + list((racine / "api").glob("*.py")) + list((racine / "scripts").glob("*.py")):
+        arbre = ast.parse(src.read_text(encoding="utf-8"), filename=str(src))
+        # Une chaîne SEULE en guise d'instruction est une docstring (ou un
+        # commentaire de bloc) : ce n'est pas une lecture de colonne.
+        prose = {id(n.value) for n in ast.walk(arbre)
+                 if isinstance(n, ast.Expr) and isinstance(n.value, ast.Constant)}
+        for n in ast.walk(arbre):
+            touche = (isinstance(n, ast.Attribute) and n.attr in mortes) or (
+                isinstance(n, ast.Constant) and isinstance(n.value, str)
+                and n.value in mortes and id(n) not in prose)
+            if touche:
+                fautifs.append(f"{src.relative_to(racine)}:{n.lineno}")
+    assert not fautifs, (
+        "colonne morte du ledger relue — le P&L se calcule, il ne se lit pas :\n  "
+        + "\n  ".join(fautifs))

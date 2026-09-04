@@ -36,9 +36,23 @@ C'est normal, ils rafraîchissent le heartbeat et s'arrêtent.
 
 Les heures ci-dessus sont les heures PLANIFIÉES. GitHub ne les livre pas
 toutes (mesuré : parfois la moitié). Un chien de garde Cloudflare vérifie
-toutes les 10 minutes et relance un tick **reprice** si le scan est en retard
-de plus de 75 min. Un standard manqué n'est pas rejoué : le suivant vient
-dans ≤ 5 h, ou tu appuies sur « Scanner ».
+toutes les 10 minutes et rattrape :
+
+- un tick **reprice** si plus rien n'a tourné depuis 75 min ;
+- un scan **standard** si son créneau est passé depuis plus de 25 min sans
+  qu'un standard ait démarré — donc au pire à H+28, H+38 dans le cas le plus
+  défavorable.
+
+Jusqu'au 4 septembre 2026 un standard manqué était perdu, et pire : il était
+INVISIBLE. Le chien de garde regardait l'âge du dernier run de `scan.yml`
+tous modes confondus, et les ticks reprice horaires le maintenaient toujours
+« frais ». Mesuré ce jour-là : sur 4 créneaux dus, 19:03 livré avec 40 min de
+retard, 21:03 jamais livré, 23:03 livré avec 1 h 47 de retard, 06:03 jamais
+livré — pendant que le chien de garde dispatchait une dizaine de reprice tous
+déclarés sains. Le mode figure désormais dans le NOM du run (`Scan standard` /
+`Scan reprice`), visible dans `gh run list` comme dans l'API.
+
+Le bouton « Scanner » du dashboard reste le rattrapage manuel immédiat.
 
 ## Ce qui n'entre PAS (depuis le 3 septembre 2026, ta décision)
 

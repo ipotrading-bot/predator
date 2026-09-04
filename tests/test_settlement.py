@@ -20,14 +20,14 @@ class TestFetchMatchResult:
 
     def test_score_sources_is_the_whole_chain(self, monkeypatch):
         monkeypatch.setattr(settlement, "fetch_score",
-                            lambda *a: {"home_score": 0, "away_score": 3,
+                            lambda *a, **k: {"home_score": 0, "away_score": 3,
                                         "completed": True, "source": "thesportsdb"})
         res = settlement.fetch_match_result("Hapoel Acre vs Bnei Yehuda", "soccer", "2026-08-31")
         assert res == {"home_score": 0, "away_score": 3,
                        "completed": True, "source": "thesportsdb"}
 
     def test_nothing_found_returns_none(self, monkeypatch):
-        monkeypatch.setattr(settlement, "fetch_score", lambda *a: None)
+        monkeypatch.setattr(settlement, "fetch_score", lambda *a, **k: None)
         assert settlement.fetch_match_result("A vs B", "soccer", "2026-09-01") is None
 
     def test_api_sports_est_parti(self):

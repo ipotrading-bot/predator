@@ -1022,8 +1022,16 @@ def _heartbeat(sb, scan_time: datetime, matches: int | None, signals: int | None
     sortie anticipée) : il rafraîchit `at` pour prouver sa vie, mais CONSERVE
     les comptes du dernier scan réel. Le step REPRICE du même tick écrasait
     « 41 matchs » par « 0 » six secondes après le scan — le dashboard annonçait
-    un slate vide alors que le scan venait d'en voir 41 (2026-08-28)."""
+    un slate vide alors que le scan venait d'en voir 41 (2026-08-28).
+
+    `scan_at` DATE ces comptes. Sans lui, `at` (l'heure du tick) et `matches`
+    (l'heure du dernier vrai scan) étaient affichés comme un seul couple :
+    le 2026-09-04 le dashboard annonçait « Dernier scan 07:30 · 33 analysés »
+    alors que le tick de 07:30 était un reprice qui n'avait rien analysé, les
+    33 datant de 04:46. Le report reste — c'est le correctif du 2026-08-28 —
+    mais il ne se fait plus passer pour du frais."""
     try:
+        scan_at = scan_time.isoformat()
         if matches is None or signals is None:
             prev = {}
             try:
@@ -1032,18 +1040,23 @@ def _heartbeat(sb, scan_time: datetime, matches: int | None, signals: int | None
                     prev = json.loads(row.data["value"]) or {}
             except Exception:
                 prev = {}
+            # `scan_at` remonte d'un cran à chaque tick muet : c'est la date du
+            # dernier scan RÉEL, pas celle du dernier report.
+            scan_at = prev.get("scan_at") or prev.get("at") or scan_at
             matches = prev.get("matches", 0) if matches is None else matches
             signals = prev.get("signals", 0) if signals is None else signals
         sb.table("meta").upsert({
             "key":        "last_scan",
             "value":      json.dumps({
                 "at":      scan_time.isoformat(),
+                "scan_at": scan_at,
                 "matches": matches,
                 "signals": signals,
             }),
             "updated_at": scan_time.isoformat(),
         }, on_conflict="key").execute()
-        log.info("Heartbeat: last_scan updated (%d matchs, %d signaux)", matches, signals)
+        log.info("Heartbeat: last_scan updated (%d matchs, %d signaux du scan de %s)",
+                 matches, signals, scan_at[11:16])
     except Exception as e:
         log.error("Supabase heartbeat: %s", e)
 

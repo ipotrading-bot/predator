@@ -210,9 +210,13 @@ def _bloc_decisif(decisifs: list[dict], tax_rate: float) -> dict:
     """Le noyau commun à un mois et à une ligue : réussite AVEC Wilson et point
     mort (règle dure n°7 — jamais un taux nu), cote moyenne, P&L à mise plate.
 
-    Le P&L est recalculé depuis la cote (1 u par pari, gain net taxé) plutôt
-    que lu dans `profit_units` : cette colonne est NULL sur une partie des
-    lignes réglées, et un total qui saute des lignes ment sans le dire."""
+    Le P&L est recalculé depuis la cote (1 u par pari, gain net taxé) et n'est
+    JAMAIS lu dans une colonne stockée. `profit_units` était NULL sur 462/462
+    lignes (mesuré 2026-09-04) — un total qui saute des lignes ment sans le
+    dire — et `sql/migrate_v10_0` la supprime. Ne pas la rétablir : le P&L
+    dépend de TAX_RATE, décision opérateur destinée à bouger ; une valeur
+    figée en base divergerait au premier changement (règle dure n°6).
+    Gardé par `tests/test_perf_mois_ligues.py`."""
     from core.stats_utils import p_breakeven, wilson_ci
     wins = sum(1 for r in decisifs if r.get("outcome") == "WIN")
     losses = len(decisifs) - wins

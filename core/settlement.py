@@ -30,14 +30,18 @@ log = logging.getLogger("PREDATOR.settlement")
 _SETTLEMENT_OPTIONAL = frozenset({"outcome", "settled_at"})
 
 
-def fetch_match_result(match_name: str, sport: str, match_date: str = "") -> dict | None:
+def fetch_match_result(match_name: str, sport: str, match_date: str = "",
+                       tsdb_ok: bool = True) -> dict | None:
     """
     Score final d'un match terminé — chaîne déterministe de core/score_sources
     (MLB statsapi, ESPN, TheSportsDB).
     Returns {"home_score": int, "away_score": int, "completed": True} or None.
     None veut dire « pas trouvé aujourd'hui », jamais un état terminal.
+
+    `tsdb_ok=False` coupe le repli TheSportsDB, dont le budget journalier est
+    étroit — voir core.score_sources.fetch_score.
     """
-    return fetch_score(match_name, sport, match_date)
+    return fetch_score(match_name, sport, match_date, tsdb_ok=tsdb_ok)
 
 
 def determine_outcome(sport: str, market_key: str, selection_name: str,
@@ -93,10 +97,13 @@ def determine_outcome(sport: str, market_key: str, selection_name: str,
     return "UNKNOWN"
 
 
-def settle_signal(sb, sig: dict, now_iso: str) -> bool:
+def settle_signal(sb, sig: dict, now_iso: str, tsdb_ok: bool = True) -> bool:
     """
     Try to settle one signal using real match score.
     Returns True if settled, False if score not found.
+
+    `tsdb_ok=False` : le repli TheSportsDB n'est pas tenté (budget journalier
+    étroit, et une source qui n'a pas le score après 12 h ne l'aura pas).
     """
     match   = sig["match"]
     sport   = sig.get("sport", "soccer")
@@ -104,7 +111,7 @@ def settle_signal(sb, sig: dict, now_iso: str) -> bool:
     # Use match_time date for Gemini search accuracy (not scanned_at)
     match_date = (sig.get("match_time") or sig.get("scanned_at") or "")[:10]
 
-    result = fetch_match_result(match, sport, match_date)
+    result = fetch_match_result(match, sport, match_date, tsdb_ok=tsdb_ok)
     if not result or not result.get("completed"):
         return False
 

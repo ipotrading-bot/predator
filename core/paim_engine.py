@@ -91,12 +91,66 @@ def convert_to_ah0(v1: float, vx: float, v2: float) -> tuple[float, float]:
     return calc_dnb(v1, v2, vx), calc_dnb(v2, v1, vx)
 
 
+_AGE      = re.compile(r'\bu-?(\d{2})\b')
+_RESERVE  = re.compile(r'\b(?:reserves?|res)\b|(?:\bii|\bb)\s*$')
+_FEMININ  = re.compile(r'\b(?:women|womens|ladies|feminin\w*|femenino|femminile|frauen|dames)\b'
+                       r'|\(w\)|\bw\s*$')
+
+
+@lru_cache(maxsize=512)
+def _niveau(name: str) -> tuple[str, bool]:
+    """(catégorie d'âge/équipe, féminines) — l'ÉTAGE d'un club.
+
+    « Sheffield Wednesday Reserve U21 » et « Sheffield Wednesday » se
+    ressemblent énormément : `_normalize_team` puis le containment les
+    déclarent identiques. Ce sont deux équipes différentes, qui jouent des
+    matchs différents. Mesuré le 2026-09-04 : la garde de couverture
+    (`core.score_sources.fixture_connue`, un seul nom apparié) laissait un
+    U21 hériter de la couverture ESPN de son club senior — le signal était
+    émis comme « réglable », puis `result_from_espn` exigeait les deux noms
+    et ne le trouvait jamais. Ces lignes restaient `active` jusqu'à
+    EXPIRE_AFTER_H en brûlant le budget TheSportsDB à chaque audit.
+
+    Le même piège vaut côté COTES, où il est pire : apparier un U21 au match
+    senior lierait le prix d'un match aux cotes d'un autre.
+
+    L'âge prime sur « réserve » (« Reserve U21 » = u21) pour qu'une source
+    écrivant « U21 » et une autre « Reserve U21 » restent appariables ; les
+    féminines sont un axe séparé, une équipe pouvant être « Women U19 ».
+    """
+    s = (name or "").lower().strip()
+    age = _AGE.search(s)
+    return (f"u{age.group(1)}" if age else ("reserve" if _RESERVE.search(s) else ""),
+            bool(_FEMININ.search(s)))
+
+
+@lru_cache(maxsize=512)
+def _sans_etage(name: str) -> str:
+    """Le nom de club SEUL, marqueurs d'étage retirés. À n'employer qu'après
+    avoir comparé les étages : sur « Sheffield Wednesday U21 » il rend
+    « sheffield wednesday », c'est-à-dire exactement la confusion contre
+    laquelle `_niveau` protège."""
+    s = (name or "").lower().strip()
+    for motif in (_AGE, _RESERVE, _FEMININ):
+        s = motif.sub(" ", s)
+    return " ".join(s.split()) or (name or "").lower().strip()
+
+
 def strict_team_match(name_a: str, name_b: str, threshold: float = 0.60) -> bool:
-    """True if both names likely refer to the same team (handles abbreviations)."""
+    """True if both names likely refer to the same team (handles abbreviations).
+
+    Deux noms d'ÉTAGES différents (jeunes, réserve, féminines) sont refusés
+    d'emblée, quelle que soit leur ressemblance — voir `_niveau`."""
     if not name_a or not name_b:
         return True
-    a = name_a.lower().strip()
-    b = name_b.lower().strip()
+    if _niveau(name_a) != _niveau(name_b):
+        return False
+    # L'étage a été comparé EXACTEMENT ci-dessus ; on le retire avant de
+    # comparer les noms de club, sinon le marqueur casse le containment qui
+    # marchait sans lui — « Lyon » ⊂ « Olympique Lyonnais » est vrai, « Lyon
+    # U19 » ⊄ « Olympique Lyonnais U19 » ne l'est plus.
+    a = _sans_etage(name_a)
+    b = _sans_etage(name_b)
     # No raw pre-normalization substring shortcut here on purpose: a plain
     # `a in b or b in a` on un-stripped names (before tag-stripping/abbrev
     # expansion below) matches on arbitrary short substrings — e.g. a

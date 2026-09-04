@@ -60,8 +60,12 @@
 <main class="wrap">
 
   {% if last_scan and last_scan.at %}
+  {# `scan_at` date les COMPTES ; `at` date le dernier tick, fût-il un reprice
+     qui n'a rien analysé (run_engine._heartbeat). Les afficher ensemble
+     faisait passer les 33 matchs de 04:46 pour ceux du tick de 07:30.
+     `data-at` garde `at` : le compte à rebours vise bien le prochain tick. #}
   <div class="scan-meta" id="scan-meta" data-at="{{ last_scan.at }}">
-    Dernier scan {{ last_scan.at[11:16] }} UTC &middot; {{ last_scan.matches }} analysés &middot; <span id="next-scan-label">prochain —</span>
+    Dernier scan {{ (last_scan.scan_at or last_scan.at)[11:16] }} UTC &middot; {{ last_scan.matches }} analysés &middot; <span id="next-scan-label">prochain —</span>
   </div>
   {% endif %}
 

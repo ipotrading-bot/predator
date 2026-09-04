@@ -619,11 +619,25 @@ def result_from_thesportsdb(match_name: str, sport: str, match_date: str) -> dic
 
 # ── Chaîne ────────────────────────────────────────────────────────────
 
-def fetch_score(match_name: str, sport: str, match_date: str = "") -> dict | None:
+def fetch_score(match_name: str, sport: str, match_date: str = "",
+                tsdb_ok: bool = True) -> dict | None:
     """Score final par la chaîne déterministe (après api-sports, étage 1 dans
     core/settlement.py). Rend {"home_score", "away_score", "completed": True,
     "source"} ou None — et None veut dire « pas trouvé AUJOURD'HUI », jamais
-    un état terminal : la ligne repassera."""
+    un état terminal : la ligne repassera.
+
+    `tsdb_ok=False` coupe le DERNIER étage, TheSportsDB, dont le budget est
+    journalier et étroit (150). MLB statsapi et ESPN, eux, restent essayés
+    jusqu'au bout : ils sont larges (ESPN mesuré à 22/200 le 2026-09-04).
+
+    POURQUOI : TheSportsDB était réessayé à CHAQUE audit pendant les 36 h de
+    `EXPIRE_AFTER_H`, donc ~6 fois par signal. Une poignée de lignes que
+    personne ne peut régler (Kakkonen, Vtora Liga, U20 NSW…) suffisait à
+    saturer les 150 requêtes : 150/150 dès 10:38 le 2026-09-03, d'où deux
+    `AUDIT STÉRILE — 0 réglé sur 15 éligibles` qui, eux, bloquaient le
+    règlement de matchs parfaitement réglables. Une source qui n'a pas le
+    score d'un match 12 h après le coup d'envoi ne l'aura pas au 6e essai ;
+    l'appelant décide (core/audit_engine._tsdb_encore_utile)."""
     if (sport or "").lower() == "baseball":
         r = result_from_mlb(match_name, match_date)
         if r:
@@ -631,4 +645,8 @@ def fetch_score(match_name: str, sport: str, match_date: str = "") -> dict | Non
     r = result_from_espn(match_name, sport, match_date)
     if r:
         return r
+    if not tsdb_ok:
+        log.info("score_sources[tsdb_results]: repli non tenté pour %s "
+                 "(fenêtre de repli dépassée) — budget préservé", match_name)
+        return None
     return result_from_thesportsdb(match_name, sport, match_date)

@@ -328,3 +328,61 @@ class TestChaineAvecESPN:
                                                                 "completed": True, "source": "espn"})
         monkeypatch.setattr(ss, "result_from_thesportsdb", lambda *a: (_ for _ in ()).throw(AssertionError("TSDB appelé")))
         assert ss.fetch_score("A FC vs B FC", "soccer", "2026-09-01")["source"] == "espn"
+
+
+class TestLEtageDuClubNestJamaisHerite:
+    """La garde de COUVERTURE (`fixture_connue`, un seul nom apparié depuis le
+    2026-09-03 pour rattraper « FC Köln » / « FC Cologne ») laissait un U21
+    hériter de la couverture ESPN de son club senior.
+
+    Mesuré le 2026-09-04 : « Sheffield Wednesday Reserve U21 vs Wigan Athletic
+    U21 » émis à 04:46 comme réglable, alors que `result_from_espn` exige les
+    DEUX noms et ne le trouve jamais. Ces lignes restaient `active` jusqu'à
+    EXPIRE_AFTER_H (36 h) et rejouaient à chaque audit — 99 requêtes
+    TheSportsDB consommées sur 150 dès 02:51, d'où deux `AUDIT STÉRILE` la
+    veille.
+
+    Le remède est dans `core.paim_engine.strict_team_match`, donc il vaut
+    AUSSI pour les cotes — c'est là qu'il est le plus important : apparier un
+    U21 au match senior lierait le prix d'un match aux cotes d'un autre.
+    """
+
+    @pytest.mark.parametrize("signal, espn", [
+        ("Sheffield Wednesday Reserve U21", "Sheffield Wednesday"),
+        ("Wigan Athletic U21",              "Wigan Athletic"),
+        ("Manly United FC U20",             "Manly United"),
+        ("Northern Tigers U20",             "Northern Tigers"),
+        ("Arsenal Women",                   "Arsenal"),
+        ("Vitesse B",                       "Vitesse"),
+        ("TSG Hoffenheim II",               "TSG Hoffenheim"),
+    ])
+    def test_un_etage_ne_sapparie_pas_au_senior(self, signal, espn):
+        from core.paim_engine import strict_team_match
+        assert not strict_team_match(signal, espn), (
+            f"« {signal} » apparié à « {espn} » : le club senior vouche pour "
+            "une équipe qui joue un autre match")
+
+    @pytest.mark.parametrize("a, b", [
+        ("Sheffield Wednesday U21", "Sheffield Weds U21"),   # même étage, deux sources
+        ("Arsenal W",               "Arsenal Women"),        # deux notations féminines
+        ("Lyon U19",                "Olympique Lyonnais U19"),
+        ("VfB Stuttgart",           "Stuttgart"),            # cas nominal intact
+        ("Barcelona",               "FC Barcelona"),         # containment légitime intact
+    ])
+    def test_le_meme_etage_reste_appariable(self, a, b):
+        from core.paim_engine import strict_team_match
+        assert strict_team_match(a, b), (
+            f"« {a} » refusé contre « {b} » : la garde d'étage ne doit pas "
+            "créer de faux négatif entre deux écritures du MÊME étage")
+
+    def test_la_couverture_espn_refuse_desormais_le_u21(self):
+        """Le bout de chaîne : `fixture_connue` en min_sides=1 — la forme
+        permissive — ne doit plus dire « couvert » sur un match de jeunes
+        adossé à une rencontre senior."""
+        senior = [{"competitions": [{"competitors": [
+            {"homeAway": "home", "team": {"displayName": "Sheffield Wednesday"}},
+            {"homeAway": "away", "team": {"displayName": "Bristol City"}},
+        ]}]}]
+        assert ss.fixture_connue("Sheffield Wednesday vs Bristol City", senior)
+        assert not ss.fixture_connue(
+            "Sheffield Wednesday Reserve U21 vs Wigan Athletic U21", senior)

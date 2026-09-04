@@ -22,13 +22,13 @@ de bug que a0767c8 : source saine court-circuitée par ricochet).
 
 | Workflow (mode) | Cadence | Purpose |
 |---|---|---|
-| `scan.yml` — `standard` | **8x/jour sur les FENÊTRES FAVORABLES** (02/06/09/12/17/19/21/23 UTC, H+03) depuis le 2026-08-22 | scan complet, fenêtre **24h**, Tier 1 OddsAPI (`ODDS_API=1` posé par `scripts/ci_scan_mode.py`, dépense bornée par le rythme mensuel de `core/scan_windows.py`) + Tier 2 gratuit, purge, photographie du slate soft pour reprice. Placement = `core/scan_windows.py` ; cadence dimensionnée sur le budget des sources gratuites — voir « L'arbitrage de cadence ». Un signal à < 2 h du coup d'envoi part en FANTÔME par signal (`is_shadow`). |
-| `scan.yml` — `reprice` | horaire (H+25), 24/j | tick GRATUIT (pool sans clé payante) : slate soft en cache (TTL 4 h) vs Matchbook/Betfair, closing line d'exchange, heartbeat, purge ; se tait s'il n'y a rien de neuf ; deux ticks muets/jour attendus (06:25, 16:25 : cache périmé). Lit `meta.scan_request` (bouton Scan → promu en scan **standard**). Ne PAS ajouter de poller dédié — erreur du 2026-07-07. **golden, deep et guerrilla supprimés le 2026-09-03** (décision opérateur) — INCIDENTS.md « Cinq modes de scan, deux qui servent ». |
+| `scan.yml` — `standard` | **8×/jour sur les FENÊTRES FAVORABLES** — cron:`3 6,9,11,13,16,19,21,23 * * *`, soit 06/09/11/13/16/19/21/23 UTC à H+03. Recalé le 2026-09-03 (était 02/06/09/12/17/19/21/23 depuis le 2026-08-22 : 02/17/19/21 tombaient à moins de 2 h des coups d'envoi et n'achetaient que des fantômes). | scan complet, fenêtre **24h**, Tier 1 OddsAPI (`ODDS_API=1` posé par `scripts/ci_scan_mode.py`, dépense bornée par le rythme mensuel de `core/scan_windows.py`) + Tier 2 gratuit, purge, photographie du slate soft pour reprice. Placement = `core/scan_windows.py` ; cadence dimensionnée sur le budget des sources gratuites — voir « L'arbitrage de cadence ». Un signal à < 2 h du coup d'envoi part en FANTÔME par signal (`is_shadow`). |
+| `scan.yml` — `reprice` | horaire — cron:`25 * * * *` (H+25), 24/j | tick GRATUIT (pool sans clé payante) : slate soft en cache (TTL 4 h) vs Matchbook/Betfair, closing line d'exchange, heartbeat, purge ; se tait s'il n'y a rien de neuf ; deux ticks muets/jour attendus (06:25, 16:25 : cache périmé). Lit `meta.scan_request` (bouton Scan → promu en scan **standard**). Ne PAS ajouter de poller dédié — erreur du 2026-07-07. **golden, deep et guerrilla supprimés le 2026-09-03** (décision opérateur) — INCIDENTS.md « Cinq modes de scan, deux qui servent ». |
 | `scan.yml` — passe closing line | **à la fin de chaque scan standard** (8/j) | `run_closing_line.py`, `continue-on-error` : une passe ratée n'annule pas le scan déjà persisté |
-| `audit.yml` | toutes les 6h | settlement + CLV + couche d'apprentissage. **Ne pas renommer ce fichier** : `api/index.py` le déclenche par son nom. |
-| `closing_line.yml` | **3 ticks/h (H+14/34/54)** depuis le 2026-08-26 (était `4-59/10`, 144/j) | capture de la ligne de clôture, cadence alignée sur `CLOSING_LINE_REFRESH_MIN`. **Hors du verrou d'écriture** — voir CLAUDE.md pour la justification exacte, la version courte (« aucune ligne en commun ») étant fausse. |
-| `reports.yml` — `rapport` | **toutes les 2h (H+35)** | rapport Telegram. `run_rapport.py:REPORT_WINDOW_H` (2h) doit rester égal à l'intervalle du cron, sinon un même signal repart dans plusieurs rapports. |
-| `reports.yml` — `hebdo` | **lundi 07:00 UTC** | classement des sports + `calibration_report.py` + **rapport hebdo de vérité** (`scripts/weekly_report.py` : CLV réel, Brier, ROI net taxe, SUSPECT, verdicts promotion/retrait) |
+| `audit.yml` | toutes les 6 h — cron:`0 */6 * * *` (00/06/12/18 UTC) | settlement + CLV + couche d'apprentissage. **Ne pas renommer ce fichier** : `api/index.py` le déclenche par son nom. |
+| `closing_line.yml` | **3 ticks/h** — cron:`14,34,54 * * * *` (H+14/34/54), depuis le 2026-08-26 (était 4-59/10, 144/j) | capture de la ligne de clôture, cadence alignée sur `CLOSING_LINE_REFRESH_MIN`. **Hors du verrou d'écriture** — voir CLAUDE.md pour la justification exacte, la version courte (« aucune ligne en commun ») étant fausse. |
+| `reports.yml` — `rapport` | **toutes les 2 h** — cron:`35 */2 * * *` (H+35) | rapport Telegram. `run_rapport.py:REPORT_WINDOW_H` (2h) doit rester égal à l'intervalle du cron, sinon un même signal repart dans plusieurs rapports. |
+| `reports.yml` — `hebdo` | **lundi 07:00 UTC** — cron:`0 7 * * 1` | classement des sports + `calibration_report.py` + **rapport hebdo de vérité** (`scripts/weekly_report.py` : CLV réel, Brier, ROI net taxe, SUSPECT, verdicts promotion/retrait) |
 | `tools.yml` | manuel uniquement | `monte_carlo` et `backfill_ledger` (réparation one-shot de `ai_learning_ledger`) |
 | `ci.yml` | sur push/PR | tests + lint, **puis** déploiement Vercel — le gate n'est réel que parce que `vercel.json` désactive le déploiement Git |
 
@@ -43,6 +43,22 @@ INCIDENTS.md (« Le scheduler GitHub ne livre qu'une fraction des crons »),
 invariants gardés par `tests/test_watchdog_worker.py`. Avant de diagnostiquer
 une cadence : les runs `workflow_dispatch` dans `gh run list` peuvent être des
 rattrapages du chien de garde, pas des clics d'opérateur.
+
+Il surveille de **deux façons**, et la distinction est le cœur de l'angle mort
+du 2026-09-04 :
+
+- `WATCH` — **fraîcheur** (« plus rien depuis N minutes »). Ne vaut que pour
+  une cadence RÉGULIÈRE. Pour `scan.yml` elle ne rattrape que `reprice`.
+- `CRENEAUX` — **créneau dû**, pour la cadence IRRÉGULIÈRE du scan `standard`
+  (écarts de 2 h à 7 h : un seuil de fraîcheur supérieur au plus petit écart
+  tirerait dans le trou de nuit). Le mode est lu dans le NOM du run, que
+  `scan.yml` pose via `run-name` — sans ça, les ticks reprice horaires
+  maintenaient `scan.yml` éternellement « frais » et un `standard` perdu était
+  **indétectable**, pas seulement non rattrapé.
+
+Diagnostiquer une cadence de scan par le NOMBRE de runs est donc faux : c'est
+le MODE qu'il faut compter (`gh run list --workflow=scan.yml` affiche
+désormais `Scan standard` / `Scan reprice`).
 Le mode d'un tick de `scan.yml` est déduit du cron qui a tiré
 (`scripts/ci_scan_mode.py::CRON_MODES`) : un cron ajouté sans sa ligne fait
 échouer le run ET le test.

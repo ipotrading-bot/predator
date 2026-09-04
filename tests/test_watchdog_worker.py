@@ -85,17 +85,116 @@ def test_les_seuils_restent_au_dessus_de_la_cadence_des_crons():
             "le chien de garde tirerait plus vite que le schedule qu'il supplée")
 
 
-def test_scan_nest_rattrape_quen_reprice_et_le_mode_existe():
-    """`reprice` (2026-09-03, ex-`golden`) : gratuit par construction — son
-    pool ne porte aucune clé payante — et il honore un clic « Scanner » en
-    attente (promotion reprice → standard)."""
+def test_la_fraicheur_ne_rattrape_scan_quen_reprice():
+    """La voie FRAÎCHEUR reste gratuite. Le scan payant `standard` a sa propre
+    voie (CRENEAUX) parce qu'un seuil de fraîcheur est FAUX pour lui : ses
+    écarts vont de 2 h à 7 h, et tout seuil supérieur au plus petit écart
+    tirerait dans le trou de nuit — aux heures que le recalage du 2026-09-03
+    a précisément écartées."""
     scan = next(w for w in _watch_table() if w["file"] == "scan.yml")
     assert scan["inputs"] == {"mode": "reprice"}, (
-        "rattraper un autre mode que reprice dépense les budgets journaliers "
-        "des sources gratuites en DOUBLE du cron GitHub quand il finit par tirer")
+        "la voie fraîcheur de scan.yml doit rester `reprice` : elle tire dès "
+        "75 min de silence, ce qui pour un scan payant serait une dépense non "
+        "bornée. Le rattrapage payant passe par CRENEAUX.")
     import importlib
     ci_scan_mode = importlib.import_module("scripts.ci_scan_mode")
     assert "reprice" in ci_scan_mode.MODES
+
+
+def _creneaux_table() -> list[dict]:
+    """La table CRENEAUX du Worker — même méthode que WATCH : on lit le JS,
+    on ne l'exécute pas."""
+    bloc = re.search(r"const CRENEAUX = \[(.*?)\n\];", WORKER, re.S)
+    assert bloc, "table CRENEAUX introuvable dans le Worker"
+    entries = []
+    for m in re.finditer(
+            r'\{\s*file:\s*"([^"]+)",\s*run_name:\s*"([^"]+)",\s*minute:\s*(\d+),\s*'
+            r'hours:\s*\[([\d,\s]+)\],\s*grace_min:\s*(\d+),\s*inputs:\s*(\{[^}]*\})',
+            bloc.group(1)):
+        raw = re.sub(r'(\w+):', r'"\1":', m.group(6))
+        entries.append({"file": m.group(1), "run_name": m.group(2),
+                        "minute": int(m.group(3)),
+                        "hours": [int(h) for h in m.group(4).split(",")],
+                        "grace_min": int(m.group(5)),
+                        "inputs": json.loads(raw)})
+    assert entries, "CRENEAUX vide — le parseur ou le JS a changé"
+    return entries
+
+
+def _cron_du_mode(mode: str) -> str:
+    import importlib
+    crons = [c for c, m in
+             importlib.import_module("scripts.ci_scan_mode").CRON_MODES.items()
+             if m == mode]
+    assert len(crons) == 1, f"{len(crons)} crons `{mode}` — ce test suppose l'unicité"
+    return crons[0]
+
+
+def _run_name_expr(fichier: str) -> str:
+    """La valeur de `run-name:`, débarrassée de l'indicateur de bloc YAML
+    (`>-`, `|`, …) et repliée sur une ligne — c'est la chaîne que GitHub
+    évalue."""
+    yml = (WORKFLOWS / fichier).read_text(encoding="utf-8")
+    m = re.search(r"^run-name:\s*(.+?)^(?=\S)", yml, re.S | re.M)
+    assert m, f"{fichier} n'a plus de run-name : le chien de garde deviendrait aveugle"
+    valeur = re.sub(r"^[>|][-+]?\s*", "", m.group(1).strip())
+    return " ".join(valeur.split())
+
+
+def test_les_creneaux_surveilles_sont_exactement_ceux_du_cron():
+    """L'angle mort du 2026-09-04 : la surveillance par FICHIER voyait scan.yml
+    éternellement frais (les ticks reprice horaires, y compris ceux du chien de
+    garde lui-même), donc un cron `standard` perdu était INDÉTECTABLE — pas
+    seulement « non rattrapé ». CRENEAUX le rattrape, encore faut-il qu'il vise
+    les bonnes heures : elles sont ici comparées au cron lui-même."""
+    for c in _creneaux_table():
+        minute, heures = _cron_du_mode(c["inputs"]["mode"]).split()[:2]
+        assert c["minute"] == int(minute), (
+            f"créneau {c['run_name']} à H+{c['minute']}, le cron dit H+{minute}")
+        assert c["hours"] == sorted(int(h) for h in heures.split(",")), (
+            f"créneau {c['run_name']} sur {c['hours']}, le cron dit {heures}")
+
+
+def test_le_delai_de_grace_reste_sous_le_plus_petit_ecart():
+    """Une grâce plus longue que l'écart minimal ferait chevaucher deux
+    créneaux : on dispatcherait pour un créneau déjà remplacé par le suivant."""
+    for c in _creneaux_table():
+        hs = sorted(c["hours"])
+        ecart = 60 * min([b - a for a, b in zip(hs, hs[1:])] + [24 - hs[-1] + hs[0]])
+        assert 0 < c["grace_min"] < ecart, (
+            f"grâce {c['grace_min']} min hors de ]0 ; {ecart}[ pour {c['run_name']}")
+
+
+def test_le_run_name_surveille_est_bien_celui_que_le_workflow_produit():
+    """Le chien de garde reconnaît son propre rattrapage par le run-name. Si
+    scan.yml cessait de nommer ses runs, il ne verrait jamais son dispatch et
+    redispatcherait à chaque passage — un scan PAYANT toutes les 10 min."""
+    for c in _creneaux_table():
+        expr = _run_name_expr(c["file"])
+        prefixe, mode = c["run_name"].rsplit(" ", 1)
+        assert expr.strip().startswith(prefixe), (
+            f"run-name de {c['file']} ne commence pas par « {prefixe} »")
+        assert "inputs.mode" in expr or f"'{mode}'" in expr, (
+            f"run-name ne peut jamais valoir « {c['run_name']} »")
+
+
+def test_les_crons_cites_par_le_run_name_existent_avec_ce_mode():
+    """run-name déduit le mode d'un cron écrit EN DUR dans le YAML. Un cron
+    recalé sans toucher cette expression nommerait tous les runs `standard` et
+    le chien de garde croirait chaque créneau honoré (règle n°6)."""
+    import importlib
+    CRON_MODES = importlib.import_module("scripts.ci_scan_mode").CRON_MODES
+    for c in _creneaux_table():
+        cites = re.findall(
+            r"github\.event\.schedule\s*==\s*'([^']+)'\s*&&\s*'([^']+)'",
+            _run_name_expr(c["file"]))
+        assert cites, (
+            f"run-name de {c['file']} ne discrimine plus aucun cron : tous les "
+            "runs porteraient le même nom")
+        for cron, mode in cites:
+            assert CRON_MODES.get(cron) == mode, (
+                f"run-name de {c['file']} associe {cron!r} à {mode!r}, "
+                f"CRON_MODES dit {CRON_MODES.get(cron)!r}")
 
 
 def test_linput_de_reports_est_une_option_declaree():

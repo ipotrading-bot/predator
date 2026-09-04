@@ -1,0 +1,56 @@
+-- migrate_v10_0_drop_colonnes_mortes_ledger.sql
+-- ═══════════════════════════════════════════════════════════════════
+-- ai_learning_ledger.actual_result et .profit_units : DEUX PIÈGES, pas
+-- deux données.
+--
+-- Mesuré le 2026-09-04 :
+--     select count(*), count(actual_result), count(profit_units)
+--       from ai_learning_ledger;
+--     → 462 | 0 | 0
+--
+-- Elles sont NULL sur la TOTALITÉ des lignes depuis toujours, et aucun
+-- code du dépôt ne les écrit — ni core/db.py:log_to_ledger, ni
+-- core/settlement.py, ni scripts/backfill_expired_results.py (qui le dit
+-- lui-même, ligne 32). Elles n'apparaissent dans aucune migration : ce
+-- sont des vestiges d'un schéma antérieur à l'historique du dépôt.
+--
+-- POURQUOI LES SUPPRIMER PLUTÔT QUE LES REMPLIR :
+-- le P&L a déjà une source de vérité, et c'est un CALCUL —
+-- core/perf_view.py:_bloc_decisif le dérive de `odds` + `outcome` +
+-- TAX_RATE. Remplir profit_units créerait une seconde source de vérité
+-- pour le même chiffre, qui divergerait au premier changement de
+-- TAX_RATE (décision opérateur, donc destinée à bouger) : exactement la
+-- règle dure n°6, « ne jamais tenir à la main une liste qui existe
+-- ailleurs ». Une colonne vide qui PORTE LE NOM du chiffre qu'on cherche
+-- est pire qu'une colonne absente : elle invite chaque requête ad-hoc à
+-- sommer des NULL et à rendre zéro sans le dire.
+--
+-- Ce que ça NE touche PAS : aucune ligne de résultat n'est supprimée
+-- (règle dure n°9, biais de survie). On retire deux colonnes vides ; les
+-- 462 lignes et leurs colonnes utiles — outcome, odds, kelly_pct,
+-- clv_pct_real, sharp_prob, time_to_match_minutes — restent intactes.
+--
+-- ⚠️ VÉRIFIER AVANT D'APPLIQUER. Si un des deux compteurs n'est plus à 0,
+-- quelqu'un a commencé à écrire ces colonnes depuis le 2026-09-04 :
+-- NE PAS lancer le DROP, et venir comprendre d'où vient l'écriture.
+--
+--     select count(*)                as total,
+--            count(actual_result)    as actual_result_non_null,
+--            count(profit_units)     as profit_units_non_null
+--       from ai_learning_ledger;
+--
+-- Application : À LA MAIN dans le SQL Editor Supabase (aucun runner de
+-- migration dans ce dépôt). Idempotent : IF EXISTS.
+-- ═══════════════════════════════════════════════════════════════════
+
+alter table ai_learning_ledger drop column if exists actual_result;
+alter table ai_learning_ledger drop column if exists profit_units;
+
+-- Contrôle post-application : les deux colonnes ont disparu, le compte de
+-- lignes est inchangé (462 au 2026-09-04, et il ne fait que croître).
+--
+--     select count(*) from ai_learning_ledger;
+--     select column_name from information_schema.columns
+--      where table_name = 'ai_learning_ledger'
+--        and column_name in ('actual_result', 'profit_units');
+--     → 0 ligne
