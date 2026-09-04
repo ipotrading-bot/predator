@@ -305,11 +305,61 @@ LEAGUE_MAP = {
 
 def league_key(label: str) -> str:
     """Clé canonique d'une ligue, ou "" si inconnue. "" n'autorise aucun
-    appariement par ligue — il force l'appariement à se justifier autrement."""
+    appariement par ligue — il force l'appariement à se justifier autrement.
+
+    Correspondance EXACTE, volontairement. Élargir cette fonction élargirait
+    l'appariement entre sources, où une clé fausse lie le prix d'un match aux
+    cotes d'un autre — voir `league_key_correlation` pour l'usage où l'erreur
+    a le sens inverse."""
     if not label:
         return ""
     raw = label.strip()
     return LEAGUE_MAP.get(raw) or LEAGUE_MAP.get(raw.lower(), "")
+
+
+_SEPARATEURS = ("|", ":", "–", "—", " - ")
+
+
+def league_key_correlation(label: str) -> str:
+    """Clé de ligue pour le TAG DE CORRÉLATION seulement — plus large que
+    `league_key`, et c'est délibéré.
+
+    Mesuré le 2026-09-04 : deux signaux de Ligue 1 du MÊME jour portaient des
+    tags différents, « soccer:2026-09-04:Ligue 1 - France » (OddsAPI) et
+    « soccer:2026-09-04:FRA D1 » (Tier 2). `core.tax_engine` en concluait deux
+    paris indépendants et acceptait de les combiner, alors qu'ils partagent
+    journée, arbitrage, météo et calendrier. `LEAGUE_MAP` connaissait pourtant
+    « fra d1 » ET « ligue 1 » : c'est la forme « Ligue - Pays » qui échappait à
+    la correspondance exacte.
+
+    L'ASYMÉTRIE qui autorise cet élargissement : le tag n'a qu'un consommateur,
+    `tax_engine._combine_with_correlation`, en mode « forbid » — deux jambes qui
+    partagent un tag sont REFUSÉES. Sur-grouper coûte donc une combinaison
+    écartée ; sous-grouper fait passer une corrélation pour de l'indépendance et
+    gonfle la probabilité annoncée. On préfère franchement le premier.
+
+    Conséquence assumée : « Brazil - Serie A » tombe sur `seriea` comme
+    l'italien. Deux championnats réellement distincts sont alors refusés au
+    combiné — un coût nul pour une garde. Ne PAS « corriger » ça en revenant à
+    la correspondance exacte sans relire le paragraphe ci-dessus.
+
+    Une ligue inconnue de la carte garde son libellé normalisé : elle se groupe
+    donc avec elle-même, jamais avec une autre.
+    """
+    exact = league_key(label)
+    if exact:
+        return exact
+    brut = (label or "").strip()
+    if not brut:
+        return ""
+    decoupe = brut
+    for sep in _SEPARATEURS:
+        decoupe = decoupe.replace(sep, "\n")
+    for segment in decoupe.split("\n"):
+        trouve = league_key(segment.strip())
+        if trouve:
+            return trouve
+    return " ".join(brut.lower().split())
 
 
 # Ligues servies EN PREMIER quand une source coupe son calendrier (titan007 :

@@ -314,4 +314,85 @@ class TestCorrelationGroupTag:
         assert base != other_date
 
     def test_missing_match_time_does_not_raise(self):
-        assert correlation_group("soccer", "MLS", "") == "soccer::MLS"
+        """La ligue est CANONISÉE depuis le 2026-09-04 (« MLS » → clé `mls`),
+        donc ce test ne fige plus la graphie de la source — seulement ce qu'il
+        gardait vraiment : un `match_time` vide laisse le segment de date vide
+        au lieu de lever."""
+        tag = correlation_group("soccer", "MLS", "")
+        assert tag.split(":") == ["soccer", "", "mls"]
+
+
+class TestLeTagDeCorrelationCanoniseLaLigue:
+    """Le libellé de ligue dépend de la SOURCE qui a rendu le match. Deux
+    signaux du même championnat portaient donc deux tags, et
+    `_combine_with_correlation` — mode « forbid » — les tenait pour
+    indépendants.
+
+    Mesuré le 2026-09-04, sur les deux seuls signaux jouables du moment :
+        9906  PSG vs Monaco   → soccer:2026-09-04:Ligue 1 - France   (OddsAPI)
+        9907  Lyon vs Auxerre → soccer:2026-09-04:FRA D1             (Tier 2)
+    Même championnat, même journée, deux tags. `LEAGUE_MAP` connaissait
+    pourtant les deux graphies : c'est la forme « Ligue - Pays » qui échappait
+    à la correspondance exacte de `league_key`.
+
+    L'asymétrie qui justifie une canonisation LARGE : sur-grouper coûte une
+    combinaison refusée, sous-grouper fait passer une corrélation pour de
+    l'indépendance et gonfle la probabilité annoncée.
+    """
+
+    def test_deux_graphies_du_meme_championnat_partagent_le_tag(self):
+        from core.paim_engine import correlation_group
+        psg  = correlation_group("soccer", "Ligue 1 - France", "2026-09-04T19:05:00+00:00")
+        lyon = correlation_group("soccer", "FRA D1",           "2026-09-04T17:00:00+00:00")
+        assert psg == lyon, (
+            f"PSG {psg!r} et Lyon {lyon!r} : même championnat, même journée, "
+            "tags différents — la garde de corrélation les combinerait")
+
+    def test_la_garde_refuse_desormais_de_les_combiner(self):
+        """Le bout de chaîne : c'est `_combine_with_correlation` qui doit dire
+        non, pas seulement le tag qui doit être égal."""
+        from core.paim_engine import correlation_group
+        from core.tax_engine import _combine_with_correlation
+        legs = [
+            {"true_prob": 0.84, "odds": 1.21,
+             "correlation_group": correlation_group("soccer", "FRA D1",
+                                                    "2026-09-04T17:00:00+00:00")},
+            {"true_prob": 0.50, "odds": 2.04,
+             "correlation_group": correlation_group("soccer", "Ligue 1 - France",
+                                                    "2026-09-04T19:05:00+00:00")},
+        ]
+        _p, _o, ok = _combine_with_correlation(legs)
+        assert not ok, "deux matchs de Ligue 1 du même jour combinés comme indépendants"
+
+    @pytest.mark.parametrize("ligue", [
+        "England Amateur - U21 Professional Development League",
+        "Vietnam - V-League 1",
+        "Australia - Western Australia NPL",
+        "Italy - Coppa Italia Serie C",
+        "Japan - J-League 3",
+    ])
+    def test_une_ligue_inconnue_ne_se_colle_sur_aucune_autre(self, ligue):
+        """Élargir ne doit pas tout aplatir : une ligue absente de la carte
+        garde son propre libellé, donc elle ne groupe qu'avec elle-même. En
+        particulier « Coppa Italia Serie C » ne doit pas tomber sur `seriea`."""
+        from core.source_adapter import league_key_correlation, LEAGUE_MAP
+        cle = league_key_correlation(ligue)
+        assert cle == " ".join(ligue.lower().split())
+        assert cle not in set(LEAGUE_MAP.values())
+
+    def test_lappariement_des_sources_reste_en_correspondance_exacte(self):
+        """`league_key` sert à lier les cotes de deux sources sur le MÊME
+        match : là, une clé fausse lie le prix d'un match aux cotes d'un autre.
+        L'élargissement ne doit jamais l'atteindre."""
+        from core.source_adapter import league_key, league_key_correlation
+        assert league_key("Ligue 1 - France") == ""
+        assert league_key("Brazil - Serie A") == ""
+        assert league_key_correlation("Ligue 1 - France") == "ligue1"
+        # Le prix de la sur-inclusion, assumé : deux Serie A distinctes
+        # partagent un groupe, donc on refuse de les combiner. Coût nul.
+        assert league_key_correlation("Brazil - Serie A") == "seriea"
+
+    def test_une_ligue_vide_ne_groupe_rien(self):
+        from core.source_adapter import league_key_correlation
+        assert league_key_correlation("") == ""
+        assert league_key_correlation(None) == ""

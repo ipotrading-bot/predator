@@ -65,9 +65,18 @@ def correlation_group(sport: str, league: str, match_time: str) -> str:
     but still real correlation (shared referee pool, weather, schedule
     congestion, etc). core/tax_engine.py's suggest_system() refuses by
     default to combine two legs sharing this tag into one accumulator.
+
+    La ligue passe par `source_adapter.league_key_correlation` : le libellé
+    BRUT dépend de la source qui a rendu le match, donc deux matchs du même
+    championnat portaient deux tags. Mesuré le 2026-09-04 — « Ligue 1 - France »
+    (OddsAPI) et « FRA D1 » (Tier 2), même journée : la garde les tenait pour
+    indépendants. Cette canonisation est volontairement plus large que celle de
+    l'appariement des sources ; le pourquoi est dans sa docstring, et il ne se
+    devine pas.
     """
+    from core.source_adapter import league_key_correlation
     date = (match_time or "")[:10]
-    return f"{sport}:{date}:{league}"
+    return f"{sport}:{date}:{league_key_correlation(league)}"
 
 
 # MMA uses the same binary ML logic as boxing/tennis — no draw possible
