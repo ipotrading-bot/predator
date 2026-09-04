@@ -56,8 +56,8 @@ Calcul en crons GitHub Actions ; dashboard en lecture seule.
 - Python 3.11 en dev et en CI, code compatible 3.12 (build Vercel). Français
   dans les docstrings/commentaires, conventional commits.
 - Les erreurs réseau/API ne crashent jamais : retour `[]` + log, documenté.
-- Chaque changement de schéma = nouveau `sql/migrate_vX_Y.sql`, appliqué À LA
-  MAIN dans le SQL Editor Supabase (aucun runner de migration).
+- Schéma : un `sql/migrate_vX_Y.sql` par changement, appliqué par
+  `ops.py supabase migrate <f>` ou à la main. Rien ne les rejoue.
 - Tests purs uniquement (pas de réseau, pas de rendu de template).
 - Dépendances VERROUILLÉES au `==`, transitives comprises
   (`requirements*.txt`). Ne jamais y remettre une borne molle.
