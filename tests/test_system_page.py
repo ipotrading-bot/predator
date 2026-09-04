@@ -123,3 +123,42 @@ class TestScenariosDerivesDuMoteur:
         ouverts = len(re.findall(rf"<{tag}\b(?![^>]*/>)", jsx))
         fermes = len(re.findall(rf"</{tag}>", jsx))
         assert ouverts == fermes, f"<{tag}> : {ouverts} ouvert(s), {fermes} fermé(s)"
+
+
+class TestSectionsAdditionnees:
+    """Chantier « sections additionnées » (2026-09-04) : simples, combiné et
+    système ont chacun leur mise et leur bilan brut/net, s'additionnent dans
+    un total, et les scénarios COMPLETS (toutes sections) sont exacts. Même
+    règle que les scénarios système : dérivé du moteur, jamais dedans, jamais
+    des probabilités."""
+
+    def test_les_scenarios_complets_vivent_hors_du_bloc_math_et_passent_par_le_moteur(self, jsx):
+        fin_math = jsx.index("SCÉNARIOS — dérivés du moteur")
+        debut = jsx.index("function scenariosComplets(")
+        assert debut > fin_math
+        corps = jsx[debut:jsx.index("function breakEvenComplet(")]
+        # Une combinaison du système est évaluée par le moteur, puis comptée
+        # dans un scénario si toutes ses jambes y sont gagnantes (masque).
+        assert "kCombinations(" in corps and "comboReturnFactor(" in corps
+        assert "(c.mask & mask) === c.mask" in corps
+        # Interdit : rappeler systemReturn par scénario (2^N × 2^N, page gelée à N = 10).
+        assert "systemReturn(" not in corps
+
+    def test_les_quatre_sections_et_le_mode_de_mise_sont_rendus(self, jsx):
+        for titre in ("Système", "Mises individuelles", "Combiné", "Total", "Scénarios complets"):
+            assert f'title="{titre}"' in jsx, titre
+        assert 'label: "Mise par ligne"' in jsx and 'label: "Mise totale"' in jsx
+        assert "switchStakeMode" in jsx and "totalStakeWanted / totalLignes" in jsx
+        # Chaque section entre ou sort du total sans perdre ses saisies.
+        assert jsx.count('label="Dans le total"') == 3
+        assert "scenariosComplets(" in jsx and "breakEvenComplet(scenariosTotal)" in jsx
+
+    def test_le_doublon_systeme_simples_combine_est_signale(self, jsx):
+        # Un système M/N contient le combiné N/N, et à M = 1 les N simples :
+        # additionner les deux est jouer deux fois — la page le dit.
+        assert "contient déjà" in jsx and "jouer deux fois" in jsx
+
+    def test_les_tables_tiennent_dans_un_telephone(self, html):
+        # predator.css impose min-width: 760px aux tables (grilles de signaux) ;
+        # sans cet override, les tableaux de /system débordent sur mobile.
+        assert ":where(#sbc-root) table { min-width: 0; }" in html

@@ -2170,6 +2170,25 @@ Gardien : `tests/test_reprice_mode.py::test_reprice_empty_cache_preserves_last_s
 — il garde le REPORT, pas `scan_at` : à ce jour aucun test n'assied la
 distinction `at` / `scan_at`, ni côté moteur ni côté template.
 
+### `predator.css` imposait 760 px à TOUTES les tables, /system comprise (2026-09-04)
+
+`predator.css` déclare `table { min-width: 760px }` — voulu pour les grilles de
+signaux de `/`, qui défilent horizontalement. Le sélecteur est NU : il attrape
+aussi les tableaux de `/system`, qui sont étroits et faits pour être lus d'un
+coup d'œil. MESURÉ le 2026-09-04 (Chromium, viewport 412 px, ticket 3
+sélections) : les tableaux « Total » et « Scénarios complets » mesurent 346 px
+de contenu et tiennent exactement dans leur conteneur — le plancher les
+étirait à 760 px, soit 414 px de défilement horizontal imposé à un tableau qui
+tenait déjà. Le panneau n'éclatait pas et la page ne défilait pas (chaque
+tableau est dans un `overflow-x-auto`) : la panne était donc INVISIBLE côté
+serveur ET côté suite, et ne se voyait qu'en ouvrant la page sur un téléphone.
+Correctif : `:where(#sbc-root) table { min-width: 0; }` dans le `<style>` de
+`templates/system.html` — `:where()` garde une spécificité NULLE pour ne pas
+écraser les utilitaires Tailwind posés sur ces mêmes tables.
+Gardien : `tests/test_system_page.py::TestSectionsAdditionnees::test_les_tables_tiennent_dans_un_telephone`
+— il garde la PRÉSENCE de la règle, pas la largeur rendue : aucun test de ce
+dépôt ne rend de CSS, seule une vérification navigateur mesure vraiment.
+
 ### Une version, un seul endroit
 
 `DASHBOARD_VERSION` (`api/index.py`), injectée
