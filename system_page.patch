@@ -1,0 +1,711 @@
+--- a/templates/system.html	2026-09-04 10:11:27.000000000 +0000
++++ b/templates/system.html	2026-09-04 23:11:07.317650035 +0000
+@@ -22,6 +22,11 @@
+ .wrap { max-width: none; padding: 0 0 calc(72px + var(--sbot)); }
+ @media (min-width: 640px) { .wrap { padding-bottom: 52px; } }
+ .nav-pages a.on, .bnav a.on { color: var(--purple); }
++/* predator.css donne aux tables du dashboard un min-width de 760px (grilles
++   de signaux, défilement horizontal voulu). Les tableaux de cette page sont
++   étroits et doivent tenir dans un téléphone : on retire ce plancher ici,
++   avec :where() pour ne pas peser plus lourd que les classes Tailwind. */
++:where(#sbc-root) table { min-width: 0; }
+ </style>
+ </head>
+ <body>
+@@ -204,6 +209,14 @@
+   if (m === n) return "Accumulateur";
+   return `Système personnalisé (${m} à ${n})`;
+ }
++// Nombre de lignes d'un palier k sur n (C(n, k)) — pour dériver la mise par
++// ligne d'une mise TOTALE sans énumérer les combinaisons.
++function binom(n, k) {
++  if (k < 0 || k > n) return 0;
++  let r = 1;
++  for (let i = 1; i <= k; i++) r = (r * (n - k + i)) / i;
++  return Math.round(r);
++}
+ 
+ /* ---------------------------------------------------------------
+    MATH — combinatoire, gestion des nuls / cotes asiatiques
+@@ -338,13 +351,73 @@
+   return Math.pow(1 + marge, Math.max(0, k)) - 1;
+ }
+ 
++// Scénarios COMPLETS : simples + combiné + système ADDITIONNÉS, pour
++// k = 0..N sélections gagnantes. Pire et meilleur cas EXACTS : toutes les
++// parties de k gagnantes sont parcourues (kCombinations). Le retour de
++// chaque combinaison du système vient de comboReturnFactor sur des jambes
++// « won », évalué UNE fois par combinaison ; une combinaison compte ensuite
++// dans un scénario si toutes ses jambes y sont gagnantes (masque de bits) —
++// même résultat qu'un appel de systemReturn par scénario, sans le coût
++// 2^N × 2^N qui gelait la page à N = 10. Retours conditionnels, jamais des
++// probabilités (règle 7). simpleStakes : mise par sélection (index aligné) ;
++// flags : { sys, simples, combo }.
++// Rend [{ k, mise, worst, best }] ; worst/best = { total, sys, simples,
++// combo, indices } où indices sont les gagnantes du cas. [] si N = 0.
++function scenariosComplets(selections, m, lineStake, simpleStakes, comboStake, flags) {
++  const n = selections.length;
++  if (n === 0) return [];
++  const idx = selections.map((_, i) => i);
++  const won = idx.map((i) => ({ odds: Number(selections[i].odds) || 1.01, status: "won" }));
++  const maskOf = (ind) => ind.reduce((acc, i) => acc | (1 << i), 0);
++  const sysCombos = [];
++  if (flags.sys) {
++    for (let j = Math.max(1, Math.min(m, n)); j <= n; j++) {
++      for (const ind of kCombinations(idx, j)) {
++        sysCombos.push({ mask: maskOf(ind), R: comboReturnFactor(ind.map((i) => won[i])) });
++      }
++    }
++  }
++  const simpleR = idx.map((i) => comboReturnFactor([won[i]]));
++  const comboR = comboReturnFactor(won);
++  const mise = sysCombos.length * lineStake
++    + (flags.simples ? simpleStakes.reduce((s, v) => s + (Number(v) || 0), 0) : 0)
++    + (flags.combo ? comboStake : 0);
++  const out = [];
++  for (let k = 0; k <= n; k++) {
++    let worst = null;
++    let best = null;
++    for (const win of kCombinations(idx, k)) {
++      const mask = maskOf(win);
++      let sys = 0;
++      for (const c of sysCombos) if ((c.mask & mask) === c.mask) sys += c.R * lineStake;
++      let simples = 0;
++      if (flags.simples) for (const i of win) simples += simpleR[i] * (Number(simpleStakes[i]) || 0);
++      const combo = flags.combo && k === n ? comboR * comboStake : 0;
++      const r = { total: sys + simples + combo, sys, simples, combo, indices: win };
++      if (!worst || r.total < worst.total - 1e-9) worst = r;
++      if (!best || r.total > best.total + 1e-9) best = r;
++    }
++    out.push({ k, mise, worst, best });
++  }
++  return out;
++}
++
++// Point mort GLOBAL : plus petit k dont le pire cas complet couvre la mise
++// engagée, toutes sections actives confondues. Même contrat que breakEven.
++function breakEvenComplet(scen) {
++  if (!scen || scen.length === 0) return null;
++  const hit = scen.find((sc) => sc.worst.total >= sc.mise - 1e-9);
++  if (!hit) return null;
++  return { k: hit.k, tooShort: hit.k === scen.length - 1 };
++}
++
+ /* ---------------------------------------------------------------
+    UI ATOMS
+ --------------------------------------------------------------- */
+ function Panel({ title, children, right }) {
+   return (
+     <div style={{ background: C.panel, border: `1px solid ${C.border}`, borderRadius: 12 }} className="p-4 md:p-5">
+-      <div className="flex items-center justify-between mb-3">
++      <div className="flex items-center justify-between flex-wrap gap-x-3 gap-y-1 mb-3">
+         <h2 style={{ color: C.text, fontFamily: SANS }} className="text-sm font-semibold tracking-wide uppercase">{title}</h2>
+         {right}
+       </div>
+@@ -371,6 +444,65 @@
+   );
+ }
+ 
++// Interrupteur « Dans le total » : chaque section (simples, combiné,
++// système) entre ou sort de l'addition finale sans perdre ses saisies.
++function Toggle({ on, onChange, label }) {
++  return (
++    <button type="button" role="switch" aria-checked={on} onClick={() => onChange(!on)}
++      style={{ color: on ? C.win : C.faint, border: `1px solid ${on ? C.win : C.border}`,
++               background: on ? "rgba(51,196,129,0.10)" : "transparent", fontFamily: SANS, cursor: "pointer" }}
++      className="flex items-center gap-1.5 text-xs px-2 py-1 rounded-md transition">
++      <span style={{ width: 22, height: 12, borderRadius: 6, background: on ? C.win : C.border, position: "relative", display: "inline-block" }}>
++        <span style={{ position: "absolute", top: 2, left: on ? 12 : 2, width: 8, height: 8, borderRadius: 4, background: C.bg, transition: "left .15s" }}></span>
++      </span>
++      {label}
++    </button>
++  );
++}
++// Sélecteur à deux positions (mode de mise du système).
++function Segmented({ value, options, onChange }) {
++  return (
++    <div style={{ background: C.panel2, border: `1px solid ${C.border}`, borderRadius: 8 }} className="flex p-0.5">
++      {options.map((o) => {
++        const active = o.v === value;
++        return (
++          <button key={o.v} type="button" onClick={() => onChange(o.v)}
++            style={{ background: active ? C.gold : "transparent", color: active ? C.bg : C.muted, fontFamily: SANS, borderRadius: 6, border: 0, cursor: "pointer" }}
++            className="flex-1 text-xs font-medium px-2 py-1.5 transition">
++            {o.label}
++          </button>
++        );
++      })}
++    </div>
++  );
++}
++// Ligne libellé / montant, utilisée pour le bilan de chaque section.
++function StatRow({ label, value, color, strong }) {
++  return (
++    <div className="flex items-center justify-between gap-3">
++      <span style={{ color: C.muted, fontFamily: SANS }} className="text-xs">{label}</span>
++      <span style={{ color: color || C.text, fontFamily: MONO }} className={strong ? "text-base font-semibold" : "text-sm"}>{value}</span>
++    </div>
++  );
++}
++// Détail d'un cas (pire ou meilleur) d'un scénario complet : quelles
++// sélections sont bonnes, et ce que rend chaque section.
++function ScenarioDetail({ titre, r, selections, flags, fmtN }) {
++  const parts = [];
++  if (flags.simples) parts.push(`Simples ${fmtN(r.simples)}`);
++  if (flags.combo) parts.push(`Combiné ${fmtN(r.combo)}`);
++  if (flags.sys) parts.push(`Système ${fmtN(r.sys)}`);
++  return (
++    <div className="text-xs">
++      <span style={{ color: C.muted, fontFamily: SANS }}>{titre} — bonnes : </span>
++      <span style={{ color: C.text }}>
++        {r.indices.length === 0 ? "aucune" : r.indices.map((i) => `${i + 1} @${selections[i].odds.toFixed(2)}`).join(" · ")}
++      </span>
++      <div style={{ color: C.faint }} className="mt-0.5">{parts.join(" + ")} = {fmtN(r.total)}</div>
++    </div>
++  );
++}
++
+ /* ---------------------------------------------------------------
+    AUTO-FILL — signaux PAIM actifs -> ticket système
+ --------------------------------------------------------------- */
+@@ -438,8 +570,23 @@
+   // "0" de repli ne se réinsère à chaque frappe (bug remonté : "0500" au lieu
+   // de "500"). La valeur numérique clampée n'est dérivée qu'au moment du calcul.
+   const [stakeInput, setStakeInput] = useState("1000");
+-  const stake = Math.max(0, parseFloat(stakeInput) || 0);
++  const lineStakeInput = Math.max(0, parseFloat(stakeInput) || 0);
+   const [currency, setCurrency] = useState("XOF");
++  // Mode de mise du système : « par ligne » (saisie directe) ou « totale »
++  // (répartie à parts égales sur toutes les lignes). La mise par ligne
++  // effective `stake` est dérivée plus bas, une fois le nombre de lignes connu.
++  const [stakeMode, setStakeMode] = useState("line"); // 'line' | 'total'
++  const [totalStakeInput, setTotalStakeInput] = useState("");
++  // Sections additionnées dans le total : chacune entre ou sort de l'addition.
++  const [sysOn, setSysOn] = useState(true);
++  const [simplesOn, setSimplesOn] = useState(true);
++  const [comboOn, setComboOn] = useState(true);
++  // Mises individuelles : une mise par défaut commune, surchargée ligne par
++  // ligne (id -> texte brut ; champ vidé = retour à la mise par défaut).
++  const [simpleDefaultInput, setSimpleDefaultInput] = useState("1000");
++  const [simpleStakes, setSimpleStakes] = useState({});
++  const [comboStakeInput, setComboStakeInput] = useState("1000");
++  const [openScenario, setOpenScenario] = useState(null);
+   // Fiscalité masquée sur cette page (demande opérateur) mais gardée active
+   // "en sourdine" : la retenue continue d'être calculée dans `computed`
+   // ci-dessous avec les mêmes réglages par défaut, simplement plus affichée.
+@@ -515,6 +662,11 @@
+     return arr;
+   }, [sysM, n]);
+   const systemLabelText = systemLabel(Math.min(sysM, n), n);
++  const totalLignes = useMemo(() => sortedFolds.reduce((s, k) => s + binom(n, k), 0), [sortedFolds, n]);
++  const totalStakeWanted = Math.max(0, parseFloat(totalStakeInput) || 0);
++  // Mise par ligne EFFECTIVE du système : saisie telle quelle, ou mise totale
++  // divisée par le nombre de lignes. Tout le calcul système passe par elle.
++  const stake = stakeMode === "total" ? (totalLignes > 0 ? totalStakeWanted / totalLignes : 0) : lineStakeInput;
+ 
+   // Calcul complet
+   const computed = useMemo(() => {
+@@ -558,6 +710,75 @@
+   const pointMort = useMemo(() => breakEven(scenarios), [scenarios]);
+ 
+   const fmt = (v) => `${v.toLocaleString("fr-FR", { minimumFractionDigits: 2, maximumFractionDigits: 2 })} ${currency}`;
++  const signed = (v) => `${v >= 0 ? "+" : ""}${fmt(v)}`;
++  // Format compact (sans devise, décimales seulement si besoin) pour les
++  // tableaux étroits : la devise est rappelée une fois sous le tableau.
++  const fmtN = (v) => v.toLocaleString("fr-FR", { minimumFractionDigits: 0, maximumFractionDigits: 2 });
++  const signedN = (v) => `${v >= 0 ? "+" : ""}${fmtN(v)}`;
++  const round2 = (v) => Math.round(v * 100) / 100;
++
++  // Mises individuelles : chaque sélection jouée seule. Le retour passe par
++  // comboReturnFactor sur une jambe, donc les statuts (nul, asiatique
++  // partiel) sont traités exactement comme dans le système.
++  const simpleStakeOf = (sel) => {
++    const raw = simpleStakes[sel.id];
++    const v = raw === undefined || raw === "" ? simpleDefaultInput : raw;
++    return Math.max(0, parseFloat(v) || 0);
++  };
++  const simples = useMemo(() => {
++    const rows = selections.map((sel, i) => {
++      const st = simpleStakeOf(sel);
++      const R = comboReturnFactor([sel]);
++      const brut = R * st;
++      return { sel, i, stake: st, R, brut, net: brut - st, bucket: bucketOf(R) };
++    });
++    const mise = rows.reduce((s, r) => s + r.stake, 0);
++    const brut = rows.reduce((s, r) => s + r.brut, 0);
++    return { rows, mise, brut, net: brut - mise };
++  }, [selections, simpleStakes, simpleDefaultInput]);
++
++  // Combiné N/N : toutes les sélections sur une ligne, cote totale = produit.
++  const comboStake = Math.max(0, parseFloat(comboStakeInput) || 0);
++  const combine = useMemo(() => {
++    const cote = selections.reduce((p, s) => p * (Number(s.odds) || 1.01), 1);
++    const R = comboReturnFactor(selections);
++    const brut = R * comboStake;
++    return { cote, R, stake: comboStake, brut, net: brut - comboStake, bucket: bucketOf(R) };
++  }, [selections, comboStake]);
++
++  // Total : addition des sections ACTIVES. Le combiné n'existe qu'à partir
++  // de 2 sélections (à 1, c'est un simple).
++  const sectionFlags = { sys: sysOn && n > 0, simples: simplesOn && n > 0, combo: comboOn && n >= 2 };
++  const sections = [
++    { key: "simples", label: `${n} simple${n > 1 ? "s" : ""}`, on: sectionFlags.simples, mise: simples.mise, brut: simples.brut },
++    ...(n >= 2 ? [{ key: "combo", label: `Combiné ${n}/${n}`, on: sectionFlags.combo, mise: combine.stake, brut: combine.brut }] : []),
++    { key: "sys", label: `Système ${Math.min(sysM, n)}/${n}`, on: sectionFlags.sys, mise: computed.totalMise, brut: computed.totalRetour },
++  ].map((sec) => ({ ...sec, net: sec.brut - sec.mise }));
++  const grand = (() => {
++    const act = sections.filter((sec) => sec.on);
++    const mise = act.reduce((s, sec) => s + sec.mise, 0);
++    const brut = act.reduce((s, sec) => s + sec.brut, 0);
++    return { mise, brut, net: brut - mise, roi: mise > 0 ? ((brut - mise) / mise) * 100 : 0 };
++  })();
++  // Un système M/N contient déjà le combiné N/N, et à M = 1 les N simples :
++  // les additionner n'est pas faux, mais c'est miser deux fois — on le dit.
++  const inclus = [];
++  if (sectionFlags.sys && sectionFlags.simples && Math.min(sysM, n) === 1) inclus.push(`les ${n} simples`);
++  if (sectionFlags.sys && sectionFlags.combo) inclus.push(`le combiné ${n}/${n}`);
++  const doublon = inclus.length > 0 ? `Le système ${Math.min(sysM, n)}/${n} contient déjà ${inclus.join(" et ")}` : null;
++
++  // Scénarios complets : pire / meilleur cas EXACTS toutes sections actives
++  // confondues — retours conditionnels, jamais des probabilités (règle 7).
++  const scenariosTotal = useMemo(() => scenariosComplets(
++    selections, Math.min(sysM, n), stake, simples.rows.map((r) => r.stake), combine.stake, sectionFlags),
++    [selections, sysM, n, stake, simples, combine, sectionFlags.sys, sectionFlags.simples, sectionFlags.combo]);
++  const pointMortTotal = useMemo(() => breakEvenComplet(scenariosTotal), [scenariosTotal]);
++  const verdictOf = (sc) => {
++    if (sc.worst.total > sc.mise + 1e-9) return { t: "Gagnant", c: C.win };
++    if (sc.worst.total >= sc.mise - 1e-9) return { t: "Couvert", c: C.gold };
++    if (sc.best.total >= sc.mise - 1e-9) return { t: "Selon lesquelles", c: C.partial };
++    return { t: "Perdant", c: C.loss };
++  };
+ 
+   const addSelection = () => {
+     if (n >= 10) return;
+@@ -580,6 +801,19 @@
+   const removeSelection = (id) => setSelections((s) => s.filter((x) => x.id !== id));
+   const clearAll = () => { setSelections([]); setPickerOpen(false); };
+   const updateSelection = (id, patch) => setSelections((s) => s.map((x) => (x.id === id ? { ...x, ...patch } : x)));
++  const setSimpleStake = (id, raw) => setSimpleStakes((m) => {
++    const next = { ...m };
++    if (raw === "") delete next[id]; else next[id] = raw;
++    return next;
++  });
++  // Bascule par ligne <-> totale en conservant la mise engagée courante, pour
++  // que le changement de mode ne change pas le ticket.
++  const switchStakeMode = (mode) => {
++    if (mode === stakeMode) return;
++    if (mode === "total") setTotalStakeInput(String(round2(lineStakeInput * totalLignes)));
++    else setStakeInput(String(round2(stake)));
++    setStakeMode(mode);
++  };
+   const setSelectionCount = (target) => {
+     const t = Math.max(1, Math.min(10, target));
+     setSelections((s) => {
+@@ -616,16 +850,17 @@
+         {/* Header */}
+         <div className="mb-6">
+           <div style={{ color: C.gold, fontFamily: MONO }} className="text-xs tracking-widest uppercase mb-1">Predator Paim · Outils</div>
+-          <h1 style={{ color: C.text }} className="text-2xl md:text-3xl font-semibold mb-2">Calculateur de paris système</h1>
++          <h1 style={{ color: C.text }} className="text-2xl md:text-3xl font-semibold mb-2">Calculateur de paris</h1>
+           <p style={{ color: C.muted }} className="text-sm max-w-2xl">
+-            Calcule tous les paliers d'un système (Trixie, Yankee, Heinz, Goliath, etc.) et gère correctement les
+-            sélections nulles et les cotes asiatiques partielles.
++            Système, simples et combiné sur les mêmes sélections, additionnés dans un total unique, avec le pire et
++            le meilleur cas selon le nombre de bons. Nuls et cotes asiatiques partielles gérés.
+           </p>
+           <p style={{ color: C.faint, fontFamily: MONO }} className="text-xs mt-2">{statusLine}</p>
+         </div>
+ 
+         <div className="grid grid-cols-1 lg:grid-cols-12 gap-5">
+-          {/* LEFT COLUMN */}
++          {/* LEFT COLUMN — saisie : les sélections, puis une section par type de pari,
++              chacune avec son propre bilan brut/net. */}
+           <div className="lg:col-span-5 space-y-5">
+             {/* Ticket */}
+             <Panel
+@@ -715,8 +950,9 @@
+               {n >= 10 && <div style={{ color: C.faint }} className="text-xs mt-2">Maximum 10 sélections pour garder un affichage lisible.</div>}
+             </Panel>
+ 
+-            {/* System config — deux dropdowns M/N, comme betbuzz */}
+-            <Panel title="Système">
++            {/* System config — deux dropdowns M/N, comme betbuzz ; mise saisie
++                PAR LIGNE ou TOTALE (répartie à parts égales sur les lignes). */}
++            <Panel title="Système" right={n > 0 ? <Toggle on={sysOn} onChange={setSysOn} label="Dans le total" /> : null}>
+               {n === 0 ? (
+                 <p style={{ color: C.faint }} className="text-xs">
+                   Aucune sélection — ajoute-en une (bouton « Ajouter ») pour configurer le système.
+@@ -739,15 +975,28 @@
+               </div>
+               <div style={{ background: "rgba(198,161,91,0.1)", border: `1px solid ${C.goldSoft}`, color: C.gold, fontFamily: MONO }}
+                 className="text-xs px-2.5 py-1.5 rounded-md mb-4 inline-block">
+-                Système {Math.min(sysM, n)}/{n} = {systemLabelText}
++                Système {Math.min(sysM, n)}/{n} = {systemLabelText} · {totalLignes} ligne{totalLignes > 1 ? "s" : ""}
+               </div>
+-              <div className="grid grid-cols-2 gap-3">
+-                <Field label="Mise par ligne">
+-                  <input type="number" min="0" step="1" value={stakeInput}
+-                    onChange={(e) => setStakeInput(e.target.value)}
+-                    onBlur={() => setStakeInput(String(stake))}
+-                    style={inputStyle} className="text-sm rounded-md px-2 py-1.5" />
+-                </Field>
++              <Field label="Mode de mise">
++                <Segmented value={stakeMode} onChange={switchStakeMode}
++                  options={[{ v: "line", label: "Mise par ligne" }, { v: "total", label: "Mise totale" }]} />
++              </Field>
++              <div className="grid grid-cols-2 gap-3 mt-3">
++                {stakeMode === "line" ? (
++                  <Field label="Mise par ligne">
++                    <input type="number" min="0" step="1" value={stakeInput}
++                      onChange={(e) => setStakeInput(e.target.value)}
++                      onBlur={() => setStakeInput(String(lineStakeInput))}
++                      style={inputStyle} className="text-sm rounded-md px-2 py-1.5" />
++                  </Field>
++                ) : (
++                  <Field label="Mise totale">
++                    <input type="number" min="0" step="1" value={totalStakeInput}
++                      onChange={(e) => setTotalStakeInput(e.target.value)}
++                      onBlur={() => setTotalStakeInput(String(totalStakeWanted))}
++                      style={inputStyle} className="text-sm rounded-md px-2 py-1.5" />
++                  </Field>
++                )}
+                 <Field label="Devise">
+                   <select value={currency} onChange={(e) => setCurrency(e.target.value)}
+                     style={{ ...inputStyle, fontFamily: SANS }} className="text-sm rounded-md px-2 py-1.5">
+@@ -755,20 +1004,279 @@
+                   </select>
+                 </Field>
+               </div>
++              <p style={{ color: C.faint, fontFamily: MONO }} className="text-xs mt-2">
++                {stakeMode === "line"
++                  ? `${totalLignes} × ${fmt(stake)} = ${fmt(computed.totalMise)} engagés`
++                  : `${fmt(totalStakeWanted)} ÷ ${totalLignes} = ${fmt(stake)} par ligne`}
++              </p>
++              <div style={{ borderTop: `1px solid ${C.borderSoft}` }} className="mt-3 pt-3 space-y-1.5">
++                <StatRow label="Mise totale" value={fmt(computed.totalMise)} />
++                <StatRow label="Gain brut" value={fmt(computed.totalRetour)} />
++                <StatRow label="Gain net" value={signed(computed.totalProfit)} color={computed.totalProfit >= 0 ? C.win : C.loss} strong />
++              </div>
++              </>
++              )}
++            </Panel>
++
++            {/* Mises individuelles — chaque sélection jouée SEULE, avec sa propre
++                mise : une mise par défaut commune, surchargeable ligne par ligne. */}
++            <Panel title="Mises individuelles" right={n > 0 ? <Toggle on={simplesOn} onChange={setSimplesOn} label="Dans le total" /> : null}>
++              {n === 0 ? (
++                <p style={{ color: C.faint }} className="text-xs">Aucune sélection — chaque sélection pourra être jouée seule ici.</p>
++              ) : (
++              <>
++              <div className="flex items-end gap-3 mb-3">
++                <Field label="Mise par défaut (toutes)">
++                  <input type="number" min="0" step="1" value={simpleDefaultInput}
++                    onChange={(e) => setSimpleDefaultInput(e.target.value)}
++                    onBlur={() => setSimpleDefaultInput(String(Math.max(0, parseFloat(simpleDefaultInput) || 0)))}
++                    style={inputStyle} className="text-sm rounded-md px-2 py-1.5 w-32" />
++                </Field>
++                {Object.keys(simpleStakes).length > 0 && (
++                  <button onClick={() => setSimpleStakes({})}
++                    style={{ color: C.muted, border: `1px solid ${C.border}` }}
++                    className="text-xs px-2 py-1.5 rounded-md">
++                    Tout remettre par défaut
++                  </button>
++                )}
++              </div>
++              <div className="space-y-2">
++                {simples.rows.map((r) => (
++                  <div key={r.sel.id} style={{ background: C.panel2, border: `1px solid ${C.borderSoft}`, borderRadius: 10 }} className="p-2.5">
++                    <div className="flex items-center gap-2 mb-2">
++                      <span style={{ color: C.gold, fontFamily: MONO, background: "rgba(198,161,91,0.1)" }} className="text-xs w-6 h-6 flex items-center justify-center rounded-md shrink-0">
++                        {r.i + 1}
++                      </span>
++                      <span style={{ color: C.text }} className="flex-1 min-w-0 truncate text-sm">{r.sel.label || `Sélection ${r.i + 1}`}</span>
++                      <span style={{ color: C.gold, fontFamily: MONO }} className="text-sm shrink-0">@{r.sel.odds.toFixed(2)}</span>
++                    </div>
++                    <div className="flex items-center gap-2">
++                      <input type="number" min="0" step="1" value={simpleStakes[r.sel.id] ?? ""} placeholder={simpleDefaultInput}
++                        aria-label={`Mise sélection ${r.i + 1}`}
++                        onChange={(e) => setSimpleStake(r.sel.id, e.target.value)}
++                        style={inputStyle} className="w-24 shrink-0 text-sm rounded-md px-2 py-1.5" />
++                      <div className="flex-1 min-w-0 text-right" style={{ fontFamily: MONO }}>
++                        <div style={{ color: C.faint }} className="text-xs">
++                          {fmtN(r.stake)} × {r.sel.odds.toFixed(2)}{r.sel.status !== "won" ? ` · ${STATUS_OPTS.find((o) => o.v === r.sel.status)?.label}` : ""}
++                        </div>
++                        <div style={{ color: bucketColor[r.bucket] }} className="text-sm font-semibold">{fmt(r.brut)}</div>
++                        <div style={{ color: r.net >= 0 ? C.win : C.loss }} className="text-xs">net {signed(r.net)}</div>
++                      </div>
++                    </div>
++                  </div>
++                ))}
++              </div>
++              <div style={{ borderTop: `1px solid ${C.borderSoft}` }} className="mt-3 pt-3 space-y-1.5">
++                <StatRow label={`Mise totale · ${n} simple${n > 1 ? "s" : ""}`} value={fmt(simples.mise)} />
++                <StatRow label="Gain brut" value={fmt(simples.brut)} />
++                <StatRow label="Gain net potentiel" value={signed(simples.net)} color={simples.net >= 0 ? C.win : C.loss} strong />
++              </div>
++              </>
++              )}
++            </Panel>
++
++            {/* Combiné — TOUTES les sélections sur une seule ligne N/N, cote
++                totale = produit des cotes (statuts appliqués par le moteur). */}
++            <Panel title="Combiné" right={n >= 2 ? <Toggle on={comboOn} onChange={setComboOn} label="Dans le total" /> : null}>
++              {n < 2 ? (
++                <p style={{ color: C.faint }} className="text-xs">
++                  Il faut au moins 2 sélections pour un combiné{n === 1 ? " — avec une seule, c'est un simple (section ci-dessus)" : ""}.
++                </p>
++              ) : (
++              <>
++              <div className="flex flex-wrap gap-1.5 mb-3">
++                {selections.map((sel, i) => (
++                  <span key={sel.id} style={{ color: C.text, background: C.panel2, border: `1px solid ${C.borderSoft}`, fontFamily: MONO }}
++                    className="text-xs px-2 py-1 rounded-md max-w-full truncate">
++                    {i + 1} · {sel.label || `Sélection ${i + 1}`} <span style={{ color: C.gold }}>@{sel.odds.toFixed(2)}</span>
++                  </span>
++                ))}
++              </div>
++              <div className="grid grid-cols-2 gap-3 items-end">
++                <Field label="Mise du combiné">
++                  <input type="number" min="0" step="1" value={comboStakeInput}
++                    onChange={(e) => setComboStakeInput(e.target.value)}
++                    onBlur={() => setComboStakeInput(String(comboStake))}
++                    style={inputStyle} className="text-sm rounded-md px-2 py-1.5" />
++                </Field>
++                <div>
++                  <div style={{ color: C.muted }} className="text-xs mb-1">Cote totale</div>
++                  <div style={{ color: C.gold, fontFamily: MONO }} className="text-xl font-semibold leading-none">{combine.cote.toFixed(3)}</div>
++                </div>
++              </div>
++              <p style={{ color: C.faint, fontFamily: MONO }} className="text-xs mt-2">
++                {selections.map((s) => s.odds.toFixed(2)).join(" × ")} = {combine.cote.toFixed(3)}
++              </p>
++              <div style={{ borderTop: `1px solid ${C.borderSoft}` }} className="mt-3 pt-3 space-y-1.5">
++                <StatRow label={`${fmtN(combine.stake)} × ${combine.cote.toFixed(3)}`} value={fmt(combine.stake * combine.cote)} />
++                <StatRow label="Gain brut" value={fmt(combine.brut)} color={bucketColor[combine.bucket]} />
++                <StatRow label="Gain net" value={signed(combine.net)} color={combine.net >= 0 ? C.win : C.loss} strong />
++              </div>
++              {combine.bucket !== "win" && (
++                <p style={{ color: C.partial }} className="text-xs mt-2">
++                  Statuts appliqués : facteur de retour {combine.R.toFixed(3)}× (nul = cote 1, perdu = 0).
++                </p>
++              )}
+               </>
+               )}
+             </Panel>
+           </div>
+ 
+-          {/* RIGHT COLUMN */}
++          {/* RIGHT COLUMN — le total des sections actives, ses scénarios
++              complets, puis le détail du système seul. */}
+           <div className="lg:col-span-7 space-y-5">
+             {n === 0 ? (
+-              <Panel title="Résultats">
++              <Panel title="Total">
+                 <p style={{ color: C.muted }} className="text-sm">Ajoute au moins une sélection pour lancer le calcul.</p>
+               </Panel>
+             ) : (
+               <>
+-                <Panel title="Résumé">
++                {/* Total — addition des sections actives (interrupteur « Dans le
++                    total » de chacune). Brut = retour mise comprise, net = brut − mise. */}
++                <Panel title="Total"
++                  right={<span style={{ color: C.faint, fontFamily: SANS }} className="text-xs">{sections.filter((s) => s.on).length}/{sections.length} sections actives</span>}
++                >
++                  <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
++                    <SummaryCard label="Mise engagée" value={fmt(grand.mise)} />
++                    <SummaryCard label="Gain brut potentiel" value={fmt(grand.brut)} />
++                    <SummaryCard label="Gain net potentiel" value={signed(grand.net)} color={grand.net >= 0 ? C.win : C.loss} />
++                    <SummaryCard label="ROI" value={`${grand.roi.toFixed(1)} %`} color={grand.net >= 0 ? C.win : C.loss} />
++                  </div>
++                  <div className="mt-3 overflow-x-auto">
++                    <table className="w-full text-xs" style={{ fontFamily: MONO, borderCollapse: "collapse" }}>
++                      <thead>
++                        <tr style={{ color: C.muted, fontFamily: SANS }}>
++                          <th className="text-left py-1 pr-2">Section</th>
++                          <th className="text-right py-1 px-2">Mise</th>
++                          <th className="text-right py-1 px-2">Brut</th>
++                          <th className="text-right py-1 pl-2">Net</th>
++                        </tr>
++                      </thead>
++                      <tbody>
++                        {sections.map((s) => (
++                          <tr key={s.key} style={{ borderTop: `1px solid ${C.borderSoft}`, opacity: s.on ? 1 : 0.45 }}>
++                            <td className="py-1.5 pr-2" style={{ color: C.text, fontFamily: SANS }}>
++                              {s.label}{!s.on && <span style={{ color: C.faint }}> · hors total</span>}
++                            </td>
++                            <td className="text-right py-1.5 px-2" style={{ color: C.text }}>{fmtN(s.mise)}</td>
++                            <td className="text-right py-1.5 px-2" style={{ color: C.text }}>{fmtN(s.brut)}</td>
++                            <td className="text-right py-1.5 pl-2" style={{ color: s.net >= 0 ? C.win : C.loss }}>{signedN(s.net)}</td>
++                          </tr>
++                        ))}
++                        <tr style={{ borderTop: `1px solid ${C.border}`, color: C.text }} className="font-semibold">
++                          <td className="py-1.5 pr-2" style={{ fontFamily: SANS }}>Total</td>
++                          <td className="text-right py-1.5 px-2">{fmtN(grand.mise)}</td>
++                          <td className="text-right py-1.5 px-2">{fmtN(grand.brut)}</td>
++                          <td className="text-right py-1.5 pl-2" style={{ color: grand.net >= 0 ? C.win : C.loss }}>{signedN(grand.net)}</td>
++                        </tr>
++                      </tbody>
++                    </table>
++                  </div>
++                  <p style={{ color: C.faint }} className="text-xs mt-2">
++                    Brut = retour, mise comprise · Net = brut − mise · en {currency}, selon les statuts saisis (Gagné par défaut = tout passe).
++                  </p>
++                  {doublon && (
++                    <div style={{ background: "rgba(227,162,60,0.10)", border: `1px solid ${C.partial}`, color: C.partial }}
++                      className="text-xs px-2.5 py-1.5 rounded-md mt-2">
++                      ⚠ {doublon} : les mises s'additionnent, c'est jouer deux fois la même chose. Voulu ? Sinon, sors une section du total.
++                    </div>
++                  )}
++                </Panel>
++
++                {/* Scénarios complets — pire et meilleur cas EXACTS, toutes sections
++                    actives confondues, par nombre de bons. Retours conditionnels,
++                    jamais des probabilités (règle 7). */}
++                <Panel
++                  title="Scénarios complets"
++                  right={<span style={{ color: C.faint, fontFamily: SANS }} className="text-xs">toutes sections — pas des probabilités</span>}
++                >
++                  {grand.mise <= 0 ? (
++                    <p style={{ color: C.muted }} className="text-sm">Active au moins une section avec une mise pour voir les scénarios.</p>
++                  ) : (
++                  <>
++                  <p style={{ color: C.muted }} className="text-xs mb-3">
++                    Si <span style={{ color: C.text, fontFamily: MONO }}>k</span> sélections sur {n} sont bonnes, pour {fmt(grand.mise)} engagés.
++                    Pire cas : les k bonnes qui rapportent le moins. Meilleur cas : celles qui rapportent le plus. Touche une ligne pour le détail.
++                  </p>
++                  <div className="grid grid-cols-2 gap-3 mb-3">
++                    <div style={{ background: C.panel2, border: `1px solid ${C.borderSoft}`, borderRadius: 10 }} className="px-4 py-3">
++                      <div style={{ color: C.muted }} className="text-xs mb-1">Point mort</div>
++                      <div style={{ color: pointMortTotal ? C.gold : C.loss, fontFamily: MONO }} className="text-lg font-semibold">
++                        {pointMortTotal ? `${pointMortTotal.k} bon${pointMortTotal.k > 1 ? "s" : ""} sur ${n}` : "jamais"}
++                      </div>
++                      <div style={{ color: C.faint }} className="text-xs mt-0.5">
++                        {pointMortTotal && pointMortTotal.tooShort ? `${n - 1} bons sur ${n} ne couvrent pas la mise` : "pire cas ≥ mise engagée"}
++                      </div>
++                    </div>
++                    <div style={{ background: C.panel2, border: `1px solid ${C.borderSoft}`, borderRadius: 10 }} className="px-4 py-3">
++                      <div style={{ color: C.muted }} className="text-xs mb-1">Si tout passe</div>
++                      <div style={{ color: C.win, fontFamily: MONO }} className="text-lg font-semibold">
++                        {signed(scenariosTotal[n].best.total - grand.mise)}
++                      </div>
++                      <div style={{ color: C.faint }} className="text-xs mt-0.5">{fmt(scenariosTotal[n].best.total)} de retour</div>
++                    </div>
++                  </div>
++                  <table className="w-full text-xs" style={{ fontFamily: MONO, borderCollapse: "collapse" }}>
++                    <thead>
++                      <tr style={{ color: C.muted, fontFamily: SANS }}>
++                        <th className="text-left py-1 pr-2">k bons</th>
++                        <th className="text-right py-1 px-2">Pire cas</th>
++                        <th className="text-right py-1 px-2">Meilleur cas</th>
++                        <th className="text-right py-1 pl-2">Verdict</th>
++                      </tr>
++                    </thead>
++                    <tbody>
++                      {scenariosTotal.map((sc) => {
++                        const v = verdictOf(sc);
++                        const open = openScenario === sc.k;
++                        const estPM = pointMortTotal && pointMortTotal.k === sc.k;
++                        const netW = sc.worst.total - sc.mise;
++                        const netB = sc.best.total - sc.mise;
++                        return (
++                          <React.Fragment key={sc.k}>
++                            <tr onClick={() => setOpenScenario(open ? null : sc.k)}
++                              style={{ borderTop: `1px solid ${C.borderSoft}`, background: estPM ? "rgba(198,161,91,0.10)" : "transparent", cursor: "pointer" }}>
++                              <td className="py-1.5 pr-2 align-top" style={{ color: estPM ? C.gold : C.text }}>
++                                {sc.k}/{n}{estPM ? " ◆" : ""}
++                              </td>
++                              <td className="text-right py-1.5 px-2 align-top">
++                                <div style={{ color: C.text }}>{fmtN(sc.worst.total)}</div>
++                                <div style={{ color: netW >= 0 ? C.win : C.loss }}>{signedN(netW)}</div>
++                              </td>
++                              <td className="text-right py-1.5 px-2 align-top">
++                                <div style={{ color: C.text }}>{fmtN(sc.best.total)}</div>
++                                <div style={{ color: netB >= 0 ? C.win : C.loss }}>{signedN(netB)}</div>
++                              </td>
++                              <td className="text-right py-1.5 pl-2 align-top">
++                                <span style={{ color: v.c, border: `1px solid ${v.c}`, background: `${v.c}22`, fontFamily: SANS }}
++                                  className="inline-block px-1.5 py-0.5 rounded-md whitespace-nowrap">{v.t}</span>
++                              </td>
++                            </tr>
++                            {open && (
++                              <tr style={{ background: C.panel2 }}>
++                                <td colSpan="4" className="px-2 py-2">
++                                  <div className="space-y-1.5">
++                                    <ScenarioDetail titre="Pire cas" r={sc.worst} selections={selections} flags={sectionFlags} fmtN={fmtN} />
++                                    <ScenarioDetail titre="Meilleur cas" r={sc.best} selections={selections} flags={sectionFlags} fmtN={fmtN} />
++                                  </div>
++                                </td>
++                              </tr>
++                            )}
++                          </React.Fragment>
++                        );
++                      })}
++                    </tbody>
++                  </table>
++                  <p style={{ color: C.faint }} className="text-xs mt-2">
++                    Retour puis net, en {currency}. Gagnant = couvert même dans le pire cas · Selon lesquelles = dépend des bonnes · Perdant = jamais couvert.
++                  </p>
++                  </>
++                  )}
++                </Panel>
++
++                {/* Résumé du SYSTÈME seul (les panneaux ci-dessous ne concernent
++                    que lui : scénarios système, détail par palier). */}
++                <Panel title="Système — résumé">
+                   <div className="grid grid-cols-2 md:grid-cols-3 gap-3">
+                     <SummaryCard label="Lignes" value={computed.totalLignes} />
+                     <SummaryCard label="Mise totale" value={fmt(computed.totalMise)} />
+@@ -793,7 +1301,7 @@
+                     réussite (règle 7) — le libellé le dit. */}
+                 <Panel
+                   title="Scénarios"
+-                  right={<span style={{ color: C.faint, fontFamily: SANS }} className="text-xs">retours conditionnels — pas des probabilités</span>}
++                  right={<span style={{ color: C.faint, fontFamily: SANS }} className="text-xs">système seul · retours conditionnels — pas des probabilités</span>}
+                 >
+                   <p style={{ color: C.muted }} className="text-xs mb-3">
+                     Si <span style={{ color: C.text, fontFamily: MONO }}>k</span> sélections sur {n} sont bonnes, sur le système {Math.min(sysM, n)}/{n} et la mise {fmt(stake)} par ligne.
+--- a/tests/test_system_page.py	2026-09-04 10:11:27.000000000 +0000
++++ b/tests/test_system_page.py	2026-09-04 23:13:05.232901412 +0000
+@@ -123,3 +123,42 @@
+         ouverts = len(re.findall(rf"<{tag}\b(?![^>]*/>)", jsx))
+         fermes = len(re.findall(rf"</{tag}>", jsx))
+         assert ouverts == fermes, f"<{tag}> : {ouverts} ouvert(s), {fermes} fermé(s)"
++
++
++class TestSectionsAdditionnees:
++    """Chantier « sections additionnées » (2026-09-04) : simples, combiné et
++    système ont chacun leur mise et leur bilan brut/net, s'additionnent dans
++    un total, et les scénarios COMPLETS (toutes sections) sont exacts. Même
++    règle que les scénarios système : dérivé du moteur, jamais dedans, jamais
++    des probabilités."""
++
++    def test_les_scenarios_complets_vivent_hors_du_bloc_math_et_passent_par_le_moteur(self, jsx):
++        fin_math = jsx.index("SCÉNARIOS — dérivés du moteur")
++        debut = jsx.index("function scenariosComplets(")
++        assert debut > fin_math
++        corps = jsx[debut:jsx.index("function breakEvenComplet(")]
++        # Une combinaison du système est évaluée par le moteur, puis comptée
++        # dans un scénario si toutes ses jambes y sont gagnantes (masque).
++        assert "kCombinations(" in corps and "comboReturnFactor(" in corps
++        assert "(c.mask & mask) === c.mask" in corps
++        # Interdit : rappeler systemReturn par scénario (2^N × 2^N, page gelée à N = 10).
++        assert "systemReturn(" not in corps
++
++    def test_les_quatre_sections_et_le_mode_de_mise_sont_rendus(self, jsx):
++        for titre in ("Système", "Mises individuelles", "Combiné", "Total", "Scénarios complets"):
++            assert f'title="{titre}"' in jsx, titre
++        assert 'label: "Mise par ligne"' in jsx and 'label: "Mise totale"' in jsx
++        assert "switchStakeMode" in jsx and "totalStakeWanted / totalLignes" in jsx
++        # Chaque section entre ou sort du total sans perdre ses saisies.
++        assert jsx.count('label="Dans le total"') == 3
++        assert "scenariosComplets(" in jsx and "breakEvenComplet(scenariosTotal)" in jsx
++
++    def test_le_doublon_systeme_simples_combine_est_signale(self, jsx):
++        # Un système M/N contient le combiné N/N, et à M = 1 les N simples :
++        # additionner les deux est jouer deux fois — la page le dit.
++        assert "contient déjà" in jsx and "jouer deux fois" in jsx
++
++    def test_les_tables_tiennent_dans_un_telephone(self, html):
++        # predator.css impose min-width: 760px aux tables (grilles de signaux) ;
++        # sans cet override, les tableaux de /system débordent sur mobile.
++        assert ":where(#sbc-root) table { min-width: 0; }" in html
