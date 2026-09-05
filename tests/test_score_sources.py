@@ -522,3 +522,66 @@ class TestLiveScore:
         d'émission et la politique de dépense restent une décision opérateur
         (CLAUDE.md règle n°11)."""
         assert ss.sports_reglables() == frozenset(ss._ESPN_PATHS) | {"baseball"}
+
+
+class TestSondeDAlias:
+    """La sonde d'alias JOURNALISE, elle ne règle jamais (2026-09-05).
+
+    Régler sur un seul camp apparié est le piège de « AD Pasto » →
+    « Pastoreo » (2026-09-02) et de l'U21 héritant du club senior
+    (2026-09-04). Un WIN/LOSS faux au ledger est DÉFINITIF ; un log ne coûte
+    rien. La promotion d'un candidat reste une décision humaine.
+    """
+
+    def test_un_camp_reconnu_est_journalise_mais_ne_regle_pas(self, monkeypatch, caplog):
+        """Le cas réel : « Truong Tuoi Dong Nai » est « Binh Phuoc » chez
+        LiveScore — même club, nom de sponsor."""
+        monkeypatch.setattr(ss, "_get_json", lambda url, b, bud, source=None:
+                            _ls_payload([("1", "Binh Phuoc", "Viettel", 0, 2, "FT")],
+                                        ligue="Vietnam - V-League"))
+        with caplog.at_level("INFO"):
+            r = ss.result_from_livescore("Truong Tuoi Dong Nai FC vs Viettel FC",
+                                         "soccer", "2026-09-04")
+        assert r is None, "un seul camp apparié ne doit JAMAIS régler"
+        assert "ALIAS CANDIDAT" in caplog.text
+        assert "Binh Phuoc" in caplog.text
+
+    def test_deux_pretendants_ne_sont_pas_journalises(self, monkeypatch, caplog):
+        """Deux prétendants, c'est du bruit, pas une piste."""
+        monkeypatch.setattr(ss, "_get_json", lambda url, b, bud, source=None:
+                            _ls_payload([("1", "X FC", "Viettel", 0, 2, "FT"),
+                                         ("2", "Y FC", "Viettel", 1, 1, "FT")]))
+        with caplog.at_level("INFO"):
+            assert ss.result_from_livescore("Z FC vs Viettel FC", "soccer",
+                                            "2026-09-04") is None
+        assert "ALIAS CANDIDAT" not in caplog.text
+
+    def test_aucun_camp_reconnu_ne_journalise_rien(self, monkeypatch, caplog):
+        """Ligue absente : rien à dire, et surtout pas un candidat."""
+        monkeypatch.setattr(ss, "_get_json", lambda url, b, bud, source=None:
+                            _ls_payload([("1", "X FC", "Y FC", 0, 2, "FT")]))
+        with caplog.at_level("INFO"):
+            assert ss.result_from_livescore("A FC vs B FC", "soccer",
+                                            "2026-09-04") is None
+        assert "ALIAS CANDIDAT" not in caplog.text
+
+    def test_la_sonde_ne_coute_aucune_requete(self, monkeypatch):
+        """Elle relit le cache de journée déjà chargé — zéro requête en plus.
+        Une sonde qui dépense du budget se ferait couper au premier incident."""
+        appels = []
+
+        def fake(url, b, bud, source=None):
+            appels.append(url)
+            return _ls_payload([("1", "Binh Phuoc", "Viettel", 0, 2, "FT")])
+        monkeypatch.setattr(ss, "_get_json", fake)
+        ss.result_from_livescore("Truong Tuoi Dong Nai FC vs Viettel FC",
+                                 "soccer", "2026-09-04")
+        assert len(appels) == 3, "3 jours de fenêtre, et rien de plus pour la sonde"
+
+    def test_un_match_regle_ne_declenche_pas_la_sonde(self, monkeypatch, caplog):
+        monkeypatch.setattr(ss, "_get_json", lambda url, b, bud, source=None:
+                            _ls_payload([("1", "Bali United", "PSS Sleman", 2, 1, "FT")]))
+        with caplog.at_level("INFO"):
+            assert ss.result_from_livescore("Bali United vs PSS Sleman", "soccer",
+                                            "2026-09-04")["home_score"] == 2
+        assert "ALIAS CANDIDAT" not in caplog.text

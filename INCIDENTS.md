@@ -1454,14 +1454,20 @@ tirs au but) : `Tr1`/`Tr2` peuvent y porter le score de la SÉANCE et non
 celui du temps réglementaire, le seul que mesurent nos marchés 1X2 et
 totaux. Ces matchs continuent vers ESPN et TheSportsDB.
 
-⚠️ LiveScore LIMITE LES RAFALES. Mesuré le 2026-09-05 : ~30 requêtes
-enchaînées sans pause → **HTTP 403** sur toutes ; les mêmes dates espacées de
-3 s rendent 200. Le chemin de production n'est pas concerné (cache de run par
-(sport, jour), au plus 3 jours par audit — 6 requêtes au premier run réel), et
-un 403 dégrade proprement en `None` + warning. Mais une exploration hors ligne
-qui balaie beaucoup de dates DOIT s'espacer, sinon elle mesure son propre
-throttling et conclut « ligue non couverte » sur des ligues couvertes — c'est
-l'erreur commise en analysant le résidu ce jour-là.
+⚠️ LiveScore LIMITE LE VOLUME, pas seulement les rafales. Mesuré le
+2026-09-05 en analysant le résidu : ~30 requêtes enchaînées → **HTTP 403** sur
+toutes ; le blocage retombe en une minute ou deux. Mais après ~250 requêtes
+dans la journée depuis la même IP, un espacement de **12 s ne suffisait plus**
+— 403 sur les six journées demandées, alors que le même endpoint répondait 200
+une minute plus tôt. C'est donc un quota par IP sur une fenêtre large, et non
+un simple anti-rafale.
+Conséquences : (1) le chemin de PRODUCTION reste sous la limite — cache de run
+par (sport, jour), au plus 3 jours par audit, 6 requêtes au premier run réel,
+~48/jour à 8 audits ; un 403 dégrade proprement en `None` + warning et la
+ligne repasse au tour suivant. (2) TOUTE exploration hors ligne fausse sa
+propre mesure : elle conclut « ligue non couverte » sur des ligues couvertes.
+C'est l'erreur commise ici, deux fois, avant de la nommer — et la raison pour
+laquelle la sonde d'alias MESURE DEPUIS LE RUNNER au lieu du poste de dev.
 
 ⚠️ Le PÉRIMÈTRE SPORTIF NE BOUGE PAS : `sports_reglables()` est inchangée.
 Cette voie règle mieux ce qui est DÉJÀ émis ; ouvrir un sport ou une ligue à
@@ -1483,10 +1489,23 @@ LLM :
   - **NOMS divergents.** « Truong Tuoi Dong Nai FC vs The Cong - Viettel FC »
     ne se réglait pas ; le match EST chez LiveScore, sous
     « Binh Phuoc 0-2 Viettel » (Vietnam - V-League, `ft`) — le club porte son
-    nom de sponsor. C'est le dictionnaire `team_aliases`
-    (`sql/migrate_v10_3`), pas une source manquante. ⚠️ Ne PAS confier cet
-    apprentissage à un LLM : mesuré le 2026-08-28, le slate de confiance a
-    appris QUATRE alias FAUX sur cinq.
+    nom de sponsor. C'est un problème de nom, pas une source manquante.
+    ⚠️ Ne PAS confier cet apprentissage à un LLM : mesuré le 2026-08-28, le
+    slate de confiance a appris QUATRE alias FAUX sur cinq. Et `team_aliases`
+    (le MODULE) est parti le 2026-09-03 avec odds500 ; le ressusciter pour un
+    besoin qu'on n'a pas encore chiffré serait la panne n°6 à l'envers.
+    D'où `_journal_alias` (2026-09-05) : quand LiveScore a la ligue et
+    qu'exactement UN camp s'apparie, la ligne est JOURNALISÉE
+    (« ALIAS CANDIDAT livescore | … NON APPLIQUE ») et rien d'autre. Zéro
+    requête en plus (relecture du cache de journée déjà chargé), zéro risque
+    d'écriture fausse, et au bout de quelques jours une liste de candidats
+    MESURÉE depuis l'IP des runners — la seule qui compte — au lieu d'un
+    dictionnaire écrit à l'aveugle. Se relit par
+    `gh run view <id> --log | grep "ALIAS CANDIDAT"`.
+    Le dédoublonnage par `Eid` n'est pas cosmétique : les journées LiveScore
+    SE CHEVAUCHENT autour de minuit UTC (NYCFC-Nashville, coup d'envoi 23:30,
+    apparaît dans la liste du 09-04 ET du 09-05), et sans lui la sonde
+    resterait muette précisément sur les matchs tardifs.
   - **FOOTBALL DE JEUNES.** LiveScore ne liste AUCUNE compétition U19/U20/U21
     sur ses 281. Aucune source gratuite ne les publie. Un LLM ne pourrait
     qu'INVENTER le score — « une génération plausible, pas une observation »,

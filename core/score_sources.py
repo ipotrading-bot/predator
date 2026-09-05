@@ -639,7 +639,56 @@ def result_from_livescore(match_name: str, sport: str, match_date: str) -> dict 
     if len(vus) > 1:
         log.info("SETTLE SKIP | %s — %d evenements LiveScore correspondent, "
                  "on ne devine pas", match_name, len(vus))
+        return None
+    _journal_alias(match_name, home, away, segment, match_date)
     return None
+
+
+def _journal_alias(match_name: str, home: str, away: str,
+                   segment: str, match_date: str) -> None:
+    """JOURNALISE un candidat d'alias. NE RÈGLE JAMAIS RIEN.
+
+    Le cas qui a motivé cette sonde (2026-09-05) : le signal
+    « Truong Tuoi Dong Nai FC vs The Cong - Viettel FC » ne se réglait pas,
+    alors que LiveScore avait bien le match — sous « Binh Phuoc 0-2 Viettel »
+    (Vietnam - V-League, `ft`). Le club porte son nom de sponsor. C'est un
+    problème de NOM, pas de couverture, et il ne se voit que si quelque chose
+    le NOMME : sans cette ligne de log, un « pas trouvé » couvre aussi bien
+    une ligue absente qu'un club renommé, et on cherche au mauvais endroit.
+
+    ⚠️ POURQUOI SEULEMENT UN LOG. Régler sur un seul camp apparié est
+    précisément le piège qui a produit deux incidents de ce dépôt : « AD
+    Pasto » → « Pastoreo » (2026-09-02) et l'U21 héritant de la couverture
+    ESPN de son club senior (2026-09-04). Un WIN/LOSS faux au ledger est
+    DÉFINITIF ; une ligne de log ne coûte rien et se relit. La promotion d'un
+    candidat en alias reste une décision humaine.
+
+    Coût réseau : ZÉRO. On relit le cache de journée déjà chargé par
+    `result_from_livescore` ; aucune requête supplémentaire n'est émise.
+
+    Un candidat UNIQUE seulement : deux prétendants, c'est du bruit, pas une
+    piste — et c'est le même contrat de refus que partout ailleurs ici.
+    """
+    # Dédoublonné par `Eid` : les journées LiveScore SE CHEVAUCHENT autour de
+    # minuit UTC — « New York City FC vs Nashville SC » (coup d'envoi 23:30)
+    # a été vu le 2026-09-05 dans les listes du 09-04 ET du 09-05. Sans ce
+    # dédoublonnage, un candidat unique se compte en double et la sonde reste
+    # muette exactement sur les matchs tardifs.
+    proches: dict[str, tuple] = {}
+    for jour in _jours(match_date) or []:
+        for ev in _CACHE_LS.get((segment, jour)) or []:
+            cote_h = _ls_camp(ev["home"], home)
+            cote_a = _ls_camp(ev["away"], away)
+            if cote_h != cote_a:      # exactement UN camp reconnu
+                manquant, vu = ((away, ev["away"]) if cote_h else (home, ev["home"]))
+                proches[ev["id"] or f"{jour}|{ev['league']}"] = (ev, manquant, vu)
+    if len(proches) != 1:
+        return
+    ev, manquant, vu = next(iter(proches.values()))
+    log.info("ALIAS CANDIDAT livescore | %s | %r pourrait etre %r "
+             "[%s, statut %s] — NON APPLIQUE, journalise seulement",
+             match_name, manquant, " / ".join(n for n in vu if n),
+             ev["league"], ev["status"])
 
 
 # ── 3. TheSportsDB ────────────────────────────────────────────────────
