@@ -1398,6 +1398,88 @@ au-dessus, le réglage n'aurait aucun effet.
 Gardien : `tests/test_audit_retry.py::TestLeRepliTheSportsDBEstBorne`.
 
 
+### L'audit tirait aux mauvaises heures, et ESPN seul ne suffisait pas (2026-09-05)
+
+Symptôme : sur les 17 signaux émis le 4 septembre, UN SEUL avait un résultat
+au matin du 5. Les 9 recommandés — dont PSG-Monaco, Betis-Real Madrid,
+Ipswich-Liverpool — étaient encore `active`, coup d'envoi passé depuis 5 h.
+
+Trois causes empilées, mesurées :
+
+  1. **La cadence tirait à côté des vagues.** `0 */6` posait un tick à 00:00
+     UTC, quand 1 % seulement des paris du jour sont réglables. Mesuré sur
+     131 signaux recommandés : un pari devient réglable à
+     KO + `SETTLEMENT_GRACE_H` (4 h), et ces heures se massent en trois
+     vagues UTC — 02-06 (42 % du total), 13-14, et 20-23 (30 %). La vague du
+     soir attendait donc l'audit de 00:00 le LENDEMAIN. Le dernier audit
+     livré datait de 20:14, quand les matchs de 19:00 étaient encore à +1 h,
+     sous la grâce : `1 settled | 11 skipped`.
+  2. **TheSportsDB saturé trois jours d'affilée** — `meta.quota_tsdb_results`
+     à 150/150 les 02, 03 et 04 septembre, ce dernier dès 10:33. Les trois
+     audits de 10:33, 14:40 et 15:43 sont sortis en ÉCHEC (`RUN STÉRILE —
+     9 règlement(s) éligible(s), AUCUN abouti`).
+  3. **Le retard du scheduler par-dessus.** Les 4 crons du 4 septembre ont
+     été livrés à 02:50, 10:33, 15:43 et 20:14 — de +2 h 50 à +4 h 33.
+
+Fait :
+
+  - cadence `0 */6` → **`45 */3 * * *`** (00:45 … 21:45 UTC). Attente
+    maximale ramenée de 6 h à 3 h sur chaque vague ; minute 45 pour éviter le
+    verrou `predator-signals-write` (scan tire `standard` à :03, `reprice`
+    à :25). Cadence gardée **RÉGULIÈRE** : le chien de garde surveille
+    `audit.yml` par FRAÎCHEUR, ce qui n'a de sens que si l'écart entre deux
+    ticks est constant — un cron « aux bonnes heures » mais irrégulier
+    imposerait le mécanisme de CRÉNEAUX de `scan.yml`. `stale_min` 370 → 190,
+    Worker redéployé.
+  - ⚠️ `TSDB_RETRY_WINDOW_H` 12 → **8** DANS LE MÊME GESTE. Ces deux nombres
+    se MULTIPLIENT : fenêtre ÷ cadence = essais TheSportsDB qu'un match
+    irrécupérable dépense sur le budget de 150/jour. 12/6 valait 2 essais ;
+    laisser 12 avec une cadence de 3 h en aurait fait 4, sur un budget déjà
+    saturé. 8/3 rend les 2 essais d'avant. Doubler la cadence sans toucher
+    ici aurait racheté du délai avec la famine qu'on venait de corriger.
+  - **LiveScore intercalée entre ESPN et TheSportsDB**
+    (`core.score_sources.result_from_livescore`). ESPN est large mais pas
+    universel : `soccer/all` rend **115** événements pour le 2026-09-04,
+    LiveScore **273** — et les 158 de différence sont exactement les lignes
+    qui tombaient sur le troisième étage. UNE requête couvre toute la journée
+    d'un sport, d'où sa POSITION : ce qu'elle règle est autant de budget
+    épargné à TheSportsDB. Le premier audit qui l'embarque a réglé **12
+    lignes** (6 + 6 à la relance des expirés) pour **6 requêtes LiveScore**,
+    dont Vihren Sandanski 4-1 Etar (Bulgarie Vtora Liga, listée comme non
+    réglable) et Bali United 2-1 PSS Sleman (Indonésie, absente d'ESPN).
+    Actifs en souffrance : 22 → 6.
+
+⚠️ SEUL « FT » RÈGLE sur cette voie. LiveScore publie aussi « AP » (après
+tirs au but) : `Tr1`/`Tr2` peuvent y porter le score de la SÉANCE et non
+celui du temps réglementaire, le seul que mesurent nos marchés 1X2 et
+totaux. Ces matchs continuent vers ESPN et TheSportsDB.
+
+⚠️ Le PÉRIMÈTRE SPORTIF NE BOUGE PAS : `sports_reglables()` est inchangée.
+Cette voie règle mieux ce qui est DÉJÀ émis ; ouvrir un sport ou une ligue à
+l'émission engage des crédits OddsAPI et reste une décision opérateur
+(règle n°11).
+
+Sondées le même jour depuis Azure (même classe d'IP que les runners), et
+écartées : **SofaScore 403** (morte comme nowgoal), **FotMob 404**
+(en-tête signé désormais requis), **football-data.org** (~12 compétitions =
+sous-ensemble strict d'ESPN), **OpenLigaDB** (Allemagne seule), **NHL
+officiel** (1 seule ligne hockey au ledger). ⚠️ `www.livescore.com/robots.txt`
+porte `Disallow: /api/` ; l'hôte de l'API publique est différent et ne sert
+aucun robots.txt — zone grise assumée par décision opérateur, comme odds500.
+
+Ce qui RESTE non réglable est une longue traîne, pas un trou de source : 33
+lignes `expired` sur 473 au ledger, réparties sur 12 ligues (Cupa României,
+Esiliiga B, Kakkonen, U20 NSW, Coppa Italia Serie C, U19 tchèque…). Les 5
+`expired` en MLB datent toutes du 2026-08-25, AVANT l'existence de
+`core/score_sources.py` — ce n'est pas un défaut d'appariement statsapi.
+
+Gardiens : `tests/test_score_sources.py::TestLiveScore` (dont
+`test_les_tirs_au_but_ne_reglent_pas`, `test_letage_du_club_nest_pas_herite`,
+`test_le_perimetre_sportif_ne_bouge_pas`),
+`TestBudgetsEtChaine::test_livescore_passe_avant_thesportsdb`,
+`tests/test_watchdog_worker.py`, `tests/test_documentation.py`.
+
+
 ## Couche IA
 
 Le paysage des paliers gratuits change tous les mois. Rien de ce qui suit
