@@ -284,12 +284,35 @@ class TestRythme:
         # …mais une ligue en fenêtre passe encore (NBA 22-04)
         assert p.allow("basketball_nba", "basketball", self.EVENING, 2000, cost=3)[0]
 
-    def test_closing_line_imminente_deborde_un_peu_mais_pas_sans_fin(self):
+    def test_closing_line_imminente_reste_prioritaire_mais_suit_l_heure(self):
+        """Elle IGNORAIT le plafond horaire (`intraday=False`) jusqu'au
+        2026-09-05, et c'est par là que la nuit mangeait la soirée. Elle garde
+        la part la plus haute — au-dessus de la fenêtre favorable et du fond —
+        mais elle n'est plus hors du temps."""
+        # 01:00 : plafond horaire = 10 × 3/24 × 1,1 = 1,375 — le débordement
+        # d'antan (11 ≤ 11) n'a plus lieu.
         p, _ = self._pol(allowance=10, spent=10, exempt={"soccer"})
-        assert p.allow("soccer_epl", "soccer", self.NIGHT, 2000, cost=1)[0]      # 11 ≤ 11
-        ok, why = p.allow("soccer_epl", "soccer", self.NIGHT, 2000, cost=1)
+        ok, _ = p.allow("soccer_epl", "soccer", self.NIGHT, 2000, cost=1)
         assert not ok and "closing line imminente mais" in p.skipped[0][1]
+        # 22:00 : la journée est écoulée, elle déborde encore jusqu'à 1,1×.
+        p, _ = self._pol(allowance=10, spent=10, exempt={"soccer"})
+        assert p.allow("soccer_epl", "soccer", self.EVENING, 2000, cost=1)[0]   # 11 ≤ 11
+        ok, _ = p.allow("soccer_epl", "soccer", self.EVENING, 2000, cost=1)
+        assert not ok
         assert EXEMPT_SHARE == pytest.approx(1.1)
+        assert EXEMPT_SHARE > 1.0 > BACKGROUND_SHARE
+
+    def test_le_tick_de_nuit_ne_peut_plus_manger_la_soiree(self):
+        """Rejeu du 2026-09-05 : à 00:40, allocation 117, la voie exemptée a
+        laissé passer 37 crédits pour un plafond horaire de ~13 ; les créneaux
+        de 16:03 et 19:03 ont ensuite acheté 0 cote et la soirée n'a pas sorti
+        un signal recommandé."""
+        nuit = _utc(2026, 9, 2, 0, 40)
+        p, _ = self._pol(allowance=117, spent=0, exempt={"soccer"})
+        engage = sum(3 for _ in range(20)
+                     if p.allow("soccer_epl", "soccer", nuit, 2000, cost=3)[0])
+        assert engage <= intraday_cap(117, nuit) * EXEMPT_SHARE
+        assert engage < 37, "le tick de nuit reprend toute l'allocation"
 
     def test_sans_allocation_rien_ne_change(self):
         p, _ = self._pol(allowance=None, spent=10_000)

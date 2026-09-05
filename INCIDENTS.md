@@ -2105,12 +2105,11 @@ Pas fait, et dit :
 - le rattrapage du chien de garde n'est pas touché : DÉCISION OPÉRATEUR du
   2026-09-04 ;
 - surtout : le doublon n'explique PAS à lui seul le budget mangé le matin. La
-  voie « closing line imminente » de `SpendPolicy.allow` appelle
-  `_within(..., intraday=False)` avec `EXEMPT_SHARE = 1.1` et CONTOURNE donc
+  voie « closing line imminente » de `SpendPolicy.allow` appelait
+  `_within(..., intraday=False)` avec `EXEMPT_SHARE = 1.1` et CONTOURNAIT donc
   le plafond intra-journée (`intraday_cap`) censé garder du budget pour le
   soir : le run de 00:40 a engagé 37 crédits quand le plafond horaire valait
-  ~13. **MESURÉ, NON CORRIGÉ** — c'est un arbitrage de politique de dépense,
-  il revient à l'opérateur.
+  ~13. CORRIGÉ le soir même — voir l'entrée suivante.
 
 ⚠️ Le créneau se marque APRÈS le scan et SEULEMENT s'il a réussi. Le marquer à
 la résolution du mode rendrait un scan tombé « servi », et le chien de garde ne
@@ -2130,6 +2129,53 @@ tests de dérivation
 `…::test_un_run_en_retard_sert_le_creneau_du_pas_son_heure`,
 `…::test_avant_le_premier_creneau_du_jour_cest_celui_dhier`,
 `…::test_le_creneau_pile_a_lheure_est_deja_du`.
+
+
+### La capture de clôture était hors du temps, et la nuit mangeait la soirée (2026-09-05)
+
+Symptôme : une soirée entière SANS un seul signal recommandé. Le dashboard
+affiche « 0 matchs · 0 sig · 0 top » à 21:48 ; tous les runs sont VERTS.
+
+Cause : `SpendPolicy.allow` traitait la voie « closing line imminente » avec
+`_within(..., intraday=False)` — la seule des trois voies à échapper au plafond
+intra-journée. Elle pouvait donc engager jusqu'à `EXEMPT_SHARE` (110 %) de
+l'allocation du JOUR dès la première minute, alors que le plafond horaire du
+(2) existe précisément pour que « le tick de nuit ne mange pas la soirée Big 5,
+qui porte le volume » (en-tête du module). La garde protégeait le fond et les
+fenêtres, et laissait passer l'exemption.
+
+MESURÉ le 2026-09-05 (run 33993232063, créneau 21:03, et la ligne « RYTHME |
+allocation … » de chaque scan de la journée) :
+- 00:40 → **37 crédits engagés pour un plafond horaire de ~13** ;
+- allocation 117/j atteinte dès 13:30 (128 engagés) ;
+- au scan de 21:30, **16 ligues peuplées sautées**, toutes sur `rythme` — EPL,
+  Liga, Serie A, Ligue 1, Bundesliga, MLS, Ligue MX, Brésil, Argentine, MLB,
+  NCAAF, NRL — et 9 d'entre elles refusées PAR LA VOIE EXEMPTÉE elle-même
+  (« closing line imminente mais rythme : 128 + 3 > plafond 128 ») ;
+- 0 crédit Tier 1 sur toute la soirée. Les 31 matchs analysés venaient des
+  sources gratuites ; 2 signaux mesurés, tous deux FANTÔMES (< T-2h), donc
+  aucun recommandé.
+- Le créneau qui a coûté la soirée est 16:03 (rattrapé à 16:30) : celui qui
+  devait acheter le Big 5 pour les coups d'envoi de 19:00, parti avec 0 crédit.
+
+Fait, sur DÉCISION OPÉRATEUR du 2026-09-05 : la voie exemptée passe en
+`intraday=True`. Elle garde la part la plus haute (`EXEMPT_SHARE` > fenêtre
+favorable > fond) — elle reste prioritaire, elle n'est plus hors du temps.
+
+⚠️ Ne pas relire ce correctif comme « la closing line est déclassée » : sa
+PRIORITÉ est intacte, c'est son ASSIETTE qui suit désormais l'heure. Le
+rétablir en `intraday=False` rendrait à un tick de 00:40 le droit de reprendre
+toute l'allocation du jour.
+⚠️ Le dé-doublonnage de l'entrée précédente et ce correctif se complètent : le
+premier rend ~30 crédits/jour, le second empêche qu'ils soient repris avant
+midi. Mesurer les DEUX ensemble avant de conclure quoi que ce soit sur le
+volume de signaux.
+
+Gardiens : `tests/test_scan_windows.py::TestRythme::test_closing_line_imminente_reste_prioritaire_mais_suit_l_heure`
+(refusée à 01:00 avec la journée déjà engagée, débordement de 1,1× toujours
+permis à 22:00) et `::test_le_tick_de_nuit_ne_peut_plus_manger_la_soiree`
+(rejeu du 00:40 : l'engagement reste sous le plafond horaire, donc loin des
+37 crédits).
 
 ### Le verrou `predator-signals-write` ne contient plus `closing_line.yml`
 

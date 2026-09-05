@@ -153,9 +153,12 @@ def favorable_leagues(now: datetime | None = None) -> set[str]:
 #   2. plafond intra-journée linéaire (INTRADAY_LEAD_H) : à 02:00 UTC on ne
 #      peut engager que ~15 % de l'allocation, à 22:00 la totalité — le tick
 #      de nuit (SA/MLB) ne mange pas la soirée Big 5, qui porte le volume ;
-#   3. parts par priorité : closing line imminente jusqu'à EXEMPT_SHARE,
-#      fenêtre favorable / golden (T-2h) jusqu'à 100 %, scan de fond jusqu'à
-#      BACKGROUND_SHARE — le fond ne préempte jamais les fenêtres.
+#   3. parts par priorité, TOUTES adossées au plafond horaire du (2) depuis
+#      le 2026-09-05 : closing line imminente jusqu'à EXEMPT_SHARE, fenêtre
+#      favorable jusqu'à 100 %, scan de fond jusqu'à BACKGROUND_SHARE — le
+#      fond ne préempte jamais les fenêtres, et plus rien ne préempte le
+#      soir. L'exemption closing line échappait au (2) : c'est par là que la
+#      nuit mangeait la soirée (INCIDENTS.md, 2026-09-05).
 # ODDS_API_PACING=0 remet l'ancien comportement (paie tout, réserve seule).
 PACING_ENABLED = os.environ.get("ODDS_API_PACING", "1") == "1"
 CYCLE_DAYS = float(os.environ.get("ODDS_API_CYCLE_DAYS", "30"))
@@ -249,7 +252,17 @@ class SpendPolicy:
             self._skip(sport_key, reason)
             return False, reason
         if sport_type in self.exempt_sports:
-            ok, why = self._within(cost, EXEMPT_SHARE, now, intraday=False)
+            # SOUMISE au plafond horaire depuis le 2026-09-05 (décision
+            # opérateur). Elle l'ignorait — `intraday=False` — et c'est par là
+            # que la journée se vidait : mesuré le 2026-09-05, le tick de
+            # 00:40 a engagé 37 crédits quand le plafond horaire en valait 13,
+            # puis les créneaux de 16:03 et 19:03 ont trouvé le plafond
+            # atteint et n'ont acheté AUCUNE cote du Big 5 du soir — une
+            # soirée entière sans un signal recommandé. La closing line garde
+            # la part la plus haute (EXEMPT_SHARE, au-dessus de la fenêtre
+            # favorable et du fond) : elle reste prioritaire, elle n'est plus
+            # hors du temps.
+            ok, why = self._within(cost, EXEMPT_SHARE, now, intraday=True)
             if ok:
                 self.engaged += cost
                 return True, "closing line imminente"
