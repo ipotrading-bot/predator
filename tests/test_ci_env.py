@@ -242,6 +242,142 @@ def test_flag_manuel_promeut_reprice_seulement():
     assert ci_mode.promote("reprice", False) == "reprice"
 
 
+# ── Un créneau standard = un scan payant (2026-09-05) ─────────────────
+# GitHub livre ses crons avec jusqu'à ~2 h de retard ; le chien de garde
+# rattrape après 25 min. Sans ces gardes, les deux paient le MÊME créneau —
+# mesuré le 2026-09-05 : 09:03 servi à 09:30 (16 crédits) puis à 10:08
+# (27 crédits), puis cinq créneaux du soir à 0 ligue payée, plafond atteint.
+
+def _t(h, m, jour=5):
+    from datetime import datetime, timezone
+    return datetime(2026, 9, jour, h, m, tzinfo=timezone.utc)
+
+
+def test_les_heures_de_creneau_sortent_du_cron_jamais_dune_liste():
+    """Règle n°6 : recaler le cron sans recaler cette table ferait dégrader
+    des runs sur des créneaux fantômes."""
+    minute, heures = ci_mode.standard_slots()
+    cron = next(c for c, m in ci_mode.CRON_MODES.items() if m == "standard")
+    assert (minute, heures) == (int(cron.split()[0]),
+                                sorted(int(h) for h in cron.split()[1].split(",")))
+
+
+def test_un_run_en_retard_sert_le_creneau_du_pas_son_heure():
+    """Le cœur du dé-doublonnage : le rattrapage de 09:30 et le cron de 10:08
+    (livré avec 65 min de retard) désignent le MÊME créneau."""
+    assert ci_mode.due_slot(_t(9, 30)) == ci_mode.due_slot(_t(10, 8)) == "2026-09-05T09:03"
+    assert ci_mode.due_slot(_t(20, 58)) == "2026-09-05T19:03"
+
+
+def test_avant_le_premier_creneau_du_jour_cest_celui_dhier():
+    """Le trou de nuit 23:03 → 06:03 : un run de 00:40 rattrape la veille et
+    ne doit pas réserver le créneau de 06:03."""
+    assert ci_mode.due_slot(_t(0, 40)) == "2026-09-04T23:03"
+    assert ci_mode.due_slot(_t(5, 59)) == "2026-09-04T23:03"
+
+
+def test_le_creneau_pile_a_lheure_est_deja_du():
+    assert ci_mode.due_slot(_t(21, 3)) == "2026-09-05T21:03"
+    assert ci_mode.due_slot(_t(21, 2)) == "2026-09-05T19:03"
+
+
+class TestDegradationDuDoublon:
+    """`main()` avec Supabase remplacé — aucun réseau."""
+
+    def _run(self, tmp_path, monkeypatch, *, servi, manual=False, force="",
+             event="schedule", schedule="3 6,9,11,13,16,19,21,23 * * *",
+             input_mode=""):
+        sortie = tmp_path / "out"
+        for var, val in (("GITHUB_OUTPUT", str(sortie)),
+                         ("GITHUB_ENV", str(tmp_path / "env")),
+                         ("GITHUB_STEP_SUMMARY", str(tmp_path / "sum")),
+                         ("GITHUB_EVENT_NAME", event), ("SCHEDULE", schedule),
+                         ("INPUT_MODE", input_mode), ("INPUT_FORCE", force),
+                         ("INPUT_HOURS", "")):
+            monkeypatch.setenv(var, val)
+        monkeypatch.setattr(ci_mode, "consume_manual_flag", lambda: manual)
+        monkeypatch.setattr(ci_mode, "slot_deja_servi", lambda slot: servi)
+        assert ci_mode.main([]) == 0
+        return dict(l.split("=", 1) for l in
+                    sortie.read_text(encoding="utf-8").splitlines() if "=" in l)
+
+    def test_le_premier_run_du_creneau_paie(self, tmp_path, monkeypatch):
+        assert self._run(tmp_path, monkeypatch, servi=False)["mode"] == "standard"
+
+    def test_le_second_run_du_meme_creneau_se_degrade(self, tmp_path, monkeypatch):
+        """Le cron en retard derrière le rattrapage : gratuit, pas muet — il
+        re-tarife le slate en cache et capte la closing line."""
+        assert self._run(tmp_path, monkeypatch, servi=True)["mode"] == "reprice"
+
+    def test_le_run_degrade_ne_peut_rien_depenser(self, tmp_path, monkeypatch):
+        """La dégradation doit RETIRER ODDS_API : sans ça le step Scan ne
+        tournerait plus mais le flag resterait posé pour la suite du job."""
+        self._run(tmp_path, monkeypatch, servi=True)
+        env = (tmp_path / "env").read_text(encoding="utf-8")
+        assert "ODDS_API" not in env and "REPRICE=1" in env
+
+    def test_le_bouton_scanner_nest_jamais_degrade(self, tmp_path, monkeypatch):
+        """L'opérateur qui clique veut un scan MAINTENANT, créneau servi ou
+        non — sinon le bouton devient silencieusement inopérant."""
+        sortie = self._run(tmp_path, monkeypatch, servi=True, manual=True,
+                           schedule="25 * * * *")
+        assert sortie["mode"] == "standard" and sortie["manual"] == "true"
+
+    def test_force_repaie_sciemment(self, tmp_path, monkeypatch):
+        sortie = self._run(tmp_path, monkeypatch, servi=True, force="true",
+                           event="workflow_dispatch", schedule="", input_mode="standard")
+        assert sortie["mode"] == "standard"
+
+    def test_le_creneau_resolu_est_publie_pour_le_step_de_marquage(self, tmp_path, monkeypatch):
+        """Le marquage doit utiliser l'heure DUE : un scan qui déborde sur le
+        créneau suivant ne doit pas le consommer."""
+        slot = self._run(tmp_path, monkeypatch, servi=False)["slot"]
+        assert slot == ci_mode.due_slot(__import__("datetime").datetime.now(
+            __import__("datetime").timezone.utc))
+
+
+class TestLeMarquageDuCreneau:
+    def _step(self):
+        wf = yaml.safe_load((RACINE / ".github" / "workflows" / "scan.yml").read_text(
+            encoding="utf-8"))
+        steps = wf["jobs"]["scan"]["steps"]
+        i = next(i for i, s in enumerate(steps) if "--note-slot" in (s.get("run") or ""))
+        return steps, i
+
+    def test_le_creneau_est_marque_apres_le_scan_et_seulement_sil_a_reussi(self):
+        """Marquer avant le scan rendrait un scan tombé invisible au chien de
+        garde : le créneau serait « servi » sans une seule cote achetée."""
+        steps, i = self._step()
+        scan = next(j for j, s in enumerate(steps)
+                    if "run_engine.py" in (s.get("run") or ""))
+        assert i > scan, "le créneau serait marqué avant que le scan ait réussi"
+        assert "success()" in steps[i]["if"]
+
+    def test_le_marquage_ne_vise_que_le_mode_standard(self):
+        steps, i = self._step()
+        assert "steps.mode.outputs.mode == 'standard'" in steps[i]["if"]
+
+    def test_le_marquage_reprend_le_creneau_du_step_mode(self):
+        steps, i = self._step()
+        assert steps[i]["env"]["SCAN_SLOT"] == "${{ steps.mode.outputs.slot }}"
+
+    def test_le_chien_de_garde_ne_force_jamais_le_paiement(self):
+        """Son rattrapage doit rester dégradable, sinon le garde-fou ne sert à
+        rien : `force` n'appartient qu'à un humain."""
+        js = (RACINE / "scripts" / "cloudflare_watchdog_worker.js").read_text(
+            encoding="utf-8")
+        table = js.split("const CRENEAUX")[1].split("];")[0]
+        assert "inputs" in table, "parseur à revoir : la table CRENEAUX a changé de forme"
+        assert "force" not in table
+
+    def test_linput_force_est_declare_et_faux_par_defaut(self):
+        wf = yaml.safe_load((RACINE / ".github" / "workflows" / "scan.yml").read_text(
+            encoding="utf-8"))
+        on = wf.get("on") or wf.get(True)
+        force = on["workflow_dispatch"]["inputs"]["force"]
+        assert force["type"] == "boolean" and force["default"] is False
+
+
 def test_env_de_mode():
     assert ci_mode.env_for("standard") == {"ODDS_API": "1"}
     assert ci_mode.env_for("standard", "12") == {"ODDS_API": "1", "HOURS_AHEAD": "12"}

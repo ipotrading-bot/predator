@@ -76,6 +76,14 @@ on:
         description: Horizon en heures (vide = défaut du mode)
         type: string
         default: ''
+      force:
+        # Un créneau `standard` ne vaut qu'un scan payant : le second run du
+        # même créneau (cron GitHub en retard derrière le rattrapage du chien
+        # de garde) se dégrade en `reprice`. Le chien de garde ne pose JAMAIS
+        # cet input — seul un humain coche la case pour repayer sciemment.
+        description: Payer même si le créneau a déjà été servi
+        type: boolean
+        default: false
 
 # run_engine._save met à jour EN PLACE (select→update/insert) depuis le
 # 2026-08-2x, mais _purge_old_signals supprime encore des lignes actives que
@@ -114,6 +122,7 @@ jobs:
           SCHEDULE:    ${{ github.event.schedule }}
           INPUT_MODE:  ${{ github.event.inputs.mode }}
           INPUT_HOURS: ${{ github.event.inputs.hours_ahead }}
+          INPUT_FORCE: ${{ github.event.inputs.force }}
           # ▼ GÉNÉRÉ par `python scripts/ci_env.py --write` — pool `scan`, amorçage (Supabase seul). NE PAS ÉDITER.
           SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
           SUPABASE_KEY: ${{ secrets.SUPABASE_KEY }}
@@ -157,6 +166,21 @@ jobs:
           # clés sont réellement présentes.
           python scripts/ci_env.py --pool scan --check
           python run_engine.py
+
+      - name: Créneau standard servi
+        # APRÈS le scan, et seulement s'il a réussi : un scan tombé laisse son
+        # créneau à rattraper par le chien de garde. Le créneau vient du step
+        # « mode » (l'heure DUE, pas l'heure courante) — un scan qui déborde
+        # sur le créneau suivant ne doit pas le consommer.
+        if: success() && steps.mode.outputs.mode == 'standard'
+        env:
+          SCAN_SLOT: ${{ steps.mode.outputs.slot }}
+          # ▼ GÉNÉRÉ par `python scripts/ci_env.py --write` — pool `scan`, amorçage (Supabase seul). NE PAS ÉDITER.
+          SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
+          SUPABASE_KEY: ${{ secrets.SUPABASE_KEY }}
+          SUPABASE_SERVICE_KEY: ${{ secrets.SUPABASE_SERVICE_KEY }}
+          # ▲ fin du bloc généré (pool `scan`, amorçage (Supabase seul))
+        run: python scripts/ci_scan_mode.py --note-slot
 
       - name: Closing line — passe post-scan
         # Même moment logique que les signaux frais ; pool `closing` = Supabase

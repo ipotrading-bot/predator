@@ -52,7 +52,23 @@ livré — pendant que le chien de garde dispatchait une dizaine de reprice tous
 déclarés sains. Le mode figure désormais dans le NOM du run (`Scan standard` /
 `Scan reprice`), visible dans `gh run list` comme dans l'API.
 
-Le bouton « Scanner » du dashboard reste le rattrapage manuel immédiat.
+Depuis le 5 septembre 2026, **un créneau ne vaut qu'un seul scan payant**.
+Le rattrapage arrive à H+28 ; le cron GitHub, lui, peut arriver deux heures
+plus tard — et il repayait les mêmes ligues. Mesuré ce jour-là : le créneau
+09:03, servi à 09:30 (16 crédits), a été repayé à 10:08 (27 crédits, 23 % de
+l'allocation du jour) ; le plafond du jour est tombé à 13:30 et les QUATRE
+créneaux suivants — 13:43, 16:30, 17:58, 19:30 — sont repartis sans acheter
+une seule cote, ceux qui portent le Big 5 du soir et la NFL/NBA.
+
+Le second run d'un même créneau se **dégrade en `reprice`** : il ne paie rien,
+mais re-tarife quand même le slate en cache et capte la clôture. C'est écrit
+dans le résumé du run (« DOUBLON dégradé »). Le créneau n'est marqué servi
+qu'APRÈS un scan réussi : un scan tombé reste à rattraper.
+
+Le bouton « Scanner » du dashboard reste le rattrapage manuel immédiat — il
+n'est JAMAIS dégradé. Pour relancer un scan payant sur un créneau déjà servi,
+lancer `scan.yml` à la main en cochant **« Payer même si le créneau a déjà été
+servi »**.
 
 ## Ce qui n'entre PAS (depuis le 3 septembre 2026, ta décision)
 

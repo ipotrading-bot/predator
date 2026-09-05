@@ -2039,6 +2039,98 @@ Gardiens :
 `…::test_les_crons_cites_par_le_run_name_existent_avec_ce_mode`,
 `…::test_la_fraicheur_ne_rattrape_scan_quen_reprice`.
 
+### Deux runs pour un créneau : le cron en retard repayait derrière le rattrapage (2026-09-05)
+
+Suite directe de l'entrée précédente : le rattrapage `standard` décidé le
+2026-09-04 marche — et il paie DEUX FOIS.
+
+Symptôme : le budget OddsAPI du jour épuisé avant 13:30. Les runs standard
+suivants — 13:43, 16:30, 17:58, 19:30 — tournent, sortent verts, et repartent
+avec **0 ligue payée** alors que 15 à 16 ligues peuplées sont disponibles
+(EPL, Liga, Serie A, Bundesliga, Ligue 1, MLS, NRL, MLB). Ce sont précisément
+les créneaux qui portent le Big 5 du soir et la NFL/NBA. Aucun run en échec,
+rien qui signale l'anomalie.
+
+Cause : le chien de garde Cloudflare (`scripts/cloudflare_watchdog_worker.js`,
+table `CRENEAUX`, grâce 25 min) rattrape un créneau standard à H+28 ; GitHub
+livre ensuite le cron du MÊME créneau avec jusqu'à ~2 h de retard. Les deux
+runs sont des scans payants complets — rien dans `scripts/ci_scan_mode.py` ne
+savait qu'un créneau avait déjà été servi. La garde d'espacement de
+`core/scan_windows.py::SpendPolicy.allow` ne protège PAS ce cas : son
+`min_interval` (`BACKGROUND_MIN_INTERVAL_MIN`, 180 min) ne vaut que pour le
+« scan de fond » ; une ligue en fenêtre favorable est repayée VOLONTAIREMENT,
+c'est le principe du module.
+
+MESURÉ le 2026-09-05 (`gh run list --workflow "Predator Scan"` + la ligne
+« RYTHME | allocation … (dont N pour ce scan : M ligue(s)) » de chaque run) :
+- **11 runs `Scan standard` pour 7 créneaux dus** — 6 rattrapages du chien de
+  garde (06:30, 09:30, 11:30, 13:30, 16:30, 19:30) et 5 crons livrés en retard
+  (00:40, 10:08, 13:43, 17:58, 20:58) ;
+- retards mesurés : 09:03 livré à 10:08 (+65 min), 16:03 à 17:58 (+115 min),
+  19:03 à 20:58 (+115 min) ;
+- créneau 09:03 servi DEUX fois : run 33958159319 à 09:30 (16 crédits,
+  6 ligues) puis run 33959842684 à 10:08 (**27 crédits, 9 ligues**). 27 crédits
+  sur une allocation de 116/j = **23 % de la journée**, dépensés une seconde
+  fois pour le même créneau ;
+- distribution du jour : 00:40 → 37, 06:30 → 3, 09:30 → 16, 10:08 → 27,
+  11:30 → 27, 13:30 → 15, puis 13:43 → 0, 16:30 → 0, 17:58 → 0, 19:30 → 0,
+  20:58 → 3. **Total 128 pour une allocation de 116.**
+
+Fait : un créneau standard ne vaut qu'UN scan payant.
+`scripts/ci_scan_mode.py` gagne `standard_slots()` (heures DÉRIVÉES de
+`CRON_MODES`, règle n°6) et `due_slot(now)`, qui rend le dernier créneau DÛ —
+un run en retard sert le créneau qu'il RATTRAPE, pas l'heure à laquelle il
+tourne : le rattrapage de 09:30 et le cron de 10:08 désignent tous deux
+« 2026-09-05T09:03 ». Si `meta.scan_standard_slot` porte déjà ce créneau, le
+run se DÉGRADE en `reprice` : gratuit, il re-tarife quand même le slate en
+cache et capte la closing line ; la dégradation est loggée (`::notice::`) et
+écrite dans le résumé du run — rien n'est supprimé en silence. Le créneau est
+marqué APRÈS un scan réussi (step « Créneau standard servi », `if: success()`,
+`python scripts/ci_scan_mode.py --note-slot`), avec le créneau publié par le
+step « mode », pas l'heure de fin. Le `concurrency: predator-signals-write` de
+`scan.yml` sérialise les runs : le marquage précède toujours la résolution du
+suivant.
+
+Épargnés de la dégradation : le bouton « Scanner » du dashboard (l'opérateur
+qui clique veut un scan MAINTENANT — sinon le bouton deviendrait
+silencieusement inopérant) et un dispatch manuel cochant le nouvel input
+booléen `force` de `scan.yml`. Le chien de garde ne pose JAMAIS `force`, sinon
+le garde-fou ne servirait à rien.
+
+Pas fait, et dit :
+- le retard de GitHub lui-même n'est pas réparable de l'intérieur (0,48
+  exécution/h mesuré le 2026-08-27, entrée « Le scheduler GitHub ne livre
+  qu'une fraction des crons ») — on rend le pipeline INSENSIBLE au retard, on
+  ne le supprime pas ;
+- le rattrapage du chien de garde n'est pas touché : DÉCISION OPÉRATEUR du
+  2026-09-04 ;
+- surtout : le doublon n'explique PAS à lui seul le budget mangé le matin. La
+  voie « closing line imminente » de `SpendPolicy.allow` appelle
+  `_within(..., intraday=False)` avec `EXEMPT_SHARE = 1.1` et CONTOURNE donc
+  le plafond intra-journée (`intraday_cap`) censé garder du budget pour le
+  soir : le run de 00:40 a engagé 37 crédits quand le plafond horaire valait
+  ~13. **MESURÉ, NON CORRIGÉ** — c'est un arbitrage de politique de dépense,
+  il revient à l'opérateur.
+
+⚠️ Le créneau se marque APRÈS le scan et SEULEMENT s'il a réussi. Le marquer à
+la résolution du mode rendrait un scan tombé « servi », et le chien de garde ne
+le rattraperait plus.
+⚠️ Le dé-doublonnage repose sur `due_slot`, donc sur les heures du cron :
+recaler le cron sans recaler `CRON_MODES` ferait dégrader des runs sur des
+créneaux FANTÔMES (cas couvert par le test gardien).
+
+Gardiens : `tests/test_ci_env.py::TestDegradationDuDoublon` (premier run paie,
+second dégradé, run dégradé sans `ODDS_API`, bouton Scanner jamais dégradé,
+`force` repaie sciemment, créneau publié pour le marquage),
+`tests/test_ci_env.py::TestLeMarquageDuCreneau` (marquage après le scan et sous
+`success()`, mode `standard` seul, `SCAN_SLOT` repris du step « mode », chien de
+garde qui ne force jamais, input `force` déclaré et faux par défaut), et les
+tests de dérivation
+`tests/test_ci_env.py::test_les_heures_de_creneau_sortent_du_cron_jamais_dune_liste`,
+`…::test_un_run_en_retard_sert_le_creneau_du_pas_son_heure`,
+`…::test_avant_le_premier_creneau_du_jour_cest_celui_dhier`,
+`…::test_le_creneau_pile_a_lheure_est_deja_du`.
+
 ### Le verrou `predator-signals-write` ne contient plus `closing_line.yml`
 
 raison courante (« aucune ligne en commun ») est FAUSSE : `purge_rules`

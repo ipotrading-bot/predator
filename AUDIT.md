@@ -59,6 +59,7 @@ C'est le tableau à consulter avant de toucher à quoi que ce soit.
 | `CLOUDFLARE_API_TOKEN` ne va jamais sans `CLOUDFLARE_ACCOUNT_ID` | `…::test_cloudflare_a_son_identifiant_de_compte` |
 | Aucun pool ne transmet une clé Groq ou Tavily (supprimées le 2026-09-02) | `…::test_aucun_pool_ne_transmet_groq_ou_tavily` |
 | Le step REPRICE ne reçoit aucune clé payante (lisible dans le YAML) | `…::test_le_step_reprice_ne_peut_mecaniquement_rien_depenser` |
+| Un créneau `standard` ne vaut qu'UN scan payant : le second run du même créneau (cron GitHub en retard derrière le rattrapage du chien de garde) se dégrade en `reprice` ; le bouton « Scanner » et l'input `force` en sont exemptés, le chien de garde ne pose jamais `force` ; les heures de créneau sont DÉRIVÉES de `CRON_MODES` ; le créneau n'est marqué servi qu'APRÈS un scan réussi | `tests/test_ci_env.py::TestDegradationDuDoublon`, `…::TestLeMarquageDuCreneau`, `…::test_un_run_en_retard_sert_le_creneau_du_pas_son_heure` |
 | `readonly` ne détient aucun jeton d'écriture | `…::test_readonly_ne_detient_aucun_jeton_decriture` |
 | Le pool `settlement` porte les clés de résultats (TheSportsDB ; ESPN et MLB sans clé) et AUCUN pool ne porte une clé api-sports (retirée le 2026-09-03) | `…::test_le_settlement_porte_les_cles_de_resultats`, `…::test_aucune_cle_api_sports_dans_les_pools` |
 | Le score vient de sources structurées (`core/score_sources`) — JAMAIS d'un LLM, plus d'api-sports | `tests/test_settlement.py::TestFetchMatchResult::test_no_ai_layer_involved` |
