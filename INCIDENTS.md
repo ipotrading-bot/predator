@@ -1454,6 +1454,15 @@ tirs au but) : `Tr1`/`Tr2` peuvent y porter le score de la SÉANCE et non
 celui du temps réglementaire, le seul que mesurent nos marchés 1X2 et
 totaux. Ces matchs continuent vers ESPN et TheSportsDB.
 
+⚠️ LiveScore LIMITE LES RAFALES. Mesuré le 2026-09-05 : ~30 requêtes
+enchaînées sans pause → **HTTP 403** sur toutes ; les mêmes dates espacées de
+3 s rendent 200. Le chemin de production n'est pas concerné (cache de run par
+(sport, jour), au plus 3 jours par audit — 6 requêtes au premier run réel), et
+un 403 dégrade proprement en `None` + warning. Mais une exploration hors ligne
+qui balaie beaucoup de dates DOIT s'espacer, sinon elle mesure son propre
+throttling et conclut « ligue non couverte » sur des ligues couvertes — c'est
+l'erreur commise en analysant le résidu ce jour-là.
+
 ⚠️ Le PÉRIMÈTRE SPORTIF NE BOUGE PAS : `sports_reglables()` est inchangée.
 Cette voie règle mieux ce qui est DÉJÀ émis ; ouvrir un sport ou une ligue à
 l'émission engage des crédits OddsAPI et reste une décision opérateur
@@ -1466,6 +1475,25 @@ sous-ensemble strict d'ESPN), **OpenLigaDB** (Allemagne seule), **NHL
 officiel** (1 seule ligne hockey au ledger). ⚠️ `www.livescore.com/robots.txt`
 porte `Disallow: /api/` ; l'hôte de l'API publique est différent et ne sert
 aucun robots.txt — zone grise assumée par décision opérateur, comme odds500.
+
+CE QUI RESTE, mesuré le 2026-09-05 sur les 281 compétitions que LiveScore
+liste en 3 jours, se range en DEUX classes — et aucune des deux n'appelle un
+LLM :
+
+  - **NOMS divergents.** « Truong Tuoi Dong Nai FC vs The Cong - Viettel FC »
+    ne se réglait pas ; le match EST chez LiveScore, sous
+    « Binh Phuoc 0-2 Viettel » (Vietnam - V-League, `ft`) — le club porte son
+    nom de sponsor. C'est le dictionnaire `team_aliases`
+    (`sql/migrate_v10_3`), pas une source manquante. ⚠️ Ne PAS confier cet
+    apprentissage à un LLM : mesuré le 2026-08-28, le slate de confiance a
+    appris QUATRE alias FAUX sur cinq.
+  - **FOOTBALL DE JEUNES.** LiveScore ne liste AUCUNE compétition U19/U20/U21
+    sur ses 281. Aucune source gratuite ne les publie. Un LLM ne pourrait
+    qu'INVENTER le score — « une génération plausible, pas une observation »,
+    la raison même de la suppression d'`oracle.py`. Le remède n'est pas une
+    source, c'est de ne pas ÉMETTRE ces matchs : le correctif d'étage du
+    2026-09-04 le fait déjà (9 signaux jeunes avant lui, 0 sur les 13 signaux
+    émis depuis).
 
 Ce qui RESTE non réglable est une longue traîne, pas un trou de source : 33
 lignes `expired` sur 473 au ledger, réparties sur 12 ligues (Cupa României,
