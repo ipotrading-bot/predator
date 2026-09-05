@@ -63,7 +63,16 @@ EXPIRE_AFTER_H      = int(os.environ.get("EXPIRE_AFTER_H", 36))
 # journalier de 150) n'est plus tenté. DOIT rester bien SOUS EXPIRE_AFTER_H :
 # la ligne continue d'être réessayée via ESPN, seule la source à budget étroit
 # décroche. Au-dessus d'EXPIRE_AFTER_H, ce réglage n'aurait aucun effet.
-TSDB_RETRY_WINDOW_H = int(os.environ.get("TSDB_RETRY_WINDOW_H", 12))
+#
+# 12 -> 8 le 2026-09-05, EN MÊME TEMPS que le passage de l'audit de 6 h à 3 h
+# (.github/workflows/audit.yml). Ces deux nombres se multiplient : un signal
+# irrécupérable dépense une requête TheSportsDB PAR AUDIT tant qu'il est dans
+# la fenêtre, soit fenêtre/cadence essais. 12/6 = 2 essais ; laisser 12 avec
+# une cadence de 3 h en aurait fait 4, et le budget de 150 était déjà saturé
+# trois jours d'affilée (02, 03 et 04 septembre, ce dernier dès 10:33). 8/3
+# rend les 2 essais d'avant. Doubler la cadence sans toucher ici aurait
+# racheté du délai de règlement avec la famine qu'on venait de corriger.
+TSDB_RETRY_WINDOW_H = int(os.environ.get("TSDB_RETRY_WINDOW_H", 8))
 SETTLE_BUDGET = 25     # Max settlement lookups per audit run (score APIs)
 
 _AUDIT_COLS = {"closing_line", "clv_pct", "closed_at"}

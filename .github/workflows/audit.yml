@@ -1,6 +1,6 @@
 name: Predator Audit
 
-# Settlement + CLV + couche d'apprentissage, toutes les 6 h.
+# Settlement + CLV + couche d'apprentissage, toutes les 3 h.
 # ⚠️ NE PAS RENOMMER CE FICHIER : api/index.py (/api/audit/run) le déclenche
 # par son nom via l'API GitHub (…/actions/workflows/audit.yml/dispatches).
 #
@@ -10,7 +10,24 @@ name: Predator Audit
 
 on:
   schedule:
-    - cron: '0 */6 * * *'   # 00:00 06:00 12:00 18:00 UTC
+    # CADENCE CALÉE SUR LES COUPS D'ENVOI, pas sur un chiffre rond. Mesuré le
+    # 2026-09-05 sur 131 signaux recommandés : un pari devient réglable à
+    # KO + SETTLEMENT_GRACE_H (4 h), et ces heures-là se massent en trois
+    # vagues UTC — 02-06 (42 % du total, soirée américaine), 13-14, et 20-23
+    # (30 %, soirée européenne). Le cron 0 */6 posait un tick à 00:00, quand
+    # 1 % seulement des paris du jour sont réglables, et laissait la vague
+    # de 20-23 attendre l'audit de 00:00 le lendemain. Trois heures d'écart
+    # ramènent l'attente maximale de 6 h à 3 h sur CHAQUE vague.
+    # La minute 45 évite le verrou `predator-signals-write` : scan.yml tire
+    # `standard` à :03 et `reprice` à :25.
+    # ⚠️ Cadence RÉGULIÈRE volontairement : le chien de garde Cloudflare
+    # surveille ce workflow par FRAÎCHEUR (`stale_min`), ce qui n'a de sens
+    # que si l'écart entre deux ticks est constant. Un cron « aux bonnes
+    # heures » mais irrégulier imposerait le mécanisme de CRÉNEAUX de
+    # scan.yml. Changer cette cadence = changer `stale_min` dans
+    # scripts/cloudflare_watchdog_worker.js (gardien :
+    # tests/test_watchdog_worker.py).
+    - cron: '45 */3 * * *'   # 00:45 03:45 06:45 09:45 12:45 15:45 18:45 21:45 UTC
   workflow_dispatch:
 
 # Settlement = UPDATE sur `signals` + INSERT dans `ai_learning_ledger`, en

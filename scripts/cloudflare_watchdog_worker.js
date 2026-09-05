@@ -42,7 +42,7 @@ const REPO = "ipotrading-bot/predator";
 const WATCH = [
   { file: "scan.yml",         stale_min: 75,  inputs: { mode: "reprice" } },
   { file: "closing_line.yml", stale_min: 25,  inputs: {} },
-  { file: "audit.yml",        stale_min: 370, inputs: {} },
+  { file: "audit.yml",        stale_min: 190, inputs: {} },   // cadence 3 h (45 */3) depuis le 2026-09-05
   { file: "reports.yml",      stale_min: 130, inputs: { report: "rapport" } },
 ];
 
