@@ -588,3 +588,85 @@ class TestSondeDAlias:
             assert ss.result_from_livescore("Bali United vs PSS Sleman", "soccer",
                                             "2026-09-04")["home_score"] == 2
         assert "ALIAS CANDIDAT" not in caplog.text
+
+
+# ── ESPN tennis : un jour à la fois (2026-09-05) ──────────────────────
+
+def _tennis_comp(cid, a, b, date, winner=None, completed=True):
+    def ath(name, win):
+        c = {"athlete": {"displayName": name}}
+        if win is not None:
+            c["winner"] = win
+        return c
+    return {"id": cid, "date": date,
+            "status": {"type": {"completed": completed, "state": "post" if completed else "pre"}},
+            "competitors": [ath(a, winner == a if winner else None),
+                            ath(b, winner == b if winner else None)]}
+
+
+def _tournoi(comps):
+    return {"id": "t1", "name": "US Open", "date": "2026-08-24T15:00Z",
+            "competitions": [], "groupings": [{"competitions": comps}]}
+
+
+class TestESPNTennisParJour:
+    """Le scoreboard tennis ne rend RIEN sur une plage `dates=A-B` (mesuré le
+    2026-09-05 : 0 événement, contre 625 matchs datés sur un jour seul).
+    Jusque-là : US Open payé à chaque scan, puis chaque match refusé « ligue
+    non couverte » — un crédit perdu deux fois."""
+
+    def _fake(self, appels):
+        def fake(url, bucket, budget, source=None):
+            appels.append(url)
+            assert "dates=2026" in url and "-" not in url.split("dates=")[1].split("&")[0], \
+                "le tennis doit être interrogé un jour à la fois"
+            jour = url.split("dates=")[1][:8]
+            comps = [_tennis_comp("c1", "Denis Shapovalov", "Ben Shelton", "2026-09-05T02:45Z",
+                                  winner="Ben Shelton"),
+                     _tennis_comp("c2", "Taylor Fritz", "Francisco Cerundolo", "2026-09-05T15:40Z",
+                                  completed=False),
+                     _tennis_comp("c3", "Iga Swiatek", "Marie Bouzkova", "2026-08-31T17:00Z",
+                                  winner="Iga Swiatek")]
+            return {"events": [_tournoi(comps)]} if jour.startswith("202609") else {"events": []}
+        return fake
+
+    def test_une_requete_par_jour_et_par_chemin(self, monkeypatch):
+        appels = []
+        monkeypatch.setattr(ss, "_get_json", self._fake(appels))
+        ev = ss.fixtures_espn("tennis", "2026-09-05", "2026-09-05")
+        # fenêtre 09-04..09-06 = 3 jours × 2 chemins (atp, wta)
+        assert len(appels) == 6
+        assert all(("/tennis/atp/" in u or "/tennis/wta/" in u) for u in appels)
+        comps = [c for e in ev for c in ss._espn_competitions(e)]
+        # hors fenêtre écarté (c3), doublon entre jours et chemins écarté (id)
+        assert sorted(c["id"] for c in comps) == ["c1", "c1", "c2", "c2"] or \
+               sorted(c["id"] for c in comps) == ["c1", "c2"]
+
+    def test_le_match_du_signal_est_couvert_dans_les_deux_ordres(self, monkeypatch):
+        monkeypatch.setattr(ss, "_get_json", self._fake([]))
+        ev = ss.fixtures_espn("tennis", "2026-09-05", "2026-09-05")
+        assert ss.fixture_connue("Ben Shelton vs Denis Shapovalov", ev, min_sides=2)
+        assert ss.fixture_connue("Taylor Fritz vs Francisco Cerundolo", ev, min_sides=2)
+        assert not ss.fixture_connue("Iga Swiatek vs Marie Bouzkova", ev)      # 31/08, hors fenêtre
+
+    def test_le_vainqueur_regle_un_match_termine_seulement(self, monkeypatch):
+        monkeypatch.setattr(ss, "_get_json", self._fake([]))
+        r = ss.result_from_espn("Ben Shelton vs Denis Shapovalov", "tennis", "2026-09-05")
+        assert r and (r["home_score"], r["away_score"]) == (1, 0)
+        ss.reset_cache()
+        assert ss.result_from_espn("Taylor Fritz vs Francisco Cerundolo", "tennis", "2026-09-05") is None
+
+    def test_un_sport_dequipe_garde_sa_plage(self, monkeypatch):
+        appels = []
+        def fake(url, bucket, budget, source=None):
+            appels.append(url); return {"events": []}
+        monkeypatch.setattr(ss, "_get_json", fake)
+        ss.fixtures_espn("soccer", "2026-09-05", "2026-09-05")
+        assert appels == [f"{ss.ESPN_BASE}/soccer/all/scoreboard?dates=20260904-20260906&limit=1000"]
+
+    def test_une_fenetre_dun_seul_jour_est_lisible(self):
+        assert ss._dans_fenetre("2026-09-05T02:45Z", "20260905")
+        assert not ss._dans_fenetre("2026-09-06T02:45Z", "20260905")
+        assert ss._jours_de_fenetre("20260904-20260906") == ["20260904", "20260905", "20260906"]
+        assert ss._jours_de_fenetre("20260905") == ["20260905"]
+        assert len(ss._jours_de_fenetre("20260101-20261231")) == 10          # plafond

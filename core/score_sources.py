@@ -308,18 +308,54 @@ def _espn_fenetre(match_date: str) -> str | None:
     return f"{debut:%Y%m%d}-{fin:%Y%m%d}"
 
 
+def _espn_par_jour(path: str) -> bool:
+    """Le scoreboard tennis d'ESPN ne rend RIEN sur une plage `dates=A-B`
+    (mesuré le 2026-09-05 : 0 événement, contre le tournoi entier — 625
+    matchs datés — sur `dates=AAAAMMJJ`). Les sports d'équipe acceptent la
+    plage ; le tennis se lit un jour à la fois."""
+    return path.startswith("tennis/")
+
+
+def _jours_de_fenetre(fenetre: str, plafond: int = 10) -> list[str]:
+    """Les jours AAAAMMJJ d'une fenêtre `A-B` (ou `A`), au plus `plafond`."""
+    debut, _, fin = fenetre.partition("-")
+    fin = fin or debut
+    try:
+        a, b = datetime.strptime(debut, "%Y%m%d"), datetime.strptime(fin, "%Y%m%d")
+    except ValueError:
+        return []
+    if b < a:
+        a, b = b, a
+    return [(a + timedelta(days=i)).strftime("%Y%m%d")
+            for i in range(min((b - a).days + 1, plafond))]
+
+
 def _espn_events(path: str, fenetre: str) -> list:
     cle = (path, fenetre)
     if cle not in _CACHE_ESPN:
-        url = f"{ESPN_BASE}/{path}/scoreboard?dates={fenetre}&limit=1000"
-        data = _get_json(url, _ESPN_BUCKET, ESPN_DAILY_BUDGET, source="espn") or {}
-        events = list(data.get("events") or [])
-        # Les tournois (tennis) rendent leurs tableaux entiers : on borne dès
-        # ici les competitions à la fenêtre, une fois pour tout le run.
-        for ev in events:
-            if ev.get("groupings"):
-                ev["competitions"] = _espn_competitions(ev, fenetre)
-                ev["groupings"] = []
+        requetes = _jours_de_fenetre(fenetre) if _espn_par_jour(path) else [fenetre]
+        events: list = []
+        vus: set = set()
+        for dates in requetes:
+            url = f"{ESPN_BASE}/{path}/scoreboard?dates={dates}&limit=1000"
+            data = _get_json(url, _ESPN_BUCKET, ESPN_DAILY_BUDGET, source="espn") or {}
+            for ev in list(data.get("events") or []):
+                # Les tournois (tennis) rendent leurs tableaux entiers : on
+                # borne dès ici les competitions à la fenêtre, une fois pour
+                # tout le run — et un même match rendu par deux jours (id)
+                # n'est gardé qu'une fois.
+                if ev.get("groupings"):
+                    comps = []
+                    for comp in _espn_competitions(ev, dates):
+                        cid = comp.get("id")
+                        if cid and cid in vus:
+                            continue
+                        if cid:
+                            vus.add(cid)
+                        comps.append(comp)
+                    ev["competitions"] = comps
+                    ev["groupings"] = []
+                events.append(ev)
         _CACHE_ESPN[cle] = events
     return _CACHE_ESPN[cle]
 
@@ -340,8 +376,8 @@ def _dans_fenetre(date_iso: str | None, fenetre: str) -> bool:
     `AAAAMMJJ-AAAAMMJJ` ? Une date illisible n'est pas gardée."""
     try:
         jour = datetime.fromisoformat(str(date_iso)[:10]).strftime("%Y%m%d")
-        debut, fin = fenetre.split("-")
-        return debut <= jour <= fin
+        debut, _, fin = fenetre.partition("-")
+        return debut <= jour <= (fin or debut)
     except (TypeError, ValueError):
         return False
 

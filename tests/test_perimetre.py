@@ -238,7 +238,10 @@ class TestTennisESPN:
         ss.reset_cache()
         r = ss.result_from_espn("Clara Burel vs Ma YeXin", "tennis", "2026-09-02")
         assert r and (r["home_score"], r["away_score"]) == (1, 0)
-        assert len(appels) == 2          # atp + wta interrogés, un seul candidat retenu
+        # atp + wta interrogés, UN JOUR À LA FOIS (3 jours de fenêtre — le
+        # scoreboard tennis ne rend rien sur une plage, mesuré le 2026-09-05),
+        # un seul candidat retenu malgré les six réponses identiques
+        assert len(appels) == 6 and all("-" not in u.split("dates=")[1][:17] for u in appels)
 
     def test_le_tennis_est_reglable_et_paye(self):
         assert "tennis" in ss.sports_reglables()
