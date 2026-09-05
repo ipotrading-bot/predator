@@ -87,9 +87,15 @@ MLB_DAILY_BUDGET = int(os.environ.get("MLB_STATSAPI_DAILY_BUDGET", "80"))
 # TOUT un sport, donc un audit en consomme quelques-unes. Borne prudente.
 ESPN_DAILY_BUDGET = int(os.environ.get("ESPN_DAILY_BUDGET", "400"))
 TSDB_DAILY_BUDGET = int(os.environ.get("THESPORTSDB_DAILY_BUDGET", "150"))
+# LiveScore rend TOUTE une journée d'un sport en UNE requête (273 matchs de
+# football pour le 2026-09-04, mesuré ; ESPN en rend 115 le même jour). Un
+# audit en consomme donc au plus 3 par sport — la fenêtre `_jours`. Borne
+# large, elle ne peut pas être atteinte par un fonctionnement normal.
+LIVESCORE_DAILY_BUDGET = int(os.environ.get("LIVESCORE_DAILY_BUDGET", "120"))
 _MLB_BUCKET = "mlb_results"
 _ESPN_BUCKET = "espn_results"
 _TSDB_BUCKET = "tsdb_results"
+_LS_BUCKET = "livescore_results"
 
 # Sport interne → chemins de scoreboard ESPN à interroger, dans l'ordre.
 # `soccer/all` couvre toutes les ligues de football en une requête ; les
@@ -168,6 +174,7 @@ _CACHE_MLB: dict[str, list] = {}
 _CACHE_ESPN: dict[tuple[str, str], list] = {}
 _CACHE_TSDB_TEAMS: dict[str, list] = {}
 _CACHE_TSDB_EVENTS: dict[str, list] = {}
+_CACHE_LS: dict[tuple[str, str], list] = {}
 
 
 def reset_cache() -> None:
@@ -176,6 +183,7 @@ def reset_cache() -> None:
     _CACHE_ESPN.clear()
     _CACHE_TSDB_TEAMS.clear()
     _CACHE_TSDB_EVENTS.clear()
+    _CACHE_LS.clear()
 
 
 def _get_json(url: str, bucket: str, budget: int, source: str | None = None) -> dict | None:
@@ -528,7 +536,113 @@ def result_from_espn(match_name: str, sport: str, match_date: str) -> dict | Non
     return None
 
 
-# ── 2. TheSportsDB ────────────────────────────────────────────────────
+# ── 2. LiveScore ──────────────────────────────────────────────────────
+#
+# POURQUOI cette voie existe (2026-09-05). ESPN est large mais pas universel :
+# mesuré sur le 2026-09-04, `soccer/all` rend 115 événements quand LiveScore
+# en rend 273 pour la même journée. Les 158 de différence sont exactement les
+# lignes qui tombaient sur TheSportsDB — dernier étage, budget de 150/jour,
+# saturé les 02, 03 et 04 septembre. Un exemple vérifié : Bali United 2-1 PSS
+# Sleman (Indonésie), invisible d'ESPN, présent ici en `FT`.
+#
+# Une requête = TOUTE la journée d'un sport, donc cette voie SOULAGE le
+# budget étroit au lieu d'en créer un second : elle s'intercale entre ESPN et
+# TheSportsDB pour que le troisième étage ne serve plus qu'à la traîne.
+#
+# ⚠️ SEUL « FT » RÈGLE. LiveScore publie aussi « AP » (après tirs au but) et
+# les minutes en direct. Sur un match décidé aux tirs au but, `Tr1`/`Tr2`
+# peuvent porter le score de la séance et non celui du temps réglementaire,
+# qui est le seul que nos marchés 1X2 et totaux mesurent : régler dessus
+# écrirait un WIN/LOSS faux et DÉFINITIF. Ces matchs-là continuent donc vers
+# ESPN et TheSportsDB, comme avant cette voie. Refus plutôt que devinette.
+_LS_URL = "https://prod-public-api.livescore.com/v1/api/app/date"
+# Sport interne → segment d'URL LiveScore. Sondés le 2026-09-05 pour le
+# 2026-09-04 : soccer 273 événements, tennis 79, hockey 31, cricket 16,
+# basketball 8 ; baseball/volleyball/handball rendent HTTP 410.
+# Le football SEUL est câblé : c'est là qu'est l'écart avec ESPN (115 contre
+# 273) et c'est 411 des 473 lignes du ledger. Sur les autres sports ESPN
+# passe d'abord et couvre déjà (NBA/WNBA, NHL, tableaux ATP/WTA), et le
+# tennis rend des ATHLÈTES — une structure que cet adaptateur ne sait pas
+# lire. Ajouter une ligne ici sans la mesurer serait une liste qu'on croit
+# exhaustive (règle n°6).
+_LS_SPORTS = {"soccer": "soccer"}
+# Statuts TERMINÉS retenus. Volontairement RÉDUIT à « FT » — voir l'alerte
+# ci-dessus sur « AP ».
+_LS_FINISHED = frozenset({"ft"})
+
+
+def _livescore_du_jour(segment: str, jour: str) -> list:
+    """Tous les matchs d'un sport pour une journée UTC, aplatis.
+
+    Rend [] sur toute panne (convention du dépôt) : une source de scores
+    muette fait attendre la ligne, elle ne casse jamais l'audit."""
+    cle = (segment, jour)
+    if cle not in _CACHE_LS:
+        data = _get_json(f"{_LS_URL}/{segment}/{jour.replace('-', '')}/0",
+                         _LS_BUCKET, LIVESCORE_DAILY_BUDGET, source="livescore")
+        rows = []
+        for stage in (data or {}).get("Stages") or []:
+            ligue = f"{stage.get('Cnm') or ''} - {stage.get('Snm') or ''}".strip(" -")
+            for ev in stage.get("Events") or []:
+                rows.append({
+                    # T1/T2 sont des LISTES (doubles au tennis) ; en football
+                    # il y a une entrée par camp. On garde tous les noms :
+                    # l'appariement essaie chacun.
+                    "home": [t.get("Nm") or "" for t in (ev.get("T1") or [])],
+                    "away": [t.get("Nm") or "" for t in (ev.get("T2") or [])],
+                    "home_score": ev.get("Tr1"),
+                    "away_score": ev.get("Tr2"),
+                    "status": str(ev.get("Eps") or "").strip().lower(),
+                    "id": str(ev.get("Eid") or ""),
+                    "league": ligue,
+                })
+        _CACHE_LS[cle] = rows
+    return _CACHE_LS[cle]
+
+
+def _ls_camp(noms: list, attendu: str) -> bool:
+    """Un des noms de ce camp correspond-il strictement à celui du signal ?"""
+    return any(n and strict_team_match(attendu, n) for n in noms)
+
+
+def result_from_livescore(match_name: str, sport: str, match_date: str) -> dict | None:
+    """Score final via l'API publique LiveScore. Même contrat que les autres
+    voies : les DEUX noms appariés sur le MÊME événement, candidat UNIQUE,
+    statut terminé seulement, None sur panne."""
+    parts = _split(match_name)
+    segment = _LS_SPORTS.get((sport or "").lower())
+    if not parts or not segment:
+        return None
+    home, away = parts
+    vus: dict[str, tuple[int, int]] = {}
+    for jour in _jours(match_date) or []:
+        for ev in _livescore_du_jour(segment, jour):
+            if not (_ls_camp(ev["home"], home) and _ls_camp(ev["away"], away)):
+                continue
+            if ev["status"] not in _LS_FINISHED:
+                # Match trouvé mais pas terminé (ou terminé aux tirs au but) :
+                # on ne règle pas, et on ne le dit qu'une fois — la ligne
+                # repassera au prochain audit.
+                log.info("SETTLE SKIP livescore | %s — statut %r, on n'ecrit pas",
+                         match_name, ev["status"])
+                continue
+            try:
+                hs, as_ = int(ev["home_score"]), int(ev["away_score"])
+            except (TypeError, ValueError):
+                continue
+            vus[ev["id"] or f"{jour}|{ev['league']}"] = (hs, as_)
+    if len(vus) == 1:
+        hs, as_ = next(iter(vus.values()))
+        log.info("SETTLE livescore | %s | %d-%d (0 appel IA)", match_name, hs, as_)
+        return {"home_score": hs, "away_score": as_, "completed": True,
+                "source": "livescore"}
+    if len(vus) > 1:
+        log.info("SETTLE SKIP | %s — %d evenements LiveScore correspondent, "
+                 "on ne devine pas", match_name, len(vus))
+    return None
+
+
+# ── 3. TheSportsDB ────────────────────────────────────────────────────
 
 def _tsdb_key() -> str:
     return os.environ.get("THESPORTSDB_API_KEY") or _TSDB_PUBLIC_KEY
@@ -627,8 +741,9 @@ def fetch_score(match_name: str, sport: str, match_date: str = "",
     un état terminal : la ligne repassera.
 
     `tsdb_ok=False` coupe le DERNIER étage, TheSportsDB, dont le budget est
-    journalier et étroit (150). MLB statsapi et ESPN, eux, restent essayés
-    jusqu'au bout : ils sont larges (ESPN mesuré à 22/200 le 2026-09-04).
+    journalier et étroit (150). MLB statsapi, ESPN et LiveScore, eux, restent
+    essayés jusqu'au bout : ils sont larges (ESPN mesuré à 22/200 le
+    2026-09-04 ; LiveScore rend une journée entière par requête).
 
     POURQUOI : TheSportsDB était réessayé à CHAQUE audit pendant les 36 h de
     `EXPIRE_AFTER_H`, donc ~6 fois par signal. Une poignée de lignes que
@@ -643,6 +758,12 @@ def fetch_score(match_name: str, sport: str, match_date: str = "",
         if r:
             return r
     r = result_from_espn(match_name, sport, match_date)
+    if r:
+        return r
+    # LiveScore AVANT TheSportsDB : une requête y couvre toute la journée d'un
+    # sport, donc ce qu'elle règle est autant de budget étroit épargné au
+    # dernier étage — c'est la raison d'être de sa position ici.
+    r = result_from_livescore(match_name, sport, match_date)
     if r:
         return r
     if not tsdb_ok:

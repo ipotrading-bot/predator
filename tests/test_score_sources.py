@@ -183,13 +183,30 @@ class TestBudgetsEtChaine:
                             lambda *a: vus.append("mlb") or None)
         monkeypatch.setattr(ss, "result_from_espn",
                             lambda *a: vus.append("espn") or None)
+        monkeypatch.setattr(ss, "result_from_livescore",
+                            lambda *a: vus.append("livescore") or None)
         monkeypatch.setattr(ss, "result_from_thesportsdb",
                             lambda *a: vus.append("tsdb") or None)
         ss.fetch_score("A FC vs B FC", "soccer", "2026-09-01")
-        assert vus == ["espn", "tsdb"]
+        assert vus == ["espn", "livescore", "tsdb"]
         vus.clear()
         ss.fetch_score("A vs B", "baseball", "2026-09-01")
-        assert vus == ["mlb", "espn", "tsdb"]
+        assert vus == ["mlb", "espn", "livescore", "tsdb"]
+
+    def test_livescore_passe_avant_thesportsdb(self, monkeypatch):
+        """L'ORDRE est la raison d'être de cette voie (2026-09-05) : une
+        requête LiveScore couvre toute la journée d'un sport, TheSportsDB
+        coûte plusieurs requêtes par signal sur un budget de 150/jour saturé
+        trois jours d'affilée. Inverser les deux rendrait la voie inutile."""
+        vus = []
+        monkeypatch.setattr(ss, "result_from_espn", lambda *a: None)
+        monkeypatch.setattr(ss, "result_from_livescore",
+                            lambda *a: vus.append("livescore") or {"home_score": 1,
+                            "away_score": 0, "completed": True, "source": "livescore"})
+        monkeypatch.setattr(ss, "result_from_thesportsdb",
+                            lambda *a: vus.append("tsdb") or None)
+        assert ss.fetch_score("A FC vs B FC", "soccer", "2026-09-01")["source"] == "livescore"
+        assert vus == ["livescore"], "TheSportsDB ne doit pas être appelé quand LiveScore règle"
 
     def test_settlement_jamais_etale(self):
         """Étaler le settlement est une faute (incident 2026-08-28) : ce
@@ -386,3 +403,122 @@ class TestLEtageDuClubNestJamaisHerite:
         assert ss.fixture_connue("Sheffield Wednesday vs Bristol City", senior)
         assert not ss.fixture_connue(
             "Sheffield Wednesday Reserve U21 vs Wigan Athletic U21", senior)
+
+
+# ── LiveScore (câblée le 2026-09-05) ──────────────────────────────────
+#
+# Les pièges encodés ici sont ceux MESURÉS le jour du câblage sur la journée
+# du 2026-09-04 : LiveScore rend 273 matchs de football quand ESPN en rend
+# 115, avec un vocabulaire de statut à lui (« FT », « AP », les minutes en
+# direct) et des camps sous forme de LISTES.
+
+def _ls_payload(events, ligue="Indonesia - Super League"):
+    """Une réponse LiveScore : Stages[] > Events[], camps en listes."""
+    return {"Stages": [{"Cnm": ligue.split(" - ")[0],
+                        "Snm": ligue.split(" - ")[-1],
+                        "Events": [
+                            {"Eid": eid, "T1": [{"Nm": h}], "T2": [{"Nm": a}],
+                             "Tr1": hs, "Tr2": as_, "Eps": st}
+                            for (eid, h, a, hs, as_, st) in events]}]}
+
+
+class TestLiveScore:
+    def test_un_match_termine_regle(self, monkeypatch):
+        monkeypatch.setattr(ss, "_get_json", lambda url, b, bud, source=None:
+                            _ls_payload([("1", "Bali United", "PSS Sleman", 2, 1, "FT")]))
+        r = ss.result_from_livescore("Bali United vs PSS Sleman", "soccer", "2026-09-04")
+        assert r == {"home_score": 2, "away_score": 1, "completed": True,
+                     "source": "livescore"}
+
+    def test_un_match_en_cours_ne_regle_pas(self, monkeypatch):
+        """LiveScore publie les minutes en direct : régler à la 70e écrirait
+        un WIN/LOSS faux et DÉFINITIF."""
+        monkeypatch.setattr(ss, "_get_json", lambda url, b, bud, source=None:
+                            _ls_payload([("1", "Bali United", "PSS Sleman", 2, 1, "70'")]))
+        assert ss.result_from_livescore("Bali United vs PSS Sleman", "soccer",
+                                        "2026-09-04") is None
+
+    def test_les_tirs_au_but_ne_reglent_pas(self, monkeypatch):
+        """« AP » (après tirs au but) est TERMINÉ mais Tr1/Tr2 peuvent porter
+        le score de la séance, que nos marchés 1X2 et totaux ne mesurent pas.
+        La ligne continue vers ESPN et TheSportsDB — refus, pas devinette."""
+        monkeypatch.setattr(ss, "_get_json", lambda url, b, bud, source=None:
+                            _ls_payload([("1", "A FC", "B FC", 4, 3, "AP")]))
+        assert ss.result_from_livescore("A FC vs B FC", "soccer", "2026-09-04") is None
+
+    def test_un_seul_nom_apparie_ne_regle_pas(self, monkeypatch):
+        """Même contrat que toutes les autres voies : les DEUX camps."""
+        monkeypatch.setattr(ss, "_get_json", lambda url, b, bud, source=None:
+                            _ls_payload([("1", "Bali United", "Persija Jakarta", 2, 1, "FT")]))
+        assert ss.result_from_livescore("Bali United vs PSS Sleman", "soccer",
+                                        "2026-09-04") is None
+
+    def test_deux_candidats_font_refuser(self, monkeypatch):
+        monkeypatch.setattr(ss, "_get_json", lambda url, b, bud, source=None:
+                            _ls_payload([("1", "A FC", "B FC", 2, 1, "FT"),
+                                         ("2", "A FC", "B FC", 0, 3, "FT")]))
+        assert ss.result_from_livescore("A FC vs B FC", "soccer", "2026-09-04") is None
+
+    def test_un_coup_denvoi_tardif_est_cherche_le_lendemain(self, monkeypatch):
+        """23:30 UTC bascule de journée : `_jours` couvre veille et lendemain."""
+        def fake(url, b, bud, source=None):
+            return _ls_payload([("1", "A FC", "B FC", 1, 0, "FT")]) \
+                if "20260905" in url else _ls_payload([])
+        monkeypatch.setattr(ss, "_get_json", fake)
+        r = ss.result_from_livescore("A FC vs B FC", "soccer", "2026-09-04")
+        assert r and r["home_score"] == 1
+
+    def test_letage_du_club_nest_pas_herite(self, monkeypatch):
+        """Un U20 ne se règle JAMAIS sur le match de son club senior — même
+        piège que l'incident ESPN du 2026-09-04, et il vaut ici aussi."""
+        monkeypatch.setattr(ss, "_get_json", lambda url, b, bud, source=None:
+                            _ls_payload([("1", "Manly United", "NWS Spirit", 3, 0, "FT")]))
+        assert ss.result_from_livescore("Manly United FC U20 vs NWS Spirit FC U20",
+                                        "soccer", "2026-09-04") is None
+
+    def test_panne_reseau_rend_none_sans_lever(self, monkeypatch):
+        monkeypatch.setattr(ss, "_get_json", lambda url, b, bud, source=None: None)
+        assert ss.result_from_livescore("A FC vs B FC", "soccer", "2026-09-04") is None
+
+    def test_un_sport_non_cable_ne_part_pas_en_requete(self, monkeypatch):
+        """Seul le football est câblé (mesuré : c'est là qu'est l'écart avec
+        ESPN). Un autre sport ne doit pas dépenser une requête pour rien."""
+        appels = []
+        monkeypatch.setattr(ss, "_get_json",
+                            lambda url, b, bud, source=None: appels.append(url))
+        assert ss.result_from_livescore("A vs B", "tennis", "2026-09-04") is None
+        assert ss.result_from_livescore("A vs B", "basketball", "2026-09-04") is None
+        assert not appels
+
+    def test_une_journee_ne_coute_quune_requete(self, monkeypatch):
+        """La raison d'être de la voie : 273 matchs pour UNE requête. Sans le
+        cache de run, un audit de 25 signaux en paierait 25."""
+        appels = []
+
+        def fake(url, b, bud, source=None):
+            appels.append(url)
+            return _ls_payload([("1", "A FC", "B FC", 1, 0, "FT"),
+                                ("2", "C FC", "D FC", 2, 2, "FT")])
+        monkeypatch.setattr(ss, "_get_json", fake)
+        ss.result_from_livescore("A FC vs B FC", "soccer", "2026-09-04")
+        ss.result_from_livescore("C FC vs D FC", "soccer", "2026-09-04")
+        assert len(set(appels)) == len(appels) == 3, "3 jours, une requête chacun, pas plus"
+
+    def test_la_requete_passe_par_core_net(self, monkeypatch):
+        """`source=` route par core.net (proxy `LIVESCORE_PROXY` /
+        `FREE_SOURCES_PROXY`) — la parade documentée si les runners GitHub se
+        font refuser, comme pour ESPN."""
+        vus = []
+
+        def fake(url, b, bud, source=None):
+            vus.append(source)
+            return _ls_payload([])
+        monkeypatch.setattr(ss, "_get_json", fake)
+        ss.result_from_livescore("A FC vs B FC", "soccer", "2026-09-04")
+        assert set(vus) == {"livescore"}
+
+    def test_le_perimetre_sportif_ne_bouge_pas(self):
+        """Cette voie règle MIEUX, elle n'ouvre AUCUN sport : le périmètre
+        d'émission et la politique de dépense restent une décision opérateur
+        (CLAUDE.md règle n°11)."""
+        assert ss.sports_reglables() == frozenset(ss._ESPN_PATHS) | {"baseball"}
