@@ -1454,6 +1454,21 @@ tirs au but) : `Tr1`/`Tr2` peuvent y porter le score de la SÉANCE et non
 celui du temps réglementaire, le seul que mesurent nos marchés 1X2 et
 totaux. Ces matchs continuent vers ESPN et TheSportsDB.
 
+⚠️⚠️ UN SCRIPT DE DIAGNOSTIC PARTAGE LES COMPTEURS DE PRODUCTION. Mesuré
+à la dure le 2026-09-05 : les scripts d'analyse lancés depuis le Codespace
+importaient `scripts/ops.py`, qui charge le fichier de credentials local —
+donc `SUPABASE_SERVICE_KEY` — et `core.daily_quota` a écrit leurs ~250
+requêtes dans `meta.quota_livescore_results_<jour>`. Résultat : **120/120
+atteint pour la JOURNÉE**, et deux audits de production sortis en
+`RUN STÉRILE` avec « budget journalier atteint (120) — requête sautée », sur
+une source qui fonctionnait parfaitement. Le compteur a été remis à la
+consommation réelle de production (`ops.py supabase meta-set
+quota_livescore_results_<jour> 6`).
+La leçon n'est pas « LiveScore est fragile », elle est plus large : une sonde
+manuelle qui importe le code du dépôt DÉPENSE LES BUDGETS DU PIPELINE. Sonder
+une source en direct depuis un poste de dev se fait avec `urllib`/`curl` nu,
+jamais par `core.score_sources`.
+
 ⚠️ LiveScore LIMITE LE VOLUME, pas seulement les rafales. Mesuré le
 2026-09-05 en analysant le résidu : ~30 requêtes enchaînées → **HTTP 403** sur
 toutes ; le blocage retombe en une minute ou deux. Mais après ~250 requêtes
