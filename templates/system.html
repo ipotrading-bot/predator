@@ -655,8 +655,11 @@ function SystemBetCalculator() {
       const count = combos.length;
       const mise = count * stake;
       const retour = combos.reduce((s, c) => s + c.R * stake, 0);
-      const impot = combos.reduce((s, c) => s + taxOfBet(c.R, stake, taxFrac), 0);
-      return { k, combos, count, mise, retour, impot, profit: retour - mise, net: retour - mise - impot };
+      // AVANT impôt (demande opérateur, 2026-09-05) : la retenue n'est plus
+      // ventilée par palier, elle est prélevée UNE fois sur le total —
+      // `taxAmount` plus bas. Un palier montre donc retour − mise, et la
+      // somme des paliers dépasse le net total de l'impôt : c'est voulu.
+      return { k, combos, count, mise, retour, profit: retour - mise };
     });
     const totalLignes = byFold.reduce((s, f) => s + f.count, 0);
     const totalMise = byFold.reduce((s, f) => s + f.mise, 0);
@@ -1262,7 +1265,8 @@ function SystemBetCalculator() {
                 </Panel>
 
                 <Panel title="Détail par palier & combinaisons"
-                  right={<span style={{ color: C.faint, fontFamily: SANS }} className="text-xs">net d'impôt</span>}
+                  right={<span style={{ color: C.faint, fontFamily: SANS }} className="text-xs"
+                    title="Avant impôt : la retenue n'est pas ventilée par palier, elle est prélevée une fois sur le total ci-dessus.">avant impôt</span>}
                 >
                   <div className="space-y-3">
                     {computed.byFold.map((f) => (
@@ -1272,12 +1276,10 @@ function SystemBetCalculator() {
                             {foldName(f.k)} <span style={{ color: C.faint }} className="font-normal">· {f.count} ligne{f.count > 1 ? "s" : ""}</span>
                           </span>
                           <span style={{ fontFamily: MONO }} className="text-right">
-                            <span style={{ color: f.net >= 0 ? C.win : C.loss }} className="text-sm font-semibold">{signed(f.net)}</span>
-                            {f.impot > 0 && (
-                              <span style={{ color: C.faint }} className="block text-xs">
-                                {fmtN(f.retour)} brut − {fmtN(f.impot)} d'impôt
-                              </span>
-                            )}
+                            <span style={{ color: f.profit >= 0 ? C.win : C.loss }} className="text-sm font-semibold">{signed(f.profit)}</span>
+                            <span style={{ color: C.faint }} className="block text-xs">
+                              {fmtN(f.retour)} brut
+                            </span>
                           </span>
                         </div>
                         <div className="flex flex-wrap gap-1.5">
