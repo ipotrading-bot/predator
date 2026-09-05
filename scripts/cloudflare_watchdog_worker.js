@@ -70,7 +70,7 @@ const WATCH = [
 // de consommation.
 const CRENEAUX = [
   { file: "scan.yml", run_name: "Scan standard", minute: 3,
-    hours: [6, 9, 11, 13, 16, 19, 21, 23], grace_min: 25,
+    hours: [6, 9, 11, 13, 16, 19, 21, 23], grace_min: 5,
     inputs: { mode: "standard" } },
 ];
 
@@ -105,8 +105,15 @@ async function creneau(env, w, now) {
   if (du === null) return;
   const retard = (now - du) / 60000;
   const quand = new Date(du).toISOString().slice(11, 16);
-  // Délai de grâce : GitHub livre souvent en retard. Dispatcher trop tôt
-  // produirait DEUX scans payants pour un créneau que le cron honore encore.
+  // Délai de grâce : 5 min depuis le 2026-09-05 (25 avant). Le Worker est
+  // désormais le PREMIER à servir un créneau — au tick suivant l'heure due,
+  // soit H+7 au plus tard — et le cron GitHub n'est plus que la roue de
+  // secours. Mesuré ce jour-là : crons livrés de +65 à +115 min sur des
+  // créneaux calés à T-2h30, donc des scans qui n'émettaient plus que des
+  // fantômes (< T-2h) : 137 lignes sur 198 depuis le 27 août. Dispatcher
+  // tôt ne coûte plus un double scan : un cron en retard derrière ce
+  // dispatch se dégrade en `reprice` (scripts/ci_scan_mode.py, créneau
+  // déjà servi) et le groupe `concurrency` sérialise le cas limite.
   if (retard < w.grace_min) {
     console.log(`${w.file} ${w.run_name}: créneau ${quand} dû il y a ${retard.toFixed(0)} min — dans le délai de grâce`);
     return;

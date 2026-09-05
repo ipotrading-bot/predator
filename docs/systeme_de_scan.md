@@ -39,9 +39,13 @@ toutes (mesuré : parfois la moitié). Un chien de garde Cloudflare vérifie
 toutes les 10 minutes et rattrape :
 
 - un tick **reprice** si plus rien n'a tourné depuis 75 min ;
-- un scan **standard** si son créneau est passé depuis plus de 25 min sans
-  qu'un standard ait démarré — donc au pire à H+28, H+38 dans le cas le plus
-  défavorable.
+- un scan **standard** si son créneau est passé depuis plus de 5 min sans
+  qu'un standard ait démarré — donc à H+7 au plus tard (le tick du Worker
+  suivant l'heure due). Depuis le 5 septembre 2026 c'est le Worker qui sert
+  le créneau en premier ; le cron GitHub, livré de +65 à +115 min ce jour-là,
+  n'est plus que la roue de secours. Un scan à T-2h30 parti deux heures en
+  retard n'émettait plus que des fantômes (< T-2h) : 137 lignes sur 198
+  depuis le 27 août.
 
 Jusqu'au 4 septembre 2026 un standard manqué était perdu, et pire : il était
 INVISIBLE. Le chien de garde regardait l'âge du dernier run de `scan.yml`
@@ -53,7 +57,7 @@ déclarés sains. Le mode figure désormais dans le NOM du run (`Scan standard` 
 `Scan reprice`), visible dans `gh run list` comme dans l'API.
 
 Depuis le 5 septembre 2026, **un créneau ne vaut qu'un seul scan payant**.
-Le rattrapage arrive à H+28 ; le cron GitHub, lui, peut arriver deux heures
+Le rattrapage arrivait alors à H+28 ; le cron GitHub, lui, peut arriver deux heures
 plus tard — et il repayait les mêmes ligues. Mesuré ce jour-là : le créneau
 09:03, servi à 09:30 (16 crédits), a été repayé à 10:08 (27 crédits, 23 % de
 l'allocation du jour) ; le plafond du jour est tombé à 13:30 et les QUATRE
