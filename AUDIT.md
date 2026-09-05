@@ -546,6 +546,25 @@ signaux `active` pour toujours), et le **catalogue OddsAPI** est sondable gratui
 
 ---
 
+## 3bis. Règle d'entrée d'une source (2026-09-05)
+
+Quinze sources de cotes, de scores ou d'IA ont été retirées entre le 22 août
+et le 5 septembre 2026 (api-sports, LineFeed, odds500, 7M, Groq, Tavily,
+Wiz…). Chacune est entrée en une heure et sortie après un incident, parce que
+l'ajout ne coûtait rien et que le retrait exigeait une mesure. La règle
+inverse ce rapport : **une source n'entre qu'avec, dans le commit d'entrée**,
+
+1. un **budget journalier chiffré**, tenu par `core/daily_quota` ou un
+   équivalent lisible dans le log (« N/M req aujourd'hui ») ;
+2. un **critère de retrait daté** : la mesure qui la fera sortir (« 0 signal
+   sur 30 jours », « < 20 % des matchs avec prix sharp »), écrit dans la
+   docstring du module ;
+3. un **test gardien** qui échoue si la source disparaît du registre sans que
+   le critère ait été relevé — et la ligne d'`INCIDENTS.md` le jour du retrait.
+
+Une source qui ne peut pas énoncer son critère de retrait n'a pas de raison
+d'entrer. Voir CLAUDE.md, règle 13.
+
 ## 4. Vérifié sain (ne pas re-diagnostiquer)
 
 Mesuré le 2026-08-22, avec la méthode :

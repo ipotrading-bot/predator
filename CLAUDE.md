@@ -8,17 +8,15 @@ Calcul en crons GitHub Actions ; dashboard en lecture seule.
 
 - `INCIDENTS.md` — **ce qui a déjà cassé, et pourquoi.** À LIRE AVANT DE
   DIAGNOSTIQUER, et avant de toucher sources, couche IA, workflows ou
-  seuils : une règle dont on ignore la raison finit contournée.
+  seuils : une règle sans sa raison finit contournée.
 - `docs/systeme_de_scan.md` — le scan en 2 modes, pour l'opérateur.
 - `AUDIT.md` — invariants → tests gardiens, à lire avant tout ajout (sport,
   fournisseur IA, route, workflow).
-- `.claude/rules/` — le DÉTAIL des règles, chargé par chemin (workflows,
-  couche IA, dashboard, sql, apprentissage).
+- `.claude/rules/` — le DÉTAIL des règles, chargé par chemin.
 - `.claude/hooks/` — les règles dures en CODE ; README dedans, gardien
   `tests/test_claude_config.py`.
-- Skills et sub-agents : `.claude/skills/` et `.claude/agents/` — les énumérer
-  ici faisait une liste non gardée (règle 6). Commencer par
-  `predator-pipeline`, la carte du flux.
+- Skills et sub-agents : `.claude/skills/`, `.claude/agents/` (pas de liste
+  ici, règle 6). Commencer par `predator-pipeline`, la carte du flux.
 
 ## Commandes
 
@@ -31,8 +29,7 @@ Calcul en crons GitHub Actions ; dashboard en lecture seule.
   qui tranche sur un fournisseur IA. MCP Supabase en LECTURE SEULE
   (`.mcp.json`).
 - Pas de build. Le push ne déploie pas (déploiement Git Vercel DÉSACTIVÉ,
-  `vercel.json`) : le job `deploy` de `ci.yml` pousse en CLI si la suite est
-  verte.
+  `vercel.json`) : le job `deploy` de `ci.yml` pousse en CLI si la suite est verte.
 
 ## Architecture (fichiers clés)
 
@@ -60,7 +57,7 @@ Calcul en crons GitHub Actions ; dashboard en lecture seule.
   `ops.py supabase migrate <f>` ou à la main. Rien ne les rejoue.
 - Tests purs uniquement (pas de réseau, pas de rendu de template).
 - Dépendances VERROUILLÉES au `==`, transitives comprises
-  (`requirements*.txt`). Ne jamais y remettre une borne molle.
+  (`requirements*.txt`), jamais de borne molle.
 
 ## Règles dures — jamais à rediscuter
 
@@ -90,3 +87,5 @@ Détail dans `.claude/rules/` (chargé par chemin), justification dans
 12. ⛔ Cadence d'un workflow multi-modes : surveiller le MODE (`run-name`)
     et le CRÉNEAU DÛ, jamais la fraîcheur du fichier — *Le chien de garde
     surveillait un FICHIER, pas un MODE*.
+13. Une source n'entre qu'avec budget chiffré, critère de retrait daté,
+    test gardien, même commit — `AUDIT.md` §3bis.

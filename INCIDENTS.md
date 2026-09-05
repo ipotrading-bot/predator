@@ -2177,6 +2177,81 @@ permis à 22:00) et `::test_le_tick_de_nuit_ne_peut_plus_manger_la_soiree`
 (rejeu du 00:40 : l'engagement reste sous le plafond horaire, donc loin des
 37 crédits).
 
+### Le règlement servait les fantômes avant les recommandés, sur le budget rare (2026-09-05)
+
+Symptôme : TheSportsDB saturé (150/150) trois jours d'affilée, des recommandés
+du 4 septembre encore `active` au matin du 5 — pendant que le budget partait.
+
+Cause : depuis l'époque A6, **137 lignes émises sur 198 sont des fantômes**
+(`is_shadow`, < T-2h). Ils sont exclus de l'apprentissage PAR CONSTRUCTION
+(`SHADOW_GOLDEN_HOUR`), mais `fetch_pending` les rendait mêlés aux recommandés
+dans l'ordre du coup d'envoi, et `audit_one` leur ouvrait le repli TheSportsDB
+comme aux autres. Le budget de 25 règlements par run et les 150 requêtes
+TheSportsDB par jour se dépensaient donc aux deux tiers sur des lignes qui
+n'informent aucun seuil.
+
+Fait :
+  - `core/audit_engine.prioriser` : les recommandés d'abord, les fantômes
+    ensuite, tri stable dans l'ordre du coup d'envoi ;
+  - `_tsdb_encore_utile` rend False pour un fantôme : le repli TheSportsDB
+    est RÉSERVÉ à ce que le système a recommandé.
+CE QUI NE CHANGE PAS : un fantôme reste réglé par les voies gratuites (ESPN,
+LiveScore, MLB statsapi), archivé, jamais jeté (règle n°9) — la mesure du
+segment < T-2h qui a justifié le fantôme reste possible.
+Gardiens : `tests/test_audit_priorite.py`.
+
+### Le chien de garde attendait 25 min qu'un cron en retard de deux heures arrive (2026-09-05)
+
+Symptôme : les scans standard, calés à T-2h30 des coups d'envoi, n'émettaient
+plus que des fantômes — 137 lignes sur 198 depuis le 27 août.
+
+Cause : mesuré ce jour-là, GitHub livrait les crons standard de +65 à +115 min
+(09:03 → 10:08, 16:03 → 17:58, 19:03 → 20:58). Le Worker Cloudflare ne
+rattrapait qu'après `grace_min: 25`, soit H+28 au mieux ; à ce moment-là un
+match de T-2h30 est à T-2h, et tout ce que le scan émet est fantôme. La grâce
+protégeait d'un double scan payant — protection devenue inutile depuis le
+dé-doublonnage de créneau (entrée « Deux runs pour un créneau », même jour).
+
+Fait : `grace_min` 25 → **5**. Le Worker sert le créneau au premier tick après
+l'heure due (H+7 au plus tard) ; le cron GitHub devient la roue de secours,
+et s'il arrive derrière, `scripts/ci_scan_mode.py` le dégrade en `reprice`.
+Le groupe `concurrency` sérialise le cas limite. Worker redéployé.
+⚠️ Ne pas remonter la grâce « pour laisser sa chance au cron » : chaque
+minute de grâce est une minute de plus vers T-2h, et le doublon ne coûte plus
+rien. Mesure attendue : part de lignes jouables par jour (ledger,
+`time_to_match_minutes` ≥ 120), à comparer aux 31 % d'avant.
+Gardiens : `tests/test_watchdog_worker.py::test_le_delai_de_grace_reste_sous_le_plus_petit_ecart`,
+`tests/test_ci_env.py::TestDegradationDuDoublon`.
+
+### ESPN tennis ne rend rien sur une plage de dates : l'US Open était payé puis refusé (2026-09-05)
+
+Symptôme : `tennis_atp_us_open` / `tennis_wta_us_open` payés à chaque scan
+favorable (2 crédits chacun), puis chaque match écarté « NON RÉGLABLE —
+absent des sources de scores (ligue non couverte) » : 12 matchs au scan de
+00:41, dont Shelton–Shapovalov et Fritz–Cerundolo. Même symptôme que le
+3 septembre (16:01). Un crédit perdu deux fois, à chaque scan.
+
+Cause, MESURÉE depuis ce Codespace : le scoreboard tennis d'ESPN rend **0
+événement sur `dates=20260904-20260906`**, et le tournoi entier — 625 matchs,
+tous datés — sur `dates=20260905`. Les sports d'équipe acceptent la plage ;
+le tennis non. `_espn_fenetre_entre` produit TOUJOURS une plage (±1 jour),
+et `_dans_fenetre` ne savait pas lire une fenêtre d'un seul jour.
+
+Fait : `core/score_sources._espn_events` interroge les chemins `tennis/*` UN
+JOUR À LA FOIS (plafond 10 jours), dédoublonne les matchs par id entre jours
+et entre chemins (atp et wta rendent le même tournoi) ; `_dans_fenetre` lit
+`A` comme `A-A`. Rejoué en réel après correction : 246 matchs en fenêtre,
+Shelton–Shapovalov couvert ET réglé 1-0 par le drapeau `winner`. Coût : 3
+requêtes ESPN par chemin au lieu d'une (budget 400/jour, sans effet mesurable).
+⚠️ Ce diagnostic a été fait en appelant `fixtures_espn` depuis le Codespace,
+avec les credentials locaux chargés : `core/daily_quota` a donc compté ces
+~12 requêtes sur le compteur ESPN de PRODUCTION
+(`meta.quota_espn_results_20260905`). Sans conséquence à 400/jour, mais c'est
+l'entrée « un script de diagnostic dépense les budgets de production » qui se
+répète : sonder ESPN avec `urllib` nu, jamais par `_get_json`.
+Gardiens : `tests/test_score_sources.py::TestESPNTennisParJour`,
+`tests/test_perimetre.py::TestTennisESPN`.
+
 ### Le verrou `predator-signals-write` ne contient plus `closing_line.yml`
 
 raison courante (« aucune ligne en commun ») est FAUSSE : `purge_rules`
