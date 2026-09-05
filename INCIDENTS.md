@@ -2189,6 +2189,37 @@ Gardien : `tests/test_system_page.py::TestSectionsAdditionnees::test_les_tables_
 — il garde la PRÉSENCE de la règle, pas la largeur rendue : aucun test de ce
 dépôt ne rend de CSS, seule une vérification navigateur mesure vraiment.
 
+### La page /system taxait à 20 %, le moteur à 0 % (2026-09-04)
+
+`core/constants.py` fixe `TAX_RATE = 0.0` — décision opérateur réitérée
+(2026-07-08, puis remise à 0.0 le 2026-09-01 après qu'une session l'eut
+passée à 0.20 contre instruction, ce qui avait fermé l'émission). Or
+`templates/system.html` portait `const taxRate = 20;` en dur depuis sa
+création, avec `taxBase = "net_system"`. Les deux valeurs ont donc cohabité
+sans jamais se voir : le calculateur annonçait une retenue de 20 % pendant
+que le moteur dimensionnait ses mises à 0 %. Personne ne mentait — ce sont
+deux questions différentes (ce qu'un ticket RAPPORTE vs quels signaux
+SORTENT) — mais rien ne le disait, et c'est le motif « listes qui divergent »
+(règle 6) au sens strict : une décision recopiée à deux endroits.
+
+Découvert le 2026-09-04 en propageant l'impôt à toute la page sur
+instruction opérateur. Deux écarts corrigés d'un coup :
+· le TAUX n'est plus en dur nulle part — c'est un champ « Taux d'imposition
+  (%) » (défaut 20), donc de nouveau une décision visible (règle 11) ;
+· l'ASSIETTE suivait `net_system` (retenue sur le profit AGRÉGÉ, les lignes
+  perdantes allégeant les gagnantes), alors que le modèle du dépôt
+  (`core/constants.net_b`, `core/tax_engine`) taxe le gain net de CHAQUE pari
+  GAGNANT. Corrigé vers le modèle du dépôt, point unique `taxOfBet`.
+  ⚠️ Conséquence RÉELLE : l'impôt frappe désormais les lignes gagnantes même
+  quand le ticket perd globalement, donc le point mort peut MONTER. Ce n'est
+  pas un durcissement gratuit, c'est ce que fait un bookmaker.
+
+L'indépendance page ↔ moteur est désormais VOULUE et écrite dans le
+template : changer le champ ne touche pas l'émission.
+Gardien : `tests/test_system_page.py::TestFiscaliteAppliqueePartout` — il
+exige que l'écart reste expliqué et qu'aucun taux ne revienne en dur ; il ne
+fige AUCUNE valeur, `core.constants.TAX_RATE` restant une décision opérateur.
+
 ### Une version, un seul endroit
 
 `DASHBOARD_VERSION` (`api/index.py`), injectée

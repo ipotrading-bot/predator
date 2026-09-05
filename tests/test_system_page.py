@@ -94,10 +94,16 @@ class TestScenariosDerivesDuMoteur:
         assert re.findall(r"^function (\w+)\(", bloc, re.M) == list(self.MATH_FUNCTIONS)
 
     def test_les_fonctions_de_scenarios_existent_apres_le_bloc_math(self, jsx):
+        # `systemReturn`, `scenariosByWinners`, `breakEven` et `compoundMargin`
+        # sont parties le 2026-09-04 avec le panneau « Scénarios » du système
+        # seul, que `scenariosComplets` couvre entièrement. Elles ne sont pas
+        # devenues du code mort : elles ont été retirées.
         fin_math = jsx.index("SCÉNARIOS — dérivés du moteur")
-        for fn in ("systemReturn", "scenariosByWinners", "breakEven", "compoundMargin"):
+        for fn in ("taxOfBet", "scenariosComplets", "breakEvenComplet"):
             pos = jsx.index(f"function {fn}(")
             assert pos > fin_math, f"{fn} doit vivre HORS du bloc MATH"
+        for parti in ("systemReturn", "scenariosByWinners", "compoundMargin"):
+            assert f"function {parti}(" not in jsx, f"{parti} devait partir avec son panneau"
 
     def test_les_scenarios_passent_par_le_moteur(self, jsx):
         debut = jsx.index("SCÉNARIOS — dérivés du moteur")
@@ -107,16 +113,17 @@ class TestScenariosDerivesDuMoteur:
         # bloc le dit en toutes lettres.
         assert "jamais des probabilités" in bloc
 
-    def test_le_panneau_scenarios_et_le_champ_marge_sont_rendus(self, jsx):
-        """Commit 2 : le panneau existe, il porte le libellé « pas des
-        probabilités » (règle 7), le point mort et le champ de marge."""
-        assert 'title="Scénarios"' in jsx
-        assert "retours conditionnels — pas des probabilités" in jsx
-        assert "Point mort" in jsx and "Cotes trop courtes pour un système" in jsx
-        assert "Marge par jambe (%)" in jsx and "compoundMargin(" in jsx
-        assert "N ≥ 5" in jsx
-        # Les scénarios de l'UI viennent des fonctions pures, pas d'un recalcul
-        assert "scenariosByWinners(selections" in jsx and "breakEven(scenarios)" in jsx
+    def test_le_panneau_scenarios_du_systeme_seul_a_ete_retire(self, jsx):
+        """2026-09-04 : « Scénarios » (système seul) est retiré — `Scénarios
+        complets` couvre les mêmes k, exactement, toutes sections confondues.
+        Ce qui SURVIT est ce qui comptait : le libellé règle 7 et le point
+        mort, portés désormais par le panneau complet."""
+        assert 'title="Scénarios"' not in jsx, "le panneau système seul devait partir"
+        assert "Marge par jambe (%)" not in jsx and "compoundMargin(" not in jsx
+        assert 'title="Scénarios complets"' in jsx
+        assert "pas des probabilités" in jsx      # règle 7, toujours affichée
+        assert "Point mort" in jsx
+        assert "scenariosComplets(" in jsx and "breakEvenComplet(scenariosTotal)" in jsx
 
     @pytest.mark.parametrize("tag", ["table", "thead", "tbody", "tr", "th", "td", "p", "label", "sup"])
     def test_les_balises_du_panneau_sont_equilibrees(self, jsx, tag):
@@ -162,3 +169,52 @@ class TestSectionsAdditionnees:
         # predator.css impose min-width: 760px aux tables (grilles de signaux) ;
         # sans cet override, les tableaux de /system débordent sur mobile.
         assert ":where(#sbc-root) table { min-width: 0; }" in html
+
+
+class TestFiscaliteAppliqueePartout:
+    """Chantier « impôt partout » (2026-09-04, instruction opérateur explicite
+    — règle dure n°11). Brut = AVANT impôt, net = APRÈS. La retenue porte sur
+    le gain net de chaque pari GAGNANT (modèle `core/constants.net_b`), et le
+    taux vient d'un champ, jamais d'une constante enterrée dans le template."""
+
+    def test_le_taux_vient_dun_champ_operateur_jamais_dune_constante(self, jsx):
+        assert "const [taxRateInput, setTaxRateInput] = useState(" in jsx
+        assert "parseFloat(taxRateInput)" in jsx
+        assert "Taux d'imposition (%)" in jsx
+        # L'ancien 20 % en dur, et l'assiette codée en dur, ont disparu.
+        assert "const taxRate = 20;" not in jsx
+        assert "taxBase" not in jsx
+        assert "taxEnabled" not in jsx
+
+    def test_un_seul_modele_fiscal_le_gain_net_dun_pari_gagnant(self, jsx):
+        debut = jsx.index("function taxOfBet(")
+        corps = jsx[debut:jsx.index("// Scénarios COMPLETS")]
+        # Un pari perdu (R < 1) ou remboursé (R = 1) n'est jamais taxé : c'est
+        # le max(0, …) qui le garantit, pas une condition posée ailleurs.
+        assert "Math.max(0, R * stake - stake) * rate" in corps
+        # POINT UNIQUE : système, simples, combiné et scénarios passent par lui.
+        assert jsx.count("taxOfBet(") >= 6
+
+    def test_chaque_section_affiche_brut_impot_net(self, jsx):
+        # Système, simples, combiné, Total, Système — résumé.
+        assert jsx.count("Impôt (${taxRate} %)") >= 5
+        assert jsx.count("(avant impôt)") >= 3 and jsx.count("(après impôt)") >= 3
+        assert "Net = brut − mise − impôt" in jsx
+
+    def test_les_scenarios_et_le_point_mort_sont_juges_apres_impot(self, jsx):
+        # Le pire/meilleur cas se choisit sur le NET, et le point mort aussi :
+        # l'impôt frappant chaque pari gagnant, il peut DÉCALER le point mort.
+        assert "r.net < worst.net" in jsx and "r.net > best.net" in jsx
+        assert "sc.worst.net >= -1e-9" in jsx
+        assert "sc.worst.net > 1e-9" in jsx
+
+    def test_lindependance_avec_le_moteur_est_ecrite_noir_sur_blanc(self, html):
+        """La page a son taux, `core.constants.TAX_RATE` a le sien (0.0, décision
+        opérateur qui pilote l'ÉMISSION via le b de Kelly). Les deux ont cohabité
+        en silence à 20 % et 0 % — ce test exige que l'écart reste EXPLIQUÉ dans
+        le template, pour qu'il ne se redécouvre pas comme un bug.
+        Il ne fige AUCUNE valeur : le taux du moteur reste une décision opérateur."""
+        assert "core.constants.TAX_RATE" in html
+        assert "l'ÉMISSION" in html
+        import core.constants as cc
+        assert isinstance(cc.TAX_RATE, float)   # la valeur ne regarde pas ce test

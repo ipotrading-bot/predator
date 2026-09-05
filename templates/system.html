@@ -281,74 +281,28 @@ const bucketColor = { loss: C.loss, void: C.voidC, partial: C.partial, win: C.wi
 /* ---------------------------------------------------------------
    SCÉNARIOS — dérivés du moteur (fonctions pures, sans UI)
    Ce que le calculateur ne disait pas : AVANT de miser, que rend le
-   système si k sélections sur N sont gagnantes ? Ce sont des RETOURS
+   ticket si k sélections sur N sont gagnantes ? Ce sont des RETOURS
    CONDITIONNELS (« si k gagnent, alors… »), jamais des probabilités ni
    un taux de réussite (règle 7 de CLAUDE.md). Tout passe par
-   kCombinations et comboReturnFactor du bloc MATH, sur des sélections
-   simulées (k statuts "won", N-k "lost") — le moteur reste inchangé.
+   kCombinations et comboReturnFactor du bloc MATH — le moteur reste
+   inchangé.
+
+   Le panneau « Scénarios » du système SEUL a été retiré le 2026-09-04 :
+   `scenariosComplets` ci-dessous le couvre entièrement (mêmes k, mêmes
+   pires/meilleurs cas) et en plus exactement, toutes sections confondues.
+   Ses quatre fonctions (systemReturn, scenariosByWinners, breakEven,
+   compoundMargin) sont parties avec lui plutôt que de rester en code mort.
 --------------------------------------------------------------- */
 
-// Retour total d'un système M/N pour un jeu de sélections données, avec la
-// même règle que `computed` : tous les paliers de min(m, N) à N, chaque
-// combinaison mise `stake`. Rend { mise, retour }.
-function systemReturn(sels, m, stake) {
-  const n = sels.length;
-  const idx = sels.map((_, i) => i);
-  let mise = 0;
-  let retour = 0;
-  for (let j = Math.max(1, Math.min(m, n)); j <= n; j++) {
-    for (const indices of kCombinations(idx, j)) {
-      mise += stake;
-      retour += comboReturnFactor(indices.map((i) => sels[i])) * stake;
-    }
-  }
-  return { mise, retour };
-}
-
-// Pour k = 0..N sélections gagnantes : pire cas (les k cotes les plus BASSES
-// gagnent), meilleur cas (les k plus HAUTES), sur le système M/N et la mise
-// courants. Le pire cas est bien minimal : chaque terme du retour est un
-// produit de cotes, et prendre les k plus petites minimise chaque terme.
-// Les statuts saisis sont ignorés — seules les cotes comptent.
-// Rend [{ k, mise, worst, best, profitWorst, profitBest }], [] si N = 0.
-function scenariosByWinners(selections, m, stake) {
-  const n = selections.length;
-  if (n === 0) return [];
-  const asc = selections.map((s) => Number(s.odds) || 1.01).sort((a, b) => a - b);
-  const desc = [...asc].reverse();
-  const simulate = (winningOdds, losingOdds) =>
-    [...winningOdds.map((o) => ({ odds: o, status: "won" })),
-     ...losingOdds.map((o) => ({ odds: o, status: "lost" }))];
-  const out = [];
-  for (let k = 0; k <= n; k++) {
-    const worstSet = simulate(asc.slice(0, k), asc.slice(k));
-    const bestSet = simulate(desc.slice(0, k), desc.slice(k));
-    const w = systemReturn(worstSet, m, stake);
-    const b = systemReturn(bestSet, m, stake);
-    out.push({ k, mise: w.mise, worst: w.retour, best: b.retour,
-               profitWorst: w.retour - w.mise, profitBest: b.retour - w.mise });
-  }
-  return out;
-}
-
-// Point mort : plus petit k dont le retour PIRE CAS couvre la mise totale.
-// Rend { k, tooShort } — tooShort vaut true quand il faut TOUTES les
-// sélections (k = N) : N-1 bons ne couvrent pas la mise, les cotes sont trop
-// courtes pour un système. Rend null si aucun k ne couvre la mise.
-function breakEven(scenarios) {
-  if (!scenarios || scenarios.length === 0) return null;
-  const n = scenarios.length - 1;
-  const hit = scenarios.find((sc) => sc.worst >= sc.mise - 1e-9);
-  if (!hit) return null;
-  return { k: hit.k, tooShort: hit.k === n };
-}
-
-// Marge composée par palier, à titre indicatif : (1 + m)^k − 1, m en
-// fraction (0.05 pour 5 %). Ce n'est pas une probabilité : c'est ce que
-// vaudrait une marge m répétée k fois si elle était réelle à chaque jambe.
-function compoundMargin(m, k) {
-  const marge = Number(m) || 0;
-  return Math.pow(1 + marge, Math.max(0, k)) - 1;
+// Retenue fiscale d'UN pari, modèle du dépôt (`core/constants.net_b`) :
+// elle porte sur le GAIN NET d'un pari GAGNANT, et sur lui seul. Un pari
+// perdu n'est pas taxé (on perd la mise, c'est tout), un remboursement
+// (R = 1) non plus, et une cote asiatique partielle n'est taxée que sur la
+// part réellement gagnée — c'est `max(0, retour − mise)` qui s'en charge.
+// POINT UNIQUE : toute la page passe par ici. Le taux vient d'un champ de
+// l'opérateur, il n'est écrit nulle part en dur — cf. `taxRate`.
+function taxOfBet(R, stake, rate) {
+  return Math.max(0, R * stake - stake) * rate;
 }
 
 // Scénarios COMPLETS : simples + combiné + système ADDITIONNÉS, pour
@@ -360,10 +314,15 @@ function compoundMargin(m, k) {
 // même résultat qu'un appel de systemReturn par scénario, sans le coût
 // 2^N × 2^N qui gelait la page à N = 10. Retours conditionnels, jamais des
 // probabilités (règle 7). simpleStakes : mise par sélection (index aligné) ;
-// flags : { sys, simples, combo }.
-// Rend [{ k, mise, worst, best }] ; worst/best = { total, sys, simples,
-// combo, indices } où indices sont les gagnantes du cas. [] si N = 0.
-function scenariosComplets(selections, m, lineStake, simpleStakes, comboStake, flags) {
+// flags : { sys, simples, combo } ; rate : taux d'imposition en fraction.
+// L'IMPÔT est compté ici pari par pari (taxOfBet) et non sur le total du
+// scénario : une ligne gagnante est taxée même quand le ticket perd dans son
+// ensemble — c'est le modèle du dépôt, et c'est ce qui DÉCALE le point mort.
+// Rend [{ k, mise, worst, best }] ; worst/best = { total, impot, net, sys,
+// simples, combo, indices }. `total` est le retour BRUT (avant impôt), `net`
+// vaut total − mise − impôt. Pire/meilleur cas sont choisis sur le NET :
+// c'est le chiffre que l'opérateur encaisse. [] si N = 0.
+function scenariosComplets(selections, m, lineStake, simpleStakes, comboStake, flags, rate) {
   const n = selections.length;
   if (n === 0) return [];
   const idx = selections.map((_, i) => i);
@@ -389,24 +348,39 @@ function scenariosComplets(selections, m, lineStake, simpleStakes, comboStake, f
     for (const win of kCombinations(idx, k)) {
       const mask = maskOf(win);
       let sys = 0;
-      for (const c of sysCombos) if ((c.mask & mask) === c.mask) sys += c.R * lineStake;
+      let impot = 0;
+      for (const c of sysCombos) if ((c.mask & mask) === c.mask) {
+        sys += c.R * lineStake;
+        impot += taxOfBet(c.R, lineStake, rate);
+      }
       let simples = 0;
-      if (flags.simples) for (const i of win) simples += simpleR[i] * (Number(simpleStakes[i]) || 0);
-      const combo = flags.combo && k === n ? comboR * comboStake : 0;
-      const r = { total: sys + simples + combo, sys, simples, combo, indices: win };
-      if (!worst || r.total < worst.total - 1e-9) worst = r;
-      if (!best || r.total > best.total + 1e-9) best = r;
+      if (flags.simples) for (const i of win) {
+        const st = Number(simpleStakes[i]) || 0;
+        simples += simpleR[i] * st;
+        impot += taxOfBet(simpleR[i], st, rate);
+      }
+      let combo = 0;
+      if (flags.combo && k === n) {
+        combo = comboR * comboStake;
+        impot += taxOfBet(comboR, comboStake, rate);
+      }
+      const total = sys + simples + combo;
+      const r = { total, impot, net: total - mise - impot, sys, simples, combo, indices: win };
+      if (!worst || r.net < worst.net - 1e-9) worst = r;
+      if (!best || r.net > best.net + 1e-9) best = r;
     }
     out.push({ k, mise, worst, best });
   }
   return out;
 }
 
-// Point mort GLOBAL : plus petit k dont le pire cas complet couvre la mise
-// engagée, toutes sections actives confondues. Même contrat que breakEven.
+// Point mort GLOBAL : plus petit k dont le pire cas complet rembourse la
+// mise engagée APRÈS IMPÔT, toutes sections actives confondues. La retenue
+// portant sur chaque pari gagnant, elle frappe même un ticket globalement
+// perdant : le point mort peut donc être plus haut qu'avant impôt.
 function breakEvenComplet(scen) {
   if (!scen || scen.length === 0) return null;
-  const hit = scen.find((sc) => sc.worst.total >= sc.mise - 1e-9);
+  const hit = scen.find((sc) => sc.worst.net >= -1e-9);
   if (!hit) return null;
   return { k: hit.k, tooShort: hit.k === scen.length - 1 };
 }
@@ -492,13 +466,14 @@ function ScenarioDetail({ titre, r, selections, flags, fmtN }) {
   if (flags.simples) parts.push(`Simples ${fmtN(r.simples)}`);
   if (flags.combo) parts.push(`Combiné ${fmtN(r.combo)}`);
   if (flags.sys) parts.push(`Système ${fmtN(r.sys)}`);
+  const impot = r.impot > 0 ? ` − ${fmtN(r.impot)} d'impôt` : "";
   return (
     <div className="text-xs">
       <span style={{ color: C.muted, fontFamily: SANS }}>{titre} — bonnes : </span>
       <span style={{ color: C.text }}>
         {r.indices.length === 0 ? "aucune" : r.indices.map((i) => `${i + 1} @${selections[i].odds.toFixed(2)}`).join(" · ")}
       </span>
-      <div style={{ color: C.faint }} className="mt-0.5">{parts.join(" + ")} = {fmtN(r.total)}</div>
+      <div style={{ color: C.faint }} className="mt-0.5">{parts.join(" + ")} = {fmtN(r.total)} brut{impot} → net {fmtN(r.net)}</div>
     </div>
   );
 }
@@ -587,17 +562,16 @@ function SystemBetCalculator() {
   const [simpleStakes, setSimpleStakes] = useState({});
   const [comboStakeInput, setComboStakeInput] = useState("1000");
   const [openScenario, setOpenScenario] = useState(null);
-  // Fiscalité masquée sur cette page (demande opérateur) mais gardée active
-  // "en sourdine" : la retenue continue d'être calculée dans `computed`
-  // ci-dessous avec les mêmes réglages par défaut, simplement plus affichée.
-  const taxEnabled = true;
-  const taxRate = 20;
-  const taxBase = "net_system"; // 'net_system' | 'per_line'
+  // FISCALITÉ — réglée par l'opérateur, jamais écrite en dur (règle 11 : le
+  // taux est une décision, pas une constante enterrée dans un template).
+  // Volontairement INDÉPENDANTE de `core.constants.TAX_RATE` : celle-là pilote
+  // l'ÉMISSION (le b de Kelly, donc quels signaux sortent) et vaut 0.0 par
+  // décision opérateur réitérée ; ici on simule ce qu'un ticket RAPPORTE, ce
+  // qui est une autre question. Changer ce champ ne touche pas le moteur.
+  const [taxRateInput, setTaxRateInput] = useState("20");
+  const taxRate = Math.max(0, Math.min(100, parseFloat(taxRateInput) || 0));
+  const taxFrac = taxRate / 100;
   const [activeCell, setActiveCell] = useState(null);
-  // Marge par jambe pour la note de marge composée (indicatif). Champ texte
-  // brut, même raison que la mise : pouvoir vider et retaper sans repli.
-  const [marginInput, setMarginInput] = useState("5");
-  const marginPct = Math.max(0, Math.min(100, parseFloat(marginInput) || 0));
   const [signalsStatus, setSignalsStatus] = useState("loading"); // loading | error | empty | `ok:N`
   const [availableSignals, setAvailableSignals] = useState([]);
   const [pickerOpen, setPickerOpen] = useState(false);
@@ -681,33 +655,21 @@ function SystemBetCalculator() {
       const count = combos.length;
       const mise = count * stake;
       const retour = combos.reduce((s, c) => s + c.R * stake, 0);
-      return { k, combos, count, mise, retour, profit: retour - mise };
+      const impot = combos.reduce((s, c) => s + taxOfBet(c.R, stake, taxFrac), 0);
+      return { k, combos, count, mise, retour, impot, profit: retour - mise, net: retour - mise - impot };
     });
     const totalLignes = byFold.reduce((s, f) => s + f.count, 0);
     const totalMise = byFold.reduce((s, f) => s + f.mise, 0);
     const totalRetour = byFold.reduce((s, f) => s + f.retour, 0);
     const totalProfit = totalRetour - totalMise;
     const maxRSystem = Math.max(1, ...byFold.flatMap((f) => f.combos.filter((c) => c.R > 1).map((c) => c.R)));
+    // Retenue LIGNE PAR LIGNE gagnante (modèle du dépôt) : une combinaison
+    // perdante ne vient pas alléger l'impôt d'une combinaison gagnante.
     let taxAmount = 0;
-    if (taxEnabled && taxRate > 0) {
-      if (taxBase === "net_system") {
-        taxAmount = totalProfit > 0 ? totalProfit * (taxRate / 100) : 0;
-      } else {
-        for (const f of byFold) for (const c of f.combos) {
-          const lineProfit = c.R * stake - stake;
-          if (lineProfit > 0) taxAmount += lineProfit * (taxRate / 100);
-        }
-      }
-    }
-    const netAfterTax = totalRetour - taxAmount;
-    return { byFold, totalLignes, totalMise, totalRetour, totalProfit, maxRSystem, taxAmount, netAfterTax };
-  }, [selections, sortedFolds, stake, taxEnabled, taxRate, taxBase]);
-
-  // Scénarios « si k gagnent » : retours CONDITIONNELS sur le système M/N et
-  // la mise courants — jamais des probabilités (règle 7 de CLAUDE.md).
-  const scenarios = useMemo(() => scenariosByWinners(selections, Math.min(sysM, n), stake),
-                            [selections, sysM, n, stake]);
-  const pointMort = useMemo(() => breakEven(scenarios), [scenarios]);
+    for (const f of byFold) for (const c of f.combos) taxAmount += taxOfBet(c.R, stake, taxFrac);
+    const totalNet = totalProfit - taxAmount;
+    return { byFold, totalLignes, totalMise, totalRetour, totalProfit, maxRSystem, taxAmount, totalNet };
+  }, [selections, sortedFolds, stake, taxFrac]);
 
   const fmt = (v) => `${v.toLocaleString("fr-FR", { minimumFractionDigits: 2, maximumFractionDigits: 2 })} ${currency}`;
   const signed = (v) => `${v >= 0 ? "+" : ""}${fmt(v)}`;
@@ -730,12 +692,14 @@ function SystemBetCalculator() {
       const st = simpleStakeOf(sel);
       const R = comboReturnFactor([sel]);
       const brut = R * st;
-      return { sel, i, stake: st, R, brut, net: brut - st, bucket: bucketOf(R) };
+      const impot = taxOfBet(R, st, taxFrac);
+      return { sel, i, stake: st, R, brut, impot, net: brut - st - impot, bucket: bucketOf(R) };
     });
     const mise = rows.reduce((s, r) => s + r.stake, 0);
     const brut = rows.reduce((s, r) => s + r.brut, 0);
-    return { rows, mise, brut, net: brut - mise };
-  }, [selections, simpleStakes, simpleDefaultInput]);
+    const impot = rows.reduce((s, r) => s + r.impot, 0);
+    return { rows, mise, brut, impot, net: brut - mise - impot };
+  }, [selections, simpleStakes, simpleDefaultInput, taxFrac]);
 
   // Combiné N/N : toutes les sélections sur une ligne, cote totale = produit.
   const comboStake = Math.max(0, parseFloat(comboStakeInput) || 0);
@@ -743,22 +707,25 @@ function SystemBetCalculator() {
     const cote = selections.reduce((p, s) => p * (Number(s.odds) || 1.01), 1);
     const R = comboReturnFactor(selections);
     const brut = R * comboStake;
-    return { cote, R, stake: comboStake, brut, net: brut - comboStake, bucket: bucketOf(R) };
-  }, [selections, comboStake]);
+    const impot = taxOfBet(R, comboStake, taxFrac);
+    return { cote, R, stake: comboStake, brut, impot, net: brut - comboStake - impot, bucket: bucketOf(R) };
+  }, [selections, comboStake, taxFrac]);
 
   // Total : addition des sections ACTIVES. Le combiné n'existe qu'à partir
   // de 2 sélections (à 1, c'est un simple).
   const sectionFlags = { sys: sysOn && n > 0, simples: simplesOn && n > 0, combo: comboOn && n >= 2 };
   const sections = [
-    { key: "simples", label: `${n} simple${n > 1 ? "s" : ""}`, on: sectionFlags.simples, mise: simples.mise, brut: simples.brut },
-    ...(n >= 2 ? [{ key: "combo", label: `Combiné ${n}/${n}`, on: sectionFlags.combo, mise: combine.stake, brut: combine.brut }] : []),
-    { key: "sys", label: `Système ${Math.min(sysM, n)}/${n}`, on: sectionFlags.sys, mise: computed.totalMise, brut: computed.totalRetour },
-  ].map((sec) => ({ ...sec, net: sec.brut - sec.mise }));
+    { key: "simples", label: `${n} simple${n > 1 ? "s" : ""}`, on: sectionFlags.simples, mise: simples.mise, brut: simples.brut, impot: simples.impot },
+    ...(n >= 2 ? [{ key: "combo", label: `Combiné ${n}/${n}`, on: sectionFlags.combo, mise: combine.stake, brut: combine.brut, impot: combine.impot }] : []),
+    { key: "sys", label: `Système ${Math.min(sysM, n)}/${n}`, on: sectionFlags.sys, mise: computed.totalMise, brut: computed.totalRetour, impot: computed.taxAmount },
+  ].map((sec) => ({ ...sec, net: sec.brut - sec.mise - sec.impot }));
   const grand = (() => {
     const act = sections.filter((sec) => sec.on);
     const mise = act.reduce((s, sec) => s + sec.mise, 0);
     const brut = act.reduce((s, sec) => s + sec.brut, 0);
-    return { mise, brut, net: brut - mise, roi: mise > 0 ? ((brut - mise) / mise) * 100 : 0 };
+    const impot = act.reduce((s, sec) => s + sec.impot, 0);
+    const net = brut - mise - impot;
+    return { mise, brut, impot, net, roi: mise > 0 ? (net / mise) * 100 : 0 };
   })();
   // Un système M/N contient déjà le combiné N/N, et à M = 1 les N simples :
   // les additionner n'est pas faux, mais c'est miser deux fois — on le dit.
@@ -770,13 +737,14 @@ function SystemBetCalculator() {
   // Scénarios complets : pire / meilleur cas EXACTS toutes sections actives
   // confondues — retours conditionnels, jamais des probabilités (règle 7).
   const scenariosTotal = useMemo(() => scenariosComplets(
-    selections, Math.min(sysM, n), stake, simples.rows.map((r) => r.stake), combine.stake, sectionFlags),
-    [selections, sysM, n, stake, simples, combine, sectionFlags.sys, sectionFlags.simples, sectionFlags.combo]);
+    selections, Math.min(sysM, n), stake, simples.rows.map((r) => r.stake), combine.stake, sectionFlags, taxFrac),
+    [selections, sysM, n, stake, simples, combine, sectionFlags.sys, sectionFlags.simples, sectionFlags.combo, taxFrac]);
   const pointMortTotal = useMemo(() => breakEvenComplet(scenariosTotal), [scenariosTotal]);
+  // Verdicts jugés sur le NET (après impôt) : c'est ce que l'opérateur encaisse.
   const verdictOf = (sc) => {
-    if (sc.worst.total > sc.mise + 1e-9) return { t: "Gagnant", c: C.win };
-    if (sc.worst.total >= sc.mise - 1e-9) return { t: "Couvert", c: C.gold };
-    if (sc.best.total >= sc.mise - 1e-9) return { t: "Selon lesquelles", c: C.partial };
+    if (sc.worst.net > 1e-9) return { t: "Gagnant", c: C.win };
+    if (sc.worst.net >= -1e-9) return { t: "Couvert", c: C.gold };
+    if (sc.best.net >= -1e-9) return { t: "Selon lesquelles", c: C.partial };
     return { t: "Perdant", c: C.loss };
   };
 
@@ -1004,6 +972,18 @@ function SystemBetCalculator() {
                   </select>
                 </Field>
               </div>
+              <div className="grid grid-cols-2 gap-3 mt-3 items-end">
+                <Field label="Taux d'imposition (%)">
+                  <input type="number" min="0" max="100" step="0.5" value={taxRateInput}
+                    onChange={(e) => setTaxRateInput(e.target.value)}
+                    onBlur={() => setTaxRateInput(String(taxRate))}
+                    style={inputStyle} className="text-sm rounded-md px-2 py-1.5" />
+                </Field>
+                <p style={{ color: C.faint }} className="text-xs">
+                  Retenue sur le gain net de chaque pari GAGNANT. Un pari perdu ou remboursé n'est pas taxé.
+                  S'applique à toutes les sections.
+                </p>
+              </div>
               <p style={{ color: C.faint, fontFamily: MONO }} className="text-xs mt-2">
                 {stakeMode === "line"
                   ? `${totalLignes} × ${fmt(stake)} = ${fmt(computed.totalMise)} engagés`
@@ -1011,8 +991,9 @@ function SystemBetCalculator() {
               </p>
               <div style={{ borderTop: `1px solid ${C.borderSoft}` }} className="mt-3 pt-3 space-y-1.5">
                 <StatRow label="Mise totale" value={fmt(computed.totalMise)} />
-                <StatRow label="Gain brut" value={fmt(computed.totalRetour)} />
-                <StatRow label="Gain net" value={signed(computed.totalProfit)} color={computed.totalProfit >= 0 ? C.win : C.loss} strong />
+                <StatRow label="Gain brut (avant impôt)" value={fmt(computed.totalRetour)} />
+                <StatRow label={`Impôt (${taxRate} %)`} value={`− ${fmt(computed.taxAmount)}`} color={C.partial} />
+                <StatRow label="Gain net (après impôt)" value={signed(computed.totalNet)} color={computed.totalNet >= 0 ? C.win : C.loss} strong />
               </div>
               </>
               )}
@@ -1060,6 +1041,7 @@ function SystemBetCalculator() {
                           {fmtN(r.stake)} × {r.sel.odds.toFixed(2)}{r.sel.status !== "won" ? ` · ${STATUS_OPTS.find((o) => o.v === r.sel.status)?.label}` : ""}
                         </div>
                         <div style={{ color: bucketColor[r.bucket] }} className="text-sm font-semibold">{fmt(r.brut)}</div>
+                        {r.impot > 0 && <div style={{ color: C.partial }} className="text-xs">impôt − {fmtN(r.impot)}</div>}
                         <div style={{ color: r.net >= 0 ? C.win : C.loss }} className="text-xs">net {signed(r.net)}</div>
                       </div>
                     </div>
@@ -1068,8 +1050,9 @@ function SystemBetCalculator() {
               </div>
               <div style={{ borderTop: `1px solid ${C.borderSoft}` }} className="mt-3 pt-3 space-y-1.5">
                 <StatRow label={`Mise totale · ${n} simple${n > 1 ? "s" : ""}`} value={fmt(simples.mise)} />
-                <StatRow label="Gain brut" value={fmt(simples.brut)} />
-                <StatRow label="Gain net potentiel" value={signed(simples.net)} color={simples.net >= 0 ? C.win : C.loss} strong />
+                <StatRow label="Gain brut (avant impôt)" value={fmt(simples.brut)} />
+                <StatRow label={`Impôt (${taxRate} %)`} value={`− ${fmt(simples.impot)}`} color={C.partial} />
+                <StatRow label="Gain net (après impôt)" value={signed(simples.net)} color={simples.net >= 0 ? C.win : C.loss} strong />
               </div>
               </>
               )}
@@ -1109,8 +1092,9 @@ function SystemBetCalculator() {
               </p>
               <div style={{ borderTop: `1px solid ${C.borderSoft}` }} className="mt-3 pt-3 space-y-1.5">
                 <StatRow label={`${fmtN(combine.stake)} × ${combine.cote.toFixed(3)}`} value={fmt(combine.stake * combine.cote)} />
-                <StatRow label="Gain brut" value={fmt(combine.brut)} color={bucketColor[combine.bucket]} />
-                <StatRow label="Gain net" value={signed(combine.net)} color={combine.net >= 0 ? C.win : C.loss} strong />
+                <StatRow label="Gain brut (avant impôt)" value={fmt(combine.brut)} color={bucketColor[combine.bucket]} />
+                <StatRow label={`Impôt (${taxRate} %)`} value={`− ${fmt(combine.impot)}`} color={C.partial} />
+                <StatRow label="Gain net (après impôt)" value={signed(combine.net)} color={combine.net >= 0 ? C.win : C.loss} strong />
               </div>
               {combine.bucket !== "win" && (
                 <p style={{ color: C.partial }} className="text-xs mt-2">
@@ -1138,9 +1122,9 @@ function SystemBetCalculator() {
                 >
                   <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
                     <SummaryCard label="Mise engagée" value={fmt(grand.mise)} />
-                    <SummaryCard label="Gain brut potentiel" value={fmt(grand.brut)} />
-                    <SummaryCard label="Gain net potentiel" value={signed(grand.net)} color={grand.net >= 0 ? C.win : C.loss} />
-                    <SummaryCard label="ROI" value={`${grand.roi.toFixed(1)} %`} color={grand.net >= 0 ? C.win : C.loss} />
+                    <SummaryCard label="Gain brut" value={fmt(grand.brut)} sub="avant impôt, mise comprise" />
+                    <SummaryCard label={`Impôt (${taxRate} %)`} value={`− ${fmt(grand.impot)}`} color={C.partial} sub="sur chaque pari gagnant" />
+                    <SummaryCard label="Gain net" value={signed(grand.net)} color={grand.net >= 0 ? C.win : C.loss} sub={`après impôt · ROI ${grand.roi.toFixed(1)} %`} />
                   </div>
                   <div className="mt-3 overflow-x-auto">
                     <table className="w-full text-xs" style={{ fontFamily: MONO, borderCollapse: "collapse" }}>
@@ -1149,6 +1133,7 @@ function SystemBetCalculator() {
                           <th className="text-left py-1 pr-2">Section</th>
                           <th className="text-right py-1 px-2">Mise</th>
                           <th className="text-right py-1 px-2">Brut</th>
+                          <th className="text-right py-1 px-2">Impôt</th>
                           <th className="text-right py-1 pl-2">Net</th>
                         </tr>
                       </thead>
@@ -1160,6 +1145,7 @@ function SystemBetCalculator() {
                             </td>
                             <td className="text-right py-1.5 px-2" style={{ color: C.text }}>{fmtN(s.mise)}</td>
                             <td className="text-right py-1.5 px-2" style={{ color: C.text }}>{fmtN(s.brut)}</td>
+                            <td className="text-right py-1.5 px-2" style={{ color: C.partial }}>{s.impot > 0 ? `− ${fmtN(s.impot)}` : "—"}</td>
                             <td className="text-right py-1.5 pl-2" style={{ color: s.net >= 0 ? C.win : C.loss }}>{signedN(s.net)}</td>
                           </tr>
                         ))}
@@ -1167,13 +1153,15 @@ function SystemBetCalculator() {
                           <td className="py-1.5 pr-2" style={{ fontFamily: SANS }}>Total</td>
                           <td className="text-right py-1.5 px-2">{fmtN(grand.mise)}</td>
                           <td className="text-right py-1.5 px-2">{fmtN(grand.brut)}</td>
+                          <td className="text-right py-1.5 px-2" style={{ color: C.partial }}>{grand.impot > 0 ? `− ${fmtN(grand.impot)}` : "—"}</td>
                           <td className="text-right py-1.5 pl-2" style={{ color: grand.net >= 0 ? C.win : C.loss }}>{signedN(grand.net)}</td>
                         </tr>
                       </tbody>
                     </table>
                   </div>
                   <p style={{ color: C.faint }} className="text-xs mt-2">
-                    Brut = retour, mise comprise · Net = brut − mise · en {currency}, selon les statuts saisis (Gagné par défaut = tout passe).
+                    Brut = retour AVANT impôt, mise comprise · Impôt = {taxRate} % du gain de chaque pari gagnant · Net = brut − mise − impôt,
+                    ce qui reste vraiment · en {currency}, selon les statuts saisis (Gagné par défaut = tout passe).
                   </p>
                   {doublon && (
                     <div style={{ background: "rgba(227,162,60,0.10)", border: `1px solid ${C.partial}`, color: C.partial }}
@@ -1196,7 +1184,7 @@ function SystemBetCalculator() {
                   <>
                   <p style={{ color: C.muted }} className="text-xs mb-3">
                     Si <span style={{ color: C.text, fontFamily: MONO }}>k</span> sélections sur {n} sont bonnes, pour {fmt(grand.mise)} engagés.
-                    Pire cas : les k bonnes qui rapportent le moins. Meilleur cas : celles qui rapportent le plus. Touche une ligne pour le détail.
+                    Pire cas : les k bonnes qui rapportent le moins, NET d'impôt. Meilleur cas : celles qui rapportent le plus. Touche une ligne pour le détail.
                   </p>
                   <div className="grid grid-cols-2 gap-3 mb-3">
                     <div style={{ background: C.panel2, border: `1px solid ${C.borderSoft}`, borderRadius: 10 }} className="px-4 py-3">
@@ -1205,15 +1193,17 @@ function SystemBetCalculator() {
                         {pointMortTotal ? `${pointMortTotal.k} bon${pointMortTotal.k > 1 ? "s" : ""} sur ${n}` : "jamais"}
                       </div>
                       <div style={{ color: C.faint }} className="text-xs mt-0.5">
-                        {pointMortTotal && pointMortTotal.tooShort ? `${n - 1} bons sur ${n} ne couvrent pas la mise` : "pire cas ≥ mise engagée"}
+                        {pointMortTotal && pointMortTotal.tooShort ? `${n - 1} bons sur ${n} ne couvrent pas la mise` : "pire cas ≥ mise, APRÈS impôt"}
                       </div>
                     </div>
                     <div style={{ background: C.panel2, border: `1px solid ${C.borderSoft}`, borderRadius: 10 }} className="px-4 py-3">
                       <div style={{ color: C.muted }} className="text-xs mb-1">Si tout passe</div>
                       <div style={{ color: C.win, fontFamily: MONO }} className="text-lg font-semibold">
-                        {signed(scenariosTotal[n].best.total - grand.mise)}
+                        {signed(scenariosTotal[n].best.net)}
                       </div>
-                      <div style={{ color: C.faint }} className="text-xs mt-0.5">{fmt(scenariosTotal[n].best.total)} de retour</div>
+                      <div style={{ color: C.faint }} className="text-xs mt-0.5">
+                        {fmt(scenariosTotal[n].best.total)} brut − {fmtN(scenariosTotal[n].best.impot)} d'impôt
+                      </div>
                     </div>
                   </div>
                   <div className="overflow-x-auto">
@@ -1221,8 +1211,8 @@ function SystemBetCalculator() {
                       <thead>
                         <tr style={{ color: C.muted, fontFamily: SANS }}>
                           <th className="text-left py-1 pr-2">k bons</th>
-                          <th className="text-right py-1 px-2">Pire cas</th>
-                          <th className="text-right py-1 px-2">Meilleur cas</th>
+                          <th className="text-right py-1 px-2">Pire cas<div style={{ color: C.faint }} className="font-normal">brut / net</div></th>
+                          <th className="text-right py-1 px-2">Meilleur cas<div style={{ color: C.faint }} className="font-normal">brut / net</div></th>
                           <th className="text-right py-1 pl-2">Verdict</th>
                         </tr>
                       </thead>
@@ -1231,8 +1221,8 @@ function SystemBetCalculator() {
                           const v = verdictOf(sc);
                           const open = openScenario === sc.k;
                           const estPM = pointMortTotal && pointMortTotal.k === sc.k;
-                          const netW = sc.worst.total - sc.mise;
-                          const netB = sc.best.total - sc.mise;
+                          const netW = sc.worst.net;
+                          const netB = sc.best.net;
                           return (
                             <React.Fragment key={sc.k}>
                               <tr onClick={() => setOpenScenario(open ? null : sc.k)}
@@ -1270,119 +1260,32 @@ function SystemBetCalculator() {
                     </table>
                   </div>
                   <p style={{ color: C.faint }} className="text-xs mt-2">
-                    Retour puis net, en {currency}. Gagnant = couvert même dans le pire cas · Selon lesquelles = dépend des bonnes · Perdant = jamais couvert.
+                    Retour brut puis net APRÈS impôt, en {currency}. Gagnant = couvert même dans le pire cas · Selon lesquelles = dépend des bonnes ·
+                    Perdant = jamais couvert. L'impôt frappe chaque pari gagnant, même quand le ticket perd dans son ensemble.
                   </p>
                   </>
                   )}
                 </Panel>
 
-                {/* Résumé du SYSTÈME seul (les panneaux ci-dessous ne concernent
-                    que lui : scénarios système, détail par palier). */}
+                {/* Résumé du SYSTÈME seul — le panneau ci-dessous ne concerne
+                    que lui (détail par palier). */}
                 <Panel title="Système — résumé">
                   <div className="grid grid-cols-2 md:grid-cols-3 gap-3">
                     <SummaryCard label="Lignes" value={computed.totalLignes} />
                     <SummaryCard label="Mise totale" value={fmt(computed.totalMise)} />
-                    <SummaryCard label="Retour total" value={fmt(computed.totalRetour)} />
-                    <SummaryCard label="Profit net" value={fmt(computed.totalProfit)} color={computed.totalProfit >= 0 ? C.win : C.loss} />
-                    <SummaryCard label="ROI" value={`${computed.totalMise > 0 ? ((computed.totalProfit / computed.totalMise) * 100).toFixed(1) : "0.0"} %`} color={computed.totalProfit >= 0 ? C.win : C.loss} />
-                    {taxEnabled && <SummaryCard label="Retenue fiscale" value={`− ${fmt(computed.taxAmount)}`} color={C.partial} sub={`${taxRate}% · ${taxBase === "net_system" ? "profit net" : "par ligne"}`} />}
+                    <SummaryCard label="Gain brut" value={fmt(computed.totalRetour)} sub="avant impôt, mise comprise" />
+                    <SummaryCard label={`Impôt (${taxRate} %)`} value={`− ${fmt(computed.taxAmount)}`} color={C.partial} sub="par ligne gagnante" />
+                    <SummaryCard label="Gain net" value={signed(computed.totalNet)} color={computed.totalNet >= 0 ? C.win : C.loss} sub="après impôt" />
+                    <SummaryCard label="ROI" value={`${computed.totalMise > 0 ? ((computed.totalNet / computed.totalMise) * 100).toFixed(1) : "0.0"} %`} color={computed.totalNet >= 0 ? C.win : C.loss} sub="net d'impôt" />
                   </div>
-                  {taxEnabled && (
-                    <div style={{ borderTop: `1px solid ${C.borderSoft}` }} className="mt-3 pt-3 flex items-center justify-between">
-                      <span style={{ color: C.muted }} className="text-xs">Net perçu après retenue</span>
-                      <span style={{ color: C.text, fontFamily: MONO }} className="text-base font-semibold">{fmt(computed.netAfterTax)}</span>
-                    </div>
-                  )}
-                </Panel>
-
-                {/* Scénarios — retours conditionnels par nombre de gagnants.
-                    Ce que le calculateur ne disait pas : AVANT de miser, que
-                    rend le système si k sélections sur N sont bonnes ? Pire cas
-                    = les k cotes les plus basses gagnent, meilleur cas = les k
-                    plus hautes. Ce ne sont PAS des probabilités ni un taux de
-                    réussite (règle 7) — le libellé le dit. */}
-                <Panel
-                  title="Scénarios"
-                  right={<span style={{ color: C.faint, fontFamily: SANS }} className="text-xs">système seul · retours conditionnels — pas des probabilités</span>}
-                >
-                  <p style={{ color: C.muted }} className="text-xs mb-3">
-                    Si <span style={{ color: C.text, fontFamily: MONO }}>k</span> sélections sur {n} sont bonnes, sur le système {Math.min(sysM, n)}/{n} et la mise {fmt(stake)} par ligne.
-                    Pire cas : les k cotes les plus basses gagnent. Meilleur cas : les k plus hautes.
+                  <p style={{ color: C.faint }} className="text-xs mt-3">
+                    Avant impôt, le système rendait {fmt(computed.totalProfit)} de gain net.
                   </p>
-                  <div className="overflow-x-auto">
-                    <table className="w-full text-xs" style={{ fontFamily: MONO, borderCollapse: "collapse" }}>
-                      <thead>
-                        <tr style={{ color: C.muted, fontFamily: SANS }}>
-                          <th className="text-left py-1 pr-2">k bons</th>
-                          <th className="text-right py-1 px-2">Pire cas</th>
-                          <th className="text-right py-1 px-2">Meilleur cas</th>
-                          <th className="text-right py-1 px-2">Profit net (pire)</th>
-                          <th className="text-right py-1 pl-2">Marge composée</th>
-                        </tr>
-                      </thead>
-                      <tbody>
-                        {scenarios.map((sc) => {
-                          const estPointMort = pointMort && pointMort.k === sc.k;
-                          const couvre = sc.worst >= sc.mise - 1e-9;
-                          return (
-                            <tr key={sc.k}
-                              style={{ borderTop: `1px solid ${C.borderSoft}`, background: estPointMort ? "rgba(198,161,91,0.10)" : "transparent" }}>
-                              <td className="py-1 pr-2" style={{ color: estPointMort ? C.gold : C.text }}>
-                                {sc.k}/{n}{estPointMort ? " ◆" : ""}
-                              </td>
-                              <td className="text-right py-1 px-2" style={{ color: couvre ? C.win : C.loss }}>{fmt(sc.worst)}</td>
-                              <td className="text-right py-1 px-2" style={{ color: C.text }}>{fmt(sc.best)}</td>
-                              <td className="text-right py-1 px-2" style={{ color: sc.profitWorst >= 0 ? C.win : C.loss }}>
-                                {sc.profitWorst >= 0 ? "+" : ""}{fmt(sc.profitWorst)}
-                              </td>
-                              <td className="text-right py-1 pl-2" style={{ color: C.faint }}>
-                                {(compoundMargin(marginPct / 100, sc.k) * 100).toFixed(1)} %
-                              </td>
-                            </tr>
-                          );
-                        })}
-                      </tbody>
-                    </table>
-                  </div>
-
-                  {/* Point mort : plus petit k dont le PIRE cas couvre la mise totale. */}
-                  <div style={{ borderTop: `1px solid ${C.borderSoft}` }} className="mt-3 pt-3 space-y-2">
-                    {pointMort ? (
-                      <div className="flex items-center justify-between text-xs">
-                        <span style={{ color: C.muted }}>Point mort (pire cas ≥ mise totale)</span>
-                        <span style={{ color: C.gold, fontFamily: MONO }} className="font-semibold">◆ {pointMort.k} bons sur {n}</span>
-                      </div>
-                    ) : (
-                      <div style={{ color: C.loss }} className="text-xs">Aucun nombre de bons ne couvre la mise totale en pire cas.</div>
-                    )}
-                    {pointMort && pointMort.tooShort && (
-                      <div style={{ background: "rgba(229,86,107,0.10)", border: `1px solid ${C.loss}`, color: C.loss }}
-                        className="text-xs px-2.5 py-1.5 rounded-md">
-                        Cotes trop courtes pour un système : {n - 1} bons sur {n} ne couvrent pas la mise.
-                      </div>
-                    )}
-                  </div>
-
-                  {/* Marge composée, indicative : (1 + m)^k − 1, m saisi par l'opérateur. */}
-                  <div style={{ borderTop: `1px solid ${C.borderSoft}` }} className="mt-3 pt-3 grid grid-cols-2 gap-3 items-end">
-                    <Field label="Marge par jambe (%) — indicatif">
-                      <input type="number" min="0" max="100" step="0.5" value={marginInput}
-                        onChange={(e) => setMarginInput(e.target.value)}
-                        onBlur={() => setMarginInput(String(marginPct))}
-                        style={inputStyle} className="text-sm rounded-md px-2 py-1.5" />
-                    </Field>
-                    <div style={{ color: C.faint }} className="text-xs">
-                      Marge composée = (1 + m)<sup>k</sup> − 1. Une hypothèse, pas une mesure.
-                      {n >= 5 && (
-                        <div style={{ color: C.partial }} className="mt-1">
-                          ⚠ N ≥ 5 : la marge composée grossit vite, elle ne dit rien de la chance de gagner.
-                        </div>
-                      )}
-                    </div>
-                  </div>
                 </Panel>
 
-                <Panel title="Détail par palier & combinaisons">
+                <Panel title="Détail par palier & combinaisons"
+                  right={<span style={{ color: C.faint, fontFamily: SANS }} className="text-xs">net d'impôt</span>}
+                >
                   <div className="space-y-3">
                     {computed.byFold.map((f) => (
                       <div key={f.k} style={{ background: C.panel2, border: `1px solid ${C.borderSoft}`, borderRadius: 10 }} className="p-3">
@@ -1390,8 +1293,13 @@ function SystemBetCalculator() {
                           <span style={{ color: C.text, fontFamily: SANS }} className="text-sm font-medium">
                             {foldName(f.k)} <span style={{ color: C.faint }} className="font-normal">· {f.count} ligne{f.count > 1 ? "s" : ""}</span>
                           </span>
-                          <span style={{ color: f.profit >= 0 ? C.win : C.loss, fontFamily: MONO }} className="text-sm font-semibold">
-                            {f.profit >= 0 ? "+" : ""}{fmt(f.profit)}
+                          <span style={{ fontFamily: MONO }} className="text-right">
+                            <span style={{ color: f.net >= 0 ? C.win : C.loss }} className="text-sm font-semibold">{signed(f.net)}</span>
+                            {f.impot > 0 && (
+                              <span style={{ color: C.faint }} className="block text-xs">
+                                {fmtN(f.retour)} brut − {fmtN(f.impot)} d'impôt
+                              </span>
+                            )}
                           </span>
                         </div>
                         <div className="flex flex-wrap gap-1.5">
