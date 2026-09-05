@@ -20,16 +20,17 @@ import requests
 
 from core.audit_engine import count_missed_closing_lines
 from core.constants import (CLOSING_SRC_EXCHANGE, CLOSING_SRC_ODDSAPI,
-                            CLOSING_SRC_ORACLE)
+                            CLOSING_SRC_ORACLE, TAX_RATE)
 from core.db import get_db
 from core.learning_layer import (SPORT_DEFAULTS, _LEDGER_SELECT, _clv_stats,
                                  _sport_stats, load_sport_verdicts, playable_rows)
-from core.stats_utils import brier_reference, brier_score
+from core.stats_utils import brier_reference, brier_score, p_breakeven, wilson_ci
 
 logging.basicConfig(level=logging.WARNING, format="%(levelname)s | %(message)s")
 log = logging.getLogger("WEEKLY")
 
 LIMIT = int(os.environ.get("WEEKLY_LEDGER_LIMIT", "200"))
+LEAGUE_LIMIT = int(os.environ.get("WEEKLY_LEAGUE_LIMIT", "1000"))   # toutes ligues confondues
 _DECISIVE = ("WIN", "LOSS")
 
 
@@ -125,6 +126,61 @@ def closing_coverage(signal_rows: list[dict], missed: int) -> list[str]:
     return lignes
 
 
+# ── Par ligue (2026-09-05) ─────────────────────────────────────────────
+# Le foot porte 98 % des lignes réglées depuis l'époque A6, et « soccer » est
+# un agrégat : MLS, Brésil, Argentine, Big 5 et coupes mineures n'ont aucune
+# raison de partager le même edge. La colonne `league` existait, personne ne
+# la lisait. Même contrat que le reste du rapport : zone jouable, non shadow,
+# Wilson bas contre le point mort après taxe — jamais un taux nu (règle n°7).
+_LEAGUE_MIN_DECIDED = int(os.environ.get("WEEKLY_LEAGUE_MIN_DECIDED", "10"))
+_LEAGUE_SELECT = "league, sport, outcome, odds, time_to_match_minutes, is_shadow, created_at"
+
+
+def league_breakdown(rows: list[dict], min_decided: int = _LEAGUE_MIN_DECIDED) -> list[dict]:
+    """Par ligue : décidés, gagnés, réussite, Wilson bas, point mort (cote
+    moyenne, TAX_RATE), P&L à mise plate d'une unité. Zone jouable et non
+    shadow seulement ; ligues sous `min_decided` agrégées sous « autres ».
+    Pure — testable sans réseau. Tri : décidés décroissants."""
+    rows = [r for r in playable_rows(rows) if not r.get("is_shadow")
+            and r.get("outcome") in _DECISIVE and r.get("odds")]
+    par_ligue: dict[str, list[dict]] = {}
+    for r in rows:
+        par_ligue.setdefault(str(r.get("league") or "?"), []).append(r)
+    out, autres = [], []
+    for league, lr in par_ligue.items():
+        (out if len(lr) >= min_decided else autres).append((league, lr))
+
+    def _stats(league: str, lr: list[dict]) -> dict:
+        n = len(lr)
+        wins = sum(1 for r in lr if r["outcome"] == "WIN")
+        avg_odds = sum(float(r["odds"]) for r in lr) / n
+        pnl = sum(float(r["odds"]) - 1 if r["outcome"] == "WIN" else -1.0 for r in lr)
+        return {"league": league, "n": n, "wins": wins, "hit_rate": wins / n,
+                "wilson_lower": wilson_ci(wins, n)[0], "avg_odds": avg_odds,
+                "p_breakeven": p_breakeven(avg_odds, TAX_RATE), "pnl_flat": pnl}
+
+    result = sorted((_stats(lg, lr) for lg, lr in out), key=lambda d: -d["n"])
+    if autres:
+        reste = [r for _, lr in autres for r in lr]
+        d = _stats(f"autres ({len(autres)} ligues < {min_decided})", reste)
+        result.append(d)
+    return result
+
+
+def format_leagues(breakdown: list[dict]) -> list[str]:
+    """Section « par ligue » du rapport hebdo. Pure."""
+    if not breakdown:
+        return []
+    lignes = ["", "🏟 *Par ligue* (zone jouable, hors fantômes, mise plate 1 u)"]
+    for d in breakdown:
+        verdict = "✅" if d["wilson_lower"] >= d["p_breakeven"] else "•"
+        lignes.append(
+            f"{verdict} {d['league']} — {d['wins']}-{d['n'] - d['wins']} · réussite "
+            f"{_pct(d['hit_rate'])} (Wilson- {_pct(d['wilson_lower'])}, requis "
+            f"{_pct(d['p_breakeven'])} à {d['avg_odds']:.2f}) · P&L {d['pnl_flat']:+.1f} u")
+    return lignes
+
+
 def _pct(x, signed=False):
     if x is None:
         return "—"
@@ -163,7 +219,8 @@ def format_ai_health(rows: list[dict]) -> list[str]:
 def format_report(metrics_by_sport: dict[str, dict], verdicts: dict[str, dict],
                   suspect: tuple[int, int], now: datetime,
                   ai_health: list[dict] | None = None,
-                  closing: list[str] | None = None) -> str:
+                  closing: list[str] | None = None,
+                  leagues: list[str] | None = None) -> str:
     """Texte Telegram/console du rapport hebdo. Pure."""
     lines = [f"📚 *PREDATOR — rapport hebdo de vérité* · {now:%d/%m %H:%M} UTC",
              "CLV réel > 0 et calibration stable = l'objectif ; le ROI court terme n'est qu'un témoin.",
@@ -197,6 +254,7 @@ def format_report(metrics_by_sport: dict[str, dict], verdicts: dict[str, dict],
         lines.append("")
         lines.append("⚠️ *Alertes* — retrait proposé : " + ", ".join(sorted(alerts))
                      + " (≥30 réglés, edge non démontré — à trancher par l'opérateur)")
+    lines.extend(leagues or [])
     lines.extend(closing or [])
     lines.extend(format_ai_health(ai_health or []))
     return "\n".join(lines)
@@ -249,7 +307,15 @@ def main() -> int:
     except Exception as e:                  # jamais bloquant pour le rapport
         print(f"santé IA : lecture impossible — {e}")
         ai_health = []
-    text = format_report(metrics, load_sport_verdicts(sb), suspect, now, ai_health, closing)
+    try:
+        res = (sb.table("ai_learning_ledger").select(_LEAGUE_SELECT)
+               .order("created_at", desc=True).limit(LEAGUE_LIMIT).execute())
+        leagues = format_leagues(league_breakdown(res.data or []))
+    except Exception as e:                  # jamais bloquant pour le rapport
+        print(f"par ligue : lecture impossible — {e}")
+        leagues = []
+    text = format_report(metrics, load_sport_verdicts(sb), suspect, now, ai_health, closing,
+                         leagues)
     print(text)
     _send(text)
     return 0
