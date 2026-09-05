@@ -195,9 +195,30 @@ def _tsdb_encore_utile(sig: dict, now: datetime) -> bool:
 
     Un signal indatable garde son repli : c'est le cas rare, et le refuser
     supprimerait une voie sur une simple absence de `match_time`.
+
+    Un FANTÔME (`is_shadow`, < T-2h ou sport en ombre) ne le reçoit JAMAIS
+    (2026-09-05). Mesuré depuis l'époque A6 : 137 lignes émises sur 198 sont
+    des fantômes — exclus de l'apprentissage par construction, mais réglés
+    comme les autres, donc sur le même budget de 150/jour qui saturait trois
+    jours d'affilée pendant que des recommandés attendaient. Les voies
+    gratuites (ESPN, LiveScore, MLB) continuent de les régler ; seule la
+    ressource rare est réservée à ce que le système a réellement recommandé.
     """
+    if sig.get("is_shadow"):
+        return False
     age = _age_h(sig, now)
     return age is None or age < TSDB_RETRY_WINDOW_H
+
+
+def prioriser(pending: list[dict]) -> list[dict]:
+    """Les RECOMMANDÉS d'abord, les fantômes ensuite — chaque groupe dans
+    l'ordre rendu par `fetch_pending` (coup d'envoi croissant). Tri stable.
+
+    Le budget de règlement (`SETTLE_BUDGET`) est consommé dans l'ordre de la
+    liste : un audit qui tombe sur 25 fantômes avant le premier recommandé
+    laissait celui-ci `active` jusqu'au run suivant. Un pari que l'opérateur
+    a joué vaut plus qu'une ligne de mesure."""
+    return sorted(pending, key=lambda s: bool(s.get("is_shadow")))
 
 
 def audit_one(sb, sig: dict, settle_calls: list, now: datetime) -> str:
@@ -520,9 +541,12 @@ def run():
         log.critical("%s", e)
         raise SystemExit(1)
 
-    pending = fetch_pending(sb)
+    pending = prioriser(fetch_pending(sb))
+    fantomes = sum(1 for s in pending if s.get("is_shadow"))
     log.info("━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━")
-    log.info("PAIM AUDIT v8.5 — %d signals pending", len(pending))
+    log.info("PAIM AUDIT v8.5 — %d signals pending (%d recommandés servis d'abord, "
+             "%d fantômes ensuite, sans TheSportsDB)",
+             len(pending), len(pending) - fantomes, fantomes)
 
     if not pending:
         log.info("Nothing to audit.")
