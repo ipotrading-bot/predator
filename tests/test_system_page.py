@@ -180,7 +180,7 @@ class TestFiscaliteAppliqueePartout:
     def test_le_taux_vient_dun_champ_operateur_jamais_dune_constante(self, jsx):
         assert "const [taxRateInput, setTaxRateInput] = useState(" in jsx
         assert "parseFloat(taxRateInput)" in jsx
-        assert "Taux d'imposition (%)" in jsx
+        assert '<Field label="Impôt (%)">' in jsx
         # L'ancien 20 % en dur, et l'assiette codée en dur, ont disparu.
         assert "const taxRate = 20;" not in jsx
         assert "taxBase" not in jsx
@@ -196,10 +196,13 @@ class TestFiscaliteAppliqueePartout:
         assert jsx.count("taxOfBet(") >= 6
 
     def test_chaque_section_affiche_brut_impot_net(self, jsx):
-        # Système, simples, combiné, Total, Système — résumé.
-        assert jsx.count("Impôt (${taxRate} %)") >= 5
-        assert jsx.count("(avant impôt)") >= 3 and jsx.count("(après impôt)") >= 3
-        assert "Net = brut − mise − impôt" in jsx
+        # Système, simples, combiné, Total, Système — résumé : chacune montre
+        # sa ligne d'impôt, en libellé COURT (page sobre — demande opérateur).
+        assert jsx.count("Impôt ${taxRate} %") >= 5
+        assert jsx.count('label="Brut"') >= 3 and jsx.count('label="Net"') >= 3
+        # Les définitions ne sont plus des phrases dans la page : elles vivent
+        # en title=, survolables, sans peser sur la lecture des chiffres.
+        assert 'title="Brut = retour avant impôt, mise comprise. Net = brut − mise − impôt.' in jsx
 
     def test_les_scenarios_et_le_point_mort_sont_juges_apres_impot(self, jsx):
         # Le pire/meilleur cas se choisit sur le NET, et le point mort aussi :

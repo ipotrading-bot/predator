@@ -807,10 +807,10 @@ function SystemBetCalculator() {
   }, [availableSignals, selections]);
 
   const statusLine = {
-    loading: "Chargement des signaux PAIM…",
-    error: "Signaux indisponibles — ticket vide, remplissage manuel possible.",
-    empty: "Aucun signal ≥ 1.80 dans les 12h à venir — ticket vide, remplissage manuel possible.",
-  }[signalsStatus] || `Auto-rempli depuis ${signalsStatus.split(":")[1]} signal(aux) actif(s) — fenêtre 12h, cote > 1.80, trié par edge.`;
+    loading: "Signaux PAIM…",
+    error: "Signaux indisponibles",
+    empty: "Aucun signal ≥ 1.80 sous 12 h",
+  }[signalsStatus] || `${signalsStatus.split(":")[1]} signaux · 12 h · cote > 1.80`;
 
   return (
     <div style={{ background: C.bg, minHeight: "60vh", fontFamily: SANS }} className="w-full">
@@ -819,11 +819,8 @@ function SystemBetCalculator() {
         <div className="mb-6">
           <div style={{ color: C.gold, fontFamily: MONO }} className="text-xs tracking-widest uppercase mb-1">Predator Paim · Outils</div>
           <h1 style={{ color: C.text }} className="text-2xl md:text-3xl font-semibold mb-2">Calculateur de paris</h1>
-          <p style={{ color: C.muted }} className="text-sm max-w-2xl">
-            Système, simples et combiné sur les mêmes sélections, additionnés dans un total unique, avec le pire et
-            le meilleur cas selon le nombre de bons. Nuls et cotes asiatiques partielles gérés.
-          </p>
-          <p style={{ color: C.faint, fontFamily: MONO }} className="text-xs mt-2">{statusLine}</p>
+          <p style={{ color: C.faint, fontFamily: MONO }} className="text-xs mt-2"
+            title="Auto-remplissage : signaux PAIM actifs, match dans les 12 h, cote > 1.80, meilleur edge d'abord, 8 au plus. Ticket vide = remplissage manuel possible.">{statusLine}</p>
         </div>
 
         <div className="grid grid-cols-1 lg:grid-cols-12 gap-5">
@@ -922,9 +919,7 @@ function SystemBetCalculator() {
                 PAR LIGNE ou TOTALE (répartie à parts égales sur les lignes). */}
             <Panel title="Système" right={n > 0 ? <Toggle on={sysOn} onChange={setSysOn} label="Dans le total" /> : null}>
               {n === 0 ? (
-                <p style={{ color: C.faint }} className="text-xs">
-                  Aucune sélection — ajoute-en une (bouton « Ajouter ») pour configurer le système.
-                </p>
+                <p style={{ color: C.faint }} className="text-xs">Aucune sélection.</p>
               ) : (
               <>
               <div className="grid grid-cols-2 gap-3 mb-3">
@@ -972,17 +967,14 @@ function SystemBetCalculator() {
                   </select>
                 </Field>
               </div>
-              <div className="grid grid-cols-2 gap-3 mt-3 items-end">
-                <Field label="Taux d'imposition (%)">
+              <div className="mt-3 w-28">
+                <Field label="Impôt (%)">
                   <input type="number" min="0" max="100" step="0.5" value={taxRateInput}
                     onChange={(e) => setTaxRateInput(e.target.value)}
                     onBlur={() => setTaxRateInput(String(taxRate))}
+                    title="Retenue sur le gain net de chaque pari GAGNANT, toutes sections. Un pari perdu ou remboursé n'est pas taxé."
                     style={inputStyle} className="text-sm rounded-md px-2 py-1.5" />
                 </Field>
-                <p style={{ color: C.faint }} className="text-xs">
-                  Retenue sur le gain net de chaque pari GAGNANT. Un pari perdu ou remboursé n'est pas taxé.
-                  S'applique à toutes les sections.
-                </p>
               </div>
               <p style={{ color: C.faint, fontFamily: MONO }} className="text-xs mt-2">
                 {stakeMode === "line"
@@ -990,10 +982,10 @@ function SystemBetCalculator() {
                   : `${fmt(totalStakeWanted)} ÷ ${totalLignes} = ${fmt(stake)} par ligne`}
               </p>
               <div style={{ borderTop: `1px solid ${C.borderSoft}` }} className="mt-3 pt-3 space-y-1.5">
-                <StatRow label="Mise totale" value={fmt(computed.totalMise)} />
-                <StatRow label="Gain brut (avant impôt)" value={fmt(computed.totalRetour)} />
-                <StatRow label={`Impôt (${taxRate} %)`} value={`− ${fmt(computed.taxAmount)}`} color={C.partial} />
-                <StatRow label="Gain net (après impôt)" value={signed(computed.totalNet)} color={computed.totalNet >= 0 ? C.win : C.loss} strong />
+                <StatRow label="Mise" value={fmt(computed.totalMise)} />
+                <StatRow label="Brut" value={fmt(computed.totalRetour)} />
+                <StatRow label={`Impôt ${taxRate} %`} value={`− ${fmt(computed.taxAmount)}`} color={C.partial} />
+                <StatRow label="Net" value={signed(computed.totalNet)} color={computed.totalNet >= 0 ? C.win : C.loss} strong />
               </div>
               </>
               )}
@@ -1003,7 +995,7 @@ function SystemBetCalculator() {
                 mise : une mise par défaut commune, surchargeable ligne par ligne. */}
             <Panel title="Mises individuelles" right={n > 0 ? <Toggle on={simplesOn} onChange={setSimplesOn} label="Dans le total" /> : null}>
               {n === 0 ? (
-                <p style={{ color: C.faint }} className="text-xs">Aucune sélection — chaque sélection pourra être jouée seule ici.</p>
+                <p style={{ color: C.faint }} className="text-xs">Aucune sélection.</p>
               ) : (
               <>
               <div className="flex items-end gap-3 mb-3">
@@ -1049,10 +1041,10 @@ function SystemBetCalculator() {
                 ))}
               </div>
               <div style={{ borderTop: `1px solid ${C.borderSoft}` }} className="mt-3 pt-3 space-y-1.5">
-                <StatRow label={`Mise totale · ${n} simple${n > 1 ? "s" : ""}`} value={fmt(simples.mise)} />
-                <StatRow label="Gain brut (avant impôt)" value={fmt(simples.brut)} />
-                <StatRow label={`Impôt (${taxRate} %)`} value={`− ${fmt(simples.impot)}`} color={C.partial} />
-                <StatRow label="Gain net (après impôt)" value={signed(simples.net)} color={simples.net >= 0 ? C.win : C.loss} strong />
+                <StatRow label={`Mise · ${n} simple${n > 1 ? "s" : ""}`} value={fmt(simples.mise)} />
+                <StatRow label="Brut" value={fmt(simples.brut)} />
+                <StatRow label={`Impôt ${taxRate} %`} value={`− ${fmt(simples.impot)}`} color={C.partial} />
+                <StatRow label="Net" value={signed(simples.net)} color={simples.net >= 0 ? C.win : C.loss} strong />
               </div>
               </>
               )}
@@ -1062,9 +1054,7 @@ function SystemBetCalculator() {
                 totale = produit des cotes (statuts appliqués par le moteur). */}
             <Panel title="Combiné" right={n >= 2 ? <Toggle on={comboOn} onChange={setComboOn} label="Dans le total" /> : null}>
               {n < 2 ? (
-                <p style={{ color: C.faint }} className="text-xs">
-                  Il faut au moins 2 sélections pour un combiné{n === 1 ? " — avec une seule, c'est un simple (section ci-dessus)" : ""}.
-                </p>
+                <p style={{ color: C.faint }} className="text-xs">2 sélections minimum.</p>
               ) : (
               <>
               <div className="flex flex-wrap gap-1.5 mb-3">
@@ -1091,14 +1081,14 @@ function SystemBetCalculator() {
                 {selections.map((s) => s.odds.toFixed(2)).join(" × ")} = {combine.cote.toFixed(3)}
               </p>
               <div style={{ borderTop: `1px solid ${C.borderSoft}` }} className="mt-3 pt-3 space-y-1.5">
-                <StatRow label={`${fmtN(combine.stake)} × ${combine.cote.toFixed(3)}`} value={fmt(combine.stake * combine.cote)} />
-                <StatRow label="Gain brut (avant impôt)" value={fmt(combine.brut)} color={bucketColor[combine.bucket]} />
-                <StatRow label={`Impôt (${taxRate} %)`} value={`− ${fmt(combine.impot)}`} color={C.partial} />
-                <StatRow label="Gain net (après impôt)" value={signed(combine.net)} color={combine.net >= 0 ? C.win : C.loss} strong />
+                <StatRow label="Mise" value={fmt(combine.stake)} />
+                <StatRow label="Brut" value={fmt(combine.brut)} color={bucketColor[combine.bucket]} />
+                <StatRow label={`Impôt ${taxRate} %`} value={`− ${fmt(combine.impot)}`} color={C.partial} />
+                <StatRow label="Net" value={signed(combine.net)} color={combine.net >= 0 ? C.win : C.loss} strong />
               </div>
               {combine.bucket !== "win" && (
-                <p style={{ color: C.partial }} className="text-xs mt-2">
-                  Statuts appliqués : facteur de retour {combine.R.toFixed(3)}× (nul = cote 1, perdu = 0).
+                <p style={{ color: C.partial }} className="text-xs mt-2" title="Statuts appliqués : nul = cote 1, perdu = 0.">
+                  Facteur de retour {combine.R.toFixed(3)}×
                 </p>
               )}
               </>
@@ -1120,13 +1110,15 @@ function SystemBetCalculator() {
                 <Panel title="Total"
                   right={<span style={{ color: C.faint, fontFamily: SANS }} className="text-xs">{sections.filter((s) => s.on).length}/{sections.length} sections actives</span>}
                 >
-                  <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
-                    <SummaryCard label="Mise engagée" value={fmt(grand.mise)} />
-                    <SummaryCard label="Gain brut" value={fmt(grand.brut)} sub="avant impôt, mise comprise" />
-                    <SummaryCard label={`Impôt (${taxRate} %)`} value={`− ${fmt(grand.impot)}`} color={C.partial} sub="sur chaque pari gagnant" />
-                    <SummaryCard label="Gain net" value={signed(grand.net)} color={grand.net >= 0 ? C.win : C.loss} sub={`après impôt · ROI ${grand.roi.toFixed(1)} %`} />
+                  <div className="grid grid-cols-2 md:grid-cols-5 gap-3">
+                    <SummaryCard label="Mise" value={fmt(grand.mise)} />
+                    <SummaryCard label="Brut" value={fmt(grand.brut)} />
+                    <SummaryCard label={`Impôt ${taxRate} %`} value={`− ${fmt(grand.impot)}`} color={C.partial} />
+                    <SummaryCard label="Net" value={signed(grand.net)} color={grand.net >= 0 ? C.win : C.loss} />
+                    <SummaryCard label="ROI" value={`${grand.roi.toFixed(1)} %`} color={grand.net >= 0 ? C.win : C.loss} />
                   </div>
-                  <div className="mt-3 overflow-x-auto">
+                  <div className="mt-3 overflow-x-auto"
+                    title="Brut = retour avant impôt, mise comprise. Net = brut − mise − impôt. Selon les statuts saisis (Gagné par défaut = tout passe).">
                     <table className="w-full text-xs" style={{ fontFamily: MONO, borderCollapse: "collapse" }}>
                       <thead>
                         <tr style={{ color: C.muted, fontFamily: SANS }}>
@@ -1159,14 +1151,10 @@ function SystemBetCalculator() {
                       </tbody>
                     </table>
                   </div>
-                  <p style={{ color: C.faint }} className="text-xs mt-2">
-                    Brut = retour AVANT impôt, mise comprise · Impôt = {taxRate} % du gain de chaque pari gagnant · Net = brut − mise − impôt,
-                    ce qui reste vraiment · en {currency}, selon les statuts saisis (Gagné par défaut = tout passe).
-                  </p>
                   {doublon && (
                     <div style={{ background: "rgba(227,162,60,0.10)", border: `1px solid ${C.partial}`, color: C.partial }}
                       className="text-xs px-2.5 py-1.5 rounded-md mt-2">
-                      ⚠ {doublon} : les mises s'additionnent, c'est jouer deux fois la même chose. Voulu ? Sinon, sors une section du total.
+                      ⚠ {doublon} — jouer deux fois.
                     </div>
                   )}
                 </Panel>
@@ -1182,10 +1170,6 @@ function SystemBetCalculator() {
                     <p style={{ color: C.muted }} className="text-sm">Active au moins une section avec une mise pour voir les scénarios.</p>
                   ) : (
                   <>
-                  <p style={{ color: C.muted }} className="text-xs mb-3">
-                    Si <span style={{ color: C.text, fontFamily: MONO }}>k</span> sélections sur {n} sont bonnes, pour {fmt(grand.mise)} engagés.
-                    Pire cas : les k bonnes qui rapportent le moins, NET d'impôt. Meilleur cas : celles qui rapportent le plus. Touche une ligne pour le détail.
-                  </p>
                   <div className="grid grid-cols-2 gap-3 mb-3">
                     <div style={{ background: C.panel2, border: `1px solid ${C.borderSoft}`, borderRadius: 10 }} className="px-4 py-3">
                       <div style={{ color: C.muted }} className="text-xs mb-1">Point mort</div>
@@ -1193,7 +1177,7 @@ function SystemBetCalculator() {
                         {pointMortTotal ? `${pointMortTotal.k} bon${pointMortTotal.k > 1 ? "s" : ""} sur ${n}` : "jamais"}
                       </div>
                       <div style={{ color: C.faint }} className="text-xs mt-0.5">
-                        {pointMortTotal && pointMortTotal.tooShort ? `${n - 1} bons sur ${n} ne couvrent pas la mise` : "pire cas ≥ mise, APRÈS impôt"}
+                        {pointMortTotal && pointMortTotal.tooShort ? `${n - 1} bons ne couvrent pas` : "net ≥ 0"}
                       </div>
                     </div>
                     <div style={{ background: C.panel2, border: `1px solid ${C.borderSoft}`, borderRadius: 10 }} className="px-4 py-3">
@@ -1202,11 +1186,12 @@ function SystemBetCalculator() {
                         {signed(scenariosTotal[n].best.net)}
                       </div>
                       <div style={{ color: C.faint }} className="text-xs mt-0.5">
-                        {fmt(scenariosTotal[n].best.total)} brut − {fmtN(scenariosTotal[n].best.impot)} d'impôt
+                        {fmtN(scenariosTotal[n].best.total)} brut − {fmtN(scenariosTotal[n].best.impot)} impôt
                       </div>
                     </div>
                   </div>
-                  <div className="overflow-x-auto">
+                  <div className="overflow-x-auto"
+                    title="Si k sélections sont bonnes : pire cas = les k qui rapportent le moins, net d'impôt ; meilleur cas = celles qui rapportent le plus. Gagnant = couvert même au pire · Selon lesquelles = dépend des bonnes · Perdant = jamais couvert. L'impôt frappe chaque pari gagnant même si le ticket perd. Touche une ligne pour le détail.">
                     <table className="w-full text-xs" style={{ fontFamily: MONO, borderCollapse: "collapse" }}>
                       <thead>
                         <tr style={{ color: C.muted, fontFamily: SANS }}>
@@ -1259,10 +1244,6 @@ function SystemBetCalculator() {
                       </tbody>
                     </table>
                   </div>
-                  <p style={{ color: C.faint }} className="text-xs mt-2">
-                    Retour brut puis net APRÈS impôt, en {currency}. Gagnant = couvert même dans le pire cas · Selon lesquelles = dépend des bonnes ·
-                    Perdant = jamais couvert. L'impôt frappe chaque pari gagnant, même quand le ticket perd dans son ensemble.
-                  </p>
                   </>
                   )}
                 </Panel>
@@ -1272,15 +1253,12 @@ function SystemBetCalculator() {
                 <Panel title="Système — résumé">
                   <div className="grid grid-cols-2 md:grid-cols-3 gap-3">
                     <SummaryCard label="Lignes" value={computed.totalLignes} />
-                    <SummaryCard label="Mise totale" value={fmt(computed.totalMise)} />
-                    <SummaryCard label="Gain brut" value={fmt(computed.totalRetour)} sub="avant impôt, mise comprise" />
-                    <SummaryCard label={`Impôt (${taxRate} %)`} value={`− ${fmt(computed.taxAmount)}`} color={C.partial} sub="par ligne gagnante" />
-                    <SummaryCard label="Gain net" value={signed(computed.totalNet)} color={computed.totalNet >= 0 ? C.win : C.loss} sub="après impôt" />
-                    <SummaryCard label="ROI" value={`${computed.totalMise > 0 ? ((computed.totalNet / computed.totalMise) * 100).toFixed(1) : "0.0"} %`} color={computed.totalNet >= 0 ? C.win : C.loss} sub="net d'impôt" />
+                    <SummaryCard label="Mise" value={fmt(computed.totalMise)} />
+                    <SummaryCard label="Brut" value={fmt(computed.totalRetour)} />
+                    <SummaryCard label={`Impôt ${taxRate} %`} value={`− ${fmt(computed.taxAmount)}`} color={C.partial} />
+                    <SummaryCard label="Net" value={signed(computed.totalNet)} color={computed.totalNet >= 0 ? C.win : C.loss} />
+                    <SummaryCard label="ROI" value={`${computed.totalMise > 0 ? ((computed.totalNet / computed.totalMise) * 100).toFixed(1) : "0.0"} %`} color={computed.totalNet >= 0 ? C.win : C.loss} />
                   </div>
-                  <p style={{ color: C.faint }} className="text-xs mt-3">
-                    Avant impôt, le système rendait {fmt(computed.totalProfit)} de gain net.
-                  </p>
                 </Panel>
 
                 <Panel title="Détail par palier & combinaisons"
