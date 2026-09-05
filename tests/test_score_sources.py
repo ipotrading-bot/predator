@@ -555,6 +555,9 @@ class TestSondeDAlias:
             assert ss.result_from_livescore("Z FC vs Viettel FC", "soccer",
                                             "2026-09-04") is None
         assert "ALIAS CANDIDAT" not in caplog.text
+        # …mais le silence est NOMMÉ : un « pas trouvé » indistinct est
+        # exactement ce que cette sonde existe pour supprimer.
+        assert "ALIAS AMBIGU" in caplog.text
 
     def test_aucun_camp_reconnu_ne_journalise_rien(self, monkeypatch, caplog):
         """Ligue absente : rien à dire, et surtout pas un candidat."""

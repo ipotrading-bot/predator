@@ -682,7 +682,19 @@ def _journal_alias(match_name: str, home: str, away: str,
             if cote_h != cote_a:      # exactement UN camp reconnu
                 manquant, vu = ((away, ev["away"]) if cote_h else (home, ev["home"]))
                 proches[ev["id"] or f"{jour}|{ev['league']}"] = (ev, manquant, vu)
-    if len(proches) != 1:
+    if not proches:
+        return                      # ligue absente : rien à nommer
+    if len(proches) > 1:
+        # On ne PROPOSE pas un alias ambigu, mais on dit POURQUOI on se tait :
+        # un silence indistinct est exactement ce que cette sonde existe pour
+        # supprimer. Le cas type est un club qui rejoue dans la fenêtre de
+        # trois jours (« Viettel » deux fois), donc lisible d'un coup d'œil.
+        log.info("ALIAS AMBIGU livescore | %s | %d evenements a un seul camp "
+                 "reconnu (%s) — rien propose",
+                 match_name, len(proches),
+                 " ; ".join(f"{' / '.join(n for n in e['home'] if n)} vs "
+                            f"{' / '.join(n for n in e['away'] if n)}"
+                            for e, _, _ in list(proches.values())[:3]))
         return
     ev, manquant, vu = next(iter(proches.values()))
     log.info("ALIAS CANDIDAT livescore | %s | %r pourrait etre %r "
