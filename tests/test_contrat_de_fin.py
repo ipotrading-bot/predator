@@ -117,10 +117,15 @@ class TestLeContratEstReellementCable:
         assert "signaux_persistes=saved_count" in src
 
     def test_laudit_appelle_le_contrat_sur_ses_propres_compteurs(self):
+        """Éligibles = les RECOMMANDÉS en attente (2026-09-06 : un fantôme
+        seul sans score peignait l'audit en rouge, voir
+        tests/test_audit_priorite.py::TestLeContratNeCompteQueLesRecommandes) ;
+        réglés = tout ce qui l'a été, fantômes compris."""
         import inspect
         from core import audit_engine
         src = inspect.getsource(audit_engine.run)
-        assert "settlement_eligible=len(pending)" in src
+        assert "recommandes = len(pending) - fantomes" in src
+        assert "settlement_eligible=recommandes" in src
         assert 'settlement_regles=counts["settled"]' in src
 
     def test_le_verdict_de_laudit_est_pose_APRES_lapprentissage(self):

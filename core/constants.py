@@ -26,6 +26,18 @@ EV_EDGE_FLOOR = 1.5   # % EV
 
 SUSPECT_EDGE = 10.0   # % — safety trigger: major sport edge above this = SUSPECT_DATA (cap totals=15%)
 
+# ── Cadence de l'audit ────────────────────────────────────────────────
+# Heures entre deux runs de `audit.yml` (cron `45 */3`). Ce nombre est
+# MULTIPLICATEUR de tout ce qui se dépense « par audit » : le repli
+# TheSportsDB d'un signal irrécupérable (fenêtre/cadence essais), le lot de
+# relance des expirés (lot × 24/cadence relances par jour). Le 2026-09-05 la
+# cadence est passée de 6 h à 3 h : `TSDB_RETRY_WINDOW_H` a suivi, le lot de
+# relance non — 96 relances/jour pour un module dimensionné à 48, et
+# TheSportsDB 150/150 à 14:41 le 06/09 (INCIDENTS.md). Ce qui dépend de la
+# cadence se DÉRIVE d'ici ; le gardien tests/test_audit_cadence.py compare
+# cette valeur au cron réel.
+AUDIT_INTERVAL_H = 3
+
 # ── Taxe ──────────────────────────────────────────────────────────────
 # REMIS À 0.0 LE 2026-09-01 — décision opérateur, réitérée (première
 # instruction le 2026-07-08 : « les 20 %, on s'en soucie plus »).

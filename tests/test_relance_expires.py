@@ -205,3 +205,66 @@ class TestLaRelanceEstCablee:
     @pytest.mark.parametrize("nom", ["relancer", "RELANCE_BUDGET", "CURSEUR_KEY"])
     def test_lapi_publique_reste_stable(self, nom):
         assert hasattr(relance_expires, nom)
+
+
+class TestTheSportsDBReserveALaRelance:
+    """2026-09-06 : la relance ne mange plus le budget TheSportsDB des
+    recommandés du jour. Un fantôme n'y a jamais droit (même règle que
+    `audit_engine._tsdb_encore_utile`) ; un recommandé seulement tant que la
+    moitié du budget reste au règlement frais. Les voies gratuites (ESPN,
+    LiveScore, MLB) restent tentées dans tous les cas."""
+
+    @staticmethod
+    def _tsdb_vu_par_settle(db, restant):
+        vus = []
+        with patch.object(relance_expires, "settle_signal",
+                          lambda sb, sig, now_iso, tsdb_ok=True: vus.append(tsdb_ok) or False), \
+             patch.object(relance_expires.score_sources, "tsdb_budget_restant",
+                          return_value=restant):
+            relance_expires.relancer(db)
+        return vus
+
+    @staticmethod
+    def _tsdb_vu_par_fetch(db, restant):
+        vus = []
+        with patch.object(relance_expires, "fetch_match_result",
+                          lambda *a, **k: vus.append(k.get("tsdb_ok")) or None), \
+             patch.object(relance_expires.score_sources, "tsdb_budget_restant",
+                          return_value=restant):
+            relance_expires.relancer(db)
+        return vus
+
+    def test_un_signal_fantome_ne_recoit_jamais_le_repli(self):
+        db = FakeDB(signaux=[{"id": 1, "match": "A vs B", "is_shadow": True}])
+        assert self._tsdb_vu_par_settle(db, restant=150) == [False]
+
+    def test_un_signal_recommande_le_recoit_tant_que_la_reserve_est_intacte(self):
+        db = FakeDB(signaux=[{"id": 1, "match": "A vs B", "is_shadow": False}])
+        assert self._tsdb_vu_par_settle(db, restant=150) == [True]
+
+    def test_un_recommande_ne_le_recoit_plus_a_mi_budget(self):
+        budget = relance_expires.score_sources.TSDB_DAILY_BUDGET
+        reserve = int(budget * relance_expires.RELANCE_TSDB_RESERVE)
+        db = FakeDB(signaux=[{"id": 1, "match": "A vs B", "is_shadow": False}])
+        assert self._tsdb_vu_par_settle(db, restant=reserve) == [False]
+
+    def test_une_ligne_de_ledger_fantome_est_cherchee_sans_thesportsdb(self):
+        db = FakeDB(ledger=[dict(LIGNE, is_shadow=True), dict(LIGNE, id="r", is_shadow=False)])
+        assert self._tsdb_vu_par_fetch(db, restant=150) == [False, True]
+
+    def test_le_compte_rendu_dit_combien_ont_ete_cherchees_sans_thesportsdb(self):
+        db = FakeDB(ledger=[dict(LIGNE, is_shadow=True), dict(LIGNE, id="r")])
+        with patch.object(relance_expires, "fetch_match_result", return_value=None), \
+             patch.object(relance_expires.score_sources, "tsdb_budget_restant",
+                          return_value=150):
+            faits = relance_expires.relancer(db)
+        assert faits["sans_tsdb"] == 1
+        assert faits["sans_score"] == 2
+
+    def test_le_lot_par_run_est_derive_et_non_ecrit_en_dur(self):
+        """`12` figeait « 4 audits/jour » ; à 8 audits le lot avait doublé
+        sans décision. Le nombre doit sortir de la cadence."""
+        import inspect
+        src = inspect.getsource(relance_expires)
+        assert "AUDIT_INTERVAL_H" in src.split("RELANCE_BUDGET =", 1)[1].split("\n\n", 1)[0]
+        assert 'RELANCE_EXPIRES_BUDGET", "12"' not in src

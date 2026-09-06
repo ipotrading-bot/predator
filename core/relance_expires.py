@@ -39,6 +39,18 @@ TROIS GARDES QUI NE SE DISCUTENT PAS.
    ce module améliore un état déjà écrit, il ne doit pas pouvoir faire échouer
    un audit qui a par ailleurs bien travaillé.
 
+4. **TheSportsDB est réservé, ici comme dans l'audit (2026-09-06).** Le lot
+   par run se DÉRIVE de la cadence de l'audit (`AUDIT_INTERVAL_H`), un
+   fantôme (`is_shadow`) ne reçoit jamais le repli TheSportsDB, et la relance
+   ne touche plus au budget TheSportsDB dès qu'il est à moitié dépensé — la
+   seconde moitié appartient au règlement des signaux frais. Mesuré le
+   2026-09-06 : le lot de 12 était dimensionné pour 4 audits par jour ; à 8
+   audits, 96 relances par jour sur ~35 lignes irrécupérables (dont 25
+   fantômes), chacune coûtant jusqu'à six requêtes par ÉQUIPE à TheSportsDB —
+   150/150 à 14:41, 0 ligne réglée sur 8 runs, et plus aucun repli pour les
+   recommandés de la vague du soir. La classe exacte de l'incident du 04/09,
+   un étage plus bas.
+
 Ce qu'il ne fait PAS : deviner. `determine_outcome` rend `UNKNOWN` sur un
 marché indécidable, `fetch_match_result` rend `None` quand le score n'est pas
 trouvé — dans les deux cas la ligne reste `expired` et repassera. Un WIN/LOSS
@@ -48,19 +60,49 @@ faux au ledger est DÉFINITIF ; l'attente ne l'est pas.
 from __future__ import annotations
 
 import logging
+import math
 import os
 from datetime import datetime, timezone
 
+from core import score_sources
+from core.constants import AUDIT_INTERVAL_H
 from core.settlement import determine_outcome, fetch_match_result, settle_signal
 
 log = logging.getLogger(__name__)
 
-# Lignes retentées par audit. 12 × 4 audits/jour = 48 relances/jour, soit un
-# tour complet des ~40 lignes résiduelles chaque jour, sans jamais approcher
-# le budget du settlement frais (SETTLE_BUDGET = 25 par run, dépensé AVANT).
-RELANCE_BUDGET = int(os.environ.get("RELANCE_EXPIRES_BUDGET", "12"))
+# Relances par JOUR : un tour complet des ~40 lignes résiduelles chaque jour,
+# sans jamais approcher le budget du settlement frais (SETTLE_BUDGET = 25 par
+# run, dépensé AVANT). C'est l'intention ; le lot par run s'en DÉDUIT.
+RELANCES_PAR_JOUR = 48
+
+# Lot par audit = relances/jour ÷ audits/jour. Écrit en dur à 12 jusqu'au
+# 2026-09-06, c'est-à-dire « 4 audits par jour » figé dans un nombre : quand
+# l'audit est passé à 3 h (2026-09-05), le lot a doublé sans que personne ne
+# l'ait décidé. Dérivé de la cadence, il la suit. L'override d'environnement
+# reste un outil d'opérateur, pas un réglage courant.
+RELANCE_BUDGET = int(os.environ.get("RELANCE_EXPIRES_BUDGET")
+                     or math.ceil(RELANCES_PAR_JOUR * AUDIT_INTERVAL_H / 24))
+
+# Part du budget TheSportsDB que la relance LAISSE au règlement des signaux
+# frais : au-delà, elle continue sur les voies gratuites seulement. Une ligne
+# expirée est, par définition, une ligne qu'aucune source n'a rendue à
+# l'audit ; la retenter vaut moins qu'un recommandé du jour qui attend.
+RELANCE_TSDB_RESERVE = 0.5
 
 CURSEUR_KEY = "relance_expires_cursor"
+
+
+def _tsdb_ok(fantome: bool) -> bool:
+    """La relance peut-elle toucher TheSportsDB pour cette ligne ?
+
+    Jamais pour un fantôme (même règle que `audit_engine._tsdb_encore_utile`),
+    et pour un recommandé seulement tant que la réserve du règlement frais est
+    intacte. Lu à chaque ligne : le compteur est partagé et bouge pendant le
+    run."""
+    if fantome:
+        return False
+    reserve = score_sources.TSDB_DAILY_BUDGET * RELANCE_TSDB_RESERVE
+    return score_sources.tsdb_budget_restant() > reserve
 
 
 def _curseur_lire(sb) -> int:
@@ -94,7 +136,8 @@ def _issue(match: str, sport: str, market_key: str, selection: str,
 
 def relancer(sb, budget: int | None = None) -> dict:
     """Retente un lot de lignes expirées. Rend un compte-rendu chiffré."""
-    faits = {"signaux": 0, "ledger": 0, "sans_score": 0, "indecidable": 0}
+    faits = {"signaux": 0, "ledger": 0, "sans_score": 0, "indecidable": 0,
+             "sans_tsdb": 0}
     budget = RELANCE_BUDGET if budget is None else budget
     if budget <= 0:
         return faits
@@ -117,8 +160,10 @@ def relancer(sb, budget: int | None = None) -> dict:
         if restant[0] <= 0:
             break
         restant[0] -= 1
+        tsdb = _tsdb_ok(bool(sig.get("is_shadow")))
+        faits["sans_tsdb"] += not tsdb
         try:
-            if settle_signal(sb, sig, now_iso):
+            if settle_signal(sb, sig, now_iso, tsdb_ok=tsdb):
                 faits["signaux"] += 1
                 log.info("RELANCE ✓ signal %s | %s", sig.get("id"), sig.get("match"))
             else:
@@ -131,7 +176,7 @@ def relancer(sb, budget: int | None = None) -> dict:
         depart = _curseur_lire(sb)
         try:
             lignes = (sb.table("ai_learning_ledger")
-                      .select("id,match,sport,market_type,selection")
+                      .select("id,match,sport,market_type,selection,is_shadow")
                       .eq("outcome", "expired")
                       .order("created_at", desc=False)
                       .range(depart, depart + restant[0] - 1).execute()).data or []
@@ -149,14 +194,18 @@ def relancer(sb, budget: int | None = None) -> dict:
             if restant[0] <= 0:
                 break
             restant[0] -= 1
+            tsdb = _tsdb_ok(bool(row.get("is_shadow")))
+            faits["sans_tsdb"] += not tsdb
             try:
                 # Pas de date : le ledger ne porte pas le coup d'envoi une fois
-                # le signal purgé. api-sports refusera (il lui faut une date) ;
-                # la voie PAR ÉQUIPE de TheSportsDB (core/score_sources) prend
-                # le relais — l'appariement des deux noms sur un événement
-                # UNIQUE des 15 derniers résultats reste exigé, deux
-                # confrontations de la même paire font refuser.
-                res = fetch_match_result(row.get("match", ""), row.get("sport") or "soccer", "")
+                # le signal purgé. ESPN et LiveScore cherchent sur leurs
+                # derniers jours sans date ; la voie PAR ÉQUIPE de TheSportsDB
+                # (core/score_sources) prend le relais quand elle est ouverte —
+                # l'appariement des deux noms sur un événement UNIQUE des 15
+                # derniers résultats reste exigé, deux confrontations de la
+                # même paire font refuser.
+                res = fetch_match_result(row.get("match", ""), row.get("sport") or "soccer",
+                                         "", tsdb_ok=tsdb)
                 if not res or not res.get("completed"):
                     faits["sans_score"] += 1
                     continue
@@ -176,6 +225,7 @@ def relancer(sb, budget: int | None = None) -> dict:
                 log.warning("RELANCE — ledger %s : %s", row.get("id"), e)
 
     log.info("RELANCE — %d signal(aux) et %d ligne(s) de ledger réglés | "
-             "%d sans score | %d marché indécidable",
-             faits["signaux"], faits["ledger"], faits["sans_score"], faits["indecidable"])
+             "%d sans score | %d marché indécidable | %d sans TheSportsDB",
+             faits["signaux"], faits["ledger"], faits["sans_score"],
+             faits["indecidable"], faits["sans_tsdb"])
     return faits

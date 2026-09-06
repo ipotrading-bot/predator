@@ -72,3 +72,57 @@ class TestTheSportsDBReserveAuxRecommandes:
         vieux = _sig(3, audit_engine.TSDB_RETRY_WINDOW_H + 1)
         assert audit_engine._tsdb_encore_utile(vieux, NOW) is False
         assert audit_engine._tsdb_encore_utile(_sig(4, 1), NOW) is True
+
+
+class TestLeContratNeCompteQueLesRecommandes:
+    """2026-09-06 : « éligible » au sens du contrat de fin = RECOMMANDÉ en
+    attente. Un fantôme est réglé si une voie gratuite l'a, TheSportsDB lui
+    étant refusé par construction : un fantôme seul sans score n'est pas une
+    contradiction interne. Le 06/09, un fantôme chilien introuvable a peint
+    deux audits en rouge et envoyé deux alertes Telegram — un faux rouge qui
+    aurait masqué un vrai stérile jusqu'à son expiration.
+
+    `run()` est joué à blanc : base, lecture des pending, règlement, relance
+    et apprentissage sont tous monkeypatchés — aucun réseau."""
+
+    @staticmethod
+    def _jouer(monkeypatch, pending, statuts):
+        alertes = []
+        monkeypatch.setattr(audit_engine, "get_db", lambda write=True: object())
+        monkeypatch.setattr(audit_engine, "fetch_pending", lambda sb: list(pending))
+        monkeypatch.setattr(audit_engine, "audit_one",
+                            lambda sb, sig, budget, now: statuts[sig["id"]])
+        monkeypatch.setattr(audit_engine, "_relancer_expires", lambda sb: None)
+        monkeypatch.setattr(audit_engine, "_learn", lambda sb: None)
+        monkeypatch.setattr(audit_engine, "_effacer_marqueur_sterile", lambda sb: None)
+        monkeypatch.setattr(audit_engine, "_signaler_audit_sterile",
+                            lambda sb, counts, total: alertes.append(total))
+        try:
+            audit_engine.run()
+        except SystemExit as e:
+            return e.code, alertes
+        return None, alertes
+
+    def test_un_fantome_seul_sans_score_ne_rend_pas_laudit_sterile(self, monkeypatch):
+        code, alertes = self._jouer(monkeypatch, [_sig(1, 24, shadow=True)], {1: "skipped"})
+        assert code is None, "un fantôme introuvable n'est pas une panne du pipeline"
+        assert alertes == [], "et n'envoie pas d'alerte « audit stérile »"
+
+    def test_un_recommande_sans_score_le_rend_sterile(self, monkeypatch):
+        code, alertes = self._jouer(monkeypatch, [_sig(1, 24)], {1: "skipped"})
+        assert code == 1
+        assert alertes == [1]
+
+    def test_lalerte_compte_les_recommandes_pas_les_fantomes(self, monkeypatch):
+        pending = [_sig(1, 24), _sig(2, 24), _sig(3, 24, shadow=True)]
+        code, alertes = self._jouer(monkeypatch, pending, {1: "skipped", 2: "skipped", 3: "skipped"})
+        assert code == 1
+        assert alertes == [2]
+
+    def test_un_fantome_regle_prouve_que_les_sources_repondent(self, monkeypatch):
+        """Un recommandé sans score AU MILIEU de fantômes réglés n'est pas une
+        panne : les sources ont répondu, ce match-là n'y est pas encore."""
+        pending = [_sig(1, 24), _sig(2, 24, shadow=True)]
+        code, alertes = self._jouer(monkeypatch, pending, {1: "skipped", 2: "settled"})
+        assert code is None
+        assert alertes == []

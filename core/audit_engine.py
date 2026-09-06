@@ -523,9 +523,10 @@ def _relancer_expires(sb) -> None:
         # ligne de résumé n'apparaissait pas dans les logs Actions — une passe
         # qu'on ne voit pas travailler est une passe qu'on croit morte.
         log.info("RELANCE EXPIRÉS — %d signal(aux) et %d ligne(s) réglés | "
-                 "%d sans score | %d marché indécidable",
+                 "%d sans score | %d marché indécidable | %d sans TheSportsDB",
                  faits.get("signaux", 0), faits.get("ledger", 0),
-                 faits.get("sans_score", 0), faits.get("indecidable", 0))
+                 faits.get("sans_score", 0), faits.get("indecidable", 0),
+                 faits.get("sans_tsdb", 0))
     except Exception as e:                                       # noqa: BLE001
         log.warning("Relance des expirés: %s", e)
 
@@ -567,10 +568,25 @@ def run():
 
     log.info("Audit done: %d settled | %d closed | %d expired | %d skipped",
              counts["settled"], counts["closed"], counts["expired"], counts["skipped"])
+
+    # ÉLIGIBLES AU SENS DU CONTRAT = les RECOMMANDÉS en attente (2026-09-06).
+    # Un fantôme est réglé « si une voie gratuite l'a » : TheSportsDB lui est
+    # refusé par construction (`_tsdb_encore_utile`), donc un fantôme seul
+    # sans score n'est pas une contradiction interne, c'est le fonctionnement
+    # documenté. Le 06/09, un fantôme chilien sans score sur aucune voie a
+    # peint deux audits en rouge (« 0 réglé sur 1 éligibles ») et envoyé deux
+    # alertes Telegram — un faux rouge qui aurait masqué un vrai stérile
+    # jusqu'à son expiration. Les fantômes RÉGLÉS, eux, comptent toujours dans
+    # `settled` : s'ils passent, les sources répondent, et un recommandé sans
+    # score au milieu n'est pas une panne.
+    recommandes = len(pending) - fantomes
     if counts["settled"]:
         _effacer_marqueur_sterile(sb)
+    elif recommandes:
+        _signaler_audit_sterile(sb, counts, recommandes)
     else:
-        _signaler_audit_sterile(sb, counts, len(pending))
+        log.info("0 réglé sur %d fantôme(s) seuls en attente — voies gratuites "
+                 "seulement, pas un audit stérile", len(pending))
     log.info("Settlement: %d/%d lookups used",
              SETTLE_BUDGET - settle_budget[0], SETTLE_BUDGET)
 
@@ -604,6 +620,6 @@ def run():
     # Le verdict est posé APRÈS la couche d'apprentissage, à dessein : un
     # audit stérile doit quand même avoir tenté d'apprendre de ce qu'il a, et
     # sortir avant le priverait de ce tour-là.
-    _terminer_run(verdict_de_fin(settlement_eligible=len(pending),
+    _terminer_run(verdict_de_fin(settlement_eligible=recommandes,
                                  settlement_regles=counts["settled"]),
                   contexte="audit")

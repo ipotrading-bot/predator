@@ -2252,6 +2252,88 @@ répète : sonder ESPN avec `urllib` nu, jamais par `_get_json`.
 Gardiens : `tests/test_score_sources.py::TestESPNTennisParJour`,
 `tests/test_perimetre.py::TestTennisESPN`.
 
+### La relance des expirés vidait TheSportsDB à 14:41 : un lot figé sur une cadence disparue (2026-09-06)
+
+Symptôme : `meta.quota_tsdb_results_20260906` = 150/150 atteint à 14:41:11,
+des 429 dès 05:05 ; « budget journalier atteint (150) — requête sautée »
+8, 15, 14 et 14 fois aux audits de 14:40, 15:45, 19:00 et 20:49. La relance
+des expirés, elle : 12 lignes par run, « 12 sans score », 0 réglé sur les
+8 audits du jour. Les audits de la vague du soir (15:45 → 21:45) n'avaient
+donc plus de repli TheSportsDB pour les recommandés — sans dégât ce jour-là,
+ESPN et LiveScore ont réglé les 4 recommandés éligibles.
+
+Cause : `core/relance_expires.py` portait `RELANCE_BUDGET = 12`, commenté
+« 12 × 4 audits/jour = 48 relances/jour ». Le 05/09 l'audit est passé de 6 h
+à 3 h (`audit.yml`, cron `45 */3`) : `TSDB_RETRY_WINDOW_H` a été recalé à la
+main, le lot de relance non — 96 relances/jour. Stock réel, mesuré en base :
+7 signaux expirés (4 fantômes) retentés à CHAQUE run (hors curseur :
+`limit(budget)` par `match_time` desc), plus 28 lignes de ledger expirées
+(21 fantômes) sous curseur. Une ligne sans date coûte jusqu'à six requêtes
+TheSportsDB (recherche par équipe, 2 candidats par côté, puis les derniers
+événements de chacun). Et le module ignorait `is_shadow`, alors que l'audit
+refuse TheSportsDB aux fantômes depuis le 05/09 (entrée « Le règlement
+servait les fantômes avant les recommandés »). C'est la classe de l'incident
+du 04/09 — TheSportsDB saturé par des lignes irrécupérables — déplacée un
+étage plus bas, dans la relance.
+
+Fait :
+  - `core/constants.AUDIT_INTERVAL_H = 3` : la cadence de l'audit écrite UNE
+    fois ;
+  - `RELANCES_PAR_JOUR = 48` et `RELANCE_BUDGET = ceil(48 × AUDIT_INTERVAL_H
+    / 24)` = 6 par run, dérivé (l'override `RELANCE_EXPIRES_BUDGET` reste un
+    outil d'opérateur, pas un réglage courant) ;
+  - `_tsdb_ok()` : un fantôme — signal ou ligne de ledger, la colonne
+    `is_shadow` est désormais lue — ne reçoit jamais TheSportsDB ; un
+    recommandé seulement tant que `score_sources.tsdb_budget_restant()`
+    dépasse la moitié du budget (`RELANCE_TSDB_RESERVE = 0.5`), la seconde
+    moitié appartenant au règlement frais ;
+  - le compte-rendu affiche « N sans TheSportsDB ».
+CE QUI NE CHANGE PAS : les voies gratuites (ESPN, LiveScore, MLB statsapi)
+restent tentées pour tout le monde, fantômes compris ; rien n'est jeté
+(règle n°9).
+⛔ Ce qui se dépense « par audit » se DÉRIVE d'`AUDIT_INTERVAL_H`, jamais
+d'un nombre qui fige la cadence — la règle 6 (listes qui divergent)
+appliquée à un multiplicateur. Recaler la constante, jamais ce qui en dérive.
+Mesure attendue : l'heure de saturation de `meta.quota_tsdb_results_<jour>`
+(ne doit plus arriver, ou après 21:45) et le compteur « sans TheSportsDB »
+dans les logs d'audit.
+Gardiens : `tests/test_audit_cadence.py` (constante = cron `*/N`
+d'`audit.yml` ; lot × audits/jour ≤ 48 ; doc opérateur alignée sur le cron),
+`tests/test_relance_expires.py::TestTheSportsDBReserveALaRelance`.
+
+### Un fantôme introuvable peignait l'audit en rouge : le contrat comptait les fantômes comme éligibles (2026-09-06)
+
+Symptôme : deux runs Predator Audit en échec — 11:20 (run 34029952770) et
+14:40 (run 34039898495) — avec « PAIM AUDIT — 1 signals pending
+(0 recommandés, 1 fantômes, sans TheSportsDB) » → « RETRY LATER | CD Everton
+Vina del Mar vs CD Universidad Catolica » → « AUDIT STÉRILE — 0 réglé sur
+1 éligibles » → « RUN STÉRILE [audit] », exit 1, et deux alertes Telegram
+« Audit stérile ». Signal 9978, Chile Primera, fantôme, coup d'envoi 05/09
+21:30, « No score yet » sur les 8 audits du jour, expiration à KO+36 h.
+
+Cause : `audit_engine.run()` passait `settlement_eligible=len(pending)` au
+contrat de fin (`core/run_contract.verdict_de_fin`), fantômes compris —
+alors que depuis le 05/09 le pipeline refuse sciemment TheSportsDB aux
+fantômes. Un fantôme seul que les voies gratuites n'ont pas n'est pas une
+contradiction interne, c'est le fonctionnement documenté. Tout audit où il
+était seul en attente sortait rouge : un faux rouge qui aurait masqué un
+vrai stérile jusqu'au 07/09 09:30.
+
+Fait : éligibles au sens du contrat = les RECOMMANDÉS en attente
+(`recommandes = len(pending) - fantomes`) ; réglés = tout ce qui l'a été,
+fantômes compris (un fantôme réglé prouve que les sources répondent).
+`_signaler_audit_sterile` (alerte Telegram + marqueur
+`meta.settlement_starved_at`) reçoit le même compte ; un audit où seuls des
+fantômes restent sans score logue « pas un audit stérile » et sort vert.
+CE QUI NE CHANGE PAS : un recommandé sans score, seul ou parmi d'autres
+recommandés, rend toujours l'audit rouge.
+⚠️ Ne pas « corriger » en rouvrant TheSportsDB aux fantômes pour faire
+disparaître le rouge : c'était le COMPTE du contrat qui était faux, pas la
+réserve du 05/09.
+Gardiens : `tests/test_audit_priorite.py::TestLeContratNeCompteQueLesRecommandes`
+(`run()` joué à blanc, sans réseau),
+`tests/test_contrat_de_fin.py::test_laudit_appelle_le_contrat_sur_ses_propres_compteurs`.
+
 ### Le verrou `predator-signals-write` ne contient plus `closing_line.yml`
 
 raison courante (« aucune ligne en commun ») est FAUSSE : `purge_rules`

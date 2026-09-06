@@ -830,6 +830,13 @@ def result_from_thesportsdb(match_name: str, sport: str, match_date: str) -> dic
 
 # ── Chaîne ────────────────────────────────────────────────────────────
 
+def tsdb_budget_restant() -> int:
+    """Requêtes TheSportsDB encore disponibles aujourd'hui (compteur partagé).
+    Sert à ce qui veut se retenir AVANT la saturation — la relance des expirés
+    laisse la seconde moitié du budget au règlement des signaux frais."""
+    return daily_quota.remaining(_TSDB_BUCKET, TSDB_DAILY_BUDGET)
+
+
 def fetch_score(match_name: str, sport: str, match_date: str = "",
                 tsdb_ok: bool = True) -> dict | None:
     """Score final par la chaîne déterministe (après api-sports, étage 1 dans

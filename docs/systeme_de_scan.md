@@ -17,7 +17,7 @@ Tout le reste (golden, deep, guerrilla) a été supprimé — voir en bas.
 | Scan **standard** | 06:03 · 09:03 · 11:03 · 13:03 · 16:03 · 19:03 · 21:03 · 23:03 | 8 |
 | Tick **reprice** | toutes les heures à H+25 | 24 |
 | Ligne de clôture (`closing_line.yml`) | H+14 · H+34 · H+54 | 72 |
-| Audit : règlement des paris, apprentissage (`audit.yml`) | 00 · 06 · 12 · 18 | 4 |
+| Audit : règlement des paris, apprentissage (`audit.yml`) | 00:45 · 03:45 · 06:45 · 09:45 · 12:45 · 15:45 · 18:45 · 21:45 | 8 |
 | Digest Telegram (`reports.yml`) | toutes les 2 h à H+35 | 12 |
 | Rapport hebdomadaire | lundi 07:00 | 1/semaine |
 
