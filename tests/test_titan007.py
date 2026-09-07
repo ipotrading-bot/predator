@@ -202,6 +202,33 @@ def test_network_failure_is_swallowed(monkeypatch):
     assert t7.fetch_odds("1") == {}
 
 
+def test_le_bilan_compte_les_matchs_sans_cotes(monkeypatch, caplog):
+    """Règle 13 : le critère de retrait se MESURE dans la ligne de bilan.
+    Relevé du 2026-09-07 : `1x2d.titan007.com/<sid>.js` rend 404 sur une
+    partie des matchs du calendrier ; sans ce compteur, seul un grep des
+    avertissements le disait, sans dénominateur."""
+    from datetime import datetime, timedelta, timezone
+    rows = []
+    for sid, h in (("1", 5), ("2", 6), ("3", 7)):
+        site = datetime.now(timezone.utc) + timedelta(hours=h + t7.SITE_UTC_OFFSET_H)
+        rows.append(_row(sid=sid, date=f"{site.month}-{site.day}",
+                         hhmm=site.strftime("%H:%M"), year=str(site.year)))
+    calls = _wire(monkeypatch, rows, _BOOKS)
+    real_get = t7._get
+
+    def flaky_get(url):
+        if url.endswith("/2.js"):
+            return None                      # 404 → _get rend None
+        return real_get(url)
+
+    monkeypatch.setattr(t7, "_get", flaky_get)
+    with caplog.at_level(logging.INFO, logger="PREDATOR.titan007"):
+        out = t7.fetch_matches(hours_ahead=48)
+    assert len(out) == 2 and len(calls["odds"]) == 2
+    bilan = [r.getMessage() for r in caplog.records if "demandées" in r.getMessage()]
+    assert bilan and "1 sans cotes (404/vide) sur 3 demandées" in bilan[0]
+
+
 def test_urls_never_carry_a_query_string():
     """robots.txt de bf.titan007.com interdit `/*?*` — ajouter un paramètre
     ferait basculer ces endpoints sous un Disallow."""
@@ -242,3 +269,18 @@ def test_a_priorite_egale_lordre_reste_celui_des_coups_denvoi(monkeypatch):
     t7.fetch_matches(hours_ahead=24)
     ordre = [next(s for s in ("m30", "m60", "m90") if s in u) for u in calls["odds"]]
     assert ordre == ["m30", "m60", "m90"]
+
+
+# ── Règle 13 : critère de retrait daté, tenu dans le module (2026-09-07) ─
+
+def test_le_critere_de_retrait_est_ecrit_et_la_source_est_au_registre():
+    """AUDIT.md §3bis : une source n'entre (ni ne reste) qu'avec un critère
+    de retrait DATÉ dans sa docstring, et sort du registre le jour où il est
+    relevé — avec sa ligne dans INCIDENTS.md. Ce test tombe si l'un des deux
+    bouge sans l'autre : retirer titan007 de CALL_ORDER sans consigner la
+    mesure, ou effacer le critère en gardant la source."""
+    from core.source_adapter import CALL_ORDER
+    doc = t7.__doc__ or ""
+    assert "CRITÈRE DE RETRAIT" in doc
+    assert "2026-09-07" in doc.split("CRITÈRE DE RETRAIT", 1)[1]
+    assert "titan007" in CALL_ORDER

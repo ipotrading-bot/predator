@@ -2177,6 +2177,28 @@ permis à 22:00) et `::test_le_tick_de_nuit_ne_peut_plus_manger_la_soiree`
 (rejeu du 00:40 : l'engagement reste sous le plafond horaire, donc loin des
 37 crédits).
 
+MESURÉ APRÈS (journée de référence 2026-09-06, samedi, allocation 117-118/j,
+relevé le 2026-09-07 sur la ligne « RYTHME | … » des 8 runs `Scan standard`
+productifs ; les 4 autres runs verts — 00:40, 10:29, 13:59, 18:05 — sont des
+crons en retard dégradés en `reprice` par le dé-doublonnage, PAS des contrats
+défaillants) :
+- engagés par créneau : 06:10→20, 09:10→28, 11:10→22, 13:10→11, 16:10→15,
+  19:10→6, 21:07→9, 23:10→15 ; total **126**, sous le plafond 1,1× (129) ;
+- 70 crédits (59 %) avant midi, contre 128 la veille ;
+- le tick de nuit n'engage plus rien (le 00:40 est un doublon dégradé) ;
+- 16:10 : EPL + Bundesliga achetées, Liga/Serie A/Ligue 1 refusées
+  (« closing line imminente mais rythme : 96 + 3 > plafond 97 ») ;
+- 19:10 : EPL seule, Liga/Serie A/Argentine/Brésil/Mexique refusées au
+  plafond 103 ; 21:07 : Liga encore refusée.
+Lecture : les deux correctifs font ce qu'ils promettaient — plus de vidage
+nocturne, du budget aux créneaux du soir (0 la veille) — mais le Big 5 reste
+INCOMPLET à 16:03 et 19:03 : 2 ligues sur 5, puis 1. Le plafond linéaire
+(`intraday_cap`) ouvre 55 % de l'allocation à 11:10 et les trois créneaux du
+matin (NCAAF, MLB, NRL, Amérique du Sud) les prennent. La suite — une part
+réservée aux créneaux du soir, ou un plafond qui ne soit plus linéaire — est
+une DÉCISION OPÉRATEUR (politique de dépense, comme le 05/09), à prendre sur
+une deuxième journée mesurée, un jour de semaine celle-ci.
+
 ### Le règlement servait les fantômes avant les recommandés, sur le budget rare (2026-09-05)
 
 Symptôme : TheSportsDB saturé (150/150) trois jours d'affilée, des recommandés
@@ -2333,6 +2355,35 @@ réserve du 05/09.
 Gardiens : `tests/test_audit_priorite.py::TestLeContratNeCompteQueLesRecommandes`
 (`run()` joué à blanc, sans réseau),
 `tests/test_contrat_de_fin.py::test_laudit_appelle_le_contrat_sur_ses_propres_compteurs`.
+
+### titan007 rendait des 404 sans dénominateur, et n'avait pas de critère de retrait (2026-09-07)
+
+Symptôme : le bilan de santé du 07/09 relève 3 à 10 avertissements
+« `1x2d.titan007.com` — HTTP Error 404 » par scan standard, alors que la
+source rend encore 24-33 matchs. Impossible de dire si c'est grave : le
+warning ne donne ni le sid ni le nombre de fichiers demandés, et titan007 —
+entrée le 2026-08-20, AVANT la règle 13 — n'avait aucun critère de retrait
+écrit. C'est exactement le cas que la règle 13 vise : une source qu'on ne
+sait ni garder ni retirer sur une mesure.
+
+MESURÉ (10 runs `Scan standard`, 06-07/09) : samedi 06/09, 750 matchs au
+calendrier, 40/40 avec prix sharp, 0 404 sur 7 cycles ; lundi 07/09, ~255 au
+calendrier, 24-33 matchs (20-30 sharp), 3-10 404 sur 40 demandés. Les 404
+n'apparaissent que sur le calendrier mince : le cap de 40 atteint alors des
+matchs dont le fichier de cotes n'existe pas encore. Qualité de données, pas
+une panne ; rien à corriger côté source.
+
+Fait :
+- la ligne de bilan porte le dénominateur : « E sans cotes (404/vide) sur
+  D demandées », et le warning donne l'URL complète (donc le sid) ;
+- la docstring de `core/titan007.py` porte le CRITÈRE DE RETRAIT daté :
+  médiane < 10 matchs avec prix sharp par cycle, ou > 50 % des fichiers
+  demandés sans cotes, sur 7 jours consécutifs de scans standard.
+
+Gardiens : `tests/test_titan007.py::test_le_bilan_compte_les_matchs_sans_cotes`,
+`::test_le_critere_de_retrait_est_ecrit_et_la_source_est_au_registre` (tombe
+si la source quitte `CALL_ORDER` ou si le critère quitte la docstring, l'un
+sans l'autre).
 
 ### Le verrou `predator-signals-write` ne contient plus `closing_line.yml`
 

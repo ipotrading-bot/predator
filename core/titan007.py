@@ -46,6 +46,31 @@ communs : **UTC+8** (12 concordances exactes ; les 2 écarts étaient de faux
 appariements entre équipes réserves argentines). Se tromper ici décalerait
 tous les `match_time` de huit heures — les signaux seraient refusés par le
 garde « match déjà commencé », ou pire, réglés sur le mauvais match.
+
+CRITÈRE DE RETRAIT (règle 13, posé le 2026-09-07)
+-------------------------------------------------
+Budget : `DAILY_BUDGET` (500/j), compteur partagé `daily_quota`, lu dans la
+ligne de bilan « titan007: N matchs (M avec prix sharp) / K à venir |
+E sans cotes (404/vide) sur D demandées | R req aujourd'hui » de chaque run
+`Scan standard`. Relevé de référence : samedi 2026-09-06, 750 matchs au
+calendrier, 40/40 avec prix sharp et 0 fichier en 404 sur 7 cycles ; lundi
+2026-09-07, ~255 au calendrier, 24-33 matchs (20-30 sharp) et 3-10 fichiers
+en 404 sur 40 demandés — le cap de 40 atteint alors des matchs dont le
+fichier `1x2d` n'existe pas encore. Un 404 sur un calendrier mince est
+normal ; un 404 sur un calendrier plein ne l'est pas.
+
+La source SORT du registre (`core/source_adapter.CALL_ORDER`) le jour où,
+sur 7 jours consécutifs de runs `Scan standard`, l'une des deux mesures
+tient :
+  - moins de 10 matchs avec prix sharp par cycle en médiane (elle ne
+    porte plus le Tier 2 sud-américain, sa seule raison d'être) ;
+  - plus de 50 % des fichiers de cotes demandés sans cotes (404/vide) — le
+    feed `1x2d` se ferme ou change de forme, et la tolérance devient une
+    intrusion.
+Le retrait se fait dans le même commit que sa ligne d'`INCIDENTS.md`, avec
+les sept bilans cités ; le gardien
+`tests/test_titan007.py::test_le_critere_de_retrait_est_ecrit_et_la_source_est_au_registre`
+tombe si la source ou ce paragraphe disparaît seul.
 """
 import logging
 import os
@@ -110,7 +135,9 @@ def _get(url: str) -> str | None:
         with urllib.request.urlopen(req, timeout=TIMEOUT) as r:
             return r.read().decode("utf-8", "replace")
     except Exception as e:
-        log.warning("titan007: %s — %s", url.split("/")[2], e)
+        # L'URL entière (sans query string, par construction) : le critère de
+        # retrait demande de savoir si les 404 frappent toujours les mêmes sid.
+        log.warning("titan007: %s — %s", url, e)
         return None
 
 
@@ -266,6 +293,8 @@ def fetch_matches(hours_ahead: int = 24, max_matches: int | None = None) -> list
 
     matches: list[dict] = []
     n_sharp = 0
+    n_asked = 0          # fichiers de cotes demandés
+    n_unreachable = 0    # … dont sans cotes (404, timeout, fichier vide) — CRITÈRE DE RETRAIT
     for i, fx in enumerate(upcoming[:cap]):
         if daily_quota.spent(QUOTA_BUCKET) >= DAILY_BUDGET:
             log.warning("titan007: budget épuisé en cours de cycle — %d matchs conservés",
@@ -273,8 +302,10 @@ def fetch_matches(hours_ahead: int = 24, max_matches: int | None = None) -> list
             break
         if i:
             time.sleep(REQUEST_DELAY)      # cadence volontairement basse
+        n_asked += 1
         books = fetch_odds(fx["sid"])
         if not books:
+            n_unreachable += 1
             continue
         soft  = _soft_price(books)
         sharp = _sharp_price(books)
@@ -299,8 +330,12 @@ def fetch_matches(hours_ahead: int = 24, max_matches: int | None = None) -> list
             n_sharp += 1
         matches.append(m)
 
-    log.info("titan007: %d matchs (%d avec prix sharp) / %d à venir | %d req aujourd'hui",
-             len(matches), n_sharp, len(upcoming), daily_quota.spent(QUOTA_BUCKET))
+    # Les deux compteurs du critère de retrait sont sur CETTE ligne, pour que
+    # la mesure se fasse par grep sur les logs des runs « Scan standard ».
+    log.info("titan007: %d matchs (%d avec prix sharp) / %d à venir | "
+             "%d sans cotes (404/vide) sur %d demandées | %d req aujourd'hui",
+             len(matches), n_sharp, len(upcoming), n_unreachable, n_asked,
+             daily_quota.spent(QUOTA_BUCKET))
     return matches
 
 
