@@ -41,6 +41,12 @@ d'abord, puis l'environnement. Aucune valeur de secret n'est imprimée.
 
 ⚠️ `set` et `clear` MODIFIENT LE COMPTE FOURNISSEUR, pas ce dépôt. Ils sont
 donc interactifs et refusent d'agir sans confirmation explicite.
+
+⚠️ DEPUIS LE 2026-09-07 le moteur ne demande que le book d'EXÉCUTION
+(`core.constants.EXECUTION_BOOK`, 1xbet) et les books sharp
+(`core.odds_api_io.usable_bookmakers`) : un second slot soft, Bet365 compris,
+n'est plus interrogé. Il ne servirait qu'à un book sharp — que le plan
+gratuit refuse. Ce script reste pour `list` et pour le jour où le plan change.
 """
 from __future__ import annotations
 

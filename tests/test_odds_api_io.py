@@ -72,11 +72,13 @@ def _wire(monkeypatch, events, odds_by_batch, *, books=("1xbet",),
             return _Resp({"bookmakers": list(books), "count": len(books)})
         if url.endswith("/events"):
             calls["events"] += 1
+            calls["limit"] = (params or {}).get("limit")
             if events_status != 200:
                 return _Resp(None, status=events_status)
             return _Resp(events)
         if url.endswith("/odds/multi"):
             calls["multi"].append(params["eventIds"].split(","))
+            calls["books_param"] = params.get("bookmakers")
             if odds_status != 200:
                 return _Resp(None, status=odds_status)
             return _Resp(pending.pop(0) if pending else [])
@@ -179,6 +181,62 @@ def test_sharp_book_becomes_odds_pinnacle(monkeypatch):
     (m,) = oai.fetch_sport("soccer", api_key="k")
     assert m["odds_pinnacle"] == {"1": 2.42, "X": 3.55, "2": 3.20}
     assert m["odds_1xbet"] == {"1": 2.30, "X": 3.40, "2": 3.10}
+
+
+def test_seul_le_book_d_execution_fournit_le_prix_soft(monkeypatch):
+    """2026-09-07 : « Al-Adalah +0.5 @ 1.85 » sortait du line shopping
+    Bet365 + 1xbet ; 1xbet ne cotait que +0.25 et +0.75. Le prix soft est
+    celui du book d'exécution, ses lignes aussi — et l'API ne reçoit que
+    lui en paramètre."""
+    ev = _odds_event(1, "Al-Adalah", "Al-Saqer", {
+        "Bet365": [_ml(3.60, 3.70, 2.30), _spread([(0.5, 1.85, 1.95)])],
+        "1xbet":  [_ml(3.55, 3.65, 2.26), _spread([(0.25, 2.13, 1.70), (0.75, 1.53, 2.40)])],
+    })
+    calls = _wire(monkeypatch, [_event(1, "Al-Adalah", "Al-Saqer")], [[ev]],
+                  books=("Bet365", "1xbet"))
+    (m,) = oai.fetch_sport("soccer", api_key="k")
+    assert m["odds_1xbet"] == {"1": 3.55, "X": 3.65, "2": 2.26}      # pas le 3.60 de Bet365
+    assert [r["point"] for r in m["spreads_1xbet"]["ladder"]] == [0.25, 0.75]
+    assert 0.5 not in {r["point"] for r in m["spreads_1xbet"]["ladder"]}
+    assert calls["books_param"] == "1xbet"
+    assert "odds_pinnacle" not in m
+
+
+def test_un_compte_sans_book_d_execution_ne_demande_rien(monkeypatch, caplog):
+    calls = _wire(monkeypatch, [_event(1, "A", "B")], [], books=("Bet365", "Betano"))
+    with caplog.at_level(logging.WARNING, logger="PREDATOR.odds_api_io"):
+        assert oai.fetch_sport("soccer", api_key="k") == []
+    assert calls["events"] == 0 and calls["multi"] == []
+    assert any("1xbet" in r.getMessage() for r in caplog.records)
+
+
+def test_un_book_sharp_en_second_slot_est_toujours_demande(monkeypatch):
+    calls = _wire(monkeypatch, [_event(1, "A", "B")], [[]], books=("1xbet", "Betfair Exchange"))
+    oai.fetch_sport("soccer", api_key="k")
+    assert calls["books_param"] == "1xbet,Betfair Exchange"
+
+
+def test_les_majeures_passent_avant_le_cap(monkeypatch):
+    """2026-09-07 : 235 matchs à 24 h, 60 lus par heure de coup d'envoi —
+    Iran, Bulgarie D2, NCAA — et Serie A / LaLiga du soir dehors. Le
+    calendrier est lu en entier (1 requête), trié par ligue puis par heure,
+    et seul `cap` paie ses cotes."""
+    evs = [_event(1, "A", "B", date="2030-01-01T17:00:00Z"),
+           _event(2, "C", "D", date="2030-01-01T17:30:00Z"),
+           _event(3, "Inter", "Milan", date="2030-01-01T20:45:00Z")]
+    evs[0]["league"] = {"name": "Finland - Kolmonen, Western, Group 3"}
+    evs[1]["league"] = {"name": "USA - NCAA"}
+    evs[2]["league"] = {"name": "Italy - Serie A"}
+    calls = _wire(monkeypatch, evs, [[]])
+    oai.fetch_sport("soccer", api_key="k", max_events=2)
+    assert calls["multi"] == [["3", "1"]], "Serie A d'abord, puis l'heure ; NCAA coupé"
+    assert calls["limit"] == "240"       # le calendrier entier pour une requête
+
+
+def test_le_cap_du_foot_est_120_les_autres_60():
+    assert oai.cap_pour("soccer") == 120
+    assert oai.cap_pour("tennis") == oai.cap_pour("basketball") == 60
+    assert oai.EVENTS_LIMIT == 240        # honoré par le serveur, mesuré 2026-09-07
 
 
 def test_event_without_moneyline_is_dropped(monkeypatch):
@@ -322,10 +380,10 @@ def test_les_books_sont_ceux_du_compte_qui_sert(monkeypatch):
     events = [_event(1, "A", "B")]
     payload = [_odds_event(1, "A", "B", {"Betano": [_ml(2.0, 3.4, 3.6)]})]
     calls = _wire_pool(monkeypatch, events, payload, refus={"k1": 401},
-                       books_by_key={"k1": ["1xbet", "Bet365"], "k2": ["Betano", "Unibet"]})
+                       books_by_key={"k1": ["1xbet", "Bet365"], "k2": ["Smarkets", "1xBet"]})
     oai.fetch_sport("soccer", api_key="k1,k2")
     multi = [(k, b) for p, k, b in calls if p == "odds/multi"]
-    assert multi[-1] == ("k2", "Betano,Unibet")
+    assert multi[-1] == ("k2", "Smarkets,1xBet")
 
 
 def test_le_budget_est_tenu_par_compte(monkeypatch):

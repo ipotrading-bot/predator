@@ -94,23 +94,40 @@ def test_offset_is_configurable(monkeypatch):
     assert t7._kickoff_utc(row).hour == 4
 
 
-# ── Prix soft : le plafond anti-aberration ────────────────────────────
+# ── Prix soft : le book d'exécution, borné par la médiane ─────────────
 
-def test_frozen_book_never_sets_the_soft_price():
-    """Le cas mesuré : un book figé propose 4.59 quand le marché est à ~4.1."""
+def test_le_prix_soft_est_celui_du_book_d_execution_pas_le_meilleur():
+    """Jusqu'au 2026-09-07, le 4.15 de Bwin aurait été retenu : l'opérateur
+    ne mise que chez 1xbet, un prix Bwin n'est pas exécutable."""
     books = {"1xBet": {"1": 4.10, "X": 3.4, "2": 1.9},
              "Bet 365": {"1": 4.05, "X": 3.4, "2": 1.9},
              "Bwin": {"1": 4.15, "X": 3.4, "2": 1.9},
              "Betway": {"1": 4.59, "X": 3.4, "2": 1.9}}          # figé
-    soft = t7._soft_price(books)
-    assert soft["1"] == 4.15                                      # pas 4.59
+    assert t7._soft_price(books)["1"] == 4.10
 
 
-def test_a_genuinely_better_price_is_still_taken():
+def test_un_book_d_execution_fige_ne_donne_pas_de_prix():
+    """Le cas mesuré le 2026-08-20 (4.59 quand le marché est à ~4.1), cette
+    fois chez le book d'exécution lui-même : mieux vaut rien."""
+    books = {"1xBet": {"1": 4.59, "X": 3.4, "2": 1.9},
+             "Bet 365": {"1": 4.05, "X": 3.4, "2": 1.9},
+             "Bwin": {"1": 4.15, "X": 3.4, "2": 1.9},
+             "Betway": {"1": 4.10, "X": 3.4, "2": 1.9}}
+    assert t7._soft_price(books) is None
+
+
+def test_un_meilleur_prix_ailleurs_nest_pas_pris():
     books = {"1xBet": {"1": 2.00, "X": 3.4, "2": 3.5},
              "Bet 365": {"1": 2.05, "X": 3.4, "2": 3.5},
              "Bwin": {"1": 2.10, "X": 3.4, "2": 3.5}}
-    assert t7._soft_price(books)["1"] == 2.10                     # 2.10 < médiane × 1.10
+    assert t7._soft_price(books)["1"] == 2.00
+
+
+def test_sans_book_d_execution_pas_de_prix_soft():
+    books = {"Bet 365": {"1": 2.05, "X": 3.4, "2": 3.5},
+             "Bwin": {"1": 2.10, "X": 3.4, "2": 3.5},
+             "Betway": {"1": 2.00, "X": 3.4, "2": 3.5}}
+    assert t7._soft_price(books) is None
 
 
 def test_too_few_soft_books_yields_no_price():
@@ -158,7 +175,7 @@ def test_upcoming_match_carries_both_sides(monkeypatch):
     (m,) = t7.fetch_matches(hours_ahead=24)
     assert m["sport"] == "soccer" and m["sport_id"] == 1
     assert m["odds_pinnacle"]["1"] == 2.40
-    assert m["odds_1xbet"]["1"] == 2.52
+    assert m["odds_1xbet"]["1"] == 2.50      # 1xBet, pas le 2.52 de Bwin (2026-09-07)
     assert m["commence_time"].endswith("Z")
     assert m["_soft_source"] == "titan007"
 

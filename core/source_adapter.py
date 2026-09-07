@@ -300,6 +300,37 @@ LEAGUE_MAP = {
     "spa d2": "laliga2", "ita d2": "seriea_b", "fra d2": "ligue2", "hol d2": "eredivisie2",
     "allsvenskan": "allsvenskan", "veikkausliiga": "veikkausliiga",
     "eliteserien": "eliteserien", "challenger pro league": "belgium_challenger",
+    # libellés EXACTS d'odds-api.io (`core/odds_api_io.py`), forme « Pays -
+    # Ligue[, phase] », RELEVÉS le 2026-09-07 sur trois calendriers (07/09,
+    # 12-13/09, 15-17/09 : ~500 événements, 200+ libellés). Ils servent au tri
+    # par priorité avant le cap (`league_rank`) : ce soir-là, 235 matchs à 24 h,
+    # 60 lus par heure de coup d'envoi, Serie A et LaLiga toutes deux dehors.
+    # La phase après la virgule (« , Clausura », « , Knockout stage ») est
+    # retirée par `_sans_phase` avant la recherche — sauf les sections
+    # féminines/jeunes, qui ne doivent JAMAIS prendre le rang de la ligue.
+    "italy - serie a": "seriea", "spain - laliga": "laliga",
+    "netherlands - eredivisie": "eredivisie", "portugal - liga portugal": "primeira",
+    "turkiye - super lig": "turkish_super", "scotland - premiership": "spl",
+    "england - championship": "efl_championship", "germany - 2. bundesliga": "bundesliga2",
+    "spain - laliga 2": "laliga2", "italy - serie b": "seriea_b", "france - ligue 2": "ligue2",
+    "brazil - brasileiro serie a": "brasileirao", "argentina - primera lpf": "argentina_primera",
+    "republic of korea - k-league 1": "k_league",
+    "saudi arabia - saudi professional league": "saudi_pro",
+    "international clubs - conmebol libertadores": "libertadores",
+    "international clubs - conmebol sudamericana": "sudamericana",
+    "sweden - allsvenskan": "allsvenskan", "portugal - liga portugal 2": "primeira_2",
+    "greece - super league": "greece_super", "russia - premier league": "russia_premier",
+    "england - league one": "efl_league_one", "england - league two": "efl_league_two",
+    "england - national league": "national_league",
+    # Forme SUPPOSÉE d'après la convention ci-dessus — ces ligues ne jouaient
+    # pas dans les calendriers relevés (trêve internationale). Une entrée
+    # fausse ne trie rien, elle ne casse rien ; à confirmer sur un calendrier.
+    "england - premier league": "epl", "germany - bundesliga": "bundesliga",
+    "france - ligue 1": "ligue1", "belgium - pro league": "belgium_pro",
+    "belgium - jupiler pro league": "belgium_pro", "usa - mls": "mls",
+    "japan - j1 league": "j_league",
+    "international clubs - uefa champions league": "ucl",
+    "international clubs - uefa europa league": "uel",
 }
 
 
@@ -378,10 +409,31 @@ LEAGUE_PRIORITY = (
 _RANK = {k: i for i, k in enumerate(LEAGUE_PRIORITY)}
 
 
+# Une section qui n'est PAS la ligue, même quand le libellé la contient :
+# « Turkiye - Super Lig, Women » ne doit jamais passer pour la Süper Lig.
+_SECTIONS_ANNEXES = ("women", "femen", "u19", "u20", "u21", "u23", "reserve",
+                     "amateur", "youth", "primavera")
+
+
+def _sans_phase(label: str) -> str:
+    """« Argentina - Primera LPF, Clausura » → « Argentina - Primera LPF ».
+    Rend le libellé INTACT si ce qui suit la virgule désigne une section
+    féminine ou de jeunes — là, la ligue n'est pas la même."""
+    if "," not in (label or ""):
+        return label or ""
+    tete, queue = label.split(",", 1)
+    if any(mot in queue.lower() for mot in _SECTIONS_ANNEXES):
+        return label
+    return tete.strip()
+
+
 def league_rank(label: str) -> int:
     """Rang de priorité d'un libellé de ligue : 0 = servi en premier ;
-    `len(LEAGUE_PRIORITY)` pour tout ce qui est inconnu ou hors liste."""
-    return _RANK.get(league_key(label), len(LEAGUE_PRIORITY))
+    `len(LEAGUE_PRIORITY)` pour tout ce qui est inconnu ou hors liste.
+    Tolère une phase après la virgule (odds-api.io) — pas `league_key`, qui
+    sert à l'appariement et doit rester exact."""
+    key = league_key(label) or league_key(_sans_phase(label))
+    return _RANK.get(key, len(LEAGUE_PRIORITY))
 
 
 def detect_lang(text: str) -> str:
@@ -654,3 +706,18 @@ def effective_trust(card: dict, spec: SourceSpec) -> float:
     trust = card.get("trust")
     base = float(trust) if isinstance(trust, (int, float)) else spec.trust
     return round(base * (0.5 if card.get("shadow", True) else 1.0), 3)
+
+
+# ── Book d'exécution ──────────────────────────────────────────────────
+
+def _normaliser_book(nom: str) -> str:
+    return "".join(ch for ch in str(nom).lower() if ch.isalnum())
+
+
+def est_book_execution(nom: str) -> bool:
+    """« 1xBet », « 1xbet », « 1x Bet » désignent le book où l'opérateur
+    mise (`core.constants.EXECUTION_BOOK`). MelBet, 1xBit et BetWinner sont
+    de la même famille mais ce ne sont PAS ce book : leurs lignes ne sont
+    pas garanties identiques au moment de miser (2026-09-07)."""
+    from core.constants import EXECUTION_BOOK
+    return _normaliser_book(nom) == _normaliser_book(EXECUTION_BOOK)

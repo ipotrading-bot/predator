@@ -128,6 +128,10 @@ C'est le tableau à consulter avant de toucher à quoi que ce soit.
 | Football sans nul : refus, jamais de repli sur le moneyline | `…::test_football_sans_nul_est_refuse_jamais_rabattu_sur_le_moneyline` |
 | Le bloc soft retenu appartient à UN book réel (pas de max par issue) | `…::TestLineShoppingSurLePrixFinal` |
 | Le line shopping se départage sur le prix FINAL, pas sur la cote nue | `…::test_cest_le_prix_executable_qui_departage_pas_la_cote_nue` |
+| Le prix soft est celui du book d'EXÉCUTION (`EXECUTION_BOOK`), jamais d'un autre book : odds-api.io ne demande que lui, titan007 ne lit que lui | `tests/test_odds_api_io.py::test_seul_le_book_d_execution_fournit_le_prix_soft`, `tests/test_titan007.py::test_le_prix_soft_est_celui_du_book_d_execution_pas_le_meilleur` |
+| Le nom du book d'exécution n'existe qu'en un endroit ; moteur et dashboard en dérivent | `tests/test_book_execution.py` |
+| odds-api.io lit le calendrier ENTIER (1 requête) et sert les majeures avant le cap ; foot 120, le reste 60 | `tests/test_odds_api_io.py::test_les_majeures_passent_avant_le_cap`, `::test_le_cap_du_foot_est_120_les_autres_60` |
+| Une section féminine/jeunes ne prend jamais le rang de sa ligue ; la phase après la virgule ne compte que pour le RANG | `tests/test_source_adapter.py::TestPrioriteDeLigue` |
 | Le moteur nomme le prix `executable_odd` ; la colonne reste `xbet_odd` | `…::TestSignalEnMemoire` |
 | Un DNB synthétique annonce la répartition de ses DEUX jambes | `…::TestAdviceAnnonceLesDeuxJambes` |
 | Le last-look reprixe le CÔTÉ MISÉ au prix exécutable, pas la cote 1X2 brute | `tests/test_last_look_reprice.py` |

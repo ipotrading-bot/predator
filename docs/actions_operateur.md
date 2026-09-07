@@ -95,7 +95,17 @@ démarre en mode ombre et rend `[]` tant qu'elle n'a pas 100 matchs appariés à
 
 ---
 
-## 2. odds-api.io — le second slot bookmaker ✅ FAIT le 2026-08-27
+## 2. odds-api.io — le second slot bookmaker ✅ FAIT le 2026-08-27 · ⚠️ SANS EFFET depuis le 2026-09-07
+
+> **2026-09-07 — décision opérateur : 1xbet uniquement.** Le moteur ne prend
+> plus que le prix du book d'exécution (`core.constants.EXECUTION_BOOK`) et ne
+> demande plus que lui à odds-api.io (`usable_bookmakers`). Le slot Bet365 est
+> toujours posé mais n'est plus interrogé : le line shopping Bet365 + 1xbet
+> avait produit « Al-Adalah +0.5 @ 1.85 » alors que 1xbet ne cotait que +0.25
+> et +0.75 (INCIDENTS.md, section sources). Le second slot ne servirait qu'à
+> un book sharp, que le plan gratuit refuse. Rien à faire côté compte ; le
+> reste de cette section est conservé comme historique.
+
 
 ### Le constat
 

@@ -80,7 +80,7 @@ import urllib.request
 from datetime import datetime, timedelta, timezone
 
 from core import daily_quota
-from core.source_adapter import league_rank
+from core.source_adapter import est_book_execution, league_rank
 
 log = logging.getLogger("PREDATOR.titan007")
 
@@ -112,10 +112,10 @@ _HEADERS = {"User-Agent": _UA, "Referer": "https://www.titan007.com/"}
 # toujours), les exchanges ensuite.
 SHARP_BOOKS = ("pinnacle", "betfair exchange", "matchbook", "smarkets")
 
-# Books SOFT retenus pour le line shopping. Liste FERMÉE volontairement : le
-# feed en contient 157, dont des books obscurs ou figés dont la cote aberrante
-# créerait un edge qui n'existe pas. On ne garde que des books réellement
-# jouables, cohérents avec l'historique du projet (1xBet en tête).
+# Books SOFT qui forment la MÉDIANE de marché (plafond anti-book figé de
+# `_soft_price`). Liste FERMÉE volontairement : le feed en contient 157, dont
+# des books obscurs ou figés dont la cote aberrante fausserait la médiane.
+# Le PRIX retenu, lui, est celui du seul book d'exécution (2026-09-07).
 SOFT_BOOKS = (
     "1xbet", "bet 365", "bet365", "melbet", "william hill", "bwin", "betway",
     "unibet", "marathonbet", "marathon", "sbobet", "interwetten", "ladbrokes",
@@ -235,9 +235,19 @@ def _sharp_price(books: dict) -> dict | None:
 
 
 def _soft_price(books: dict) -> dict | None:
-    """Line shopping BORNÉ : le meilleur prix qui reste crédible face à la
-    médiane des books soft. Renvoie None si moins de trois books cotent —
-    sans médiane fiable, mieux vaut pas de prix qu'un prix douteux."""
+    """Le prix du book d'EXÉCUTION, borné par la médiane des books soft.
+
+    Jusqu'au 2026-09-07 c'était un line shopping sur `SOFT_BOOKS` : le
+    meilleur prix crédible, chez n'importe lequel d'entre eux. L'opérateur
+    ne mise que chez `EXECUTION_BOOK` (décision opérateur, règle 11) : un
+    prix Bet365 ou Marathonbet n'est pas exécutable, donc pas un edge. Le
+    plafond `MAX_SOFT_OUTLIER` reste : il protège du book FIGÉ, et le book
+    d'exécution peut l'être dans ce feed comme un autre. Renvoie None sans
+    prix du book d'exécution, ou si moins de trois books soft cotent — sans
+    médiane fiable, mieux vaut pas de prix qu'un prix douteux."""
+    execution = next((odds for book, odds in books.items() if est_book_execution(book)), None)
+    if execution is None:
+        return None
     quotes = [odds for book, odds in books.items()
               if any(n in book.lower() for n in SOFT_BOOKS)]
     if len(quotes) < 3:
@@ -245,12 +255,11 @@ def _soft_price(books: dict) -> dict | None:
     out: dict = {}
     for k in ("1", "X", "2"):
         vals = [q[k] for q in quotes if q.get(k, 0) > 1.01]
-        if not vals:
-            out[k] = 0.0
+        mine = float(execution.get(k, 0) or 0)
+        if not vals or mine <= 1.01 or mine > _median(vals) * MAX_SOFT_OUTLIER:
+            out[k] = 0.0             # absent, ou figé au-dessus du marché
             continue
-        ceiling = _median(vals) * MAX_SOFT_OUTLIER
-        keep = [v for v in vals if v <= ceiling]
-        out[k] = max(keep) if keep else _median(vals)
+        out[k] = mine
     return out if out.get("1") and out.get("2") else None
 
 

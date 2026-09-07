@@ -9,7 +9,7 @@
 <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
 <meta name="apple-mobile-web-app-title" content="PREDATOR">
 <meta name="application-name" content="PREDATOR">
-<meta name="description" content="Arbitrage Lead-Lag — Pinnacle Sharp vs 1XBet">
+<meta name="description" content="Arbitrage Lead-Lag — Pinnacle Sharp vs {{ execution_book }}">
 <meta http-equiv="refresh" content="300">
 <title>PREDATOR</title>
 <link rel="manifest" href="/manifest.json">
@@ -211,7 +211,7 @@
   <div class="m-drag"><i></i></div>
 
   <div class="m-hdr">
-    <span class="m-title" id="modal-title">&#9658; PLACER LE PARI — 1XBET</span>
+    <span class="m-title" id="modal-title">&#9658; PLACER LE PARI — {{ execution_book|upper }}</span>
     <button class="m-close" onclick="closeModal()" aria-label="Fermer">&#10005;</button>
   </div>
 
@@ -247,7 +247,7 @@
   </div>
 
   <div class="m-steps">
-    <div class="m-lbl">Étapes 1XBet</div>
+    <div class="m-lbl">Étapes {{ execution_book }}</div>
     <div class="steps">
       <div class="step"><span class="sn">①</span><span class="sk">Match :</span><span class="sv" id="s-match">—</span></div>
       <div class="step"><span class="sn">②</span><span class="sk">Marché :</span><span class="sv" id="s-market">—</span></div>
@@ -540,7 +540,7 @@ function openModal(idx){
   if(s.match_time){ const d=s.match_time; mt=d.slice(8,10)+'/'+d.slice(5,7)+' '+d.slice(11,16)+' UTC'; }
   const cd=s.match_time?_cd(s.match_time):null;
   const rCol={HIGH_VALUE:'var(--green)',VALUE:'var(--yellow)',LOW_VALUE:'#444',SUSPECT_DATA:'var(--orange)'}[s.risk_flag]||'#444';
-  const why=s.advice||`Edge +${(s.edge_pct||0).toFixed(1)}% — 1XBet ${(s.xbet_odd||0).toFixed(2)} vs Pinnacle ${(s.pinnacle_price||0).toFixed(2)}.`;
+  const why=s.advice||`Edge +${(s.edge_pct||0).toFixed(1)}% — {{ execution_book }} ${(s.xbet_odd||0).toFixed(2)} vs Pinnacle ${(s.pinnacle_price||0).toFixed(2)}.`;
 
   document.getElementById('m-match').textContent = emoji+'  '+s.match;
   document.getElementById('m-sub').textContent   = s.league||'—';

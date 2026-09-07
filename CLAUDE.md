@@ -81,8 +81,8 @@ Détail dans `.claude/rules/` (chargé par chemin), justification dans
    survie).
 10. Aucun seuil d'émission modifié sans mesure sur des lignes réglées
     POSTÉRIEURES à la correction en cours — *A6*.
-11. `TAX_RATE`, `SHADOW_SPORTS` et le périmètre sportif = décisions
-    opérateur, instruction explicite exigée dans la session courante —
+11. `TAX_RATE`, `SHADOW_SPORTS`, `EXECUTION_BOOK`, périmètre sportif =
+    décisions opérateur, instruction explicite exigée dans la session —
     *TAX_RATE remis à 0.20 contre instruction*.
 12. ⛔ Cadence d'un workflow multi-modes : surveiller le MODE (`run-name`)
     et le CRÉNEAU DÛ, jamais la fraîcheur du fichier — *Le chien de garde

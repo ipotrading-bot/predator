@@ -344,6 +344,29 @@ class TestPrioriteDeLigue:
         big5 = [sa.league_rank(x) for x in ("ENG PR", "SPA D1", "ITA D1", "GER D1", "FRA D1")]
         assert max(big5) < min(sa.league_rank(x) for x in ("HOL D1", "ENG LCH", "ARG D1", "SAU D1"))
 
+    def test_les_libelles_pays_ligue_d_odds_api_io_sont_connus(self):
+        """Relevés le 2026-09-07 sur les calendriers réels d'odds-api.io."""
+        for lbl, key in (("Italy - Serie A", "seriea"), ("Spain - LaLiga", "laliga"),
+                         ("Turkiye - Super Lig", "turkish_super"),
+                         ("Saudi Arabia - Saudi Professional League", "saudi_pro"),
+                         ("England - Championship", "efl_championship"),
+                         ("Brazil - Brasileiro Serie A", "brasileirao")):
+            assert sa.league_key(lbl) == key, lbl
+
+    def test_la_phase_apres_la_virgule_ne_cache_pas_la_ligue(self):
+        assert sa.league_rank("Argentina - Primera LPF, Clausura") == sa.league_rank("ARG D1")
+        assert (sa.league_rank("International Clubs - CONMEBOL Libertadores, Knockout stage")
+                < len(sa.LEAGUE_PRIORITY))
+        # l'appariement, lui, reste exact
+        assert sa.league_key("Argentina - Primera LPF, Clausura") == ""
+
+    def test_une_section_feminine_ou_jeunes_ne_prend_pas_le_rang_de_la_ligue(self):
+        inconnu = len(sa.LEAGUE_PRIORITY)
+        assert sa.league_rank("Turkiye - Super Lig, Women") == inconnu
+        assert sa.league_rank("Italy - Primavera 1") == inconnu
+        assert sa.league_rank("England Amateur - U21 Premier League 2") == inconnu
+        assert sa.league_rank("Israel - Premier League") == inconnu   # pas l'EPL
+
     def test_chaque_cle_de_priorite_est_atteignable_depuis_un_libelle(self):
         """Une clé de LEAGUE_PRIORITY qu'aucun libellé de LEAGUE_MAP ne produit
         est une entrée morte (règle 6) — elle ne trierait jamais rien."""

@@ -28,6 +28,15 @@ sous le plafond de 500. Le compteur partagé de core/daily_quota.py fait
 respecter ce plafond entre les runs — sans lui, une journée où Tier 1 est
 mort suffirait à le dépasser (voir la suspension du compte api-sports).
 
+LE BOOK D'EXÉCUTION (2026-09-07)
+--------------------------------
+Seul le prix de `core.constants.EXECUTION_BOOK` (1xbet) sert de prix soft,
+et seul ce book (plus un éventuel book sharp) est demandé à l'API. Le
+line shopping entre les deux slots (Bet365 + 1xbet, 2026-08-27 → 2026-09-07)
+produisait des lignes et des prix que l'opérateur ne pouvait pas prendre —
+voir `usable_bookmakers`. Le second slot ne sert donc plus qu'à un book
+sharp, que le plan gratuit refuse : il est sans effet aujourd'hui.
+
 LES BOOKS SÉLECTIONNÉS
 ----------------------
 Le plan restreint le nombre de bookmakers actifs simultanément ; le compte
@@ -52,7 +61,9 @@ from datetime import datetime, timedelta, timezone
 import requests
 
 from core import daily_quota
+from core.constants import EXECUTION_BOOK
 from core.secret_store import get_secret
+from core.source_adapter import est_book_execution, league_rank
 
 log = logging.getLogger("PREDATOR.odds_api_io")
 
@@ -86,6 +97,27 @@ DAILY_BUDGET = int(os.environ.get("ODDS_API_IO_DAILY_BUDGET", "400"))
 CYCLE_COST = int(os.environ.get("ODDS_API_IO_CYCLE_COST", "12"))
 MULTI_BATCH  = 10          # maximum accepté par /v3/odds/multi
 MAX_EVENTS   = int(os.environ.get("ODDS_API_IO_MAX_EVENTS", "60"))
+
+# ── CALENDRIER ENTIER, MAJEURES D'ABORD, CAP PAR SPORT (2026-09-07) ───
+# `/events` coûte 1 requête quelle que soit la limite, et le serveur honore
+# 240 (mesuré le 2026-09-07 : 240 rendus, 235 à venir sur 24 h). Jusque-là
+# on lui demandait `limit=60` : les 60 PREMIERS PAR HEURE — Iran, Bulgarie
+# D2, Arabie U21, NCAA — et Serie A comme LaLiga du soir restaient dehors
+# (même défaut que titan007 le 2026-08-28, « position 62 »). On lit donc le
+# calendrier en entier, on trie par priorité de ligue puis par heure
+# (`source_adapter.league_rank`), et on ne PAIE les cotes que pour `cap`.
+# Foot : 120. Coût : +1 requête par tranche de 10 matchs et par scan, 8 scans
+# par jour → +48 req/j, soit ~290/400 sur la base de la veille (242). 240
+# aurait donné ~386/400, trop juste pour le tennis et le basket qui passent
+# après (règle 13 : budget chiffré ; retrait si la ligne de bilan dépasse
+# 360/400 deux jours de suite).
+EVENTS_LIMIT = int(os.environ.get("ODDS_API_IO_EVENTS_LIMIT", "240"))
+MAX_EVENTS_PAR_SPORT = {"soccer": int(os.environ.get("ODDS_API_IO_MAX_EVENTS_SOCCER", "120"))}
+
+
+def cap_pour(sport: str) -> int:
+    """Nombre maximal de matchs dont on PAIE les cotes pour ce sport."""
+    return MAX_EVENTS_PAR_SPORT.get(sport, MAX_EVENTS)
 TIMEOUT      = int(os.environ.get("ODDS_API_IO_TIMEOUT", "25"))
 
 SHARP_NAMES = ("pinnacle", "betfair exchange", "smarkets", "matchbook")
@@ -193,6 +225,25 @@ def selected_bookmakers(key: str, *, force: bool = False) -> list[str]:
         books = [str(b) for b in body]
     _selected_cache[key] = books
     return books
+
+
+def usable_bookmakers(key: str) -> list[str]:
+    """Les books du compte qu'on DEMANDE : le book d'exécution et les books
+    sharp, rien d'autre.
+
+    Le second slot (Bet365, posé le 2026-08-27 pour la couverture) entrait
+    dans un line shopping avec 1xbet : le 2026-09-07, « Al-Adalah +0.5 @ 1.85 »
+    en est sorti alors que 1xbet ne cotait que +0.25 et +0.75 — une ligne
+    que l'opérateur ne pouvait pas prendre, sous une fiche « 1XBET ». Un prix
+    inexécutable n'est pas un edge. Sans book d'exécution parmi les slots,
+    rien n'est demandé : payer le calendrier pour des prix qu'on ne peut pas
+    jouer n'a pas de sens."""
+    books = selected_bookmakers(key)
+    if books and not any(est_book_execution(b) for b in books):
+        log.warning("odds-api.io: %s n'est pas parmi les slots du compte (%s) — "
+                    "aucun prix exécutable à demander", EXECUTION_BOOK, ",".join(books))
+        return []
+    return [b for b in books if est_book_execution(b) or _is_sharp(b)]
 
 
 def reset_cache() -> None:
@@ -305,45 +356,6 @@ def _markets(entries: list, draw: bool) -> dict:
     return out
 
 
-def _line_shopping(soft: dict, autre: dict) -> None:
-    """Meilleur prix par ISSUE entre deux books soft — 1X2, mais aussi
-    handicaps et totaux, LIGNE PAR LIGNE.
-
-    Le second book ne servait qu'au 1X2 : ses handicaps et ses totaux étaient
-    jetés, et si le PREMIER book n'en cotait aucun, le match repartait sans
-    spread ni total du tout. Or le plan gratuit d'odds-api.io autorise DEUX
-    books simultanés (message d'erreur de l'API, relevé le 2026-08-27) : la
-    moitié de la couverture soft disponible se perdait ici.
-
-    Le prix se compare toujours À LIGNE ÉGALE. Retenir le meilleur prix
-    toutes lignes confondues reviendrait à choisir un AUTRE pari parce qu'il
-    est mieux payé — l'artefact exact qu'A6 a supprimé (voir
-    `run_engine._meme_ligne`).
-    """
-    for k in ("1", "X", "2"):
-        if autre.get("h2h", {}).get(k, 0) > soft.get("h2h", {}).get(k, 0):
-            soft.setdefault("h2h", {})[k] = autre["h2h"][k]
-
-    for marche, cotes in (("spreads", ("home", "away")), ("totals", ("over", "under"))):
-        if not autre.get(marche):
-            continue
-        if not soft.get(marche):
-            soft[marche] = autre[marche]
-            continue
-        par_ligne = {r["point"]: dict(r) for r in soft[marche].get("ladder", [])}
-        for r in autre[marche].get("ladder", []):
-            cible = par_ligne.get(r["point"])
-            if cible is None:
-                par_ligne[r["point"]] = dict(r)
-                continue
-            for c in cotes:
-                if r.get(c, 0) > cible.get(c, 0):
-                    cible[c] = r[c]
-        ladder = sorted(par_ligne.values(),
-                        key=lambda r: abs(r[cotes[0]] - r[cotes[1]]))
-        soft[marche] = {**ladder[0], "ladder": ladder}
-
-
 def _to_match(ev: dict, sport: str, sport_id: int, draw: bool) -> dict | None:
     home = str(ev.get("home", "")).strip()
     away = str(ev.get("away", "")).strip()
@@ -358,10 +370,10 @@ def _to_match(ev: dict, sport: str, sport_id: int, draw: bool) -> dict | None:
         if _is_sharp(str(book)):
             if not sharp:
                 sharp = parsed
-        elif not soft:
+        elif est_book_execution(str(book)) and not soft:
             soft = parsed
-        else:
-            _line_shopping(soft, parsed)
+        # Tout autre book soft est ignoré : son prix n'est pas exécutable
+        # (voir `usable_bookmakers` — normalement il n'est même pas demandé).
     base = soft or sharp
     if not base.get("h2h"):
         return None
@@ -420,17 +432,17 @@ def fetch_sport(sport: str, api_key: str | None = None, hours_ahead: int = 24,
 
     now   = datetime.now(timezone.utc)
     until = now + timedelta(hours=hours_ahead)
-    cap   = max_events or MAX_EVENTS
+    cap   = max_events or cap_pour(sport)
     def _params_events(k: str):
         # Vérifié AVANT le calendrier : un compte sans bookmaker ne peut rien
         # demander, autant ne pas lui payer la requête /events.
-        if not selected_bookmakers(k):
+        if not usable_bookmakers(k):
             return None
         return {
             "sport": slug,
             "from": now.strftime("%Y-%m-%dT%H:%M:%SZ"),
             "to":   until.strftime("%Y-%m-%dT%H:%M:%SZ"),
-            "limit": str(cap),
+            "limit": str(max(cap, EVENTS_LIMIT)),
         }
 
     status, body, _ = _request("events", _params_events, keys, sport)
@@ -439,7 +451,12 @@ def fetch_sport(sport: str, api_key: str | None = None, hours_ahead: int = 24,
 
     # `pending` = à venir. Les statuts live/settled/cancelled n'ont rien à
     # faire dans un scan pré-match.
-    events = [e for e in body if str(e.get("status", "")).lower() == "pending"][:cap]
+    a_venir = [e for e in body if str(e.get("status", "")).lower() == "pending"]
+    # Les majeures d'abord, puis l'heure — tri stable : sans ligue connue,
+    # l'ordre reste celui des coups d'envoi, comme avant.
+    a_venir.sort(key=lambda e: (league_rank(str((e.get("league") or {}).get("name", ""))),
+                                str(e.get("date", ""))))
+    events = a_venir[:cap]
     if not events:
         log.info("odds-api.io[%s]: 0 match à venir dans les %dh", sport, hours_ahead)
         return []
@@ -455,22 +472,22 @@ def fetch_sport(sport: str, api_key: str | None = None, hours_ahead: int = 24,
         ids = ",".join(str(e.get("id")) for e in batch)
 
         def _params(k: str, ids: str = ids):
-            books = selected_bookmakers(k)
+            books = usable_bookmakers(k)
             return {"eventIds": ids, "bookmakers": ",".join(books)} if books else None
 
         status, body, key = _request("odds/multi", _params, keys, sport)
         if status != 200 or not isinstance(body, list):
             break
-        book_param = ",".join(selected_bookmakers(key))
+        book_param = ",".join(usable_bookmakers(key))
         for ev in body:
             m = _to_match(ev, sport, sport_id, draw)
             if m:
                 matches.append(m)
 
     n_sharp = sum(1 for m in matches if m.get("odds_pinnacle"))
-    log.info("odds-api.io[%s]: %d matchs (%d avec prix sharp) / %d à venir | "
+    log.info("odds-api.io[%s]: %d matchs (%d avec prix sharp) / %d à venir (%d lus) | "
              "books=%s | comptes=%d/%d | %d/%d req au total aujourd'hui",
-             sport, len(matches), n_sharp, len(events), book_param,
+             sport, len(matches), n_sharp, len(a_venir), len(events), book_param,
              len(live_keys(keys)), len(keys),
              daily_quota.spent(QUOTA_BUCKET), budget_total)
     return matches

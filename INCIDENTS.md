@@ -170,6 +170,8 @@ disponible se perdait là.
 barreau par barreau. Retenir le meilleur prix toutes lignes confondues
 reviendrait à choisir un AUTRE pari parce qu'il est mieux payé : l'artefact
 exact qu'A6 a supprimé.
+(2026-09-07 : `_line_shopping` supprimé, un seul book soft désormais — voir
+« Un prix qu'on ne peut pas prendre n'est pas un edge ».)
 
 ### La contre-expertise jetait les totals/spreads du sharp (2026-08-27)
 
@@ -485,6 +487,25 @@ test refuse toute clé de priorité qu'aucun libellé ne produit (règle 6).
 du `.env`) : le même tri chez odds-api.io demanderait `limit` > 60 sur
 `/events` — 1 requête quelle que soit la limite d'après le coût mesuré, mais
 rien ne dit que le serveur honore 240. À sonder depuis un run.
+FAIT le 2026-09-07, sondé en direct (4 requêtes) : `limit=240` est honoré
+(240 rendus, 235 à venir sur 24 h) ; les 60 premiers par heure étaient Iran,
+Bulgarie D2, Arabie U21, Israël D2, Norvège D3, NCAA… et les 2 Serie A + 2
+LaLiga du soir étaient toutes hors du cap. `league_rank` ne reconnaissait
+AUCUN libellé odds-api.io (forme « Pays - Ligue[, phase] », 128 libellés ce
+soir-là, tous au rang « inconnu »). Correction : libellés relevés sur trois
+calendriers ajoutés à `LEAGUE_MAP`, `_sans_phase` retire « , Clausura » /
+« , Knockout stage » pour le RANG seulement (jamais pour l'appariement), et
+jamais pour une section féminine/jeunes ; `core/odds_api_io.fetch_sport` lit
+le calendrier entier (1 requête), trie `(rang, heure)`, et ne paie les cotes
+que pour `cap_pour(sport)` — foot 120, le reste 60. Budget chiffré : +48
+req/j (8 scans × ~6 lots de 10), ~290/400 sur la base de la veille (242) ;
+critère de retrait : bilan > 360/400 deux jours de suite → cap foot ramené à
+60 (décision opérateur du 2026-09-07 : « je veux pas moins de signaux »,
+après le passage à 1xbet seul — voir « Un prix qu'on ne peut pas prendre »).
+Gardiens : `tests/test_odds_api_io.py::test_les_majeures_passent_avant_le_cap`,
+`::test_le_cap_du_foot_est_120_les_autres_60`,
+`tests/test_source_adapter.py::TestPrioriteDeLigue` (libellés odds-api.io,
+phase, sections annexes).
 Gardiens : `tests/test_titan007.py::test_les_ligues_majeures_passent_avant_le_cap`,
 `tests/test_source_adapter.py::TestPrioriteDeLigue`.
 
@@ -619,6 +640,8 @@ que 1xbet (mêmes lignes, aucune diversification). Un book à large couverture
 et à lignes indépendantes ajoute des matchs ET un vrai line shopping — un
 meilleur prix exécutable sur le MÊME pari est un edge honnête, pas un
 artefact. Réinitialisation : `PUT /bookmakers/selected/clear`.
+(2026-09-07 : `_line_shopping` supprimé, un seul book soft désormais — voir
+« Un prix qu'on ne peut pas prendre n'est pas un edge ».)
 
 ### odds-api.io : un POOL de comptes, budget par compte (2026-08-28)
 
@@ -642,6 +665,95 @@ suivant. Trois règles à ne pas défaire :
 d'utilisation ; api-sports a suspendu le compte le 2026-08-20. DAILY_BUDGET
 reste 400/500 par compte. Décision opérateur du 2026-08-28.
 Gardiens : `tests/test_odds_api_io.py` (bloc « Pool de comptes »).
+
+### Un prix qu'on ne peut pas prendre n'est pas un edge : le book d'exécution (2026-09-07)
+
+Symptôme : le 2026-09-07 vers 13:34 UTC, la fiche « PLACER LE PARI — 1XBET »
+du dashboard affichait « Al-Adalah vs AL Saqer FC · Saudi Arabia - Division 1
+· 15:30 UTC — AL-ADALAH +0.5, SOC PS +0.5 @ 1.85, Pinnacle 1.78, edge +4.2 %,
+CS:100 ». Sur l'application 1xbet, le handicap asiatique de ce match ne
+proposait que des quarts de ligne — 1 (−0.25) 1.833 / 2 (+0.25) 2.129,
+2 (+0.75) 1.53 — et aucune ligne +0.5. L'opérateur a demandé pourquoi la
+ligne recommandée n'existait pas chez lui.
+
+Cause mécanique, trois organes :
+1. `core/odds_api_io._to_match` + `_line_shopping` fusionnaient Bet365 et
+   1xbet barreau par barreau (meilleur prix À LIGNE ÉGALE, conforme à A6) —
+   mais une ligne cotée par Bet365 SEUL entrait telle quelle dans l'échelle
+   étiquetée « 1xbet ». Le book d'origine n'était stocké nulle part : la
+   ligne +0.5 à 1.85 n'a pas pu être attribuée a posteriori à l'un ou
+   l'autre. Le line shopping n'a jamais eu tort sur le prix ; il avait tort
+   sur QUI le proposait.
+2. `run_engine._emit` loggait « Melbet=%.3f » en dur et `templates/index.html`
+   affichait « PLACER LE PARI — 1XBET » et « Étapes 1XBet » en dur :
+   l'étiquette ne disait pas quel book avait fourni le prix, et n'aurait pas
+   pu le dire.
+3. `core/titan007._soft_price` faisait de même sur les 25 `SOFT_BOOKS`
+   (meilleur prix, plafond médiane × 1.10) : le « prix soft » de titan007
+   était celui d'un book quelconque parmi 25.
+
+MESURÉ le 2026-09-07 : signal id 10040 (`signals`, `scanned_at`
+13:10:28 UTC, `match_id oai_73206442`, `market_key spreads_home`,
+`xbet_odd 1.85`, `pinnacle_price 1.78`, `edge_pct 4.21`), run « Scan
+standard » GitHub Actions 34125874229. Log du run : « odds-api.io[soccer]:
+51 matchs (0 avec prix sharp) / 58 à venir | books=Bet365,1xbet », puis
+« SIGNAL | ⚽ Al-Adalah vs AL Saqer FC | SOC PS +0.5: Melbet=1.850 Pin=1.775
+Edge=+4.21% Prob=56% HIGH_VALUE », puis « LIGNES | … matchbook pose totals +
+spreads (seule référence sharp sur ces marchés) ». Matchbook en direct à
+13:40 UTC : Al-Adalah 3.55 / X 3.65 / Al-Saqer 2.26 ; Al-Adalah +0.5 à 1.79,
+0.0 à 2.55. La « Pinnacle 1.78 » de la fiche était donc Matchbook.
+
+Décision opérateur (session du 2026-09-07) : « Je joue plus Melbet. 1xbet
+uniquement pour l'instant. »
+
+Fait :
+- `core/constants.EXECUTION_BOOK = "1xbet"` — décision opérateur, ajoutée à
+  la règle 11 de `CLAUDE.md` ;
+- `core/source_adapter.est_book_execution` : graphies 1xBet / 1XBET / 1x Bet
+  reconnues ; MelBet, 1xBit, BetWinner NON — même famille, mais lignes non
+  garanties identiques, et c'est précisément la ligne qui manquait ;
+- `core/odds_api_io.usable_bookmakers` ne demande à l'API que le book
+  d'exécution + les books sharp. Le slot Bet365 reste posé sur le compte
+  mais n'est plus interrogé. Sans book d'exécution parmi les slots d'un
+  compte : warning et AUCUNE requête, pas même le calendrier ;
+- `_to_match` ne garde que ce book en soft ; `_line_shopping` SUPPRIMÉ ;
+- `core/titan007._soft_price` rend le prix du book d'exécution seul, borné
+  par la médiane des `SOFT_BOOKS` (le plafond anti-book-figé est conservé ;
+  `None` si le book d'exécution est lui-même au-dessus du plafond) ;
+- `run_engine` loggue « %s=%.3f » avec `EXECUTION_BOOK` ; `api/index.py`
+  passe `execution_book` au template, `index.html` en dérive ses trois
+  libellés (règle 6) ;
+- `docs/actions_operateur.md` §2 (choix du second book) marqué sans effet ;
+  en-tête de `scripts/odds_api_io_books.py` mis à jour.
+
+PAS fait, et pourquoi :
+- pas de colonne « book soft » dans `signals` : tant qu'il n'y a qu'un book
+  d'exécution, la colonne serait une constante ; la migration viendra avec un
+  second book, s'il vient ;
+- le libellé « Pinnacle » du dashboard reste alors que la référence est
+  souvent Matchbook — autre sujet, à traiter à part. Piège d'ici là : sur le
+  dashboard, « Pinnacle » désigne la référence sharp QUELLE QU'ELLE SOIT ;
+- la couverture odds-api.io va BAISSER : 51 matchs cotés avec Bet365+1xbet
+  le 07/09 à 13:11, contre 8/60 avec 1xbet seul le 27/08 à 20:00. C'est
+  voulu : un match que seul Bet365 cote n'est pas jouable par l'opérateur,
+  donc n'est pas un signal. À mesurer sur les prochains runs, ligne
+  « odds-api.io[soccer]: … | books=1xbet ».
+
+⚠️ Ne pas « rétablir la couverture » en remettant un second book soft dans
+`usable_bookmakers` : c'est exactement l'artefact — des lignes que
+l'opérateur ne peut pas prendre, étiquetées à son book. Un second book ne
+reviendra qu'avec le book d'origine STOCKÉ par ligne et affiché sur la fiche.
+⛔ `EXECUTION_BOOK` = décision opérateur (règle 11) ; en changer exige une
+instruction explicite dans la session courante.
+
+Gardiens : `tests/test_book_execution.py` (nom unique, graphies,
+moteur/dashboard sans nom en dur, `XBET_KEY` « onexbet » cohérent) ;
+`tests/test_odds_api_io.py::test_seul_le_book_d_execution_fournit_le_prix_soft`,
+`::test_un_compte_sans_book_d_execution_ne_demande_rien`,
+`::test_un_book_sharp_en_second_slot_est_toujours_demande` ;
+`tests/test_titan007.py::test_le_prix_soft_est_celui_du_book_d_execution_pas_le_meilleur`,
+`::test_un_book_d_execution_fige_ne_donne_pas_de_prix`,
+`::test_un_meilleur_prix_ailleurs_nest_pas_pris`.
 
 ### Périmètre sports (2026-08-22)
 

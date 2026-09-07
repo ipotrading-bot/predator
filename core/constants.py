@@ -368,3 +368,14 @@ def kelly_stake(executable_odd: float, sharp_prob: float,
     fraction = KELLY_FRACTION.get(sport, 0.12)   # fallback also inside Task 10's temporary 0.10-0.15 band
     stake = round(max(0.0, kf * fraction) * effective_bankroll)
     return stake if stake >= MIN_STAKE else 0
+
+# ── Book d'EXÉCUTION (décision opérateur 2026-09-07) ──────────────────
+# Le prix soft d'un signal est celui du book où l'opérateur POSE le pari,
+# et de lui seul. Le 2026-09-07, « Al-Adalah +0.5 @ 1.85 » sortait d'un
+# line shopping Bet365 + 1xbet (odds-api.io) : la ligne +0.5 n'existait
+# pas chez 1xbet (que des quarts, +0.25 / +0.75), et la fiche affichait
+# « 1XBET » en dur. Un prix qu'on ne peut pas prendre n'est pas un edge.
+# L'opérateur a tranché : 1xbet uniquement (« je joue plus Melbet »).
+# Changer de book = instruction explicite dans la session (règle 11) ;
+# `core.source_adapter.est_book_execution` fait la comparaison de noms.
+EXECUTION_BOOK = "1xbet"

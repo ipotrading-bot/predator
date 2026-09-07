@@ -149,7 +149,7 @@ SHADOW_GOLDEN_HOUR = True
 # thread (a test runner, a dashboard route off the request thread, etc),
 # before a single line of run()'s actual logic ever executed. See
 # tests/test_run_engine_import.py.
-from core.constants import GLOBAL_TIMEOUT, SCAN_TIMEOUTS
+from core.constants import GLOBAL_TIMEOUT, SCAN_TIMEOUTS, EXECUTION_BOOK
 
 _budget_arme = GLOBAL_TIMEOUT      # renseigné par _arm_global_timeout, pour le message
 
@@ -1416,8 +1416,9 @@ def _emit(signals, sb, now, log, name, sport, league, mkt_key, mkt_label,
     # Normalize match_time to ISO UTC (+00:00)
     mt = match_time.replace("Z", "+00:00") if match_time else ""
 
-    log.info("SIGNAL  | %s %s | %s: Melbet=%.3f Pin=%.3f Edge=+%.2f%% Prob=%.0f%% %s",
-             emoji, name, mkt_label, executable_odd, pin_odd, edge, sharp_prob * 100, risk)
+    log.info("SIGNAL  | %s %s | %s: %s=%.3f Pin=%.3f Edge=+%.2f%% Prob=%.0f%% %s",
+             emoji, name, mkt_label, EXECUTION_BOOK, executable_odd, pin_odd, edge,
+             sharp_prob * 100, risk)
     signal = {
         "match":          name,
         "league":         league or "",
@@ -1551,7 +1552,7 @@ def _process_h2h(m, name, sport, league, home, away, emoji, signals, sb, now, lo
     if executable_price <= 1.01 or pin_price <= 1.01:
         return
     if not strict_team_match(soft_fav, pin_fav):
-        log.info("SPLIT   | %s %s — Melbet=%s Sharp=%s", emoji, name, soft_fav, pin_fav)
+        log.info("SPLIT   | %s %s — %s=%s Sharp=%s", emoji, name, EXECUTION_BOOK, soft_fav, pin_fav)
         return
     if sharp_prob < prob_min:
         log.info("LOWPROB | %s %s h2h — Prob.Sharp=%.0f%% < %.0f%%",
@@ -1579,7 +1580,7 @@ def _keep_best_side(sides: list, log, emoji, name) -> list:
     """Sur un marché à deux côtés opposés (Over/Under, handicap home/away),
     ne garder que celui au plus gros edge.
 
-    Les deux côtés peuvent passer les filtres en même temps quand Melbet est
+    Les deux côtés peuvent passer les filtres en même temps quand le book soft est
     moins margé que Pinnacle sur ce marché : le devig répartit alors une prob.
     sharp favorable des DEUX bords. C'est un artefact de marge, pas deux
     opportunités — et sur le dashboard ça produisait deux signaux
