@@ -443,6 +443,11 @@ def sources():
             sports=["soccer", "basketball", "baseball", "hockey"], hours_ahead=24))
         print(f"  marchés sharp exploitables dans 24h : {n}")
 
+    print("── Tier 1.5 · Smarkets Exchange (sharp, sans clé, comblement) ──")
+    from core.smarkets import probe as sm_probe                        # noqa: E402
+    ok, detail = sm_probe()
+    print(f"  joignabilité : {'OK' if ok else 'KO'} — {detail}")
+
     print("── Tier 2 · odds-api.io (books soft authentifiés) ──")
     from core.odds_api_io import probe as oai_probe                    # noqa: E402
     ok, detail = oai_probe()

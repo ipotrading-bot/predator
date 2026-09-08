@@ -23,6 +23,7 @@ from core.db import (get_db, MissingCredentialsError,
 from core.harvester import fetch_matches, fetch_betfair_prices
 from core.closing_line import capture_from_exchange, capture_from_scan
 from core.matchbook import fetch_matchbook_prices
+from core.smarkets import fetch_smarkets_prices
 # Appariement slate ↔ exchange : déplacé dans core/ le 2026-08-26 pour que
 # core/closing_line.py puisse s'en servir sans importer la racine.
 from core.exchange_match import lookup_exchange as _lookup_exchange
@@ -252,6 +253,9 @@ _TTL_SOFT_SLATE = float(os.environ.get("CACHE_SOFT_SLATE_TTL_H", "4"))
 # Coupe-circuit d'urgence si Matchbook devait mal se comporter en prod
 # (géoblocage US non constaté en test, voir core/matchbook.py).
 _MATCHBOOK_OFF = os.environ.get("MATCHBOOK_OFF", "") == "1"
+# Même coupe-circuit pour Smarkets (core/smarkets.py, entré le 2026-09-08 —
+# règle 13 : budget 2 000 req/j, critère de retrait daté dans sa docstring).
+_SMARKETS_OFF = os.environ.get("SMARKETS_OFF", "") == "1"
 
 # Divergence tolérée entre DEUX avis sharp indépendants (Pinnacle et
 # l'exchange), en POINTS de probabilité. Au-delà, le match entier est refusé :
@@ -2432,6 +2436,30 @@ def run():
         if mb_prices:
             log.info("💹 Matchbook OK — %d marchés sharp (total exchange : %d)",
                      len(mb_prices), len(betfair_prices))
+
+    # Smarkets (2026-09-08) : troisième exchange, sans clé, en COMBLEMENT
+    # derrière Betfair et Matchbook (setdefault) — un match qu'aucun autre
+    # exchange ne cote n'est plus un « MARCHÉ MORT ». Le compte des
+    # « nouveaux » est LA mesure du critère de retrait (core/smarkets.py).
+    # Scans standard seulement : REPRICE a 300 s de budget et Matchbook y
+    # suffit ; Smarkets prend ~100 appels espacés d'une seconde (débit 429).
+    if not _SMARKETS_OFF and not REPRICE:
+        sm_prices = fetch_smarkets_prices(
+            sports=["soccer", "tennis", "hockey", "baseball", "mma", "basketball"],
+            hours_ahead=hours_ahead,
+        )
+        nouveaux = 0
+        for _k, _v in sm_prices.items():
+            if _k in betfair_prices:
+                continue
+            # « Nouveau » au sens du rapprochement flou (Sheff Utd = Sheffield
+            # United) : la mesure du critère de retrait, pas une clé brute.
+            if _lookup_exchange({"home": _v["home"], "away": _v["away"]}, betfair_prices) is None:
+                nouveaux += 1
+            betfair_prices[_k] = _v
+        if sm_prices:
+            log.info("💹 Smarkets OK — %d marchés sharp (+%d nouveaux hors Matchbook/Betfair, "
+                     "total exchange %d)", len(sm_prices), nouveaux, len(betfair_prices))
 
     if betfair_prices:
         if _enrich_from_exchange(matches, betfair_prices, log) and \

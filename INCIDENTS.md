@@ -353,6 +353,59 @@ Gardien : `tests/test_tier2_toujours.py` — 6 tests sur le source (style
 REPRICE seul, LOWPROB présent dans `_process_totals`/`_process_spreads`,
 pas de retour de `pending`, PURGE loggée en `info`.
 
+### Smarkets entre en comblement, sans clé, avec son critère de retrait (2026-09-08)
+
+Symptôme : soirée de Ligue des champions à 0 signal (quatre scans standard,
+tout en EV négatif chez 1xbet), et l'opérateur demande « le book gratuit le
+plus adapté à PREDATOR ». Le second compte odds-api.io est mort-né le même
+jour (« New free API keys are paused indefinitely », capture opérateur
+17:38 UTC) ; les autres books soft de titan007 ne donnent que le 1X2.
+
+Ce que la mesure dit : le gisement n'est pas un book soft de plus mais la
+RÉFÉRENCE SHARP — ~7 « MARCHÉ MORT » par scan (prix 1xbet/Bet365 sans
+exchange derrière) et l'entrée « Sources de cotes : lesquelles portent
+RÉELLEMENT un signal » (2e avis sharp indépendant = le levier). Betfair est
+en attente du certificat opérateur ; Matchbook couvre 70-120 marchés.
+
+Sondé le 2026-09-08 (17:40-17:50 UTC, depuis le Codespace, sans clé) :
+`api.smarkets.com/v3` répond en clair — 200 matchs de football à 30 h
+(Saudi Pro League, EFL Trophy, MLS Next Pro, Championship…), 100 tennis,
+42 hockey, 15 baseball, 32 MMA ; marchés WINNER_3_WAY, OVER_UNDER (param =
+ligne), ASIAN_HANDICAP (param = ligne domicile signée) ; cotes en centièmes
+de pour-cent (4854 → 2,06), `offers` à backer, `bids` à layer. Essai réel de
+l'adaptateur : 137 marchés (89 totals, 66 handicaps) pour 109 requêtes en
+85 s ; 103 clés absentes de Matchbook (89 marchés ce soir-là) — recouvrement
+réel à mesurer par rapprochement flou, c'est la mesure du critère. Débit :
+/markets/ en rafale passe, /quotes/ enchaînés prennent des HTTP 429.
+
+Fait (règle 13, même commit) :
+- `core/smarkets.py`, calqué sur `core/matchbook.py` (mêmes bornes
+  MAX_SPREAD_RATIO / overround, même `_split_teams` pour « A at B », même
+  forme de sortie) ; budget `SMARKETS_DAILY_BUDGET` = 2 000 req/j via
+  core/daily_quota (bucket « smarkets »), pause 1 s entre appels, UNE
+  reprise après 429, 401/403/451 → {} en le disant ;
+- `run_engine` : appelé APRÈS Betfair et Matchbook, en `setdefault` (un
+  exchange déjà présent garde la main), scans STANDARD seulement (REPRICE a
+  300 s de budget, Matchbook y suffit) ; la ligne « Smarkets OK — N marchés
+  sharp (+M nouveaux hors Matchbook/Betfair, total exchange T) » compte M par
+  `core.exchange_match.lookup_exchange`, pas par clé brute ; coupe-circuit
+  `SMARKETS_OFF=1` ;
+- registre `core.source_adapter.CALL_ORDER`, sonde `ops.py sources`.
+
+CRITÈRE DE RETRAIT, à relever le 2026-09-22 (docstring du module) : sur
+les scans standard du 09 au 21/09, M < 10 % de T en médiane (Smarkets ne
+ferait que recopier Matchbook), ou géoblocage sur 3 scans consécutifs.
+
+PAS fait : pas de contre-expertise Smarkets contre Matchbook quand les deux
+cotent (seul le premier arrivé sert) — à envisager si la mesure montre un
+recouvrement large ; pas de proxy (joignable en direct depuis Azure, les
+runners le sont aussi — à confirmer au premier scan standard, 21:03).
+
+Gardiens : `tests/test_smarkets.py` (cotes en centièmes de %, milieu
+back/lay, carnet vide/croisé/large, « at » inversé, ligne domicile signée,
+sous-marché jamais demandé, 429 rejoué une fois, géoblocage, budget,
+registre + moteur hors REPRICE + sonde ops.py).
+
 ### Matchbook : quatre marchés « total » par match, un seul est le match entier (2026-08-28)
 
 REPRICE 15:58 : « Al-Riyadh SC vs Neom SC | SOC Under 2.5 — EV 80.84 % »
