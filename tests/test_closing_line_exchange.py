@@ -162,13 +162,50 @@ def test_match_deja_commence_ignore(_update_capture):
     assert cl.capture_from_exchange(_SB([_signal()]), [passe], _prix(), NOW) == 0
 
 
-def test_totals_et_spreads_ignores(_update_capture):
-    """Le payload d'exchange ne porte pas la LIGNE que nous avons pariée :
-    grader ces marchés comparerait deux paris différents."""
-    sigs = [_signal(id=2, market_key="totals", selection_name="Over 2.5"),
-            _signal(id=3, market_key="spreads", selection_name="Moss FK -1.5")]
-    assert cl.capture_from_exchange(_SB(sigs), [_match()], _prix(), NOW) == 0
+def _prix_avec_echelles(**over):
+    """Une ligne d'exchange comme Matchbook/Smarkets la rendent depuis le
+    2026-08-27 : l'échelle ENTIÈRE, un barreau par point, prix milieu."""
+    return _prix(
+        totals={"point": 2.5, "over": 1.95, "under": 1.90,
+                "ladder": [{"point": 2.5, "over": 1.95, "under": 1.90},
+                           {"point": 3.5, "over": 2.90, "under": 1.40}]},
+        spreads={"point": -1.5, "away_point": 1.5, "home": 2.60, "away": 1.52,
+                 "ladder": [{"point": -1.5, "away_point": 1.5, "home": 2.60, "away": 1.52},
+                            {"point": -0.5, "away_point": 0.5, "home": 1.80, "under": 2.05, "away": 2.05}]},
+        **over)
+
+
+def test_totals_et_spreads_se_cloturent_sur_le_barreau_exact(_update_capture):
+    """2026-09-08 19:30 : 6 signaux actifs passés kickoff sans clôture, tous
+    des totals/spreads du Tier 2. L'échelle de l'exchange porte la ligne :
+    on prend le barreau EXACT, côté parié — jamais un voisin."""
+    sigs = [_signal(id=2, market_key="totals_over", selection_name="Over 2.5", xbet_odd=2.05),
+            _signal(id=3, market_key="spreads_home", selection_name="Moss FK -1.5", xbet_odd=2.80),
+            _signal(id=4, market_key="spreads_away", selection_name="Stabaek +0.5", xbet_odd=2.20)]
+    n = cl.capture_from_exchange(_SB(sigs), [_match()], _prix_avec_echelles(), NOW)
+    assert n == 3
+    assert _update_capture[2]["closing_pinnacle_price"] == pytest.approx(1.95)   # Over 2.5, pas 3.5
+    assert _update_capture[3]["closing_pinnacle_price"] == pytest.approx(2.60)   # home -1.5
+    assert _update_capture[4]["closing_pinnacle_price"] == pytest.approx(2.05)   # away +0.5
+    assert _update_capture[2]["clv_pct_real"] == pytest.approx((2.05 / 1.95 - 1) * 100, abs=0.01)
+    assert all(v["closing_source"] == CLOSING_SRC_EXCHANGE for v in _update_capture.values())
+
+
+def test_une_ligne_absente_de_lechelle_ne_donne_pas_de_clv(_update_capture):
+    """Under 4.5 n'est pas coté : refus, pas le barreau voisin (A6)."""
+    sigs = [_signal(id=5, market_key="totals_under", selection_name="Under 4.5"),
+            _signal(id=6, market_key="spreads_home", selection_name="Moss FK -2.5"),
+            _signal(id=7, market_key="totals_over", selection_name="Over")]         # ligne illisible
+    assert cl.capture_from_exchange(_SB(sigs), [_match()], _prix_avec_echelles(), NOW) == 0
     assert not _update_capture
+
+
+def test_un_exchange_sans_echelle_ne_cloture_que_le_h2h(_update_capture):
+    """Ligne d'exchange d'avant les échelles (1X2 seul) : les totals/spreads
+    restent sans clôture, comme avant — jamais un prix inventé."""
+    sigs = [_signal(id=1), _signal(id=2, market_key="totals_over", selection_name="Over 2.5")]
+    assert cl.capture_from_exchange(_SB(sigs), [_match()], _prix(), NOW) == 1
+    assert set(_update_capture) == {1}
 
 
 def test_match_absent_de_lexchange_ignore(_update_capture):

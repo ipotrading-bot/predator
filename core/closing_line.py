@@ -147,11 +147,14 @@ def capture_from_exchange(sb, matches: list[dict], exchange_prices: dict,
     price as the closing price: clv_pct_real ≈ 0 on every row, a green run,
     and a silent lie. We look the market up ourselves instead.
 
-    h2h ONLY. Matchbook's totals/spreads do reach `_enrich_from_exchange`, but
-    only as a fallback when the soft feed had none, and _line_market_close
-    needs the same LINE we bet — which the exchange payload does not carry per
-    signal. Grading those would compare two different bets; the oracle path's
-    refusal (see _line_market_close) applies here too.
+    h2h, TOTALS AND SPREADS. Until 2026-09-08 this path was h2h only, on the
+    grounds that the exchange payload did not carry the LINE we bet. It does
+    now: core/matchbook.py and core/smarkets.py return the whole ladder
+    (`totals.ladder` / `spreads.ladder`, one rung per point, mid prices), so
+    `_exchange_line_close` looks up the EXACT rung of our bet (LINE_TOLERANCE)
+    and refuses when it is absent — same contract as _line_market_close,
+    never a neighbouring line. Measured 2026-09-08 19:30: 6 active signals
+    past kickoff without a close, all totals/spreads from Tier 2.
     """
     if not sb or not matches or not exchange_prices:
         return 0
@@ -191,14 +194,16 @@ def capture_from_exchange(sb, matches: list[dict], exchange_prices: dict,
 
     captured = 0
     for sig in signals:
-        if (sig.get("market_key") or "") != "h2h":
+        mk = sig.get("market_key") or ""
+        if mk != "h2h" and not mk.startswith(("totals_", "spreads_")):
             continue
         entry = in_window.get(str(sig.get("match_id") or ""))
         if not entry:
             continue
         match, row, kickoff = entry
         try:
-            price = _exchange_h2h_close(sig, match, row)
+            price = (_exchange_h2h_close(sig, match, row) if mk == "h2h"
+                     else _exchange_line_close(sig, row))
         except Exception as e:                          # never let one odd
             log.warning("exchange close [%s]: %s", sig.get("match"), e)   # payload kill the scan
             continue
@@ -218,8 +223,8 @@ def capture_from_exchange(sb, matches: list[dict], exchange_prices: dict,
         }, optional_cols=frozenset(CLOSING_LINE_COLS))
         if ok:
             captured += 1
-            log.info("CLOSING LINE | %s | h2h %s | bet %.3f -> close %.3f | CLV_real %+.2f%% "
-                     "| T-%s | %s", sig.get("match"), sig.get("selection_name"),
+            log.info("CLOSING LINE | %s | %s %s | bet %.3f -> close %.3f | CLV_real %+.2f%% "
+                     "| T-%s | %s", sig.get("match"), mk, sig.get("selection_name"),
                      xbet_odd, price, clv_real, _lead_time(kickoff, now),
                      row.get("_source", "exchange"))
         else:
@@ -228,6 +233,44 @@ def capture_from_exchange(sb, matches: list[dict], exchange_prices: dict,
     if captured:
         log.info("📉 Closing line (exchange): %d signal(s) priced — 0 extra request", captured)
     return captured
+
+
+def _exchange_line_close(sig: dict, row: dict) -> float | None:
+    """Closing mid price of a totals/spreads side, from the exchange LADDER.
+
+    The bet's line lives only in `selection_name` ("Over 2.5", "Moss FK -1.5"
+    — the TEAM's own line, i.e. `point` for spreads_home, `away_point` for
+    spreads_away, exactly as run_engine labelled it). The rung must match
+    within LINE_TOLERANCE, else no CLV: a neighbouring line is another bet.
+    `lookup_exchange` already flipped the row (sign included) when the
+    exchange named the match the other way round."""
+    mk = sig.get("market_key") or ""
+    bet_point = _selection_point(sig.get("selection_name") or "")
+    if bet_point is None:
+        log.info("CLOSE SKIP | %s %s — ligne illisible dans '%s'",
+                 sig.get("match"), mk, sig.get("selection_name"))
+        return None
+    marche, side = mk.split("_", 1)
+    bloc = row.get(marche) or {}
+    rungs = bloc.get("ladder") or ([bloc] if bloc else [])
+    for r in rungs:
+        try:
+            if marche == "totals":
+                pt = abs(float(r.get("point")))
+                cible = abs(bet_point)
+            elif side == "home":
+                pt, cible = float(r.get("point")), bet_point
+            else:
+                pt = float(r["away_point"]) if r.get("away_point") is not None else -float(r.get("point"))
+                cible = bet_point
+        except (TypeError, ValueError):
+            continue
+        if abs(pt - cible) <= LINE_TOLERANCE:
+            price = float(r.get(side) or 0.0)
+            return price if price > 1.01 else None
+    log.info("LINEMOVE | %s %s — ligne %s absente de l'échelle exchange (%d barreau(x)) — no CLV",
+             sig.get("match"), mk, bet_point, len(rungs))
+    return None
 
 
 def _exchange_h2h_close(sig: dict, match: dict, row: dict) -> float | None:

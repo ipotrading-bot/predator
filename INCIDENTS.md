@@ -1397,6 +1397,37 @@ endpoint — gardé par `tests/test_odds500.py::TestRobotsTxt`.
 Un règlement manqué ne retarde pas l'apprentissage : il DÉTRUIT
 l'échantillon, parce qu'un signal non réglé finit purgé en `expired`.
 
+### Les totals et handicaps passaient le coup d'envoi sans prix de clôture (2026-09-08)
+
+Symptôme : run closing line 34269384757 (19:30 UTC) — « 6 signal(s) actifs
+(tous marchés) passés kickoff sans clôture », contre 1-2 les jours d'avant.
+Les six étaient des totals/spreads du Tier 2 (Dortmund Under 3.5, PS +1.5…),
+la part la plus volumineuse des émissions du jour.
+
+Cause : `core/closing_line.capture_from_exchange` ne traitait que le h2h,
+au motif (docstring, 2026-08-26) que « le payload d'exchange ne porte pas la
+ligne pariée ». C'était vrai alors ; depuis le 2026-08-27 Matchbook, et
+depuis ce jour Smarkets, rendent l'échelle ENTIÈRE (`totals.ladder`,
+`spreads.ladder`, un barreau par point). `audit_engine` filtrait de surcroît
+les candidats de clôture sur `market_key == "h2h"`.
+
+Fait : `_exchange_line_close` retrouve le barreau EXACT de la ligne pariée
+(`_selection_point` sur le libellé, LINE_TOLERANCE, `point` pour
+spreads_home / `away_point` pour spreads_away — la ligne a déjà été
+retournée par `lookup_exchange` quand l'exchange nomme le match à l'envers)
+et prend le prix milieu du côté parié ; ligne absente → LINEMOVE, pas de
+CLV, jamais un barreau voisin (A6). Les candidats de clôture incluent
+totals_* et spreads_*. L'avertissement de stock nomme désormais les vraies
+causes (LINEMOVE, CLOSE SKIP) au lieu de « sans voie de capture ».
+
+Mesure attendue : le stock « passés kickoff sans clôture » redescend vers
+1-2 sur les runs closing line du 09/09 ; `closing_source='exchange'` sur des
+lignes totals/spreads dans `signals`.
+
+Gardiens : `tests/test_closing_line_exchange.py::test_totals_et_spreads_se_cloturent_sur_le_barreau_exact`,
+`::test_une_ligne_absente_de_lechelle_ne_donne_pas_de_clv`,
+`::test_un_exchange_sans_echelle_ne_cloture_que_le_h2h`.
+
 ### Settlement : le score vient d'un CHAMP, plus d'un LLM (2026-08-26)
 
 LE SCORE VIENT D'UN CHAMP, PLUS D'UN LLM (2026-08-26).
@@ -2990,6 +3021,28 @@ template : changer le champ ne touche pas l'émission.
 Gardien : `tests/test_system_page.py::TestFiscaliteAppliqueePartout` — il
 exige que l'écart reste expliqué et qu'aucun taux ne revienne en dur ; il ne
 fige AUCUNE valeur, `core.constants.TAX_RATE` restant une décision opérateur.
+
+### Betfair banni pour trop de tentatives : un refus de compte ne se rejoue pas (2026-09-08)
+
+Symptôme : run closing line 34269384757 (19:30 UTC) — « Betfair login:
+TEMPORARY_BAN_TOO_MANY_REQUESTS ». Depuis le passage par le proxy (matin du
+08/09), chaque scan (22/j) et chaque tick de closing line (~45/j) retentait
+le cert-login et recevait CERT_AUTH_REQUIRED (certificat non associé au
+compte, action opérateur en attente) : ~70 échecs par jour, jusqu'au ban.
+
+Cause : `core/harvester._betfair_login` ne mémorisait rien entre processus ;
+un refus de COMPTE était traité comme un incident réseau, rejoué au tick
+suivant. Le risque réel : le ban temporaire persiste quand l'opérateur
+associe enfin le certificat, et le critère de retrait règle 13 (login refusé
+7 jours) se déclenche pour une raison que nous avons fabriquée.
+
+Fait : suspension partagée via `meta.betfair_login_backoff_until`
+(CERT_AUTH_REQUIRED 6 h, TEMPORARY_BAN 3 h, ACCOUNT_NOW_LOCKED 12 h, autre
+refus 1 h), lue AVANT toute tentative (`betfair_login_suspendu`) ; un
+SUCCESS ou une exception réseau ne suspendent rien. Le log dit « login
+suspendu jusqu'à … » au lieu de répéter le refus.
+
+Gardiens : `tests/test_betfair_backoff.py`.
 
 ### Betfair refusait les runners depuis le 2026-07-09 — sortie par le proxy (2026-09-08)
 

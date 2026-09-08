@@ -389,8 +389,11 @@ def capture_closing_lines(sb, budget: int | None = None) -> int:
     """
     del budget
     now = datetime.now(timezone.utc)
+    # h2h, totals et spreads (2026-09-08) : l'échelle des exchanges porte la
+    # ligne, core/closing_line._exchange_line_close la retrouve ou refuse.
     candidates = [s for s in fetch_closing_line_candidates(sb)
-                  if (s.get("market_key") or "") == "h2h"]
+                  if (s.get("market_key") or "") == "h2h"
+                  or str(s.get("market_key") or "").startswith(("totals_", "spreads_"))]
     if not candidates:
         return 0
     matches = _matches_from_signals(candidates)
@@ -439,10 +442,11 @@ def run_closing_lines():
         # Voir la docstring de count_missed_closing_lines pour les causes.
         log.warning("CLOSING LINE — %d signal(s) actifs (tous marchés) passés "
                     "kickoff sans clôture. C'est un STOCK recompté à chaque "
-                    "run, pas un flux : causes probables — Tier 2 hors "
-                    "payload (totals/spreads sans voie de capture), émission "
-                    "née après la dernière passe de capture, ou settlement "
-                    "en famine qui fait stagner ces lignes en `active`.",
+                    "run, pas un flux : causes probables — ligne absente de "
+                    "l'échelle exchange (LINEMOVE), match sans cote exchange "
+                    "(CLOSE SKIP), émission née après la dernière passe de "
+                    "capture, ou settlement en famine qui fait stagner ces "
+                    "lignes en `active`.",
                     missed)
     log.info("━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━")
 

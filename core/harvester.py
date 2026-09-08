@@ -283,6 +283,66 @@ _BETFAIR_EVENT_TYPES: dict[str, str] = {
 
 _betfair_session: dict = {}
 
+# ── Suspension du login après un refus de COMPTE (2026-09-08) ─────────────
+# Chaque scan (22/j) et chaque tick de closing line (~45/j) retentait le
+# login pendant que le certificat n'était pas associé au compte
+# (CERT_AUTH_REQUIRED, action opérateur) : ~70 échecs par jour, et Betfair a
+# répondu TEMPORARY_BAN_TOO_MANY_REQUESTS le 08/09 à 19:30. Un refus de
+# compte n'est pas un incident réseau : le rejouer toutes les vingt minutes
+# ne change rien et finit banni. La suspension est partagée entre processus
+# via la table `meta` (comme core/daily_quota), lue AVANT toute tentative.
+_BETFAIR_BACKOFF_KEY = "betfair_login_backoff_until"
+_BETFAIR_BACKOFF_H = {
+    "CERT_AUTH_REQUIRED":              6.0,   # attend l'opérateur
+    "TEMPORARY_BAN_TOO_MANY_REQUESTS": 3.0,   # laisse le ban expirer
+    "ACCOUNT_NOW_LOCKED":              12.0,
+    "INVALID_USERNAME_OR_PASSWORD":    6.0,
+}
+_BETFAIR_BACKOFF_DEFAULT_H = 1.0             # tout autre loginStatus ≠ SUCCESS
+
+
+def _meta_get(key: str) -> str | None:
+    try:
+        from core.db import get_db
+        sb = get_db(write=True)
+        row = sb.table("meta").select("value").eq("key", key).maybe_single().execute()
+        return (row.data or {}).get("value") if row and row.data else None
+    except Exception as e:                       # credentials absentes incluses
+        log.debug("meta[%s]: lecture impossible (%s)", key, e)
+        return None
+
+
+def _meta_set(key: str, value: str) -> None:
+    try:
+        from core.db import get_db
+        sb = get_db(write=True)
+        sb.table("meta").upsert({"key": key, "value": value,
+                                 "updated_at": datetime.now(timezone.utc).isoformat()},
+                                on_conflict="key").execute()
+    except Exception as e:
+        log.debug("meta[%s]: écriture impossible (%s)", key, e)
+
+
+def betfair_login_suspendu() -> str | None:
+    """L'échéance ISO de la suspension si elle court encore, sinon None."""
+    raw = _meta_get(_BETFAIR_BACKOFF_KEY)
+    if not raw:
+        return None
+    try:
+        until = datetime.fromisoformat(str(raw).replace("Z", "+00:00"))
+    except ValueError:
+        return None
+    return raw if until > datetime.now(timezone.utc) else None
+
+
+def _suspendre_login(status: str) -> None:
+    heures = _BETFAIR_BACKOFF_H.get(status, _BETFAIR_BACKOFF_DEFAULT_H)
+    until = (datetime.now(timezone.utc) + timedelta(hours=heures)).isoformat()
+    _meta_set(_BETFAIR_BACKOFF_KEY, until)
+    log.warning("Betfair login: %s — tentatives suspendues %.0f h (jusqu'à %s) ; "
+                "un refus de compte ne se rejoue pas toutes les vingt minutes",
+                status, heures, until[:16])
+
 
 def _betfair_proxies() -> dict | None:
     """`proxies=` pour `requests`, ou None (cas nominal : sortie directe).
@@ -323,6 +383,11 @@ def _betfair_login() -> bool:
     key_pem   = os.environ.get("BETFAIR_CERT_KEY", "")
     if not all([username, password, app_key, cert_pem, key_pem]):
         return False
+    until = betfair_login_suspendu()
+    if until:
+        log.info("Betfair: login suspendu jusqu'à %s (refus de compte précédent) — "
+                 "aucune tentative", until[:16])
+        return False
     import tempfile
     try:
         with tempfile.NamedTemporaryFile(mode="w", suffix=".crt", delete=False) as cf, \
@@ -352,7 +417,9 @@ def _betfair_login() -> bool:
             _betfair_session["app_key"] = app_key
             log.info("Betfair: session ouverte (cert login)")
             return True
-        log.warning("Betfair login: %s", data.get("loginStatus", "FAILED"))
+        status = str(data.get("loginStatus", "FAILED"))
+        log.warning("Betfair login: %s", status)
+        _suspendre_login(status)
         return False
     except Exception as e:
         log.error("Betfair login: %s", e)
