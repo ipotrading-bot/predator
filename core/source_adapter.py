@@ -436,6 +436,35 @@ def league_rank(label: str) -> int:
     return _RANK.get(key, len(LEAGUE_PRIORITY))
 
 
+def _label_replie(label: str) -> str:
+    """Libellé de ligue en minuscules, accents retirés, phase ôtée :
+    « Argentina - Primera LPF, Clausura » → « argentina - primera lpf »."""
+    import unicodedata
+    s = unicodedata.normalize("NFKD", _sans_phase(label or ""))
+    s = "".join(c for c in s if not unicodedata.combining(c))
+    return " ".join(s.lower().split())
+
+
+def ligue_exclue(label: str, motifs) -> str:
+    """Le motif opérateur qui exclut ce libellé de ligue, ou "" si aucun.
+
+    POURQUOI des motifs et non des clés (2026-09-08) : la même ligue arrive
+    sous « Primera División - Argentina » (OddsAPI), « Argentina - Primera
+    LPF, Clausura » (odds-api.io) et « Liga Profesional Argentina » (Tier 2),
+    et `league_key` — exact par contrat — n'en reconnaît aucune. L'opérateur
+    écrit des sous-chaînes (`meta.perimetre_ligues_exclues`, séparées par
+    « ; » ou un retour à la ligne) ; elles se comparent au libellé replié
+    (minuscules, sans accents, sans phase). Un motif vide n'exclut rien."""
+    replie = _label_replie(label)
+    if not replie:
+        return ""
+    for motif in motifs or ():
+        m = _label_replie(str(motif))
+        if m and m in replie:
+            return str(motif).strip()
+    return ""
+
+
 def detect_lang(text: str) -> str:
     """Langue d'un libellé d'équipe, par plage Unicode. Sert à router la
     résolution d'alias (7M gratuit, puis IA), pas à traduire quoi que ce soit."""

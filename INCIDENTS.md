@@ -3185,6 +3185,55 @@ périmètre refuse même avec l'homonyme senior dans ESPN, `fetch_score` sur le
 nom nu rend les seniors et sur le nom qualifié les U19, `settle_signal`
 sort LOSS sur le cas réel).
 
+### Contre-audit du ledger : 12 issues fausses héritées du règlement IA, une ligue exclue (2026-09-08, nuit)
+
+Question opérateur après le faux GAGNÉ des U19 : « existe-t-il d'autres
+erreurs de ce genre ? ». Mesuré en recalculant les 453 lignes foot réglées
+du ledger contre LiveScore (une requête par journée, `urllib` nu depuis le
+poste — JAMAIS `core.score_sources`, qui dépenserait les budgets de
+production), puis ESPN sur les écarts : 371 issues identiques, **12
+fausses**, 57 introuvables (alias ou date, invérifiables), 11 trouvées non
+terminées ce jour-là, 2 journées à homonymes — toutes deux réglées juste.
+
+Les 12 écarts datent TOUS du 1er au 25 août : l'époque où une IA (Groq +
+Tavily, supprimés le 2026-09-02) réglait les paris. Cinq confirmés par ESPN
+en plus de LiveScore (San Luis–Tijuana 0-0, Inter Miami–Columbus 2-2,
+Atlas–Monterrey 0-2, Defensa 2-1 Newell's, Argentinos 2-1 Racing) ; sept
+dans des ligues qu'ESPN ne couvre pas (J2, J3, Superettan, Esiliiga, MLS
+Next Pro, Canada, Damallsvenskan). Depuis la chaîne déterministe : **zéro
+écart** sur les lignes vérifiables. Les 12 lignes ont été passées à leur
+issue réelle (effet net ≈ +0.65 u, les erreurs se compensaient ; l'enjeu
+était la fiabilité par ligue et par marché). Leurs signaux d'août étaient
+déjà purgés.
+
+⚠️ Le jeton GitHub du chien de garde n'était PAS expiré : un moniteur d'une
+autre session l'a conclu faute de `workflow_dispatch` entre 22:01 et 22:26,
+alors que le Worker a déclenché la closing line à 22:00:37 et 22:30:39.
+Vérifier `gh run list --json event` avant de « réparer » un jeton.
+
+**Ligues exclues par l'opérateur** (instruction « plus de youth ligues,
+ainsi que ligues qui perdent trop »). Mesure `scripts.weekly_report.
+league_breakdown` (zone jouable, non shadow, Wilson bas contre point mort
+après taxe, mise plate) sur le ledger corrigé : une seule ligue perd
+nettement, la **Primera División argentine** — 12 décidés, 5-7, −2.44 u,
+Wilson bas 19 % contre 57 % de point mort. Pas une preuve statistique (n
+petit), une décision opérateur (règle 11), revue le **2026-09-22**. WNBA
+(21 décidés, 11-10, −0.88 u) laissée : à l'équilibre et saison finie
+mi-septembre. Rien d'autre n'atteint 5 décidés en zone jouable — le ledger
+est trop jeune pour trancher plus.
+
+Fait : `meta.perimetre_ligues_exclues` = motifs de libellé séparés par « ; »
+(ici `primera lpf;liga profesional argentina;primera division -
+argentina`), appliqués par `run_engine._filtrer_perimetre` AVANT toute
+requête, via `core.source_adapter.ligue_exclue` (libellé replié :
+minuscules, sans accents, sans phase). Des MOTIFS et non des clés parce que
+la même ligue arrive sous trois libellés selon la source et que
+`league_key`, exact par contrat, n'en reconnaît aucun. Chaque refus est
+loggé `HORS PÉRIMÈTRE`. Levée : `ops.py supabase meta-set
+perimetre_ligues_exclues ""`.
+
+Gardiens : `tests/test_perimetre.py::TestLiguesExcluesParLOperateur`.
+
 ### Une version, un seul endroit
 
 `DASHBOARD_VERSION` (`api/index.py`), injectée

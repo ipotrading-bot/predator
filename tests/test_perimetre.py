@@ -103,7 +103,7 @@ class TestFiltre:
     def test_le_filtre_precede_la_photographie_du_slate(self):
         import inspect
         src = inspect.getsource(eng.run)
-        assert src.index("_filtrer_perimetre(matches, log)") < src.index('_set_cached(sb, "cache_soft_slate"')
+        assert src.index("_filtrer_perimetre(matches, log, _ligues_exclues(sb))") < src.index('_set_cached(sb, "cache_soft_slate"')
 
 
 class TestESPNFixtures:
@@ -248,3 +248,61 @@ class TestTennisESPN:
         fx = {"tennis": [self._tournoi()]}
         # fixtures_espn borne déjà à la fenêtre ; ici on vérifie la couverture
         assert eng._reglable(_m(match="Clara Burel vs Ma YeXin", sport="tennis", soft=None), fx) is True
+
+
+class TestLiguesExcluesParLOperateur:
+    """`meta.perimetre_ligues_exclues` (2026-09-08) : des MOTIFS de libellé,
+    parce que la même ligue arrive sous trois libellés selon la source et
+    que `league_key` (exact) n'en reconnaît aucun."""
+    MOTIFS = ("primera lpf", "liga profesional argentina", "primera division - argentina")
+
+    def test_le_motif_replie_accents_et_phase(self):
+        from core.source_adapter import ligue_exclue
+        assert ligue_exclue("Primera División - Argentina", self.MOTIFS) == "primera division - argentina"
+        assert ligue_exclue("Argentina - Primera LPF, Clausura", self.MOTIFS) == "primera lpf"
+        assert ligue_exclue("Liga Profesional Argentina", self.MOTIFS) == "liga profesional argentina"
+        # Une autre ligue argentine n'est PAS visée par ces motifs.
+        assert ligue_exclue("Argentina - Primera B Metropolitana", self.MOTIFS) == ""
+        assert ligue_exclue("Germany - Bundesliga", self.MOTIFS) == ""
+        assert ligue_exclue("", self.MOTIFS) == "" and ligue_exclue("Argentina - Primera LPF", ()) == ""
+        assert ligue_exclue("Argentina - Primera LPF", ("", "  ")) == ""
+
+    def test_la_cle_meta_se_lit_en_motifs(self):
+        class _Q:
+            def __init__(self, v): self.v = v
+            def select(self, *a): return self
+            def eq(self, *a): return self
+            def maybe_single(self): return self
+            def execute(self):
+                class R: data = {"value": self.v}
+                return R()
+        class _SB:
+            def __init__(self, v): self.v = v
+            def table(self, name): return _Q(self.v)
+        assert eng._ligues_exclues(_SB("primera lpf; liga profesional argentina\nwnba")) == \
+            ("primera lpf", "liga profesional argentina", "wnba")
+        assert eng._ligues_exclues(_SB("")) == () and eng._ligues_exclues(None) == ()
+
+    def test_le_filtre_ecarte_avant_toute_requete_et_loggue(self, monkeypatch, caplog):
+        appels = []
+        def fake(sport, a, b):
+            appels.append(sport); return [_ev("A FC", "B FC")]
+        monkeypatch.setattr(eng, "_fixtures_espn", fake)
+        matches = [_m(_exchange="matchbook"),
+                   _m(match="Boca Juniors vs River Plate", _exchange="matchbook",
+                      league="Argentina - Primera LPF, Clausura")]
+        with caplog.at_level(logging.INFO, logger="PREDATOR"):
+            gardes = eng._filtrer_perimetre(matches, logging.getLogger("PREDATOR"), self.MOTIFS)
+        assert [g["match"] for g in gardes] == ["A FC vs B FC"]
+        assert "HORS PÉRIMÈTRE | Boca Juniors vs River Plate" in caplog.text
+        assert "PÉRIMÈTRE | 1 match(s) en ligue exclue par l'opérateur" in caplog.text
+        assert appels == ["soccer"]
+
+    def test_sans_motif_rien_ne_change(self, monkeypatch):
+        monkeypatch.setattr(eng, "_fixtures_espn", lambda s, a, b: [_ev("A FC", "B FC")])
+        assert len(eng._filtrer_perimetre([_m(_exchange="matchbook")], logging.getLogger("PREDATOR"))) == 1
+
+    def test_le_point_dappel_passe_la_cle_meta(self):
+        import inspect
+        src = inspect.getsource(eng)
+        assert "_filtrer_perimetre(matches, log, _ligues_exclues(sb))" in src

@@ -34,6 +34,7 @@ from core.math_engine import (to_binary, devig_bounds, is_round_number_line, dev
 from core.tax_engine import optimal_stake_fraction as _optimal_stake_fraction
 from core.learning_layer import _PLAYABLE_MIN_MINUTES
 from core.paim_engine import section_jeunes as _section_jeunes
+from core.source_adapter import ligue_exclue as _ligue_exclue
 from core.score_sources import (fixtures_espn as _fixtures_espn, fixture_connue as _fixture_connue,
                                 sports_reglables as _sports_reglables)
 from core.odds_api import (SPORT_KEYS, fetch_odds, pool_status as _odds_pool_status,
@@ -1953,10 +1954,42 @@ def _reglable(m: dict, fixtures_par_sport: dict) -> bool:
     return _fixture_connue(m.get("match") or "", events)
 
 
-def _filtrer_perimetre(matches: list, log) -> list:
-    """Applique les deux gardes du périmètre, loggue chaque refus, rend les
+# Clé meta lue une fois par run : motifs de libellés de ligue exclus par
+# l'opérateur (règle 11 — périmètre = décision opérateur), séparés par « ; »
+# ou un retour à la ligne. Posée le 2026-09-08 avec la Primera División
+# argentine (5-7, −2.44 u, Wilson bas 19 % contre 57 % de point mort) —
+# voir INCIDENTS.md. Se lève par `ops.py supabase meta-set
+# perimetre_ligues_exclues ""`.
+LIGUES_EXCLUES_META_KEY = "perimetre_ligues_exclues"
+
+
+def _ligues_exclues(sb) -> tuple[str, ...]:
+    """Motifs opérateur, vides sans base ou sans clé."""
+    raw = _meta_get(sb, LIGUES_EXCLUES_META_KEY) if sb else None
+    if not raw:
+        return ()
+    return tuple(m.strip() for m in raw.replace("\n", ";").split(";") if m.strip())
+
+
+def _filtrer_perimetre(matches: list, log, ligues_exclues: tuple = ()) -> list:
+    """Applique les gardes du périmètre, loggue chaque refus, rend les
     matchs conservés. Une requête ESPN par sport présent, sur une fenêtre
-    couvrant tous les coups d'envoi du run (cache de run, budget partagé)."""
+    couvrant tous les coups d'envoi du run (cache de run, budget partagé).
+    `ligues_exclues` : motifs opérateur (voir `_ligues_exclues`), appliqués
+    AVANT tout le reste — un match d'une ligue exclue ne coûte rien."""
+    if ligues_exclues:
+        restants = []
+        for m in matches:
+            motif = _ligue_exclue(m.get("league") or "", ligues_exclues)
+            if motif:
+                log.info("HORS PÉRIMÈTRE | %s (%s) — ligue exclue par l'opérateur "
+                         "(motif « %s »), écarté", m.get("match", "?"), m.get("league", "?"), motif)
+            else:
+                restants.append(m)
+        if len(restants) < len(matches):
+            log.info("PÉRIMÈTRE | %d match(s) en ligue exclue par l'opérateur",
+                     len(matches) - len(restants))
+        matches = restants
     vivants = []
     for m in matches:
         if _marche_vivant(m):
@@ -2657,7 +2690,7 @@ def run():
     # ── Périmètre : marchés vivants, ligues réglables (2026-09-03) ────────
     # AVANT la photographie du slate : un match banni ne doit pas revenir
     # par le cache du tick reprice suivant.
-    matches = _filtrer_perimetre(matches, log)
+    matches = _filtrer_perimetre(matches, log, _ligues_exclues(sb))
     if not matches:
         log.warning("PÉRIMÈTRE | aucun match ne passe les gardes (marché vivant + réglable)")
         if sb:
