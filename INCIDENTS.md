@@ -401,6 +401,16 @@ cotent (seul le premier arrivé sert) — à envisager si la mesure montre un
 recouvrement large ; pas de proxy (joignable en direct depuis Azure, les
 runners le sont aussi — à confirmer au premier scan standard, 21:03).
 
+MESURÉ au premier scan standard depuis les runners (34279769016, 21:17 UTC,
+dispatch manuel faute de chien de garde) : joignable sans proxy, aucun 429
+fatal ; « Smarkets: 107 marchés sharp — dont 61 totals, 46 handicaps (216
+événements | 108 trop peu liquides) | 69/2000 req » ; « Smarkets OK — 107
+marchés sharp (+56 nouveaux hors Matchbook/Betfair, total exchange 139) »
+contre Matchbook 69 seul. M/T = 40 %, quatre fois le seuil de retrait.
+Run complet en 6 min 28 (budget 900 s). MARCHÉ MORT inchangé à 6 : les
+restants sont CONMEBOL / réserves / Paraguay, qu'aucun exchange ne cote.
+Premier signal adossé : Kochi United–V-Varen Nagasaki PS +1.0 @ 2.05 Bet365.
+
 Gardiens : `tests/test_smarkets.py` (cotes en centièmes de %, milieu
 back/lay, carnet vide/croisé/large, « at » inversé, ligne domicile signée,
 sous-marché jamais demandé, 429 rejoué une fois, géoblocage, budget,
