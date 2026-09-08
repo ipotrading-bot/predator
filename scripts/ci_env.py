@@ -146,7 +146,10 @@ POOLS: dict[str, dict] = {
         # La capture de closing line lit l'EXCHANGE (Matchbook sans clé,
         # Betfair si les clés sont posées) — plus aucune clé IA/recherche
         # depuis la suppression de l'oracle web (2026-09-02).
-        passthrough=_uniq(SUPABASE_RW, BETFAIR),
+        # RELAYS depuis le 2026-09-08 : Betfair sort par le proxy
+        # (core/harvester.py, géo-blocage des runners), et la closing line
+        # est son appelant le plus fréquent.
+        passthrough=_uniq(SUPABASE_RW, BETFAIR, RELAYS),
         required=SUPABASE_RW, service_role=True),
     "settlement": dict(
         # AUCUNE clé IA : le settlement est déterministe (MLB statsapi, ESPN

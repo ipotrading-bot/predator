@@ -2822,6 +2822,35 @@ Gardien : `tests/test_system_page.py::TestFiscaliteAppliqueePartout` — il
 exige que l'écart reste expliqué et qu'aucun taux ne revienne en dur ; il ne
 fige AUCUNE valeur, `core.constants.TAX_RATE` restant une décision opérateur.
 
+### Betfair refusait les runners depuis le 2026-07-09 — sortie par le proxy (2026-09-08)
+
+« Betfair login: BETTING_RESTRICTED_LOCATION » à CHAQUE scan standard et à
+chaque passe de closing line, 0 marché Betfair chargé depuis deux mois. Ce
+n'est ni le certificat, ni la clé, ni les identifiants : `certlogin`
+géolocalise l'IP de l'appelant, et les runners GitHub sortent des
+États-Unis. Le remède est celui d'odds500 le 2026-08-27 — le proxy Webshare
+à sortie Londres (`FREE_SOURCES_PROXY`) était posé, câblé au job de scan…
+et jamais transmis à `requests` côté Betfair, qui partait en direct. Une
+capacité posée et non branchée, morte sans erreur.
+
+Décision opérateur du 2026-09-08 (« par tous les moyens »), après avoir
+été averti que ce proxy fait sortir SON compte Betfair d'un territoire
+autorisé et que les conditions Betfair interdisent de masquer sa
+localisation : le risque porte sur le compte, pas sur le pipeline.
+`core/harvester._betfair_proxies()` résout `BETFAIR_PROXY` puis
+`FREE_SOURCES_PROXY` par `core/net.py` (donc `app_secrets` d'abord, proxy
+rotatif sans redéploiement) et le passe au login cert ET à l'API — un seul
+des deux routé, et l'API rend le même refus en silence. Le pool `closing`
+de `ci_env.py` reçoit `RELAYS`, sans quoi la closing line, appelant le
+plus fréquent (3/h), serait restée aux États-Unis. Sans proxy configuré,
+rien ne change : sortie directe, comme avant.
+
+Critère de retrait (règle 13) dans l'en-tête Betfair de `core/harvester.py` :
+login encore refusé, ou moins de 10 marchés par scan en médiane sur 7 jours
+alors que Matchbook en porte plus de 60. Le login est vérifié dans le
+premier run réel après ce commit, pas ici.
+Gardien : `tests/test_betfair_proxy.py`.
+
 ### Une version, un seul endroit
 
 `DASHBOARD_VERSION` (`api/index.py`), injectée

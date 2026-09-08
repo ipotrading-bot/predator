@@ -200,6 +200,36 @@ def fetch_matches():
 
 
 # ── Betfair Exchange (Tier 1.5 — sharp prices peer-to-peer) ──────────
+#
+# GÉO-BLOCAGE ET SORTIE PROXY (2026-09-08, décision opérateur)
+# -------------------------------------------------------------
+# Depuis les runners GitHub (IP américaines), `certlogin` rend
+# `BETTING_RESTRICTED_LOCATION` à CHAQUE scan : Betfair géolocalise l'IP de
+# l'appelant (MaxMind), et rien côté code ne lève ça — certificat, clé et
+# identifiants sont corrects. L'issue est la même que pour odds500 le
+# 2026-08-27 : sortir par le proxy à IP britannique que `core/net.py`
+# résout (`BETFAIR_PROXY` puis `FREE_SOURCES_PROXY`, lus par `secret_store`,
+# donc rotatifs sans redéploiement). Sans proxy configuré, RIEN ne change :
+# `requests` part en direct, comme avant.
+#
+# ⚠️ Ce proxy fait sortir le compte Betfair de L'OPÉRATEUR d'un territoire
+# autorisé ; c'est sa décision (2026-09-08, « par tous les moyens »), et le
+# risque porte sur son compte, pas sur le pipeline.
+#
+# CRITÈRE DE RETRAIT (règle 13, posé le 2026-09-08)
+# Budget : le proxy Webshare gratuit (1 Go/mois, partagé avec les sources de
+# scores) ; Betfair ne coûte rien en requêtes à cette cadence (2 appels par
+# scan standard, 2 par passe de closing line). Relevé de référence : avant
+# ce jour, 0 marché Betfair chargé depuis le 2026-07-09 (login refusé).
+# Betfair SORT du Tier 1.5 (`fetch_betfair_prices` retiré des appels de
+# run_engine/audit_engine, et ses cinq secrets du pool `ci_env`) le jour où,
+# sur 7 jours consécutifs de runs `Scan standard`, l'une des mesures tient :
+#   - le login échoue encore (« Betfair login: … ») malgré le proxy — le
+#     contournement ne marche pas, on ne s'acharne pas sur un compte ;
+#   - moins de 10 marchés Betfair chargés par scan en médiane, alors que
+#     Matchbook en porte plus de 60 — la source n'ajoute rien de sharp.
+# Gardien : tests/test_betfair_proxy.py — tombe si le proxy n'est plus
+# transmis aux appels, ou si ce critère disparaît sans retrait consigné.
 
 _BETFAIR_LOGIN_URL      = "https://identitysso.betfair.com/api/login"
 _BETFAIR_CERTLOGIN_URL  = "https://identitysso-cert.betfair.com/api/certlogin"
@@ -221,6 +251,23 @@ _BETFAIR_EVENT_TYPES: dict[str, str] = {
 }
 
 _betfair_session: dict = {}
+
+
+def _betfair_proxies() -> dict | None:
+    """`proxies=` pour `requests`, ou None (cas nominal : sortie directe).
+
+    Résolu par `core.net.proxy_for("betfair")` : `BETFAIR_PROXY` puis
+    `FREE_SOURCES_PROXY`. Loggé UNE fois par processus — un scan fait
+    plusieurs appels et un log répété ne se lit plus.
+    """
+    from core import net
+    url = net.proxy_for("betfair")
+    if not url:
+        return None
+    if "log-proxy:betfair" not in net._memo:
+        net._memo["log-proxy:betfair"] = "1"
+        log.info("Betfair: sortie via proxy (géo-blocage des runners contourné)")
+    return {"http": url, "https": url}
 
 
 def _betfair_login() -> bool:
@@ -262,6 +309,7 @@ def _betfair_login() -> bool:
                     "X-Application": app_key,
                 },
                 cert=(cert_path, key_path),
+                proxies=_betfair_proxies(),
                 timeout=15,
             )
         finally:
@@ -295,6 +343,7 @@ def _bf_request(endpoint: str, body: dict):
                 "Content-Type":     "application/json",
                 "Accept":           "application/json",
             },
+            proxies=_betfair_proxies(),
             timeout=20,
         )
         return r.json() if r.status_code == 200 else None
