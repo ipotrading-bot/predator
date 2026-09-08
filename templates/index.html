@@ -230,7 +230,7 @@
     </div>
     <div class="m-stats">
       <div class="m-stat"><div class="m-sv" id="m-edge" style="color:var(--green)">—</div><div class="m-sl">Edge</div></div>
-      <div class="m-stat"><div class="m-sv" id="m-pin"  style="color:var(--blue)">—</div><div class="m-sl">Pinnacle</div></div>
+      <div class="m-stat"><div class="m-sv" id="m-pin"  style="color:var(--blue)">—</div><div class="m-sl" title="Prix de référence sharp : Pinnacle, ou un exchange (Matchbook, Smarkets, Betfair) quand Pinnacle ne cote pas">Sharp</div></div>
       <div class="m-stat"><div class="m-sv" id="m-risk">—</div><div class="m-sl">Signal</div></div>
     </div>
   </div>
@@ -251,7 +251,7 @@
     <div class="steps">
       <div class="step"><span class="sn">①</span><span class="sk">Match :</span><span class="sv" id="s-match">—</span></div>
       <div class="step"><span class="sn">②</span><span class="sk">Marché :</span><span class="sv" id="s-market">—</span></div>
-      <div class="step"><span class="sn">③</span><span class="sk">Sélection :</span><span class="sv" id="s-team">—</span><span class="sc" id="s-cote">—</span><span class="sp">(Pin: <span id="s-pin">—</span>)</span></div>
+      <div class="step"><span class="sn">③</span><span class="sk">Sélection :</span><span class="sv" id="s-team">—</span><span class="sc" id="s-cote">—</span><span class="sp" title="Prix de référence sharp">(Sharp: <span id="s-pin">—</span>)</span></div>
     </div>
   </div>
 
@@ -543,7 +543,7 @@ function openModal(idx){
   // Le book de CETTE ligne (signals.soft_book, 2026-09-08) ; « ? » si le
   // prix n'est pas attribuable — jamais le book de référence par défaut.
   const book=s.soft_book||'?';
-  const why=s.advice||`Edge +${(s.edge_pct||0).toFixed(1)}% — ${book} ${(s.xbet_odd||0).toFixed(2)} vs Pinnacle ${(s.pinnacle_price||0).toFixed(2)}.`;
+  const why=s.advice||`Edge +${(s.edge_pct||0).toFixed(1)}% — ${book} ${(s.xbet_odd||0).toFixed(2)} vs sharp ${(s.pinnacle_price||0).toFixed(2)}.`;
   document.getElementById('m-book').textContent = book.toUpperCase();
   document.getElementById('s-book').textContent = book;
 
