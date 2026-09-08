@@ -175,7 +175,20 @@ Réversible : `python scripts/odds_api_io_books.py clear`.
 
 ---
 
-## 2bis. odds-api.io — un pool de comptes ⏳ CÔTÉ CODE PRÊT le 2026-08-28
+## 2bis. odds-api.io — un pool de comptes ⏳ CÔTÉ CODE PRÊT le 2026-08-28 · ⛔ BLOQUÉ CÔTÉ FOURNISSEUR le 2026-09-08
+
+> **2026-09-08 17:38 UTC, constaté par l'opérateur sur odds-api.io/pricing :**
+> « New free API keys are paused indefinitely. » Aucun second compte gratuit
+> n'est possible ; la clé gratuite actuelle est donc IRREMPLAÇABLE (plafond
+> 400/500 à respecter d'autant plus). Le plan gratuit reste « 2 recreational
+> bookmakers · 500/jour » ; les books sharp et exchange exigent un plan payant.
+> Tarifs relevés le même jour : Solo £49/mois (2 books, 5 000 req/h),
+> Starter £99 (5 books), Growth £179 (10 books), Pro £229 (15 books).
+> Passer au payant = décision opérateur (règle 13 : budget chiffré, critère
+> de retrait daté, test gardien dans le même commit). Le code du pool
+> (`core/odds_api_io.candidate_keys`) reste valable pour une clé payante
+> posée dans `ODDS_API_IO_KEYS`. Le reste de cette section est conservé comme
+> procédure, elle ne s'applique qu'à une clé obtenue.
 
 ### Le constat
 
