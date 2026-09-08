@@ -683,6 +683,28 @@ def _next_live_key(keys: list[str], start: int) -> tuple[str | None, int]:
 
 # ── Public API ────────────────────────────────────────────────────────
 
+# Une connexion coupée par OddsAPI (« Connection aborted », reset 104) est
+# rejouée UNE fois avant d'abandonner la ligue : le 2026-09-08 à 13:11 l'appel
+# soccer_uefa_champs_league est tombé ainsi, sans seconde tentative, le jour
+# où la Ligue des champions fournissait les seuls signaux — 0 crédit dépensé,
+# 0 événement, et la ligue perdue jusqu'au scan suivant. Un reset est un
+# incident de transport, pas une réponse : le rejouer ne coûte rien de plus
+# que l'appel qui a échoué. Toute autre exception suit toujours la politique
+# « retour [] + log » du bloc appelant.
+_RETRY_PAUSE_S = 2.0
+
+
+def _get_retried(url: str, params: dict, sport_key: str):
+    """GET OddsAPI, rejoué une fois sur erreur de connexion."""
+    import time
+    try:
+        return requests.get(url, params=params, timeout=15)
+    except requests.exceptions.ConnectionError as e:
+        log.warning("%s: connexion coupée (%s) — seconde tentative", sport_key, e)
+        time.sleep(_RETRY_PAUSE_S)
+        return requests.get(url, params=params, timeout=15)
+
+
 def fetch_odds(api_key: str | None = None, hours_ahead: int = 24,
                sport_keys: dict | None = None, spend_policy=None) -> list[dict]:
     """
@@ -819,7 +841,7 @@ def fetch_odds(api_key: str | None = None, hours_ahead: int = 24,
             r = None
             while True:
                 params["apiKey"] = api_key
-                r = requests.get(url, params=params, timeout=15)
+                r = _get_retried(url, params, sport_key)
                 if r.status_code not in (401, 403, 422):
                     break
                 # Clé à sec (422) ou refusée (401/403 — OddsAPI renvoie aussi

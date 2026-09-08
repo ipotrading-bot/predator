@@ -14,7 +14,11 @@ _ABBREVS = [
     (r'\bpsg\b',                      'paris'),
     (r'\bspurs\b',                    'tottenham'),
     (r'\br\.\s+(?=madrid|sociedad)', 'real '),
-    (r'\binter\s+milan\b',            'internazionale'),
+    # « Inter Milano » (1xbet via odds-api.io) contre « Inter Milan »
+    # (Pinnacle, Matchbook) : le \b après « milan » refusait le « o », et
+    # Real Madrid–Inter du 2026-09-08 est resté sans prix sharp trois scans
+    # de suite (« Échec prix Sharp »). Le « o » optionnel absorbe les deux.
+    (r'\binter\s+milano?\b',           'internazionale'),
 ]
 _STRIP_TAGS = re.compile(r'\s*\b(fc|cf|sc|ac|gfc|afc|fk|sk|bk|rfc|sfc)\b\s*', re.I)
 
