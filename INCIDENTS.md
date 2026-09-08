@@ -3044,6 +3044,30 @@ suspendu jusqu'à … » au lieu de répéter le refus.
 
 Gardiens : `tests/test_betfair_backoff.py`.
 
+### Betfair suspendu par l'opérateur, proprement, en une clé meta (2026-09-08, soir)
+
+Décision opérateur : « suspends Betfair pour l'instant si c'est sans
+conséquence, mon compte est bloqué, le temps de trouver une solution ».
+Conséquence mesurée d'un Betfair actif mais refusé : ~70 logins/jour en
+échec, ban temporaire (entrée précédente) — et rien à gagner tant que le
+compte est bloqué. Sans conséquence pour le pipeline : Betfair chargeait
+0 marché depuis le 2026-07-09 ; Matchbook (60-120 marchés) et Smarkets
+(≈130) tiennent le Tier 1.5 et la closing line.
+
+Fait : `meta.betfair_suspendu` (motif en valeur) lu par
+`core.harvester.fetch_betfair_prices` AVANT tout login — {} immédiat, une
+ligne INFO « Betfair suspendu par l'opérateur (…) », zéro requête, zéro
+backoff écrit ; vide / 0 / non / off = levée. Posée le 2026-09-08 ~20:50 UTC.
+Procédure et levée : `docs/actions_operateur.md` §2ter. L'horloge du critère
+de retrait du proxy est arrêtée ; revue le 2026-09-22 (compte rétabli → lever
+; sinon → retrait complet, règle 13).
+
+PAS fait : aucun secret retiré du pool, aucun appelant modifié — la levée
+doit être une commande, pas un déploiement.
+
+Gardiens : `tests/test_betfair_backoff.py::test_la_suspension_operateur_coupe_tout_sans_tentative`,
+`::test_une_valeur_vide_ou_non_leve_la_suspension`.
+
 ### Betfair refusait les runners depuis le 2026-07-09 — sortie par le proxy (2026-09-08)
 
 « Betfair login: BETTING_RESTRICTED_LOCATION » à CHAQUE scan standard et à

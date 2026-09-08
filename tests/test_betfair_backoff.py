@@ -95,3 +95,28 @@ def test_un_succes_ou_un_incident_reseau_ne_suspendent_rien(monkeypatch, _env_et
 def test_la_suspension_est_lisible_sans_base():
     """Sans meta (tests, sandbox) : pas de suspension, jamais d'exception."""
     assert hv.betfair_login_suspendu() is None
+
+
+# ── Suspension décidée par l'opérateur (2026-09-08 soir : compte bloqué) ──
+
+def test_la_suspension_operateur_coupe_tout_sans_tentative(monkeypatch, _env_et_meta, caplog):
+    """`meta.betfair_suspendu` posé : {} tout de suite, zéro requête, zéro
+    backoff écrit, une ligne INFO — Matchbook/Smarkets tiennent le Tier 1.5."""
+    import logging
+    _env_et_meta[hv.BETFAIR_SUSPENDU_KEY] = "2026-09-08 compte bloqué (opérateur)"
+    appels = _poster(monkeypatch, "SUCCESS")
+    with caplog.at_level(logging.INFO, logger="PREDATOR.harvester"):
+        assert hv.fetch_betfair_prices(sports=["soccer"]) == {}
+    assert appels["n"] == 0
+    assert hv._BETFAIR_BACKOFF_KEY not in _env_et_meta
+    assert any("suspendu par l'opérateur" in r.getMessage() for r in caplog.records)
+    assert hv.betfair_suspendu() == "2026-09-08 compte bloqué (opérateur)"
+
+
+@pytest.mark.parametrize("valeur", ["", "0", "non", "off", "  "])
+def test_une_valeur_vide_ou_non_leve_la_suspension(monkeypatch, _env_et_meta, valeur):
+    _env_et_meta[hv.BETFAIR_SUSPENDU_KEY] = valeur
+    assert hv.betfair_suspendu() is None
+    appels = _poster(monkeypatch, "SUCCESS")
+    hv.fetch_betfair_prices(sports=["soccer"])
+    assert appels["n"] >= 1, "suspension levée : le login repart"

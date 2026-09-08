@@ -259,6 +259,14 @@ def fetch_matches():
 #     contournement ne marche pas, on ne s'acharne pas sur un compte ;
 #   - moins de 10 marchés Betfair chargés par scan en médiane, alors que
 #     Matchbook en porte plus de 60 — la source n'ajoute rien de sharp.
+# SUSPENSION OPÉRATEUR (2026-09-08, soir) : « mon compte est bloqué, le
+# temps de trouver une solution ». `meta.betfair_suspendu` porte le motif ;
+# tant qu'il est posé, `fetch_betfair_prices` rend {} SANS tentative de
+# login (aucun ban entretenu, aucun bruit : une ligne INFO par appel) et
+# Matchbook + Smarkets tiennent le Tier 1.5. L'horloge des 7 jours ci-dessus
+# est ARRÊTÉE pendant la suspension. Revue le 2026-09-22 : compte rétabli →
+# lever la suspension (`ops.py supabase meta-set betfair_suspendu ""`) ;
+# sinon → retrait complet (appels, secrets du pool ci_env, ce bloc).
 # Gardien : tests/test_betfair_proxy.py — tombe si le proxy n'est plus
 # transmis aux appels, ou si ce critère disparaît sans retrait consigné.
 
@@ -292,6 +300,10 @@ _betfair_session: dict = {}
 # ne change rien et finit banni. La suspension est partagée entre processus
 # via la table `meta` (comme core/daily_quota), lue AVANT toute tentative.
 _BETFAIR_BACKOFF_KEY = "betfair_login_backoff_until"
+# Suspension DÉCIDÉE par l'opérateur (≠ backoff automatique) : la valeur est
+# le motif ; vide / 0 / non / off = pas de suspension.
+BETFAIR_SUSPENDU_KEY = "betfair_suspendu"
+_VALEURS_LEVEE = ("", "0", "non", "no", "false", "off")
 _BETFAIR_BACKOFF_H = {
     "CERT_AUTH_REQUIRED":              6.0,   # attend l'opérateur
     "TEMPORARY_BAN_TOO_MANY_REQUESTS": 3.0,   # laisse le ban expirer
@@ -321,6 +333,13 @@ def _meta_set(key: str, value: str) -> None:
                                 on_conflict="key").execute()
     except Exception as e:
         log.debug("meta[%s]: écriture impossible (%s)", key, e)
+
+
+def betfair_suspendu() -> str | None:
+    """Le motif de la suspension posée par l'opérateur, ou None."""
+    raw = _meta_get(BETFAIR_SUSPENDU_KEY)
+    motif = str(raw or "").strip()
+    return motif if motif.lower() not in _VALEURS_LEVEE else None
 
 
 def betfair_login_suspendu() -> str | None:
@@ -460,6 +479,11 @@ def fetch_betfair_prices(sports: list = None, hours_ahead: int = 48) -> dict:
     Returns {} when BETFAIR_APP_KEY is not set or login fails.
     """
     if not os.environ.get("BETFAIR_APP_KEY"):
+        return {}
+    motif = betfair_suspendu()
+    if motif:
+        log.info("Betfair suspendu par l'opérateur (%s) — aucune tentative ; "
+                 "Matchbook et Smarkets tiennent le Tier 1.5", motif)
         return {}
     if not _betfair_session.get("token"):
         if not _betfair_login():

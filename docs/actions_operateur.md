@@ -239,6 +239,33 @@ aucun bookmaker sélectionné — écarté »).
 
 ---
 
+## 2ter. Betfair — SUSPENDU par l'opérateur ⏸ depuis le 2026-09-08 (compte bloqué)
+
+Décision opérateur du 2026-09-08 au soir : « suspends Betfair pour l'instant,
+mon compte est bloqué, le temps de trouver une solution ». La suspension est
+une clé `meta`, lue à chaque appel par `core.harvester.fetch_betfair_prices`
+(scans ET closing line) : tant qu'elle est posée, AUCUNE tentative de login
+(donc aucun ban entretenu), une ligne INFO par appel, et Matchbook + Smarkets
+tiennent le Tier 1.5. Rien d'autre ne change ; les cinq secrets Betfair
+restent dans le pool `ci_env`.
+
+```bash
+# poser / renouveler (la valeur est le motif, affiché dans les logs)
+python scripts/ops.py supabase meta-set betfair_suspendu "2026-09-08 compte bloque, decision operateur"
+# lever, le jour où le compte est rétabli — effet au scan suivant, sans déploiement
+python scripts/ops.py supabase meta-set betfair_suspendu ""
+# vérifier
+python scripts/ops.py supabase meta betfair
+```
+
+Le backoff automatique (`betfair_login_backoff_until`, posé sur refus de
+compte) est indépendant : il expire tout seul.
+
+Revue le **2026-09-22** (même date que Bet365 et Smarkets) : compte rétabli
+→ lever la suspension et reprendre le critère de retrait du proxy
+(`core/harvester.py`) ; sinon → retrait complet de Betfair (appels dans
+`run_engine`/`audit_engine`, secrets du pool, bloc de doc), règle 13.
+
 ## 3. Cloudflare — Smart Placement ⚠️ ESSAYÉ, INSUFFISANT
 
 Activé le 2026-08-27 à 21:41. Mesuré au run 33119345516 : le colo est passé
