@@ -3126,6 +3126,65 @@ antérieur à ce commit par nature (Matchbook ne passe pas par le proxy), mais
 il montre qu'un 403 Matchbook coûte un créneau entier — à traiter (retenter
 via le proxy, ou marquer le créneau non servi) si ça se répète.
 
+### Le pari des U19 réglé sur le score des seniors du même soir (2026-09-08)
+
+Symptôme : le dashboard affichait « Borussia Dortmund vs Villarreal CF —
+Borussia Dortmund 1.54 — GAGNÉ » ; le coupon 1xbet du même pari (handicap 0,
+Youth League, 14:00 UTC) était PERDANT, 2-3.
+
+Cause, en deux étages :
+1. odds-api.io nomme les équipes de jeunes par le nom du club SENIOR :
+   « Borussia Dortmund vs Villarreal CF », seule la ligue dit
+   « International Youth - UEFA Youth League ». La garde d'étage de
+   `strict_team_match` (04/09) compare les marqueurs U19/réserve dans les
+   NOMS ; sans marqueur, elle ne voit rien.
+2. Le même soir, les seniors jouaient en Ligue des champions (3-2, sur ESPN
+   et LiveScore à 19:00 UTC). Le périmètre a laissé passer le match (le club
+   senior figure dans ESPN → « réglable »), puis `result_from_espn` a trouvé
+   le match senior TERMINÉ, deux noms appariés, candidat unique → WIN.
+
+MESURÉ sur pièces (LiveScore, curl nu) : Dortmund U19 2-3 Villarreal U19 ;
+Club Brugge U19 5-3 Aston Villa U19 (signal 10054, Villa +1.5 réglé WIN sur
+les seniors 2-3, en réalité LOSS) ; FC Barcelona vs Feyenoord U19 (signal
+10074, coup d'envoi 09/09 10:00) aurait subi le même sort sur les seniors
+de 16:45. Les deux gains de septembre en Youth League étaient deux pertes.
+Bilan des lignes « jeunes » du ledger avant correction : 6 WIN (dont 2
+faux), 2 LOSS, 6 expirées — ESPN ne couvre pas ces ligues, seul
+l'homonyme senior les faisait entrer.
+
+Corrigé le 2026-09-08 :
+- Données : signaux 10064 et 10054 et leurs lignes de ledger passés en LOSS.
+  La clôture « exchange » 1.4356 de 10064 (capturée à 12:30, appariée par
+  nom, donc sur le marché SENIOR de l'exchange — Matchbook nomme les U19
+  avec le marqueur, l'étage refuse) effacée : un CLV faux vaut moins qu'un
+  CLV absent.
+- `core.paim_engine.section_jeunes(league)` : catégorie d'âge portée par le
+  LIBELLÉ DE LIGUE ; « youth » sans nombre vaut u19 (catégorie de la Youth
+  League, mesurée). `nom_avec_etage(match, league)` qualifie les deux camps
+  qui n'en portent pas — idempotent, neutre en ligue senior.
+- Périmètre (`run_engine._reglable`) : une ligue de jeunes est refusée AVANT
+  la garde ESPN, homonyme ou non — DÉCISION OPÉRATEUR du 2026-09-08 (règle
+  11), sur la question « on peut exclure les ligues jeunes ? ».
+- Règlement (`core.settlement.settle_signal`, `core.relance_expires`) : le
+  nom cherché est le nom qualifié, pour les lignes déjà émises (10074).
+  ESPN (seniors) ne s'apparie plus ; LiveScore (« Borussia Dortmund U19 »)
+  règle sur le bon match. Une catégorie fausse rend un NON-règlement,
+  jamais un faux règlement.
+
+⚠️ FÉMININES : même mécanique possible en théorie (Liga MX Women « CF
+Pachuca vs CD Guadalajara » contre la Liga MX masculine), mais vérifié sur
+les 5 lignes du ledger : toutes réglées sur le bon match (Pachuca W 3-1,
+Bay FC 1-0, Angel City 0-0), +1.44 u, aucune collision. ESPN couvre ces
+ligues (NWSL, Liga MX Femenil) et LiveScore nomme « X W » de façon
+INCONSTANTE (« Pachuca W » mais « Bay FC » tout court), donc qualifier les
+noms casserait le règlement NWSL. Laissées dans le périmètre ; à revoir si
+une collision est mesurée.
+
+Gardiens : `tests/test_ligues_jeunes.py` (la ligue qualifie les noms, le
+périmètre refuse même avec l'homonyme senior dans ESPN, `fetch_score` sur le
+nom nu rend les seniors et sur le nom qualifié les U19, `settle_signal`
+sort LOSS sur le cas réel).
+
 ### Une version, un seul endroit
 
 `DASHBOARD_VERSION` (`api/index.py`), injectée

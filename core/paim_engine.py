@@ -149,6 +149,51 @@ def _sans_etage(name: str) -> str:
     return " ".join(s.split()) or (name or "").lower().strip()
 
 
+# Marqueurs d'une LIGUE de jeunes sans catégorie d'âge chiffrée. « UEFA Youth
+# League » est le cas mesuré (2026-09-08) : LiveScore y nomme les équipes
+# « Borussia Dortmund U19 », odds-api.io « Borussia Dortmund » tout court.
+_LIGUE_JEUNES = re.compile(r'\b(?:youth|jeunes|primavera)\b')
+
+
+def section_jeunes(league: str) -> str:
+    """Catégorie d'âge portée par le LIBELLÉ DE LIGUE (« u19 », « u21 »…),
+    chaîne vide pour une ligue senior.
+
+    POURQUOI (2026-09-08) : odds-api.io nomme les équipes de jeunes par le
+    nom du club senior — « Borussia Dortmund vs Villarreal CF » en « UEFA
+    Youth League ». Le même soir, les seniors jouaient en Ligue des
+    champions : l'audit a réglé le pari des U19 (perdu 2-3) sur le score des
+    seniors (3-2). La garde d'étage de `strict_team_match` ne voit que les
+    NOMS ; quand ils ne portent rien, c'est la ligue qui sait.
+
+    Une ligue « youth » sans nombre vaut u19 (catégorie de la Youth League).
+    Une mauvaise catégorie rend un NON-règlement (étages différents), jamais
+    un faux règlement — c'est la seule erreur qu'on s'autorise."""
+    s = (league or "").lower()
+    age = _AGE.search(s)
+    if age:
+        return f"u{age.group(1)}"
+    if _LIGUE_JEUNES.search(s):
+        return "u19"
+    return ""
+
+
+def nom_avec_etage(match_name: str, league: str) -> str:
+    """« Borussia Dortmund vs Villarreal CF » en Youth League →
+    « Borussia Dortmund U19 vs Villarreal CF U19 ». Un camp qui porte déjà un
+    étage est laissé tel quel (idempotent) ; une ligue senior ne change rien."""
+    etage = section_jeunes(league)
+    if not etage or " vs " not in (match_name or ""):
+        return match_name
+    camps = []
+    for camp in match_name.split(" vs ", 1):
+        camp = camp.strip()
+        if not _niveau(camp)[0]:
+            camp = f"{camp} {etage.upper()}"
+        camps.append(camp)
+    return " vs ".join(camps)
+
+
 def strict_team_match(name_a: str, name_b: str, threshold: float = 0.60) -> bool:
     """True if both names likely refer to the same team (handles abbreviations).
 

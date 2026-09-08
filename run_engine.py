@@ -33,6 +33,7 @@ from core.math_engine import (to_binary, devig_bounds, is_round_number_line, dev
                               dnb_leg_split as _dnb_leg_split)
 from core.tax_engine import optimal_stake_fraction as _optimal_stake_fraction
 from core.learning_layer import _PLAYABLE_MIN_MINUTES
+from core.paim_engine import section_jeunes as _section_jeunes
 from core.score_sources import (fixtures_espn as _fixtures_espn, fixture_connue as _fixture_connue,
                                 sports_reglables as _sports_reglables)
 from core.odds_api import (SPORT_KEYS, fetch_odds, pool_status as _odds_pool_status,
@@ -1936,6 +1937,13 @@ def _marche_vivant(m: dict) -> bool:
 
 
 def _reglable(m: dict, fixtures_par_sport: dict) -> bool:
+    # Ligues de jeunes HORS PÉRIMÈTRE (décision opérateur du 2026-09-08) :
+    # ESPN ne les couvre pas, et leurs équipes portent le nom du club senior
+    # chez odds-api.io — le match passait la garde ci-dessous grâce à
+    # l'homonyme senior, puis se réglait sur SON score (Dortmund–Villarreal,
+    # U19 perdu 2-3, seniors 3-2 le même soir). Voir INCIDENTS.md.
+    if _section_jeunes(m.get("league") or ""):
+        return False
     sport = (m.get("sport") or "").lower()
     if sport == "baseball":
         return True                      # MLB statsapi, sans clé
@@ -1976,7 +1984,9 @@ def _filtrer_perimetre(matches: list, log) -> list:
             gardes.append(m)
         else:
             sport = (m.get("sport") or "").lower()
-            raison = ("aucune source de scores pour ce sport"
+            raison = ("ligue de jeunes, hors périmètre depuis le 2026-09-08"
+                      if _section_jeunes(m.get("league") or "")
+                      else "aucune source de scores pour ce sport"
                       if fixtures_par_sport.get(sport) is None
                       else "ESPN muet sur ce sport (panne ?)" if fixtures_par_sport.get(sport) == []
                       else "absent des sources de scores (ligue non couverte)")

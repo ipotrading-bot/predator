@@ -23,7 +23,7 @@ import re
 
 from core.score_sources import fetch_score
 from core.db import log_to_ledger, update_signal_fields
-from core.paim_engine import resolve_selection_side
+from core.paim_engine import resolve_selection_side, nom_avec_etage
 
 log = logging.getLogger("PREDATOR.settlement")
 
@@ -111,7 +111,13 @@ def settle_signal(sb, sig: dict, now_iso: str, tsdb_ok: bool = True) -> bool:
     # Use match_time date for Gemini search accuracy (not scanned_at)
     match_date = (sig.get("match_time") or sig.get("scanned_at") or "")[:10]
 
-    result = fetch_match_result(match, sport, match_date, tsdb_ok=tsdb_ok)
+    # Le nom cherché porte l'étage que la LIGUE connaît et que la source a
+    # tu : « Borussia Dortmund vs Villarreal CF » en Youth League se cherche
+    # en « … U19 vs … U19 », sinon le score des seniors du même soir règle
+    # le pari des jeunes (mesuré le 2026-09-08). Idempotent sur un nom déjà
+    # qualifié, neutre sur une ligue senior.
+    cherche = nom_avec_etage(match, sig.get("league") or "")
+    result = fetch_match_result(cherche, sport, match_date, tsdb_ok=tsdb_ok)
     if not result or not result.get("completed"):
         return False
 

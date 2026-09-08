@@ -67,6 +67,7 @@ from datetime import datetime, timezone
 from core import score_sources
 from core.constants import AUDIT_INTERVAL_H
 from core.settlement import determine_outcome, fetch_match_result, settle_signal
+from core.paim_engine import nom_avec_etage
 
 log = logging.getLogger(__name__)
 
@@ -204,7 +205,10 @@ def relancer(sb, budget: int | None = None) -> dict:
                 # l'appariement des deux noms sur un événement UNIQUE des 15
                 # derniers résultats reste exigé, deux confrontations de la
                 # même paire font refuser.
-                res = fetch_match_result(row.get("match", ""), row.get("sport") or "soccer",
+                # Étage porté par la ligue (jeunes), comme settle_signal.
+                res = fetch_match_result(nom_avec_etage(row.get("match", ""),
+                                                        row.get("league") or ""),
+                                         row.get("sport") or "soccer",
                                          "", tsdb_ok=tsdb)
                 if not res or not res.get("completed"):
                     faits["sans_score"] += 1
