@@ -128,8 +128,9 @@ C'est le tableau à consulter avant de toucher à quoi que ce soit.
 | Football sans nul : refus, jamais de repli sur le moneyline | `…::test_football_sans_nul_est_refuse_jamais_rabattu_sur_le_moneyline` |
 | Le bloc soft retenu appartient à UN book réel (pas de max par issue) | `…::TestLineShoppingSurLePrixFinal` |
 | Le line shopping se départage sur le prix FINAL, pas sur la cote nue | `…::test_cest_le_prix_executable_qui_departage_pas_la_cote_nue` |
-| Le prix soft est celui du book d'EXÉCUTION (`EXECUTION_BOOK`), jamais d'un autre book : odds-api.io ne demande que lui, titan007 ne lit que lui | `tests/test_odds_api_io.py::test_seul_le_book_d_execution_fournit_le_prix_soft`, `tests/test_titan007.py::test_le_prix_soft_est_celui_du_book_d_execution_pas_le_meilleur` |
-| Le nom du book d'exécution n'existe qu'en un endroit ; moteur et dashboard en dérivent | `tests/test_book_execution.py` |
+| Le prix soft vient d'UN book d'EXÉCUTION (`EXECUTION_BOOKS`), jamais d'un autre : odds-api.io et titan007 ne lisent qu'eux ; le 1X2 est un bloc par book, jamais un maximum par issue | `tests/test_odds_api_io.py::test_chaque_ligne_porte_son_book_al_adalah_2026_09_07`, `tests/test_titan007.py::test_un_bloc_par_book_d_execution_jamais_un_max_par_issue` |
+| Entre books d'exécution, le line shopping est À LIGNE ÉGALE et chaque côté de chaque barreau porte son book ; le 1X2 se départage sur le prix FINAL, bloc contre bloc ; `soft_book` voyage jusqu'au signal, à la base, au ledger et à Telegram | `tests/test_second_book_execution.py` |
+| La liste des books d'exécution n'existe qu'en un endroit ; sources, clés OddsAPI, moteur et dashboard en dérivent ; la fiche affiche le book de la LIGNE | `tests/test_book_execution.py` |
 | odds-api.io lit le calendrier ENTIER (1 requête) et sert les majeures avant le cap ; foot 120, le reste 60 | `tests/test_odds_api_io.py::test_les_majeures_passent_avant_le_cap`, `::test_le_cap_du_foot_est_120_les_autres_60` |
 | Une section féminine/jeunes ne prend jamais le rang de sa ligue ; la phase après la virgule ne compte que pour le RANG | `tests/test_source_adapter.py::TestPrioriteDeLigue` |
 | Le moteur nomme le prix `executable_odd` ; la colonne reste `xbet_odd` | `…::TestSignalEnMemoire` |

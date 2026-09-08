@@ -369,13 +369,25 @@ def kelly_stake(executable_odd: float, sharp_prob: float,
     stake = round(max(0.0, kf * fraction) * effective_bankroll)
     return stake if stake >= MIN_STAKE else 0
 
-# ── Book d'EXÉCUTION (décision opérateur 2026-09-07) ──────────────────
-# Le prix soft d'un signal est celui du book où l'opérateur POSE le pari,
+# ── Books d'EXÉCUTION (décision opérateur 2026-09-07, élargie le 2026-09-08) ──
+# Le prix soft d'un signal est celui d'un book où l'opérateur POSE le pari,
 # et de lui seul. Le 2026-09-07, « Al-Adalah +0.5 @ 1.85 » sortait d'un
 # line shopping Bet365 + 1xbet (odds-api.io) : la ligne +0.5 n'existait
 # pas chez 1xbet (que des quarts, +0.25 / +0.75), et la fiche affichait
 # « 1XBET » en dur. Un prix qu'on ne peut pas prendre n'est pas un edge.
-# L'opérateur a tranché : 1xbet uniquement (« je joue plus Melbet »).
-# Changer de book = instruction explicite dans la session (règle 11) ;
-# `core.source_adapter.est_book_execution` fait la comparaison de noms.
-EXECUTION_BOOK = "1xbet"
+# Le 2026-09-08 l'opérateur a rouvert le second book (« Bet365 plus
+# d'autres disponibles, plusieurs à la fois ») à la condition posée par
+# l'incident : le book d'ORIGINE est STOCKÉ par ligne (`signals.soft_book`)
+# et affiché sur la fiche, Telegram compris. Le line shopping entre ces
+# books se fait À LIGNE ÉGALE (core/execution_books.py), et sur le 1X2 le
+# bloc retenu appartient à UN seul book (les deux jambes du DNB).
+#
+# Ordre = priorité à prix égal. Ajouter un book = une entrée ici, et il faut
+# qu'une source le serve (odds-api.io : 2 slots sur le plan gratuit ;
+# titan007 : `SOFT_BOOKS` ; OddsAPI : `core.odds_api.ODDS_API_BOOK_KEYS`).
+# Changer cette liste = instruction explicite dans la session (règle 11) ;
+# `core.execution_books.est_book_execution` fait la comparaison de noms.
+EXECUTION_BOOKS = ("1xbet", "bet365")
+# Book de référence (premier de la liste) — pour les libellés qui n'ont pas
+# de ligne sous la main. Un signal, lui, porte TOUJOURS son propre book.
+EXECUTION_BOOK = EXECUTION_BOOKS[0]

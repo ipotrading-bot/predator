@@ -149,7 +149,10 @@ SHADOW_GOLDEN_HOUR = True
 # thread (a test runner, a dashboard route off the request thread, etc),
 # before a single line of run()'s actual logic ever executed. See
 # tests/test_run_engine_import.py.
-from core.constants import GLOBAL_TIMEOUT, SCAN_TIMEOUTS, EXECUTION_BOOK
+from core.constants import GLOBAL_TIMEOUT, SCAN_TIMEOUTS
+# Second book d'exécution (2026-09-08) : le bloc 1X2 d'UN book, le book de
+# chaque côté d'un barreau — voir core/execution_books.py.
+from core.execution_books import book_du_cote, choisir_bloc_h2h
 
 _budget_arme = GLOBAL_TIMEOUT      # renseigné par _arm_global_timeout, pour le message
 
@@ -344,7 +347,10 @@ def _refresh_ai_catalogues() -> None:
 # Columns optional at DB level — strip only as last-resort fallback
 _OPTIONAL_COLS = {"selection_name", "kelly_pct", "advice", "sharp_sources", "consensus_score", "correlation_group",
                   # sql/migrate_v10_12_signals_shadow.sql — posées à l'émission, voir _shadow_partition
-                  "is_shadow", "shadow_reason"}
+                  "is_shadow", "shadow_reason",
+                  # sql/migrate_v10_13_soft_book.sql — le book qui fournit le prix
+                  # (core/execution_books) ; rafraîchi AVEC le prix, jamais figé
+                  "soft_book"}
 
 # Le drapeau FANTÔME est figé à la PREMIÈRE insertion : un rafraîchissement
 # (même match/marché revu par un tick ultérieur, typiquement golden à T-1h)
@@ -552,7 +558,7 @@ def _set_cached(sb, key: str, value: list):
 # le sharp est gratuit — c'est l'équivalent d'un « odds screen » de pro.
 _SLATE_KEYS = ("id", "match", "home", "away", "league", "sport", "sport_id",
                "commence_time", "odds_1xbet", "totals_1xbet", "spreads_1xbet",
-               "_soft_source")
+               "h2h_par_book", "_soft_source")
 
 # Le book publie une douzaine de handicaps et autant de totaux, et REPRICE a
 # besoin de cette échelle : c'est elle qui permet de retrouver la ligne du
@@ -1259,8 +1265,15 @@ def _purge_old_signals(sb):
 def _emit(signals, sb, now, log, name, sport, league, mkt_key, mkt_label,
           executable_odd, pin_odd, sharp_prob, emoji, selection_name="", min_edge=None,
           match_time="", match_id="", sharp_sources=None, consensus_score=None,
-          ah0_value: bool = False, sharp_prob_cons=None, dnb_draw_odd: float = 0.0):
+          ah0_value: bool = False, sharp_prob_cons=None, dnb_draw_odd: float = 0.0,
+          soft_book: str | None = None):
     """Calcule l'EV, applique les gates de qualité, collecte le signal.
+
+    `soft_book` : le book d'EXÉCUTION qui fournit `executable_odd`
+    (core/execution_books) — persisté dans `signals.soft_book`, affiché sur
+    la fiche et dans Telegram. None quand le prix n'est pas attribuable
+    (repli sharp, slate d'avant le 2026-09-08) : on l'écrit tel quel plutôt
+    que d'étiqueter le prix au book principal, l'artefact du 2026-09-07.
 
     `sharp_prob_cons` est la borne worst-case de devig_bounds() : quand elle
     est fournie, le signal doit rester EV-positif SOUS LA MÉTHODE DE
@@ -1417,7 +1430,7 @@ def _emit(signals, sb, now, log, name, sport, league, mkt_key, mkt_label,
     mt = match_time.replace("Z", "+00:00") if match_time else ""
 
     log.info("SIGNAL  | %s %s | %s: %s=%.3f Pin=%.3f Edge=+%.2f%% Prob=%.0f%% %s",
-             emoji, name, mkt_label, EXECUTION_BOOK, executable_odd, pin_odd, edge,
+             emoji, name, mkt_label, soft_book or "book?", executable_odd, pin_odd, edge,
              sharp_prob * 100, risk)
     signal = {
         "match":          name,
@@ -1435,6 +1448,7 @@ def _emit(signals, sb, now, log, name, sport, league, mkt_key, mkt_label,
         "match_id":       match_id,
         "status":         "active",
         "selection_name": selection_name or name,
+        "soft_book":      soft_book,
         "kelly_pct":      kelly_pct,
         "advice":         advice,
         "sharp_sources":  json.dumps(sharp_sources) if sharp_sources else None,
@@ -1444,7 +1458,7 @@ def _emit(signals, sb, now, log, name, sport, league, mkt_key, mkt_label,
     signals.append(signal)
 
 
-def _dnb_draw_odd(m: dict, sport: str) -> float:
+def _dnb_draw_odd(bloc: dict, sport: str) -> float:
     """
     Cote du nul QUAND le prix d'entrée est un DNB synthétique, 0.0 sinon.
 
@@ -1456,7 +1470,9 @@ def _dnb_draw_odd(m: dict, sport: str) -> float:
     """
     if sport != "soccer":
         return 0.0
-    o = m.get("odds_1xbet") or {}
+    # `bloc` = le 1X2 du book RETENU (core/execution_books.choisir_bloc_h2h) :
+    # la cote du nul doit venir du même book que les deux jambes du DNB.
+    o = bloc or {}
     o1, o2 = float(o.get("1") or 0), float(o.get("2") or 0)
     if o1 <= 1.01 or o2 <= 1.01:
         return 0.0
@@ -1474,7 +1490,17 @@ def _process_h2h(m, name, sport, league, home, away, emoji, signals, sb, now, lo
     # La branche `_oracle_price` (prix « Pinnacle » rendu par un LLM, sans
     # contre-cote pour deviguer) a été SUPPRIMÉE le 2026-09-02 avec l'oracle
     # web-search : plus rien ne pose cette clé.
-    executable_price, _, soft_fav = to_binary(m["odds_1xbet"], sport, home, away)
+    # Plusieurs books d'exécution (2026-09-08) : UN bloc 1X2 entier, celui
+    # dont le prix FINAL exécutable est le meilleur — jamais un maximum par
+    # issue, un DNB synthétique engage deux jambes chez le même book.
+    par_book = m.get("h2h_par_book") or {}
+    if par_book:
+        soft_book, bloc_h2h, executable_price, soft_fav = choisir_bloc_h2h(par_book, sport, home, away)
+        if not bloc_h2h:
+            bloc_h2h = m["odds_1xbet"]
+    else:
+        bloc_h2h, soft_book = m["odds_1xbet"], None
+        executable_price, _, soft_fav = to_binary(bloc_h2h, sport, home, away)
     # Strict Matching: lock Pinnacle lookup to the same position as 1XBet
     # (fav_key "1"=home, "2"=away). Never run to_binary() on Pinnacle
     # independently — it could pick a different favourite and silently
@@ -1552,7 +1578,7 @@ def _process_h2h(m, name, sport, league, home, away, emoji, signals, sb, now, lo
     if executable_price <= 1.01 or pin_price <= 1.01:
         return
     if not strict_team_match(soft_fav, pin_fav):
-        log.info("SPLIT   | %s %s — %s=%s Sharp=%s", emoji, name, EXECUTION_BOOK, soft_fav, pin_fav)
+        log.info("SPLIT   | %s %s — %s=%s Sharp=%s", emoji, name, soft_book or "book?", soft_fav, pin_fav)
         return
     if sharp_prob < prob_min:
         log.info("LOWPROB | %s %s h2h — Prob.Sharp=%.0f%% < %.0f%%",
@@ -1569,11 +1595,11 @@ def _process_h2h(m, name, sport, league, home, away, emoji, signals, sb, now, lo
           "h2h", lbl, executable_price, pin_price, sharp_prob, emoji,
           sharp_prob_cons=sharp_cons,
           selection_name=soft_fav, min_edge=h2h_min_edge,
-          dnb_draw_odd=_dnb_draw_odd(m, sport),
+          dnb_draw_odd=_dnb_draw_odd(bloc_h2h, sport),
           match_time=m.get("commence_time", ""), match_id=m.get("id", ""),
           sharp_sources=sources_found if sources_found else None,
           consensus_score=consensus_score if sources_found else None,
-          ah0_value=ah0_value)
+          ah0_value=ah0_value, soft_book=soft_book)
 
 
 def _keep_best_side(sides: list, log, emoji, name) -> list:
@@ -1795,7 +1821,8 @@ def _process_totals(m, name, sport, league, emoji, signals, sb, now, log, min_ed
               selection_name=sel, min_edge=min_edge,
               match_time=m.get("commence_time", ""), match_id=m.get("id", ""),
               sharp_sources=sources_found if sources_found else None,
-              consensus_score=consensus_score if sources_found else None)
+              consensus_score=consensus_score if sources_found else None,
+              soft_book=book_du_cote(xt, side))
 
     signals.extend(_keep_best_side(sides, log, emoji, name))
 
@@ -1863,7 +1890,8 @@ def _process_spreads(m, name, sport, league, home, away, emoji, signals, sb, now
               selection_name=f"{team} {pt_str}", min_edge=min_edge,
               match_time=m.get("commence_time", ""), match_id=m.get("id", ""),
               sharp_sources=sources_found if sources_found else None,
-              consensus_score=consensus_score if sources_found else None)
+              consensus_score=consensus_score if sources_found else None,
+              soft_book=book_du_cote(xs, side))
 
     signals.extend(_keep_best_side(sides, log, emoji, name))
 
@@ -2121,7 +2149,11 @@ def _signal_block(s: dict, now) -> str:
     if fav and fav != sel:
         lines.append(f"   Favori : {fav}\n")
     tag = " (favori)" if fav and fav == sel else ""
-    lines.append(f"   → {sel}{tag} `@ {s.get('executable_odd', 0):.2f}` · valeur `+{s.get('edge_pct', 0):.1f}%`\n")
+    # Le book qui cote ce prix (2026-09-08, second book d'exécution) : sans
+    # lui, « @ 1.85 » ne dit plus chez qui poser le pari.
+    book = s.get("soft_book")
+    chez = f" · chez *{book}*" if book else ""
+    lines.append(f"   → {sel}{tag} `@ {s.get('executable_odd', 0):.2f}` · valeur `+{s.get('edge_pct', 0):.1f}%`{chez}\n")
     return "".join(lines)
 
 

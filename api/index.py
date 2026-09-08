@@ -347,14 +347,18 @@ def dashboard():
 
     groups = _group_by_match(signals)
 
-    from core.constants import BANKROLL_REF, EXECUTION_BOOK
+    from core.constants import BANKROLL_REF, EXECUTION_BOOK, EXECUTION_BOOKS
+    # `execution_book` = book de référence, pour les seuls libellés sans
+    # ligne sous la main ; chaque signal porte SON book (`soft_book`,
+    # sql/migrate_v10_13) et la fiche l'affiche par ligne (2026-09-08).
     return render_template("index.html", signals=signals, groups=groups,
                            last_scan=last_scan, bankroll_ref=BANKROLL_REF,
                            scan_crons=_SCAN_CRONS,
                            sport_emoji=_SPORT_EMOJI,
                            sport_label_short=_SPORT_LABEL_SHORT,
                            sport_order=_SPORT_ORDER,
-                           execution_book=EXECUTION_BOOK)
+                           execution_book=EXECUTION_BOOK,
+                           execution_books=EXECUTION_BOOKS)
 
 
 # ── Ledger ───────────────────────────────────────────────────────────

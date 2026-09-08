@@ -748,12 +748,128 @@ instruction explicite dans la session courante.
 
 Gardiens : `tests/test_book_execution.py` (nom unique, graphies,
 moteur/dashboard sans nom en dur, `XBET_KEY` « onexbet » cohérent) ;
-`tests/test_odds_api_io.py::test_seul_le_book_d_execution_fournit_le_prix_soft`,
+`tests/test_odds_api_io.py::test_seul_le_book_d_execution_fournit_le_prix_soft` (devenu `::test_chaque_ligne_porte_son_book_al_adalah_2026_09_07` le 2026-09-08),
 `::test_un_compte_sans_book_d_execution_ne_demande_rien`,
 `::test_un_book_sharp_en_second_slot_est_toujours_demande` ;
 `tests/test_titan007.py::test_le_prix_soft_est_celui_du_book_d_execution_pas_le_meilleur`,
-`::test_un_book_d_execution_fige_ne_donne_pas_de_prix`,
+`::test_un_book_d_execution_fige_ne_donne_pas_de_prix` (plafond book par book depuis le 2026-09-08),
 `::test_un_meilleur_prix_ailleurs_nest_pas_pris`.
+
+### Le second book revient avec son nom sur chaque ligne (2026-09-08)
+
+Symptôme : soirée de Ligue des champions du 2026-09-08 sans UN signal. Les
+scans standard de 11:10, 13:10 et 16:09 UTC et le scan forcé sur 48 h de
+16:19 ont rendu 0 candidat (runs GitHub Actions 34219272904, 34230364691,
+34249285768, 34250336248). Sur les affiches UCL, 1xbet colle au sharp : tous
+les marchés en EV négatif, entre −1 % et −5,5 %. Ce n'est pas une panne,
+c'est le prix du 07/09 : le passage à 1xbet seul avait supprimé le line
+shopping, et la couverture odds-api.io était déjà tombée de 51 matchs cotés
+(Bet365+1xbet) à ~8 (1xbet seul, mesure du 27/08 citée dans l'entrée
+précédente). Un book seul qui colle au sharp ne laisse rien à prendre.
+
+Cause mécanique : l'entrée du 07/09 posait la condition du retour d'un second
+book — « le book d'origine STOCKÉ par ligne et affiché sur la fiche ». Aucun
+organe ne le permettait : pas de colonne, pas d'attribution par côté dans les
+échelles de handicaps/totaux, un seul bloc 1X2 par match, libellés dérivés
+d'une constante unique. C'est cette condition qui est construite ici.
+
+Décision opérateur (session du 2026-09-08, règle 11) : « Oui pour le second
+book d'exécution », puis « Bet365 plus d'autres disponibles, plusieurs à la
+fois ».
+
+Fait :
+- `core/constants.EXECUTION_BOOKS = ("1xbet", "bet365")` ; `EXECUTION_BOOK =
+  EXECUTION_BOOKS[0]` reste le book de RÉFÉRENCE (départage des égalités de
+  prix, libellés sans ligne sous la main) — un signal porte toujours SON
+  book ;
+- nouveau module `core/execution_books.py` : `book_canonique` (« Bet 365 »,
+  « BET365 », « 1x Bet » → nom canonique ; MelBet, 1xBit, BetWinner
+  REFUSÉS, même raison que le 07/09), `ordre`, `fusionner_lignes`
+  (handicaps/totaux fusionnés À LIGNE ÉGALE ; chaque côté de chaque barreau
+  porte `books = {côté: book}` ; une ligne qu'un seul book cote entre
+  attribuée à lui — l'Al-Adalah +0.5 du 07/09 serait sortie « chez bet365 »,
+  pas sous la fiche 1xbet ; ligne principale = la plus équilibrée, JAMAIS la
+  mieux payée — A6), `book_du_cote`, `choisir_bloc_h2h` (sur le 1X2, UN bloc
+  ENTIER par book, départagé sur le prix FINAL exécutable, favori fixé par
+  le book de référence : les deux jambes du DNB synthétique de
+  `core.math_engine.to_binary` partent chez le MÊME book). `core.source_
+  adapter.est_book_execution` délègue à ce module ;
+- sources : `core/odds_api_io._to_match` pose `h2h_par_book` et fusionne les
+  échelles ; `usable_bookmakers` demande tous les books d'exécution + les
+  sharp — le slot Bet365 posé le 27/08 est de nouveau interrogé
+  (`books=Bet365,1xbet`). `core/odds_api._parse_event` : `ODDS_API_BOOK_KEYS
+  = {"1xbet": "onexbet"}`, paramètre `bookmakers` DÉRIVÉ de cette table
+  (`_execution_keys`), plus de liste en dur. `core/titan007._soft_prices` :
+  un bloc par book d'exécution, plafond médiane appliqué book PAR book (un
+  1xbet figé n'efface plus Bet365). `core/harvester._fusionner_h2h` : fusion
+  entre sources book par book — jamais une issue Bet365 dans un bloc 1xbet ;
+- moteur `run_engine.py` : `_process_h2h` choisit le bloc via
+  `choisir_bloc_h2h` ; `_dnb_draw_odd(bloc, sport)` lit la cote du nul dans
+  le bloc RETENU ; totals/spreads passent `soft_book=book_du_cote(...)` ;
+  `_emit(..., soft_book=None)` écrit `signal["soft_book"]` et loggue
+  « book? » quand le prix n'est pas attribuable — jamais le book de
+  référence par défaut ; `_OPTIONAL_COLS` reçoit `soft_book`, `_SLATE_KEYS`
+  reçoit `h2h_par_book` (cache reprice) ; Telegram `_signal_block` ajoute
+  « · chez *bet365* » ;
+- persistance : `sql/migrate_v10_13_soft_book.sql` — `soft_book text` sur
+  `signals`, `ai_learning_ledger` et leurs deux archives ; backfill '1xbet'
+  pour les lignes émises depuis le 2026-09-07 14:37 UTC (commit 8b6ea55,
+  book unique par construction), NULL avant — le mix Bet365/1xbet n'était
+  pas tracé, on ne devine pas. `soft_book` est rafraîchi AVEC le prix
+  (`_FIGES_AU_RAFRAICHISSEMENT` inchangé : un book et un prix de deux ticks
+  différents seraient la fiche mensongère du 07/09). `core/db.log_to_ledger`
+  et `backfill_ledger.py` recopient la colonne ;
+- dashboard : `api/index.py` passe `execution_books` ; `templates/index.html`
+  — badge `.sig-book` par ligne dans la liste, `#m-book` dans le titre de la
+  modale et `#s-book` dans les étapes remplis PAR LIGNE depuis
+  `s.soft_book` (« ? » si NULL) ; CSS `api/static/css/predator.css`.
+
+PAS fait, et pourquoi :
+- Bet365 chez OddsAPI : la seule clé existante est la version australienne,
+  qui n'est pas le book de l'opérateur — non demandé ;
+- un troisième book : le plan gratuit odds-api.io n'a que deux slots par
+  compte. En ajouter un = l'ajouter à `EXECUTION_BOOKS` ET à une source qui
+  le sert, même commit — gardien
+  `test_chaque_book_de_la_liste_est_servi_par_au_moins_une_source` ;
+- `core/closing_line._selection_point` relit encore la ligne depuis le
+  libellé de la sélection : deuxième implémentation de « même ligne »,
+  divergence préexistante, non traitée ici ;
+- l'index unique `(match_id, market_key)` reste : un signal par marché, le
+  book gagnant est celui du signal. Pas de « même pari chez deux books ».
+
+Mesure attendue : sur les lignes réglées POSTÉRIEURES à ce commit, réussite
+et CLV PAR `soft_book` (règle 7 : Wilson + point mort après taxe). Critère
+de retrait (règle 13) : si sur 30 lignes Bet365 réglées le CLV moyen est
+négatif, ou si l'écart de ligne (« ligne inexistante chez le book »)
+réapparaît, retirer Bet365 de `EXECUTION_BOOKS`. Revue le 2026-09-22.
+
+⚠️ La fusion se fait à LIGNE ÉGALE et le bloc 1X2 est pris ENTIER chez un
+seul book. Prendre « le meilleur prix par issue » entre deux books recrée
+l'artefact du 07/09 (un pari que personne ne cote) — et casse le DNB
+synthétique, dont les deux jambes doivent venir du même book.
+⚠️ `soft_book` NULL veut dire « non attribuable », jamais « 1xbet par
+défaut » : le repli sur le book de référence est précisément ce qui a rendu
+la fiche du 07/09 fausse.
+⛔ `EXECUTION_BOOKS` = décision opérateur (règle 11) ; y ajouter ou en
+retirer un book exige une instruction explicite dans la session courante.
+⛔ Sans la migration v10_13 appliquée, `_save` retire la colonne
+(`_OPTIONAL_COLS`) et l'INSERT passe : le book est perdu en silence, pas le
+signal. Vérifier en base, pas dans le dépôt (`.claude/rules/sql.md`).
+
+Gardiens : `tests/test_second_book_execution.py` (`TestFusionALigneEgale`,
+`TestBlocH2H`, `TestLeBookVoyage` — signal, ledger, Telegram, cache reprice —,
+`TestFusionEntreSources`,
+`::test_la_migration_pose_la_colonne_sur_les_quatre_tables`,
+`::test_chaque_book_de_la_liste_est_servi_par_au_moins_une_source`) ;
+`tests/test_book_execution.py` (liste unique, graphies, clés OddsAPI dérivées,
+aucun nom en dur moteur/dashboard) ;
+`tests/test_odds_api_io.py::test_chaque_ligne_porte_son_book_al_adalah_2026_09_07`,
+`::test_deux_books_sur_la_meme_ligne_meilleur_prix_par_cote` ;
+`tests/test_titan007.py::test_un_bloc_par_book_d_execution_jamais_un_max_par_issue`,
+`::test_un_book_d_execution_fige_est_ecarte_pas_les_autres`,
+`::test_tous_les_books_d_execution_figes_ne_donnent_pas_de_prix` (ces deux
+derniers remplacent `test_un_book_d_execution_fige_ne_donne_pas_de_prix`
+cité par l'entrée du 07/09).
 
 ### Périmètre sports (2026-08-22)
 

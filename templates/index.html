@@ -151,7 +151,7 @@
       <div class="sig-r2 leg" data-idx="{{ leg.idx }}" onclick="openModal({{ leg.idx }})">
         <span class="leg-mkt">{{ mkt }}</span>
         <span class="sig-team">{{ team }}</span>
-        <span class="sig-odd">@ {{ "%.2f"|format(s.xbet_odd) }}</span>
+        <span class="sig-odd">@ {{ "%.2f"|format(s.xbet_odd) }}{% if s.soft_book %} <span class="sig-book" title="Book qui cote ce prix">{{ s.soft_book }}</span>{% endif %}</span>
         <span class="sig-edge {% if is_suspect %}e-sus{% elif s.edge_pct >= 5 %}e-high{% elif s.edge_pct >= 2.5 %}e-mid{% else %}e-low{% endif %}">
           +{{ "%.1f"|format(s.edge_pct) }}%
         </span>
@@ -211,7 +211,7 @@
   <div class="m-drag"><i></i></div>
 
   <div class="m-hdr">
-    <span class="m-title" id="modal-title">&#9658; PLACER LE PARI — {{ execution_book|upper }}</span>
+    <span class="m-title" id="modal-title">&#9658; PLACER LE PARI — <span id="m-book">{{ execution_book|upper }}</span></span>
     <button class="m-close" onclick="closeModal()" aria-label="Fermer">&#10005;</button>
   </div>
 
@@ -247,7 +247,7 @@
   </div>
 
   <div class="m-steps">
-    <div class="m-lbl">Étapes {{ execution_book }}</div>
+    <div class="m-lbl">Étapes <span id="s-book">{{ execution_book }}</span></div>
     <div class="steps">
       <div class="step"><span class="sn">①</span><span class="sk">Match :</span><span class="sv" id="s-match">—</span></div>
       <div class="step"><span class="sn">②</span><span class="sk">Marché :</span><span class="sv" id="s-market">—</span></div>
@@ -540,7 +540,12 @@ function openModal(idx){
   if(s.match_time){ const d=s.match_time; mt=d.slice(8,10)+'/'+d.slice(5,7)+' '+d.slice(11,16)+' UTC'; }
   const cd=s.match_time?_cd(s.match_time):null;
   const rCol={HIGH_VALUE:'var(--green)',VALUE:'var(--yellow)',LOW_VALUE:'#444',SUSPECT_DATA:'var(--orange)'}[s.risk_flag]||'#444';
-  const why=s.advice||`Edge +${(s.edge_pct||0).toFixed(1)}% — {{ execution_book }} ${(s.xbet_odd||0).toFixed(2)} vs Pinnacle ${(s.pinnacle_price||0).toFixed(2)}.`;
+  // Le book de CETTE ligne (signals.soft_book, 2026-09-08) ; « ? » si le
+  // prix n'est pas attribuable — jamais le book de référence par défaut.
+  const book=s.soft_book||'?';
+  const why=s.advice||`Edge +${(s.edge_pct||0).toFixed(1)}% — ${book} ${(s.xbet_odd||0).toFixed(2)} vs Pinnacle ${(s.pinnacle_price||0).toFixed(2)}.`;
+  document.getElementById('m-book').textContent = book.toUpperCase();
+  document.getElementById('s-book').textContent = book;
 
   document.getElementById('m-match').textContent = emoji+'  '+s.match;
   document.getElementById('m-sub').textContent   = s.league||'—';

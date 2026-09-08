@@ -140,10 +140,14 @@ def test_markets_map_to_engine_shapes(monkeypatch):
     (m,) = oai.fetch_sport("soccer", api_key="k")
     assert m["odds_1xbet"] == {"1": 1.34, "X": 4.8, "2": 10.0}
     # ligne principale = prix les plus proches, pas la première publiée
-    principale = lambda d: {k: v for k, v in d.items() if k != "ladder"}
+    principale = lambda d: {k: v for k, v in d.items() if k not in ("ladder", "books")}
     assert principale(m["spreads_1xbet"]) == {"home": 1.88, "away": 1.92,
                                               "point": -1.25, "away_point": 1.25}
     assert principale(m["totals_1xbet"]) == {"over": 1.89, "under": 1.91, "point": 2.25}
+    # Chaque côté de chaque barreau connaît son book (2026-09-08)
+    assert m["spreads_1xbet"]["books"] == {"home": "1xbet", "away": "1xbet"}
+    assert all(r["books"] == {"over": "1xbet", "under": "1xbet"} for r in m["totals_1xbet"]["ladder"])
+    assert m["h2h_par_book"] == {"1xbet": {"1": 1.34, "X": 4.8, "2": 10.0}}
     # L'échelle garde TOUTES les lignes cotées, la principale en tête —
     # sans elle, deux sources qui choisissent chacune la leur ne se
     # rencontrent jamais (voir run_engine._aligner_sur_meme_ligne).
@@ -183,11 +187,12 @@ def test_sharp_book_becomes_odds_pinnacle(monkeypatch):
     assert m["odds_1xbet"] == {"1": 2.30, "X": 3.40, "2": 3.10}
 
 
-def test_seul_le_book_d_execution_fournit_le_prix_soft(monkeypatch):
+def test_chaque_ligne_porte_son_book_al_adalah_2026_09_07(monkeypatch):
     """2026-09-07 : « Al-Adalah +0.5 @ 1.85 » sortait du line shopping
-    Bet365 + 1xbet ; 1xbet ne cotait que +0.25 et +0.75. Le prix soft est
-    celui du book d'exécution, ses lignes aussi — et l'API ne reçoit que
-    lui en paramètre."""
+    Bet365 + 1xbet sous une fiche « 1XBET » ; 1xbet ne cotait que +0.25 et
+    +0.75. Depuis le 2026-09-08 les deux books sont d'exécution : la ligne
+    +0.5 entre, attribuée à Bet365 ; les quarts restent à 1xbet ; le 1X2
+    est un bloc par book, jamais un maximum par issue."""
     ev = _odds_event(1, "Al-Adalah", "Al-Saqer", {
         "Bet365": [_ml(3.60, 3.70, 2.30), _spread([(0.5, 1.85, 1.95)])],
         "1xbet":  [_ml(3.55, 3.65, 2.26), _spread([(0.25, 2.13, 1.70), (0.75, 1.53, 2.40)])],
@@ -195,15 +200,31 @@ def test_seul_le_book_d_execution_fournit_le_prix_soft(monkeypatch):
     calls = _wire(monkeypatch, [_event(1, "Al-Adalah", "Al-Saqer")], [[ev]],
                   books=("Bet365", "1xbet"))
     (m,) = oai.fetch_sport("soccer", api_key="k")
-    assert m["odds_1xbet"] == {"1": 3.55, "X": 3.65, "2": 2.26}      # pas le 3.60 de Bet365
-    assert [r["point"] for r in m["spreads_1xbet"]["ladder"]] == [0.25, 0.75]
-    assert 0.5 not in {r["point"] for r in m["spreads_1xbet"]["ladder"]}
-    assert calls["books_param"] == "1xbet"
+    assert m["odds_1xbet"] == {"1": 3.55, "X": 3.65, "2": 2.26}      # bloc de référence : 1xbet
+    assert m["h2h_par_book"] == {"1xbet": {"1": 3.55, "X": 3.65, "2": 2.26},
+                                 "bet365": {"1": 3.60, "X": 3.70, "2": 2.30}}
+    par_point = {r["point"]: r for r in m["spreads_1xbet"]["ladder"]}
+    assert set(par_point) == {0.25, 0.5, 0.75}
+    assert par_point[0.5]["books"] == {"home": "bet365", "away": "bet365"}
+    assert par_point[0.25]["books"] == {"home": "1xbet", "away": "1xbet"}
+    assert calls["books_param"] == "Bet365,1xbet"
     assert "odds_pinnacle" not in m
 
 
+def test_deux_books_sur_la_meme_ligne_meilleur_prix_par_cote(monkeypatch):
+    ev = _odds_event(1, "A", "B", {
+        "1xbet":  [_ml(2.0, 3.3, 3.6), _totals([(2.5, 1.90, 1.95)])],
+        "Bet365": [_ml(2.0, 3.3, 3.6), _totals([(2.5, 1.95, 1.90)])],
+    })
+    _wire(monkeypatch, [_event(1, "A", "B")], [[ev]], books=("1xbet", "Bet365"))
+    (m,) = oai.fetch_sport("soccer", api_key="k")
+    t = m["totals_1xbet"]
+    assert (t["over"], t["under"]) == (1.95, 1.95)
+    assert t["books"] == {"over": "bet365", "under": "1xbet"}
+
+
 def test_un_compte_sans_book_d_execution_ne_demande_rien(monkeypatch, caplog):
-    calls = _wire(monkeypatch, [_event(1, "A", "B")], [], books=("Bet365", "Betano"))
+    calls = _wire(monkeypatch, [_event(1, "A", "B")], [], books=("Betano", "Bwin"))
     with caplog.at_level(logging.WARNING, logger="PREDATOR.odds_api_io"):
         assert oai.fetch_sport("soccer", api_key="k") == []
     assert calls["events"] == 0 and calls["multi"] == []

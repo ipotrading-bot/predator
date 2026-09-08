@@ -80,7 +80,8 @@ import urllib.request
 from datetime import datetime, timedelta, timezone
 
 from core import daily_quota
-from core.source_adapter import est_book_execution, league_rank
+from core.execution_books import book_canonique, ordre
+from core.source_adapter import league_rank
 
 log = logging.getLogger("PREDATOR.titan007")
 
@@ -239,28 +240,49 @@ def _soft_price(books: dict) -> dict | None:
 
     Jusqu'au 2026-09-07 c'était un line shopping sur `SOFT_BOOKS` : le
     meilleur prix crédible, chez n'importe lequel d'entre eux. L'opérateur
-    ne mise que chez `EXECUTION_BOOK` (décision opérateur, règle 11) : un
+    ne mise que chez `EXECUTION_BOOKS` (décision opérateur, règle 11) : un
     prix Bet365 ou Marathonbet n'est pas exécutable, donc pas un edge. Le
     plafond `MAX_SOFT_OUTLIER` reste : il protège du book FIGÉ, et le book
     d'exécution peut l'être dans ce feed comme un autre. Renvoie None sans
     prix du book d'exécution, ou si moins de trois books soft cotent — sans
     médiane fiable, mieux vaut pas de prix qu'un prix douteux."""
-    execution = next((odds for book, odds in books.items() if est_book_execution(book)), None)
-    if execution is None:
+    par_book = _soft_prices(books)
+    if not par_book:
         return None
+    return par_book[min(par_book, key=ordre)]
+
+
+def _soft_prices(books: dict) -> dict[str, dict]:
+    """Un bloc 1X2 par book d'EXÉCUTION présent dans le feed (2026-09-08 :
+    plusieurs books, `core.constants.EXECUTION_BOOKS`), chacun borné par la
+    médiane des books soft — le plafond anti-book-figé s'applique book par
+    book, et un book figé est simplement absent du résultat. Jamais un
+    maximum par issue entre books : le moteur départage bloc contre bloc,
+    sur le prix final (core/execution_books.choisir_bloc_h2h)."""
     quotes = [odds for book, odds in books.items()
               if any(n in book.lower() for n in SOFT_BOOKS)]
     if len(quotes) < 3:
-        return None
-    out: dict = {}
+        return {}
+    medianes = {}
     for k in ("1", "X", "2"):
         vals = [q[k] for q in quotes if q.get(k, 0) > 1.01]
-        mine = float(execution.get(k, 0) or 0)
-        if not vals or mine <= 1.01 or mine > _median(vals) * MAX_SOFT_OUTLIER:
-            out[k] = 0.0             # absent, ou figé au-dessus du marché
+        medianes[k] = _median(vals) if vals else None
+    par_book: dict[str, dict] = {}
+    for book, execution in books.items():
+        canon = book_canonique(book)
+        if canon is None or canon in par_book:
             continue
-        out[k] = mine
-    return out if out.get("1") and out.get("2") else None
+        out: dict = {}
+        for k in ("1", "X", "2"):
+            mine = float(execution.get(k, 0) or 0)
+            med = medianes[k]
+            if med is None or mine <= 1.01 or mine > med * MAX_SOFT_OUTLIER:
+                out[k] = 0.0             # absent, ou figé au-dessus du marché
+                continue
+            out[k] = mine
+        if out.get("1") and out.get("2"):
+            par_book[canon] = out
+    return par_book
 
 
 def fetch_matches(hours_ahead: int = 24, max_matches: int | None = None) -> list[dict]:
@@ -316,7 +338,8 @@ def fetch_matches(hours_ahead: int = 24, max_matches: int | None = None) -> list
         if not books:
             n_unreachable += 1
             continue
-        soft  = _soft_price(books)
+        par_book = _soft_prices(books)
+        soft  = par_book[min(par_book, key=ordre)] if par_book else None
         sharp = _sharp_price(books)
         if not soft and not sharp:
             continue
@@ -334,6 +357,8 @@ def fetch_matches(hours_ahead: int = 24, max_matches: int | None = None) -> list
             "odds_1xbet":    soft or sharp,
             "_soft_source":  "titan007",
         }
+        if par_book:
+            m["h2h_par_book"] = par_book
         if sharp:
             m["odds_pinnacle"] = sharp
             n_sharp += 1

@@ -106,13 +106,24 @@ def test_le_prix_soft_est_celui_du_book_d_execution_pas_le_meilleur():
     assert t7._soft_price(books)["1"] == 4.10
 
 
-def test_un_book_d_execution_fige_ne_donne_pas_de_prix():
+def test_un_book_d_execution_fige_est_ecarte_pas_les_autres():
     """Le cas mesuré le 2026-08-20 (4.59 quand le marché est à ~4.1), cette
-    fois chez le book d'exécution lui-même : mieux vaut rien."""
+    fois chez 1xbet : son bloc tombe, celui de Bet365 (aussi d'exécution
+    depuis le 2026-09-08) reste — book par book, mieux vaut rien qu'un
+    prix figé."""
     books = {"1xBet": {"1": 4.59, "X": 3.4, "2": 1.9},
              "Bet 365": {"1": 4.05, "X": 3.4, "2": 1.9},
              "Bwin": {"1": 4.15, "X": 3.4, "2": 1.9},
              "Betway": {"1": 4.10, "X": 3.4, "2": 1.9}}
+    assert set(t7._soft_prices(books)) == {"bet365"}
+    assert t7._soft_price(books)["1"] == 4.05
+
+
+def test_tous_les_books_d_execution_figes_ne_donnent_pas_de_prix():
+    books = {"1xBet": {"1": 4.59, "X": 3.4, "2": 1.9},
+             "Bwin": {"1": 4.15, "X": 3.4, "2": 1.9},
+             "Betway": {"1": 4.10, "X": 3.4, "2": 1.9},
+             "Unibet": {"1": 4.08, "X": 3.4, "2": 1.9}}
     assert t7._soft_price(books) is None
 
 
@@ -124,10 +135,21 @@ def test_un_meilleur_prix_ailleurs_nest_pas_pris():
 
 
 def test_sans_book_d_execution_pas_de_prix_soft():
-    books = {"Bet 365": {"1": 2.05, "X": 3.4, "2": 3.5},
+    books = {"Unibet": {"1": 2.05, "X": 3.4, "2": 3.5},
              "Bwin": {"1": 2.10, "X": 3.4, "2": 3.5},
              "Betway": {"1": 2.00, "X": 3.4, "2": 3.5}}
     assert t7._soft_price(books) is None
+
+
+def test_un_bloc_par_book_d_execution_jamais_un_max_par_issue():
+    """1xbet meilleur sur le 1, Bet365 sur le 2 : deux blocs distincts —
+    le moteur départage sur le prix final, pas sur une issue."""
+    books = {"1xBet": {"1": 2.10, "X": 3.4, "2": 3.40},
+             "Bet 365": {"1": 2.00, "X": 3.4, "2": 3.60},
+             "Bwin": {"1": 2.05, "X": 3.4, "2": 3.50}}
+    par = t7._soft_prices(books)
+    assert par == {"1xbet": {"1": 2.10, "X": 3.4, "2": 3.40},
+                   "bet365": {"1": 2.00, "X": 3.4, "2": 3.60}}
 
 
 def test_too_few_soft_books_yields_no_price():

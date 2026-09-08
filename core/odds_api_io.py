@@ -28,14 +28,15 @@ sous le plafond de 500. Le compteur partagé de core/daily_quota.py fait
 respecter ce plafond entre les runs — sans lui, une journée où Tier 1 est
 mort suffirait à le dépasser (voir la suspension du compte api-sports).
 
-LE BOOK D'EXÉCUTION (2026-09-07)
---------------------------------
-Seul le prix de `core.constants.EXECUTION_BOOK` (1xbet) sert de prix soft,
-et seul ce book (plus un éventuel book sharp) est demandé à l'API. Le
-line shopping entre les deux slots (Bet365 + 1xbet, 2026-08-27 → 2026-09-07)
-produisait des lignes et des prix que l'opérateur ne pouvait pas prendre —
-voir `usable_bookmakers`. Le second slot ne sert donc plus qu'à un book
-sharp, que le plan gratuit refuse : il est sans effet aujourd'hui.
+LES BOOKS D'EXÉCUTION (2026-09-07, élargi le 2026-09-08)
+--------------------------------------------------------
+Seuls les prix de `core.constants.EXECUTION_BOOKS` (1xbet, Bet365) servent
+de prix soft, et seuls ces books (plus un éventuel book sharp) sont demandés
+à l'API. Le line shopping entre les deux slots (2026-08-27 → 2026-09-07)
+produisait des lignes que l'opérateur ne pouvait pas prendre, étiquetées
+« 1xbet » sans trace du book d'origine. Depuis le 2026-09-08 il est de
+retour À LIGNE ÉGALE, chaque côté de chaque barreau portant son book, et le
+1X2 restant un bloc par book (`core/execution_books`, `_to_match`).
 
 LES BOOKS SÉLECTIONNÉS
 ----------------------
@@ -61,9 +62,10 @@ from datetime import datetime, timedelta, timezone
 import requests
 
 from core import daily_quota
-from core.constants import EXECUTION_BOOK
+from core.constants import EXECUTION_BOOKS
 from core.secret_store import get_secret
-from core.source_adapter import est_book_execution, league_rank
+from core.execution_books import book_canonique, est_book_execution, fusionner_lignes, ordre
+from core.source_adapter import league_rank
 
 log = logging.getLogger("PREDATOR.odds_api_io")
 
@@ -240,8 +242,8 @@ def usable_bookmakers(key: str) -> list[str]:
     jouer n'a pas de sens."""
     books = selected_bookmakers(key)
     if books and not any(est_book_execution(b) for b in books):
-        log.warning("odds-api.io: %s n'est pas parmi les slots du compte (%s) — "
-                    "aucun prix exécutable à demander", EXECUTION_BOOK, ",".join(books))
+        log.warning("odds-api.io: aucun book d'exécution (%s) parmi les slots du compte (%s) — "
+                    "aucun prix exécutable à demander", ", ".join(EXECUTION_BOOKS), ",".join(books))
         return []
     return [b for b in books if est_book_execution(b) or _is_sharp(b)]
 
@@ -361,7 +363,7 @@ def _to_match(ev: dict, sport: str, sport_id: int, draw: bool) -> dict | None:
     away = str(ev.get("away", "")).strip()
     if not home or not away:
         return None
-    soft: dict = {}
+    par_book: dict = {}          # book d'exécution canonique → marchés parsés
     sharp: dict = {}
     for book, entries in (ev.get("bookmakers") or {}).items():
         parsed = _markets(entries, draw)
@@ -370,12 +372,22 @@ def _to_match(ev: dict, sport: str, sport_id: int, draw: bool) -> dict | None:
         if _is_sharp(str(book)):
             if not sharp:
                 sharp = parsed
-        elif est_book_execution(str(book)) and not soft:
-            soft = parsed
+            continue
+        canon = book_canonique(str(book))
+        if canon and canon not in par_book:
+            par_book[canon] = parsed
         # Tout autre book soft est ignoré : son prix n'est pas exécutable
         # (voir `usable_bookmakers` — normalement il n'est même pas demandé).
-    base = soft or sharp
-    if not base.get("h2h"):
+
+    # 1X2 : un bloc par book, jamais un maximum par issue (les deux jambes
+    # du DNB partent chez le même book) ; `odds_1xbet` = bloc du book de
+    # référence, le moteur départage sur le prix final (core/execution_books).
+    h2h_par_book = {b: p["h2h"] for b, p in par_book.items() if p.get("h2h")}
+    if h2h_par_book:
+        soft_h2h = h2h_par_book[min(h2h_par_book, key=ordre)]
+    else:
+        soft_h2h = sharp.get("h2h") or {}       # repli sharp, comme avant
+    if not soft_h2h:
         return None
 
     out = {
@@ -387,13 +399,20 @@ def _to_match(ev: dict, sport: str, sport_id: int, draw: bool) -> dict | None:
         "sport":         sport,
         "sport_id":      sport_id,
         "commence_time": str(ev.get("date", "")),
-        "odds_1xbet":    base["h2h"],
+        "odds_1xbet":    soft_h2h,
         "_soft_source":  "odds-api.io",
     }
-    if base.get("spreads"):
-        out["spreads_1xbet"] = base["spreads"]
-    if base.get("totals"):
-        out["totals_1xbet"] = base["totals"]
+    if h2h_par_book:
+        out["h2h_par_book"] = h2h_par_book
+    # Handicaps et totaux : fusion À LIGNE ÉGALE entre books d'exécution,
+    # chaque barreau portant le book de chaque côté (`books`).
+    for marche in ("spreads", "totals"):
+        if par_book:
+            fused = fusionner_lignes({b: p[marche] for b, p in par_book.items() if p.get(marche)}, marche)
+        else:
+            fused = sharp.get(marche)
+        if fused:
+            out[f"{marche}_1xbet"] = fused
     if sharp.get("h2h"):
         out["odds_pinnacle"] = sharp["h2h"]
         if sharp.get("spreads"):

@@ -95,7 +95,17 @@ démarre en mode ombre et rend `[]` tant qu'elle n'a pas 100 matchs appariés à
 
 ---
 
-## 2. odds-api.io — le second slot bookmaker ✅ FAIT le 2026-08-27 · ⚠️ SANS EFFET depuis le 2026-09-07
+## 2. odds-api.io — le second slot bookmaker ✅ FAIT le 2026-08-27 · ✅ DE NOUVEAU ACTIF depuis le 2026-09-08
+
+> **2026-09-08 — décision opérateur : Bet365 second book d'exécution**
+> (`core.constants.EXECUTION_BOOKS = ("1xbet", "bet365")`). Le slot Bet365
+> est interrogé à nouveau, à la condition posée par l'incident du 07/09 :
+> le book d'origine est stocké par ligne (`signals.soft_book`,
+> `sql/migrate_v10_13_soft_book.sql`) et affiché sur la fiche et dans
+> Telegram. Le line shopping se fait à ligne égale ; sur le 1X2 le bloc
+> retenu appartient à un seul book. Ajouter un 3e book = une entrée dans
+> `EXECUTION_BOOKS` **et** une source qui le sert (odds-api.io n'a que
+> 2 slots ; titan007 couvre `SOFT_BOOKS`) — instruction explicite, règle 11.
 
 > **2026-09-07 — décision opérateur : 1xbet uniquement.** Le moteur ne prend
 > plus que le prix du book d'exécution (`core.constants.EXECUTION_BOOK`) et ne

@@ -390,6 +390,9 @@ def log_to_ledger(sb, sig: dict, clv: float, outcome: str) -> None:
         # Drapeau FANTÔME recopié du signal (sql/migrate_v10_12) : /performance
         # n'a plus à le deviner depuis time_to_match_minutes.
         "is_shadow":              bool(sig.get("is_shadow", False)),
+        # Book d'exécution qui a fourni le prix (sql/migrate_v10_13) : une
+        # analyse par book (CLV, réussite) sans deviner depuis l'époque.
+        "soft_book":              sig.get("soft_book"),
     }
     payload = {
         "signal_id":             sig.get("id"),

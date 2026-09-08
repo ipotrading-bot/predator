@@ -62,6 +62,43 @@ def _stable_id(prefix: str, home: str, away: str, when: str = "") -> str:
     return f"ai_{prefix}_" + hashlib.sha1(raw.encode()).hexdigest()[:12]
 
 
+def _meilleur_par_issue(cible: dict, autre: dict) -> bool:
+    """Meilleur prix par issue entre deux observations DU MÊME book (ou de
+    provenance inconnue) — deux sources qui lisent le même book donnent deux
+    lectures d'un seul prix, pas deux books. True si `cible` a bougé."""
+    improved = False
+    for key in ("1", "X", "2"):
+        new_odd = float(autre.get(key, 0.0) or 0.0)
+        if new_odd > float(cible.get(key, 0.0) or 0.0):
+            cible[key] = new_odd
+            improved = True
+    return improved
+
+
+def _fusionner_h2h(existing: dict, cand: dict) -> bool:
+    """Fusion du 1X2 d'un même match vu par deux sources.
+
+    Depuis le 2026-09-08 chaque source pose `h2h_par_book` (bloc par book
+    d'exécution, core/execution_books). Les blocs se fusionnent BOOK PAR
+    BOOK — jamais une issue de Bet365 dans un bloc 1xbet : un DNB
+    synthétique engage deux jambes chez le même book. `odds_1xbet` reste le
+    bloc du book de référence ; sans attribution des deux côtés (sources
+    d'avant, tests), on retombe sur le meilleur prix par issue."""
+    from core.execution_books import ordre
+    ex_pb, ca_pb = existing.get("h2h_par_book"), cand.get("h2h_par_book")
+    if not ex_pb or not ca_pb:
+        return _meilleur_par_issue(existing["odds_1xbet"], cand["odds_1xbet"])
+    improved = False
+    for book, bloc in ca_pb.items():
+        if book in ex_pb:
+            improved = _meilleur_par_issue(ex_pb[book], bloc) or improved
+        else:
+            ex_pb[book] = dict(bloc)
+            improved = True
+    existing["odds_1xbet"] = ex_pb[min(ex_pb, key=ordre)]
+    return improved
+
+
 def _fuzzy_match_event(candidate: dict, pool: list[dict]) -> dict | None:
     """Find `candidate`'s counterpart in `pool` by team-name fuzzy match
     (core.paim_engine.strict_team_match) — used to line up the same
@@ -149,13 +186,7 @@ def _fetch_multi_book(sport_id: int) -> list:
                           "spreads_pinnacle", "totals_pinnacle"):
                 if cand.get(extra) and not existing.get(extra):
                     existing[extra] = cand[extra]
-            improved = False
-            for key in ("1", "X", "2"):
-                new_odd = cand["odds_1xbet"].get(key, 0.0)
-                cur_odd = existing["odds_1xbet"].get(key, 0.0)
-                if new_odd > cur_odd:
-                    existing["odds_1xbet"][key] = new_odd
-                    improved = True
+            improved = _fusionner_h2h(existing, cand)
             if improved:
                 sources.add(book)
                 existing["_soft_source"] = "+".join(sorted(sources))

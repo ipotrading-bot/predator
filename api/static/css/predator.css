@@ -368,6 +368,8 @@ nav:not(.bnav) {
   min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
 }
 .sig-odd  { font-size: 13px; font-weight: 700; color: var(--blue);   flex-shrink: 0; font-family: var(--font-data); }
+/* Book qui cote ce prix (signals.soft_book, 2026-09-08) — par ligne, jamais global */
+.sig-book { font-size: 10px; font-weight: 600; color: var(--t2); margin-left: 4px; text-transform: uppercase; letter-spacing: .02em; }
 .sig-edge { font-size: 13px; font-weight: 700; flex-shrink: 0; min-width: 44px; text-align: right; font-family: var(--font-data); }
 .e-high { color: var(--green); }
 .e-mid  { color: var(--yellow); }

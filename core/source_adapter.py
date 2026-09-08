@@ -710,14 +710,12 @@ def effective_trust(card: dict, spec: SourceSpec) -> float:
 
 # ── Book d'exécution ──────────────────────────────────────────────────
 
-def _normaliser_book(nom: str) -> str:
-    return "".join(ch for ch in str(nom).lower() if ch.isalnum())
-
-
 def est_book_execution(nom: str) -> bool:
-    """« 1xBet », « 1xbet », « 1x Bet » désignent le book où l'opérateur
-    mise (`core.constants.EXECUTION_BOOK`). MelBet, 1xBit et BetWinner sont
-    de la même famille mais ce ne sont PAS ce book : leurs lignes ne sont
-    pas garanties identiques au moment de miser (2026-09-07)."""
-    from core.constants import EXECUTION_BOOK
-    return _normaliser_book(nom) == _normaliser_book(EXECUTION_BOOK)
+    """« 1xBet », « 1xbet », « 1x Bet », « Bet 365 » désignent un book où
+    l'opérateur mise (`core.constants.EXECUTION_BOOKS`). MelBet, 1xBit et
+    BetWinner sont de la famille 1xbet mais ce ne sont PAS ce book : leurs
+    lignes ne sont pas garanties identiques au moment de miser (2026-09-07).
+    Depuis le 2026-09-08 la logique vit dans `core.execution_books` ; ce nom
+    reste pour ses appelants."""
+    from core.execution_books import est_book_execution as _est
+    return _est(nom)

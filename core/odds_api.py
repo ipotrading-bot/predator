@@ -26,6 +26,8 @@ import re
 import requests
 from datetime import datetime, timedelta, timezone
 
+from core.constants import EXECUTION_BOOKS
+from core.execution_books import fusionner_lignes, ordre
 from core.secret_store import get_secret
 # Borne T-2h du fantôme (core/learning_layer, règle n°6 : une seule copie).
 from core.learning_layer import _PLAYABLE_MIN_MINUTES as PLAYABLE_MIN_MINUTES
@@ -39,6 +41,11 @@ log = logging.getLogger("PREDATOR.odds_api")
 BASE_URL     = "https://api.the-odds-api.com/v4"
 PINNACLE_KEY = "pinnacle"
 XBET_KEY     = "onexbet"
+# Clé OddsAPI de chaque book d'exécution (core.constants.EXECUTION_BOOKS).
+# Un book absent d'ici n'est pas demandé à OddsAPI : Bet365 n'y existe qu'en
+# version australienne (`bet365_au`), dont les lignes ne sont pas celles que
+# l'opérateur voit — il est servi par odds-api.io et titan007.
+ODDS_API_BOOK_KEYS = {"1xbet": XBET_KEY}
 CIRCA_KEY    = "circa"        # Circa Sports — sharp US book
 CRIS_KEY     = "bookmaker"    # Bookmaker.eu — CRIS network
 
@@ -320,6 +327,11 @@ def _extract_totals(bookmakers: list, bookie_key: str) -> dict | None:
 
 # ── Event parser ──────────────────────────────────────────────────────
 
+def _execution_keys() -> list[str]:
+    """Clés OddsAPI des books d'exécution, dans l'ordre de EXECUTION_BOOKS."""
+    return [ODDS_API_BOOK_KEYS[b] for b in EXECUTION_BOOKS if b in ODDS_API_BOOK_KEYS]
+
+
 def _parse_event(ev: dict, sport_type: str) -> dict | None:
     home = str(ev.get("home_team", "")).strip()
     away = str(ev.get("away_team", "")).strip()
@@ -328,10 +340,18 @@ def _parse_event(ev: dict, sport_type: str) -> dict | None:
 
     bookmakers = ev.get("bookmakers", [])
 
-    xbet_h2h  = _extract_h2h(bookmakers, XBET_KEY,     home, away)
+    # Un bloc 1X2 par book d'exécution servi par OddsAPI (jamais un maximum
+    # par issue — core/execution_books) ; `odds_1xbet` = bloc de référence.
+    h2h_par_book = {}
+    for book in EXECUTION_BOOKS:
+        key = ODDS_API_BOOK_KEYS.get(book)
+        h = _extract_h2h(bookmakers, key, home, away) if key else None
+        if h:
+            h2h_par_book[book] = h
     pin_h2h   = _extract_h2h(bookmakers, PINNACLE_KEY, home, away)
-    if not xbet_h2h or not pin_h2h:
-        return None  # Both books must have h2h for the event to be useful
+    if not h2h_par_book or not pin_h2h:
+        return None  # Both sides must have h2h for the event to be useful
+    xbet_h2h = h2h_par_book[min(h2h_par_book, key=ordre)]
 
     circa_h2h = _extract_h2h(bookmakers, CIRCA_KEY, home, away)
     cris_h2h  = _extract_h2h(bookmakers, CRIS_KEY,  home, away)
@@ -346,6 +366,7 @@ def _parse_event(ev: dict, sport_type: str) -> dict | None:
         "sport_id":      {"soccer": 1, "tennis": 3, "basketball": 4, "boxing": 5, "darts": 6, "cricket": 7, "hockey": 8, "americanfootball": 10, "baseball": 11, "rugby": 12, "volleyball": 13, "tabletennis": 14, "handball": 15, "aussierules": 16, "rugbyleague": 17, "euroleague_basketball": 4, "college_football": 10}.get(sport_type, 1),
         "commence_time": ev.get("commence_time", ""),
         "odds_1xbet":    xbet_h2h,
+        "h2h_par_book":  h2h_par_book,
         "odds_pinnacle": pin_h2h,
     }
     if circa_h2h:
@@ -355,7 +376,8 @@ def _parse_event(ev: dict, sport_type: str) -> dict | None:
 
     # ── Spreads (binary sports only — tennis/boxing/darts/cricket/baseball have no spreads) ──
     if sport_type not in ("tennis", "boxing", "mma", "darts", "cricket", "baseball", "rugbyleague"):
-        xs = _extract_spreads(bookmakers, XBET_KEY,     home, away)
+        xs = fusionner_lignes({b: r for b, r in ((b, _extract_spreads(bookmakers, ODDS_API_BOOK_KEYS[b], home, away))
+                                                for b in h2h_par_book) if r}, "spreads")
         ps = _extract_spreads(bookmakers, PINNACLE_KEY, home, away)
         if xs and ps:
             event["spreads_1xbet"]    = xs
@@ -368,7 +390,8 @@ def _parse_event(ev: dict, sport_type: str) -> dict | None:
                 event["spreads_cris"] = rs
 
     # ── Totals (all sports) ───────────────────────────────────────────
-    xt = _extract_totals(bookmakers, XBET_KEY)
+    xt = fusionner_lignes({b: r for b, r in ((b, _extract_totals(bookmakers, ODDS_API_BOOK_KEYS[b]))
+                                            for b in h2h_par_book) if r}, "totals")
     pt = _extract_totals(bookmakers, PINNACLE_KEY)
     if xt and pt:
         event["totals_1xbet"]    = xt
@@ -832,7 +855,7 @@ def fetch_odds(api_key: str | None = None, hours_ahead: int = 24,
             "apiKey":           api_key,
             "regions":          "eu",
             "markets":          markets,
-            "bookmakers":       f"{PINNACLE_KEY},{XBET_KEY},{CIRCA_KEY},{CRIS_KEY}",
+            "bookmakers":       ",".join([PINNACLE_KEY, *_execution_keys(), CIRCA_KEY, CRIS_KEY]),
             "oddsFormat":       "decimal",
             "commenceTimeFrom": time_from,
             "commenceTimeTo":   time_to,
