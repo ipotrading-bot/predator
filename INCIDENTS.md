@@ -2847,9 +2847,28 @@ rien ne change : sortie directe, comme avant.
 
 Critère de retrait (règle 13) dans l'en-tête Betfair de `core/harvester.py` :
 login encore refusé, ou moins de 10 marchés par scan en médiane sur 7 jours
-alors que Matchbook en porte plus de 60. Le login est vérifié dans le
-premier run réel après ce commit, pas ici.
+alors que Matchbook en porte plus de 60.
 Gardien : `tests/test_betfair_proxy.py`.
+
+MESURÉ le 2026-09-08 02:51 (scan standard forcé 34181477636, 14 crédits) :
+« Betfair: sortie via proxy » puis **« Betfair login: CERT_AUTH_REQUIRED »**.
+Le géo-blocage est LEVÉ — Betfair ne répond plus `BETTING_RESTRICTED_LOCATION`,
+il passe à l'étape suivante. Le refus vient maintenant du certificat : le TLS
+a abouti (réponse JSON, pas d'erreur SSL côté client), donc le PEM des
+secrets se charge ; c'est Betfair qui ne l'associe à aucun compte, ou le mot
+de passe qui ne passe pas (doc Betfair : « certificate not detected, or the
+account cannot be authenticated »). Le certificat posé le 2026-07-09 n'a
+JAMAIS été validé côté Betfair — chaque login échouait AVANT cette étape.
+Action OPÉRATEUR, hors dépôt : My Account → Security → Automated Betting
+Program Access, y téléverser le `.crt` correspondant à `BETFAIR_CERT`, et
+vérifier le mot de passe. Rien à changer dans le code.
+⚠️ Le même run a vu **Matchbook: HTTP 403** — un runner dont l'IP est
+refusée — et donc 0 marché d'exchange, tous les candidats en MARCHÉ MORT,
+65 caractères Telegram : un scan PAYANT perdu. Le reprice 34181932279 huit
+minutes plus tard (autre runner) : 71 marchés. Ce 403 est passager et
+antérieur à ce commit par nature (Matchbook ne passe pas par le proxy), mais
+il montre qu'un 403 Matchbook coûte un créneau entier — à traiter (retenter
+via le proxy, ou marquer le créneau non servi) si ça se répète.
 
 ### Une version, un seul endroit
 
