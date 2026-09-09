@@ -174,7 +174,12 @@ _PHRASE_DE_MISE = re.compile(
     + r"|,?\s*soit\s" + _FIN
     + r"|\s*[\d.,]+\s*%\s*(?:de\s+|du\s+)?(?:bankroll|capital)" + _FIN,
     re.I)
-_CHAMPS_MUETS = ("stake_xof",)
+# `kelly_pct` reste CALCULÉ et PERSISTÉ — il refuse un signal qu'on ne
+# miserait pas et pondère le ROI du ledger (`core.constants.roi_net_of_tax`)
+# — mais plus rien ne l'affiche : il n'a plus rien à faire dans le JSON
+# envoyé au navigateur. `stake_xof` est la colonne morte de la bankroll
+# mensuelle, construite puis retirée le même jour.
+_CHAMPS_MUETS = ("stake_xof", "kelly_pct")
 
 
 def _sans_mise(rows: list) -> list:

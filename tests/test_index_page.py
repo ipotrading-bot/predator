@@ -100,13 +100,13 @@ def test_aucune_mise_ne_sort_du_dashboard_meme_sur_une_ligne_ancienne():
                    "book : 70.0% sur X et 30.0% sur le nul (@ 3.10), "
                    "soit 0.84% et 0.36% de bankroll.",
          "stake_xof": 1200},
-        {"advice": None},
+        {"advice": None, "kelly_pct": 0.56},
     ]
     for ligne in _sans_mise(lignes):
         a = ligne.get("advice") or ""
         for interdit in ("Mise conseillée", "bankroll", "capital", "soit "):
             assert interdit not in a, (interdit, a)
-        assert "stake_xof" not in ligne
+        assert "stake_xof" not in ligne and "kelly_pct" not in ligne
         # Ce qui RESTE doit être propre : ni débris de décimale, ni ponctuation
         # orpheline (« .56% », « (@ 3.10), »).
         assert not a.startswith(".") and ".56%" not in a
