@@ -74,10 +74,10 @@ details[open] > summary.sec-hdr::before { content: '▾'; }
    horizontal ; le libellé (match, ligue) est la seule colonne qui s'étire. */
 .tbl-outer { padding: 0 12px 14px; }
 @media (min-width: 640px) { .tbl-outer { padding: 0 24px 22px; } }
-/* `min-width: 0` : predator.css pose `table { min-width: 760px }` pour le
-   ledger ; hérité ici, il coupait Unités et G–P hors de l'écran sur
-   téléphone et faisait défiler la page de côté (capture opérateur
-   2026-09-09). */
+/* `min-width: 0` : predator.css posait `table { min-width: 760px }` sans
+   sélecteur ; hérité ici, il coupait Unités et G–P hors de l'écran sur
+   téléphone (capture opérateur 2026-09-09). La règle est depuis scopée au
+   ledger et à l'audit ; ce plancher explicite reste la garantie locale. */
 .perf-table { width: 100%; min-width: 0; border-collapse: collapse; table-layout: auto; }
 .perf-table thead th { font-size: 8.5px; font-weight: 600; letter-spacing: .7px; text-transform: uppercase; color: var(--t2);
   padding: 6px 6px; border-bottom: 1px solid var(--bd); background: var(--bg1); text-align: left; white-space: nowrap; }

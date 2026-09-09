@@ -22,10 +22,11 @@
 .wrap { max-width: none; padding: 0 0 calc(72px + var(--sbot)); }
 @media (min-width: 640px) { .wrap { padding-bottom: 52px; } }
 .nav-pages a.on, .bnav a.on { color: var(--purple); }
-/* predator.css donne aux tables du dashboard un min-width de 760px (grilles
-   de signaux, défilement horizontal voulu). Les tableaux de cette page sont
-   étroits et doivent tenir dans un téléphone : on retire ce plancher ici,
-   avec :where() pour ne pas peser plus lourd que les classes Tailwind. */
+/* predator.css donnait à TOUTE table un min-width de 760px ; la règle est
+   scopée au ledger et à l'audit depuis le 2026-09-09. Les tableaux de cette
+   page sont étroits et doivent tenir dans un téléphone : ce plancher à 0
+   reste la garantie locale, avec :where() pour ne pas peser plus lourd que
+   les classes Tailwind. */
 :where(#sbc-root) table { min-width: 0; }
 </style>
 </head>

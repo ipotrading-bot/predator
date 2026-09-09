@@ -727,7 +727,12 @@ footer { display: none; }
 .tbl-wrap { padding: 0 16px 20px; overflow-x: auto; -webkit-overflow-scrolling: touch; }
 @media (min-width: 640px) { .tbl-wrap { padding: 0 24px 24px; } }
 
-table { width: 100%; border-collapse: collapse; min-width: 760px; }
+table { width: 100%; border-collapse: collapse; }
+/* Plancher de largeur RÉSERVÉ aux grilles qui défilent volontairement de
+   côté (ledger dans .tbl-wrap, audit). Posé sur `table` nu, il s'appliquait
+   à toute page : /performance se lisait en deux écrans sur téléphone et
+   /system devait s'en défendre à la main (2026-09-09). */
+.tbl-wrap table, .audit-table { min-width: 760px; }
 thead th {
   font-size: 9px; font-weight: 600; letter-spacing: .8px;
   text-transform: uppercase; color: var(--t2);

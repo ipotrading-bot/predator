@@ -21,6 +21,15 @@ def _sans_commentaires_jinja(src: str) -> str:
     return re.sub(r"\{#.*?#\}", "", src, flags=re.S)
 
 
+def test_predator_css_ne_pose_plus_de_plancher_sur_table_nu():
+    css = (RACINE / "api" / "static" / "css" / "predator.css").read_text(encoding="utf-8")
+    for m in re.finditer(r"(^|[\s,}])table\s*\{([^}]*)\}", css, re.M):
+        assert "min-width" not in m.group(2), (
+            "un min-width sur `table` nu s'applique à toutes les pages ; "
+            "le poser sur .tbl-wrap table / .audit-table")
+    assert re.search(r"\.tbl-wrap table,\s*\.audit-table\s*\{[^}]*min-width:\s*760px", css)
+
+
 def test_les_tableaux_ne_heritent_plus_de_la_largeur_minimale_du_ledger():
     assert re.search(r"\.perf-table\s*\{[^}]*min-width:\s*0", PERF), (
         "sans `min-width: 0`, la règle globale `table { min-width: 760px }` "
