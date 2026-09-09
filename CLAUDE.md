@@ -20,23 +20,21 @@ Calcul en crons GitHub Actions ; dashboard en lecture seule.
 
 ## Commandes
 
-- Tests : `python -m pytest tests/ -q` (~10 s, 0 échec).
+- Tests : `python -m pytest tests/ -q`, 0 échec.
 - Lint : `python -m pyflakes $(git ls-files '*.py')`
-- Dashboard local : skill `predator-dashboard-check`
-- Comptes externes : `docs/actions_operateur.md`
+- Dashboard local : skill `predator-dashboard-check` ; comptes externes :
+  `docs/actions_operateur.md`
 - Piloter Supabase/Vercel : `python scripts/ops.py doctor|status|supabase …|vercel …`
   (credentials gitignorés). `ops.py ai` fait un VRAI appel — seul diagnostic
-  qui tranche sur un fournisseur IA. MCP Supabase en LECTURE SEULE
-  (`.mcp.json`).
-- Pas de build, SAUF `/system` : après toute retouche de `assets/system.jsx`,
-  `python scripts/build_system.py` (gardien `tests/test_system_build.py`).
-  Le push ne déploie pas (déploiement Git Vercel DÉSACTIVÉ,
-  `vercel.json`) : le job `deploy` de `ci.yml` pousse en CLI si la suite est verte.
+  IA qui tranche. MCP Supabase en LECTURE SEULE.
+- `/system` : `scripts/build_system.py` après retouche de `assets/system.jsx`.
+- Le push ne déploie pas (Git Vercel DÉSACTIVÉ, `vercel.json`) : le job
+  `deploy` de `ci.yml` pousse en CLI si la suite est verte.
 
 ## Architecture (fichiers clés)
 
-- `run_engine.py` — scan + purge + émission des signaux (entrée principale)
-- `core/odds_api.py` / `harvester.py` — sources de cotes (Tier 1/2)
+- `run_engine.py` — scan + purge + émission des signaux, entrée principale
+- `core/odds_api.py` / `harvester.py` — sources de cotes
 - `core/math_engine.py` + `paim_engine.py` — devig, prix exécutable, edge, consensus
 - `core/audit_engine.py` + `settlement.py` + `score_sources.py` — règlement
   (0 IA), CLV, ledger
