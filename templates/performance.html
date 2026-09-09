@@ -22,78 +22,88 @@
 @media (min-width: 640px) { .wrap { padding-bottom: 52px; } }
 .nav-pages a.on, .bnav a.on { color: var(--green); }
 
-.page-hdr { display: flex; align-items: center; justify-content: space-between; gap: 12px; flex-wrap: wrap; }
+.page-hdr { display: flex; align-items: center; justify-content: space-between; gap: 12px; flex-wrap: wrap; padding: 14px 16px 0; }
+@media (min-width: 640px) { .page-hdr { padding: 18px 24px 0; } }
 .mois-sel { padding: 7px 10px; font: 600 12px var(--font); color: var(--t1);
   background: var(--bg2); border: 1px solid var(--bd2); border-radius: 6px; }
 
-.wr-hero { margin: 14px 16px 0; padding: 20px; text-align: center;
+.wr-hero { margin: 14px 16px 0; padding: 18px; text-align: center;
   background: var(--bg1); border: 1px solid var(--bd); border-radius: var(--r); }
 @media (min-width: 640px) { .wr-hero { margin: 18px 24px 0; } }
-.wr-hero-v { font-size: 64px; font-weight: 800; line-height: 1; font-family: var(--font-data); letter-spacing: -1px; }
-.wr-hero-l { font-size: 12px; font-weight: 700; letter-spacing: 1.5px; color: var(--t2); margin-top: 10px; }
-.wr-hero-s { font-size: 14px; color: var(--t1); margin-top: 8px; font-family: var(--font-data); font-weight: 600; }
-.wr-verdict { display: inline-block; margin-top: 12px; padding: 5px 14px; border-radius: 100px; font-size: 12px; font-weight: 700; letter-spacing: .3px; }
+.wr-hero-v { font-size: 56px; font-weight: 800; line-height: 1; font-family: var(--font-data); letter-spacing: -1px; }
+.wr-hero-l { font-size: 11px; font-weight: 700; letter-spacing: 1.5px; color: var(--t2); margin-top: 8px; }
+.wr-hero-s { font-size: 13px; color: var(--t1); margin-top: 6px; font-family: var(--font-data); font-weight: 600; }
+.wr-verdict { display: inline-block; margin-top: 10px; padding: 4px 12px; border-radius: 100px; font-size: 11px; font-weight: 700; letter-spacing: .3px; }
 
-.perf-kpis { display: flex; overflow-x: auto; scrollbar-width: none; border-bottom: 1px solid var(--bd); background: var(--bg1); margin-top: 14px; }
-.perf-kpis::-webkit-scrollbar { display: none; }
-.pk { flex: 0 0 auto; min-width: 104px; padding: 16px 14px; border-right: 1px solid var(--bd); text-align: center; }
+/* Quatre tuiles qui tiennent sur 360 px — plus de défilement horizontal. */
+.perf-kpis { display: flex; border-bottom: 1px solid var(--bd); background: var(--bg1); margin-top: 14px; }
+.pk { flex: 1; min-width: 0; padding: 12px 4px; border-right: 1px solid var(--bd); text-align: center; }
 .pk:last-child { border-right: none; }
-.pk-v { font-size: 26px; font-weight: 800; line-height: 1; font-family: var(--font-data); }
-.pk-l { font-size: 9px; color: var(--t2); text-transform: uppercase; letter-spacing: .8px; margin-top: 7px; line-height: 1.4; font-weight: 600; }
-@media (min-width: 640px) { .perf-kpis { overflow-x: visible; } .pk { flex: 1; min-width: 0; } }
+.pk-v { font-size: 22px; font-weight: 800; line-height: 1; font-family: var(--font-data); white-space: nowrap; }
+.pk-l { font-size: 8.5px; color: var(--t2); text-transform: uppercase; letter-spacing: .6px; margin-top: 6px; line-height: 1.4; font-weight: 600; }
+@media (min-width: 640px) { .pk { padding: 16px 14px; } .pk-v { font-size: 26px; } .pk-l { font-size: 9px; } }
 
 .sec-hdr { font-size: 10px; font-weight: 600; letter-spacing: 1.5px; text-transform: uppercase; color: var(--t2);
-  padding: 18px 16px 10px; display: flex; align-items: center; gap: 8px; }
-.sec-hdr::after { content: ''; flex: 1; height: 1px; background: var(--bd); }
-.sec-hdr em { color: var(--blue); font-style: normal; font-family: var(--font-data); }
+  padding: 16px 16px 8px; display: flex; align-items: center; gap: 8px; white-space: nowrap; }
+.sec-hdr::after { content: ''; flex: 1; height: 1px; background: var(--bd); min-width: 12px; }
+.sec-hdr em { color: var(--blue); font-style: normal; font-family: var(--font-data); overflow: hidden; text-overflow: ellipsis; }
 @media (min-width: 640px) { .sec-hdr { padding: 20px 24px 10px; } }
 details > summary.sec-hdr { cursor: pointer; list-style: none; user-select: none; }
 details > summary.sec-hdr::-webkit-details-marker { display: none; }
 details > summary.sec-hdr::before { content: '▸'; color: var(--t2); font-size: 11px; }
 details[open] > summary.sec-hdr::before { content: '▾'; }
 
-.month-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; padding: 0 16px 6px; }
+.month-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; padding: 0 16px 4px; }
 @media (min-width: 640px) { .month-grid { grid-template-columns: repeat(3, 1fr); gap: 12px; padding: 0 24px 6px; } }
-.mc { background: var(--bg1); border: 1px solid var(--bd); border-radius: var(--r); padding: 12px 14px; }
+.mc { background: var(--bg1); border: 1px solid var(--bd); border-radius: var(--r); padding: 10px 12px; }
 .mc.on { border-color: var(--bd3); }
-.mc-month { font-size: 11px; font-weight: 700; color: var(--t1); margin-bottom: 10px; text-transform: capitalize;
+.mc-month { font-size: 11px; font-weight: 700; color: var(--t1); margin-bottom: 8px; text-transform: capitalize;
   display: flex; justify-content: space-between; align-items: center; gap: 6px; }
-.mc-wr { font-size: 10px; font-weight: 700; padding: 2px 9px; border-radius: 100px; font-family: var(--font-data); }
+.mc-wr { font-size: 10px; font-weight: 700; padding: 2px 8px; border-radius: 100px; font-family: var(--font-data); }
 .wr-good { background: rgba(0,232,127,.08);  color: var(--green);  border: 1px solid rgba(0,232,127,.2); }
 .wr-ok   { background: rgba(245,197,24,.08); color: var(--yellow); border: 1px solid rgba(245,197,24,.2); }
 .wr-bad  { background: rgba(251,78,110,.08); color: var(--red);    border: 1px solid rgba(251,78,110,.2); }
 .wr-none { background: transparent;          color: var(--t3);     border: 1px solid var(--bd2); }
-.mc-stats { display: flex; gap: 8px; }
-.mc-stat { flex: 1; }
-.mc-sv { font-size: 18px; font-weight: 800; line-height: 1; font-family: var(--font-data); }
+.mc-stats { display: flex; gap: 6px; }
+.mc-stat { flex: 1; min-width: 0; }
+.mc-sv { font-size: 17px; font-weight: 800; line-height: 1; font-family: var(--font-data); }
 .mc-sl { font-size: 8px; color: var(--t2); text-transform: uppercase; letter-spacing: .5px; margin-top: 4px; }
-.mc-foot { margin-top: 8px; padding-top: 6px; border-top: 1px solid var(--bd); font-size: 9px; color: var(--t2); font-family: var(--font-data);
-  display: flex; justify-content: space-between; gap: 6px; }
+.mc-foot { margin-top: 7px; padding-top: 5px; border-top: 1px solid var(--bd); font-size: 9px; color: var(--t2); font-family: var(--font-data); white-space: nowrap; }
 
-.tbl-outer { padding: 0 16px 18px; overflow-x: auto; -webkit-overflow-scrolling: touch; }
+/* Tableaux resserrés : pas de largeur minimale, donc jamais de défilement
+   horizontal ; le libellé (match, ligue) est la seule colonne qui s'étire. */
+.tbl-outer { padding: 0 12px 14px; }
 @media (min-width: 640px) { .tbl-outer { padding: 0 24px 22px; } }
-.perf-table { width: 100%; border-collapse: collapse; }
-.perf-table.wide { min-width: 560px; }
-.perf-table thead th { font-size: 9px; font-weight: 600; letter-spacing: .8px; text-transform: uppercase; color: var(--t2);
-  padding: 7px 10px; border-bottom: 1px solid var(--bd); background: var(--bg1); text-align: left; white-space: nowrap; }
-.perf-table thead th.num, .perf-table td.num { text-align: right; font-family: var(--font-data); }
+/* `min-width: 0` : predator.css pose `table { min-width: 760px }` pour le
+   ledger ; hérité ici, il coupait Unités et G–P hors de l'écran sur
+   téléphone et faisait défiler la page de côté (capture opérateur
+   2026-09-09). */
+.perf-table { width: 100%; min-width: 0; border-collapse: collapse; table-layout: auto; }
+.perf-table thead th { font-size: 8.5px; font-weight: 600; letter-spacing: .7px; text-transform: uppercase; color: var(--t2);
+  padding: 6px 6px; border-bottom: 1px solid var(--bd); background: var(--bg1); text-align: left; white-space: nowrap; }
+.perf-table thead th.num, .perf-table td.num { text-align: right; font-family: var(--font-data); white-space: nowrap; }
 .perf-table tbody tr { border-bottom: 1px solid var(--bd); }
 .perf-table tbody tr:last-child { border-bottom: none; }
 .perf-table tbody tr:hover { background: var(--bg2); }
-.perf-table td { padding: 7px 10px; vertical-align: middle; font-size: 12.5px; line-height: 1.35; }
-.ci { display: block; color: var(--t2); font-size: 9px; font-family: var(--font-data); font-weight: 400; }
+.perf-table td { padding: 6px 6px; vertical-align: middle; font-size: 12px; line-height: 1.3; }
+/* Seule colonne qui s'étire : pas de `width:100%` (il poussait Unités et
+   G–P hors de l'écran sur 390 px), les autres cellules sont nowrap. */
+.perf-table td.lbl { color: var(--t1); word-break: break-word; }
+.perf-table td.rate { font-weight: 700; white-space: nowrap; font-family: var(--font-data); }
+.ci { display: block; color: var(--t3); font-size: 8.5px; font-family: var(--font-data); font-weight: 400; margin-top: 1px; }
 .pos { color: var(--green); font-weight: 700; } .neg { color: var(--red); font-weight: 700; }
+.gp { white-space: nowrap; font-family: var(--font-data); font-size: 11px; }
 
-.oc-win  { display:inline-block; padding:2px 9px; border-radius:100px; font-size:9px; font-weight:700; background:rgba(0,232,127,.08);  color:var(--green); border:1px solid rgba(0,232,127,.2); }
-.oc-loss { display:inline-block; padding:2px 9px; border-radius:100px; font-size:9px; font-weight:700; background:rgba(251,78,110,.08); color:var(--red);   border:1px solid rgba(251,78,110,.2); }
-.lg-v { display:inline-block; padding:2px 8px; border-radius:100px; font-size:9px; font-weight:700; white-space:nowrap; }
-.lg-v.bad  { background:rgba(251,78,110,.08); color:var(--red);   border:1px solid rgba(251,78,110,.2); }
-.lg-v.good { background:rgba(0,232,127,.08);  color:var(--green); border:1px solid rgba(0,232,127,.2); }
-.lg-v.na   { color:var(--t2); border:1px solid var(--bd2); }
+.oc-win, .oc-loss { display: inline-block; padding: 2px 6px; border-radius: 100px; font-size: 8px; font-weight: 700; letter-spacing: .3px; white-space: nowrap; }
+.oc-win  { background: rgba(0,232,127,.08);  color: var(--green); border: 1px solid rgba(0,232,127,.2); }
+.oc-loss { background: rgba(251,78,110,.08); color: var(--red);   border: 1px solid rgba(251,78,110,.2); }
+.h-match { color: var(--t1); font-weight: 700; display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden; }
+.h-sub { color: var(--t3); font-size: 10px; margin-top: 1px; }
+.h-sub b { color: var(--t2); font-weight: 600; }
 
 .perf-empty { text-align: center; padding: 60px 20px; color: var(--t2); font-size: 12px; line-height: 2.4; }
 .perf-empty-icon { font-size: 32px; color: var(--bd2); margin-bottom: 14px; }
-.small-empty { padding: 0 16px 18px; font-size: 11.5px; color: var(--t2); }
+.small-empty { padding: 0 16px 14px; font-size: 11.5px; color: var(--t2); }
 @media (min-width: 640px) { .small-empty { padding: 0 24px 22px; } }
 </style>
 </head>
@@ -107,7 +117,7 @@ details[open] > summary.sec-hdr::before { content: '▾'; }
     <a href="/performance" class="on">PERF</a>
   </div>
   <div class="nav-right">
-    <span id="clock">—</span>
+    <span id="clock" title="Heure locale">—</span>
   </div>
 </nav>
 
@@ -139,73 +149,70 @@ details[open] > summary.sec-hdr::before { content: '▾'; }
      Règle dure n°7 : jamais un taux nu. La pastille porte le verdict de
      l'intervalle de Wilson contre le point mort après taxe, en trois mots. #}
   {% set wr_color = 'var(--green)' if global_s.above_breakeven else ('var(--yellow)' if global_s.win_rate >= 50 else 'var(--red)') %}
-  <div class="wr-hero" style="border-color:{{ wr_color }}">
+  <div class="wr-hero" style="border-color:{{ wr_color }}" title="IC 95 % {{ global_s.win_rate_lo }}–{{ global_s.win_rate_hi }} %{% if global_s.p_breakeven is not none %} · point mort après taxe {{ "%.0f"|format(global_s.p_breakeven) }} %{% endif %}">
     <div class="wr-hero-v" style="color:{{ wr_color }}">{{ "%.1f"|format(global_s.win_rate) }}%</div>
     <div class="wr-hero-l">RÉUSSITE</div>
-    <div class="wr-hero-s">{{ global_s.wins }} gagnés &middot; {{ global_s.losses }} perdus</div>
+    <div class="wr-hero-s"><span class="pos">{{ global_s.wins }}</span> gagnés &middot; <span class="neg">{{ global_s.losses }}</span> perdus</div>
     {% if global_s.above_breakeven %}
     <div class="wr-verdict" style="color:var(--green);background:rgba(0,232,127,.10)">&#10003; RENTABLE</div>
     {% elif global_s.p_breakeven is not none %}
-    <div class="wr-verdict" style="color:var(--yellow);background:rgba(255,200,0,.10)" title="IC 95 % {{ global_s.win_rate_lo }}–{{ global_s.win_rate_hi }} %">À CONFIRMER &middot; seuil {{ "%.0f"|format(global_s.p_breakeven) }}%</div>
+    <div class="wr-verdict" style="color:var(--yellow);background:rgba(255,200,0,.10)">À CONFIRMER &middot; seuil {{ "%.0f"|format(global_s.p_breakeven) }}%</div>
     {% else %}
     <div class="wr-verdict" style="color:var(--t3);background:var(--bg2)">PAS ASSEZ DE PARIS</div>
     {% endif %}
   </div>
 
   {# ── Indicateurs ──────────────────────────────────────────────────
-     Cinq tuiles, aucune phrase. La résolution (réglés / réglés+expirés)
+     Quatre tuiles, aucune phrase. La résolution (réglés / réglés+expirés)
      reste visible : sans elle la page ne décrit que les paris qu'on a su
      suivre — biais de survie, voir perf_view.resolution_rate. Les fantômes
-     golden hour (< T-2h, jamais envoyés) sont hors de tous les chiffres et
-     comptés ici, à part. #}
+     golden hour (< T-2h, jamais envoyés) restent hors de tous les chiffres ;
+     leur tuile est retirée de l'écran (demande opérateur 2026-09-09), le
+     compte reste en infobulle sur « Paris réglés ». #}
   {% set r = global_s.resolution %}
   <div class="perf-kpis">
-    <div class="pk">
+    <div class="pk" title="Mise plate 1 unité, après taxe">
       <div class="pk-v {{ 'pos' if global_s.pnl_units >= 0 else 'neg' }}">{{ "%+.1f"|format(global_s.pnl_units) }}</div>
-      <div class="pk-l">Unités<br>mise 1 u</div>
+      <div class="pk-l">Unités</div>
     </div>
-    <div class="pk">
+    <div class="pk" title="Paris recommandés réglés ; hors {{ global_s.phantoms.wins }}–{{ global_s.phantoms.losses }} fantômes à moins de 2 h du coup d'envoi, jamais envoyés">
       <div class="pk-v" style="color:var(--t1)">{{ global_s.settled }}</div>
-      <div class="pk-l">Paris<br>réglés</div>
+      <div class="pk-l">Réglés</div>
     </div>
     <div class="pk">
       {% if global_s.clv_is_real and global_s.avg_clv is not none %}
       <div class="pk-v {{ 'pos' if global_s.avg_clv >= 0 else 'neg' }}">{{ "%+.2f"|format(global_s.avg_clv) }}%</div>
-      <div class="pk-l">CLV moyen<br>({{ global_s.clv_n }})</div>
+      <div class="pk-l">CLV ({{ global_s.clv_n }})</div>
       {% elif global_s.avg_edge is not none %}
       <div class="pk-v" style="color:var(--t2)">{{ "%+.2f"|format(global_s.avg_edge) }}%</div>
-      <div class="pk-l">Edge<br>à l'entrée</div>
+      <div class="pk-l">Edge entrée</div>
       {% else %}
       <div class="pk-v" style="color:var(--t3)">&mdash;</div>
-      <div class="pk-l">CLV<br>moyen</div>
+      <div class="pk-l">CLV</div>
       {% endif %}
     </div>
     <div class="pk" title="{{ r.settled }} réglés sur {{ r.denom }} suivis ; {{ r.expired }} expirés sans score, absents de tous les chiffres">
       {% if r and r.rate_pct is not none %}
       {% set res_color = 'var(--green)' if r.rate_pct >= 80 else ('var(--yellow)' if r.rate_pct >= 50 else 'var(--red)') %}
       <div class="pk-v" style="color:{{ res_color }}">{{ "%.0f"|format(r.rate_pct) }}%</div>
-      <div class="pk-l">Réglés<br>{{ r.expired }} expirés</div>
+      <div class="pk-l">Résolus</div>
       {% else %}
       <div class="pk-v" style="color:var(--t3)">&mdash;</div>
-      <div class="pk-l">Réglés<br>expirés</div>
+      <div class="pk-l">Résolus</div>
       {% endif %}
-    </div>
-    <div class="pk" title="Signaux à moins de 2 h du coup d'envoi : réglés, jamais envoyés, hors de tous les chiffres">
-      <div class="pk-v" style="color:var(--t2)">{{ global_s.phantoms.wins }}&ndash;{{ global_s.phantoms.losses }}</div>
-      <div class="pk-l">Fantômes<br>non envoyés</div>
     </div>
   </div>
 
   {# ── Par mois ──────────────────────────────────────────────────────
      Une carte par mois : pastille = verdict de l'intervalle (vert : entier
      au-dessus du point mort ; rouge : entier en dessous ; jaune : rien de
-     démontré). Fantômes du mois en pied, à part. #}
+     démontré). Fantômes du mois en infobulle, jamais dans le taux. #}
   {% if monthly %}
   <div class="sec-hdr">&#9632; PAR MOIS</div>
   <div class="month-grid">
     {% for m in monthly %}
     {% set wr_cls = 'wr-none' if m.win_rate is none else ('wr-good' if m.above_breakeven else ('wr-bad' if m.below_breakeven else 'wr-ok')) %}
-    <div class="mc {{ 'on' if m.month == mois }}">
+    <div class="mc {{ 'on' if m.month == mois }}"{% if m.phantoms and (m.phantoms.wins + m.phantoms.losses) %} title="hors {{ m.phantoms.wins }}–{{ m.phantoms.losses }} fantômes non envoyés"{% endif %}>
       <div class="mc-month">{{ m.label }}
         <span class="mc-wr {{ wr_cls }}">{% if m.win_rate is not none %}{{ "%.0f"|format(m.win_rate) }}%{% else %}&mdash;{% endif %}</span></div>
       <div class="mc-stats">
@@ -213,29 +220,44 @@ details[open] > summary.sec-hdr::before { content: '▾'; }
         <div class="mc-stat"><div class="mc-sv" style="color:var(--red)">{{ m.losses }}</div><div class="mc-sl">Perdus</div></div>
         <div class="mc-stat"><div class="mc-sv {{ 'pos' if m.pnl_units >= 0 else 'neg' }}">{{ "%+.1f"|format(m.pnl_units) }}</div><div class="mc-sl">Unités</div></div>
       </div>
-      <div class="mc-foot">
-        <span>{% if m.win_rate is not none %}IC {{ "%.0f"|format(m.win_rate_lo) }}&ndash;{{ "%.0f"|format(m.win_rate_hi) }}{% if m.p_breakeven is not none %} &middot; seuil {{ "%.0f"|format(m.p_breakeven) }}{% endif %}{% else %}&mdash;{% endif %}</span>
-        {% if m.phantoms and (m.phantoms.wins + m.phantoms.losses) %}<span title="fantômes golden hour, non envoyés">&#8709; {{ m.phantoms.wins }}&ndash;{{ m.phantoms.losses }}</span>{% endif %}
-      </div>
+      <div class="mc-foot" title="Intervalle de Wilson 95 % · point mort après taxe">{% if m.win_rate is not none %}IC {{ "%.0f"|format(m.win_rate_lo) }}&ndash;{{ "%.0f"|format(m.win_rate_hi) }}{% if m.p_breakeven is not none %} &middot; seuil {{ "%.0f"|format(m.p_breakeven) }}{% endif %}{% else %}&mdash;{% endif %}</div>
     </div>
     {% endfor %}
   </div>
   {% endif %}
 
-  {# ── Par sport ─────────────────────────────────────────────────── #}
+  {# ── Cellules communes ─────────────────────────────────────────────
+     Réussite EN PREMIER (demande opérateur 2026-09-09) : la couleur porte
+     le verdict de Wilson contre le point mort (vert : démontré rentable,
+     rouge : démontré perdant, neutre : rien de démontré, dont n < 30) ; la
+     ligne dessous porte les chiffres — règle n°7. G–P = gagnés–perdus, en
+     couleur : « 14–12 » sous « PARIS » n'était pas compris. #}
+  {% macro cell_rate(x) %}
+  <td class="rate" style="color:{{ 'var(--green)' if x.above_breakeven else ('var(--red)' if x.below_breakeven else 'var(--t1)') }}" title="IC 95 % {{ "%.0f"|format(x.win_rate_lo) }}–{{ "%.0f"|format(x.win_rate_hi) }} %{% if x.p_breakeven is not none %} · point mort {{ "%.0f"|format(x.p_breakeven) }} %{% endif %}{% if not x.above_breakeven and not x.below_breakeven %} · rien de démontré{% endif %}">{{ "%.0f"|format(x.win_rate) }}%
+    <span class="ci">{{ "%.0f"|format(x.win_rate_lo) }}&ndash;{{ "%.0f"|format(x.win_rate_hi) }}{% if x.p_breakeven is not none %} &middot; seuil {{ "%.0f"|format(x.p_breakeven) }}{% endif %}</span></td>
+  {% endmacro %}
+  {% macro cell_gp(x) %}
+  <td class="num gp" title="gagnés–perdus"><span class="pos">{{ x.wins }}</span>&ndash;<span class="neg">{{ x.losses }}</span></td>
+  {% endmacro %}
+  {% macro th_row(titre) %}
+  <thead><tr><th title="Taux de réussite · IC 95 % · point mort après taxe">Réussite</th><th>{{ titre }}</th><th class="num" title="Mise plate 1 unité">Unités</th><th class="num" title="gagnés–perdus">G&ndash;P</th></tr></thead>
+  {% endmacro %}
+
+  {# ── Par sport — réussite décroissante (demande opérateur 2026-09-09 ;
+     perf_view.sport_breakdown garde son ordre « perdant d'abord » pour le
+     rapport hebdomadaire). ── #}
   {% if global_s.by_sport %}
   <div class="sec-hdr">&#9632; PAR SPORT</div>
   <div class="tbl-outer">
     <table class="perf-table">
-      <thead><tr><th>Sport</th><th class="num">Paris</th><th class="num">Réussite</th><th class="num">Unités</th></tr></thead>
+      {{ th_row('Sport') }}
       <tbody>
-        {% for sp in global_s.by_sport %}
+        {% for sp in global_s.by_sport|sort(attribute='win_rate', reverse=true) %}
         <tr>
-          <td style="color:var(--t1)">{{ sport_emoji.get(sp.sport, '🎯') }} {{ sport_label.get(sp.sport, sp.sport) }}</td>
-          <td class="num">{{ sp.wins }}&ndash;{{ sp.losses }}</td>
-          <td class="num" style="font-weight:700;color:{{ 'var(--green)' if sp.above_breakeven else ('var(--red)' if sp.below_breakeven else 'var(--t1)') }}">{{ "%.0f"|format(sp.win_rate) }}%
-            <span class="ci">IC {{ "%.0f"|format(sp.win_rate_lo) }}&ndash;{{ "%.0f"|format(sp.win_rate_hi) }}{% if sp.p_breakeven is not none %} &middot; seuil {{ "%.0f"|format(sp.p_breakeven) }}{% endif %}</span></td>
+          {{ cell_rate(sp) }}
+          <td class="lbl">{{ sport_emoji.get(sp.sport, '🎯') }} {{ sport_label.get(sp.sport, sp.sport) }}</td>
           <td class="num {{ 'pos' if sp.pnl_units >= 0 else 'neg' }}">{{ "%+.1f"|format(sp.pnl_units) }}</td>
+          {{ cell_gp(sp) }}
         </tr>
         {% endfor %}
       </tbody>
@@ -244,27 +266,22 @@ details[open] > summary.sec-hdr::before { content: '▾'; }
   {% endif %}
 
   {# ── Détail : ligues, marchés (repliés), historique (ouvert) ───────
-     Perdants d'abord. Le verdict est celui de l'intervalle contre le point
-     mort ; sous 30 paris rien n'est démontré et la pastille le dit. Les
-     libellés de ligue sont ceux des sources (« WNBA » / « USA - WNBA ») :
-     pas de normalisation à la main, règle n°6. #}
+     Perdants d'abord (« quelles ligues perdent ? », 2026-09-03). Le verdict
+     est celui de l'intervalle contre le point mort, porté par la couleur ;
+     sous 30 paris rien n'est démontré. Les libellés de ligue sont ceux des
+     sources (« WNBA » / « USA - WNBA ») : pas de normalisation à la main,
+     règle n°6. #}
   {% macro tableau(lignes, cle, titre) %}
   <div class="tbl-outer">
     <table class="perf-table">
-      <thead><tr><th>{{ titre }}</th><th class="num">Paris</th><th class="num">Réussite</th><th class="num">Unités</th><th></th></tr></thead>
+      {{ th_row(titre) }}
       <tbody>
         {% for x in lignes %}
         <tr>
-          <td style="color:var(--t1);white-space:nowrap">{{ sport_emoji.get(x.sport, '🎯') }} {{ x[cle] }}</td>
-          <td class="num">{{ x.wins }}&ndash;{{ x.losses }}</td>
-          <td class="num" style="font-weight:700;color:var(--t1)">{{ "%.0f"|format(x.win_rate) }}%
-            <span class="ci">IC {{ "%.0f"|format(x.win_rate_lo) }}&ndash;{{ "%.0f"|format(x.win_rate_hi) }}{% if x.p_breakeven is not none %} &middot; seuil {{ "%.0f"|format(x.p_breakeven) }}{% endif %}</span></td>
+          {{ cell_rate(x) }}
+          <td class="lbl">{{ sport_emoji.get(x.sport, '🎯') }} {{ x[cle] }}</td>
           <td class="num {{ 'pos' if x.pnl_units >= 0 else 'neg' }}">{{ "%+.1f"|format(x.pnl_units) }}</td>
-          <td style="text-align:right">
-            {% if x.below_breakeven %}<span class="lg-v bad">PERDANT</span>
-            {% elif x.above_breakeven %}<span class="lg-v good">RENTABLE</span>
-            {% else %}<span class="lg-v na">n&lt;30</span>{% endif %}
-          </td>
+          {{ cell_gp(x) }}
         </tr>
         {% endfor %}
       </tbody>
@@ -273,34 +290,35 @@ details[open] > summary.sec-hdr::before { content: '▾'; }
   {% endmacro %}
 
   <details>
-    <summary class="sec-hdr">&#9632; PAR LIGUE <em>{{ mois_label }} &middot; {{ leagues|length }}{% if leagues_hidden %} (+{{ leagues_hidden }} &lt; {{ league_min_n }} paris){% endif %}</em></summary>
+    <summary class="sec-hdr" title="Ligues à {{ league_min_n }} paris réglés ou plus{% if leagues_hidden %} ; {{ leagues_hidden }} en dessous, non listées{% endif %}">&#9632; PAR LIGUE <em>{{ mois_label }} &middot; {{ leagues|length }}</em></summary>
     {% if leagues %}{{ tableau(leagues, 'league', 'Ligue') }}
     {% else %}<div class="small-empty">Aucune ligue à {{ league_min_n }} paris réglés ou plus.</div>{% endif %}
   </details>
 
   <details>
-    <summary class="sec-hdr">&#9632; PAR MARCHÉ <em>{{ mois_label }} &middot; {{ markets|length }}</em></summary>
+    <summary class="sec-hdr" title="Marchés à {{ league_min_n }} paris réglés ou plus">&#9632; PAR MARCHÉ <em>{{ mois_label }} &middot; {{ markets|length }}</em></summary>
     {% if markets %}{{ tableau(markets, 'market', 'Marché') }}
     {% else %}<div class="small-empty">Aucun marché à {{ league_min_n }} paris réglés ou plus.</div>{% endif %}
   </details>
 
+  {# Historique : résultat en première colonne (demande opérateur
+     2026-09-09), match et pronostic dans la seule colonne qui s'étire,
+     cote et date à droite. Plus de largeur minimale : la table tenait sur
+     560 px et se lisait en deux écrans sur téléphone. #}
   <details open>
     <summary class="sec-hdr">&#9632; HISTORIQUE <em>{{ mois_label }} &middot; {{ history|length }}</em></summary>
     {% if history %}
     <div class="tbl-outer">
-      <table class="perf-table wide">
-        <thead><tr><th></th><th>Match</th><th>Pronostic</th><th class="num">Cote</th><th>Résultat</th><th>Date</th></tr></thead>
+      <table class="perf-table">
+        <thead><tr><th>Résultat</th><th>Match &middot; pronostic</th><th class="num">Cote</th><th class="num">Date</th></tr></thead>
         <tbody>
           {% for r in history %}
           <tr>
-            <td>{{ sport_emoji.get(r.sport or '', '🎯') }}</td>
-            <td><div style="color:var(--t1);font-weight:700;white-space:nowrap">{{ r.match or '—' }}</div>
-              {% if r.league %}<div style="color:var(--t3);font-size:10px">{{ r.league }}</div>{% endif %}</td>
-            <td style="color:var(--t1)">{{ r.selection or '—' }}
-              {% if r.market_type or r.market %}<div style="color:var(--t3);font-size:10px">{{ r.market_type or r.market }}</div>{% endif %}</td>
+            <td>{% if r.outcome == 'WIN' %}<span class="oc-win">GAGNÉ</span>{% else %}<span class="oc-loss">PERDU</span>{% endif %}</td>
+            <td class="lbl"><div class="h-match">{{ sport_emoji.get(r.sport or '', '🎯') }} {{ r.match or '—' }}</div>
+              <div class="h-sub"><b>{{ r.selection or '—' }}</b>{% if r.market_type or r.market %} &middot; {{ r.market_type or r.market }}{% endif %}{% if r.league %} &middot; {{ r.league }}{% endif %}</div></td>
             <td class="num" style="color:var(--t1);font-weight:700">{{ "%.2f"|format(r.odds) if r.odds else '—' }}</td>
-            <td>{% if r.outcome == 'WIN' %}<span class="oc-win">✓ GAGNÉ</span>{% else %}<span class="oc-loss">✗ PERDU</span>{% endif %}</td>
-            <td class="ts">{{ r.created_at[8:10] ~ '/' ~ r.created_at[5:7] if r.created_at else '—' }}</td>
+            <td class="num ts">{{ r.created_at[8:10] ~ '/' ~ r.created_at[5:7] if r.created_at else '—' }}</td>
           </tr>
           {% endfor %}
         </tbody>
@@ -336,14 +354,11 @@ details[open] > summary.sec-hdr::before { content: '▾'; }
 </nav>
 
 <script>
+// Heure locale HH:MM, comme l'accueil — la date anglaise longue en UTC
+// prenait la moitié de la barre sur téléphone.
 (function tick(){
-  const d = new Date();
-  const pad = n => String(n).padStart(2,'0');
-  const days = ['Sun','Mon','Tue','Wed','Thu','Fri','Sat'];
-  const months = ['Jan','Feb','Mar','Apr','May','Jun','Jul','Aug','Sep','Oct','Nov','Dec'];
-  document.getElementById('clock').textContent =
-    days[d.getUTCDay()]+', '+pad(d.getUTCDate())+' '+months[d.getUTCMonth()]+' '+d.getUTCFullYear()+
-    ' '+pad(d.getUTCHours())+':'+pad(d.getUTCMinutes())+':'+pad(d.getUTCSeconds())+' UTC';
+  const d = new Date(), p = n => String(n).padStart(2,'0');
+  document.getElementById('clock').textContent = p(d.getHours())+':'+p(d.getMinutes());
   setTimeout(tick,1000);
 })();
 </script>

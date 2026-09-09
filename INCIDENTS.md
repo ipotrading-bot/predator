@@ -3283,6 +3283,30 @@ signaux et les captures 390/900 px se font hors suite (Chromium de
 `~/.cache/ms-playwright`, `--window-size` ne descend pas sous ~500 px :
 passer par une iframe).
 
+### /performance défilait de côté : une règle CSS du ledger s'appliquait à tous les tableaux (2026-09-09)
+
+Capture opérateur : PAR SPORT se lisait en deux écrans (« SPORT / PARIS »
+d'un côté, « RÉUSSITE / UNITÉS » de l'autre), d'où « paris 14–12 ou 0–1 je
+comprends pas ». Mesuré dans une iframe de 390 px : chaque tableau faisait
+760 px pour un conteneur de 375. Cause : `predator.css` pose
+`table { width: 100%; min-width: 760px }` pour le tableau du ledger, sans
+sélecteur — toute page à `<table>` en hérite. Le gabarit perf portait en plus
+son propre `min-width: 560px` sur l'historique. Le smoke test ne le voit pas
+(un 200 ne mesure rien) ; seule une capture à largeur de téléphone le montre.
+
+Fait : `.perf-table { min-width: 0 }` ; réussite en première colonne
+(couleur = verdict Wilson contre point mort, chiffres dessous — règle n°7),
+PAR SPORT trié par réussite décroissante (dans le gabarit ;
+`perf_view.sport_breakdown` garde « perdant d'abord » pour le rapport
+hebdo), « Paris 14–12 » devenu « G–P » en vert/rouge, résultat en première
+colonne de l'historique, colonne « verdict » des ligues/marchés fondue dans
+la couleur du taux, tuile et pieds « fantômes » retirés de l'écran (restent
+en `title=`, toujours hors des chiffres), pendule en heure locale, quatre
+tuiles qui tiennent sur 360 px, en-têtes de section sans le « (+22 < 5
+paris) ».
+
+Gardiens : `tests/test_perf_page.py`.
+
 ### Une version, un seul endroit
 
 `DASHBOARD_VERSION` (`api/index.py`), injectée
