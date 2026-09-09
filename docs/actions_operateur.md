@@ -1,20 +1,21 @@
 # Actions opérateur — ce que le code ne peut pas faire à ta place
 
-> **État au 2026-08-27 23:00 UTC — les trois sont FAITS.**
-> 1. ✅ Proxy Webshare (sortie Londres) posé → odds500 rendait 15 matchs sharp.
->    ⛔ odds500 RETIRÉE le 2026-09-03 (mur anti-bot EdgeOne) avec 7M et le
->    dictionnaire d'alias ; la plomberie proxy/relais reste pour les sources
->    de scores (core/score_sources.py).
-> 2. ✅ Second book posé → `Slots posés (2/2) : Bet365, 1xbet`.
-> 3. ⚠️ Smart Placement activé mais INSUFFISANT (colo IAD → SEA, toujours US).
->    C'est le proxy qui a levé le blocage, pas lui.
+> **Ce qui est OUVERT au 2026-09-09 (soir)** — une seule action opérateur :
+> ⚠️ **le proxy Webshare répond « 402 Payment Required »** depuis ~15:10 UTC
+> (quota du plan gratuit épuisé). Le code sort désormais EN DIRECT quand le
+> tunnel refuse (`core/net.py`), donc rien n'est bloqué ; mais les sources
+> réellement filtrées par IP restent sans proxy tant que le compte n'est pas
+> renouvelé. Voir §1 pour reposer une URL.
 >
-> Ce document reste la marche à suivre pour REFAIRE ces gestes (rotation de
-> proxy, changement de book). Le suivi de ce qui reste ouvert est dans
-> INCIDENTS.md.
+> Tout le reste est fait : second book Bet365 posé (§2), Smart Placement
+> essayé et jugé insuffisant (§3, c'est le proxy qui levait le blocage).
+> Sources RETIRÉES, à ne pas réintroduire : odds500 et 7M (mur anti-bot,
+> 2026-09-03), api-sports (comptes gratuits suspendus, 2026-09-03), Betfair
+> (2026-09-09, §2ter). Le suivi de ce qui reste ouvert est dans INCIDENTS.md.
 
-Trois gestes touchent des comptes EXTERNES (odds-api.io, Cloudflare, GitHub).
-Aucun agent ni workflow ne les fait : ils modifient tes comptes, pas ce dépôt.
+Les gestes décrits ici touchent des comptes EXTERNES (proxy, odds-api.io,
+Cloudflare, GitHub). Aucun agent ni workflow ne les fait : ils modifient tes
+comptes, pas ce dépôt.
 Chacun est réversible et documenté ici avec sa commande exacte, ce qu'on
 attend en retour, et comment vérifier que ça a marché.
 

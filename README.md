@@ -18,12 +18,12 @@
 ```
    SOURCES DE COTES                       COUCHE IA (core/ai_router.py)
    ───────────────────                    ──────────────────────────────
-   OddsAPI      (rallumé 2026-09-01)      Registre de 9 fournisseurs
-   Matchbook    (sharp, sans clé)         Lanes : FILTER / ANALYZE
-   odds-api.io  (soft)                    (SEARCH_READ et SETTLEMENT parties
-   titan007     (foot hors Europe)         avec Groq/Tavily le 2026-09-02 ;
-   Kalshi / Polymarket (consensus)         TRANSLATE_CJK avec odds500/7M
-                                           le 2026-09-03)
+   OddsAPI      (Tier 1, pool de clés)    Registre de 9 fournisseurs
+   Matchbook    (exchange, sans clé)      Lanes : FILTER / ANALYZE
+   Smarkets     (exchange, comblement)    (SEARCH_READ et SETTLEMENT parties
+   odds-api.io  (soft, books d'exécution)  avec Groq/Tavily le 2026-09-02 ;
+   titan007     (foot hors Europe)         TRANSLATE_CJK avec odds500/7M
+   Kalshi / Polymarket (consensus)         le 2026-09-03)
                                           Disjoncteur : 3 échecs → 30 min
           │                               Découverte du catalogue au run
           ▼                                        │
@@ -75,11 +75,16 @@ mauvais endroit.
 | `/ledger` | Bilan CLV par sport, seuils d'edge appris |
 | `/audit` | Distribution d'alpha par sport, verdicts de promotion/retrait |
 | `/performance` | WIN/LOSS/PUSH depuis `ai_learning_ledger`, score de Brier |
-| `/system` | Calculateur de paris système, pré-rempli avec les signaux actifs ; panneau Scénarios (retour pire/meilleur cas pour k bons sur N, point mort, marge composée indicative) — des retours conditionnels, jamais des probabilités |
+| `/system` | Calculateur de paris système, pré-rempli avec les signaux actifs ; simples, combiné et système s'additionnent, panneau « Scénarios complets » (pire/meilleur cas EXACTS pour k bons sur N, point mort après impôt) — des retours conditionnels, jamais des probabilités |
 
-Pas de build, pas de bundler : Jinja + CSS + JavaScript inline. Le dashboard
-n'écrit qu'une chose, une demande de scan dans `meta` (`/api/scan`, cooldown
-de 120 s), ramassée par `scan.yml` au tick suivant (32/jour, donc ≤ ~1 h) et transformée en scan complet.
+Jinja + CSS + JavaScript inline, sans bundler — À UNE EXCEPTION : `/system`
+est du JSX (`assets/system.jsx`) compilé UNE fois par
+[`scripts/build_system.py`](scripts/build_system.py) en `api/static/js/system.js`
++ `system.css`. Avant le 2026-09-09 la page embarquait Babel (2,9 Mo) et
+Tailwind « play » (398 Ko) et se recompilait dans le navigateur à chaque
+visite. Le dashboard n'écrit qu'une chose, une demande de scan dans `meta`
+(`/api/scan`, cooldown de 120 s), ramassée par `scan.yml` au tick suivant
+(32/jour, donc ≤ ~1 h) et transformée en scan complet.
 
 ### 🧠 Couche IA
 
@@ -364,29 +369,30 @@ Les automatisations (scans, audit, rapport, backfill) sont pilotées par les wor
 > ([`core/paim_engine.py`](core/paim_engine.py)) et la mise par Kelly
 > fractionnaire fiscalisé, pas par un compte de paris gagnants.
 
-Mesuré en base le 2026-08-27 sur `ai_learning_ledger` (327 lignes, dont
-**114 réglées** en WIN/LOSS — les 182 `expired` ne sont pas des résultats) :
+Mesuré en base le **2026-09-09** sur `ai_learning_ledger`, paris
+RECOMMANDÉS seulement (les fantômes de la golden hour sont mesurés mais
+n'ont jamais été envoyés — les compter jugerait le système sur des paris que
+personne n'a joués) :
 
-| | annoncé | mesuré |
+| | annoncé à l'époque | mesuré |
 |---|---|---|
-| Taux de réussite | 90,2 % | **56,1 %** (64 W / 50 L) |
-| ROI | +100 % / mois | **−10,3 %**, pondéré Kelly et net de taxe |
+| Taux de réussite | 90,2 % | **63,2 %** (103 W / 60 L sur 200 réglés) |
+| ROI | +100 % / mois | **+7,3 unités** à mise plate, pondéré Kelly |
 
 Et le taux nu ne suffit pas à conclure, dans un sens comme dans l'autre :
 
-- intervalle de Wilson à 95 % : **[47,0 % ; 64,9 %]** ;
-- à la cote moyenne de 1,739, il faut **62,8 %** pour être rentable après la
-  taxe de 20 % sur le gain net ;
-- la borne basse (47,0 %) est sous le point mort : **le système n'est pas
-  prouvé rentable**. Il n'est pas prouvé perdant non plus — 114 paris ne
-  tranchent pas.
+- intervalle de Wilson à 95 % : la borne basse reste **sous le point mort**
+  de 59 % (cote moyenne du portefeuille) ;
+- **le système n'est pas prouvé rentable** — il n'est pas prouvé perdant non
+  plus. 200 paris ne tranchent pas.
+- CLV réel moyen **+3,77 %** sur 68 lignes capturées : le marché confirme la
+  direction, ce qu'un taux de réussite seul ne dit pas.
 
-⚠️ Ces lignes viennent de l'ANCIEN moteur. Les phases A1 et A6 (2026-08-27)
-ont corrigé le prix retenu (exécutable, non dévigorisé) et la ligne comparée
-(même handicap des deux côtés) ; depuis, le football n'émet plus aucun signal
-positif. Une recalibration demande des lignes réglées POSTÉRIEURES à ces
-corrections — voir `INCIDENTS.md`. Ne pas recalculer un seuil sur ce ledger : il
-décrit une distribution que le moteur ne produit plus.
+⚠️ Le ledger mélange DEUX moteurs. Les phases A1 et A6 (2026-08-27) ont
+corrigé le prix retenu (exécutable, non dévigorisé) et la ligne comparée
+(même handicap des deux côtés). Ne pas recalculer un seuil sur les lignes
+antérieures : elles décrivent une distribution que le moteur ne produit plus
+(`core/learning_layer.post_correction_rows` applique cette coupe).
 
 Reproduire ces chiffres : `python scripts/replay_ledger_executable.py`
 (lecture seule).

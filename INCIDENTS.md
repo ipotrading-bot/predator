@@ -572,106 +572,43 @@ phase, sections annexes).
 Gardiens : `tests/test_titan007.py::test_les_ligues_majeures_passent_avant_le_cap`,
 `tests/test_source_adapter.py::TestPrioriteDeLigue`.
 
-### Le budget api-sports partait PREMIER ARRIVÉ, PREMIER SERVI (2026-08-27)
+### Un budget de requêtes ne se sert pas « premier arrivé » (2026-08-27)
 
-Symptôme opérateur : « pauvreté de signaux » le soir, alors que le moteur
-tournait, que la suite était verte et qu'aucun seuil n'avait bougé. La
-tentation était de baisser un plancher d'émission. C'était le mauvais organe :
-ce n'est pas la garde qui refusait, c'est le SLATE SHARP qui s'effondrait.
+Symptôme opérateur : « pauvreté de signaux » le soir, moteur vert, aucun
+seuil bougé. La tentation était de baisser un plancher d'émission ; c'était
+le mauvais organe. Ce n'est pas la garde qui refusait, c'est le SLATE SHARP
+qui s'effondrait — le budget de la source était mangé par les scans du
+matin, et les scans du soir (quand se jouent les grosses affiches)
+trouvaient le quota vide.
 
-Mesuré sur les scans du 2026-08-27 — la colonne de droite est le nombre de
-matchs portant un prix sharp à la sortie du Tier 2 :
+Règle qui en découle, appliquée depuis à OddsAPI : **une allocation par
+CRÉNEAU, pas un pot commun.** Le pré-vol vérifie ce qu'il reste avant de
+payer, l'allocation quotidienne se dérive du pool et des jours restants, et
+un créneau déjà payé ne se repaie pas. Un budget partagé sans réservation
+est toujours consommé par le premier appelant.
 
-    14:25  api-sports 14 matchs (14 sharp)      →  39
-    16:39  api-sports 13 matchs (11 sharp)      →  58
-    18:00  api-sports 26 matchs (22 sharp)      →  42
-    19:20  ⛔ budget de SCAN 64/64, cycle ignoré →  28
-    20:00  ⛔ budget de SCAN 71/64, cycle ignoré →  25
+api-sports elle-même a été RETIRÉE le 2026-09-03 : deux comptes gratuits
+suspendus, le second en moins de 24 h et à moins de 100 requêtes/jour — la
+règle « un compte gratuit par personne » rattrape tout compte refait après
+suspension. Décision opérateur : « vivre sans ». Ne pas la réintroduire.
+### OddsAPI déclarée obsolète (2026-08-26), puis RALLUMÉE (2026-09-01)
 
-api-sports est la seule source qui porte un prix Pinnacle sur ~100 % de ses
-matchs. Un cycle foot coûte 8 requêtes, `SCAN_BUDGET` en autorise 64 : huit
-cycles, pas un de plus. Rien ne disait QUAND les dépenser, donc les premiers
-crons livrés raflaient tout — et la source s'éteignait précisément quand le
-slate européen entre dans la zone jouable 2-24 h. À la cadence horaire du
-cron `golden` (:25), le budget entier partait AVANT 07:00 UTC et le soir
-n'avait pas un seul cycle.
-⚠️ Le motif dominant de rejet n'était PAS un seuil : sur 5 runs, 141 refus
-« Échec prix Sharp » (dont 81 en tennis, structurellement sans source sharp
-depuis l'obsolescence d'OddsAPI), 57 `LINESKIP`, 19 `CONFLIT SHARP` — et
-**zéro** `PLAFOND`, **zéro** `SUSPECT`. Aucune garde d'edge ne refusait quoi
-que ce soit : elles n'étaient pas atteintes, faute de candidats.
-Le budget n'est PAS augmenté — le compte a été SUSPENDU pour dépassement le
-2026-08-20 et la marge de sûreté ne se mange pas. Il est ÉTALÉ :
-`api_sports.scan_allowance()` n'ouvre à chaque heure que la fraction du
-budget correspondant à la journée UTC écoulée, avec un plancher d'un cycle
-pour que le premier scan du jour parte toujours. Aucun horaire n'est codé en
-dur (une fenêtre qui bouge dans `core/scan_windows.py` n'a rien à
-re-déclarer), et `fetch_results` n'est pas concerné : la réserve du
-settlement reste intacte.
-Gardien : `tests/test_api_sports.py::TestRythmeDeDepense` — en particulier
-`test_le_matin_ne_peut_pas_bruler_le_budget_du_soir`.
+⚠️ Cette section a porté « OddsAPI est OBSOLÈTE » pendant une semaine après
+que ce ne fut plus vrai. Elle est corrigée ici : OddsAPI est le Tier 1
+PAYANT du pipeline, alimenté par un pool de comptes gratuits dans
+`app_secrets`, et c'est lui qui price tennis, hockey, MMA/boxe, NFL/NCAAF,
+Ligue des champions et Euroleague — aucune source gratuite ne les couvre.
 
-### OddsAPI est OBSOLÈTE (décision opérateur 2026-08-26)
-
-(décision opérateur 2026-08-26) : `ODDS_API_ENABLED`
-(`run_engine.py`) vaut 0 par défaut, le Tier 1 ne s'exécute plus, aucune
-alerte de pool ne part (un pool mort est l'état NOMINAL, pas une panne).
-Réactivation : `ODDS_API=1`. Le module `core/odds_api.py` RESTE — il n'est
+Ce qui reste vrai de la décision de 2026-08-26 : `ODDS_API_ENABLED` peut
+éteindre le Tier 1 (un pool mort devient alors l'état NOMINAL, pas une
+panne), et le module `core/odds_api.py` RESTE quoi qu'il arrive — il n'est
 pas qu'une source, ses `SPORT_KEYS` sont le vocabulaire écrit dans
 `signals.sport` et relu par `api/index.py` (invariant des sport-keys,
-AUDIT.md §2). Ce que l'obsolescence tue, en clair : tennis, hockey,
-MMA/boxe, NFL/NCAAF, LdC/UEL, Euroleague (aucune source gratuite ne les
-price), et la capture closing-line « en stop » sur le payload payant —
-seul `run_closing_line.py` la fait encore, donc le CLV réel se raréfie
-alors que `learning_layer` en fait un critère de premier rang. La garde
-`[ -z "$ODDS_API_KEY" ] && exit 1` a été retirée des scans (fusionnés dans
-`scan.yml` le 2026-08-26) : elle échouait FERMÉ et aurait tué tous les scans
-le jour où le secret est retiré. La sortie anticipée de GOLDEN_HOUR supposait
-un Tier 1 vivant : sans elle, le tick golden était un no-op horaire permanent.
-Gardien : `tests/test_oddsapi_obsolete.py`.
+AUDIT.md §2).
 
-**RALLUMÉ le 2026-09-01** (décision opérateur, nouvelle clé posée par
-`rotate_odds_key.py --add` dans `app_secrets.ODDS_API_KEYS`). Ce qui a été
-fait, et pourquoi ainsi :
-
-- le flag `ODDS_API=1` est posé par `scripts/ci_scan_mode.py::TIER1_ENV` pour
-  `standard`, `golden` et `deep` — pas dans `scan.yml`, pas par défaut dans
-  `run_engine.py` (le défaut 0 reste verrouillé : un run local ou un futur
-  workflow ne doit jamais dépenser un crédit sans l'avoir demandé). Golden
-  l'a perdu une heure (50c127e : crainte d'une clé vidée en 3-5 jours) et
-  l'a RETROUVÉ le même jour, décision opérateur, avec le rythme mensuel
-  ci-dessous — c'est l'allocation du jour qui borne la dépense, pas le
-  nombre de ticks. Le bouton « Scanner » du dashboard promeut désormais le
-  tick golden en scan STANDARD (était guerrilla : sans Tier 1, foot seul) ;
-- la sortie anticipée GOLDEN_HOUR (« 0 event OddsAPI dans T-2h → exit ») a
-  été **retirée**, et non ré-armée : elle datait d'un Tier 2 fait de recherche
-  web ; aujourd'hui le Tier 2 porte tout le volume (api-sports, odds-api.io,
-  titan007, Matchbook) et le tick golden tire 24 fois par jour. La garder
-  aurait rendu ces sources muettes à chaque tick où le pool est vide, hors
-  fenêtre ou sans match à 2 h. Gardien :
-  `…::test_golden_hour_tier_1_allume_mais_vide_descend_au_tier_2` ;
-- **le budget est le vrai risque.** Une clé = 500 crédits/mois ; un scan
-  paie ~3 crédits par ligue peuplée (24 h ≈ 4 ligues ≈ 9-12 crédits, plus
-  en saison). Mesuré le 2026-09-01 : 24 crédits sur le tick standard de
-  09:03, soit ~240/jour à 10 scans — le pool de 5 comptes (2 500) serait
-  parti en dix jours. D'où le **rythme mensuel** (même jour, décision
-  opérateur « 1 mois seulement, maximum d'utilisation, suffisant pour tenir
-  30 jours ») : `core/scan_windows` calcule à chaque scan l'allocation du
-  jour = crédits restants du POOL ENTIER (5 sondes gratuites) ÷ jours
-  restants du cycle de 30 j (`meta.oddsapi_cycle_start`, redémarre seul) ;
-  un plafond intra-journée linéaire (15 % à 02:00 UTC, 100 % à 22:00) garde
-  du budget pour la soirée Big 5 ; closing line imminente jusqu'à 110 % de
-  l'allocation, fenêtre favorable / golden T-2h jusqu'à 100 %, fond jusqu'à
-  50 % ; dans un scan les ligues les plus peuplées passent d'abord. L'engagé
-  du jour vit dans `meta.oddsapi_spent_day`. Ce n'est PAS le gouverneur
-  retiré le 2026-08-01 (« ne pas rationner » : il étalait un budget que
-  l'opérateur voulait brûler) — celui-ci vise 100 % du pool, à la bonne
-  vitesse, et l'inutilisé d'un jour creux est reporté. `ODDS_API_PACING=0`
-  le coupe. Gardiens : `tests/test_scan_windows.py::TestRythme` et suivants.
-  Un pool mort n'est PAS une panne
-  (les alertes de pool Telegram sont de nouveau actives et le disent) :
-  la réponse est `rotate_odds_key.py --add`, jamais un rationnement muet.
-
+Leçon de forme : **une section d'incident qui décrit un état révolu doit
+être corrigée, pas empilée.** Ici, un lecteur en aurait conclu que le Tier 1
+ne tourne plus, alors qu'il paie chaque scan standard.
 ### odds-api.io : le plan autorise DEUX books, un seul est sélectionné (2026-08-27)
 
 Le côté SOFT est le goulot de tout le pipeline, et il tenait ce jour-là sur
@@ -973,179 +910,41 @@ le repaie donc plus jamais. Rendement mesuré 10 % → 30 % dès le 2e run, et
 croissant. La mémoire est refermée sur le sitemap courant à chaque écriture,
 sinon elle gonfle sans fin.
 
-### Le pont d'alias avait DEUX chemins morts en silence (2026-08-28)
+### Le pont d'alias : ce qu'un dictionnaire appris coûte vraiment (2026-08-28)
 
-Mesuré au scan de 14:19 : odds500 rend **27 matchs, 27 avec prix sharp réel**
-— et **26 sont écartés « faute d'alias fiable »**, 7M à court de budget
-(90/80). L'estimation « ~11 jours pour converger » (ci-dessous) reposait sur
-le seul chemin 7M ; deux autres existaient et n'étaient branchés nulle part :
-1. **Le slate de confiance du run** (api-sports/Matchbook/titan007, noms
-   anglais). `measure_against` apparie DÉJÀ ces fixtures à celles de 500.com
-   par temps + ligue + structure — mais seulement APRÈS `resolve_names`, qui
-   venait de les jeter. Les matchs mesurables étaient exactement ceux qu'on
-   écartait. `learn_from_trusted` fait le même appariement AVANT, et nourrit
-   `apply_pairing(canonical_source="trusted")` : gratuit, zéro requête,
-   confiance 0,7 comme 7M (même nature de preuve, aucun nom).
-2. **`team_aliases.resolve_with_ai`** (lane `translate_cjk`, 40 appels/jour
-   sur les modèles chinois du registre) — écrite le 2026-08-22, **jamais
-   appelée** : 12 alias en base, tous `sevenm`, zéro `ai`, aucune clé
-   `quota_alias_ai_*` jamais écrite. Capacité morte en silence, règle 6.
-   Branchée dans `resolve_names` pour les noms encore inconnus.
-⛔ L'IA PROPOSE, ELLE NE DÉCIDE PAS. Un alias IA part à 0,4 sous le seuil de
-0,6 : le match reste écarté tant que deux appariements indépendants (7M ou
-slate de confiance) ne l'ont pas confirmé. `resolve_names` ignore la valeur
-rendue par l'IA et ne lit que `canonical()`. Un nom déjà proposé ne repasse
-pas par l'IA (c'est un dictionnaire, pas un traducteur), et une panne IA
-n'écarte rien de plus.
-Gardiens : `tests/test_free_sources.py::TestLesDeuxChemainsQuiManquaient`,
-`tests/test_team_aliases.py::TestSeuilDeConfiance`.
+`team_aliases` est parti le 2026-09-03 avec les sources qu'il servait. Trois
+mesures méritent de survivre, parce qu'elles se reproduiront au prochain
+rapprochement de noms :
 
-### Le slate de confiance a appris QUATRE alias faux sur cinq (2026-08-28)
+- **Un pont d'alias apprend des alias FAUX.** Le « slate de confiance » en
+  avait appris quatre sur cinq (associations entre équipes distinctes jouant
+  le même soir). Un alias appris sans vérification est pire qu'aucun alias :
+  il fait régler un pari sur le mauvais match.
+- **Sa mise en route coûte ~11 jours** de collecte avant de converger. Ce
+  délai se paie avant tout bénéfice, et il doit être budgété comme tel.
+- **Deux de ses chemins étaient morts en silence** : le code existait,
+  personne ne l'appelait. Une capacité posée et non branchée ne lève aucune
+  erreur — c'est le même piège que le proxy Betfair.
+### odds500 : un mur anti-bot servi en HTTP 200, puis le retrait (2026-09-01 → 09-03)
 
-Premier run du chemin `learn_from_trusted` (ci-dessus), 15:48 UTC :
-« appariement odds500↔trusted : 5 paires sur 28×104 ». Deux justes (波鸿 →
-VfL Bochum, 奥斯纳 → Osnabrück) et **quatre fausses** : 拜仁/斯图加特
-(Bayern/Stuttgart, 德甲) appris comme **UCD / Finn Harps** (Irlande D2),
-蒙彼利埃/布洛涅 (Ligue 2) comme Farsta / Nacka Iliria (Suède, divisions
-inférieures), 雷克斯/伯明翰 (Championship) comme Kerry / Treaty United,
-卡斯鲁厄/沃夫斯堡 (2. Bundesliga) comme **AIK W / Kristianstad W** (football
-féminin). Huit lignes `team_aliases` (id 15-22), `resolved_by='trusted'`,
-confiance **0,7 ≥ MIN_CONFIDENCE 0,6** — utilisables dès l'écriture. Le
-`SUSPECT_DATA odds500 vs trusted 11.77 pts` loggé juste après, c'était la
-comparaison de Bayern-Stuttgart avec UCD-Finn Harps.
-Cause : `pair_fixtures` ne refusait une ligue que si elle était connue des
-DEUX côtés (`la and lb and la != lb`). Le libellé api-sports (« Ireland -
-First Division ») n'est pas dans `LEAGUE_MAP` → `lb` vide → la garde ne
-peut rien dire, et il reste le temps (même minute) et la structure — deux
-gros favoris se ressemblent à moins de 12 pts. Conçu pour le chemin 7M, dont
-les libellés ont été recopiés dans `LEAGUE_MAP` ; jamais mesuré sur le slate
-de confiance. Et le paragraphe « l'IA propose, elle ne décide pas » ne
-protégeait que la voie IA (0,4) : la voie `trusted` décide en un passage.
-Correction : `pair_fixtures(require_league=True)` sur ce chemin — une ligue
-inconnue d'un côté n'est plus « pas de désaccord », c'est « pas de preuve ».
-Ça coûte les deux paires justes de 德乙 (pas dans `LEAGUE_MAP` non plus) :
-un match sauté contre un alias faux à vie, l'arbitrage est le même que pour
-l'ambiguïté. Les huit lignes ont été INVALIDÉES en base (confiance 0,
-contradiction +1 — le geste d'`invalidate()`, pas un DELETE : la ligne
-garde la trace de ce que la source a affirmé).
-⚠️ Impact contenu parce qu'odds500 était en MODE OMBRE (0 émis). Le jour où
-elle en sort, un alias faux = un signal émis ET réglé sur le mauvais match.
-Gardiens : `tests/test_source_adapter.py::TestLaLigueEstExigeeSurLeCheminDeConfiance`,
-`tests/test_free_sources.py::TestLeSlateDeConfianceExigeLaLigue`.
+Source RETIRÉE le 2026-09-03 (décision opérateur : « si une source est
+inutilisable, il faut la dégager »), avec tout ce qui n'existait que pour
+elle. Ce qui reste à en tirer, et qui vaut pour n'importe quelle source
+gratuite :
 
-### 500.com sert son mur anti-bot en HTTP 200 — odds500 meurt sans un WARNING (2026-09-02)
-
-✅ TRANCHÉ le 2026-09-03 : source retirée, voir l'entrée suivante.
-
-DIAGNOSTIQUÉ, PAS CORRIGÉ — le statu quo est le choix par défaut, la
-décision finale appartient à l'opérateur.
-
-Symptôme : odds500 rend « 0 matchs au calendrier » sur TOUS les runs depuis
-le 2026-09-01 ~11:40 UTC. Dernier run vivant : 33489971035 à 09:00
-(16 matchs) ; premier mort : 33503697780 à 11:40. Aucun WARNING nulle part :
-le run contract ne voit rien, car `[]` est un retour « propre » — `_get` n'a
-pas échoué, le parseur n'a juste rien trouvé.
-
-Cause établie (MESURÉ le 2026-09-02, 2 requêtes de diagnostic) : 500.com a
-déployé un challenge anti-bot Tencent EdgeOne servi en **HTTP 200** — une
-page de **987 octets** de JS obfusqué (cookies `EO_Bot_Ssid`/`__tst_status`)
-au lieu des ~288 Ko du calendrier ; rejouer la requête avec les cookies
-calculés escalade vers une page « Security Verification » de **1 978
-octets**. Le parseur (`_ROW_RE` sur `<tr data-fid=…>`) rend légitimement 0.
-Le mur couvre l'IP datacenter ET la sortie Webshare UK. Ce que ce N'EST PAS,
-mesuré aussi : pas un re-filtrage de l'IP du proxy, pas le proxy gratuit qui
-rate 1/3 des requêtes (cet aléa est TRANSITOIRE et loggue un WARNING après
-3 tentatives ; ici, 200 persistant sur tous les runs), et pas le mode ombre
-(`meta.source_scorecard_odds500` : matched=244, shadow=false, promue à
-100 matchs / 0.00 pt de divergence médiane, errors=0 — la source était
-PROMUE quand le mur est tombé). C'est exactement la « panne INDISCERNABLE
-d'un blocage réel » que l'entrée du proxy (ci-dessous) redoutait — sauf
-qu'ici le blocage est réel.
-
-Ce qui a été fait : le diagnostic ci-dessus, rien d'autre. Ce qui n'a PAS
-été fait, et pourquoi : exécuter le challenge JS demanderait un navigateur
-headless ou un service de déblocage — coût et fragilité, décision opérateur ;
-l'alternative est l'abandon de fait. Le code reste en place : il rend `[]`
-sans nuire (~1 requête gaspillée par run) et le scorecard rétrogradera la
-source de lui-même si le mur persiste.
-
-⛔ NE PAS couper `FREE_SOURCES=0` pour « nettoyer » : ce coupe-circuit
-tuerait aussi 7M et les marchés de prédiction, qui vont bien.
-
-Gardien : aucun nouveau — le comportement « 200 avec 0 ligne = silence » est
-celui, documenté, de `core/odds500.py` (`_get` lignes 188-210,
-`fetch_fixtures` lignes 245-290) : une RÉPONSE du serveur n'est pas un échec
-de transport, et le parseur qui ne trouve rien rend `[]`.
-
-### odds500 RETIRÉE — et tout ce qui n'existait que pour elle part avec elle (2026-09-03)
-
-Symptôme : depuis le 2026-09-01 ~11:40 UTC, odds.500.com sert un défi
-anti-bot Tencent EdgeOne (cookie `EO_Bot_Ssid`) en **HTTP 200** à la place
-du calendrier. Quota tombé de ~400 à 14 requêtes/run sans un log jusqu'au
-commit 600c000 (`mur_anti_bot()` nomme le mur). Au scan de 21:45 le 03/09,
-la ligne disait encore « odds500: MUR ANTI-BOT (défi EdgeOne …) — à retirer
-si ça dure ». Diagnostic complet dans l'entrée précédente.
-
-Décision opérateur du 2026-09-03 (« Régler 3 » sur le bilan de santé, dans
-la lignée de « si une source est inutilisable, il faut la dégager ») :
-**odds500 retirée.** Exécuter le défi JavaScript aurait demandé un
-navigateur headless ou un service de déblocage — coût et fragilité refusés.
-
-Ce qui part AVEC elle, parce que ça n'existait que pour elle :
-- `core/sevenm.py` — 7M, source de NOMS anglais pour apprendre les alias
-  des noms chinois de 500.com. Sans source chinoise, rien à traduire.
-- `core/team_aliases.py` — le dictionnaire d'alias (module). La TABLE
-  Supabase `team_aliases` (12 lignes) et `sql/migrate_v10_3_team_aliases.sql`
-  sont CONSERVÉES : jamais de suppression sèche.
-- la coordination de `core/free_sources.py` (`fetch_odds500`, `learn_aliases`,
-  `learn_from_trusted`, `resolve_names`, `measure_against`, curseur et
-  mémoire 7M) — le module ne garde que le consensus Kalshi/Polymarket, avec
-  son coupe-circuit `FREE_SOURCES=0` ;
-- la lane IA `TRANSLATE_CJK` (seul consommateur : `team_aliases.resolve_with_ai`)
-  et les deux fournisseurs qui ne servaient qu'elle, siliconflow et upstage
-  → registre à **9 fournisseurs, 7 sans clause restrictive** (README et
-  AUDIT.md recomptés, `tests/test_documentation.py` garde le compte) ;
-- les overrides `ODDS500_PROXY`/`ODDS500_RELAY`/`SEVENM_PROXY`/`SEVENM_RELAY`
-  de `scripts/ci_env.RELAYS` — `scan.yml` régénéré par `ci_env.py --write`,
-  6 lignes de secrets en moins (ces 4 + `SILICONFLOW_API_KEY` +
-  `UPSTAGE_API_KEY`) ;
-- l'entrée `odds500` de `source_adapter.CALL_ORDER`, la sonde « Sources
-  gratuites Asie » de `ops.py sources`, et la liste blanche du Worker relais
-  (`scripts/cloudflare_relay_worker.js`), désormais VIDE — un relais sans
-  hôte ne relaie rien, c'est le comportement sûr.
-
-Ce qui RESTE, et pourquoi :
-- `core/net.py` entier (proxy, relais, reprise sur échec de transport) :
-  `core/score_sources.py` (ESPN, TheSportsDB, MLB — les scores du
-  settlement) passe par `net.prepare` + `net.open_with_retry`. Le module
-  est né pour odds500 ; son consommateur est aujourd'hui le settlement.
-  `FREE_SOURCES_PROXY`/`FREE_SOURCES_RELAY`/`_TOKEN` restent dans le pool
-  `scan`.
-- `core/source_adapter.py` (Fixture, `pair_fixtures`, scorecards) sert le
-  consensus ; `core/prediction_markets.py` inchangé.
-
-Résidus Supabase laissés en place (données, pas code) :
-`meta.source_scorecard_odds500`, `meta.sevenm_sitemap_cursor`,
-`meta.sevenm_past_gids`, table `team_aliases`. Les secrets GitHub
-`ODDS500_*`, `SEVENM_*`, `SILICONFLOW_API_KEY`, `UPSTAGE_API_KEY`, s'ils
-existent, sont inertes et peuvent être supprimés (actions_operateur §6).
-
-Règle qui en découle : **une source qu'on ne peut plus LIRE n'a pas de mode
-ombre, elle a une date de sortie** ; et ce qui n'existait que pour elle
-part avec elle — sinon c'est une capacité morte en silence (motif « listes
-qui divergent », règle dure n°6).
-
-Gardiens :
-- `tests/test_free_sources_wiring.py::TestConsensusBranche::test_plus_aucune_source_asiatique_dans_le_depot`
-  (les trois modules ne reviennent pas, le harvester n'appelle plus
-  `fetch_odds500`) ;
-- `::TestModeRelais::test_le_worker_garde_sa_liste_blanche_et_son_jeton`
-  (hôtes 500.com/7M absents de la liste blanche, jeton toujours exigé) ;
-- `::TestRepriseSurEchecPassager::test_les_sources_de_scores_passent_par_la_reprise` ;
-- `tests/test_ai_router.py::TestLanes::test_la_lane_cjk_est_partie_avec_la_mission_3` ;
-- `tests/test_documentation.py` (comptes du README = registre).
-Suite : 1547 passed.
-
+1. **Un HTTP 200 peut être un mur.** Depuis le 2026-09-01 11:40 UTC,
+   500.com servait le défi anti-bot Tencent EdgeOne (script obfusqué de
+   ~1 ko posant un cookie `EO_Bot_Ssid`) À LA PLACE du calendrier, en 200.
+   Le parseur ne trouvait rien et rendait `[]`.
+2. **`[]` est un retour « propre » : il ne déclenche rien.** Ni WARNING, ni
+   run contract, ni alerte. La source est morte du 01/09 au 02/09 sans une
+   ligne de log — quota tombé de ~400 à 14 requêtes/run. D'où la règle :
+   une source qui rend vide DOIT savoir dire pourquoi (`mur_anti_bot()`
+   nommait le mur ; `core/net.describe_failure` fait ce travail pour les
+   autres).
+3. **Un défi JavaScript ne se contourne pas par un relais.** Le filtrage
+   par IP, oui (proxy/Worker) ; une porte fermée à tout client sans moteur
+   JS, non.
 ### Le proxy gratuit rate une requête sur trois — et ça coûtait la source (2026-08-28)
 
 Mesuré au lendemain du déblocage, trois GET identiques sur 500.com à travers
@@ -1175,118 +974,24 @@ sur un run passe de 11 % à 4 %, pour une requête de plus en cas d'échec
 seulement.
 Gardien : `tests/test_free_sources_wiring.py::TestRepriseSurEchecPassager`.
 
-### Le pont d'alias converge, mais sa mise en route coûte ~11 jours (2026-08-28)
+### Une source filtrée par IP se route par un proxy — et le proxy se vérifie (2026-08-27)
 
-Mesuré en direct, odds500 et 7M interrogés côte à côte depuis un poste :
+odds500 (retirée depuis) rendait 0 match depuis les runners GitHub et 15
+depuis un poste de dev : filtrage par plages IP, pas un bug. Le remède —
+sortir par un proxy à IP européenne (`{SOURCE}_PROXY` puis
+`FREE_SOURCES_PROXY`, résolus par `core/net.py` depuis `app_secrets`, donc
+rotatifs sans redéploiement) — sert encore aux sources de scores.
 
-    odds500        14 matchs à venir, 14 avec prix sharp réel
-    7M sitemap     854 identifiants
-    balayage       60 identifiants interrogés → **1 seul match à venir**,
-                   42 déjà joués (donc mémorisés), 17 inexploitables
+Deux pièges rencontrés ce jour-là, toujours d'actualité :
+- **Un proxy souscrit n'entre pas tout seul dans le pipeline** : il faut la
+  variable ET qu'elle atteigne le job (`scripts/ci_env.py`). Vérifié le
+  2026-08-27 : aucun proxy n'était posé nulle part.
+- **Tester depuis un Codespace ne prouve rien** : ici, ça marche déjà sans
+  proxy. La preuve se fait sur un vrai run GitHub Actions.
 
-Le sitemap 7M n'est pas trié par coup d'envoi et traîne plusieurs jours de
-passé : le rendement en matchs À VENIR est de ~1,7 % au premier passage. Avec
-`SEVENM_DAILY_BUDGET` = 80, il faut ~11 jours pour balayer les 854 entrées.
-⚠️ CE N'EST PAS UNE PANNE, ET LE COÛT EST NON RÉCURRENT : les 42 joués de ce
-balayage sont entrés dans `meta.sevenm_past_gids` et ne seront plus jamais
-repayés. Le rendement monte donc à chaque run. Ce qu'il faut surveiller n'est
-pas la lenteur mais l'ARRÊT : si `team_aliases` (12 lignes, inchangé depuis
-le 2026-08-22) n'a pas bougé sous deux jours, le pont ne fonctionne pas et il
-faut le diagnostiquer, pas l'attendre.
-
-    python scripts/ops.py supabase sql "select count(*) from team_aliases"
-
-⚠️ Et rappel de l'échelle : la sortie du MODE OMBRE demande 100 matchs
-appariés à ≤ 2 points de divergence. Tant que le dictionnaire est vide,
-14 des 15 prix sharp d'odds500 sont écartés à chaque run.
-
-### odds500 était FILTRÉE PAR IP — ✅ LEVÉ le 2026-08-27 par un proxy UK
-
-HTTP 200
-et 15 fixtures depuis un poste de dev, `Connection refused` depuis les
-runners GitHub. Le code, le parseur et le User-Agent vont bien — aucune
-correction de code ne lève un blocage d'IP. Seule issue : `core/net.py`
-(`FREE_SOURCES_PROXY`, ou `ODDS500_PROXY`/`SEVENM_PROXY` par source). Sans
-variable, le module est INERTE et rien ne change. Plomberie COMPLÈTE au
-2026-08-26 : lecture par `secret_store` (donc `app_secrets` AVANT l'env —
-URL rotative sans redéploiement), les 3 variables sont transmises par
-engine/golden_hour/deep_scan/guerrilla, documentées dans `.env.example`,
-et `ops.py sources` affiche `[via proxy]`. ⚠️ `proxy_for` MÉMORISE sa
-résolution pour tout le processus : `get_secret` ne met pas les valeurs
-ABSENTES en cache, et l'absence de proxy étant le cas nominal, chaque
-requête HTTP d'odds500 aurait relu Supabase. `net.reset()` pour les tests.
-Chemin proxy VÉRIFIÉ de bout en bout : proxy vivant → 99 420 caractères
-et 15 fixtures ; proxy mort → échec (donc rien ne le contourne) ; sans
-proxy → succès direct. ⚠️ Un test depuis un poste de dev ne prouve RIEN
-sur les runners, où ça marche déjà sans proxy — seul un run GitHub tranche.
-VOIE RETENUE (décision opérateur 2026-08-26) : RELAIS Cloudflare Worker,
-`scripts/cloudflare_relay_worker.js`. Un Worker ne parle pas CONNECT — ce
-sont donc DEUX mécanismes distincts dans `net.py`, pas deux réglages du
-même : `prepare()` réécrit l'URL (relais), `opener_for()` tunnelise
-(proxy). Le relais gagne si les deux sont posés. Variables :
-`FREE_SOURCES_RELAY` + `FREE_SOURCES_RELAY_TOKEN` (et `ODDS500_RELAY` /
-`SEVENM_RELAY`), câblées dans les 4 workflows de scan.
-DEUX GARDES NON NÉGOCIABLES côté Worker, sans quoi c'est un PROXY OUVERT
-que le premier venu utilisera sur ton quota : jeton partagé (comparé en
-temps constant) ET liste blanche d'hôtes. Gardées par
-`tests/test_free_sources_wiring.py::TestModeRelais`.
-Le Worker doit rendre `upstream.body` (octets bruts) et JAMAIS `.text()` :
-500.com sert du GB18030, un passage par le texte rendrait tous les noms
-chinois en mojibake — panne silencieuse ressemblant à un parseur cassé.
-Chemin relais VÉRIFIÉ de bout en bout contre un serveur local conforme :
-15 fixtures, `大田市民 vs 蔚山现代` intact ; jeton faux → 403 ; hôte hors
-liste avec jeton valide → 403 ; 7M → 435 ids.
-EN PRODUCTION DEPUIS LE 2026-08-26 : Worker `predator-relay` déployé sur le
-compte, sous-domaine `predator-relay.ipotradingbot.workers.dev`, et les deux
-secrets GitHub posés. ⚠️ LE PIÈGE QUI A COÛTÉ LE PLUS DE TEMPS : le Worker
-était uploadé ET son binding `RELAY_TOKEN` présent, mais le sous-domaine
-`workers.dev` était DÉSACTIVÉ — le script n'avait donc aucune URL publique
-et rendait 404 sur tout. Un `workers/scripts` qui liste le Worker ne prouve
-PAS qu'il est joignable : vérifier `GET workers/scripts/<nom>/subdomain`
-(`enabled: true`). La valeur d'un `RELAY_TOKEN` déjà posé étant ILLISIBLE,
-la seule façon de faire correspondre les deux côtés est de le faire tourner.
-✅ LEVÉ — que 500.com accepte les IP de sortie de Cloudflare : mesuré le
-2026-08-26, 200 et 58 807 octets à travers le relais, soit exactement la
-taille obtenue en direct. Pas de 502, donc pas de proxy à IP dédiée à
-chercher. Encodage vérifié à travers le relais : 518 noms chinois, ZÉRO
-mojibake. 7M a été joint pour la PREMIÈRE fois (435 ids) — sa joignabilité
-n'est plus inconnue. `ops.py sources` affiche `[via relais Cloudflare]` sur
-les deux. ⛔ TRANCHÉ le 2026-08-26 (run engine 32994959190, 17:34) : depuis
-un runner, odds500 rend « 403 de l'AMONT via le relais (colo Cloudflare
-IAD) ». Le Worker s'exécute au colo le plus proche de l'APPELANT — Londres
-(LHR) depuis le poste de dev, où 500.com répond 200 ; Washington (IAD)
-depuis les runners GitHub, où 500.com REFUSE l'IP de sortie. Ce n'est ni
-le jeton (tourné des deux côtés, même résultat), ni le code, ni la liste
-blanche. `net.describe_failure` le dit en clair : un 403 SANS `X-Relay-By`
-serait le Worker (jeton/hôte) ; AVEC, c'est l'amont, et le colo est nommé.
-Conséquence : le relais Cloudflare tel quel NE SUFFIT PAS depuis GitHub
-Actions. Il faut une sortie hors des colos US — relais épinglé en Europe
-(Fly.io/Render région EU), proxy à IP dédiée, ou runner auto-hébergé en
-Europe. ✅ RÉSOLU LE 2026-08-27 — proxy Webshare à sortie LONDRES (plan gratuit,
-10 proxys, 1 Go/mois), posé en secret GitHub `FREE_SOURCES_PROXY`. Premier
-run depuis un runner (33120263411) :
-
-    odds500: 15 matchs (15 avec prix sharp réel) / 15 à venir | 16 req
-    sevenm: 854 identifiants au sitemap   ← 7M atteint EN PRODUCTION
-    free_sources: 14 match(s) avec un nom inconnu — interrogation 7M
-
-Le 403 a disparu. odds500 apporte du prix SHARP RÉEL, ce qu'aucune autre
-source gratuite ne fait à ce volume. Vérifié avant de poser le secret :
-`curl --proxy … https://odds.500.com/fenxi/ouzhi-1.shtml` → 200 et
-**58 807 octets**, exactement la taille documentée d'une réponse valide.
-⚠️ Le Smart Placement du relais a été essayé le même soir et NE SUFFIT PAS
-(colo déplacé IAD → SEA, toujours américain, toujours refusé). C'est le
-proxy qui a réglé le blocage, pas lui.
-⛔ ET SANS L'INVERSION DE PRÉCÉDENCE, LE PROXY N'AURAIT RIEN CHANGÉ : le
-relais captait l'URL même quand un proxy était posé. Le log le dit désormais
-en clair : « net[odds500]: proxy configuré — le relais est ignoré ».
-⚠️ CE QUI N'EST PAS ENCORE GAGNÉ, et il ne faut pas le lire comme une panne :
-14 des 15 matchs sont ÉCARTÉS faute d'alias fiable, et odds500 reste en MODE
-OMBRE (1 match mesuré, 0 émis). Les deux se résorbent run après run — le
-dictionnaire `team_aliases` se remplit à chaque interrogation de 7M, et la
-sortie du mode ombre demande 100 matchs appariés à ≤ 2 points. Compter en
-JOURS, pas en runs.
-
+Le Smart Placement de Cloudflare a été essayé sur le Worker relais : il
+déplace l'exécution, pas la plage IP de sortie — insuffisant contre un
+filtrage géographique.
 ### Un proxy posé était CAPTÉ par le relais, en silence (2026-08-27)
 
 « J'avais installé un proxy » — et rien n'avait changé. Deux causes,
@@ -1317,51 +1022,6 @@ Gardien : `tests/test_free_sources_wiring.py::TestModeRelais`
 ::`test_sans_proxy_le_relais_reprend_la_main`.
 ⚠️ Ce qui tranche reste un run DEPUIS UN RUNNER GitHub : `describe_failure`
 nomme le colo, et un 403 SANS `X-Relay-By` n'a pas la même cause qu'avec.
-
-### odds500 : le Smart Placement a été essayé — et il NE SUFFIT PAS (2026-08-27)
-
-Le blocage est établi et ne change pas : un Worker s'exécute au colo le plus
-proche de l'APPELANT, donc IAD depuis les runners GitHub, et 500.com refuse
-cette IP de sortie. Ce qui n'avait jamais été vérifié, c'est le réglage qui
-INVERSE cette règle. Relevé en base le 2026-08-27 : l'endpoint
-`workers/scripts/predator-relay/settings` rend `placement: {}` — le Smart
-Placement, qui exécute le Worker près de l'ORIGINE et non de l'appelant, n'a
-jamais été activé.
-Outil : `scripts/relay_smart_placement.py` (lecture seule sans `--oui`,
-réversible par `--annuler`).
-
-⛔ TRANCHÉ LE MÊME JOUR — ACTIVÉ, MESURÉ, INSUFFISANT. `placement: smart`
-posé à 21:41, puis run de scan 33119345516 : le colo est passé de **IAD**
-(Washington) à **SEA** (Seattle). Le Smart Placement DÉPLACE donc bien
-l'exécution — ce n'est pas un réglage inerte — mais Cloudflare choisit par
-LATENCE, et depuis les runners GitHub le plus proche de l'origine reste un
-colo américain. 500.com refuse toujours : « 403 de l'AMONT via le relais
-(colo Cloudflare SEA) ».
-Le réglage est LAISSÉ EN PLACE : il ne nuit pas, et un proxy le contourne de
-toute façon depuis l'inversion de précédence. Mais il ne faut plus le
-compter comme une piste — elle est fermée, avec sa mesure.
-CE QUI RESTE, ET IL N'Y A PLUS D'HYPOTHÈSE GRATUITE : une sortie hors des
-colos US. Proxy à sortie européenne (`FREE_SOURCES_PROXY`, le chemin le plus
-court — la plomberie est déjà là, il ne manque que la valeur du secret),
-relais épinglé en Europe (Fly.io/Render région EU), ou runner auto-hébergé
-en Europe.
-⚠️ CE N'EST PAS UNE SOLUTION ANNONCÉE, c'est une hypothèse gratuite qu'on
-ferme avant d'en payer une autre. Cloudflare optimise la LATENCE et choisit
-lui-même le colo : rien ne garantit qu'il en retienne un dont 500.com accepte
-l'IP. Si le 403 persiste en nommant un colo américain, la conclusion tient
-sans changement — il faut une sortie hors des colos US (relais épinglé en
-Europe, proxy à IP dédiée, ou runner auto-hébergé).
-⛔ ET LE PIÈGE EST LE MÊME QUE CELUI DU SOUS-DOMAINE workers.dev : un
-`placement.mode = smart` POSÉ ne prouve rien sur le RÉSULTAT. Seul un run
-depuis un runner GitHub tranche, et `net.describe_failure` nomme le colo.
-⚠️ Le PATCH renvoie les réglages EXISTANTS tels quels. N'envoyer que
-`placement` effacerait les bindings du Worker, dont `RELAY_TOKEN` — dont la
-valeur est ILLISIBLE une fois posée, ce qui obligerait à faire tourner le
-jeton des deux côtés. Et l'endpoint n'accepte QUE du multipart/form-data :
-un PATCH JSON rend 415.
-Note sur le jeton : il avait été trouvé en lecture seule le 2026-08-27 sur
-`workers/scripts`. Sur `settings` il rend 415 et non 403 — donc il écrit
-peut-être ici. Un 403 ne veut pas dire « jeton expiré ».
 
 ### Kalshi/Polymarket
 
@@ -2043,24 +1703,6 @@ J-`API_SPORTS_FREE_WINDOW_DAYS` (1), api-sports n'est plus appelé et ses
 lookups sont préservés pour les matchs de la veille.
 Gardiens : `tests/test_score_sources.py::TestESPN`, `::TestChaineAvecESPN`,
 `tests/test_settlement.py::…::test_api_sports_saute_hors_de_la_fenetre_du_plan_gratuit`.
-
-### odds500 derrière un mur anti-bot EdgeOne depuis le 1er septembre (2026-09-03)
-
-`ops.py sources` disait « odds500 KO — 0 matchs au calendrier » et le quota
-journalier était tombé de 400 (30 août) à 14 (3 septembre) sans qu'aucun log
-n'accuse quoi que ce soit. Lu à la main via le relais : le calendrier n'est
-plus une page mais un script obfusqué de ~1 ko qui pose un cookie
-`EO_Bot_Ssid` — le défi JavaScript de Tencent EdgeOne. Sans moteur JS, la
-source est MUETTE, relais Cloudflare ou pas ; ce n'est plus un filtrage par
-IP (celui-là, le relais le contournait), c'est une porte fermée à tout
-client qui n'exécute pas de JavaScript.
-
-Fait : `core/odds500.mur_anti_bot` reconnaît le défi et `_get` rend None en
-loggant « MUR ANTI-BOT » en clair — plus jamais « 0 match » pour une panne.
-Pas fait, et c'est une DÉCISION OPÉRATEUR : retirer la mission 3 odds500
-(module, relais, scorecard, alias chinois) si le mur dure, ou la garder
-dormante (coût : 1 à 2 requêtes de calendrier par scan). Gardien :
-`tests/test_odds500.py::TestMurAntiBot`.
 
 ### Le LineFeed 1xbet/Melbet/22bet retiré du harvest (2026-09-03)
 
@@ -2888,46 +2530,6 @@ Big 5 (20:45/21:00) : les crédits qu'ils dépensent sur ces ligues
 
 Gardiens : `tests/test_rapport_digest.py`, `tests/test_telegram_format.py`.
 
-### api-sports, deux comptes suspendus — le second en moins de 24 h (2026-09-03)
-
-Le compte du 2026-08-20 avait été suspendu « pour dépassement ». Le compte
-créé le 2026-09-02 à 06:50 (nouveau compte gratuit, clé posée dans
-`app_secrets`) répondait encore à 03:07 le 2026-09-03 et était SUSPENDU à
-06:10 — moins de 24 h, à MOINS de 100 requêtes par API et par jour (le
-budget partagé était à 36/64 sur le foot, 59/100 sur le basket). Ce n'est
-donc pas le quota journalier : c'est la règle « un compte gratuit par
-personne » — un compte refait après suspension retombe. Aucun code
-n'empêche cela ; la décision est à l'opérateur (plan payant, ou vivre sans :
-titan007 + Matchbook portent le sharp Tier 2, ESPN/MLB le règlement).
-Et pendant toute la journée, scans et audits ont réinterrogé le compte
-suspendu — quatre appels par audit, sans une alerte : l'opérateur l'a appris
-par le log, le soir.
-
-Ce que le code garantit désormais (`core/api_sports.py`) :
-
-1. **Cadence** : jamais plus d'une requête toutes les `REQUEST_SPACING_S`
-   (6,5 s → ≤ 9/min, limite 10/min du plan gratuit), quel que soit
-   l'appelant — scan, `fetch_results`, sondes ;
-2. **Coupe-circuit** : dès la première réponse « suspended », un
-   compartiment partagé `core/daily_quota` (`api_sports_suspended`, remis à
-   zéro à minuit UTC) coupe TOUS les appels de la journée, tous sports et
-   settlement compris ; `run_engine` envoie UNE alerte Telegram par 24 h.
-   Le lendemain, un seul appel re-sonde le compte.
-
-**Décision opérateur, le soir même : « vivre sans api-football ».** La source
-est RETIRÉE du dépôt (`core/api_sports.py` et ses garde-fous du matin
-supprimés, `API_SPORTS_KEY` effacée d'`app_secrets`, pools de secrets
-régénérés sans aucune clé api-sports, périmètre sans passe-droit : un match
-n'est réglable que si ESPN le liste ou si c'est du baseball). Aucun sport ne
-sort du périmètre : ESPN couvre foot, basket, hockey, NFL, NCAAF, AFL, NRL,
-MMA, tennis, MLB statsapi le baseball. Ce que le Tier 2 perd : le Pinnacle
-« gratuit » sur ~100 % des fixtures foot d'api-sports — titan007 et Matchbook
-portent désormais tout le sharp Tier 2. Ne pas refaire un compte gratuit.
-Gardiens : `tests/test_settlement.py::TestFetchMatchResult::test_api_sports_est_parti`,
-`tests/test_ci_env.py::test_aucune_cle_api_sports_dans_les_pools`,
-`tests/test_perimetre.py::TestReglable::test_plus_de_passe_droit_api_sports`,
-`tests/test_engine_circuit_breaker.py::test_breaker_still_queries_the_cheap_sources`.
-
 ### Un crédit OddsAPI n'achète jamais un fantôme ; les crons recalés ; Telegram en simples (2026-09-03)
 
 Suite directe de « Telegram après les fantômes » (causes b, c, d), sur
@@ -3032,100 +2634,34 @@ Gardien : `tests/test_system_page.py::TestFiscaliteAppliqueePartout` — il
 exige que l'écart reste expliqué et qu'aucun taux ne revienne en dur ; il ne
 fige AUCUNE valeur, `core.constants.TAX_RATE` restant une décision opérateur.
 
-### Betfair banni pour trop de tentatives : un refus de compte ne se rejoue pas (2026-09-08)
+### Betfair : deux mois sans un seul marché, puis retrait (2026-07-09 → 2026-09-09)
 
-Symptôme : run closing line 34269384757 (19:30 UTC) — « Betfair login:
-TEMPORARY_BAN_TOO_MANY_REQUESTS ». Depuis le passage par le proxy (matin du
-08/09), chaque scan (22/j) et chaque tick de closing line (~45/j) retentait
-le cert-login et recevait CERT_AUTH_REQUIRED (certificat non associé au
-compte, action opérateur en attente) : ~70 échecs par jour, jusqu'au ban.
+Source RETIRÉE le 2026-09-09 (règle 13, décision opérateur). Toute la
+mécanique — `fetch_betfair_prices`, login par certificat, backoff, clé de
+suspension, cinq secrets — a été supprimée du dépôt le même jour.
 
-Cause : `core/harvester._betfair_login` ne mémorisait rien entre processus ;
-un refus de COMPTE était traité comme un incident réseau, rejoué au tick
-suivant. Le risque réel : le ban temporaire persiste quand l'opérateur
-associe enfin le certificat, et le critère de retrait règle 13 (login refusé
-7 jours) se déclenche pour une raison que nous avons fabriquée.
+Ce qui s'est passé, dans l'ordre : `certlogin` géolocalise l'IP de
+l'appelant et les runners GitHub sortent des États-Unis, donc
+`BETTING_RESTRICTED_LOCATION` à chaque scan et **0 marché chargé depuis le
+2026-07-09** ; sortie par le proxy Londres le 2026-09-08 (décision
+opérateur, sachant que masquer sa localisation viole les conditions
+Betfair) → le géo-blocage tombe et le refus devient `CERT_AUTH_REQUIRED`,
+le certificat n'ayant jamais été associé au compte ; ~70 logins refusés par
+jour → `TEMPORARY_BAN_TOO_MANY_REQUESTS` le soir même ; suspension par clé
+meta ; nouveau compte le 2026-09-09, qui ne peut pas créer de clé
+d'application (`APP_KEY_CREATION_FAILED`) → « laisse tomber ».
 
-Fait : suspension partagée via `meta.betfair_login_backoff_until`
-(CERT_AUTH_REQUIRED 6 h, TEMPORARY_BAN 3 h, ACCOUNT_NOW_LOCKED 12 h, autre
-refus 1 h), lue AVANT toute tentative (`betfair_login_suspendu`) ; un
-SUCCESS ou une exception réseau ne suspendent rien. Le log dit « login
-suspendu jusqu'à … » au lieu de répéter le refus.
+Trois leçons, elles, restent vraies ailleurs :
+1. **Un refus de COMPTE n'est pas un incident réseau.** Le rejouer au tick
+   suivant ne change rien et finit banni — d'où le backoff partagé en base,
+   modèle repris pour toute authentification tierce.
+2. **Une capacité posée et non branchée est morte sans erreur** : le proxy
+   existait et n'était pas transmis à `requests` côté Betfair.
+3. **Un critère de retrait daté** (règle 13) évite de s'acharner : ici il
+   aurait dû se déclencher dès juillet.
 
-Gardiens : `tests/test_betfair_backoff.py`.
-
-### Betfair suspendu par l'opérateur, proprement, en une clé meta (2026-09-08, soir)
-
-Décision opérateur : « suspends Betfair pour l'instant si c'est sans
-conséquence, mon compte est bloqué, le temps de trouver une solution ».
-Conséquence mesurée d'un Betfair actif mais refusé : ~70 logins/jour en
-échec, ban temporaire (entrée précédente) — et rien à gagner tant que le
-compte est bloqué. Sans conséquence pour le pipeline : Betfair chargeait
-0 marché depuis le 2026-07-09 ; Matchbook (60-120 marchés) et Smarkets
-(≈130) tiennent le Tier 1.5 et la closing line.
-
-Fait : `meta.betfair_suspendu` (motif en valeur) lu par
-`core.harvester.fetch_betfair_prices` AVANT tout login — {} immédiat, une
-ligne INFO « Betfair suspendu par l'opérateur (…) », zéro requête, zéro
-backoff écrit ; vide / 0 / non / off = levée. Posée le 2026-09-08 ~20:50 UTC.
-Procédure et levée : `docs/actions_operateur.md` §2ter. L'horloge du critère
-de retrait du proxy est arrêtée ; revue le 2026-09-22 (compte rétabli → lever
-; sinon → retrait complet, règle 13).
-
-PAS fait : aucun secret retiré du pool, aucun appelant modifié — la levée
-doit être une commande, pas un déploiement.
-
-Gardiens : `tests/test_betfair_backoff.py::test_la_suspension_operateur_coupe_tout_sans_tentative`,
-`::test_une_valeur_vide_ou_non_leve_la_suspension`.
-
-### Betfair refusait les runners depuis le 2026-07-09 — sortie par le proxy (2026-09-08)
-
-« Betfair login: BETTING_RESTRICTED_LOCATION » à CHAQUE scan standard et à
-chaque passe de closing line, 0 marché Betfair chargé depuis deux mois. Ce
-n'est ni le certificat, ni la clé, ni les identifiants : `certlogin`
-géolocalise l'IP de l'appelant, et les runners GitHub sortent des
-États-Unis. Le remède est celui d'odds500 le 2026-08-27 — le proxy Webshare
-à sortie Londres (`FREE_SOURCES_PROXY`) était posé, câblé au job de scan…
-et jamais transmis à `requests` côté Betfair, qui partait en direct. Une
-capacité posée et non branchée, morte sans erreur.
-
-Décision opérateur du 2026-09-08 (« par tous les moyens »), après avoir
-été averti que ce proxy fait sortir SON compte Betfair d'un territoire
-autorisé et que les conditions Betfair interdisent de masquer sa
-localisation : le risque porte sur le compte, pas sur le pipeline.
-`core/harvester._betfair_proxies()` résout `BETFAIR_PROXY` puis
-`FREE_SOURCES_PROXY` par `core/net.py` (donc `app_secrets` d'abord, proxy
-rotatif sans redéploiement) et le passe au login cert ET à l'API — un seul
-des deux routé, et l'API rend le même refus en silence. Le pool `closing`
-de `ci_env.py` reçoit `RELAYS`, sans quoi la closing line, appelant le
-plus fréquent (3/h), serait restée aux États-Unis. Sans proxy configuré,
-rien ne change : sortie directe, comme avant.
-
-Critère de retrait (règle 13) dans l'en-tête Betfair de `core/harvester.py` :
-login encore refusé, ou moins de 10 marchés par scan en médiane sur 7 jours
-alors que Matchbook en porte plus de 60.
-Gardien : `tests/test_betfair_proxy.py`.
-
-MESURÉ le 2026-09-08 02:51 (scan standard forcé 34181477636, 14 crédits) :
-« Betfair: sortie via proxy » puis **« Betfair login: CERT_AUTH_REQUIRED »**.
-Le géo-blocage est LEVÉ — Betfair ne répond plus `BETTING_RESTRICTED_LOCATION`,
-il passe à l'étape suivante. Le refus vient maintenant du certificat : le TLS
-a abouti (réponse JSON, pas d'erreur SSL côté client), donc le PEM des
-secrets se charge ; c'est Betfair qui ne l'associe à aucun compte, ou le mot
-de passe qui ne passe pas (doc Betfair : « certificate not detected, or the
-account cannot be authenticated »). Le certificat posé le 2026-07-09 n'a
-JAMAIS été validé côté Betfair — chaque login échouait AVANT cette étape.
-Action OPÉRATEUR, hors dépôt : My Account → Security → Automated Betting
-Program Access, y téléverser le `.crt` correspondant à `BETFAIR_CERT`, et
-vérifier le mot de passe. Rien à changer dans le code.
-⚠️ Le même run a vu **Matchbook: HTTP 403** — un runner dont l'IP est
-refusée — et donc 0 marché d'exchange, tous les candidats en MARCHÉ MORT,
-65 caractères Telegram : un scan PAYANT perdu. Le reprice 34181932279 huit
-minutes plus tard (autre runner) : 71 marchés. Ce 403 est passager et
-antérieur à ce commit par nature (Matchbook ne passe pas par le proxy), mais
-il montre qu'un 403 Matchbook coûte un créneau entier — à traiter (retenter
-via le proxy, ou marquer le créneau non servi) si ça se répète.
-
+Matchbook et Smarkets tiennent le Tier 1.5 et la closing line. Ne pas
+réintroduire Betfair.
 ### Le pari des U19 réglé sur le score des seniors du même soir (2026-09-08)
 
 Symptôme : le dashboard affichait « Borussia Dortmund vs Villarreal CF —
@@ -3367,129 +2903,34 @@ requêtes, recréer client et session HTTP à chaque page était du temps perdu.
 Les montants en XOF sont entiers et suffixés « F » (le franc CFA n'a pas de
 centimes, demande opérateur du même jour).
 
-### Fractions de Kelly doublées, fiche de pari en francs CFA (2026-09-09, décision opérateur)
+### Fractions de Kelly doublées (2026-09-09, décision opérateur)
 
-Capture opérateur de la fiche « Under 34.5 @ 1.97, edge +2.9 % » : mise
-0,5 € pour 150 € de bankroll, soit 0,3 %. Instruction : « bankroll trop
-timide, mal calibrée à 0,3 % sachant que Predator fournit moins de 150
-signaux jouables par mois ; régler et mettre le montant en CFA ».
+« Bankroll trop timide, mal calibrée à 0,3 % ». Toutes les fractions de
+`KELLY_FRACTION` sont doublées, ordre relatif entre sports conservé,
+plafond 0.30 (la valeur d'origine d'avant le recentrage du 2026-08-22) :
+basket 0.30, NFL 0.28, hockey 0.26, foot/baseball/Euroleague 0.24,
+tennis/MMA/NCAAF/NRL/AFL 0.20, boxe 0.16. À edge +3 % sur cote 1.97 la
+mise passe de 0,3 % à 0,7 % de bankroll.
 
-Ce que valait la fraction : un DIXIÈME de Kelly (0.08-0.15 selon le sport),
-plancher posé le 2026-08-22 (recentrage, Task 10) en attendant qu'un sport
-valide son edge — critère chiffré dans `core/constants.py` : ≥ 30 réglés en
-zone jouable ET borne basse de Wilson au-dessus du point mort, remontée
-progressive vers 0.20-0.30. Mesuré le jour même sur /performance : aucun
-sport ne satisfait le critère (foot 56 %, IC 37-72 pour 61 de seuil ;
-basket 62 %, IC 31-86 pour 73 ; mois de septembre 68 %, IC 53-80 pour 64).
-La remontée n'est donc pas celle du critère mais une DÉCISION OPÉRATEUR,
-explicite dans la session — le dict « ne bouge jamais tout seul », il a
-bougé sur instruction.
+⚠️ Le critère de promotion du dépôt (≥ 30 réglés en zone jouable ET borne
+basse de Wilson au-dessus du point mort) n'était atteint par AUCUN sport ce
+jour-là — mesuré sur /performance. C'est donc une décision opérateur, pas
+un verdict du critère, et elle est consignée comme telle.
 
-Fait : toutes les fractions ×2, plafond 0.30 (valeur d'origine), ordre
-relatif conservé : basket 0.30, NFL 0.28, hockey 0.26, foot / baseball /
-Euroleague 0.24, tennis / MMA / NCAAF / NRL / AFL 0.20, boxe 0.16. À edge
-+3 % sur 1.97, la mise passe de 0,3 % à 0,7 % de bankroll. Les signaux déjà
-actifs gardent leur `kelly_pct` d'émission ; les suivants portent le nouveau.
-Effet de bord connu et accepté : la porte « mise Kelly nulle » arrondit
-`kelly_pct` à deux décimales, un multiplicateur doublé laisse passer des
-edges deux fois plus petits juste au-dessus de zéro (0,02 % de Kelly plein
-au lieu de 0,04 %) — négligeable, mais c'est bien une retouche de la marge
-d'émission, consignée ici (règle 10).
+L'affichage en francs CFA posé le même jour est parti avec la bankroll (voir
+la section précédente) : la fiche ne montre plus que « K: x % ».
+### Bankroll mensuelle : construite et retirée le même jour (2026-09-09)
 
-Affichage : la fiche et les cartes de l'accueil sont en francs CFA —
-bankroll par défaut `BANKROLL_REF_XOF` = 100 000 F (la même référence que
-le moteur, 150 €, parité fixe `XOF_PER_EUR`), mises entières arrondies à la
-dizaine sous 1 000 F et à la centaine au-delà. Clé de stockage locale
-renommée (`predator_bankroll_xof`) pour ne pas relire une bankroll saisie
-en euros comme des francs.
+Demandée le matin (100 000 F le 1er, budget du jour au prorata de Kelly,
+mise `stake_xof` figée à l'émission, page `/bank` avec courbes et ROI),
+livrée et déployée dans la journée, **retirée le soir** : « c'était juste
+une idée, j'en ai pas besoin ». Tout est parti — modules, page, migration,
+tests, colonne hors du code.
 
-Gardiens : `tests/test_mma_boxing_oddsapi.py`, `test_new_sports_phase2.py`,
-`test_new_sports_phase3.py` (valeurs et ordre), `tests/test_index_page.py`
-(devise de la fiche).
-
-### Bankroll mensuelle : 100 000 F le 1er, dépensés sur le mois, page /bank (2026-09-09, décision opérateur)
-
-Instruction : « bankroll fixée à 100 000 renouvelable tous les mois, qu'elle
-tienne exactement le mois et soit dépensée en intégralité ; les mises des
-signaux validés dans perf sont soustraites au fur et à mesure ; savoir ce
-que ça rapporte au fil des jours ; page bank avec coffre-fort ». Quatre
-choix posés à l'opérateur et tranchés le jour même :
-
-- **Répartition** : budget du jour = restant ÷ jours restants (aujourd'hui
-  compris), partagé entre les signaux du jour AU PRORATA de leur Kelly,
-  contre un « Kelly quotidien attendu » (moyenne des 14 derniers jours,
-  jours vides compris ; 3,0 sans historique). Un jour plus fourni n'excède
-  pas son budget, un jour maigre reporte. Mise au billet (100 F), plancher
-  500 F, Kelly forts servis d'abord quand le budget manque. Les gains vont
-  au résultat, pas au budget — « dépensé en intégralité » se juge sur les
-  mises, et reste un objectif : un mois sans assez de signaux laisse un
-  reliquat, il n'est jamais forcé.
-- **Engagement** : mise réservée à l'ÉMISSION (`signals.stake_xof`, figée
-  au premier enregistrement — un tick qui revoit le pari ne la recalcule
-  pas), actée au RÈGLEMENT (recopiée au ledger). PUSH et expiré rendent
-  leur mise. Un signal déjà actif reprend sa mise (clé match/marché).
-- **Impôt** : 0 %, résultat brut.
-- **Démarrage** : septembre reconstitué (lignes sans mise → jour plat ÷
-  Kelly du jour, marquées ⟲), octobre premier mois exact.
-
-Ce qui a été fait : `sql/migrate_v10_14_stake_xof.sql` (quatre tables,
-sans backfill — À APPLIQUER PAR L'OPÉRATEUR), `core/bankroll.py` (pur +
-`load_context` en lecture seule), cadencement dans `run_engine.run()` APRÈS
-`_shadow_partition` et AVANT `_save`, sous try : un échec cadence sur l'état
-par défaut, jamais de scan bloqué ; `log_to_ledger` recopie la mise ;
-`core/bank_view.py` + `/bank` + `templates/bank.html` (restant, barre
-dépensé | engagé | restant, résultat, retours, budget du jour, deux courbes
-à UN axe, tableau par jour, liste des paris) ; quatrième entrée de
-navigation (coffre-fort) sur toutes les pages ; fiche de pari : la mise
-vient du moteur, plus de bankroll saisie (elle est fixe). Telegram reste
-sans mise (décision 2026-07-21, gardée par test).
-
-Le JOUR d'un pari réglé est celui de son entrée au ledger : c'est le jour
-où /performance a validé le résultat, donc celui où la mise « sort ».
-
-Plafond de `CLAUDE.md` relevé à 6 000 o (`tests/test_documentation.py`) :
-à 5 000, chaque ligne de commande ajoutée en chassait une autre.
-
-Mise en service (2026-09-09 16:20-16:35 UTC, sur instruction « exécuter la
-base de données et finir ») : migration appliquée par `ops.py supabase
-migrate` (colonne vérifiée sur les quatre tables) ; scan reprice dispatché
-sur le nouveau code — vert, « rien de neuf », donc aucun signal re-émis ;
-les CINQ lignes actives d'avant la colonne (3 du 09, 2 du 08) ont reçu UNE
-fois la mise que le premier rafraîchissement leur aurait donnée
-(`core.bankroll.with_stakes`, mêmes valeurs que le ⟲ de /bank : 1 300, 900,
-1 200, 500, 3 000 F), par UPDATE `… AND stake_xof IS NULL` — jamais
-d'écrasement. Le code fait désormais la même chose seul (`_rafraichir`,
-filtre IS NULL). Le ledger n'est pas touché : ses lignes de septembre
-restent reconstituées à l'affichage.
-
-Gardiens : `tests/test_bankroll.py`, `tests/test_bank_page.py`.
-
-### Betfair retiré (2026-09-09, soir) — règle 13, décision opérateur
-
-Chronologie d'une source qui n'a jamais servi : 0 marché chargé depuis le
-2026-07-09 (géo-blocage des runners), proxy Londres le 2026-09-08 → refus
-de certificat (jamais associé au compte) → ~70 logins/jour → ban →
-suspension par clé meta le soir. Le 2026-09-09 l'opérateur ouvre un
-nouveau compte : le visualiseur Betfair rend `APP_KEY_CREATION_FAILED` à la
-création de clé. « Laisse tomber, oublie, abandonne », puis « fais-le
-maintenant » : retrait complet le jour même plutôt qu'à la revue du 22.
-
-Fait : `core/harvester.py` perd tout son bloc Betfair (login cert, backoff,
-suspension, `fetch_betfair_prices`) ; `run_engine` et `audit_engine` ne
-l'appellent plus — le dict d'exchange s'appelle `exchange_prices` (Matchbook
-puis Smarkets en comblement) et le drapeau `_betfair` devient
-`_exchange_hit` ; les cinq secrets `BETFAIR_*` sortent du pool `ci_env`
-(workflows régénérés par `--write`), de `.env.example` et de GitHub
-(`gh secret delete`) ; `tests/test_betfair_backoff.py` et
-`test_betfair_proxy.py` supprimés, les autres tests nettoyés de leurs
-`delenv`/`setattr`. Les clés `meta.betfair_*` restent en base, lues par
-personne. Les noms « Betfair Exchange » dans les listes de books sharp
-d'odds-api.io et titan007 sont des libellés de flux tiers, sans lien avec
-le compte : conservés.
-
-Règle : ne pas réintroduire Betfair. Sortir par un proxy hors du territoire
-du compte est interdit par ses conditions, et l'exchange est déjà couvert.
-
+La leçon n'est pas technique : **une fonctionnalité de cette taille se
+valide sur une maquette avant d'être câblée au moteur, migrée et
+déployée.** Ne pas reproposer bankroll, mise en francs ni page Bank ; la
+fiche de pari ne montre que la fraction de Kelly.
 ### Un proxy mort a aveuglé deux scans payants ; trois signaux à 0 F ; un signal jeunes coincé (2026-09-09, soir)
 
 Bilan de santé du soir (agent de diagnostic, lecture seule), trois constats.

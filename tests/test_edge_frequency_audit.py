@@ -4,7 +4,9 @@ empirical edge amplitude x frequency audit, tested against synthetic
 multi-day data (the real Supabase dataset as of 2026-07-08 has only 11
 signals in a single 2.5h window and 1 permanent ledger row — nowhere near
 enough to exercise this logic, which is exactly this audit's headline
-finding; see reports/edge_frequency_audit.md).
+finding). Le rapport `reports/edge_frequency_audit.md` qui portait ce
+constat a été supprimé le 2026-09-09 : il décrivait `min_edge_for_k` et la
+formation de combinés, deux mécanismes qui n'existent plus.
 """
 import pytest
 

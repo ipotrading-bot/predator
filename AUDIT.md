@@ -133,7 +133,7 @@ C'est le tableau à consulter avant de toucher à quoi que ce soit.
 | Le prix soft vient d'UN book d'EXÉCUTION (`EXECUTION_BOOKS`), jamais d'un autre : odds-api.io et titan007 ne lisent qu'eux ; le 1X2 est un bloc par book, jamais un maximum par issue | `tests/test_odds_api_io.py::test_chaque_ligne_porte_son_book_al_adalah_2026_09_07`, `tests/test_titan007.py::test_un_bloc_par_book_d_execution_jamais_un_max_par_issue` |
 | Entre books d'exécution, le line shopping est À LIGNE ÉGALE et chaque côté de chaque barreau porte son book ; le 1X2 se départage sur le prix FINAL, bloc contre bloc ; `soft_book` voyage jusqu'au signal, à la base, au ledger et à Telegram | `tests/test_second_book_execution.py` |
 | La liste des books d'exécution n'existe qu'en un endroit ; sources, clés OddsAPI, moteur et dashboard en dérivent ; la fiche affiche le book de la LIGNE | `tests/test_book_execution.py` |
-| Smarkets entre en comblement derrière Betfair/Matchbook, scans standard seulement, budget 2 000 req/j, critère de retrait daté 2026-09-22 ; cotes en centièmes de %, milieu back/lay, « at » inversé | `tests/test_smarkets.py` |
+| Smarkets entre en comblement derrière Matchbook (Betfair retiré le 2026-09-09), scans standard seulement, budget 2 000 req/j, critère de retrait daté 2026-09-22 ; cotes en centièmes de %, milieu back/lay, « at » inversé | `tests/test_smarkets.py` |
 | odds-api.io lit le calendrier ENTIER (1 requête) et sert les majeures avant le cap ; foot 120, le reste 60 | `tests/test_odds_api_io.py::test_les_majeures_passent_avant_le_cap`, `::test_le_cap_du_foot_est_120_les_autres_60` |
 | Une section féminine/jeunes ne prend jamais le rang de sa ligue ; la phase après la virgule ne compte que pour le RANG | `tests/test_source_adapter.py::TestPrioriteDeLigue` |
 | Le moteur nomme le prix `executable_odd` ; la colonne reste `xbet_odd` | `…::TestSignalEnMemoire` |
@@ -253,7 +253,8 @@ pouvait être servi par un interpréteur sur lequel rien n'est testé.
 > plateforme.
 
 `.env.example` — dont tout le propos est « copiez-moi en `.env` » — omettait
-10 credentials réellement lus : les 5 variables Betfair et tout le bloc de
+10 credentials réellement lus : les 5 variables Betfair (retirées avec la
+source le 2026-09-09) et tout le bloc de
 `scripts/ops.py`, alors que `CLAUDE.md` présente `ops.py` comme *la* façon de
 piloter Supabase et Vercel. La commande documentée était inutilisable après
 une copie propre.
@@ -321,8 +322,10 @@ courbes Chart.js, intégration QuantStats, export PDF, ticker de news, ratios
 Sortino/Calmar, monitoring BetterStack.
 
 Le plus grave était chiffré : le README annonçait **« Kelly 25 % »** avec la
-formule `Mise = Bankroll × (Edge / Odds) × 0.25`. Le code applique 0.08–0.15
-selon le sport (`KELLY_FRACTION`). **Faux dans un rapport de 2 à 3.** Sur un
+formule `Mise = Bankroll × (Edge / Odds) × 0.25`. C'était faux dans un
+rapport de 2 à 3 : le code appliquait alors 0.08–0.15 selon le sport
+(`KELLY_FRACTION` ; 0.16–0.30 depuis le doublement du 2026-09-09, décision
+opérateur).** Sur un
 système de mise, un chiffre de documentation faux ne fait pas perdre du
 temps : il fait perdre de l'argent.
 
