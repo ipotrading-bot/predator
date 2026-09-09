@@ -13,8 +13,12 @@ SOCCER_ELITE_EDGE      = 1.5    # % — Soccer AH0 : marché serré, VALUE dès 
 BASKETBALL_ELITE_EDGE  = 2.0    # % — NBA Finales : VALUE dès 2.0% (edges typiques 1.5–2.5%)
 AH0_VALUE_THRESHOLD  = 1.5    # Soccer DNB : favori à 1.5+ = valeur intrinsèque
 PURGE_EDGE_FLOOR     = 0.5    # % — floor purge : ne jamais supprimer au-dessus de ça
-MIN_STAKE    = 2      # € — below this Kelly stake, signal is not actionable
-BANKROLL_REF = 150    # € — 100 000 XOF (taux fixe 655.96 XOF/€)
+# `MIN_STAKE`, `BANKROLL_REF` et `kelly_stake()` ont ete RETIRES le
+# 2026-09-09 (decision operateur : « ne plus proposer de mise »). Le
+# dashboard n'affiche plus aucun montant ni pourcentage de mise. La
+# fraction de Kelly reste CALCULEE (`core.tax_engine.optimal_stake_fraction`,
+# colonne `signals.kelly_pct`) : elle refuse un signal qu'on ne miserait
+# pas, et pondere le ROI du ledger (`roi_net_of_tax`). Elle n'est plus montree.
 MAX_EDGE     = 15.0   # % — hard cap; above = data mapping error, reject
 
 # Plancher d'EV en DUR sous lequel rien ne sort, quoi que disent les seuils
@@ -357,32 +361,6 @@ def risk_flag(edge_pct: float, elite: float = ELITE_EDGE) -> str:
         return "VALUE"
     return "LOW_VALUE"
 
-
-def kelly_stake(executable_odd: float, sharp_prob: float,
-                bankroll: int = BANKROLL_REF,
-                sport: str = "soccer",
-                current_exposure: float = 0.0) -> int:
-    """
-    Fractional Kelly adaptatif par sport — fraction dans KELLY_FRACTION.
-    Returns 0 (non-actionable) if computed stake < MIN_STAKE.
-
-    `current_exposure` (Task 7, core/risk_manager.py) is capital already
-    committed to other active signals — the effective bankroll available
-    for THIS stake is reduced by it, so a portfolio already at or past its
-    exposure cap (core.risk_manager.MAX_EXPOSURE_PCT) naturally sizes new
-    stakes down to 0 instead of stacking risk on top of risk. Defaults to
-    0 (no reduction) for callers that haven't computed exposure.
-    """
-    b = executable_odd - 1   # gain net par unité misée, au prix RÉELLEMENT jouable
-    if b <= 0 or sharp_prob <= 0:
-        return 0
-    effective_bankroll = max(0.0, bankroll - current_exposure)
-    if effective_bankroll <= 0:
-        return 0
-    kf = (sharp_prob * b - (1 - sharp_prob)) / b
-    fraction = KELLY_FRACTION.get(sport, 0.12)   # fallback also inside Task 10's temporary 0.10-0.15 band
-    stake = round(max(0.0, kf * fraction) * effective_bankroll)
-    return stake if stake >= MIN_STAKE else 0
 
 # ── Books d'EXÉCUTION (décision opérateur 2026-09-07, élargie le 2026-09-08) ──
 # Le prix soft d'un signal est celui d'un book où l'opérateur POSE le pari,

@@ -1418,19 +1418,19 @@ def _emit(signals, sb, now, log, name, sport, league, mkt_key, mkt_label,
     # `kelly_pct` est l'exposition TOTALE, pas une mise à poser sur l'équipe.
     # Taire la répartition ferait miser tout sur l'équipe et laisserait une
     # exposition au nul que le calcul d'EV n'a pas modélisée.
+    # Aucune MISE n'est proposée (décision opérateur 2026-09-09) : le conseil
+    # dit d'où vient l'edge, pas combien miser. `kelly_pct` reste calculé et
+    # persisté — il refuse les signaux non misables et pondère le ROI.
     advice = (
         f"EV +{edge:.1f}% — cote soft exécutable {executable_odd:.2f} vs sharp "
-        f"{pin_odd:.2f} (prob. dévigorisée {sharp_prob * 100:.1f}%). "
-        f"Mise conseillée {kelly_pct:.2f}% du capital (Kelly fractionnaire)."
+        f"{pin_odd:.2f} (prob. dévigorisée {sharp_prob * 100:.1f}%)."
     )
     if dnb_draw_odd and dnb_draw_odd > 1.01:
         part_nul, part_equipe = _dnb_leg_split(dnb_draw_odd)
         advice += (
-            f" DNB synthétique — exposition TOTALE à répartir chez le MÊME book : "
+            f" DNB synthétique — DEUX jambes chez le MÊME book : "
             f"{part_equipe * 100:.1f}% sur {selection_name or name} et "
-            f"{part_nul * 100:.1f}% sur le nul (@ {dnb_draw_odd:.2f}), "
-            f"soit {kelly_pct * part_equipe:.2f}% et {kelly_pct * part_nul:.2f}% "
-            f"du capital."
+            f"{part_nul * 100:.1f}% sur le nul (@ {dnb_draw_odd:.2f})."
         )
 
     # Normalize match_time to ISO UTC (+00:00)

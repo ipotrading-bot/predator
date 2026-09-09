@@ -2970,6 +2970,32 @@ programmée à chaque audit où il serait seul. Passé `expired` à la main
 (ligne conservée, règle 9) : sa mise revient au budget (engagé 6 400 →
 3 400 F).
 
+### Le proxy n'était plus nécessaire : le supprimer valait mieux que le renouveler (2026-09-09, soir)
+
+Suite de l'entrée précédente (tunnel Webshare en 402 depuis ~15:10 UTC,
+deux scans payants à 0 signal). Le réflexe était « renouveler le compte ».
+La bonne question était : **qui a encore besoin de ce proxy ?**
+
+Réponse mesurée : personne. Le proxy avait été posé le 2026-08-27 pour
+odds500, filtrée par IP — retirée depuis (2026-09-03), comme 7M et Betfair.
+Les seuls consommateurs restants de `core/net.py` sont les sources de
+SCORES (ESPN, TheSportsDB, MLB statsapi, LiveScore), et le job d'audit les
+appelle EN DIRECT depuis toujours : son pool `settlement` n'a jamais porté
+`RELAYS`. Preuve au run 34377181071 (16:30 UTC) : « Audit done: 4 settled »,
+zéro 402, zéro mention de proxy.
+
+Fait : le secret `FREE_SOURCES_PROXY` est SUPPRIMÉ. `proxy_for()` rend ""
+→ `opener_for()` rend None → sortie directe, sans une requête perdue ni un
+avertissement. Toute la plomberie reste (`{SOURCE}_PROXY` puis
+`FREE_SOURCES_PROXY`, résolus depuis `app_secrets` d'abord) : reposer un
+proxy le jour où une source en a besoin est une commande, pas un commit.
+
+Leçon : **une capacité posée pour une source disparue survit à cette source
+et devient un point de panne.** Ici elle a coûté deux scans payants. Le
+retrait d'une source doit emporter ce qui n'existait que pour elle — c'est
+déjà la règle appliquée à odds500 (`team_aliases`, `TRANSLATE_CJK`), elle a
+simplement été oubliée pour le proxy.
+
 ### Une version, un seul endroit
 
 `DASHBOARD_VERSION` (`api/index.py`), injectée

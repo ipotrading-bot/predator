@@ -1,17 +1,19 @@
 # Actions opérateur — ce que le code ne peut pas faire à ta place
 
-> **Ce qui est OUVERT au 2026-09-09 (soir)** — une seule action opérateur :
-> ⚠️ **le proxy Webshare répond « 402 Payment Required »** depuis ~15:10 UTC
-> (quota du plan gratuit épuisé). Le code sort désormais EN DIRECT quand le
-> tunnel refuse (`core/net.py`), donc rien n'est bloqué ; mais les sources
-> réellement filtrées par IP restent sans proxy tant que le compte n'est pas
-> renouvelé. Voir §1 pour reposer une URL.
+> **Rien d'ouvert au 2026-09-09 (soir).** Le proxy Webshare répondait
+> « 402 Payment Required » depuis ~15:10 UTC (quota du plan gratuit épuisé),
+> ce qui faisait passer les sources de scores pour muettes et écartait 36 à
+> 45 matchs par scan. Réglé sans compte à renouveler : le secret
+> `FREE_SOURCES_PROXY` a été SUPPRIMÉ (il ne portait plus qu'une URL morte)
+> et les sources sortent en direct — c'est déjà ce que fait le job d'audit,
+> qui n'a jamais porté ce secret et règle normalement. `core/net.py` garde
+> toute la plomberie : reposer un proxy le jour où une source en a besoin
+> tient en une commande (§1), par source (`{SOURCE}_PROXY`) ou globalement.
 >
-> Tout le reste est fait : second book Bet365 posé (§2), Smart Placement
-> essayé et jugé insuffisant (§3, c'est le proxy qui levait le blocage).
-> Sources RETIRÉES, à ne pas réintroduire : odds500 et 7M (mur anti-bot,
-> 2026-09-03), api-sports (comptes gratuits suspendus, 2026-09-03), Betfair
-> (2026-09-09, §2ter). Le suivi de ce qui reste ouvert est dans INCIDENTS.md.
+> Fait aussi : second book Bet365 posé (§2), Smart Placement essayé et jugé
+> insuffisant (§3). Sources RETIRÉES, à ne pas réintroduire : odds500 et 7M
+> (mur anti-bot, 2026-09-03), api-sports (comptes gratuits suspendus,
+> 2026-09-03), Betfair (2026-09-09, §2ter).
 
 Les gestes décrits ici touchent des comptes EXTERNES (proxy, odds-api.io,
 Cloudflare, GitHub). Aucun agent ni workflow ne les fait : ils modifient tes

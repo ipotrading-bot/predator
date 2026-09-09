@@ -5,7 +5,6 @@ and rolling-drawdown circuit breaker.
 import pytest
 
 import core.risk_manager as risk_manager
-from core.constants import kelly_stake
 
 
 class _Query:
@@ -144,39 +143,11 @@ class TestGetCurrentExposure:
         assert risk_manager.get_current_exposure(sb, bankroll=150) == 0.0
 
 
-class TestExposureHeadroom:
-    def test_headroom_shrinks_as_exposure_grows(self):
-        sb = _FakeSB(signals=[_active_signal(10.0)])
-        headroom = risk_manager.get_exposure_headroom(sb, bankroll=150, max_pct=0.15)
-        cap = 0.15 * 150
-        exposure = 10.0 / 100 * 150
-        assert headroom == cap - exposure
-
-    def test_headroom_negative_once_cap_exceeded(self):
-        sb = _FakeSB(signals=[_active_signal(50.0)])   # way over any 15% cap
-        headroom = risk_manager.get_exposure_headroom(sb, bankroll=150, max_pct=0.15)
-        assert headroom < 0
-
-    def test_read_failure_fails_open_to_full_bankroll(self):
-        class _Boom:
-            def table(self, _n):
-                raise RuntimeError("down")
-        assert risk_manager.get_exposure_headroom(_Boom(), bankroll=150) == 150
-
-
-class TestKellyStakeExposureAware:
-    def test_zero_exposure_matches_baseline(self):
-        stake_baseline = kelly_stake(2.0, 0.60, bankroll=150, sport="soccer")
-        stake_explicit = kelly_stake(2.0, 0.60, bankroll=150, sport="soccer", current_exposure=0.0)
-        assert stake_baseline == stake_explicit
-
-    def test_exposure_at_full_bankroll_zeroes_stake(self):
-        assert kelly_stake(2.0, 0.60, bankroll=150, sport="soccer", current_exposure=150) == 0
-
-    def test_partial_exposure_reduces_but_does_not_necessarily_zero_stake(self):
-        full = kelly_stake(2.0, 0.70, bankroll=150, sport="soccer", current_exposure=0)
-        partial = kelly_stake(2.0, 0.70, bankroll=150, sport="soccer", current_exposure=100)
-        assert partial <= full
+# `TestExposureHeadroom` et `TestKellyStakeExposureAware` sont partis le
+# 2026-09-09 avec les fonctions qu'ils testaient (dimensionnement de mise) :
+# plus aucune mise n'est proposée, donc plus rien à dimensionner.
+# `get_current_exposure` reste testé plus haut — c'est la mesure
+# d'exposition, pas une consigne de mise.
 
 
 class TestRollingDrawdown:

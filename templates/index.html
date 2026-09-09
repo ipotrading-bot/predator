@@ -148,7 +148,6 @@
       {% set s = leg.sig %}
       {% set is_suspect = s.risk_flag == 'SUSPECT_DATA' %}
       {% set team = s.selection_name if s.selection_name and ' vs ' not in s.selection_name else (s.match.split(' vs ')[0].strip() if ' vs ' in s.match else s.match) %}
-      {% set kelly = s.kelly_pct if s.kelly_pct else 0 %}
       {# Type de marché seulement : le libellé complet ("SOC Over 2.5") fait
          doublon avec la sélection juste à côté ("Over 2.5"). Le libellé
          complet reste dans la modale. #}
@@ -158,7 +157,7 @@
       {% else %}{% set mkt = s.market_key or '—' %}{% endif %}
       {# Deux lignes sur mobile : la SÉLECTION (ligne du total, handicap) est
          l'information n°1 et se retrouvait tronquée en « Und… » / « Paris… »
-         derrière cote, edge et Kelly (2026-09-09). Une seule ligne dès 640px. #}
+         derrière la cote et l'edge (2026-09-09). Une seule ligne dès 640px. #}
       <div class="leg" data-idx="{{ leg.idx }}" onclick="openModal({{ leg.idx }})">
         <div class="leg-l1">
           <span class="leg-mkt">{{ mkt }}</span>
@@ -172,11 +171,6 @@
           <span class="sig-edge {% if is_suspect %}e-sus{% elif s.edge_pct >= 5 %}e-high{% elif s.edge_pct >= 2.5 %}e-mid{% else %}e-low{% endif %}">
             +{{ "%.1f"|format(s.edge_pct) }}%
           </span>
-          {% if kelly > 0 %}
-            <span class="sig-mise" title="Fraction de Kelly conseillée, en % du capital">K:{{ "%.1f"|format(kelly) }}%</span>
-          {% else %}
-            <span class="sig-mise" style="color:var(--t3)">—</span>
-          {% endif %}
           <span class="sig-cta">&#9654;</span>
         </div>
       </div>
@@ -240,7 +234,6 @@
     <div class="m-meta"><b id="m-time">—</b> &nbsp;·&nbsp; <span id="m-sub">—</span> &nbsp;<span id="m-cd" style="color:var(--t2)"></span></div>
   </div>
 
-  <div id="m-stale">&#9888; Mise non calculée — relancez un scan pour une mise précise.</div>
 
   <div class="m-ss">
     <div class="m-sel">
@@ -273,12 +266,6 @@
       <div class="step"><span class="sn">②</span><span class="sk">Marché :</span><span class="sv" id="s-market">—</span></div>
       <div class="step"><span class="sn">③</span><span class="sk">Sélection :</span><span class="sv" id="s-team">—</span><span class="sc" id="s-cote">—</span><span class="sp" title="Prix de référence sharp">(Sharp: <span id="s-pin">—</span>)</span></div>
     </div>
-  </div>
-
-  <div class="m-stake" title="Fraction de Kelly conseillée, en % du capital">
-    <span class="stake-n" id="m-kelly-pct">—</span>
-    <span class="stake-d">|</span>
-    <div class="stake-m">Kelly</div>
   </div>
 
   <div class="m-why" id="m-why">—</div>
@@ -535,7 +522,6 @@ function applyFilters(){
 }
 
 const SIGNALS={{ signals|tojson }};
-let _kpct=0;
 
 // ── Âge de la cote : « vu 12:31 », orange au-delà du TTL du slate soft
 // (core.constants.SOFT_SLATE_TTL_H) — un prix vu à 06:00 affiché à 13:00
@@ -593,7 +579,6 @@ function openModal(idx){
     ?s.selection_name
     :(s.match&&s.match.includes(' vs ')?s.match.split(' vs ')[0].trim():s.match);
 
-  _kpct=s.kelly_pct||0;
 
   let mt='—';
   if(s.match_time){
@@ -613,7 +598,6 @@ function openModal(idx){
   document.getElementById('m-sub').textContent   = s.league||'—';
   document.getElementById('m-time').textContent  = mt;
   document.getElementById('m-cd').textContent    = cd?'· dans '+cd:'';
-  document.getElementById('m-stale').style.display = (s.kelly_pct===null||s.kelly_pct===undefined)?'block':'none';
   document.getElementById('m-team').textContent  = team;
   document.getElementById('m-mkt').textContent   = (s.market||'—')+'  ·  @ '+(s.xbet_odd||0).toFixed(2);
   document.getElementById('m-exp').textContent   = _exp(s.market,s.sport);
@@ -635,7 +619,6 @@ function openModal(idx){
   document.getElementById('s-team').textContent   = team;
   document.getElementById('s-cote').textContent   = (s.xbet_odd||0).toFixed(2);
   document.getElementById('s-pin').textContent    = s.pinnacle_price?s.pinnacle_price.toFixed(2):'—';
-  document.getElementById('m-kelly-pct').textContent = _kpct>0?_kpct.toFixed(1)+' %':'—';
   document.getElementById('m-why').textContent   = why;
   document.getElementById('m-edge').textContent  = (s.edge_pct>0?'+':'')+(s.edge_pct||0).toFixed(1)+'%';
   document.getElementById('m-pin').textContent   = s.pinnacle_price?s.pinnacle_price.toFixed(2):'—';

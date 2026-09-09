@@ -63,15 +63,19 @@ def test_les_tables_de_la_page_viennent_du_serveur():
     assert INDEX.index("{% set FLAG_FR") < INDEX.index("{% if signals %}")
 
 
-def test_la_selection_a_sa_propre_ligne_et_la_fiche_ne_parle_que_de_kelly():
+def test_la_selection_a_sa_propre_ligne_et_la_fiche_ne_propose_aucune_mise():
     assert 'class="leg-l1"' in INDEX and 'class="leg-l2"' in INDEX
     assert ".leg-l1, .leg-l2" in CSS
-    # La bankroll mensuelle (page /bank, mise en francs) a été construite puis
-    # RETIRÉE le 2026-09-09 sur décision opérateur : la fiche ne montre que la
-    # fraction de Kelly — aucun montant, aucun champ, aucun lien /bank.
-    for interdit in ("stake_xof", 'href="/bank"', "€", 'id="bankroll-input"', "_BANKROLL_XOF"):
+    # AUCUNE mise n'est proposée sur le dashboard (décision opérateur
+    # 2026-09-09, après le retrait de la bankroll mensuelle) : ni montant, ni
+    # pourcentage, ni fraction de Kelly, ni champ de saisie. `kelly_pct` reste
+    # calculé et persisté — il refuse un signal non misable et pondère le ROI
+    # du ledger — mais il ne se montre nulle part.
+    for interdit in ("kelly", "Kelly", "stake", "bankroll", "€", 'href="/bank"',
+                     "sig-mise", "m-stake"):
         assert interdit not in INDEX, interdit
-    assert 'id="m-kelly-pct"' in INDEX
+    for interdit in ("sig-mise", "m-stake", "stake-n", "m-kelly", "bankroll"):
+        assert interdit not in CSS, interdit
 
 
 def test_un_seul_etat_actif_pour_les_puces_de_filtre():

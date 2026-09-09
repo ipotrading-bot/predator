@@ -349,7 +349,7 @@ def dashboard():
 
     groups = _group_by_match(signals)
 
-    from core.constants import (BANKROLL_REF, EXECUTION_BOOK,
+    from core.constants import (EXECUTION_BOOK,
                                 EXECUTION_BOOKS, SOFT_SLATE_TTL_H)
     # `execution_book` = book de référence, pour les seuls libellés sans
     # ligne sous la main ; chaque signal porte SON book (`soft_book`,
@@ -357,7 +357,7 @@ def dashboard():
     # `soft_ttl_h` : au-delà de cet âge, la carte marque la cote comme à
     # revérifier — même TTL que le slate du REPRICE, jamais recopié.
     return render_template("index.html", signals=signals, groups=groups,
-                           last_scan=last_scan, bankroll_ref=BANKROLL_REF,
+                           last_scan=last_scan,
                            scan_crons=_SCAN_CRONS,
                            sport_emoji=_SPORT_EMOJI,
                            sport_label_short=_SPORT_LABEL_SHORT,

@@ -219,12 +219,12 @@ class TestAdviceAnnonceLesDeuxJambes:
         assert f"{nul * 100:.1f}%" in advice
         assert "nul" in advice
 
-    def test_la_mise_annoncee_est_lexposition_TOTALE_a_repartir(self):
-        (sig,) = _emit_one(dnb_draw_odd=3.40)
-        nul, equipe = dnb_leg_split(3.40)
-        total = sig["kelly_pct"]
-        assert f"{total * equipe:.2f}%" in sig["advice"]
-        assert f"{total * nul:.2f}%" in sig["advice"]
+    # (Retiré le 2026-09-09.) `test_la_mise_annoncee_est_lexposition_TOTALE`
+    # exigeait que le conseil annonce la MISE de chaque jambe en % de
+    # bankroll. Plus aucune mise n'est proposée (décision opérateur) : le
+    # conseil dit la RÉPARTITION entre les deux jambes, ce qui reste vrai
+    # quelle que soit la somme engagée, et c'est ce que teste le cas
+    # ci-dessus.
 
     def test_un_pari_a_une_seule_jambe_nannonce_aucune_repartition(self):
         # AH 0.0 réellement coté, ou moneyline : rien à répartir. Annoncer une

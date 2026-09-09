@@ -100,30 +100,9 @@ def get_current_exposure(sb, bankroll: float) -> float:
     return total_pct / 100 * bankroll
 
 
-def get_exposure_headroom(sb, bankroll: float, max_pct: float = MAX_EXPOSURE_PCT) -> float:
-    """
-    Currency units of bankroll still available before the exposure cap is
-    hit. 0 or negative means no new stake should be sized — callers pass
-    `max(0.0, headroom)` as the effective bankroll into
-    kelly_stake()/suggest_system() so a maxed-out portfolio naturally
-    produces stake=0 for new signals instead of stacking more risk on top.
-
-    Fails open (returns the FULL bankroll, not 0) if the exposure read
-    itself fails — a transient Supabase read error should not silently
-    zero out every stake for the rest of the run; that failure mode is
-    worse than temporarily not enforcing the cap for one scan cycle. This
-    is the opposite fail-direction from the circuit breaker below on
-    purpose: exposure is a soft cap on sizing, the circuit breaker is a
-    hard stop on emission — losing the ability to check one should not
-    silently become the other.
-    """
-    try:
-        sb.table("signals").select("kelly_pct").eq("status", "active").limit(1).execute()
-    except Exception as e:
-        log.warning("get_exposure_headroom: %s — failing open, using full bankroll", e)
-        return bankroll
-    current = get_current_exposure(sb, bankroll)
-    return max_pct * bankroll - current
+# `get_exposure_headroom` a ete retire le 2026-09-09 avec `kelly_stake` :
+# il ne servait qu'a reduire une mise proposee, et plus aucune mise n'est
+# proposee. `get_current_exposure` reste — c'est la mesure, pas la consigne.
 
 
 def is_emission_paused(sb) -> bool:
