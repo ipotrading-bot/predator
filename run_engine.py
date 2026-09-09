@@ -448,6 +448,19 @@ def _save(sb, signal) -> bool:
             return False
         if not (res.data or []):
             return None
+        # La mise est figée (jamais réécrite), mais une ligne active SANS mise
+        # — émise avant sql/migrate_v10_14, ou pendant une lecture dégradée
+        # de la bankroll — reçoit celle que le cadencement lui donne
+        # maintenant, UNE fois : filtre `stake_xof IS NULL`, jamais d'écrasement.
+        mise = payload.get("stake_xof")
+        if mise:
+            try:
+                (sb.table("signals").update({"stake_xof": int(mise)})
+                   .eq("status", "active").eq("match_id", mid).eq("market_key", mkey)
+                   .is_("stake_xof", "null").execute())
+            except Exception as e:
+                log.warning("stake_xof non posée sur %s (%s) — reconstituée à l'affichage",
+                            sig_label, str(e)[:80])
         if DEBUG_MODE:
             log.debug("✓ Signal refreshed: %s [edge=%.2f%%]",
                       sig_label, payload.get("edge_pct", 0))

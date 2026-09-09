@@ -37,6 +37,14 @@ class TestLaMiseVoyageDeBoutEnBout:
         bloc = src[i_part:i_save]
         assert "except Exception" in bloc and "signaux sans mise" in bloc
 
+    def test_un_rafraichissement_ne_remplit_la_mise_que_si_elle_est_nulle(self):
+        # Figée : jamais réécrite. Mais une ligne active sans mise (d'avant la
+        # migration) la reçoit une fois — filtre IS NULL, pas d'écrasement.
+        src = _texte("run_engine.py")
+        bloc = src[src.index("def _rafraichir():"):src.index("def _rafraichir_sans_contrainte()")]
+        assert '.is_("stake_xof", "null")' in bloc
+        assert 'update({"stake_xof": int(mise)})' in bloc
+
     def test_le_ledger_recopie_la_mise_au_reglement(self):
         assert '"stake_xof":              sig.get("stake_xof")' in _texte("core/db.py")
 
