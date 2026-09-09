@@ -32,7 +32,7 @@ class TestNCAAF:
         """Non validé au ledger = 0.10, comme la boxe et le MMA à leur entrée.
         Et strictement sous la NFL : les lignes universitaires sont moins
         sharp, hériter du 0.14 serait une affirmation sans mesure."""
-        assert KELLY_FRACTION["college_football"] == 0.10
+        assert KELLY_FRACTION["college_football"] == 0.20   # 0.10 ×2 (décision opérateur 2026-09-09)
         assert KELLY_FRACTION["college_football"] < KELLY_FRACTION["americanfootball"]
 
     def test_miroir_des_mecaniques_nfl(self):

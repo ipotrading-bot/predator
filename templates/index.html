@@ -277,11 +277,14 @@
   </div>
 
   <div class="m-stake">
-    <span class="stake-n" id="stake-big">— €</span>
+    {# Francs CFA, montants entiers (demande opérateur 2026-09-09) ; repli =
+       BANKROLL_REF_XOF de core/constants.py, la même bankroll de référence
+       que le moteur, en CFA. #}
+    <span class="stake-n" id="stake-big">— F</span>
     <span class="stake-d">|</span>
     <div class="stake-m">
       bankroll
-      <input id="bankroll-input" type="number" inputmode="numeric" value="{{ bankroll_ref }}" min="1" oninput="updateStake()">€
+      <input id="bankroll-input" type="number" inputmode="numeric" value="{{ bankroll_ref_xof }}" min="1" step="1000" oninput="updateStake()">F
       <span id="m-kelly-pct"></span>
     </div>
   </div>
@@ -543,16 +546,21 @@ const SIGNALS={{ signals|tojson }};
 let _kpct=0;
 
 // ── Bankroll : saisie dans la fiche, mémorisée sur l'appareil, et la mise en
-// euros s'affiche directement sur chaque ligne (K:0.4% seul n'est pas une
-// mise). Repli = BANKROLL_REF de core/constants.py, injecté. ──
-const _BR_KEY='predator_bankroll';
+// francs CFA s'affiche directement sur chaque ligne (K:0.7% seul n'est pas
+// une mise). Repli = BANKROLL_REF_XOF de core/constants.py, injecté. La clé
+// de stockage a changé avec la devise : l'ancienne valeur en euros
+// (`predator_bankroll`) ne doit pas être relue comme des francs. ──
+const _BR_KEY='predator_bankroll_xof';
 function _bankroll(){
   const inp=document.getElementById('bankroll-input');
   return parseFloat(inp&&inp.value)||0;
 }
-function _fmtStake(eur){
-  if(!(eur>0)) return null;
-  return (eur>=10 ? Math.round(eur) : eur.toFixed(1).replace('.0','')) + ' €';
+// Francs entiers, arrondis à la dizaine sous 1 000 et à la centaine au-delà :
+// une mise se pose en billets, pas au franc près.
+function _fmtStake(f){
+  if(!(f>0)) return null;
+  const pas = f>=1000 ? 100 : 10;
+  return Math.max(pas, Math.round(f/pas)*pas).toLocaleString('fr-FR') + ' F';
 }
 function _fillStakes(){
   const br=_bankroll();
@@ -597,7 +605,7 @@ if(document.getElementById('signals-list')){
 function updateStake(){
   const br=_bankroll();
   try{ if(br>0) localStorage.setItem(_BR_KEY,String(br)); }catch(e){}
-  document.getElementById('stake-big').textContent=_fmtStake(br*_kpct/100)||'— €';
+  document.getElementById('stake-big').textContent=_fmtStake(br*_kpct/100)||'— F';
   _fillStakes();
 }
 

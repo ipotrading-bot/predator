@@ -25,8 +25,8 @@ class TestWiring:
         assert SPORT_KEYS["basketball_euroleague"] == "euroleague_basketball"
 
     def test_kelly_fractions(self):
-        assert KELLY_FRACTION["americanfootball"] == 0.14
-        assert KELLY_FRACTION["euroleague_basketball"] == 0.12
+        assert KELLY_FRACTION["americanfootball"] == 0.28   # 0.14 ×2 (décision opérateur 2026-09-09)
+        assert KELLY_FRACTION["euroleague_basketball"] == 0.24
         assert KELLY_FRACTION["euroleague_basketball"] < KELLY_FRACTION["basketball"]
 
     def test_euroleague_mirrors_basketball_mechanics(self):

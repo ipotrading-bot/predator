@@ -25,8 +25,8 @@ class TestWiring:
         assert _MARKETS_BY_SPORT["boxing"] == "h2h"
 
     def test_kelly_fractions_reflect_a_real_sharp_price(self):
-        assert KELLY_FRACTION["mma"] == 0.10       # était 0.08 (prix web)
-        assert KELLY_FRACTION["boxing"] == 0.08    # marché mince, non validé
+        assert KELLY_FRACTION["mma"] == 0.20       # 0.08 (prix web) → 0.10 (Pinnacle) → ×2 le 2026-09-09 (décision opérateur)
+        assert KELLY_FRACTION["boxing"] == 0.16    # marché mince, non validé ; ×2 le 2026-09-09
         # ...mais toujours SOUS les sports majeurs tant que le ledger n'a pas tranché.
         assert KELLY_FRACTION["mma"] < KELLY_FRACTION["basketball"]
 

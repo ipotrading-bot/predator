@@ -3367,6 +3367,46 @@ requêtes, recréer client et session HTTP à chaque page était du temps perdu.
 Les montants en XOF sont entiers et suffixés « F » (le franc CFA n'a pas de
 centimes, demande opérateur du même jour).
 
+### Fractions de Kelly doublées, fiche de pari en francs CFA (2026-09-09, décision opérateur)
+
+Capture opérateur de la fiche « Under 34.5 @ 1.97, edge +2.9 % » : mise
+0,5 € pour 150 € de bankroll, soit 0,3 %. Instruction : « bankroll trop
+timide, mal calibrée à 0,3 % sachant que Predator fournit moins de 150
+signaux jouables par mois ; régler et mettre le montant en CFA ».
+
+Ce que valait la fraction : un DIXIÈME de Kelly (0.08-0.15 selon le sport),
+plancher posé le 2026-08-22 (recentrage, Task 10) en attendant qu'un sport
+valide son edge — critère chiffré dans `core/constants.py` : ≥ 30 réglés en
+zone jouable ET borne basse de Wilson au-dessus du point mort, remontée
+progressive vers 0.20-0.30. Mesuré le jour même sur /performance : aucun
+sport ne satisfait le critère (foot 56 %, IC 37-72 pour 61 de seuil ;
+basket 62 %, IC 31-86 pour 73 ; mois de septembre 68 %, IC 53-80 pour 64).
+La remontée n'est donc pas celle du critère mais une DÉCISION OPÉRATEUR,
+explicite dans la session — le dict « ne bouge jamais tout seul », il a
+bougé sur instruction.
+
+Fait : toutes les fractions ×2, plafond 0.30 (valeur d'origine), ordre
+relatif conservé : basket 0.30, NFL 0.28, hockey 0.26, foot / baseball /
+Euroleague 0.24, tennis / MMA / NCAAF / NRL / AFL 0.20, boxe 0.16. À edge
++3 % sur 1.97, la mise passe de 0,3 % à 0,7 % de bankroll. Les signaux déjà
+actifs gardent leur `kelly_pct` d'émission ; les suivants portent le nouveau.
+Effet de bord connu et accepté : la porte « mise Kelly nulle » arrondit
+`kelly_pct` à deux décimales, un multiplicateur doublé laisse passer des
+edges deux fois plus petits juste au-dessus de zéro (0,02 % de Kelly plein
+au lieu de 0,04 %) — négligeable, mais c'est bien une retouche de la marge
+d'émission, consignée ici (règle 10).
+
+Affichage : la fiche et les cartes de l'accueil sont en francs CFA —
+bankroll par défaut `BANKROLL_REF_XOF` = 100 000 F (la même référence que
+le moteur, 150 €, parité fixe `XOF_PER_EUR`), mises entières arrondies à la
+dizaine sous 1 000 F et à la centaine au-delà. Clé de stockage locale
+renommée (`predator_bankroll_xof`) pour ne pas relire une bankroll saisie
+en euros comme des francs.
+
+Gardiens : `tests/test_mma_boxing_oddsapi.py`, `test_new_sports_phase2.py`,
+`test_new_sports_phase3.py` (valeurs et ordre), `tests/test_index_page.py`
+(devise de la fiche).
+
 ### Une version, un seul endroit
 
 `DASHBOARD_VERSION` (`api/index.py`), injectée

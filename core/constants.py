@@ -15,6 +15,11 @@ AH0_VALUE_THRESHOLD  = 1.5    # Soccer DNB : favori à 1.5+ = valeur intrinsèqu
 PURGE_EDGE_FLOOR     = 0.5    # % — floor purge : ne jamais supprimer au-dessus de ça
 MIN_STAKE    = 2      # € — below this Kelly stake, signal is not actionable
 BANKROLL_REF = 150    # € — 100 000 XOF (taux fixe 655.96 XOF/€)
+# Le dashboard affiche la bankroll et la mise en francs CFA (demande
+# opérateur 2026-09-09) ; `kelly_pct` reste un pourcentage, seule la devise
+# d'affichage change. Parité fixe XOF/€.
+XOF_PER_EUR      = 655.957
+BANKROLL_REF_XOF = 100_000   # F — même bankroll de référence, en CFA
 MAX_EDGE     = 15.0   # % — hard cap; above = data mapping error, reject
 
 # Plancher d'EV en DUR sous lequel rien ne sort, quoi que disent les seuils
@@ -295,13 +300,23 @@ CLOSING_SRC_EXCHANGE = "exchange"   # prix d'exchange réel (Matchbook/Betfair),
 # (0.20-0.30 selon le sport). ≥ 30 réglés et edge non démontré → « retrait
 # proposé » au rapport hebdo. Les deux sont des DÉCISIONS OPÉRATEUR : ce
 # dict ne bouge jamais tout seul.
+#
+# DÉCISION OPÉRATEUR 2026-09-09 — « bankroll trop timide, mal calibrée à
+# 0,3 % » : toutes les fractions sont DOUBLÉES (plafond 0.30, la valeur
+# d'origine), l'ordre relatif entre sports est conservé. Base = quart de
+# Kelly (0.24-0.25) pour les sports majeurs, contre un dixième avant : à
+# edge +3 % sur cote 1.97, la mise passe de 0,3 % à 0,7 % de bankroll
+# (300 F → 720 F sur 100 000 F). Mesuré le jour même sur /performance :
+# aucun sport n'atteignait le critère de promotion (borne basse de Wilson
+# sous le point mort partout) — la décision est celle de l'opérateur, pas
+# celle du critère, et elle est consignée (INCIDENTS.md).
 KELLY_FRACTION = {
-    "basketball":  0.15,   # NBA — marché le plus sharp au monde, confiance max
-    "hockey":      0.13,   # NHL — sharp, liquid, peu de bruit
-    "soccer":      0.12,   # FIFA WC + Copa Lib + MLS + Brasileirão — relevé légèrement
-    "baseball":    0.12,   # MLB + KBO + NPB — volume élevé + lag timezone documenté
-    "rugbyleague": 0.10,   # NRL — Pinnacle très sharp, marché australien fiable
-    "aussierules": 0.10,   # AFL — Pinnacle + Betfair très actifs
+    "basketball":  0.30,   # NBA — marché le plus sharp au monde, confiance max
+    "hockey":      0.26,   # NHL — sharp, liquid, peu de bruit
+    "soccer":      0.24,   # FIFA WC + Copa Lib + MLS + Brasileirão — relevé légèrement
+    "baseball":    0.24,   # MLB + KBO + NPB — volume élevé + lag timezone documenté
+    "rugbyleague": 0.20,   # NRL — Pinnacle très sharp, marché australien fiable
+    "aussierules": 0.20,   # AFL — Pinnacle + Betfair très actifs
     # ── Sports de combat — flux OddsAPI réel depuis le 2026-08-22 ──────
     # Jusque-là le MMA était à 0.08 parce que son prix de référence venait
     # d'une recherche web (fetch_mma_events) et qu'une cote lue sur le web
@@ -309,24 +324,24 @@ KELLY_FRACTION = {
     # un vrai Pinnacle (OddsAPI mma_mixed_martial_arts), mais reste SOUS les
     # sports majeurs tant que le ledger n'a pas validé l'edge par CLV réel —
     # le +37,5% de ROI historique tient sur 8 paris.
-    "mma":         0.10,
+    "mma":         0.20,
     # Boxe : marché mince, jamais validé dans le ledger. À réévaluer après
     # 30 signaux réglés (critère de promotion de la Phase 4).
-    "boxing":      0.08,
+    "boxing":      0.16,
     # ── Phase 2 (2026-08-22) ───────────────────────────────────────────
-    # NFL : sharpness niveau NBA (le marché le plus liquide des US) — 0.14,
-    # un cran sous la NBA le temps que le ledger confirme sur ce sport.
-    "americanfootball":      0.14,
+    # NFL : sharpness niveau NBA (le marché le plus liquide des US) — un
+    # cran sous la NBA le temps que le ledger confirme sur ce sport.
+    "americanfootball":      0.28,
     # Euroleague : mécaniques basketball mais marché nettement moins sharp
-    # que la NBA — ne PAS hériter du 0.15 ; 0.12 (niveau soccer/baseball).
-    "euroleague_basketball": 0.12,
+    # que la NBA — ne PAS hériter de la NBA ; niveau soccer/baseball.
+    "euroleague_basketball": 0.24,
     # ── Phase 3 (2026-08-22) — NCAAF + tennis Grand Chelem ────────────
     # Deux sports choisis pour la même raison : le favori COURT y est la
     # norme, et c'est la seule tranche que le ledger valide (81 % sous 1,50).
     # Fraction basse identique pour les deux — « non validé au ledger » vaut
     # plus que toute intuition de sharpness ; à réévaluer après 30 réglés.
-    "college_football": 0.10,   # NCAAF — lignes moins sharp que la NFL, ne PAS hériter du 0.14
-    "tennis":           0.10,   # Slams + Masters 1000 seulement (clés dynamiques)
+    "college_football": 0.20,   # NCAAF — lignes moins sharp que la NFL, ne PAS hériter de la NFL
+    "tennis":           0.20,   # Slams + Masters 1000 seulement (clés dynamiques)
 }
 
 # Sports RETIRÉS le 2026-08-22 (mission « recentrage sports ») : prix de
