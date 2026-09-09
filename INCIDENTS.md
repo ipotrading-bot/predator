@@ -3333,6 +3333,40 @@ par pari gagnant) n'a pas bougé — `tests/test_system_page.py` le tient.
 Vérifié en Chromium headless (Babel transpile réellement, pas seulement
 un 200) à 390 et 1 100 px.
 
+### /system se recompilait dans chaque téléphone à chaque visite (2026-09-09)
+
+Demande opérateur : « appli légère, chargement des pages rapide et fluide
+au max ». Le poids était sur /system : Babel standalone (2,9 Mo) transpilait
+le JSX dans le navigateur à chaque chargement, Tailwind « play » (398 Ko)
+générait son CSS à la volée en scrutant le DOM, react et react-dom venaient
+d'unpkg (deux connexions de plus). Plusieurs secondes sur mobile, pour un
+résultat identique à chaque fois — « pas d'étape de build » était devenu
+« l'étape de build tourne chez l'opérateur ».
+
+Fait : la source est `assets/system.jsx` ; `python scripts/build_system.py`
+la compile UNE fois (Babel 8.0.4 exécuté en local par node, empreinte SRI
+vérifiée au premier téléchargement, cache `~/.cache/predator`) en
+`api/static/js/system.js` (41 Ko) et génère `api/static/css/system.css`
+(5 Ko, Tailwind CLI 3.4.17, `preflight: false` comme avant). react /
+react-dom 18.3.1 sont vendorisés dans `api/static/js/vendor/` (SRI vérifié
+par le même script). Le gabarit charge trois scripts locaux et un CSS ;
+plus aucun script distant, plus de `{% raw %}`. Le bundle Tailwind de
+398 Ko est supprimé du dépôt. Poids envoyé au téléphone : ~3,5 Mo → ~190 Ko
+avant compression, et zéro transpilation.
+
+Règle : après toute retouche de `assets/system.jsx`, relancer le script —
+`tests/test_system_build.py` compare l'empreinte SHA-256 de la source à
+celle inscrite en tête des deux sorties et refuse un compilé périmé.
+`tests/test_system_page.py` lit désormais la SOURCE ; `test_dashboard_cdn.py`
+tient les empreintes des bundles vendorisés et interdit tout retour de
+Babel ou de Tailwind play.
+
+Aussi : le client Supabase du dashboard est réutilisé entre requêtes
+(`core/db._client_cached`) — sur Fluid Compute une instance sert plusieurs
+requêtes, recréer client et session HTTP à chaque page était du temps perdu.
+Les montants en XOF sont entiers et suffixés « F » (le franc CFA n'a pas de
+centimes, demande opérateur du même jour).
+
 ### Une version, un seul endroit
 
 `DASHBOARD_VERSION` (`api/index.py`), injectée

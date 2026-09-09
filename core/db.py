@@ -104,12 +104,28 @@ def get_db(write: bool = False):
                 "(legacy JWT) or 'secret' (sb_secret_... new format) key "
                 "into this GitHub/Vercel secret — not 'anon'/'publishable'."
             )
-        return create_client(url, service_key)
+        return _client_cached(url, service_key)
 
     anon_key = os.environ.get("SUPABASE_KEY")
     if not anon_key:
         return None
-    return create_client(url, anon_key)
+    return _client_cached(url, anon_key)
+
+
+# Un client par (url, clé), réutilisé tant que le processus vit. Sur Vercel
+# (Fluid Compute) une instance sert des requêtes successives : recréer le
+# client — et sa session HTTP — à chaque page coûtait une poignée de
+# millisecondes et une négociation TLS par requête pour rien (2026-09-09,
+# « chargement rapide »). Une clé qui change (test, rotation) donne un
+# nouveau client : la clé fait partie de l'index.
+_CLIENTS: dict = {}
+
+
+def _client_cached(url: str, key: str):
+    c = _CLIENTS.get((url, key))
+    if c is None:
+        c = _CLIENTS[(url, key)] = create_client(url, key)
+    return c
 
 
 # ── Écriture sur une ligne existante : UPDATE, et rien d'autre ───────────

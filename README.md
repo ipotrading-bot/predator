@@ -479,14 +479,16 @@ réellement mesuré, et où :
 ### Frontend
 - **Aucun framework, aucun bundler** — Jinja, CSS écrit à la main
   ([`api/static/css/predator.css`](api/static/css/predator.css)), JavaScript
-  inline. Pas de `node_modules`, pas d'étape de build.
-- **Tailwind servi par le dépôt** — uniquement sur `/system`, écrite en JSX
-  compilé dans le navigateur. Le bundle est vendorisé
-  (`api/static/js/tailwind-3.4.17.min.js`) : `cdn.tailwindcss.com` ne
-  publie aucun en-tête CORS, donc l'intégrité SRI y est impossible et la
-  seule fermeture est de ne pas l'appeler. React, React-DOM et Babel
-  restent distants mais épinglés, avec `integrity` ET `crossorigin`.
-  Les quatre autres pages n'en dépendent pas.
+  inline. Pas de `node_modules` dans le dépôt.
+- **`/system` est compilée une fois, ici** — la page est du JSX
+  (`assets/system.jsx`) compilé par `python scripts/build_system.py` en
+  `api/static/js/system.js` + `api/static/css/system.css` (Babel 8.0.4 en
+  local, Tailwind CLI 3.4.17 ; empreinte de la source en tête de chaque
+  sortie, gardien `tests/test_system_build.py`). React et React-DOM sont
+  vendorisés (`api/static/js/vendor/`, SRI vérifié au téléchargement) :
+  plus aucun script distant, plus de transpilation dans le téléphone
+  (jusqu'au 2026-09-09 : Babel 2,9 Mo + Tailwind « play » 398 Ko à
+  chaque visite). Les quatre autres pages n'en dépendent pas.
 
 > « Chart.js — Graphiques financiers » figurait ici : le dépôt ne contient
 > aucune bibliothèque de graphiques. « BetterStack — Log monitoring » aussi :

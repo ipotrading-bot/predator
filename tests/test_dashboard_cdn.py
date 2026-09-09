@@ -1,5 +1,5 @@
 """
-tests/test_dashboard_cdn.py — PHASE C4.
+tests/test_dashboard_cdn.py — PHASE C4, puis compilation locale (2026-09-09).
 
 `templates/system.html` chargeait quatre scripts depuis des URL FLOTTANTES :
 `react@18` et `react-dom@18` suivaient tous les correctifs de la branche,
@@ -7,26 +7,25 @@ tests/test_dashboard_cdn.py — PHASE C4.
 tiers décidait donc seul du code exécuté dans le navigateur de l'opérateur, à
 chaque chargement, sans commit, sans revue et sans trace.
 
-Ce n'est pas une hypothèse : `@babel/standalone` sans version servait du 7.x
-quand la page a été écrite, il rend du 8.0.4 aujourd'hui. La page a changé de
-MAJEURE de Babel sans qu'aucune ligne du dépôt ne le mentionne.
+Depuis le 2026-09-09 la page ne charge PLUS AUCUN script distant : react et
+react-dom sont vendorisés (api/static/js/vendor/, empreintes SRI vérifiées au
+téléchargement par scripts/build_system.py), le JSX est compilé UNE fois
+(api/static/js/system.js) et Tailwind est un CSS généré (system.css). Babel
+standalone (2,9 Mo) et Tailwind « play » (398 Ko) ne partent plus vers le
+téléphone.
 
 Ce que ces tests gardent :
 
-  · plus aucune URL flottante — chaque source distante porte une version exacte ;
-  · toute source DISTANTE porte `integrity` ET `crossorigin` (l'un sans
-    l'autre ne vérifie rien) ;
-  · Tailwind est servi depuis le dépôt, et le fichier vendorisé est bien celui
-    qu'on croit — sinon « pas de tiers » ne veut plus rien dire ;
-  · aucun script n'est ajouté sans l'une de ces deux protections.
+  · plus aucune URL flottante — si un script distant revenait, il porterait
+    une version exacte, `integrity` ET `crossorigin` ;
+  · les bundles vendorisés sont bien ceux qu'on croit (empreintes épinglées) ;
+  · la page charge react, puis react-dom, puis le code compilé — et rien
+    d'autre.
 
 ⚠️ Ces tests sont HORS RÉSEAU, comme toute la suite (voir tests/conftest.py).
-Ils vérifient ce que le dépôt DÉCLARE, pas ce que le CDN sert aujourd'hui :
-comparer une empreinte à la réalité demanderait un appel réseau, et une suite
-qui dépend d'un tiers échoue le jour où ce tiers tousse. La correspondance
-empreinte ↔ octets a été établie à l'épinglage, et c'est le navigateur qui la
-revérifie à chaque chargement — c'est exactement le travail de SRI.
+Ils vérifient ce que le dépôt DÉCLARE et CONTIENT, jamais ce qu'un CDN sert.
 """
+import base64
 import hashlib
 import pathlib
 import re
@@ -35,12 +34,15 @@ import pytest
 
 _RACINE = pathlib.Path(__file__).resolve().parent.parent
 _GABARITS = sorted((_RACINE / "templates").glob("*.html"))
+_SYSTEM = _RACINE / "templates" / "system.html"
+_VENDOR = _RACINE / "api" / "static" / "js" / "vendor"
 
-# Empreinte du bundle Tailwind vendorisé, relevée à l'épinglage le 2026-08-27
-# et identique à celle servie alors par cdn.tailwindcss.com/3.4.17 — c'est le
-# même octet, servi d'ailleurs.
-_TAILWIND = _RACINE / "api" / "static" / "js" / "tailwind-3.4.17.min.js"
-_TAILWIND_SHA384 = "igm5BeiBt36UU4gqwWS7imYmelpTsZlQ45FZf+XBn9MuJbn4nQr7yx1yFydocC/K"
+# Empreintes SRI relevées à l'épinglage (2026-08-27) sur unpkg — les mêmes
+# que scripts/build_system.py vérifie avant d'écrire le fichier.
+_VENDORS_SHA384 = {
+    "react-18.3.1.production.min.js": "DGyLxAyjq0f9SPpVevD6IgztCFlnMF6oW/XQGmfe+IsZ8TqEiDrcHkMLKI6fiB/Z",
+    "react-dom-18.3.1.production.min.js": "gTGxhz21lVGYNMcdJOyq01Edg0jhn/c22nsx0kyqP0TxaV5WVdsSH1fSDUf5YJj1",
+}
 
 _BALISE_SCRIPT = re.compile(r"<script\b[^>]*\bsrc=\"([^\"]+)\"[^>]*>", re.S)
 _COMMENTAIRE = re.compile(r"<!--.*?-->", re.S)
@@ -50,11 +52,9 @@ def _sans_commentaires(gabarit: pathlib.Path) -> str:
     """Le gabarit privé de ses commentaires HTML.
 
     Indispensable : les commentaires de ce dépôt CITENT le code retiré pour
-    expliquer pourquoi il l'est — la balise `cdn.tailwindcss.com` figure dans
-    la note de retour arrière. Un commentaire n'est pas exécuté ; l'analyser
-    ferait échouer les gardes sur la documentation elle-même, et pousserait à
-    l'effacer. Même règle que pour les modèles IA morts nommés en commentaire
-    (tests/test_ai_router.py) et pour `replace_signal_row` (tests/test_db.py).
+    expliquer pourquoi il l'est — Babel et Tailwind figurent dans la note
+    historique. Un commentaire n'est pas exécuté ; l'analyser ferait échouer
+    les gardes sur la documentation elle-même, et pousserait à l'effacer.
     """
     return _COMMENTAIRE.sub("", gabarit.read_text(encoding="utf-8"))
 
@@ -79,12 +79,14 @@ class TestPlusAucuneURLFlottante:
                 f"{gabarit.name} : version non épinglée → {url}"
 
     @pytest.mark.parametrize("gabarit", _GABARITS, ids=lambda g: g.name)
-    def test_le_cdn_tailwind_nest_plus_appele(self, gabarit):
-        """Ce CDN ne peut PAS être protégé par SRI (aucun en-tête CORS,
-        mesuré le 2026-08-27) : la seule fermeture est de ne pas l'appeler."""
+    def test_aucun_cdn_de_transpilation_nest_appele(self, gabarit):
+        """Tailwind play ne peut PAS être protégé par SRI (aucun en-tête CORS,
+        mesuré le 2026-08-27) et Babel standalone pèse 2,9 Mo : ni l'un ni
+        l'autre n'a sa place dans un téléphone."""
         urls = [u for u, _ in _scripts(gabarit)]
-        assert not any("cdn.tailwindcss.com" in u for u in urls), \
-            f"{gabarit.name} appelle un CDN sur lequel l'intégrité est impossible"
+        for interdit in ("cdn.tailwindcss.com", "@babel/standalone", "tailwind-3"):
+            assert not any(interdit in u for u in urls), \
+                f"{gabarit.name} charge {interdit} — la page se recompile dans le navigateur"
 
 
 class TestToutTiersEstVerifie:
@@ -109,55 +111,36 @@ class TestToutTiersEstVerifie:
                 assert len(valeur) >= 40, f"empreinte trop courte : {empreinte}"
 
 
-class TestTailwindEstServiParLeDepot:
-    def test_le_bundle_vendorise_existe(self):
-        assert _TAILWIND.is_file(), \
-            "le bundle Tailwind a disparu — la page perdrait sa mise en forme"
-
-    def test_le_bundle_est_bien_celui_quon_croit(self):
+class TestReactEstServiParLeDepot:
+    @pytest.mark.parametrize("nom", sorted(_VENDORS_SHA384), ids=str)
+    def test_le_bundle_vendorise_est_bien_celui_quon_croit(self, nom):
         """Sans cette vérification, « plus aucun tiers » ne veut rien dire :
         un fichier vendorisé remplacé en silence est exactement le risque que
         SRI ferme sur un CDN."""
-        empreinte = hashlib.sha384(_TAILWIND.read_bytes()).digest()
-        import base64
-        assert base64.b64encode(empreinte).decode() == _TAILWIND_SHA384
+        p = _VENDOR / nom
+        assert p.is_file(), f"{nom} a disparu — la page /system serait blanche"
+        empreinte = base64.b64encode(hashlib.sha384(p.read_bytes()).digest()).decode()
+        assert empreinte == _VENDORS_SHA384[nom], nom
 
-    def test_le_gabarit_le_sert_depuis_notre_origine(self):
-        urls = [u for u, _ in _scripts(_RACINE / "templates" / "system.html")]
-        assert any(u.startswith("/static/js/tailwind-3.4.17.min.js") for u in urls)
-
-    def test_le_bundle_najoute_aucun_appel_reseau(self):
-        """Un bundle vendorisé qui irait chercher des morceaux ailleurs
-        rouvrirait la porte qu'on vient de fermer. Les URL présentes doivent
-        être des messages d'erreur, jamais des cibles de requête."""
-        texte = _TAILWIND.read_text(encoding="utf-8", errors="replace")
-        for motif in ("fetch(\"http", "fetch('http", "XMLHttpRequest",
-                      "importScripts("):
-            assert motif not in texte, f"le bundle tente un accès réseau : {motif}"
+    @pytest.mark.parametrize("nom", sorted(_VENDORS_SHA384), ids=str)
+    def test_le_bundle_najoute_aucun_appel_reseau(self, nom):
+        texte = (_VENDOR / nom).read_text(encoding="utf-8", errors="replace")
+        for motif in ("fetch(\"http", "fetch('http", "importScripts("):
+            assert motif not in texte, f"{nom} tente un accès réseau : {motif}"
 
 
 class TestLaPageResteChargeable:
-    """Le pire résultat de C4 serait une page qui ne charge plus : SRI casse
-    BRUYAMMENT, et c'est voulu, mais uniquement quand l'octet a changé."""
+    """Le pire résultat serait une page qui ne charge plus : react, puis
+    react-dom, puis le code compilé, tous depuis notre origine."""
 
-    def test_les_quatre_scripts_sont_toujours_la(self):
-        urls = [u for u, _ in _scripts(_RACINE / "templates" / "system.html")]
-        assert any("react@" in u and "react-dom" not in u for u in urls)
-        assert any("react-dom@" in u for u in urls)
-        assert any("babel" in u for u in urls)
-        assert any("tailwind" in u for u in urls)
+    def test_les_trois_scripts_et_rien_dautre(self):
+        urls = [u.split("?")[0] for u, _ in _scripts(_SYSTEM)]
+        assert urls == ["/static/js/vendor/react-18.3.1.production.min.js",
+                        "/static/js/vendor/react-dom-18.3.1.production.min.js",
+                        "/static/js/system.js"], urls
+        assert not _distants(_SYSTEM)
 
-    def test_la_config_tailwind_suit_le_script_qui_la_definit(self):
-        """`tailwind.config = …` sur un `tailwind` non défini lève, et toute
-        la page s'arrête là."""
-        texte = _sans_commentaires(_RACINE / "templates" / "system.html")
-        assert texte.index("tailwind-3.4.17.min.js") < texte.index("tailwind.config")
-
-    def test_babel_est_charge_avant_le_script_quil_doit_compiler(self):
-        texte = _sans_commentaires(_RACINE / "templates" / "system.html")
-        assert texte.index("@babel/standalone") < texte.index('type="text/babel"')
-
-    def test_react_est_charge_avant_babel(self):
-        """Le bloc JSX déstructure `React` dès sa première ligne."""
-        texte = _sans_commentaires(_RACINE / "templates" / "system.html")
-        assert texte.index("react-dom@") < texte.index("@babel/standalone")
+    def test_le_css_compile_est_lie(self):
+        texte = _sans_commentaires(_SYSTEM)
+        assert '/static/css/system.css?v={{ version }}' in texte
+        assert "tailwind.config" not in texte and 'type="text/babel"' not in texte

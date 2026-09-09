@@ -28,7 +28,9 @@ Calcul en crons GitHub Actions ; dashboard en lecture seule.
   (credentials gitignorés). `ops.py ai` fait un VRAI appel — seul diagnostic
   qui tranche sur un fournisseur IA. MCP Supabase en LECTURE SEULE
   (`.mcp.json`).
-- Pas de build. Le push ne déploie pas (déploiement Git Vercel DÉSACTIVÉ,
+- Pas de build, SAUF `/system` : après toute retouche de `assets/system.jsx`,
+  `python scripts/build_system.py` (gardien `tests/test_system_build.py`).
+  Le push ne déploie pas (déploiement Git Vercel DÉSACTIVÉ,
   `vercel.json`) : le job `deploy` de `ci.yml` pousse en CLI si la suite est verte.
 
 ## Architecture (fichiers clés)

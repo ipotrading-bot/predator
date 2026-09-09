@@ -1,6 +1,9 @@
 """
-tests/test_system_page.py — la page /system est du JSX transpilé DANS le
-navigateur (Babel standalone, ce dépôt n'a pas d'étape de build).
+tests/test_system_page.py — la page /system est du JSX (assets/system.jsx),
+compilé UNE fois par scripts/build_system.py en api/static/js/system.js
+(depuis le 2026-09-09 ; avant, Babel standalone le transpilait dans le
+navigateur à chaque visite). Ces tests lisent la SOURCE ; la fraîcheur du
+compilé est tenue par tests/test_system_build.py.
 
 POURQUOI CE TEST EXISTE (panne du 2026-08-22) : la suppression du widget
 « Quota OddsAPI » (Mission 2, Phase 2) a laissé un `</div>` orphelin. Côté
@@ -27,7 +30,9 @@ from pathlib import Path
 
 import pytest
 
-TEMPLATE = Path(__file__).resolve().parent.parent / "templates" / "system.html"
+RACINE = Path(__file__).resolve().parent.parent
+TEMPLATE = RACINE / "templates" / "system.html"
+SOURCE = RACINE / "assets" / "system.jsx"
 
 
 @pytest.fixture(scope="module")
@@ -36,19 +41,18 @@ def html() -> str:
 
 
 @pytest.fixture(scope="module")
-def jsx(html: str) -> str:
-    """Le seul bloc que Babel transpile, isolé de tout le HTML statique."""
-    start = html.index("{% raw %}") + len("{% raw %}")
-    return html[start:html.index("{% endraw %}")]
+def jsx() -> str:
+    """La source JSX, hors du gabarit depuis sa compilation locale."""
+    return SOURCE.read_text(encoding="utf-8")
 
 
 class TestJinjaEnvelope:
-    def test_le_jsx_est_protege_par_raw(self, html):
-        # Sans {% raw %}, Jinja interprète `{ background: … }` comme une
-        # expression et le script part en erreur de rendu côté serveur.
-        assert html.count("{% raw %}") == 1
-        assert html.count("{% endraw %}") == 1
-        assert html.index("{% raw %}") < html.index("{% endraw %}")
+    def test_le_jsx_ne_vit_plus_dans_le_gabarit(self, html):
+        # Plus de bloc {% raw %} : la source est compilée hors ligne et le
+        # gabarit ne charge que le résultat. Un retour du JSX inline ramènerait
+        # Babel (2,9 Mo) dans le téléphone.
+        assert "{% raw %}" not in html and 'type="text/babel"' not in html
+        assert "/static/js/system.js?v={{ version }}" in html
 
     def test_le_conteneur_react_existe(self, html, jsx):
         assert 'id="sbc-root"' in html
@@ -215,13 +219,13 @@ class TestFiscaliteAppliqueePartout:
         assert "sc.worst.net >= -1e-9" in jsx
         assert "sc.worst.net > 1e-9" in jsx
 
-    def test_lindependance_avec_le_moteur_est_ecrite_noir_sur_blanc(self, html):
+    def test_lindependance_avec_le_moteur_est_ecrite_noir_sur_blanc(self, jsx):
         """La page a son taux, `core.constants.TAX_RATE` a le sien (0.0, décision
         opérateur qui pilote l'ÉMISSION via le b de Kelly). Les deux ont cohabité
         en silence à 20 % et 0 % — ce test exige que l'écart reste EXPLIQUÉ dans
-        le template, pour qu'il ne se redécouvre pas comme un bug.
+        la source, pour qu'il ne se redécouvre pas comme un bug.
         Il ne fige AUCUNE valeur : le taux du moteur reste une décision opérateur."""
-        assert "core.constants.TAX_RATE" in html
-        assert "l'ÉMISSION" in html
+        assert "core.constants.TAX_RATE" in jsx
+        assert "l'ÉMISSION" in jsx
         import core.constants as cc
         assert isinstance(cc.TAX_RATE, float)   # la valeur ne regarde pas ce test
