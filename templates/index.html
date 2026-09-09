@@ -173,7 +173,7 @@
             +{{ "%.1f"|format(s.edge_pct) }}%
           </span>
           {% if kelly > 0 %}
-            <span class="sig-mise" title="Fraction de Kelly conseillée (% de bankroll)">K:{{ "%.1f"|format(kelly) }}%</span>
+            <span class="sig-mise" title="Fraction de Kelly conseillée, en % du capital">K:{{ "%.1f"|format(kelly) }}%</span>
           {% else %}
             <span class="sig-mise" style="color:var(--t3)">—</span>
           {% endif %}
@@ -275,7 +275,7 @@
     </div>
   </div>
 
-  <div class="m-stake" title="Fraction de Kelly conseillée, en % de bankroll">
+  <div class="m-stake" title="Fraction de Kelly conseillée, en % du capital">
     <span class="stake-n" id="m-kelly-pct">—</span>
     <span class="stake-d">|</span>
     <div class="stake-m">Kelly</div>
