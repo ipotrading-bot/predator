@@ -18,8 +18,9 @@
 <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&family=JetBrains+Mono:wght@400;500;700&display=swap" rel="stylesheet">
 <link rel="stylesheet" href="/static/css/predator.css?v={{ version }}">
 <style>
-/* System page overrides */
-.wrap { max-width: none; padding: 0 0 calc(72px + var(--sbot)); }
+/* System page overrides — même charte que l'accueil et /performance :
+   variables de predator.css, en-tête .page-title/.page-sub, pendule local. */
+.wrap { max-width: none; padding: 0 0 calc(116px + var(--sbot)); }
 @media (min-width: 640px) { .wrap { padding-bottom: 52px; } }
 .nav-pages a.on, .bnav a.on { color: var(--purple); }
 /* predator.css donnait à TOUTE table un min-width de 760px ; la règle est
@@ -28,6 +29,17 @@
    reste la garantie locale, avec :where() pour ne pas peser plus lourd que
    les classes Tailwind. */
 :where(#sbc-root) table { min-width: 0; }
+#sbc-root input, #sbc-root select { color-scheme: dark; }
+#sbc-root input:focus, #sbc-root select:focus { outline: none; border-color: var(--purple) !important; }
+/* Barre de résultat mobile : le net vit sous le pouce pendant la saisie,
+   sans avoir à descendre jusqu'au panneau Total. */
+.sys-bar { position: fixed; left: 0; right: 0; bottom: calc(64px + var(--sbot)); z-index: 55;
+  background: rgba(3,3,5,.94); backdrop-filter: blur(20px); -webkit-backdrop-filter: blur(20px);
+  border-top: 1px solid var(--bd); display: flex; justify-content: space-around; padding: 8px 12px; }
+.sys-bar div { text-align: center; }
+.sys-bar .l { font-size: 8.5px; letter-spacing: .6px; text-transform: uppercase; color: var(--t2); font-weight: 600; }
+.sys-bar .v { font-size: 15px; font-weight: 800; font-family: var(--font-data); line-height: 1.2; }
+@media (min-width: 1024px) { .sys-bar { display: none; } }
 </style>
 </head>
 <body>
@@ -41,7 +53,7 @@
     <a href="/performance">PERF</a>
   </div>
   <div class="nav-right">
-    <span id="clock">—</span>
+    <span id="clock" title="Heure locale">—</span>
   </div>
 </nav>
 
@@ -70,18 +82,13 @@
 </nav>
 
 <script>
+// Heure locale HH:MM, comme l'accueil et /performance.
 (function tick(){
-  const d = new Date();
-  const pad = n => String(n).padStart(2,'0');
-  const days = ['Sun','Mon','Tue','Wed','Thu','Fri','Sat'];
-  const months = ['Jan','Feb','Mar','Apr','May','Jun','Jul','Aug','Sep','Oct','Nov','Dec'];
-  document.getElementById('clock').textContent =
-    days[d.getUTCDay()]+', '+pad(d.getUTCDate())+' '+months[d.getUTCMonth()]+' '+d.getUTCFullYear()+
-    ' '+pad(d.getUTCHours())+':'+pad(d.getUTCMinutes())+':'+pad(d.getUTCSeconds())+' UTC';
+  const d = new Date(), p = n => String(n).padStart(2,'0');
+  document.getElementById('clock').textContent = p(d.getHours())+':'+p(d.getMinutes());
   setTimeout(tick,1000);
 })();
 </script>
-
 <!-- System Bet Calculator — React via CDN (aucune étape de build ici).
      ═══════════════════════════════════════════════════════════════════
      VERSIONS ÉPINGLÉES + SRI (C4, 2026-08-27).
@@ -159,39 +166,46 @@ const Trash2       = ({ size }) => <Icon size={size}><polyline points="3 6 5 6 2
 /* ---------------------------------------------------------------
    TOKENS — palette "carnet de paris quantitatif"
 --------------------------------------------------------------- */
+/* ---------------------------------------------------------------
+   TOKENS — la charte de predator.css (variables CSS), pas une seconde
+   palette : la page avait son propre fond, ses propres bordures et un or
+   différent de celui des deux autres pages (harmonisation 2026-09-09).
+--------------------------------------------------------------- */
 const C = {
-  bg: "#0A0C10",
-  panel: "#12151C",
-  panel2: "#191D27",
-  border: "#262B38",
-  borderSoft: "#1E222D",
-  text: "#ECEFF4",
-  muted: "#8A93A6",
-  faint: "#5C6478",
-  gold: "#C6A15B",
-  goldSoft: "#8A7240",
-  win: "#33C481",
-  loss: "#E5566B",
-  voidC: "#7C8798",
-  partial: "#E3A23C",
+  bg: "var(--bg)",
+  panel: "var(--bg1)",
+  panel2: "var(--bg2)",
+  border: "var(--bd2)",
+  borderSoft: "var(--bd)",
+  text: "var(--t1)",
+  muted: "var(--t2)",
+  faint: "var(--t2)",
+  gold: "var(--gold)",
+  goldSoft: "var(--gold-bd)",
+  win: "var(--green)",
+  loss: "var(--red)",
+  voidC: "var(--t2)",
+  partial: "var(--orange)",
+  accent: "var(--purple)",
 };
 
-const SANS = '"Inter", ui-sans-serif, system-ui, -apple-system, "Segoe UI", sans-serif';
-const MONO = 'ui-monospace, "IBM Plex Mono", "SF Mono", Menlo, Consolas, monospace';
+const SANS = "var(--font)";
+const MONO = "var(--font-data)";
 
 const FOLD_NAMES = { 1: "Simple", 2: "Double", 3: "Trio", 4: "Quadruple", 5: "Quintuple", 6: "Sextuple", 7: "Septuple", 8: "Octuple", 9: "Nonuple", 10: "Décuple" };
 const foldName = (k) => FOLD_NAMES[k] || `${k}-fold`;
 
+// Libellés courts (page sobre) ; le sens complet est en title= du sélecteur.
 const STATUS_OPTS = [
   { v: "won", label: "Gagné" },
   { v: "lost", label: "Perdu" },
-  { v: "void", label: "Nul (remboursé)" },
-  { v: "won_void", label: "Gagné / Nul (cote asiatique partielle)" },
-  { v: "lost_void", label: "Perdu / Nul (cote asiatique partielle)" },
+  { v: "void", label: "Nul" },
+  { v: "won_void", label: "Gagné ½" },
+  { v: "lost_void", label: "Perdu ½" },
 ];
+const STATUS_TITLE = "Gagné · Perdu · Nul = remboursé (cote 1) · Gagné ½ / Perdu ½ = cote asiatique partielle (moitié gagnée ou perdue, moitié remboursée)";
 
 const CURRENCIES = ["XOF", "CHF", "EUR", "USD"];
-
 const NAMED_SYSTEMS = {
   "1-1": "Simple", "2-2": "Double", "3-3": "Trio (Treble)",
   "1-3": "Patent", "2-3": "Trixie",
@@ -387,48 +401,51 @@ function breakEvenComplet(scen) {
 }
 
 /* ---------------------------------------------------------------
-   UI ATOMS
+   UI ATOMS — sobres : chiffres, libellés courts, explications en title=.
 --------------------------------------------------------------- */
-function Panel({ title, children, right }) {
+function Panel({ title, children, right, sub }) {
   return (
-    <div style={{ background: C.panel, border: `1px solid ${C.border}`, borderRadius: 12 }} className="p-4 md:p-5">
-      <div className="flex items-center justify-between flex-wrap gap-x-3 gap-y-1 mb-3">
-        <h2 style={{ color: C.text, fontFamily: SANS }} className="text-sm font-semibold tracking-wide uppercase">{title}</h2>
+    <div style={{ background: C.panel, border: `1px solid ${C.borderSoft}`, borderRadius: "var(--r)" }} className="p-3 md:p-4">
+      <div className="flex items-center justify-between gap-x-3 gap-y-1 mb-2.5">
+        <h2 style={{ color: C.muted, fontFamily: SANS, letterSpacing: "1.5px" }} className="text-[10px] font-semibold uppercase whitespace-nowrap">
+          ■ {title}{sub && <span style={{ color: C.gold, fontFamily: MONO, letterSpacing: 0 }} className="ml-2 normal-case">{sub}</span>}
+        </h2>
         {right}
       </div>
       {children}
     </div>
   );
 }
-function Field({ label, children }) {
+function Field({ label, children, title }) {
   return (
-    <label className="flex flex-col gap-1">
-      <span style={{ color: C.muted, fontFamily: SANS }} className="text-xs">{label}</span>
+    <label className="flex flex-col gap-1 min-w-0" title={title}>
+      <span style={{ color: C.muted, fontFamily: SANS }} className="text-[10px] uppercase tracking-wider">{label}</span>
       {children}
     </label>
   );
 }
-const inputStyle = { background: C.panel2, border: `1px solid ${C.border}`, color: C.text, fontFamily: MONO };
-function SummaryCard({ label, value, sub, color }) {
+const inputStyle = { background: C.panel2, border: `1px solid ${C.border}`, color: C.text, fontFamily: MONO, borderRadius: 6 };
+const inputCls = "text-sm px-2 py-1.5 w-full min-w-0";
+// Chiffre mis en avant (Total, scénarios).
+function Big({ label, value, sub, color, title }) {
   return (
-    <div style={{ background: C.panel2, border: `1px solid ${C.borderSoft}`, borderRadius: 10 }} className="px-4 py-3">
-      <div style={{ color: C.muted, fontFamily: SANS }} className="text-xs mb-1">{label}</div>
-      <div style={{ color: color || C.text, fontFamily: MONO }} className="text-lg font-semibold">{value}</div>
-      {sub && <div style={{ color: C.faint, fontFamily: SANS }} className="text-xs mt-0.5">{sub}</div>}
+    <div style={{ background: C.panel2, border: `1px solid ${C.borderSoft}`, borderRadius: 8 }} className="px-3 py-2 min-w-0" title={title}>
+      <div style={{ color: C.muted, fontFamily: SANS }} className="text-[10px] uppercase tracking-wider">{label}</div>
+      <div style={{ color: color || C.text, fontFamily: MONO }} className="text-lg font-bold leading-tight truncate">{value}</div>
+      {sub && <div style={{ color: C.muted, fontFamily: MONO }} className="text-[10px] mt-0.5 truncate">{sub}</div>}
     </div>
   );
 }
-
 // Interrupteur « Dans le total » : chaque section (simples, combiné,
 // système) entre ou sort de l'addition finale sans perdre ses saisies.
 function Toggle({ on, onChange, label }) {
   return (
     <button type="button" role="switch" aria-checked={on} onClick={() => onChange(!on)}
-      style={{ color: on ? C.win : C.faint, border: `1px solid ${on ? C.win : C.border}`,
-               background: on ? "rgba(51,196,129,0.10)" : "transparent", fontFamily: SANS, cursor: "pointer" }}
-      className="flex items-center gap-1.5 text-xs px-2 py-1 rounded-md transition">
-      <span style={{ width: 22, height: 12, borderRadius: 6, background: on ? C.win : C.border, position: "relative", display: "inline-block" }}>
-        <span style={{ position: "absolute", top: 2, left: on ? 12 : 2, width: 8, height: 8, borderRadius: 4, background: C.bg, transition: "left .15s" }}></span>
+      style={{ color: on ? C.win : C.muted, border: `1px solid ${on ? "rgba(0,232,127,.35)" : C.border}`,
+               background: on ? "rgba(0,232,127,.07)" : "transparent", fontFamily: SANS, cursor: "pointer", borderRadius: 100 }}
+      className="flex items-center gap-1.5 text-[11px] px-2 py-0.5 transition whitespace-nowrap">
+      <span style={{ width: 20, height: 11, borderRadius: 6, background: on ? C.win : C.border, position: "relative", display: "inline-block" }}>
+        <span style={{ position: "absolute", top: 2, left: on ? 11 : 2, width: 7, height: 7, borderRadius: 4, background: C.bg, transition: "left .15s" }}></span>
       </span>
       {label}
     </button>
@@ -437,13 +454,13 @@ function Toggle({ on, onChange, label }) {
 // Sélecteur à deux positions (mode de mise du système).
 function Segmented({ value, options, onChange }) {
   return (
-    <div style={{ background: C.panel2, border: `1px solid ${C.border}`, borderRadius: 8 }} className="flex p-0.5">
+    <div style={{ border: `1px solid ${C.border}`, borderRadius: 8, overflow: "hidden" }} className="flex">
       {options.map((o) => {
         const active = o.v === value;
         return (
           <button key={o.v} type="button" onClick={() => onChange(o.v)}
-            style={{ background: active ? C.gold : "transparent", color: active ? C.bg : C.muted, fontFamily: SANS, borderRadius: 6, border: 0, cursor: "pointer" }}
-            className="flex-1 text-xs font-medium px-2 py-1.5 transition">
+            style={{ background: active ? "rgba(0,232,127,.07)" : "transparent", color: active ? C.win : C.muted, fontFamily: SANS, border: 0, cursor: "pointer" }}
+            className="flex-1 text-[11px] font-medium px-2 py-1.5 transition whitespace-nowrap">
             {o.label}
           </button>
         );
@@ -456,7 +473,18 @@ function StatRow({ label, value, color, strong }) {
   return (
     <div className="flex items-center justify-between gap-3">
       <span style={{ color: C.muted, fontFamily: SANS }} className="text-xs">{label}</span>
-      <span style={{ color: color || C.text, fontFamily: MONO }} className={strong ? "text-base font-semibold" : "text-sm"}>{value}</span>
+      <span style={{ color: color || C.text, fontFamily: MONO }} className={strong ? "text-base font-bold" : "text-sm"}>{value}</span>
+    </div>
+  );
+}
+// Bilan d'une section : mise, brut, impôt, net — même bloc partout.
+function Bilan({ mise, brut, impot, net, taxRate, fmt, signed, miseLabel }) {
+  return (
+    <div style={{ borderTop: `1px solid ${C.borderSoft}` }} className="mt-2.5 pt-2.5 space-y-1">
+      <StatRow label={miseLabel || "Mise"} value={fmt(mise)} />
+      <StatRow label="Brut" value={fmt(brut)} />
+      <StatRow label={`Impôt ${taxRate} %`} value={`− ${fmt(impot)}`} color={C.partial} />
+      <StatRow label="Net" value={signed(net)} color={net >= 0 ? C.win : C.loss} strong />
     </div>
   );
 }
@@ -467,17 +495,18 @@ function ScenarioDetail({ titre, r, selections, flags, fmtN }) {
   if (flags.simples) parts.push(`Simples ${fmtN(r.simples)}`);
   if (flags.combo) parts.push(`Combiné ${fmtN(r.combo)}`);
   if (flags.sys) parts.push(`Système ${fmtN(r.sys)}`);
-  const impot = r.impot > 0 ? ` − ${fmtN(r.impot)} d'impôt` : "";
+  const impot = r.impot > 0 ? ` − ${fmtN(r.impot)} impôt` : "";
   return (
     <div className="text-xs">
-      <span style={{ color: C.muted, fontFamily: SANS }}>{titre} — bonnes : </span>
-      <span style={{ color: C.text }}>
+      <span style={{ color: C.muted, fontFamily: SANS }}>{titre} · bonnes : </span>
+      <span style={{ color: C.text, fontFamily: MONO }}>
         {r.indices.length === 0 ? "aucune" : r.indices.map((i) => `${i + 1} @${selections[i].odds.toFixed(2)}`).join(" · ")}
       </span>
-      <div style={{ color: C.faint }} className="mt-0.5">{parts.join(" + ")} = {fmtN(r.total)} brut{impot} → net {fmtN(r.net)}</div>
+      <div style={{ color: C.muted, fontFamily: MONO }} className="mt-0.5">{parts.join(" + ")} = {fmtN(r.total)} brut{impot} → net {fmtN(r.net)}</div>
     </div>
   );
 }
+const Empty = ({ children }) => <p style={{ color: C.muted }} className="text-xs">{children}</p>;
 
 /* ---------------------------------------------------------------
    AUTO-FILL — signaux PAIM actifs -> ticket système
@@ -536,7 +565,14 @@ async function fetchAllActiveSignals() {
 }
 
 /* ---------------------------------------------------------------
-   MAIN COMPONENT
+   MAIN COMPONENT — organisation 2026-09-09 (demande opérateur :
+   « plus efficiente, intuitive, sans répétitions ») :
+   · réglages globaux (devise, impôt) dans l'en-tête, une seule fois ;
+   · chaque sélection n'est LISTÉE qu'une fois (panneau Sélections) ;
+     Mises individuelles et Combiné y renvoient par leur numéro ;
+   · le panneau « Système — résumé » (copie du bilan Système) est retiré ;
+   · le détail par palier est replié par défaut ;
+   · sur téléphone, une barre fixe porte Mise / Net / ROI pendant la saisie.
 --------------------------------------------------------------- */
 function SystemBetCalculator() {
   const [selections, setSelections] = useState([]);
@@ -563,6 +599,7 @@ function SystemBetCalculator() {
   const [simpleStakes, setSimpleStakes] = useState({});
   const [comboStakeInput, setComboStakeInput] = useState("1000");
   const [openScenario, setOpenScenario] = useState(null);
+  const [detailOpen, setDetailOpen] = useState(false);
   // FISCALITÉ — réglée par l'opérateur, jamais écrite en dur (règle 11 : le
   // taux est une décision, pas une constante enterrée dans un template).
   // Volontairement INDÉPENDANTE de `core.constants.TAX_RATE` : celle-là pilote
@@ -624,11 +661,10 @@ function SystemBetCalculator() {
       try {
         const all = await fetchAllActiveSignals();
         if (!cancelled) setAvailableSignals(all);
-      } catch (e) { /* le picker affichera juste "aucun signal disponible" */ }
+      } catch (e) { /* le picker affichera juste "aucun signal" */ }
     })();
     return () => { cancelled = true; };
   }, []);
-
 
   // Système M/N : tous les paliers de M à N sont inclus d'office (comme betbuzz)
   const sortedFolds = useMemo(() => {
@@ -678,7 +714,7 @@ function SystemBetCalculator() {
   const fmt = (v) => `${v.toLocaleString("fr-FR", { minimumFractionDigits: 2, maximumFractionDigits: 2 })} ${currency}`;
   const signed = (v) => `${v >= 0 ? "+" : ""}${fmt(v)}`;
   // Format compact (sans devise, décimales seulement si besoin) pour les
-  // tableaux étroits : la devise est rappelée une fois sous le tableau.
+  // tableaux étroits : la devise est rappelée une fois dans l'en-tête.
   const fmtN = (v) => v.toLocaleString("fr-FR", { minimumFractionDigits: 0, maximumFractionDigits: 2 });
   const signedN = (v) => `${v >= 0 ? "+" : ""}${fmtN(v)}`;
   const round2 = (v) => Math.round(v * 100) / 100;
@@ -811,50 +847,76 @@ function SystemBetCalculator() {
   }, [availableSignals, selections]);
 
   const statusLine = {
-    loading: "Signaux PAIM…",
-    error: "Signaux indisponibles",
-    empty: "Aucun signal ≥ 1.80 sous 12 h",
+    loading: "signaux…",
+    error: "signaux indisponibles",
+    empty: "aucun signal ≥ 1.80 sous 12 h",
   }[signalsStatus] || `${signalsStatus.split(":")[1]} signaux · 12 h · cote > 1.80`;
 
+  const nActives = sections.filter((s) => s.on).length;
+  const netColor = grand.net >= 0 ? C.win : C.loss;
+  const numBadge = { color: C.gold, fontFamily: MONO, background: "var(--gold-bg)", border: `1px solid ${C.goldSoft}` };
+
   return (
-    <div style={{ background: C.bg, minHeight: "60vh", fontFamily: SANS }} className="w-full">
-      <div className="max-w-6xl mx-auto px-4 py-8 md:px-8">
-        {/* Header */}
-        <div className="mb-6">
-          <div style={{ color: C.gold, fontFamily: MONO }} className="text-xs tracking-widest uppercase mb-1">Predator Paim · Outils</div>
-          <h1 style={{ color: C.text }} className="text-2xl md:text-3xl font-semibold mb-2">Calculateur de paris</h1>
-          <p style={{ color: C.faint, fontFamily: MONO }} className="text-xs mt-2"
-            title="Auto-remplissage : signaux PAIM actifs, match dans les 12 h, cote > 1.80, meilleur edge d'abord, 8 au plus. Ticket vide = remplissage manuel possible.">{statusLine}</p>
+    <div style={{ fontFamily: SANS }} className="w-full">
+      <div className="max-w-6xl mx-auto px-3 py-4 md:px-6 md:py-5">
+        {/* En-tête : même gabarit que /performance, plus les deux réglages
+            GLOBAUX (devise, impôt) — ils valent pour toutes les sections,
+            ils ne vivent donc plus dans le panneau Système. */}
+        <div className="flex items-end justify-between gap-3 flex-wrap mb-3">
+          <div className="min-w-0">
+            <div className="page-title">&#9660; CALCULATEUR</div>
+            <div className="page-sub" style={{ fontFamily: MONO }}
+              title="Auto-remplissage : signaux actifs, match dans les 12 h, cote > 1.80, meilleur edge d'abord, 8 au plus. Ticket vide = saisie manuelle.">{statusLine}</div>
+          </div>
+          <div className="flex items-end gap-2">
+            <div className="w-20">
+              <Field label="Devise">
+                <select value={currency} onChange={(e) => setCurrency(e.target.value)}
+                  style={{ ...inputStyle, fontFamily: SANS }} className={inputCls}>
+                  {CURRENCIES.map((c) => <option key={c} value={c}>{c}</option>)}
+                </select>
+              </Field>
+            </div>
+            <div className="w-20">
+              <Field label="Impôt (%)">
+                <input type="number" min="0" max="100" step="0.5" value={taxRateInput}
+                  onChange={(e) => setTaxRateInput(e.target.value)}
+                  onBlur={() => setTaxRateInput(String(taxRate))}
+                  title="Retenue sur le gain net de chaque pari GAGNANT, toutes sections. Un pari perdu ou remboursé n'est pas taxé."
+                  style={inputStyle} className={inputCls} />
+              </Field>
+            </div>
+          </div>
         </div>
 
-        <div className="grid grid-cols-1 lg:grid-cols-12 gap-5">
-          {/* LEFT COLUMN — saisie : les sélections, puis une section par type de pari,
-              chacune avec son propre bilan brut/net. */}
-          <div className="lg:col-span-5 space-y-5">
-            {/* Ticket */}
+        <div className="grid grid-cols-1 lg:grid-cols-12 gap-3">
+          {/* COLONNE SAISIE — les sélections (listées ici et nulle part
+              ailleurs), puis une section par type de pari avec son bilan. */}
+          <div className="lg:col-span-5 space-y-3">
             <Panel
               title="Sélections"
+              sub={n > 0 ? `${n}` : null}
               right={
-                <div className="flex items-center gap-2">
+                <div className="flex items-center gap-1.5">
                   {n > 0 && (
-                    <button onClick={clearAll} aria-label="Tout effacer"
-                      style={{ color: C.loss, border: `1px solid ${C.border}` }}
-                      className="flex items-center gap-1 text-xs px-2 py-1 rounded-md transition">
-                      <Trash2 size={13} /> Vider
+                    <button onClick={clearAll} aria-label="Tout effacer" title="Tout effacer"
+                      style={{ color: C.loss, border: `1px solid ${C.border}`, borderRadius: 100 }}
+                      className="flex items-center gap-1 text-[11px] px-2 py-0.5 transition">
+                      <Trash2 size={12} /> Vider
                     </button>
                   )}
-                  <button onClick={() => setPickerOpen((v) => !v)} disabled={n >= 10}
-                    style={{ color: n >= 10 ? C.faint : C.gold, border: `1px solid ${n >= 10 ? C.border : C.goldSoft}` }}
-                    className="flex items-center gap-1 text-xs px-2 py-1 rounded-md transition">
-                    <Plus size={13} /> Ajouter
+                  <button onClick={() => setPickerOpen((v) => !v)} disabled={n >= 10} title={n >= 10 ? "10 sélections au plus" : "Ajouter un signal actif ou une ligne vide"}
+                    style={{ color: n >= 10 ? C.muted : C.gold, border: `1px solid ${n >= 10 ? C.border : C.goldSoft}`, borderRadius: 100 }}
+                    className="flex items-center gap-1 text-[11px] px-2 py-0.5 transition">
+                    <Plus size={12} /> Ajouter
                   </button>
                 </div>
               }
             >
               {pickerOpen && n < 10 && (
-                <div style={{ background: C.panel2, border: `1px solid ${C.borderSoft}`, borderRadius: 10 }} className="mb-3 p-2 max-h-56 overflow-y-auto">
+                <div style={{ background: C.panel2, border: `1px solid ${C.borderSoft}`, borderRadius: 8 }} className="mb-2 p-1.5 max-h-56 overflow-y-auto">
                   {pickableSignals.length === 0 ? (
-                    <p style={{ color: C.faint }} className="text-xs px-1.5 py-1">Aucun signal actif disponible — utilise la ligne vide ci-dessous.</p>
+                    <Empty>Aucun signal actif.</Empty>
                   ) : (
                     pickableSignals.map((s, i) => (
                       <button key={i} onClick={() => { addFromSignal(s); setPickerOpen(false); }}
@@ -868,46 +930,44 @@ function SystemBetCalculator() {
                   <div style={{ borderTop: `1px solid ${C.border}` }} className="mt-1 pt-1">
                     <button onClick={() => { addSelection(); setPickerOpen(false); }}
                       style={{ color: C.muted }} className="w-full text-left text-xs px-1.5 py-1.5 rounded-md hover:bg-white/5">
-                      + Ligne vide (saisie manuelle)
+                      + Ligne vide
                     </button>
                   </div>
                 </div>
               )}
               {n === 0 ? (
-                <p style={{ color: C.faint }} className="text-xs">Aucune sélection — ajoute-en une, ou attends l'auto-remplissage.</p>
+                <Empty>Aucune sélection.</Empty>
               ) : (
-                <div className="space-y-2">
+                <div className="space-y-1.5">
                   {selections.map((sel, i) => (
-                    <div key={sel.id} style={{ background: C.panel2, border: `1px solid ${C.borderSoft}`, borderRadius: 10 }} className="p-2.5">
-                      <div className="flex items-center gap-2 mb-2">
-                        <span style={{ color: C.gold, fontFamily: MONO, background: "rgba(198,161,91,0.1)" }} className="text-xs w-6 h-6 flex items-center justify-center rounded-md shrink-0">
-                          {i + 1}
-                        </span>
+                    <div key={sel.id} style={{ background: C.panel2, border: `1px solid ${C.borderSoft}`, borderRadius: 8 }} className="p-2">
+                      <div className="flex items-center gap-1.5 mb-1.5">
+                        <span style={numBadge} className="text-[11px] w-6 h-6 flex items-center justify-center rounded-md shrink-0">{i + 1}</span>
                         <input
                           value={sel.label}
                           onChange={(e) => updateSelection(sel.id, { label: e.target.value })}
                           placeholder={`Sélection ${i + 1}`}
                           style={{ ...inputStyle, fontFamily: SANS }}
-                          className="flex-1 min-w-0 text-sm rounded-md px-2 py-1.5"
+                          className="flex-1 min-w-0 text-sm px-2 py-1"
                         />
-                        <button onClick={() => removeSelection(sel.id)} aria-label="Supprimer la sélection"
+                        <button onClick={() => removeSelection(sel.id)} aria-label="Supprimer la sélection" title="Supprimer"
                           style={{ color: C.loss }} className="shrink-0 p-1">
                           <Trash2 size={14} />
                         </button>
                       </div>
-                      <div className="flex gap-2">
+                      <div className="flex gap-1.5 pl-[30px]">
                         <div className="w-20 shrink-0">
                           <input
-                            type="number" step="0.01" min="1.01" value={sel.odds}
+                            type="number" step="0.01" min="1.01" value={sel.odds} aria-label="Cote" title="Cote"
                             onChange={(e) => updateSelection(sel.id, { odds: Math.max(1.01, parseFloat(e.target.value) || 1.01) })}
-                            style={inputStyle} className="w-full text-sm rounded-md px-2 py-1.5"
+                            style={inputStyle} className="w-full text-sm px-2 py-1"
                           />
                         </div>
                         <select
-                          value={sel.status}
+                          value={sel.status} title={STATUS_TITLE} aria-label="Statut"
                           onChange={(e) => updateSelection(sel.id, { status: e.target.value })}
                           style={{ ...inputStyle, fontFamily: SANS }}
-                          className="flex-1 min-w-0 text-sm rounded-md px-2 py-1.5"
+                          className="flex-1 min-w-0 text-sm px-2 py-1"
                         >
                           {STATUS_OPTS.map((o) => <option key={o.v} value={o.v}>{o.label}</option>)}
                         </select>
@@ -916,248 +976,205 @@ function SystemBetCalculator() {
                   ))}
                 </div>
               )}
-              {n >= 10 && <div style={{ color: C.faint }} className="text-xs mt-2">Maximum 10 sélections pour garder un affichage lisible.</div>}
             </Panel>
 
-            {/* System config — deux dropdowns M/N, comme betbuzz ; mise saisie
-                PAR LIGNE ou TOTALE (répartie à parts égales sur les lignes). */}
-            <Panel title="Système" right={n > 0 ? <Toggle on={sysOn} onChange={setSysOn} label="Dans le total" /> : null}>
+            {/* Système M/N — deux menus M/N, comme betbuzz ; mise saisie PAR
+                LIGNE ou TOTALE (répartie à parts égales sur les lignes). */}
+            <Panel title="Système" sub={n > 0 ? `${Math.min(sysM, n)}/${n} · ${systemLabelText} · ${totalLignes} ligne${totalLignes > 1 ? "s" : ""}` : null}
+              right={n > 0 ? <Toggle on={sysOn} onChange={setSysOn} label="Dans le total" /> : null}>
               {n === 0 ? (
-                <p style={{ color: C.faint }} className="text-xs">Aucune sélection.</p>
+                <Empty>Aucune sélection.</Empty>
               ) : (
               <>
-              <div className="grid grid-cols-2 gap-3 mb-3">
-                <Field label="Système (M)">
+              <div className="grid grid-cols-2 gap-2 mb-2">
+                <Field label="M" title="Plus petit palier joué : toutes les combinaisons de M à N sélections sont jouées">
                   <select value={Math.min(sysM, n)} onChange={(e) => setSysM(Number(e.target.value))}
-                    style={{ ...inputStyle, fontFamily: MONO }} className="text-sm rounded-md px-2 py-1.5">
+                    style={inputStyle} className={inputCls}>
                     {Array.from({ length: n }, (_, i) => i + 1).map((k) => <option key={k} value={k}>{k}</option>)}
                   </select>
                 </Field>
-                <Field label="Sélections (N)">
+                <Field label="N" title="Nombre de sélections du ticket (ajoute ou retire des lignes)">
                   <select value={n} onChange={(e) => setSelectionCount(Number(e.target.value))}
-                    style={{ ...inputStyle, fontFamily: MONO }} className="text-sm rounded-md px-2 py-1.5">
+                    style={inputStyle} className={inputCls}>
                     {Array.from({ length: 10 }, (_, i) => i + 1).map((k) => <option key={k} value={k}>{k}</option>)}
                   </select>
                 </Field>
               </div>
-              <div style={{ background: "rgba(198,161,91,0.1)", border: `1px solid ${C.goldSoft}`, color: C.gold, fontFamily: MONO }}
-                className="text-xs px-2.5 py-1.5 rounded-md mb-4 inline-block">
-                Système {Math.min(sysM, n)}/{n} = {systemLabelText} · {totalLignes} ligne{totalLignes > 1 ? "s" : ""}
-              </div>
-              <Field label="Mode de mise">
-                <Segmented value={stakeMode} onChange={switchStakeMode}
-                  options={[{ v: "line", label: "Mise par ligne" }, { v: "total", label: "Mise totale" }]} />
-              </Field>
-              <div className="grid grid-cols-2 gap-3 mt-3">
+              <div className="grid grid-cols-2 gap-2 items-end">
+                <Field label="Mise">
+                  <Segmented value={stakeMode} onChange={switchStakeMode}
+                    options={[{ v: "line", label: "Mise par ligne" }, { v: "total", label: "Mise totale" }]} />
+                </Field>
                 {stakeMode === "line" ? (
-                  <Field label="Mise par ligne">
+                  <Field label="Par ligne">
                     <input type="number" min="0" step="1" value={stakeInput}
                       onChange={(e) => setStakeInput(e.target.value)}
                       onBlur={() => setStakeInput(String(lineStakeInput))}
-                      style={inputStyle} className="text-sm rounded-md px-2 py-1.5" />
+                      style={inputStyle} className={inputCls} />
                   </Field>
                 ) : (
-                  <Field label="Mise totale">
+                  <Field label="Totale">
                     <input type="number" min="0" step="1" value={totalStakeInput}
                       onChange={(e) => setTotalStakeInput(e.target.value)}
                       onBlur={() => setTotalStakeInput(String(totalStakeWanted))}
-                      style={inputStyle} className="text-sm rounded-md px-2 py-1.5" />
+                      style={inputStyle} className={inputCls} />
                   </Field>
                 )}
-                <Field label="Devise">
-                  <select value={currency} onChange={(e) => setCurrency(e.target.value)}
-                    style={{ ...inputStyle, fontFamily: SANS }} className="text-sm rounded-md px-2 py-1.5">
-                    {CURRENCIES.map((c) => <option key={c} value={c}>{c}</option>)}
-                  </select>
-                </Field>
               </div>
-              <div className="mt-3 w-28">
-                <Field label="Impôt (%)">
-                  <input type="number" min="0" max="100" step="0.5" value={taxRateInput}
-                    onChange={(e) => setTaxRateInput(e.target.value)}
-                    onBlur={() => setTaxRateInput(String(taxRate))}
-                    title="Retenue sur le gain net de chaque pari GAGNANT, toutes sections. Un pari perdu ou remboursé n'est pas taxé."
-                    style={inputStyle} className="text-sm rounded-md px-2 py-1.5" />
-                </Field>
-              </div>
-              <p style={{ color: C.faint, fontFamily: MONO }} className="text-xs mt-2">
-                {stakeMode === "line"
-                  ? `${totalLignes} × ${fmt(stake)} = ${fmt(computed.totalMise)} engagés`
-                  : `${fmt(totalStakeWanted)} ÷ ${totalLignes} = ${fmt(stake)} par ligne`}
-              </p>
-              <div style={{ borderTop: `1px solid ${C.borderSoft}` }} className="mt-3 pt-3 space-y-1.5">
-                <StatRow label="Mise" value={fmt(computed.totalMise)} />
-                <StatRow label="Brut" value={fmt(computed.totalRetour)} />
-                <StatRow label={`Impôt ${taxRate} %`} value={`− ${fmt(computed.taxAmount)}`} color={C.partial} />
-                <StatRow label="Net" value={signed(computed.totalNet)} color={computed.totalNet >= 0 ? C.win : C.loss} strong />
-              </div>
+              {stakeMode === "total" && (
+                <div style={{ color: C.muted, fontFamily: MONO }} className="text-[11px] mt-1.5 text-right">÷ {totalLignes} = {fmt(stake)} par ligne</div>
+              )}
+              <Bilan mise={computed.totalMise} brut={computed.totalRetour} impot={computed.taxAmount} net={computed.totalNet}
+                taxRate={taxRate} fmt={fmt} signed={signed} miseLabel={`Mise · ${totalLignes} × ${fmtN(stake)}`} />
               </>
               )}
             </Panel>
 
-            {/* Mises individuelles — chaque sélection jouée SEULE, avec sa propre
-                mise : une mise par défaut commune, surchargeable ligne par ligne. */}
-            <Panel title="Mises individuelles" right={n > 0 ? <Toggle on={simplesOn} onChange={setSimplesOn} label="Dans le total" /> : null}>
+            {/* Mises individuelles — chaque sélection jouée SEULE. Les lignes
+                renvoient au NUMÉRO de la sélection (listée une seule fois plus
+                haut) : mise par défaut commune, surchargeable ligne par ligne. */}
+            <Panel title="Mises individuelles" sub={n > 0 ? `${n} simple${n > 1 ? "s" : ""}` : null}
+              right={n > 0 ? <Toggle on={simplesOn} onChange={setSimplesOn} label="Dans le total" /> : null}>
               {n === 0 ? (
-                <p style={{ color: C.faint }} className="text-xs">Aucune sélection.</p>
+                <Empty>Aucune sélection.</Empty>
               ) : (
               <>
-              <div className="flex items-end gap-3 mb-3">
-                <Field label="Mise par défaut (toutes)">
-                  <input type="number" min="0" step="1" value={simpleDefaultInput}
-                    onChange={(e) => setSimpleDefaultInput(e.target.value)}
-                    onBlur={() => setSimpleDefaultInput(String(Math.max(0, parseFloat(simpleDefaultInput) || 0)))}
-                    style={inputStyle} className="text-sm rounded-md px-2 py-1.5 w-32" />
-                </Field>
+              <div className="flex items-end gap-2 mb-2">
+                <div className="w-28">
+                  <Field label="Mise par défaut" title="Appliquée à chaque simple sans mise propre">
+                    <input type="number" min="0" step="1" value={simpleDefaultInput}
+                      onChange={(e) => setSimpleDefaultInput(e.target.value)}
+                      onBlur={() => setSimpleDefaultInput(String(Math.max(0, parseFloat(simpleDefaultInput) || 0)))}
+                      style={inputStyle} className={inputCls} />
+                  </Field>
+                </div>
                 {Object.keys(simpleStakes).length > 0 && (
-                  <button type="button" onClick={() => setSimpleStakes({})}
-                    style={{ color: C.muted, border: `1px solid ${C.border}`, cursor: "pointer" }}
-                    className="text-xs px-2 py-1.5 rounded-md">
-                    Tout remettre par défaut
+                  <button type="button" onClick={() => setSimpleStakes({})} title="Remettre toutes les mises à la valeur par défaut"
+                    style={{ color: C.muted, border: `1px solid ${C.border}`, cursor: "pointer", borderRadius: 100 }}
+                    className="text-[11px] px-2 py-1">
+                    ↺ défaut
                   </button>
                 )}
               </div>
-              <div className="space-y-2">
-                {simples.rows.map((r) => (
-                  <div key={r.sel.id} style={{ background: C.panel2, border: `1px solid ${C.borderSoft}`, borderRadius: 10 }} className="p-2.5">
-                    <div className="flex items-center gap-2 mb-2">
-                      <span style={{ color: C.gold, fontFamily: MONO, background: "rgba(198,161,91,0.1)" }} className="text-xs w-6 h-6 flex items-center justify-center rounded-md shrink-0">
-                        {r.i + 1}
-                      </span>
-                      <span style={{ color: C.text }} className="flex-1 min-w-0 truncate text-sm">{r.sel.label || `Sélection ${r.i + 1}`}</span>
-                      <span style={{ color: C.gold, fontFamily: MONO }} className="text-sm shrink-0">@{r.sel.odds.toFixed(2)}</span>
-                    </div>
-                    <div className="flex items-center gap-2">
-                      <input type="number" min="0" step="1" value={simpleStakes[r.sel.id] ?? ""} placeholder={simpleDefaultInput}
-                        aria-label={`Mise sélection ${r.i + 1}`}
-                        onChange={(e) => setSimpleStake(r.sel.id, e.target.value)}
-                        style={inputStyle} className="w-24 shrink-0 text-sm rounded-md px-2 py-1.5" />
-                      <div className="flex-1 min-w-0 text-right" style={{ fontFamily: MONO }}>
-                        <div style={{ color: C.faint }} className="text-xs">
-                          {fmtN(r.stake)} × {r.sel.odds.toFixed(2)}{r.sel.status !== "won" ? ` · ${STATUS_OPTS.find((o) => o.v === r.sel.status)?.label}` : ""}
-                        </div>
-                        <div style={{ color: bucketColor[r.bucket] }} className="text-sm font-semibold">{fmt(r.brut)}</div>
-                        {r.impot > 0 && <div style={{ color: C.partial }} className="text-xs">impôt − {fmtN(r.impot)}</div>}
-                        <div style={{ color: r.net >= 0 ? C.win : C.loss }} className="text-xs">net {signed(r.net)}</div>
-                      </div>
-                    </div>
-                  </div>
-                ))}
-              </div>
-              <div style={{ borderTop: `1px solid ${C.borderSoft}` }} className="mt-3 pt-3 space-y-1.5">
-                <StatRow label={`Mise · ${n} simple${n > 1 ? "s" : ""}`} value={fmt(simples.mise)} />
-                <StatRow label="Brut" value={fmt(simples.brut)} />
-                <StatRow label={`Impôt ${taxRate} %`} value={`− ${fmt(simples.impot)}`} color={C.partial} />
-                <StatRow label="Net" value={signed(simples.net)} color={simples.net >= 0 ? C.win : C.loss} strong />
-              </div>
+              <table className="w-full text-xs" style={{ fontFamily: MONO, borderCollapse: "collapse" }}
+                title="Une ligne par sélection (numéro du panneau Sélections). Mise vide = mise par défaut. Brut = retour mise comprise, net après impôt.">
+                <thead>
+                  <tr style={{ color: C.muted, fontFamily: SANS }}>
+                    <th className="text-left py-1 pr-2">#</th>
+                    <th className="text-left py-1 pr-2">Cote</th>
+                    <th className="text-left py-1 pr-2">Mise</th>
+                    <th className="text-right py-1 px-1">Brut</th>
+                    <th className="text-right py-1 pl-1">Net</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {simples.rows.map((r) => (
+                    <tr key={r.sel.id} style={{ borderTop: `1px solid ${C.borderSoft}` }}>
+                      <td className="py-1 pr-2"><span style={numBadge} className="text-[10px] w-5 h-5 inline-flex items-center justify-center rounded">{r.i + 1}</span></td>
+                      <td className="py-1 pr-2" style={{ color: C.gold }}>{r.sel.odds.toFixed(2)}{r.sel.status !== "won" && <span style={{ color: C.muted }}> · {STATUS_OPTS.find((o) => o.v === r.sel.status)?.label}</span>}</td>
+                      <td className="py-1 pr-2">
+                        <input type="number" min="0" step="1" value={simpleStakes[r.sel.id] ?? ""} placeholder={simpleDefaultInput}
+                          aria-label={`Mise sélection ${r.i + 1}`}
+                          onChange={(e) => setSimpleStake(r.sel.id, e.target.value)}
+                          style={inputStyle} className="w-20 text-xs px-1.5 py-1" />
+                      </td>
+                      <td className="text-right py-1 px-1" style={{ color: bucketColor[r.bucket] }}>{fmtN(r.brut)}</td>
+                      <td className="text-right py-1 pl-1" style={{ color: r.net >= 0 ? C.win : C.loss }}>{signedN(r.net)}</td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+              <Bilan mise={simples.mise} brut={simples.brut} impot={simples.impot} net={simples.net}
+                taxRate={taxRate} fmt={fmt} signed={signed} />
               </>
               )}
             </Panel>
 
             {/* Combiné — TOUTES les sélections sur une seule ligne N/N, cote
                 totale = produit des cotes (statuts appliqués par le moteur). */}
-            <Panel title="Combiné" right={n >= 2 ? <Toggle on={comboOn} onChange={setComboOn} label="Dans le total" /> : null}>
+            <Panel title="Combiné" sub={n >= 2 ? `${n}/${n}` : null}
+              right={n >= 2 ? <Toggle on={comboOn} onChange={setComboOn} label="Dans le total" /> : null}>
               {n < 2 ? (
-                <p style={{ color: C.faint }} className="text-xs">2 sélections minimum.</p>
+                <Empty>2 sélections minimum.</Empty>
               ) : (
               <>
-              <div className="flex flex-wrap gap-1.5 mb-3">
-                {selections.map((sel, i) => (
-                  <span key={sel.id} style={{ color: C.text, background: C.panel2, border: `1px solid ${C.borderSoft}`, fontFamily: MONO }}
-                    className="text-xs px-2 py-1 rounded-md max-w-full truncate">
-                    {i + 1} · {sel.label || `Sélection ${i + 1}`} <span style={{ color: C.gold }}>@{sel.odds.toFixed(2)}</span>
-                  </span>
-                ))}
-              </div>
-              <div className="grid grid-cols-2 gap-3 items-end">
-                <Field label="Mise du combiné">
+              <div className="grid grid-cols-2 gap-2 items-end">
+                <Field label="Mise">
                   <input type="number" min="0" step="1" value={comboStakeInput}
                     onChange={(e) => setComboStakeInput(e.target.value)}
                     onBlur={() => setComboStakeInput(String(comboStake))}
-                    style={inputStyle} className="text-sm rounded-md px-2 py-1.5" />
+                    style={inputStyle} className={inputCls} />
                 </Field>
-                <div>
-                  <div style={{ color: C.muted }} className="text-xs mb-1">Cote totale</div>
-                  <div style={{ color: C.gold, fontFamily: MONO }} className="text-xl font-semibold leading-none">{combine.cote.toFixed(3)}</div>
+                <div className="min-w-0 text-right" title={selections.map((s) => s.odds.toFixed(2)).join(" × ")}>
+                  <div style={{ color: C.muted }} className="text-[10px] uppercase tracking-wider">Cote totale</div>
+                  <div style={{ color: C.gold, fontFamily: MONO }} className="text-xl font-bold leading-none">{combine.cote.toFixed(3)}</div>
                 </div>
               </div>
-              <p style={{ color: C.faint, fontFamily: MONO }} className="text-xs mt-2">
-                {selections.map((s) => s.odds.toFixed(2)).join(" × ")} = {combine.cote.toFixed(3)}
-              </p>
-              <div style={{ borderTop: `1px solid ${C.borderSoft}` }} className="mt-3 pt-3 space-y-1.5">
-                <StatRow label="Mise" value={fmt(combine.stake)} />
-                <StatRow label="Brut" value={fmt(combine.brut)} color={bucketColor[combine.bucket]} />
-                <StatRow label={`Impôt ${taxRate} %`} value={`− ${fmt(combine.impot)}`} color={C.partial} />
-                <StatRow label="Net" value={signed(combine.net)} color={combine.net >= 0 ? C.win : C.loss} strong />
+              <div style={{ color: C.muted, fontFamily: MONO }} className="text-[11px] mt-1.5 text-right truncate">
+                {selections.map((s) => s.odds.toFixed(2)).join(" × ")}
+                {combine.bucket !== "win" && <span style={{ color: C.partial }} title="Statuts appliqués : nul = cote 1, perdu = 0."> · R {combine.R.toFixed(3)}×</span>}
               </div>
-              {combine.bucket !== "win" && (
-                <p style={{ color: C.partial }} className="text-xs mt-2" title="Statuts appliqués : nul = cote 1, perdu = 0.">
-                  Facteur de retour {combine.R.toFixed(3)}×
-                </p>
-              )}
+              <Bilan mise={combine.stake} brut={combine.brut} impot={combine.impot} net={combine.net}
+                taxRate={taxRate} fmt={fmt} signed={signed} />
               </>
               )}
             </Panel>
           </div>
 
-          {/* RIGHT COLUMN — le total des sections actives, ses scénarios
-              complets, puis le détail du système seul. */}
-          <div className="lg:col-span-7 space-y-5">
+          {/* COLONNE RÉSULTAT — le total des sections actives, ses scénarios
+              complets, puis le détail du système (replié). */}
+          <div className="lg:col-span-7 space-y-3">
             {n === 0 ? (
-              <Panel title="Total">
-                <p style={{ color: C.muted }} className="text-sm">Ajoute au moins une sélection pour lancer le calcul.</p>
-              </Panel>
+              <Panel title="Total"><Empty>Aucune sélection.</Empty></Panel>
             ) : (
               <>
                 {/* Total — addition des sections actives (interrupteur « Dans le
-                    total » de chacune). Brut = retour mise comprise, net = brut − mise. */}
-                <Panel title="Total"
-                  right={<span style={{ color: C.faint, fontFamily: SANS }} className="text-xs">{sections.filter((s) => s.on).length}/{sections.length} sections actives</span>}
-                >
-                  <div className="grid grid-cols-2 md:grid-cols-5 gap-3">
-                    <SummaryCard label="Mise" value={fmt(grand.mise)} />
-                    <SummaryCard label="Brut" value={fmt(grand.brut)} />
-                    <SummaryCard label={`Impôt ${taxRate} %`} value={`− ${fmt(grand.impot)}`} color={C.partial} />
-                    <SummaryCard label="Net" value={signed(grand.net)} color={grand.net >= 0 ? C.win : C.loss} />
-                    <SummaryCard label="ROI" value={`${grand.roi.toFixed(1)} %`} color={grand.net >= 0 ? C.win : C.loss} />
+                    total » de chacune). Brut = retour mise comprise, net = brut − mise − impôt. */}
+                <Panel title="Total" sub={`${nActives}/${sections.length} actives · ${currency}`}>
+                  {/* Grands chiffres SANS devise (elle est dans le sous-titre) :
+                      « 8 000,00 XOF » se tronquait dans une colonne de 390/3 px. */}
+                  <div className="grid grid-cols-3 gap-2">
+                    <Big label="Mise" value={fmtN(grand.mise)} />
+                    <Big label="Net" value={signedN(grand.net)} color={netColor} sub={`${fmtN(grand.brut)} brut`} />
+                    <Big label="ROI" value={`${grand.roi.toFixed(1)} %`} color={netColor} sub="net / mise" />
                   </div>
-                  <div className="mt-3 overflow-x-auto"
+                  <div className="mt-2.5"
                     title="Brut = retour avant impôt, mise comprise. Net = brut − mise − impôt. Selon les statuts saisis (Gagné par défaut = tout passe).">
                     <table className="w-full text-xs" style={{ fontFamily: MONO, borderCollapse: "collapse" }}>
                       <thead>
                         <tr style={{ color: C.muted, fontFamily: SANS }}>
                           <th className="text-left py-1 pr-2">Section</th>
-                          <th className="text-right py-1 px-2">Mise</th>
-                          <th className="text-right py-1 px-2">Brut</th>
-                          <th className="text-right py-1 px-2">Impôt</th>
-                          <th className="text-right py-1 pl-2">Net</th>
+                          <th className="text-right py-1 px-1">Mise</th>
+                          <th className="text-right py-1 px-1">Brut</th>
+                          <th className="text-right py-1 px-1 whitespace-nowrap">{`Impôt ${taxRate} %`}</th>
+                          <th className="text-right py-1 pl-1">Net</th>
                         </tr>
                       </thead>
                       <tbody>
                         {sections.map((s) => (
                           <tr key={s.key} style={{ borderTop: `1px solid ${C.borderSoft}`, opacity: s.on ? 1 : 0.45 }}>
-                            <td className="py-1.5 pr-2" style={{ color: C.text, fontFamily: SANS }}>
-                              {s.label}{!s.on && <span style={{ color: C.faint }}> · hors total</span>}
+                            <td className="py-1 pr-2 whitespace-nowrap" style={{ color: C.text, fontFamily: SANS }} title={s.on ? "" : "hors total"}>
+                              {s.label}{!s.on && <span style={{ color: C.muted }}> ⊘</span>}
                             </td>
-                            <td className="text-right py-1.5 px-2" style={{ color: C.text }}>{fmtN(s.mise)}</td>
-                            <td className="text-right py-1.5 px-2" style={{ color: C.text }}>{fmtN(s.brut)}</td>
-                            <td className="text-right py-1.5 px-2" style={{ color: C.partial }}>{s.impot > 0 ? `− ${fmtN(s.impot)}` : "—"}</td>
-                            <td className="text-right py-1.5 pl-2" style={{ color: s.net >= 0 ? C.win : C.loss }}>{signedN(s.net)}</td>
+                            <td className="text-right py-1 px-1" style={{ color: C.text }}>{fmtN(s.mise)}</td>
+                            <td className="text-right py-1 px-1" style={{ color: C.text }}>{fmtN(s.brut)}</td>
+                            <td className="text-right py-1 px-1" style={{ color: C.partial }}>{s.impot > 0 ? `− ${fmtN(s.impot)}` : "—"}</td>
+                            <td className="text-right py-1 pl-1" style={{ color: s.net >= 0 ? C.win : C.loss }}>{signedN(s.net)}</td>
                           </tr>
                         ))}
                         <tr style={{ borderTop: `1px solid ${C.border}`, color: C.text }} className="font-semibold">
-                          <td className="py-1.5 pr-2" style={{ fontFamily: SANS }}>Total</td>
-                          <td className="text-right py-1.5 px-2">{fmtN(grand.mise)}</td>
-                          <td className="text-right py-1.5 px-2">{fmtN(grand.brut)}</td>
-                          <td className="text-right py-1.5 px-2" style={{ color: C.partial }}>{grand.impot > 0 ? `− ${fmtN(grand.impot)}` : "—"}</td>
-                          <td className="text-right py-1.5 pl-2" style={{ color: grand.net >= 0 ? C.win : C.loss }}>{signedN(grand.net)}</td>
+                          <td className="py-1 pr-2" style={{ fontFamily: SANS }}>Total</td>
+                          <td className="text-right py-1 px-1">{fmtN(grand.mise)}</td>
+                          <td className="text-right py-1 px-1">{fmtN(grand.brut)}</td>
+                          <td className="text-right py-1 px-1" style={{ color: C.partial }}>{grand.impot > 0 ? `− ${fmtN(grand.impot)}` : "—"}</td>
+                          <td className="text-right py-1 pl-1" style={{ color: netColor }}>{signedN(grand.net)}</td>
                         </tr>
                       </tbody>
                     </table>
                   </div>
                   {doublon && (
-                    <div style={{ background: "rgba(227,162,60,0.10)", border: `1px solid ${C.partial}`, color: C.partial }}
-                      className="text-xs px-2.5 py-1.5 rounded-md mt-2">
+                    <div style={{ background: "rgba(255,107,53,.08)", border: `1px solid rgba(255,107,53,.35)`, color: C.partial, borderRadius: 6 }}
+                      className="text-[11px] px-2 py-1 mt-2">
                       ⚠ {doublon} — jouer deux fois.
                     </div>
                   )}
@@ -1168,41 +1185,30 @@ function SystemBetCalculator() {
                     jamais des probabilités (règle 7). */}
                 <Panel
                   title="Scénarios complets"
-                  right={<span style={{ color: C.faint, fontFamily: SANS }} className="text-xs">toutes sections — pas des probabilités</span>}
+                  right={<span style={{ color: C.muted, fontFamily: SANS }} className="text-[10px] whitespace-nowrap"
+                    title="Retours conditionnels : « si k sélections sont bonnes, le ticket rend… ». Aucune probabilité n'est calculée ni affichée.">pas des probabilités</span>}
                 >
                   {grand.mise <= 0 ? (
-                    <p style={{ color: C.muted }} className="text-sm">Active au moins une section avec une mise pour voir les scénarios.</p>
+                    <Empty>Aucune mise.</Empty>
                   ) : (
                   <>
-                  <div className="grid grid-cols-2 gap-3 mb-3">
-                    <div style={{ background: C.panel2, border: `1px solid ${C.borderSoft}`, borderRadius: 10 }} className="px-4 py-3">
-                      <div style={{ color: C.muted }} className="text-xs mb-1">Point mort</div>
-                      <div style={{ color: pointMortTotal ? C.gold : C.loss, fontFamily: MONO }} className="text-lg font-semibold">
-                        {pointMortTotal ? `${pointMortTotal.k} bon${pointMortTotal.k > 1 ? "s" : ""} sur ${n}` : "jamais"}
-                      </div>
-                      <div style={{ color: C.faint }} className="text-xs mt-0.5">
-                        {pointMortTotal && pointMortTotal.tooShort ? `${n - 1} bons ne couvrent pas` : "net ≥ 0"}
-                      </div>
-                    </div>
-                    <div style={{ background: C.panel2, border: `1px solid ${C.borderSoft}`, borderRadius: 10 }} className="px-4 py-3">
-                      <div style={{ color: C.muted }} className="text-xs mb-1">Si tout passe</div>
-                      <div style={{ color: C.win, fontFamily: MONO }} className="text-lg font-semibold">
-                        {signed(scenariosTotal[n].best.net)}
-                      </div>
-                      <div style={{ color: C.faint }} className="text-xs mt-0.5">
-                        {fmtN(scenariosTotal[n].best.total)} brut − {fmtN(scenariosTotal[n].best.impot)} impôt
-                      </div>
-                    </div>
+                  <div className="grid grid-cols-2 gap-2 mb-2.5">
+                    <Big label="Point mort" title="Plus petit nombre de bonnes sélections dont le PIRE cas rembourse la mise après impôt"
+                      value={pointMortTotal ? `${pointMortTotal.k} bon${pointMortTotal.k > 1 ? "s" : ""} / ${n}` : "jamais"}
+                      color={pointMortTotal ? C.gold : C.loss}
+                      sub={pointMortTotal && pointMortTotal.tooShort ? `${n - 1} bons ne couvrent pas` : "net ≥ 0"} />
+                    <Big label="Si tout passe" value={signedN(scenariosTotal[n].best.net)} color={C.win}
+                      sub={`${fmtN(scenariosTotal[n].best.total)} brut − ${fmtN(scenariosTotal[n].best.impot)} impôt`} />
                   </div>
-                  <div className="overflow-x-auto"
+                  <div
                     title="Si k sélections sont bonnes : pire cas = les k qui rapportent le moins, net d'impôt ; meilleur cas = celles qui rapportent le plus. Gagnant = couvert même au pire · Selon lesquelles = dépend des bonnes · Perdant = jamais couvert. L'impôt frappe chaque pari gagnant même si le ticket perd. Touche une ligne pour le détail.">
                     <table className="w-full text-xs" style={{ fontFamily: MONO, borderCollapse: "collapse" }}>
                       <thead>
                         <tr style={{ color: C.muted, fontFamily: SANS }}>
-                          <th className="text-left py-1 pr-2">k bons</th>
-                          <th className="text-right py-1 px-2">Pire cas<div style={{ color: C.faint }} className="font-normal">brut / net</div></th>
-                          <th className="text-right py-1 px-2">Meilleur cas<div style={{ color: C.faint }} className="font-normal">brut / net</div></th>
-                          <th className="text-right py-1 pl-2">Verdict</th>
+                          <th className="text-left py-1 pr-2">Bons</th>
+                          <th className="text-right py-1 px-1">Pire<div style={{ color: C.muted }} className="font-normal text-[9px]">brut / net</div></th>
+                          <th className="text-right py-1 px-1">Meilleur<div style={{ color: C.muted }} className="font-normal text-[9px]">brut / net</div></th>
+                          <th className="text-right py-1 pl-1">Verdict</th>
                         </tr>
                       </thead>
                       <tbody>
@@ -1215,29 +1221,29 @@ function SystemBetCalculator() {
                           return (
                             <React.Fragment key={sc.k}>
                               <tr onClick={() => setOpenScenario(open ? null : sc.k)}
-                                style={{ borderTop: `1px solid ${C.borderSoft}`, background: estPM ? "rgba(198,161,91,0.10)" : "transparent", cursor: "pointer" }}>
-                                <td className="py-1.5 pr-2 align-top" style={{ color: estPM ? C.gold : C.text }}>
+                                style={{ borderTop: `1px solid ${C.borderSoft}`, background: estPM ? "var(--gold-bg)" : "transparent", cursor: "pointer" }}>
+                                <td className="py-1 pr-2 align-top whitespace-nowrap" style={{ color: estPM ? C.gold : C.text }}>
                                   {sc.k}/{n}{estPM ? " ◆" : ""}
                                 </td>
-                                <td className="text-right py-1.5 px-2 align-top">
+                                <td className="text-right py-1 px-1 align-top">
                                   <div style={{ color: C.text }}>{fmtN(sc.worst.total)}</div>
                                   <div style={{ color: netW >= 0 ? C.win : C.loss }}>{signedN(netW)}</div>
                                 </td>
-                                <td className="text-right py-1.5 px-2 align-top">
+                                <td className="text-right py-1 px-1 align-top">
                                   <div style={{ color: C.text }}>{fmtN(sc.best.total)}</div>
                                   <div style={{ color: netB >= 0 ? C.win : C.loss }}>{signedN(netB)}</div>
                                 </td>
-                                <td className="text-right py-1.5 pl-2 align-top">
-                                  <span style={{ color: v.c, border: `1px solid ${v.c}`, background: `${v.c}22`, fontFamily: SANS }}
-                                    className="inline-block px-1.5 py-0.5 rounded-md whitespace-nowrap">{v.t}</span>
+                                <td className="text-right py-1 pl-1 align-top">
+                                  <span style={{ color: v.c, border: `1px solid ${v.c}`, fontFamily: SANS, borderRadius: 100 }}
+                                    className="inline-block px-1.5 py-0.5 text-[10px] whitespace-nowrap">{v.t}</span>
                                 </td>
                               </tr>
                               {open && (
                                 <tr style={{ background: C.panel2 }}>
                                   <td colSpan="4" className="px-2 py-2">
                                     <div className="space-y-1.5">
-                                      <ScenarioDetail titre="Pire cas" r={sc.worst} selections={selections} flags={sectionFlags} fmtN={fmtN} />
-                                      <ScenarioDetail titre="Meilleur cas" r={sc.best} selections={selections} flags={sectionFlags} fmtN={fmtN} />
+                                      <ScenarioDetail titre="Pire" r={sc.worst} selections={selections} flags={sectionFlags} fmtN={fmtN} />
+                                      <ScenarioDetail titre="Meilleur" r={sc.best} selections={selections} flags={sectionFlags} fmtN={fmtN} />
                                     </div>
                                   </td>
                                 </tr>
@@ -1252,49 +1258,43 @@ function SystemBetCalculator() {
                   )}
                 </Panel>
 
-                {/* Résumé du SYSTÈME seul — le panneau ci-dessous ne concerne
-                    que lui (détail par palier). */}
-                <Panel title="Système — résumé">
-                  <div className="grid grid-cols-2 md:grid-cols-3 gap-3">
-                    <SummaryCard label="Lignes" value={computed.totalLignes} />
-                    <SummaryCard label="Mise" value={fmt(computed.totalMise)} />
-                    <SummaryCard label="Brut" value={fmt(computed.totalRetour)} />
-                    <SummaryCard label={`Impôt ${taxRate} %`} value={`− ${fmt(computed.taxAmount)}`} color={C.partial} />
-                    <SummaryCard label="Net" value={signed(computed.totalNet)} color={computed.totalNet >= 0 ? C.win : C.loss} />
-                    <SummaryCard label="ROI" value={`${computed.totalMise > 0 ? ((computed.totalNet / computed.totalMise) * 100).toFixed(1) : "0.0"} %`} color={computed.totalNet >= 0 ? C.win : C.loss} />
-                  </div>
-                </Panel>
-
-                <Panel title="Détail par palier & combinaisons"
-                  right={<span style={{ color: C.faint, fontFamily: SANS }} className="text-xs"
-                    title="Avant impôt : la retenue n'est pas ventilée par palier, elle est prélevée une fois sur le total ci-dessus.">avant impôt</span>}
+                {/* Détail du SYSTÈME par palier et par combinaison — replié par
+                    défaut : c'est la loupe, pas la lecture courante. Avant
+                    impôt : la retenue n'est pas ventilée par palier. */}
+                <Panel title="Détail du système" sub={`${computed.totalLignes} ligne${computed.totalLignes > 1 ? "s" : ""}`}
+                  right={
+                    <button type="button" onClick={() => setDetailOpen((v) => !v)}
+                      style={{ color: C.muted, border: `1px solid ${C.border}`, borderRadius: 100 }}
+                      className="text-[11px] px-2 py-0.5" title="Paliers et combinaisons, avant impôt">
+                      {detailOpen ? "▾ masquer" : "▸ afficher"}
+                    </button>
+                  }
                 >
-                  <div className="space-y-3">
+                  {detailOpen && (
+                  <div className="space-y-2">
                     {computed.byFold.map((f) => (
-                      <div key={f.k} style={{ background: C.panel2, border: `1px solid ${C.borderSoft}`, borderRadius: 10 }} className="p-3">
-                        <div className="flex items-center justify-between mb-2">
+                      <div key={f.k} style={{ background: C.panel2, border: `1px solid ${C.borderSoft}`, borderRadius: 8 }} className="p-2.5">
+                        <div className="flex items-center justify-between mb-1.5">
                           <span style={{ color: C.text, fontFamily: SANS }} className="text-sm font-medium">
-                            {foldName(f.k)} <span style={{ color: C.faint }} className="font-normal">· {f.count} ligne{f.count > 1 ? "s" : ""}</span>
+                            {foldName(f.k)} <span style={{ color: C.muted }} className="font-normal text-xs">· {f.count} ligne{f.count > 1 ? "s" : ""}</span>
                           </span>
                           <span style={{ fontFamily: MONO }} className="text-right">
                             <span style={{ color: f.profit >= 0 ? C.win : C.loss }} className="text-sm font-semibold">{signed(f.profit)}</span>
-                            <span style={{ color: C.faint }} className="block text-xs">
-                              {fmtN(f.retour)} brut
-                            </span>
+                            <span style={{ color: C.muted }} className="block text-[10px]">{fmtN(f.retour)} brut</span>
                           </span>
                         </div>
-                        <div className="flex flex-wrap gap-1.5">
+                        <div className="flex flex-wrap gap-1">
                           {f.combos.map((c, i) => {
                             const isActive = activeCell && activeCell.k === f.k && activeCell.i === i;
                             return (
                               <button key={i} onClick={() => setActiveCell(isActive ? null : { k: f.k, i })}
                                 style={{
-                                  background: isActive ? bucketColor[c.bucket] : `${bucketColor[c.bucket]}22`,
+                                  background: isActive ? bucketColor[c.bucket] : "transparent",
                                   border: `1px solid ${bucketColor[c.bucket]}`,
                                   color: isActive ? C.bg : bucketColor[c.bucket],
-                                  fontFamily: MONO,
+                                  fontFamily: MONO, borderRadius: 6,
                                 }}
-                                className="text-xs px-2 py-1 rounded-md transition">
+                                className="text-[11px] px-1.5 py-0.5 transition">
                                 {c.indices.map((idx) => idx + 1).join("·")}
                               </button>
                             );
@@ -1302,31 +1302,28 @@ function SystemBetCalculator() {
                         </div>
                       </div>
                     ))}
+                    {activeCombo && (
+                      <div style={{ background: C.panel2, border: `1px solid ${C.goldSoft}`, borderRadius: 8 }} className="p-2.5">
+                        <div style={{ color: C.gold, fontFamily: MONO }} className="text-xs font-semibold mb-1.5">
+                          {foldName(activeCell.k)} {activeCombo.indices.map((i) => i + 1).join("·")}
+                          <span style={{ color: bucketColor[activeCombo.bucket] }} className="float-right" title="Facteur de retour : 0 = perdue, 1 = remboursée, > 1 = gagnante">R {activeCombo.R.toFixed(3)}×</span>
+                        </div>
+                        <div className="space-y-0.5">
+                          {activeCombo.indices.map((idx) => {
+                            const sel = selections[idx];
+                            return (
+                              <div key={idx} className="flex items-center justify-between gap-2 text-xs">
+                                <span style={{ color: C.muted }} className="truncate">{idx + 1} · {sel.label || `Sélection ${idx + 1}`}</span>
+                                <span style={{ color: C.gold, fontFamily: MONO }} className="shrink-0">
+                                  @{sel.odds.toFixed(2)}{sel.status !== "won" ? ` · ${STATUS_OPTS.find((o) => o.v === sel.status)?.label}` : ""}
+                                </span>
+                              </div>
+                            );
+                          })}
+                        </div>
+                      </div>
+                    )}
                   </div>
-
-                  {activeCombo && (
-                    <div style={{ background: C.panel2, border: `1px solid ${C.gold}`, borderRadius: 10 }} className="p-3 mt-3">
-                      <div style={{ color: C.gold, fontFamily: SANS }} className="text-xs font-semibold uppercase tracking-wide mb-2">
-                        Combinaison {activeCell.k}-fold — {activeCombo.indices.map((i) => i + 1).join(" · ")}
-                      </div>
-                      <div className="space-y-1 mb-2">
-                        {activeCombo.indices.map((idx) => {
-                          const sel = selections[idx];
-                          return (
-                            <div key={idx} className="flex items-center justify-between text-xs">
-                              <span style={{ color: C.muted }}>{sel.label || `Sélection ${idx + 1}`}</span>
-                              <span style={{ color: C.faint, fontFamily: MONO }}>
-                                @{sel.odds.toFixed(2)} · {STATUS_OPTS.find((o) => o.v === sel.status)?.label}
-                              </span>
-                            </div>
-                          );
-                        })}
-                      </div>
-                      <div className="flex items-center justify-between text-sm" style={{ fontFamily: MONO }}>
-                        <span style={{ color: C.muted }}>Facteur de retour R</span>
-                        <span style={{ color: bucketColor[activeCombo.bucket], fontWeight: 600 }}>{activeCombo.R.toFixed(3)}×</span>
-                      </div>
-                    </div>
                   )}
                 </Panel>
               </>
@@ -1338,6 +1335,15 @@ function SystemBetCalculator() {
             la surveillance est backend — alerte Telegram 20 % / 5 % + log à
             chaque run (run_engine._alert_oddsapi_pool_levels). */}
       </div>
+
+      {/* Barre de résultat (téléphone) : mise, net, ROI des sections actives. */}
+      {n > 0 && (
+        <div className="sys-bar" title="Total des sections actives, après impôt">
+          <div><div className="l">Mise</div><div className="v" style={{ color: C.text }}>{fmtN(grand.mise)}</div></div>
+          <div><div className="l">Net</div><div className="v" style={{ color: netColor }}>{signedN(grand.net)}</div></div>
+          <div><div className="l">ROI</div><div className="v" style={{ color: netColor }}>{grand.roi.toFixed(1)} %</div></div>
+        </div>
+      )}
     </div>
   );
 }

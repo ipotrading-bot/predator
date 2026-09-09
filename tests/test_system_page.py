@@ -196,10 +196,14 @@ class TestFiscaliteAppliqueePartout:
         assert jsx.count("taxOfBet(") >= 6
 
     def test_chaque_section_affiche_brut_impot_net(self, jsx):
-        # Système, simples, combiné, Total, Système — résumé : chacune montre
-        # sa ligne d'impôt, en libellé COURT (page sobre — demande opérateur).
-        assert jsx.count("Impôt ${taxRate} %") >= 5
-        assert jsx.count('label="Brut"') >= 3 and jsx.count('label="Net"') >= 3
+        # Système, simples, combiné : chacune montre son bilan mise / brut /
+        # impôt / net par le MÊME composant `Bilan` (libellé court, page
+        # sobre) ; le Total le montre dans son tableau. Le panneau « Système —
+        # résumé », copie du bilan Système, est parti le 2026-09-09.
+        assert jsx.count("<Bilan ") >= 3
+        bilan = jsx[jsx.index("function Bilan("):jsx.index("// Détail d'un cas")]
+        assert 'label="Brut"' in bilan and 'label="Net"' in bilan and "Impôt ${taxRate} %" in bilan
+        assert jsx.count("Impôt ${taxRate} %") >= 2      # Bilan + en-tête du tableau Total
         # Les définitions ne sont plus des phrases dans la page : elles vivent
         # en title=, survolables, sans peser sur la lecture des chiffres.
         assert 'title="Brut = retour avant impôt, mise comprise. Net = brut − mise − impôt.' in jsx

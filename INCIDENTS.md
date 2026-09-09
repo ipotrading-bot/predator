@@ -3307,6 +3307,32 @@ paris) ».
 
 Gardiens : `tests/test_perf_page.py`.
 
+### /system réorganisée : une charte, chaque chose une fois (2026-09-09)
+
+Demande opérateur : « optimiser comme les autres pages, harmoniser,
+organisation plus efficiente, éviter les répétitions et les textes non
+significatifs ». Ce qui se répétait : chaque sélection était listée TROIS
+fois (Sélections, Mises individuelles avec libellé et cote, Combiné en
+puces) ; le panneau « Système — résumé » recopiait le bilan du panneau
+Système ; la ligne « 1 × 1 000 = 1 000 engagés » redisait la ligne Mise ;
+devise et impôt, réglages globaux, vivaient dans le panneau Système. La
+page avait aussi sa propre palette (fond, bordures, or différent) et une
+date anglaise en UTC dans la barre.
+
+Fait : palette = variables de predator.css, en-tête `.page-title` /
+`.page-sub` comme /performance, pendule local ; devise et impôt dans
+l'en-tête ; Mises individuelles en tableau qui renvoie au NUMÉRO de la
+sélection (#, cote, mise, brut, net) ; Combiné réduit à mise + cote totale
++ produit des cotes ; « Système — résumé » retiré ; bilan mise/brut/impôt/
+net par un seul composant `Bilan` ; détail par palier replié par défaut ;
+statuts en libellés courts (Gagné ½…) avec le sens en `title=` ; textes
+d'état vides réduits à « Aucune sélection. » ; barre fixe Mise / Net / ROI
+sur téléphone pendant la saisie. Le moteur (bloc MATH, scénarios, impôt
+par pari gagnant) n'a pas bougé — `tests/test_system_page.py` le tient.
+
+Vérifié en Chromium headless (Babel transpile réellement, pas seulement
+un 200) à 390 et 1 100 px.
+
 ### Une version, un seul endroit
 
 `DASHBOARD_VERSION` (`api/index.py`), injectée
