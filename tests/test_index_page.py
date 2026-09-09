@@ -80,3 +80,44 @@ def test_la_selection_a_sa_propre_ligne_et_la_fiche_ne_propose_aucune_mise():
 
 def test_un_seul_etat_actif_pour_les_puces_de_filtre():
     assert "day-on" not in INDEX and "day-on" not in CSS
+
+
+def test_aucune_mise_ne_sort_du_dashboard_meme_sur_une_ligne_ancienne():
+    """Le moteur n'écrit plus de mise, mais les lignes ÉMISES AVANT le
+    2026-09-09 portent encore « Mise conseillée X% de bankroll » dans leur
+    `advice`, que la fiche affiche tel quel — et une colonne `stake_xof`
+    morte traîne dans le JSON servi. `api.index._sans_mise` retire les deux
+    au point de LECTURE : la base garde ses lignes (règle 9), rien n'en sort.
+    """
+    from api.index import _sans_mise
+    lignes = [
+        {"advice": "EV +2.1% — cote soft 1.88 vs sharp 1.83 (prob. 54.3%). "
+                   "Mise conseillée 0.56% de bankroll (Kelly fractionnaire).",
+         "stake_xof": 0},
+        {"advice": "EV +5.0% — cote soft 2.10 vs sharp 2.02 (prob. 49.0%). "
+                   "Mise conseillée 1.20% du capital (Kelly fractionnaire). "
+                   "DNB synthétique — exposition TOTALE à répartir chez le MÊME "
+                   "book : 70.0% sur X et 30.0% sur le nul (@ 3.10), "
+                   "soit 0.84% et 0.36% de bankroll.",
+         "stake_xof": 1200},
+        {"advice": None},
+    ]
+    for ligne in _sans_mise(lignes):
+        a = ligne.get("advice") or ""
+        for interdit in ("Mise conseillée", "bankroll", "capital", "soit "):
+            assert interdit not in a, (interdit, a)
+        assert "stake_xof" not in ligne
+        # Ce qui RESTE doit être propre : ni débris de décimale, ni ponctuation
+        # orpheline (« .56% », « (@ 3.10), »).
+        assert not a.startswith(".") and ".56%" not in a
+        assert a == "" or a.endswith(".")
+    # La répartition entre les DEUX jambes d'un DNB survit : c'est un ratio,
+    # pas un montant — elle reste vraie quelle que soit la somme engagée.
+    assert "70.0% sur X" in lignes[1]["advice"]
+
+
+def test_les_routes_servent_les_signaux_decapes():
+    """Les deux surfaces qui exposent un signal passent par le décapeur."""
+    src = (RACINE / "api" / "index.py").read_text(encoding="utf-8")
+    assert src.count("_sans_mise(") >= 3          # définition + page + API JSON
+    assert "jsonify(_sans_mise(" in src

@@ -20,6 +20,7 @@ import hmac
 import json
 import logging
 import os
+import re
 import time
 from datetime import datetime, timezone as _tz
 
@@ -153,6 +154,42 @@ def _db(write: bool = False):
     `app_secrets`. Rend None si rien n'est configuré, pour que les routes se
     dégradent proprement au lieu de lever."""
     return _get_db_client(write=write)
+
+
+# ── Aucune MISE ne sort du dashboard (décision opérateur 2026-09-09) ──
+# Le moteur n'en écrit plus, mais des lignes ÉMISES AVANT ce jour portent
+# encore « Mise conseillée X% de bankroll (Kelly fractionnaire). » dans leur
+# `advice`, et la fiche affiche `advice` tel quel. Une colonne `stake_xof`
+# morte (bankroll mensuelle, construite puis retirée le même jour) traîne de
+# la même façon dans le JSON servi. Les deux sont retirés ICI, au point de
+# lecture : la base garde ses lignes intactes (règle 9), rien n'en sort.
+# `(?:[^.]|\.(?=\d))*\.` = « jusqu'au premier point qui n'est PAS une
+# virgule décimale » — sinon « Mise conseillée 0.56% … » se coupait après
+# le « 0 » et laissait « .56% de bankroll » à l'écran. Trois formes ont
+# existé : la phrase entière, la clause « …, soit X% et Y% de bankroll. »
+# des DNB synthétiques, et un pourcentage de capital isolé.
+_FIN = r"(?:[^.]|\.(?=\d))*\."
+_PHRASE_DE_MISE = re.compile(
+    r"\s*(?:Mise conseillée|Mise\s*:)" + _FIN
+    + r"|,?\s*soit\s" + _FIN
+    + r"|\s*[\d.,]+\s*%\s*(?:de\s+|du\s+)?(?:bankroll|capital)" + _FIN,
+    re.I)
+_CHAMPS_MUETS = ("stake_xof",)
+
+
+def _sans_mise(rows: list) -> list:
+    """Retire toute proposition de mise des lignes servies au dashboard."""
+    for r in rows:
+        for champ in _CHAMPS_MUETS:
+            r.pop(champ, None)
+        a = r.get("advice")
+        if isinstance(a, str) and a:
+            propre = _PHRASE_DE_MISE.sub("", a)
+            propre = re.sub(r"\s+([.,])", r"\1", propre).strip(" ,;")
+            if propre and not propre.endswith((".", "!", "?")):
+                propre += "."
+            r["advice"] = propre or None
+    return rows
 
 
 def _get_meta(sb, key: str) -> dict | None:
@@ -324,6 +361,8 @@ def dashboard():
             # dashboard de matchs déjà joués. Le filtre ci-dessus n'accepte
             # plus rien après le coup d'envoi : ces lignes étaient de toute
             # façon masquées côté client. L'historique reste sur /bilan.
+
+            _sans_mise(signals)
 
             # Parse sharp_sources JSON string → dict, consensus_score → int
             for s in signals:
@@ -869,7 +908,7 @@ def api_signals():
         if request.args.get("all") not in ("1", "true", "yes"):
             now  = datetime.now(_tz.utc)
             rows = [s for s in rows if _is_playable(s, now)]
-        return jsonify(rows[:50])
+        return jsonify(_sans_mise(rows[:50]))
     except Exception as e:
         log.error("api_signals: %s", e)
         return jsonify({"error": "internal error"}), 500
