@@ -2,7 +2,7 @@
 <html lang="fr">
 <head>
 <meta charset="UTF-8">
-<meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+<meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover">
 <meta name="theme-color" content="#00E87F">
 <meta name="mobile-web-app-capable" content="yes">
 <meta name="apple-mobile-web-app-capable" content="yes">
@@ -10,7 +10,9 @@
 <meta name="apple-mobile-web-app-title" content="PREDATOR">
 <meta name="application-name" content="PREDATOR">
 <meta name="description" content="Arbitrage Lead-Lag — Pinnacle Sharp vs {{ execution_book }}">
-<meta http-equiv="refresh" content="300">
+{# Plus de rechargement automatique par balise meta : il rechargeait la page
+   fiche ouverte, bankroll saisie comprise. Le rafraîchissement est en JS
+   (softReload) et attend que la fiche soit fermée et l'onglet visible. #}
 <title>PREDATOR</title>
 <link rel="manifest" href="/manifest.json">
 <link rel="icon" type="image/png" sizes="32x32" href="/static/icons/favicon-32.png">
@@ -29,30 +31,32 @@
 <nav>
   <a href="/" class="nav-logo">
     <img src="/static/icons/icon-96.png" alt="PREDATOR">
-    PREDATOR
+    <span class="nav-logo-txt">PREDATOR</span>
   </a>
   <div class="nav-pages">
     <a href="/" class="on">ACCUEIL</a>
     <a href="/system">SYSTÈME</a>
     <a href="/performance">PERF</a>
   </div>
-  {% set elites = signals | selectattr('risk_flag', 'in', ['HIGH_VALUE','VALUE']) | list %}
+  {# « top » = les seuls TOP VALEUR (HIGH_VALUE), même définition que le badge
+     de carte : compter aussi les VALUE affichait « 2 top » au-dessus d'une
+     seule carte TOP VALEUR (2026-09-09). #}
+  {% set elites = signals | selectattr('risk_flag', 'equalto', 'HIGH_VALUE') | list %}
   {% set edges  = signals | map(attribute='edge_pct') | list %}
   <div class="nav-mid">
+    <span class="ns" title="Matchs affichés"><b class="b">{{ groups|length }}</b> matchs</span>
     <span class="nd">·</span>
-    <span class="ns"><b class="b">{{ groups|length }}</b> matchs</span>
+    <span class="ns" title="Signaux (un match peut en porter plusieurs)"><b class="b">{{ signals|length }}</b> sig</span>
     <span class="nd">·</span>
-    <span class="ns"><b class="b">{{ signals|length }}</b> sig</span>
-    <span class="nd">·</span>
-    <span class="ns"><b class="g">{{ elites|length }}</b> top</span>
+    <span class="ns" title="TOP VALEUR"><b class="g">{{ elites|length }}</b> top</span>
     {% if edges %}
     <span class="nd">·</span>
-    <span class="ns"><b class="y">+{{ "%.1f"|format(edges|max) }}%</b><span class="nd-txt"> best</span></span>
+    <span class="ns" title="Meilleur edge affiché"><b class="y">+{{ "%.1f"|format(edges|max) }}%</b><span class="nd-txt"> best</span></span>
     {% endif %}
   </div>
   <div class="nav-right">
-    <span id="clock">—</span>
-    <button id="scanBtn" onclick="triggerScan()">&#9654; SCAN</button>
+    <span id="clock" title="Heure locale">—</span>
+    <button id="scanBtn" onclick="triggerScan()">&#8635; SCAN</button>
   </div>
 </nav>
 
@@ -64,10 +68,17 @@
      qui n'a rien analysé (run_engine._heartbeat). Les afficher ensemble
      faisait passer les 33 matchs de 04:46 pour ceux du tick de 07:30.
      `data-at` garde `at` : le compte à rebours vise bien le prochain tick. #}
+  {# Heures : rendues en UTC par le serveur, réécrites en heure LOCALE par le
+     JS (data-iso) — l'opérateur joue depuis la France, les cartes disaient
+     « 19:00 » sans dire UTC. Sans JS, l'UTC reste, étiqueté. #}
   <div class="scan-meta" id="scan-meta" data-at="{{ last_scan.at }}">
-    Dernier scan {{ (last_scan.scan_at or last_scan.at)[11:16] }} UTC &middot; {{ last_scan.matches }} analysés &middot; <span id="next-scan-label">prochain —</span>
+    <span>Dernier scan <span class="tloc" data-iso="{{ last_scan.scan_at or last_scan.at }}" data-fmt="hm">{{ (last_scan.scan_at or last_scan.at)[11:16] }} UTC</span> &middot; {{ last_scan.matches }} analysés</span>
+    <span id="next-scan-label">prochain —</span>
   </div>
   {% endif %}
+
+  {# Libellés des drapeaux : une seule table, servie au Jinja ET au JS. #}
+  {% set FLAG_FR = {'HIGH_VALUE':'TOP VALEUR','VALUE':'VALEUR','LOW_VALUE':'FAIBLE','SUSPECT_DATA':'SUSPECT'} %}
 
   {% if signals %}
 
@@ -77,28 +88,26 @@
       <button class="fchip on" data-sport="all" onclick="setSport('all')">TOUS</button>
       <div class="fb-div"></div>
       <div id="sport-chips" style="display:contents"></div>
+      <span id="filter-count"></span>
+    </div>
+    <div class="fb-row">
+      <button class="fchip on" data-day="24h"      onclick="setDay('24h')" title="Fenêtre glissante de 24 h">24H</button>
+      <button class="fchip"    data-day="all"      onclick="setDay('all')">TOUS JOURS</button>
+      <button class="fchip"    data-day="today"    onclick="setDay('today')">AUJOURD'HUI</button>
+      <button class="fchip"    data-day="tomorrow" onclick="setDay('tomorrow')">DEMAIN</button>
+      <button class="fchip"    data-day="later"    onclick="setDay('later')">PLUS TARD</button>
+      <div class="fb-div"></div>
+      <span class="fsort-lbl">TRI</span>
       <div class="fsort-group">
         <button class="fsort-btn on" data-sort="sport" onclick="setSort('sport')" title="Grouper par sport">SPORT</button>
         <button class="fsort-btn" data-sort="time"    onclick="setSort('time')"    title="Plus tôt en premier">HEURE</button>
-        <button class="fsort-btn" data-sort="quality" onclick="setSort('quality')" title="TOP VALEUR en premier">TOP</button>
+        <button class="fsort-btn" data-sort="quality" onclick="setSort('quality')" title="TOP VALEUR puis edge">VALEUR</button>
       </div>
-    </div>
-    <div class="fb-row">
-      <button class="fchip day-on" data-day="24h"      onclick="setDay('24h')">24H</button>
-      <button class="fchip"        data-day="all"      onclick="setDay('all')">TOUS JOURS</button>
-      <button class="fchip"        data-day="today"    onclick="setDay('today')">Aujourd'hui</button>
-      <button class="fchip"        data-day="tomorrow" onclick="setDay('tomorrow')">Demain</button>
-      <button class="fchip"        data-day="later"    onclick="setDay('later')">+Tard</button>
-      <span id="filter-count"></span>
     </div>
   </div>
 
   {# ── Signal list (flat — sorted by JS) ── #}
   <div id="signals-list">
-
-  {% set E = {'basketball':'🏀','hockey':'🏒','americanfootball':'🏈','baseball':'⚾','esports':'🎮','rugby':'🏉','tennis':'🎾','mma':'🥋','volleyball':'🏐','tabletennis':'🏓','handball':'🤾','boxing':'🥊','darts':'🎯','cricket':'🏏','soccer':'⚽'} %}
-
-  {% set FLAG_FR = {'HIGH_VALUE':'TOP VALEUR','VALUE':'VALEUR','LOW_VALUE':'FAIBLE','SUSPECT_DATA':'SUSPECT'} %}
 
   {# Une carte par MATCH, une ligne .leg par marché. Un match produit jusqu'à
      3 signaux (h2h + totals + spreads) : à plat, ils se lisaient comme des
@@ -106,7 +115,7 @@
      marché n'existait que dans la modale. #}
   {% for g in groups %}
   {% set sp  = g.sport or 'soccer' %}
-  {% set emoji = E.get(sp, '🎯') %}
+  {% set emoji = sport_emoji.get(sp, '🎯') %}
   {% if g.match_time %}
     {% set mdate = g.match_time[8:10] + '/' + g.match_time[5:7] %}
     {% set mhour = g.match_time[11:16] %}
@@ -128,7 +137,7 @@
           <span class="mcard-n">{{ g.legs|length }} marchés</span>
           {% endif %}
           {% if g.match_time %}
-            <span class="sig-date">{{ mdate }} {{ mhour }}</span>
+            <span class="sig-date tloc" data-iso="{{ g.match_time }}" data-fmt="dhm" title="Coup d'envoi, heure locale">{{ mdate }} {{ mhour }} UTC</span>
             <span class="sig-cd" data-ts="{{ g.match_time }}"></span>
           {% else %}
             <span class="sig-date" style="color:var(--t3)">heure?</span>
@@ -142,25 +151,36 @@
       {% set team = s.selection_name if s.selection_name and ' vs ' not in s.selection_name else (s.match.split(' vs ')[0].strip() if ' vs ' in s.match else s.match) %}
       {% set kelly = s.kelly_pct if s.kelly_pct else 0 %}
       {# Type de marché seulement : le libellé complet ("SOC Over 2.5") fait
-         doublon avec la sélection juste à côté ("Over 2.5") et écrasait
-         celle-ci sur écran mobile. Le libellé complet reste dans la modale. #}
+         doublon avec la sélection juste à côté ("Over 2.5"). Le libellé
+         complet reste dans la modale. #}
       {% if s.market_key == 'h2h' %}{% set mkt = 'AH0' if sp == 'soccer' else 'ML' %}
       {% elif s.market_key and s.market_key.startswith('totals') %}{% set mkt = 'TOTAL' %}
       {% elif s.market_key and s.market_key.startswith('spreads') %}{% set mkt = 'HCAP' %}
       {% else %}{% set mkt = s.market_key or '—' %}{% endif %}
-      <div class="sig-r2 leg" data-idx="{{ leg.idx }}" onclick="openModal({{ leg.idx }})">
-        <span class="leg-mkt">{{ mkt }}</span>
-        <span class="sig-team">{{ team }}</span>
-        <span class="sig-odd">@ {{ "%.2f"|format(s.xbet_odd) }}{% if s.soft_book %} <span class="sig-book" title="Book qui cote ce prix">{{ s.soft_book }}</span>{% endif %}</span>
-        <span class="sig-edge {% if is_suspect %}e-sus{% elif s.edge_pct >= 5 %}e-high{% elif s.edge_pct >= 2.5 %}e-mid{% else %}e-low{% endif %}">
-          +{{ "%.1f"|format(s.edge_pct) }}%
-        </span>
-        {% if kelly > 0 %}
-          <span class="sig-mise" title="Kelly fraction — ajustez la bankroll dans le détail">K:{{ "%.1f"|format(kelly) }}%</span>
-        {% else %}
-          <span class="sig-mise" style="color:var(--t3)">—</span>
-        {% endif %}
-        <span class="sig-cta">&#9654;</span>
+      {# Deux lignes sur mobile : la SÉLECTION (ligne du total, handicap) est
+         l'information n°1 et se retrouvait tronquée en « Und… » / « Paris… »
+         derrière cote, edge et Kelly (2026-09-09). Une seule ligne dès 640px. #}
+      <div class="leg" data-idx="{{ leg.idx }}" onclick="openModal({{ leg.idx }})">
+        <div class="leg-l1">
+          <span class="leg-mkt">{{ mkt }}</span>
+          <span class="sig-team">{{ team }}</span>
+          {% if s.scanned_at %}
+          <span class="sig-age" data-seen="{{ s.scanned_at }}" title="Heure à laquelle cette cote a été vue"></span>
+          {% endif %}
+        </div>
+        <div class="leg-l2">
+          <span class="sig-odd">@ {{ "%.2f"|format(s.xbet_odd) }}{% if s.soft_book %} <span class="sig-book" title="Book qui cote ce prix">{{ s.soft_book }}</span>{% endif %}</span>
+          <span class="sig-edge {% if is_suspect %}e-sus{% elif s.edge_pct >= 5 %}e-high{% elif s.edge_pct >= 2.5 %}e-mid{% else %}e-low{% endif %}">
+            +{{ "%.1f"|format(s.edge_pct) }}%
+          </span>
+          {% if kelly > 0 %}
+            <span class="sig-mise" title="Fraction de Kelly">K:{{ "%.1f"|format(kelly) }}%</span>
+            <span class="sig-stake" data-k="{{ kelly }}" title="Mise pour la bankroll saisie dans la fiche"></span>
+          {% else %}
+            <span class="sig-mise" style="color:var(--t3)">—</span>
+          {% endif %}
+          <span class="sig-cta">&#9654;</span>
+        </div>
       </div>
       {% endfor %}
     </div>
@@ -174,7 +194,7 @@
   <div class="empty">
     <div>Aucun signal haute valeur.</div>
     <div id="empty-next">Prochain scan automatique : <span id="empty-countdown">—</span></div>
-    <button onclick="triggerScan()">&#9654; LANCER UN SCAN</button>
+    <button onclick="triggerScan()">&#8635; LANCER UN SCAN</button>
   </div>
   {% endif %}
 
@@ -186,7 +206,9 @@
 <div id="toast"></div>
 
 <!-- ── FAB SCAN (mobile) ──────────────────── -->
-<button class="fab-scan" id="fabScan" onclick="triggerScan()" aria-label="Lancer un scan">&#9654;</button>
+{# ⟳ et non ► : le chevron des lignes ouvre la fiche, le même glyphe ici
+   lançait un scan (2026-09-09). #}
+<button class="fab-scan" id="fabScan" onclick="triggerScan()" aria-label="Lancer un scan" title="Lancer un scan">&#8635;</button>
 
 <!-- ── BOTTOM NAV (mobile) ────────────────── -->
 <nav class="bnav">
@@ -260,7 +282,7 @@
     <span class="stake-d">|</span>
     <div class="stake-m">
       bankroll
-      <input id="bankroll-input" type="number" inputmode="numeric" value="1000" min="1" oninput="updateStake()">€
+      <input id="bankroll-input" type="number" inputmode="numeric" value="{{ bankroll_ref }}" min="1" oninput="updateStake()">€
       <span id="m-kelly-pct"></span>
     </div>
   </div>
@@ -270,18 +292,35 @@
 </div>
 
 <script>
+const _p2 = n => String(n).padStart(2,'0');
+// Heure LOCALE de l'appareil (l'opérateur joue depuis la France) ; l'UTC
+// reste disponible dans la fiche. `hm` = HH:MM, `dhm` = JJ/MM HH:MM.
+function _local(iso, fmt){
+  const d = new Date(iso);
+  if(isNaN(d)) return null;
+  const hm = _p2(d.getHours())+':'+_p2(d.getMinutes());
+  return fmt==='dhm' ? _p2(d.getDate())+'/'+_p2(d.getMonth()+1)+' '+hm : hm;
+}
+function _fillLocal(root){
+  (root||document).querySelectorAll('.tloc[data-iso]').forEach(el=>{
+    const t=_local(el.dataset.iso, el.dataset.fmt);
+    if(t) el.textContent=t;
+  });
+}
 (function tick(){
-  document.getElementById('clock').textContent = new Date().toISOString().slice(11,16)+' UTC';
+  document.getElementById('clock').textContent = _local(new Date(), 'hm');
   setTimeout(tick,1000);
 })();
 
+// Compte à rebours : « 6h04 », « 34min », « 2j » — minutes toujours sur deux
+// chiffres (« 6h4min » côtoyait « 10h34min », 2026-09-09).
 function _cd(iso){
   if(!iso) return null;
   const d = new Date(iso)-Date.now();
   if(d<=0) return null;
   const h=Math.floor(d/3600000), m=Math.floor((d%3600000)/60000);
   if(h===0) return m+'min';
-  if(h<24)  return h+'h'+(m?m+'min':'');
+  if(h<24)  return h+'h'+_p2(m);
   return Math.floor(h/24)+'j';
 }
 
@@ -293,6 +332,8 @@ function _cd(iso){
 const _SPORT_ORDER = {{ sport_order | tojson }};
 const _SPORT_EMOJI = {{ sport_emoji | tojson }};
 const _SPORT_LABEL = {{ sport_label_short | tojson }};
+const _FLAG_FR     = {{ FLAG_FR | tojson }};
+const _SOFT_TTL_H  = {{ soft_ttl_h | tojson }};
 const _DAY_LABEL   = {today:"Aujourd'hui",tomorrow:'Demain',later:'Plus tard',unknown:'?'};
 
 let _sort  = 'sport';
@@ -308,13 +349,17 @@ let _sport = 'all';
 const _WINDOW_H = 24;
 let _day   = '24h';
 
+// Jour calendaire LOCAL. L'ancienne version comparait la date UTC du signal
+// à un minuit local passé par toISOString() : à Paris, « Aujourd'hui »
+// désignait hier dès 00:00 et un match de 23:30 UTC tombait dans « Demain ».
 function _sigDay(iso){
   if(!iso) return 'unknown';
-  const now = new Date();
-  const t   = (d,n)=>new Date(d.getFullYear(),d.getMonth(),d.getDate()+n).toISOString().slice(0,10);
-  const sig = iso.slice(0,10);
-  if(sig===t(now,0)) return 'today';
-  if(sig===t(now,1)) return 'tomorrow';
+  const key = d => d.getFullYear()*10000 + d.getMonth()*100 + d.getDate();
+  const now = new Date(), sig = new Date(iso);
+  if(isNaN(sig)) return 'unknown';
+  const k = key(sig);
+  if(k===key(now)) return 'today';
+  if(k===key(new Date(now.getFullYear(),now.getMonth(),now.getDate()+1))) return 'tomorrow';
   return 'later';
 }
 
@@ -340,7 +385,9 @@ function setSport(sp){
 }
 function setDay(d){
   _day = (_day===d&&d!=='all') ? 'all' : d;
-  document.querySelectorAll('.fchip[data-day]').forEach(b=>b.classList.toggle('day-on',b.dataset.day===_day));
+  // Même classe « on » que les sports : trois couleurs d'état actif (vert,
+  // bleu, fond vert) se lisaient comme trois choses différentes (2026-09-09).
+  document.querySelectorAll('.fchip[data-day]').forEach(b=>b.classList.toggle('on',b.dataset.day===_day));
   applyFilters();
 }
 function setSort(s){
@@ -448,12 +495,17 @@ function applyFilters(){
   }
   else {
     empty.style.display='none';
+    // Séparateurs seulement si un groupe a plus d'une carte : « TENNIS 1 /
+    // FOOT 1 » coûtait deux lignes par carte pour répéter son emoji.
+    const gkOf = el => (_sort==='sport'&&_sport==='all') ? 'sport:'+el.dataset.sport
+                     : (_sort==='time') ? 'day:'+_sigDay(el.dataset.matchtime) : null;
+    const gcount = {};
+    visible.forEach(el=>{ const k=gkOf(el); if(k) gcount[k]=(gcount[k]||0)+1; });
+    const withSep = Object.values(gcount).some(n=>n>1);
     let lastGroup=null;
     visible.forEach(el=>{
       el.style.display='';
-      let gk=null;
-      if(_sort==='sport'&&_sport==='all') gk='sport:'+el.dataset.sport;
-      else if(_sort==='time') gk='day:'+_sigDay(el.dataset.matchtime);
+      const gk = withSep ? gkOf(el) : null;
       if(gk&&gk!==lastGroup){
         const sep=document.createElement('div');
         if(gk.startsWith('sport:')){
@@ -489,20 +541,63 @@ function applyFilters(){
 const SIGNALS={{ signals|tojson }};
 let _kpct=0;
 
+// ── Bankroll : saisie dans la fiche, mémorisée sur l'appareil, et la mise en
+// euros s'affiche directement sur chaque ligne (K:0.4% seul n'est pas une
+// mise). Repli = BANKROLL_REF de core/constants.py, injecté. ──
+const _BR_KEY='predator_bankroll';
+function _bankroll(){
+  const inp=document.getElementById('bankroll-input');
+  return parseFloat(inp&&inp.value)||0;
+}
+function _fmtStake(eur){
+  if(!(eur>0)) return null;
+  return (eur>=10 ? Math.round(eur) : eur.toFixed(1).replace('.0','')) + ' €';
+}
+function _fillStakes(){
+  const br=_bankroll();
+  document.querySelectorAll('.sig-stake[data-k]').forEach(el=>{
+    el.textContent=_fmtStake(br*parseFloat(el.dataset.k)/100)||'';
+  });
+}
+(function restoreBankroll(){
+  const inp=document.getElementById('bankroll-input');
+  if(!inp) return;
+  try{ const v=parseFloat(localStorage.getItem(_BR_KEY)); if(v>0) inp.value=v; }catch(e){}
+})();
+
+// ── Âge de la cote : « vu 12:31 », orange au-delà du TTL du slate soft
+// (core.constants.SOFT_SLATE_TTL_H) — un prix vu à 06:00 affiché à 13:00
+// n'est plus une cote, c'est un souvenir. ──
+function _fillAges(){
+  const now=Date.now();
+  document.querySelectorAll('.sig-age[data-seen]').forEach(el=>{
+    const t=_local(el.dataset.seen,'hm');
+    if(!t){ el.textContent=''; return; }
+    const ageH=(now-new Date(el.dataset.seen))/3600000;
+    const stale=ageH>_SOFT_TTL_H;
+    el.textContent=(stale?'⚠ ':'')+'vu '+t;
+    el.classList.toggle('stale',stale);
+  });
+}
+
 // Init — l'état vide (branche « aucun signal » plus haut) ne rend ni
 // #sport-chips ni #signals-list : lancer les filtres ici jetait un TypeError qui tuait tout
 // le script restant, compte à rebours « prochain scan » compris — précisément
 // sur la page que l'opérateur regarde quand il n'y a rien (2026-08-28).
+_fillLocal();
 if(document.getElementById('signals-list')){
   _buildSportChips();
+  _fillStakes();
+  _fillAges();
   applyFilters();
-  setInterval(applyFilters,30000);
+  setInterval(()=>{ applyFilters(); _fillAges(); },30000);
 }
 
 function updateStake(){
-  const br=parseFloat(document.getElementById('bankroll-input').value)||0;
-  const s=Math.round(br*_kpct/100);
-  document.getElementById('stake-big').textContent=s>0?s+' €':'— €';
+  const br=_bankroll();
+  try{ if(br>0) localStorage.setItem(_BR_KEY,String(br)); }catch(e){}
+  document.getElementById('stake-big').textContent=_fmtStake(br*_kpct/100)||'— €';
+  _fillStakes();
 }
 
 function _mkt(m,sp){
@@ -528,8 +623,7 @@ function _exp(m,sp){
 
 function openModal(idx){
   const s=SIGNALS[idx]; if(!s) return;
-  const E={soccer:'⚽',basketball:'🏀',tennis:'🎾',mma:'🥋',boxing:'🥊',darts:'🎯',cricket:'🏏',hockey:'🏒',esports:'🎮',americanfootball:'🏈',baseball:'⚾',rugby:'🏉',volleyball:'🏐',tabletennis:'🏓',handball:'🤾'};
-  const emoji=E[s.sport]||'🎯';
+  const emoji=_SPORT_EMOJI[s.sport]||'🎯';
   const team=(s.selection_name&&!s.selection_name.includes(' vs '))
     ?s.selection_name
     :(s.match&&s.match.includes(' vs ')?s.match.split(' vs ')[0].trim():s.match);
@@ -537,7 +631,10 @@ function openModal(idx){
   _kpct=s.kelly_pct||0;
 
   let mt='—';
-  if(s.match_time){ const d=s.match_time; mt=d.slice(8,10)+'/'+d.slice(5,7)+' '+d.slice(11,16)+' UTC'; }
+  if(s.match_time){
+    const d=s.match_time, loc=_local(d,'dhm');
+    mt = loc ? loc+' (UTC '+d.slice(11,16)+')' : d.slice(8,10)+'/'+d.slice(5,7)+' '+d.slice(11,16)+' UTC';
+  }
   const cd=s.match_time?_cd(s.match_time):null;
   const rCol={HIGH_VALUE:'var(--green)',VALUE:'var(--yellow)',LOW_VALUE:'#444',SUSPECT_DATA:'var(--orange)'}[s.risk_flag]||'#444';
   // Le book de CETTE ligne (signals.soft_book, 2026-09-08) ; « ? » si le
@@ -577,8 +674,7 @@ function openModal(idx){
   document.getElementById('m-why').textContent   = why;
   document.getElementById('m-edge').textContent  = (s.edge_pct>0?'+':'')+(s.edge_pct||0).toFixed(1)+'%';
   document.getElementById('m-pin').textContent   = s.pinnacle_price?s.pinnacle_price.toFixed(2):'—';
-  const flagFr={HIGH_VALUE:'TOP VALEUR',VALUE:'VALEUR',LOW_VALUE:'FAIBLE',SUSPECT_DATA:'SUSPECT'};
-  document.getElementById('m-risk').textContent  = flagFr[s.risk_flag]||(s.risk_flag||'').replace(/_/g,' ');
+  document.getElementById('m-risk').textContent  = _FLAG_FR[s.risk_flag]||(s.risk_flag||'').replace(/_/g,' ');
   document.getElementById('m-risk').style.color  = rCol;
 
   updateStake();
@@ -622,8 +718,8 @@ const SCAN_CRONS={{ scan_crons|tojson }};
     const diffSecs=Math.max(0,Math.round((best-nowMs)/1000));
     const m=Math.floor(diffSecs/60), s=diffSecs%60;
     const txt = m>=60
-      ? `dans ${Math.floor(m/60)}h${String(m%60).padStart(2,'0')}`
-      : `dans ${m}m${String(s).padStart(2,'0')}s`;
+      ? `dans ${Math.floor(m/60)}h${_p2(m%60)}`
+      : `dans ${m}min${_p2(s)}s`;
     const el = document.getElementById('empty-countdown');
     const lbl = document.getElementById('next-scan-label');
     if(el) el.textContent = `prochain scan ${txt}`;
@@ -641,6 +737,22 @@ const SCAN_CRONS={{ scan_crons|tojson }};
   if(!at) return;
   const ageH = (Date.now() - new Date(at)) / 3600000;
   if(ageH > 4) el.classList.add('stale');
+})();
+
+// ── Rafraîchissement doux : toutes les 5 min, seulement fiche fermée et
+// onglet visible — l'ancien <meta refresh> rechargeait la page sous les
+// doigts de l'opérateur, bankroll saisie comprise. ──
+(function softReload(){
+  const PERIOD=300000;
+  let due=Date.now()+PERIOD;
+  function maybe(){
+    if(Date.now()<due) return;
+    const modalOpen=document.getElementById('modal').style.display==='block';
+    if(modalOpen || document.visibilityState!=='visible'){ return; }
+    location.reload();
+  }
+  setInterval(maybe,5000);
+  document.addEventListener('visibilitychange',maybe);
 })();
 
 let _toastTimer;
@@ -663,15 +775,15 @@ async function triggerScan(){
     const r=await fetch('/api/scan',{method:'POST'});
     const data=await r.json().catch(()=>({}));
     if(r.ok){
-      unlock(btn,'▶ SCAN'); unlock(fab,'▶');
+      unlock(btn,'↻ SCAN'); unlock(fab,'↻');
       showToast('✓ Scan demandé — résultats sous 30 min max','ok',6000);
     } else {
-      unlock(btn,'▶ SCAN'); unlock(fab,'▶');
+      unlock(btn,'↻ SCAN'); unlock(fab,'↻');
       const msg=data.error||'Erreur '+r.status;
       showToast('✗ '+msg,'err',6000);
     }
   } catch(e){
-    unlock(btn,'▶ SCAN'); unlock(fab,'▶');
+    unlock(btn,'↻ SCAN'); unlock(fab,'↻');
     showToast('✗ Erreur réseau — vérifiez votre connexion','err',6000);
   }
 }

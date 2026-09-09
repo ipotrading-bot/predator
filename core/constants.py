@@ -244,6 +244,11 @@ EXCHANGE_DIVERGENCE_PTS = 2.0   # points de probabilité
 # depends on the scheduler firing at a particular minute — only on it firing
 # at all. CLOSING_LINE_REFRESH_MIN bounds the oracle cost of that refresh.
 CLOSING_LINE_WINDOW_MIN  = 240  # capture starts this many minutes before kickoff
+# Âge maximal d'une cote soft pour prétendre être jouable (heures). Le scan
+# REPRICE s'en sert comme TTL de son slate (run_engine._TTL_SOFT_SLATE,
+# surchargeable par CACHE_SOFT_SLATE_TTL_H) et le dashboard marque une ligne
+# dont le prix est plus vieux que ça — même chiffre, une seule source.
+SOFT_SLATE_TTL_H = 4.0
 CLOSING_LINE_TIGHTEN_MIN = 90   # only inside this do we re-price; further out one price is enough
 CLOSING_LINE_REFRESH_MIN = 20   # and even then, not more often than this
 CLOSING_LINE_BUDGET      = 30   # Max oracle (web search) calls per closing-line run

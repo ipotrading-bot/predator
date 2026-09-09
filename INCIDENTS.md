@@ -3234,6 +3234,55 @@ perimetre_ligues_exclues ""`.
 
 Gardiens : `tests/test_perimetre.py::TestLiguesExcluesParLOperateur`.
 
+### Revue de la page d'accueil sur téléphone : la sélection tronquée, « 2 top » pour une carte, des heures UTC sans le dire (2026-09-09)
+
+Capture opérateur à 12:55 UTC, deux signaux. Ce qui était faux ou
+inutilisable, et pourquoi :
+
+- **« Und… » et « Paris… »** : la ligne du marché mettait cote, book, edge,
+  Kelly et chevron en `flex-shrink: 0` et laissait ~60 px à la sélection.
+  La ligne du total et le handicap — ce sur quoi on parie — n'étaient
+  lisibles que dans la fiche. Désormais deux lignes sur mobile
+  (`.leg-l1` sélection, `.leg-l2` chiffres), une seule dès 640 px.
+- **« 2 top » au-dessus d'une seule carte TOP VALEUR** : le bandeau comptait
+  HIGH_VALUE + VALUE, le badge de carte ne dit TOP VALEUR que pour
+  HIGH_VALUE. Même mot, deux définitions. Le bandeau compte HIGH_VALUE seul.
+- **Heures UTC non étiquetées** : « 09/09 19:00 » sur la carte, seul le
+  pendule du nav disait UTC. L'opérateur joue depuis la France (21:00). Les
+  cartes, le « dernier scan » et le pendule sont en heure locale (JS,
+  `data-iso`) ; la fiche donne local + UTC ; sans JS, l'UTC reste étiqueté.
+- **`_sigDay` était faux d'un jour** : il comparait la date UTC du signal à
+  un minuit LOCAL passé par `toISOString()`. À Paris, « Aujourd'hui »
+  désignait hier dès 00:00 et un match à 23:30 UTC tombait dans « Demain »
+  alors qu'il est bien demain… par hasard. Jour calendaire local des deux
+  côtés.
+- **Trois états actifs** (TOUS vert, 24H bleu, tri sur fond vert), tri
+  coupé hors écran sans indice, « TOP » servant de tri, de compteur et de
+  badge : un seul état actif vert, tri sur la seconde rangée derrière un
+  libellé « TRI », « TOP » de tri renommé VALEUR, fondu de défilement.
+- **Deux ► pour deux actions** : le flottant lançait un scan, le chevron
+  ouvre la fiche. Le scan porte ↻ ; le bas de page réserve la place du
+  flottant.
+- **`user-scalable=no`** sur les cinq gabarits (zoom interdit) et un
+  `meta refresh` de 5 min qui rechargeait la fiche ouverte, bankroll saisie
+  comprise : retirés ; rechargement JS fiche fermée et onglet visible.
+- **Bankroll « 1000 » en dur** dans la fiche alors que `BANKROLL_REF` vaut
+  150 : injectée, mémorisée sur l'appareil, et la mise en euros s'affiche
+  sur chaque ligne à côté de la fraction de Kelly.
+- **Tables recopiées** (emoji en Jinja ET en JS, drapeaux en Jinja ET en JS)
+  — règle 6 : une seule, injectée.
+
+Ajouté : l'heure à laquelle la cote a été vue (« vu 14:31 ») sur chaque
+ligne, orange au-delà de `core.constants.SOFT_SLATE_TTL_H` — le même TTL
+que le slate du REPRICE (`run_engine._TTL_SOFT_SLATE` en dérive). Un prix
+vu à 06:00 affiché à 13:00 n'est pas une cote. La « zone jouable » n'avait
+rien à afficher : les fantômes sont déjà filtrés en base (`is_shadow`).
+
+Gardiens : `tests/test_index_page.py`. Le rendu du gabarit avec de faux
+signaux et les captures 390/900 px se font hors suite (Chromium de
+`~/.cache/ms-playwright`, `--window-size` ne descend pas sous ~500 px :
+passer par une iframe).
+
 ### Une version, un seul endroit
 
 `DASHBOARD_VERSION` (`api/index.py`), injectée

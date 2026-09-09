@@ -251,7 +251,8 @@ MAX_MATCHES = 50
 # TTL du slate soft photographié par les scans complets pour le mode REPRICE.
 # Au-delà, le prix soft est trop vieux pour prétendre être jouable : on
 # préfère un tick REPRICE muet à un edge calculé contre une cote fantôme.
-_TTL_SOFT_SLATE = float(os.environ.get("CACHE_SOFT_SLATE_TTL_H", "4"))
+from core.constants import SOFT_SLATE_TTL_H as _SOFT_SLATE_TTL_H
+_TTL_SOFT_SLATE = float(os.environ.get("CACHE_SOFT_SLATE_TTL_H", str(_SOFT_SLATE_TTL_H)))
 # Coupe-circuit d'urgence si Matchbook devait mal se comporter en prod
 # (géoblocage US non constaté en test, voir core/matchbook.py).
 _MATCHBOOK_OFF = os.environ.get("MATCHBOOK_OFF", "") == "1"
