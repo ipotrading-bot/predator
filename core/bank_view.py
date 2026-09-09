@@ -26,6 +26,22 @@ def _recommandes(rows: list[dict]) -> list[dict]:
     return [r for r in rows if not is_phantom(r)]
 
 
+def _serie(jours: list[dict]) -> dict:
+    """Série courte : gagnants et perdants d'affilée sur les jours joués, du
+    plus récent vers le passé — « 3 jours positifs de suite » se lit d'un
+    coup, une liste de signes non."""
+    if not jours:
+        return {"signe": 0, "n": 0}
+    signe = 1 if jours[-1]["resultat"] > 0 else (-1 if jours[-1]["resultat"] < 0 else 0)
+    n = 0
+    for d in reversed(jours):
+        s = 1 if d["resultat"] > 0 else (-1 if d["resultat"] < 0 else 0)
+        if s != signe or s == 0:
+            break
+        n += 1
+    return {"signe": signe, "n": n}
+
+
 def build(ledger_rows: list[dict], active_rows: list[dict], now: datetime,
           mois: str, bankroll: int = BANKROLL_MONTHLY_XOF) -> dict:
     """Résumé + série quotidienne + paris, pour le mois `mois` ('YYYY-MM').
@@ -67,7 +83,11 @@ def build(ledger_rows: list[dict], active_rows: list[dict], now: datetime,
         d["restant"] = bankroll - depense
         d["resultat"] = round(d["resultat"], 0)
         d["retours"] = round(d["retours"], 0)
+        # ROI du jour = résultat / misé du jour (None sans mise : rien à rapporter)
+        d["roi_pct"] = round(d["resultat"] / d["mise"] * 100, 1) if d["mise"] else None
         jours.append(d)
+    meilleur = max(jours, key=lambda d: d["resultat"]) if jours else None
+    pire = min(jours, key=lambda d: d["resultat"]) if jours else None
 
     # ── Résumé ──
     spent = sum(stake_committed(r) for r in led)
@@ -83,7 +103,15 @@ def build(ledger_rows: list[dict], active_rows: list[dict], now: datetime,
         "mois": mois, "courant": courant, "bankroll": bankroll,
         "depense": spent, "engage": engaged, "restant": remaining,
         "retours": round(retours, 0), "resultat": round(resultat, 0),
+        # ROI = résultat / misé (les mises réglées) ; rendement = résultat /
+        # bankroll du mois — deux lectures, deux dénominateurs, nommés.
         "roi_pct": round(resultat / spent * 100, 1) if spent else None,
+        "rendement_pct": round(resultat / bankroll * 100, 1) if bankroll else None,
+        "mise_moyenne": round(spent / (sum(1 for r in led if r.get("outcome") in ("WIN", "LOSS")) or 1), 0) if spent else 0,
+        "jours_joues": len(jours),
+        "meilleur_jour": {"jour": meilleur["jour"], "resultat": meilleur["resultat"]} if meilleur else None,
+        "pire_jour": {"jour": pire["jour"], "resultat": pire["resultat"]} if pire else None,
+        "serie": _serie(jours),
         "n_regles": sum(1 for r in led if r.get("outcome") in _REGLE),
         "n_gagnes": sum(1 for r in led if r.get("outcome") == "WIN"),
         "n_perdus": sum(1 for r in led if r.get("outcome") == "LOSS"),

@@ -164,6 +164,12 @@ class TestVueBank:
         assert jours[0]["restant"] == BANKROLL_MONTHLY_XOF - 1500
         assert jours[1]["rendus"] == 1 and jours[1]["mise"] == 0 and jours[1]["cumul"] == 500
         assert v["paris"][0]["outcome"] == "EN COURS" and v["paris"][0]["mise"] == 600
+        # ROI : par jour (résultat ÷ misé, None sans mise) et rendement bankroll
+        assert jours[0]["roi_pct"] == pytest.approx(500 / 1500 * 100, abs=0.1) and jours[1]["roi_pct"] is None
+        assert r["roi_pct"] == pytest.approx(33.3, abs=0.1) and r["rendement_pct"] == 0.5
+        assert r["mise_moyenne"] == 750 and r["jours_joues"] == 2
+        assert r["meilleur_jour"]["jour"] == "2026-09-02" and r["pire_jour"]["jour"] == "2026-09-05"
+        assert r["serie"] == {"signe": 0, "n": 0}          # dernier jour joué à 0 : pas de série
 
     def test_un_mois_passe_na_ni_engage_ni_budget(self):
         v = build(self._rows(), [], datetime(2026, 10, 3, tzinfo=timezone.utc), "2026-09")

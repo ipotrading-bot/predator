@@ -82,13 +82,13 @@ class TestLaPageBankResteSobre:
 
     def test_les_explications_vivent_en_title(self):
         assert BANK.count("title=") >= 10
-        for mot in ("Budget du jour", "reconstituée", "Résultat", "Restant"):
+        for mot in ("Budget du jour", "reconstituée", "Rendement", "ROI", "Restant"):
             assert mot in BANK, mot
 
     def test_un_axe_par_courbe_et_une_serie(self):
         # Deux graphiques, jamais un double axe : restant et cumul séparés.
-        assert BANK.count('class="chart"') == 2
-        assert 'id="c-restant"' in BANK and 'id="c-cumul"' in BANK
+        assert BANK.count(' chart"') == 2
+        assert 'id="c-jour"' in BANK and 'id="c-cumul"' in BANK
 
     def test_la_route_existe_et_lit_le_mois(self):
         api = _texte("api/index.py")
