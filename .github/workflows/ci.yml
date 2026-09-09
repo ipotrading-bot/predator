@@ -19,6 +19,9 @@ on:
       - '**.py'
       - 'api/**'
       - 'templates/**'
+      # Source de /system : compilée en api/static par scripts/build_system.py ;
+      # tests/test_system_build.py refuse un compilé périmé (2026-09-09).
+      - 'assets/**'
       - 'requirements.txt'
       - 'requirements-dev.txt'
       - 'vercel.json'
