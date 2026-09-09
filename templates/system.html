@@ -1133,10 +1133,12 @@ function SystemBetCalculator() {
                 <Panel title="Total" sub={`${nActives}/${sections.length} actives · ${currency}`}>
                   {/* Grands chiffres SANS devise (elle est dans le sous-titre) :
                       « 8 000,00 XOF » se tronquait dans une colonne de 390/3 px. */}
-                  <div className="grid grid-cols-3 gap-2">
-                    <Big label="Mise" value={fmtN(grand.mise)} />
-                    <Big label="Net" value={signedN(grand.net)} color={netColor} sub={`${fmtN(grand.brut)} brut`} />
-                    <Big label="ROI" value={`${grand.roi.toFixed(1)} %`} color={netColor} sub="net / mise" />
+                  <div className="grid grid-cols-2 md:grid-cols-3 gap-2">
+                    <div className="col-span-2 md:col-span-1 md:order-2 min-w-0">
+                      <Big label="Net" value={signedN(grand.net)} color={netColor} sub={`${fmtN(grand.brut)} brut`} />
+                    </div>
+                    <div className="md:order-1 min-w-0"><Big label="Mise" value={fmtN(grand.mise)} /></div>
+                    <div className="md:order-3 min-w-0"><Big label="ROI" value={`${grand.roi.toFixed(1)} %`} color={netColor} sub="net / mise" /></div>
                   </div>
                   <div className="mt-2.5"
                     title="Brut = retour avant impôt, mise comprise. Net = brut − mise − impôt. Selon les statuts saisis (Gagné par défaut = tout passe).">
