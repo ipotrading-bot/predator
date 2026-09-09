@@ -91,11 +91,10 @@
       <span id="filter-count"></span>
     </div>
     <div class="fb-row">
-      <button class="fchip on" data-day="24h"      onclick="setDay('24h')" title="Fenêtre glissante de 24 h">24H</button>
-      <button class="fchip"    data-day="all"      onclick="setDay('all')">TOUS JOURS</button>
-      <button class="fchip"    data-day="today"    onclick="setDay('today')">AUJOURD'HUI</button>
-      <button class="fchip"    data-day="tomorrow" onclick="setDay('tomorrow')">DEMAIN</button>
-      <button class="fchip"    data-day="later"    onclick="setDay('later')">PLUS TARD</button>
+      {# Une seule puce de fenêtre (demande opérateur 2026-09-09 : plus de
+         TOUS JOURS / AUJOURD'HUI / DEMAIN / PLUS TARD). Active = 24 h
+         glissantes ; un tap la désactive et montre tout le stock. #}
+      <button class="fchip on" data-day="24h" onclick="setDay('24h')" title="Fenêtre glissante de 24 h — toucher pour tout afficher">24H</button>
       <div class="fb-div"></div>
       <span class="fsort-lbl">TRI</span>
       <div class="fsort-group">
@@ -343,9 +342,11 @@ let _sport = 'all';
 // sur 90 signaux réglés, 24-48h = ROI -62,8% (p=0,0023), >48h = 17 signaux
 // dont 17 expirés sans jamais être réglés. Le dashboard ouvre donc sur la
 // seule tranche rentable. Ce n'est PAS une coupe de production : rien n'est
-// filtré côté serveur, les cartes au-delà sont dans le DOM et le chip
-// « TOUS JOURS » les rend en un tap — le compteur annonce toujours combien
-// sont masquées, pour qu'un stock caché ne passe jamais pour un stock absent.
+// filtré côté serveur, les cartes au-delà sont dans le DOM et désactiver la
+// puce « 24H » les rend en un tap (les puces TOUS JOURS / AUJOURD'HUI /
+// DEMAIN / PLUS TARD ont été retirées le 2026-09-09, demande opérateur) —
+// le compteur annonce toujours combien sont masquées, pour qu'un stock
+// caché ne passe jamais pour un stock absent.
 const _WINDOW_H = 24;
 let _day   = '24h';
 
@@ -489,7 +490,7 @@ function applyFilters(){
     // fenêtre 24h est la seule raison du vide, l'annoncer avec le stock
     // disponible, sinon l'opérateur croit le pipeline en panne.
     empty.textContent = hidden24
-      ? `Rien à parier dans les ${_WINDOW_H}h — ${hidden24} match${hidden24>1?'s':''} plus loin, chip TOUS JOURS pour les voir.`
+      ? `Rien à parier dans les ${_WINDOW_H}h — ${hidden24} match${hidden24>1?'s':''} plus loin, désactiver 24H pour les voir.`
       : 'Aucun signal pour ce filtre.';
     empty.style.display='block';
   }
@@ -535,7 +536,7 @@ function applyFilters(){
   const suffix = hidden24 ? ` · +${hidden24} au-delà de 24h` : '';
   document.getElementById('filter-count').textContent =
     n ? `${n} match${n>1?'s':''} · ${nLegs} ${nLegs>1?'signaux':'signal'}${suffix}`
-      : (hidden24 ? `0 dans 24h · ${hidden24} au-delà — voir TOUS JOURS` : '');
+      : (hidden24 ? `0 dans 24h · ${hidden24} au-delà — désactiver 24H` : '');
 }
 
 const SIGNALS={{ signals|tojson }};
