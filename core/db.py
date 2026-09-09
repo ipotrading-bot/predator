@@ -409,10 +409,6 @@ def log_to_ledger(sb, sig: dict, clv: float, outcome: str) -> None:
         # Book d'exécution qui a fourni le prix (sql/migrate_v10_13) : une
         # analyse par book (CLV, réussite) sans deviner depuis l'époque.
         "soft_book":              sig.get("soft_book"),
-        # Mise en francs décidée à l'émission (sql/migrate_v10_14,
-        # core/bankroll.py) : ACTÉE ici, au règlement — c'est ce que /bank
-        # soustrait de la bankroll du mois.
-        "stake_xof":              sig.get("stake_xof"),
     }
     payload = {
         "signal_id":             sig.get("id"),

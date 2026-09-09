@@ -391,9 +391,6 @@ nav:not(.bnav) {
 /* Heure à laquelle la cote a été vue ; orange au-delà du TTL du slate soft. */
 .sig-age { font-size: 10px; color: var(--t3); flex-shrink: 0; font-family: var(--font-data); white-space: nowrap; }
 .sig-age.stale { color: var(--orange); font-weight: 600; }
-/* Mise en euros pour la bankroll mémorisée (remplie par le JS). */
-.sig-stake { font-size: 12px; font-weight: 700; color: var(--t1); flex-shrink: 0; font-family: var(--font-data); white-space: nowrap; }
-.sig-stake:empty { display: none; }
 .sig-odd  { font-size: 13px; font-weight: 700; color: var(--blue);   flex-shrink: 0; font-family: var(--font-data); }
 /* Book qui cote ce prix (signals.soft_book, 2026-09-08) — par ligne, jamais global */
 .sig-book { font-size: 10px; font-weight: 600; color: var(--t2); margin-left: 4px; text-transform: uppercase; letter-spacing: .02em; }
@@ -595,13 +592,6 @@ nav:not(.bnav) {
 @media (max-width: 639px) { .stake-n { font-size: 22px; min-width: 60px; } }
 .stake-d { color: var(--bd2); font-size: 20px; }
 .stake-m { font-size: 11px; color: var(--t2); display: flex; align-items: center; gap: 5px; flex-wrap: wrap; }
-#bankroll-input {
-  background: var(--bg2); border: 1px solid var(--bd2); border-radius: 6px;
-  color: #ccc; font-family: var(--font-data); font-size: 12px;
-  padding: 4px 8px; width: 72px; text-align: right;
-  -webkit-appearance: none;
-}
-#bankroll-input:focus { outline: none; border-color: var(--green); }
 #m-kelly-pct { color: var(--green); font-weight: 700; font-family: var(--font-data); }
 .m-why { padding: 10px 16px 16px; font-size: 10px; color: var(--t3); line-height: 1.7; }
 @media (max-width: 639px) { .m-why { padding: 8px 14px 14px; font-size: 9px; } }

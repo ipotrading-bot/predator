@@ -11,7 +11,7 @@
 <meta name="application-name" content="PREDATOR">
 <meta name="description" content="Arbitrage Lead-Lag — Pinnacle Sharp vs {{ execution_book }}">
 {# Plus de rechargement automatique par balise meta : il rechargeait la page
-   fiche ouverte, bankroll saisie comprise. Le rafraîchissement est en JS
+   fiche ouverte. Le rafraîchissement est en JS
    (softReload) et attend que la fiche soit fermée et l'onglet visible. #}
 <title>PREDATOR</title>
 <link rel="manifest" href="/manifest.json">
@@ -37,7 +37,6 @@
     <a href="/" class="on">ACCUEIL</a>
     <a href="/system">SYSTÈME</a>
     <a href="/performance">PERF</a>
-    <a href="/bank">BANK</a>
   </div>
   {# « top » = les seuls TOP VALEUR (HIGH_VALUE), même définition que le badge
      de carte : compter aussi les VALUE affichait « 2 top » au-dessus d'une
@@ -173,15 +172,8 @@
           <span class="sig-edge {% if is_suspect %}e-sus{% elif s.edge_pct >= 5 %}e-high{% elif s.edge_pct >= 2.5 %}e-mid{% else %}e-low{% endif %}">
             +{{ "%.1f"|format(s.edge_pct) }}%
           </span>
-          {# Mise en francs DÉCIDÉE à l'émission (signals.stake_xof, bankroll
-             mensuelle cadencée — core/bankroll.py). Repli JS bankroll × Kelly
-             pour une ligne d'avant la colonne. #}
-          {% if s.stake_xof %}
-            <span class="sig-mise" title="Fraction de Kelly">K:{{ "%.1f"|format(kelly) }}%</span>
-            <span class="sig-stake" title="Mise du budget du jour (bankroll mensuelle)">{{ "{:,}".format(s.stake_xof|int).replace(",", " ") }} F</span>
-          {% elif kelly > 0 %}
-            <span class="sig-mise" title="Fraction de Kelly">K:{{ "%.1f"|format(kelly) }}%</span>
-            <span class="sig-stake" data-k="{{ kelly }}" title="Mise estimée : bankroll mensuelle × Kelly (ligne d'avant la colonne de mise)"></span>
+          {% if kelly > 0 %}
+            <span class="sig-mise" title="Fraction de Kelly conseillée (% de bankroll)">K:{{ "%.1f"|format(kelly) }}%</span>
           {% else %}
             <span class="sig-mise" style="color:var(--t3)">—</span>
           {% endif %}
@@ -229,10 +221,6 @@
   <a href="/performance" aria-label="Performance">
     <svg viewBox="0 0 24 24"><polyline points="22 12 18 12 15 21 9 3 6 12 2 12"/><circle cx="12" cy="5" r="1" fill="currentColor" stroke="none"/></svg>
     Perf
-  </a>
-  <a href="/bank" aria-label="Bank">
-    <svg viewBox="0 0 24 24"><rect x="3" y="4" width="18" height="16" rx="2"/><circle cx="12" cy="12" r="4"/><line x1="12" y1="8" x2="12" y2="10"/><line x1="12" y1="14" x2="12" y2="16"/><line x1="8" y1="12" x2="10" y2="12"/><line x1="14" y1="12" x2="16" y2="12"/><line x1="6" y1="20" x2="6" y2="22"/><line x1="18" y1="20" x2="18" y2="22"/></svg>
-    Bank
   </a>
 </nav>
 
@@ -287,16 +275,10 @@
     </div>
   </div>
 
-  <div class="m-stake" title="Mise décidée à l'émission : budget du jour de la bankroll mensuelle ({{ "{:,}".format(bankroll_ref_xof|int).replace(",", " ") }} F le 1er), au prorata du Kelly. Détail sur /bank.">
-    {# Plus de bankroll saisie (2026-09-09) : elle est FIXE, 100 000 F le
-       1er du mois, et la mise vient du moteur (signals.stake_xof). Repli
-       bankroll × Kelly pour une ligne d'avant la colonne. #}
-    <span class="stake-n" id="stake-big">— F</span>
+  <div class="m-stake" title="Fraction de Kelly conseillée, en % de bankroll">
+    <span class="stake-n" id="m-kelly-pct">—</span>
     <span class="stake-d">|</span>
-    <div class="stake-m">
-      <a href="/bank" style="color:inherit;text-decoration:none">bankroll du mois</a> <b id="m-bankroll" style="color:var(--t1)">{{ "{:,}".format(bankroll_ref_xof|int).replace(",", " ") }} F</b>
-      <span id="m-kelly-pct"></span>
-    </div>
+    <div class="stake-m">Kelly</div>
   </div>
 
   <div class="m-why" id="m-why">—</div>
@@ -555,25 +537,6 @@ function applyFilters(){
 const SIGNALS={{ signals|tojson }};
 let _kpct=0;
 
-// ── Mise : décidée par le moteur à l'émission (`stake_xof`, bankroll
-// mensuelle cadencée — core/bankroll.py, page /bank). Plus de bankroll
-// saisie sur l'appareil (2026-09-09) : elle est fixe. Repli pour une ligne
-// d'avant la colonne : BANKROLL_REF_XOF × Kelly. ──
-const _BANKROLL_XOF={{ bankroll_ref_xof|tojson }};
-let _stakeCur=0;
-// Francs entiers, arrondis à la dizaine sous 1 000 et à la centaine au-delà :
-// une mise se pose en billets, pas au franc près.
-function _fmtStake(f){
-  if(!(f>0)) return null;
-  const pas = f>=1000 ? 100 : 10;
-  return Math.max(pas, Math.round(f/pas)*pas).toLocaleString('fr-FR') + ' F';
-}
-function _fillStakes(){
-  document.querySelectorAll('.sig-stake[data-k]').forEach(el=>{
-    el.textContent=_fmtStake(_BANKROLL_XOF*parseFloat(el.dataset.k)/100)||'';
-  });
-}
-
 // ── Âge de la cote : « vu 12:31 », orange au-delà du TTL du slate soft
 // (core.constants.SOFT_SLATE_TTL_H) — un prix vu à 06:00 affiché à 13:00
 // n'est plus une cote, c'est un souvenir. ──
@@ -596,15 +559,11 @@ function _fillAges(){
 _fillLocal();
 if(document.getElementById('signals-list')){
   _buildSportChips();
-  _fillStakes();
   _fillAges();
   applyFilters();
   setInterval(()=>{ applyFilters(); _fillAges(); },30000);
 }
 
-function updateStake(){
-  document.getElementById('stake-big').textContent=_fmtStake(_stakeCur)||'— F';
-}
 
 function _mkt(m,sp){
   if(!m) return 'Handicap / Total';
@@ -635,8 +594,6 @@ function openModal(idx){
     :(s.match&&s.match.includes(' vs ')?s.match.split(' vs ')[0].trim():s.match);
 
   _kpct=s.kelly_pct||0;
-  // Mise du moteur si la ligne en porte une, sinon repli bankroll × Kelly.
-  _stakeCur = s.stake_xof ? Number(s.stake_xof) : _BANKROLL_XOF*_kpct/100;
 
   let mt='—';
   if(s.match_time){
@@ -678,14 +635,13 @@ function openModal(idx){
   document.getElementById('s-team').textContent   = team;
   document.getElementById('s-cote').textContent   = (s.xbet_odd||0).toFixed(2);
   document.getElementById('s-pin').textContent    = s.pinnacle_price?s.pinnacle_price.toFixed(2):'—';
-  document.getElementById('m-kelly-pct').textContent = _kpct>0?_kpct.toFixed(1)+'%':'';
+  document.getElementById('m-kelly-pct').textContent = _kpct>0?_kpct.toFixed(1)+' %':'—';
   document.getElementById('m-why').textContent   = why;
   document.getElementById('m-edge').textContent  = (s.edge_pct>0?'+':'')+(s.edge_pct||0).toFixed(1)+'%';
   document.getElementById('m-pin').textContent   = s.pinnacle_price?s.pinnacle_price.toFixed(2):'—';
   document.getElementById('m-risk').textContent  = _FLAG_FR[s.risk_flag]||(s.risk_flag||'').replace(/_/g,' ');
   document.getElementById('m-risk').style.color  = rCol;
 
-  updateStake();
   document.getElementById('modal-overlay').style.display='block';
   document.getElementById('modal').style.display='block';
   document.body.classList.add('locked');
@@ -749,7 +705,7 @@ const SCAN_CRONS={{ scan_crons|tojson }};
 
 // ── Rafraîchissement doux : toutes les 5 min, seulement fiche fermée et
 // onglet visible — l'ancien <meta refresh> rechargeait la page sous les
-// doigts de l'opérateur, bankroll saisie comprise. ──
+// doigts de l'opérateur. ──
 (function softReload(){
   const PERIOD=300000;
   let due=Date.now()+PERIOD;

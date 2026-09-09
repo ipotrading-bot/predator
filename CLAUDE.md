@@ -44,9 +44,7 @@ Calcul en crons GitHub Actions ; dashboard en lecture seule.
 - `core/scan_windows.py` — fenêtres favorables (UTC) + politique de dépense
 - `core/constants.py` — taxe, Kelly, `SCAN_TIMEOUTS`
 - `core/run_contract.py` — un run qui n'a pas fait son travail sort en ÉCHEC
-- `api/index.py` + `templates/*.html` — dashboard Flask (`/bank` = bankroll
-  mensuelle) ; `core/bankroll.py` — 100 000 F le 1er, budget du jour au
-  prorata de Kelly, `stake_xof` figée à l'émission ; `core/bank_view.py`
+- `api/index.py` + `templates/*.html` — dashboard Flask
 - `scripts/ci_env.py` — quels secrets atteignent quel job ;
   `scripts/ci_scan_mode.py` — quel cron donne quel mode de scan
 

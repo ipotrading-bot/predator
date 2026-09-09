@@ -357,10 +357,7 @@ _OPTIONAL_COLS = {"selection_name", "kelly_pct", "advice", "sharp_sources", "con
                   "is_shadow", "shadow_reason",
                   # sql/migrate_v10_13_soft_book.sql — le book qui fournit le prix
                   # (core/execution_books) ; rafraîchi AVEC le prix, jamais figé
-                  "soft_book",
-                  # sql/migrate_v10_14_stake_xof.sql — mise en francs décidée à
-                  # l'émission (core/bankroll.py), figée au premier enregistrement
-                  "stake_xof"}
+                  "soft_book"}
 
 # Le drapeau FANTÔME est figé à la PREMIÈRE insertion : un rafraîchissement
 # (même match/marché revu par un tick ultérieur, typiquement golden à T-1h)
@@ -368,10 +365,7 @@ _OPTIONAL_COLS = {"selection_name", "kelly_pct", "advice", "sharp_sources", "con
 # dashboard la cacherait alors que l'opérateur l'a peut-être déjà jouée. Le
 # cas inverse (fantôme qui redeviendrait recommandé) n'existe pas : un tick
 # ultérieur est toujours plus proche du coup d'envoi.
-# `stake_xof` est figée pour la même raison : la mise a peut-être déjà été
-# posée ; un tick ultérieur qui la recalculerait sur un budget entamé
-# afficherait une autre mise pour le même pari (2026-09-09).
-_FIGES_AU_RAFRAICHISSEMENT = frozenset({"is_shadow", "shadow_reason", "stake_xof"})
+_FIGES_AU_RAFRAICHISSEMENT = frozenset({"is_shadow", "shadow_reason"})
 
 
 def _save(sb, signal) -> bool:
@@ -448,19 +442,6 @@ def _save(sb, signal) -> bool:
             return False
         if not (res.data or []):
             return None
-        # La mise est figée (jamais réécrite), mais une ligne active SANS mise
-        # — émise avant sql/migrate_v10_14, ou pendant une lecture dégradée
-        # de la bankroll — reçoit celle que le cadencement lui donne
-        # maintenant, UNE fois : filtre `stake_xof IS NULL`, jamais d'écrasement.
-        mise = payload.get("stake_xof")
-        if mise:
-            try:
-                (sb.table("signals").update({"stake_xof": int(mise)})
-                   .eq("status", "active").eq("match_id", mid).eq("market_key", mkey)
-                   .is_("stake_xof", "null").execute())
-            except Exception as e:
-                log.warning("stake_xof non posée sur %s (%s) — reconstituée à l'affichage",
-                            sig_label, str(e)[:80])
         if DEBUG_MODE:
             log.debug("✓ Signal refreshed: %s [edge=%.2f%%]",
                       sig_label, payload.get("edge_pct", 0))
@@ -2791,26 +2772,6 @@ def run():
             by_reason[k] = by_reason.get(k, 0) + 1
         log.info("FANTÔME | %d signaux mesurés mais non recommandés (%s)",
                  len(shadowed), " ".join(f"{k}={n}" for k, n in sorted(by_reason.items())))
-
-    # ── Mise en francs — bankroll mensuelle cadencée (2026-09-09) ─────
-    # Recommandés seulement, APRÈS la partition fantôme et AVANT la
-    # persistance : la mise part en base avec la ligne, figée au premier
-    # enregistrement (_FIGES_AU_RAFRAICHISSEMENT). Les fantômes n'ont pas de
-    # mise : ils ne sont pas joués. Un échec de lecture de l'état de la
-    # bankroll cadence sur l'état par défaut, il n'arrête jamais le scan.
-    if recommandes:
-        try:
-            from core.bankroll import load_context, assign_stakes
-            ctx = load_context(sb, now) if sb else None
-            if ctx is None:
-                from core.bankroll import BankContext
-                ctx = BankContext(now=now)
-            mises = assign_stakes(recommandes, ctx)
-            log.info("BANKROLL | budget du jour %.0f F (restant %d F, %d j) | %d mise(s) : %s",
-                     ctx.budget_today, ctx.remaining_before_today, ctx.days_left,
-                     len(mises), " ".join(f"{m} F" for m in mises))
-        except Exception as e:  # noqa: BLE001 — jamais bloquant
-            log.error("BANKROLL | cadencement impossible (%s) — signaux sans mise", e)
 
     # ── B. Bulk-save balanced signals to Supabase ─────────────────────
     saved_count = 0

@@ -69,9 +69,9 @@ app = Flask(__name__, template_folder=_template_dir, static_folder=_static_dir, 
 # pastille active), /performance allegee, Wiz supprime. Le numero sert
 # aussi de cache-busting au CSS (`?v=`) : sans bump, un telephone qui a
 # deja predator.css en cache ne verrait AUCUN changement de style.
-# 10.6 (2026-09-09) : page /bank (bankroll mensuelle), barre de navigation
-# à quatre entrées, fiche de pari en francs.
-DASHBOARD_VERSION = "10.6"
+# 10.7 (2026-09-09) : la page /bank et la bankroll mensuelle, construites
+# le jour meme, sont RETIREES sur decision operateur ; trois entrees de nav.
+DASHBOARD_VERSION = "10.7"
 
 
 # Instants de tir des scans pour le compte à rebours « prochain scan » du
@@ -349,7 +349,7 @@ def dashboard():
 
     groups = _group_by_match(signals)
 
-    from core.constants import (BANKROLL_REF, BANKROLL_REF_XOF, EXECUTION_BOOK,
+    from core.constants import (BANKROLL_REF, EXECUTION_BOOK,
                                 EXECUTION_BOOKS, SOFT_SLATE_TTL_H)
     # `execution_book` = book de référence, pour les seuls libellés sans
     # ligne sous la main ; chaque signal porte SON book (`soft_book`,
@@ -362,7 +362,6 @@ def dashboard():
                            sport_emoji=_SPORT_EMOJI,
                            sport_label_short=_SPORT_LABEL_SHORT,
                            sport_order=_SPORT_ORDER,
-                           bankroll_ref_xof=BANKROLL_REF_XOF,
                            soft_ttl_h=SOFT_SLATE_TTL_H,
                            execution_book=EXECUTION_BOOK,
                            execution_books=EXECUTION_BOOKS)
@@ -845,41 +844,6 @@ def performance():
 @app.route("/system")
 def system():
     return render_template("system.html")
-
-
-@app.route("/bank")
-def bank():
-    """Bankroll MENSUELLE (décision opérateur 2026-09-09) : 100 000 F le 1er,
-    dépensés en entier sur le mois, mise réservée à l'émission et actée au
-    règlement. Tout le calcul est dans core/bank_view.build (pur, testé) ;
-    ici on lit le ledger du mois (réglés, expirés) et les signaux actifs du
-    mois (engagés). Mois sélectionnable comme sur /performance."""
-    from core.bankroll import BANKROLL_MONTHLY_XOF, month_start_iso, next_month_start_iso
-    from core.bank_view import build as _bank_build
-    now = datetime.now(_tz.utc)
-    months = _perf_shown_months(now)
-    mois = _pick_month(request.args.get("mois"), months) or now.strftime("%Y-%m")
-    ref = datetime.fromisoformat(f"{mois}-01T00:00:00+00:00")
-    ledger: list = []
-    actifs: list = []
-    try:
-        sb = _db()
-        if sb:
-            ledger = (sb.table("ai_learning_ledger").select("*")
-                      .gte("created_at", month_start_iso(ref))
-                      .lt("created_at", next_month_start_iso(ref))
-                      .order("created_at", desc=True).limit(2000).execute().data) or []
-            if mois == now.strftime("%Y-%m"):
-                actifs = (sb.table("signals").select("*").eq("status", "active")
-                          .gte("created_at", month_start_iso(ref))
-                          .limit(500).execute().data) or []
-    except Exception as e:
-        log.error("Bank: %s", e)
-    vue = _bank_build(ledger, actifs, now, mois, BANKROLL_MONTHLY_XOF)
-    return render_template("bank.html", **vue,
-                           months=[(m, _month_label(m)) for m in months], mois=mois,
-                           mois_label=_month_label(mois),
-                           sport_emoji=_SPORT_EMOJI)
 
 
 # ── JSON API ─────────────────────────────────────────────────────────

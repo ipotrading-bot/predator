@@ -15,23 +15,6 @@ AH0_VALUE_THRESHOLD  = 1.5    # Soccer DNB : favori à 1.5+ = valeur intrinsèqu
 PURGE_EDGE_FLOOR     = 0.5    # % — floor purge : ne jamais supprimer au-dessus de ça
 MIN_STAKE    = 2      # € — below this Kelly stake, signal is not actionable
 BANKROLL_REF = 150    # € — 100 000 XOF (taux fixe 655.96 XOF/€)
-# Le dashboard affiche la bankroll et la mise en francs CFA (demande
-# opérateur 2026-09-09) ; `kelly_pct` reste un pourcentage, seule la devise
-# d'affichage change. Parité fixe XOF/€.
-XOF_PER_EUR      = 655.957
-BANKROLL_REF_XOF = 100_000   # F — même bankroll de référence, en CFA
-
-# ── Bankroll MENSUELLE (décision opérateur 2026-09-09, core/bankroll.py) ──
-# 100 000 F posés le 1er de chaque mois, à dépenser EN ENTIER sur le mois :
-# budget du jour = restant ÷ jours restants, réparti entre les signaux du
-# jour au prorata de leur Kelly. Mise réservée à l'émission (`stake_xof`),
-# actée au règlement ; un signal expiré ou remboursé rend sa mise. Résultat
-# BRUT (0 % d'impôt) sur la page /bank. Chiffres = décisions opérateur.
-BANKROLL_MONTHLY_XOF        = BANKROLL_REF_XOF
-STAKE_ROUND_XOF             = 100    # F — une mise se pose en billets
-STAKE_MIN_XOF               = 500    # F — sous ce montant, le pari ne vaut pas le déplacement
-BANKROLL_PACING_LOOKBACK_D  = 14     # jours d'historique pour estimer le Kelly quotidien attendu
-BANKROLL_DEFAULT_DAY_KELLY  = 3.0    # Σ kelly_pct/jour supposé sans historique (≈ 5 signaux × 0,6 %)
 MAX_EDGE     = 15.0   # % — hard cap; above = data mapping error, reject
 
 # Plancher d'EV en DUR sous lequel rien ne sort, quoi que disent les seuils

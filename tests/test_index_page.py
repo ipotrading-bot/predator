@@ -63,15 +63,15 @@ def test_les_tables_de_la_page_viennent_du_serveur():
     assert INDEX.index("{% set FLAG_FR") < INDEX.index("{% if signals %}")
 
 
-def test_la_selection_a_sa_propre_ligne_et_la_bankroll_vient_des_constantes():
+def test_la_selection_a_sa_propre_ligne_et_la_fiche_ne_parle_que_de_kelly():
     assert 'class="leg-l1"' in INDEX and 'class="leg-l2"' in INDEX
     assert ".leg-l1, .leg-l2" in CSS
-    # Bankroll FIXE (100 000 F le 1er, décision opérateur 2026-09-09) : plus de
-    # champ de saisie, la mise vient du moteur (signals.stake_xof) et le repli
-    # bankroll × Kelly lit BANKROLL_REF_XOF injecté — jamais un nombre en dur.
-    assert 'id="bankroll-input"' not in INDEX and 'value="1000"' not in INDEX and "€" not in INDEX
-    assert "const _BANKROLL_XOF={{ bankroll_ref_xof|tojson }}" in INDEX
-    assert "s.stake_xof" in INDEX and 'href="/bank"' in INDEX
+    # La bankroll mensuelle (page /bank, mise en francs) a été construite puis
+    # RETIRÉE le 2026-09-09 sur décision opérateur : la fiche ne montre que la
+    # fraction de Kelly — aucun montant, aucun champ, aucun lien /bank.
+    for interdit in ("stake_xof", 'href="/bank"', "€", 'id="bankroll-input"', "_BANKROLL_XOF"):
+        assert interdit not in INDEX, interdit
+    assert 'id="m-kelly-pct"' in INDEX
 
 
 def test_un_seul_etat_actif_pour_les_puces_de_filtre():

@@ -26,15 +26,8 @@ paths:
   template (règle n°6). Zone jouable : `_is_playable()`, partagée.
 - `.python-version` (3.12) appartient à VERCEL — règle dure n°4, l'aligner
   sur 3.11 casse le déploiement.
-- **Bankroll mensuelle** (`/bank`, décision opérateur 2026-09-09) : 100 000 F
-  le 1er (`BANKROLL_MONTHLY_XOF`), budget du jour = restant ÷ jours restants,
-  réparti au prorata du Kelly (`core/bankroll.assign_stakes`). La mise
-  `stake_xof` est décidée à l'émission, FIGÉE (jamais recalculée par un
-  rafraîchissement), actée au règlement (`log_to_ledger`). PUSH et expiré
-  rendent leur mise. Résultat BRUT. Une ligne sans mise est reconstituée à
-  l'affichage et marquée ⟲ — jamais backfillée en base. Telegram reste sans
-  mise (décision 2026-07-21). Gardiens : `tests/test_bankroll.py`,
-  `tests/test_bank_page.py`. Quatre entrées de navigation, identiques sur
-  toutes les pages.
-- Aucune courbe à double axe : une série, un axe, étiquette directe, survol
-  (`templates/bank.html`).
+- Pas de bankroll ni de mise en francs sur le dashboard : la page `/bank`
+  et la bankroll mensuelle ont été construites puis RETIRÉES le 2026-09-09
+  (décision opérateur, « c'était juste une idée »). Ne pas les reproposer.
+  La fiche de pari ne montre que la fraction de Kelly.
+- Aucune courbe à double axe : une série, un axe, étiquette directe, survol.
