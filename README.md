@@ -329,7 +329,7 @@ predator/
 │   │  ── Infrastructure ──────────────────────────────────────────────
 │   ├── db.py                # Source unique des clients Supabase (lecture vs écriture)
 │   └── secret_store.py      # Table `app_secrets` — BAT os.environ
-├── templates/               # index / ledger / audit / performance / system
+├── templates/               # index / ledger / audit / performance / system / bank
 ├── sql/                     # Migrations Supabase — À APPLIQUER À LA MAIN
 ├── tests/                   # pytest — voir AUDIT.md pour la carte des invariants testés
 ├── .github/workflows/       # 6 workflows — tout le calcul tourne ici

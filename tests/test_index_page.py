@@ -66,11 +66,12 @@ def test_les_tables_de_la_page_viennent_du_serveur():
 def test_la_selection_a_sa_propre_ligne_et_la_bankroll_vient_des_constantes():
     assert 'class="leg-l1"' in INDEX and 'class="leg-l2"' in INDEX
     assert ".leg-l1, .leg-l2" in CSS
-    # En francs CFA depuis le 2026-09-09 (BANKROLL_REF_XOF) ; la clé de stockage
-    # locale a changé avec la devise pour ne pas relire des euros en francs.
-    assert 'value="{{ bankroll_ref_xof }}"' in INDEX, "la bankroll par défaut était 1000 en dur"
-    assert 'value="1000"' not in INDEX and "€" not in INDEX
-    assert "_BR_KEY='predator_bankroll_xof'" in INDEX
+    # Bankroll FIXE (100 000 F le 1er, décision opérateur 2026-09-09) : plus de
+    # champ de saisie, la mise vient du moteur (signals.stake_xof) et le repli
+    # bankroll × Kelly lit BANKROLL_REF_XOF injecté — jamais un nombre en dur.
+    assert 'id="bankroll-input"' not in INDEX and 'value="1000"' not in INDEX and "€" not in INDEX
+    assert "const _BANKROLL_XOF={{ bankroll_ref_xof|tojson }}" in INDEX
+    assert "s.stake_xof" in INDEX and 'href="/bank"' in INDEX
 
 
 def test_un_seul_etat_actif_pour_les_puces_de_filtre():

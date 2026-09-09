@@ -182,7 +182,10 @@ class TestLaScissionTient:
     Ces tests existent parce que la pente naturelle est le regonflement — le
     prochain incident coûteux voudra s'écrire là où on le lira d'abord."""
 
-    PLAFOND = 5_000
+    # 6 000 depuis le 2026-09-09 : la section Commandes a gagné le build de
+    # /system et la bankroll mensuelle ; à 5 000 chaque ligne ajoutée en
+    # chassait une autre. Le récit reste dans INCIDENTS.md.
+    PLAFOND = 6_000
 
     def test_claude_md_reste_sous_son_plafond(self):
         taille = len(_texte(_CLAUDE).encode("utf-8"))

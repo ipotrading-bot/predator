@@ -3407,6 +3407,51 @@ Gardiens : `tests/test_mma_boxing_oddsapi.py`, `test_new_sports_phase2.py`,
 `test_new_sports_phase3.py` (valeurs et ordre), `tests/test_index_page.py`
 (devise de la fiche).
 
+### Bankroll mensuelle : 100 000 F le 1er, dépensés sur le mois, page /bank (2026-09-09, décision opérateur)
+
+Instruction : « bankroll fixée à 100 000 renouvelable tous les mois, qu'elle
+tienne exactement le mois et soit dépensée en intégralité ; les mises des
+signaux validés dans perf sont soustraites au fur et à mesure ; savoir ce
+que ça rapporte au fil des jours ; page bank avec coffre-fort ». Quatre
+choix posés à l'opérateur et tranchés le jour même :
+
+- **Répartition** : budget du jour = restant ÷ jours restants (aujourd'hui
+  compris), partagé entre les signaux du jour AU PRORATA de leur Kelly,
+  contre un « Kelly quotidien attendu » (moyenne des 14 derniers jours,
+  jours vides compris ; 3,0 sans historique). Un jour plus fourni n'excède
+  pas son budget, un jour maigre reporte. Mise au billet (100 F), plancher
+  500 F, Kelly forts servis d'abord quand le budget manque. Les gains vont
+  au résultat, pas au budget — « dépensé en intégralité » se juge sur les
+  mises, et reste un objectif : un mois sans assez de signaux laisse un
+  reliquat, il n'est jamais forcé.
+- **Engagement** : mise réservée à l'ÉMISSION (`signals.stake_xof`, figée
+  au premier enregistrement — un tick qui revoit le pari ne la recalcule
+  pas), actée au RÈGLEMENT (recopiée au ledger). PUSH et expiré rendent
+  leur mise. Un signal déjà actif reprend sa mise (clé match/marché).
+- **Impôt** : 0 %, résultat brut.
+- **Démarrage** : septembre reconstitué (lignes sans mise → jour plat ÷
+  Kelly du jour, marquées ⟲), octobre premier mois exact.
+
+Ce qui a été fait : `sql/migrate_v10_14_stake_xof.sql` (quatre tables,
+sans backfill — À APPLIQUER PAR L'OPÉRATEUR), `core/bankroll.py` (pur +
+`load_context` en lecture seule), cadencement dans `run_engine.run()` APRÈS
+`_shadow_partition` et AVANT `_save`, sous try : un échec cadence sur l'état
+par défaut, jamais de scan bloqué ; `log_to_ledger` recopie la mise ;
+`core/bank_view.py` + `/bank` + `templates/bank.html` (restant, barre
+dépensé | engagé | restant, résultat, retours, budget du jour, deux courbes
+à UN axe, tableau par jour, liste des paris) ; quatrième entrée de
+navigation (coffre-fort) sur toutes les pages ; fiche de pari : la mise
+vient du moteur, plus de bankroll saisie (elle est fixe). Telegram reste
+sans mise (décision 2026-07-21, gardée par test).
+
+Le JOUR d'un pari réglé est celui de son entrée au ledger : c'est le jour
+où /performance a validé le résultat, donc celui où la mise « sort ».
+
+Plafond de `CLAUDE.md` relevé à 6 000 o (`tests/test_documentation.py`) :
+à 5 000, chaque ligne de commande ajoutée en chassait une autre.
+
+Gardiens : `tests/test_bankroll.py`, `tests/test_bank_page.py`.
+
 ### Une version, un seul endroit
 
 `DASHBOARD_VERSION` (`api/index.py`), injectée

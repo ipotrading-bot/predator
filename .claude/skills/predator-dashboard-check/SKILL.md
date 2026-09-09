@@ -41,7 +41,7 @@ broken `{% %}` blocks) throw 500s even with no data.
    ```
 5. Nav-bar parity check — every page's `<div class="nav-pages">` block AND its
    `<nav class="bnav">` (mobile) block should list the same four links, in the
-   same order: **ACCUEIL / SYSTÈME / PERF**.
+   same order: **ACCUEIL / SYSTÈME / PERF / BANK** (four since 2026-09-09).
 
    `/ledger` and `/audit` are deliberately **hidden from both menus** (operator
    decision, 2026-08-22). The pages are still served and still render — they
@@ -53,7 +53,7 @@ broken `{% %}` blocks) throw 500s even with no data.
    `.nav-pages` is hidden under 640px. Check both blocks, not just the desktop
    one:
    ```bash
-   for f in index ledger audit performance; do
+   for f in index performance system bank; do
      echo "=== $f.html ==="
      awk '/<div class="nav-pages">/,/<\/div>/' templates/$f.html
    done

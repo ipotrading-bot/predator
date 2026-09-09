@@ -37,6 +37,7 @@
     <a href="/" class="on">ACCUEIL</a>
     <a href="/system">SYSTÈME</a>
     <a href="/performance">PERF</a>
+    <a href="/bank">BANK</a>
   </div>
   {# « top » = les seuls TOP VALEUR (HIGH_VALUE), même définition que le badge
      de carte : compter aussi les VALUE affichait « 2 top » au-dessus d'une
@@ -172,9 +173,15 @@
           <span class="sig-edge {% if is_suspect %}e-sus{% elif s.edge_pct >= 5 %}e-high{% elif s.edge_pct >= 2.5 %}e-mid{% else %}e-low{% endif %}">
             +{{ "%.1f"|format(s.edge_pct) }}%
           </span>
-          {% if kelly > 0 %}
+          {# Mise en francs DÉCIDÉE à l'émission (signals.stake_xof, bankroll
+             mensuelle cadencée — core/bankroll.py). Repli JS bankroll × Kelly
+             pour une ligne d'avant la colonne. #}
+          {% if s.stake_xof %}
             <span class="sig-mise" title="Fraction de Kelly">K:{{ "%.1f"|format(kelly) }}%</span>
-            <span class="sig-stake" data-k="{{ kelly }}" title="Mise pour la bankroll saisie dans la fiche"></span>
+            <span class="sig-stake" title="Mise du budget du jour (bankroll mensuelle)">{{ "{:,}".format(s.stake_xof|int).replace(",", " ") }} F</span>
+          {% elif kelly > 0 %}
+            <span class="sig-mise" title="Fraction de Kelly">K:{{ "%.1f"|format(kelly) }}%</span>
+            <span class="sig-stake" data-k="{{ kelly }}" title="Mise estimée : bankroll mensuelle × Kelly (ligne d'avant la colonne de mise)"></span>
           {% else %}
             <span class="sig-mise" style="color:var(--t3)">—</span>
           {% endif %}
@@ -222,6 +229,10 @@
   <a href="/performance" aria-label="Performance">
     <svg viewBox="0 0 24 24"><polyline points="22 12 18 12 15 21 9 3 6 12 2 12"/><circle cx="12" cy="5" r="1" fill="currentColor" stroke="none"/></svg>
     Perf
+  </a>
+  <a href="/bank" aria-label="Bank">
+    <svg viewBox="0 0 24 24"><rect x="3" y="4" width="18" height="16" rx="2"/><circle cx="12" cy="12" r="4"/><line x1="12" y1="8" x2="12" y2="10"/><line x1="12" y1="14" x2="12" y2="16"/><line x1="8" y1="12" x2="10" y2="12"/><line x1="14" y1="12" x2="16" y2="12"/><line x1="6" y1="20" x2="6" y2="22"/><line x1="18" y1="20" x2="18" y2="22"/></svg>
+    Bank
   </a>
 </nav>
 
@@ -276,15 +287,14 @@
     </div>
   </div>
 
-  <div class="m-stake">
-    {# Francs CFA, montants entiers (demande opérateur 2026-09-09) ; repli =
-       BANKROLL_REF_XOF de core/constants.py, la même bankroll de référence
-       que le moteur, en CFA. #}
+  <div class="m-stake" title="Mise décidée à l'émission : budget du jour de la bankroll mensuelle ({{ "{:,}".format(bankroll_ref_xof|int).replace(",", " ") }} F le 1er), au prorata du Kelly. Détail sur /bank.">
+    {# Plus de bankroll saisie (2026-09-09) : elle est FIXE, 100 000 F le
+       1er du mois, et la mise vient du moteur (signals.stake_xof). Repli
+       bankroll × Kelly pour une ligne d'avant la colonne. #}
     <span class="stake-n" id="stake-big">— F</span>
     <span class="stake-d">|</span>
     <div class="stake-m">
-      bankroll
-      <input id="bankroll-input" type="number" inputmode="numeric" value="{{ bankroll_ref_xof }}" min="1" step="1000" oninput="updateStake()">F
+      <a href="/bank" style="color:inherit;text-decoration:none">bankroll du mois</a> <b id="m-bankroll" style="color:var(--t1)">{{ "{:,}".format(bankroll_ref_xof|int).replace(",", " ") }} F</b>
       <span id="m-kelly-pct"></span>
     </div>
   </div>
@@ -545,16 +555,12 @@ function applyFilters(){
 const SIGNALS={{ signals|tojson }};
 let _kpct=0;
 
-// ── Bankroll : saisie dans la fiche, mémorisée sur l'appareil, et la mise en
-// francs CFA s'affiche directement sur chaque ligne (K:0.7% seul n'est pas
-// une mise). Repli = BANKROLL_REF_XOF de core/constants.py, injecté. La clé
-// de stockage a changé avec la devise : l'ancienne valeur en euros
-// (`predator_bankroll`) ne doit pas être relue comme des francs. ──
-const _BR_KEY='predator_bankroll_xof';
-function _bankroll(){
-  const inp=document.getElementById('bankroll-input');
-  return parseFloat(inp&&inp.value)||0;
-}
+// ── Mise : décidée par le moteur à l'émission (`stake_xof`, bankroll
+// mensuelle cadencée — core/bankroll.py, page /bank). Plus de bankroll
+// saisie sur l'appareil (2026-09-09) : elle est fixe. Repli pour une ligne
+// d'avant la colonne : BANKROLL_REF_XOF × Kelly. ──
+const _BANKROLL_XOF={{ bankroll_ref_xof|tojson }};
+let _stakeCur=0;
 // Francs entiers, arrondis à la dizaine sous 1 000 et à la centaine au-delà :
 // une mise se pose en billets, pas au franc près.
 function _fmtStake(f){
@@ -563,16 +569,10 @@ function _fmtStake(f){
   return Math.max(pas, Math.round(f/pas)*pas).toLocaleString('fr-FR') + ' F';
 }
 function _fillStakes(){
-  const br=_bankroll();
   document.querySelectorAll('.sig-stake[data-k]').forEach(el=>{
-    el.textContent=_fmtStake(br*parseFloat(el.dataset.k)/100)||'';
+    el.textContent=_fmtStake(_BANKROLL_XOF*parseFloat(el.dataset.k)/100)||'';
   });
 }
-(function restoreBankroll(){
-  const inp=document.getElementById('bankroll-input');
-  if(!inp) return;
-  try{ const v=parseFloat(localStorage.getItem(_BR_KEY)); if(v>0) inp.value=v; }catch(e){}
-})();
 
 // ── Âge de la cote : « vu 12:31 », orange au-delà du TTL du slate soft
 // (core.constants.SOFT_SLATE_TTL_H) — un prix vu à 06:00 affiché à 13:00
@@ -603,10 +603,7 @@ if(document.getElementById('signals-list')){
 }
 
 function updateStake(){
-  const br=_bankroll();
-  try{ if(br>0) localStorage.setItem(_BR_KEY,String(br)); }catch(e){}
-  document.getElementById('stake-big').textContent=_fmtStake(br*_kpct/100)||'— F';
-  _fillStakes();
+  document.getElementById('stake-big').textContent=_fmtStake(_stakeCur)||'— F';
 }
 
 function _mkt(m,sp){
@@ -638,6 +635,8 @@ function openModal(idx){
     :(s.match&&s.match.includes(' vs ')?s.match.split(' vs ')[0].trim():s.match);
 
   _kpct=s.kelly_pct||0;
+  // Mise du moteur si la ligne en porte une, sinon repli bankroll × Kelly.
+  _stakeCur = s.stake_xof ? Number(s.stake_xof) : _BANKROLL_XOF*_kpct/100;
 
   let mt='—';
   if(s.match_time){
