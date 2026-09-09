@@ -51,6 +51,26 @@ log.setLevel(logging.INFO)
 log.addHandler(_handler)
 log.propagate = False
 
+# ── Les modules appelés loggent sous « PREDATOR.* » (2026-09-09) ──────
+# `run_audit.py` et `run_closing_line.py` n'importent pas run_engine, seul
+# endroit qui configurait le logger « PREDATOR ». Résultat : dans ces deux
+# jobs, tout core/ était MUET — niveau effectif WARNING, root sans handler,
+# vérifié en exécutant le job. Or c'est là que vivent les seules lignes qui
+# DISENT pourquoi une capture de clôture a échoué : `CLOSE SKIP |` (match
+# sans cote exchange, sélection non résolue, pas de prix de nul) et
+# `LINEMOVE |` (la ligne pariée a bougé). Le job rendait « capture done: 0 »
+# sans jamais pouvoir dire pourquoi — la panne « vert mais vide » que ce
+# dépôt paie déjà deux fois (INCIDENTS.md, « Un audit stérile ALERTE »,
+# « Closing line : capture_from_scan est morte »).
+# Le garde `if not .handlers` est LOAD-BEARING : quand run_engine.py est le
+# point d'entrée il a déjà posé le sien, et un second handler doublerait
+# chaque ligne du scan.
+_predator = logging.getLogger("PREDATOR")
+if not _predator.handlers:
+    _predator.setLevel(logging.INFO)
+    _predator.addHandler(_handler)
+    _predator.propagate = False
+
 AUDIT_LAG_H         = int(os.environ.get("AUDIT_LAG_H", 3))          # legacy fallback: scanned_at age, only used when match_time is missing
 SETTLEMENT_GRACE_H  = int(os.environ.get("SETTLEMENT_GRACE_H", 4))   # hours after match_time before we even attempt audit
 # Hours after match_time before a failed settlement is allowed to become the
@@ -354,14 +374,28 @@ def count_missed_closing_lines(sb) -> int:
     Counts every market, not just h2h. ⚠️ Ce compte est un STOCK, pas un
     flux : une ligne reste `active` après kickoff tant que le settlement ne
     l'a pas réglée, donc les mêmes signaux sont recomptés à chaque run — un
-    chiffre stable qui revient n'est PAS « 4-5 pertes par scan ». Causes
-    réelles mesurées le 2026-09-02 (cadence du cron vérifiée SAINE) :
-    (a) signaux Tier 2 hors SPORT_KEYS — invisibles au payload OddsAPI, et
-    la voie exchange est h2h-only, donc leurs totals/spreads n'ont AUCUNE
-    voie de capture (limite structurelle, 0/14 sur 7 jours) ;
+    chiffre stable qui revient n'est PAS « 4-5 pertes par scan ».
+
+    ⚠️ CAUSES — la liste du 2026-09-02 disait « la voie exchange est h2h-only,
+    donc les totals/spreads n'ont AUCUNE voie de capture ». C'EST FAUX depuis
+    le 2026-09-08 : `core/closing_line.capture_from_exchange` lit l'échelle
+    entière et retrouve la ligne exacte du pari. Mesuré le 2026-09-09 sur les
+    lignes émises depuis le 09-08 : 6 captures sur 9 en totals/spreads, contre
+    40 sur 146 avant. La docstring périmée a fait diagnostiquer à côté ce
+    jour-là — d'où cet avertissement.
+
+    Causes restantes, à confirmer maintenant que les logs de `PREDATOR.*`
+    sortent enfin dans ce job (voir le bloc logger en tête de module) :
+    (a) match sans cote d'exchange exploitable — le job de clôture n'interroge
+        que Matchbook, là où le scan interroge AUSSI Smarkets en comblement :
+        un match que seul Smarkets cote ne peut PAS être clôturé (asymétrie
+        connue, non corrigée — coût Smarkets ≈ 100-130 req/passe pour 72 ticks
+        par jour, à borner avant de le brancher) ;
     (b) signaux émis à moins de ~20 min du kickoff, nés après la dernière
-    passe de capture ;
-    (c) famine de settlement qui fait stagner le stock."""
+        passe de capture ;
+    (c) famine de settlement qui fait stagner le stock ;
+    (d) ligne bougée entre l'entrée et la clôture (`LINEMOVE`) — refus
+        VOULU : une autre ligne est un autre pari."""
     now = datetime.now(timezone.utc)
     try:
         res = (sb.table("signals")
