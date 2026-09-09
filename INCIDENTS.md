@@ -3490,6 +3490,45 @@ le compte : conservés.
 Règle : ne pas réintroduire Betfair. Sortir par un proxy hors du territoire
 du compte est interdit par ses conditions, et l'exchange est déjà couvert.
 
+### Un proxy mort a aveuglé deux scans payants ; trois signaux à 0 F ; un signal jeunes coincé (2026-09-09, soir)
+
+Bilan de santé du soir (agent de diagnostic, lecture seule), trois constats.
+
+**1. Proxy Webshare en « 402 Payment Required »** depuis ~15:10 UTC : quota
+du plan gratuit épuisé (1 Go/mois, partagé). `open_with_retry` rejouait
+trois fois le MÊME tunnel, ESPN passait pour muet, le filtre de réglabilité
+(`run_engine` ~2044) écartait 45 puis 36 matchs, et les scans standard de
+16:10 et 19:07 — payés en crédits OddsAPI — sont sortis à 0 signal. L'audit,
+qui sort en direct (pool `settlement` sans RELAYS), réglait normalement :
+la SOURCE répondait, seul le tunnel refusait. 147 appels ESPN comptés au
+quota du jour pour des échecs.
+Fait : `core/net.py` distingue le proxy mort de la source morte — sur un
+refus du tunnel (« Tunnel connection failed », 402, 407, 502, 503) il note
+`proxy-mort:<source>` une fois par processus et sort EN DIRECT pour le reste
+du run ; `opener_for` le respecte. Un vrai refus de la source reste un 403
+nommé par `describe_failure`. Gardien : `tests/test_free_sources_wiring.py`.
+Action opérateur restante : le compte Webshare (plan ou bande passante) — le
+proxy ne sert plus qu'aux sources qui exigent une IP hors US.
+
+**2. Trois signaux recommandés à 0 F** (Giants–Cardinals, Padres–Nationals,
+Braves–Rays : Kelly 1,17 / 0,87 / 0,56 %, les plus forts du jour), émis par
+les ticks de 17:40 et 18:43 : le budget du jour (3 091 F) était déjà
+consommé par les 3 400 F posés à la main à 16:35, `available_today` → 0 →
+0 F. Le « Kelly fort d'abord » ne joue qu'au sein d'un même lot, pas entre
+ticks. Fait : plancher STAKE_MIN_XOF (500 F) pris sur le RESTANT DU MOIS
+(jamais au-delà), absorbé par les budgets des jours suivants — un
+recommandé ne sort plus à 0 F tant que le mois n'est pas vide. Les trois
+lignes du jour restent à 0 F : émises ainsi, donc non jouées ; on ne réécrit
+pas une mise après coup. Gardiens : `tests/test_bankroll.py`.
+
+**3. Barça–Feyenoord (Youth League, 3 000 F, kickoff 10:00)** : émis le 08/09
+à 19:14, AVANT l'exclusion des ligues de jeunes (22:47), aucune source de
+score ne le couvre → seul éligible de l'audit de 16:52 → « AUDIT STÉRILE »,
+exit 1, `settlement_starved_at` posé, purge élargie à 96 h, et rechute
+programmée à chaque audit où il serait seul. Passé `expired` à la main
+(ligne conservée, règle 9) : sa mise revient au budget (engagé 6 400 →
+3 400 F).
+
 ### Une version, un seul endroit
 
 `DASHBOARD_VERSION` (`api/index.py`), injectée

@@ -180,10 +180,29 @@ def opener_for(source: str):
     sur `urllib.request.urlopen`, exactement comme avant ce module.
     """
     url = proxy_for(source)
-    if not url:
+    if not url or _memo.get(f"proxy-mort:{source.lower()}"):
         return None
     return urllib.request.build_opener(
         urllib.request.ProxyHandler({"http": url, "https": url}))
+
+
+# ── PROXY MORT ≠ SOURCE MORTE (2026-09-09) ────────────────────────────
+# Mesuré ce jour : le tunnel Webshare répondait « 402 Payment Required »
+# (quota du plan épuisé) à CHAQUE ouverture. `open_with_retry` rejouait trois
+# fois le même tunnel, ESPN passait pour « muet », le filtre de réglabilité
+# écartait 36 à 45 matchs par scan et deux scans standard payants sont sortis
+# à 0 signal — alors que l'audit, qui sort en direct, réglait normalement.
+# Un refus du TUNNEL (402/407/5xx du proxy, « Tunnel connection failed ») ne
+# dit rien de la source : on le note une fois par processus et par source,
+# et on sort EN DIRECT pour le reste du run. Si la source refuse l'IP du
+# runner, ce sera un 403 de la source, nommé comme tel par describe_failure.
+_PROXY_MORT = ("Tunnel connection failed", "Payment Required",
+               "Proxy Authentication Required", "Bad Gateway", "Service Unavailable")
+
+
+def _proxy_mort(exc: Exception) -> bool:
+    txt = str(exc)
+    return any(m in txt for m in _PROXY_MORT)
 
 
 # ── REPRISE SUR ÉCHEC PASSAGER (2026-08-28) ───────────────────────────
@@ -237,6 +256,12 @@ def open_with_retry(source: str, req, timeout: int, tentatives: int | None = Non
             raise                      # une réponse, pas un aléa réseau
         except _TRANSIENT as e:
             derniere = e
+            if opener is not None and _proxy_mort(e):
+                log.warning("net[%s]: proxy HS (%s) — sortie DIRECTE pour le reste "
+                            "du run", source, e)
+                _memo[f"proxy-mort:{source.lower()}"] = "1"
+                opener = None
+                continue               # même tentative, sans le tunnel
             if essai < tentatives:
                 log.info("net[%s]: échec de transport (%s) — nouvelle tentative "
                          "%d/%d", source, e, essai + 1, tentatives)

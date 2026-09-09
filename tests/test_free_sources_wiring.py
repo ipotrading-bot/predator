@@ -162,6 +162,56 @@ class TestRepriseSurEchecPassager:
             net.open_with_retry("espn", object(), 5)
         assert len(essais) == 1, "un 403 a été rejoué"
 
+    def test_un_tunnel_mort_bascule_en_direct_pour_le_reste_du_run(self, monkeypatch):
+        """2026-09-09 : le tunnel Webshare répondait « 402 Payment Required »
+        (quota du plan) à CHAQUE ouverture ; trois reprises du même tunnel
+        faisaient passer ESPN pour muette et deux scans payants sont sortis à
+        0 signal. Un refus du TUNNEL n'est pas un refus de la source : on sort
+        en direct, une fois pour toutes dans le processus."""
+        via_proxy, en_direct = [], []
+
+        class _Opener:
+            def open(self, req, timeout=None):
+                via_proxy.append(1)
+                raise net.urllib.error.URLError(
+                    "Tunnel connection failed: 402 Payment Required")
+
+        def _urlopen(req, timeout=None):
+            en_direct.append(1)
+            return "réponse"
+
+        net.reset()
+        monkeypatch.setattr(net, "proxy_for", lambda source: "http://user:pw@proxy:8080")
+        monkeypatch.setattr(net.urllib.request, "build_opener", lambda *a, **k: _Opener())
+        monkeypatch.setattr(net.urllib.request, "urlopen", _urlopen)
+        assert net.open_with_retry("espn", object(), 5) == "réponse"
+        assert len(via_proxy) == 1 and len(en_direct) == 1
+        # Deuxième appel du même run : plus une seule tentative par le tunnel.
+        assert net.open_with_retry("espn", object(), 5) == "réponse"
+        assert len(via_proxy) == 1 and len(en_direct) == 2
+        assert net.opener_for("espn") is None
+        net.reset()
+
+    def test_un_timeout_ordinaire_ne_bascule_pas_en_direct(self, monkeypatch):
+        """Un timeout passager du proxy reste une reprise PAR le proxy : la
+        bascule directe est réservée aux refus explicites du tunnel."""
+        via_proxy = []
+
+        class _Opener:
+            def open(self, req, timeout=None):
+                via_proxy.append(1)
+                if len(via_proxy) < 2:
+                    raise TimeoutError("handshake")
+                return "réponse"
+
+        net.reset()
+        monkeypatch.setattr(net, "proxy_for", lambda source: "http://user:pw@proxy:8080")
+        monkeypatch.setattr(net.urllib.request, "build_opener", lambda *a, **k: _Opener())
+        monkeypatch.setattr(net.urllib.request, "urlopen", lambda *a, **k: (_ for _ in ()).throw(AssertionError("direct interdit")))
+        assert net.open_with_retry("espn", object(), 5) == "réponse"
+        assert len(via_proxy) == 2
+        net.reset()
+
     def test_l_echec_final_remonte_a_l_appelant(self, monkeypatch):
         """L'appelant garde son `except` et son message : on ne change que le
         nombre d'essais, jamais le contrat d'erreur."""

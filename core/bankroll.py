@@ -226,14 +226,25 @@ def assign_stakes(signals: list[dict], ctx: BankContext) -> list[int]:
     dispo = ctx.available_today
     ordre = sorted(nouveaux,
                    key=lambda i: -max(float(signals[i].get("kelly_pct") or 0), 0.0))
+    # Plancher (2026-09-09, soir) : un signal RECOMMANDÉ ne sort jamais à 0 F
+    # tant que le mois a du restant. Mesuré le jour même : trois signaux aux
+    # Kelly les plus forts de la journée (1,17 / 0,87 / 0,56 %) émis par des
+    # ticks tardifs ont reçu 0 F parce que le budget du jour était consommé.
+    # Le plancher se prend sur le restant du MOIS (jamais au-delà), et les
+    # budgets des jours suivants l'absorbent — c'est l'esprit « dépensé en
+    # intégralité », pas une rallonge.
+    reste_mois = max(0.0, ctx.remaining_before_today - ctx.engaged_today)
     for i in ordre:
         k = max(float(signals[i].get("kelly_pct") or 0), 0.0)
         brut = budget * k / k_ref
         mise = round_stake(min(brut, dispo)) if dispo >= STAKE_MIN_XOF else 0
-        mise = min(mise, int(dispo // STAKE_ROUND_XOF * STAKE_ROUND_XOF))
+        mise = max(0, min(mise, int(dispo // STAKE_ROUND_XOF * STAKE_ROUND_XOF)))
+        if mise == 0 and k > 0 and reste_mois >= STAKE_MIN_XOF:
+            mise = STAKE_MIN_XOF
         mises[i] = mise
         signals[i]["stake_xof"] = mise
-        dispo -= mise
+        dispo = max(0.0, dispo - mise)      # jamais négatif : le plancher est pris sur le mois
+        reste_mois -= mise
     ctx.engaged_today += sum(mises[i] for i in nouveaux)
     ctx.kelly_today += kelly_new
     return mises

@@ -94,7 +94,21 @@ class TestRepartitionAuProrataDuKelly:
         ctx = bk.BankContext(now=NOW, spent=99_000, kelly_day_expected=1.0)   # ≈ 45 F de budget
         sigs = [_sig(0.2, "faible"), _sig(2.0, "fort")]
         mises = bk.assign_stakes(sigs, ctx)
-        assert mises == [0, 0] or (mises[1] >= mises[0])
+        # 1 000 F restent sur le mois : le fort reçoit le plancher, puis le
+        # faible aussi (2 × 500 ≤ 1 000) ; jamais au-delà du restant du mois.
+        assert mises == [STAKE_MIN_XOF, STAKE_MIN_XOF]
+
+    def test_un_recommande_ne_sort_jamais_a_zero_tant_que_le_mois_a_du_restant(self):
+        # Budget du jour déjà consommé par les ticks précédents (dispo < 0),
+        # mais 60 000 F restent sur le mois : plancher 500 F, pris sur le mois.
+        ctx = bk.BankContext(now=NOW, spent=36_000, engaged_today=3_400, kelly_day_expected=3.0)
+        assert ctx.available_today == 0
+        sigs = [_sig(1.17, "a"), _sig(0.87, "b")]
+        assert bk.assign_stakes(sigs, ctx) == [STAKE_MIN_XOF, STAKE_MIN_XOF]
+
+    def test_le_plancher_sarrete_quand_le_mois_est_vide(self):
+        ctx = bk.BankContext(now=NOW, spent=99_800, kelly_day_expected=3.0)   # 200 F sur le mois
+        assert bk.assign_stakes([_sig(1.0, "a")], ctx) == [0]
 
     def test_un_signal_deja_actif_reprend_sa_mise_figee(self):
         ctx = bk.BankContext(now=NOW, active_stakes={("m1", "h2h"): 700}, engaged_today=700, kelly_today=0.7)
