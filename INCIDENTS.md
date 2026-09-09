@@ -3450,6 +3450,18 @@ où /performance a validé le résultat, donc celui où la mise « sort ».
 Plafond de `CLAUDE.md` relevé à 6 000 o (`tests/test_documentation.py`) :
 à 5 000, chaque ligne de commande ajoutée en chassait une autre.
 
+Mise en service (2026-09-09 16:20-16:35 UTC, sur instruction « exécuter la
+base de données et finir ») : migration appliquée par `ops.py supabase
+migrate` (colonne vérifiée sur les quatre tables) ; scan reprice dispatché
+sur le nouveau code — vert, « rien de neuf », donc aucun signal re-émis ;
+les CINQ lignes actives d'avant la colonne (3 du 09, 2 du 08) ont reçu UNE
+fois la mise que le premier rafraîchissement leur aurait donnée
+(`core.bankroll.with_stakes`, mêmes valeurs que le ⟲ de /bank : 1 300, 900,
+1 200, 500, 3 000 F), par UPDATE `… AND stake_xof IS NULL` — jamais
+d'écrasement. Le code fait désormais la même chose seul (`_rafraichir`,
+filtre IS NULL). Le ledger n'est pas touché : ses lignes de septembre
+restent reconstituées à l'affichage.
+
 Gardiens : `tests/test_bankroll.py`, `tests/test_bank_page.py`.
 
 ### Une version, un seul endroit
