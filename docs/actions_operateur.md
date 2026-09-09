@@ -239,7 +239,15 @@ aucun bookmaker sélectionné — écarté »).
 
 ---
 
-## 2ter. Betfair — SUSPENDU par l'opérateur ⏸ depuis le 2026-09-08 (compte bloqué)
+## 2ter. Betfair — ABANDONNÉ par l'opérateur ⛔ le 2026-09-09 (suspendu depuis le 2026-09-08)
+
+Décision opérateur du 2026-09-09 : « laisse tomber, oublie, abandonne ». Le
+nouveau compte n'a pas pu créer de clé d'application (`APP_KEY_CREATION_FAILED`
+dans le visualiseur Betfair). La suspension ci-dessous RESTE posée : zéro login,
+zéro requête. Retrait complet du code (appels, secrets du pool `ci_env`, tests,
+ce bloc) à faire à la revue du 2026-09-22, règle 13 — ne pas « réparer »
+Betfair d'ici là, ni relever la suspension.
+
 
 Décision opérateur du 2026-09-08 au soir : « suspends Betfair pour l'instant,
 mon compte est bloqué, le temps de trouver une solution ». La suspension est
