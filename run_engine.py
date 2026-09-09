@@ -20,7 +20,7 @@ from dotenv import load_dotenv
 from core.db import (get_db, MissingCredentialsError,
                      log_to_ledger as _log_to_ledger,
                      is_unique_violation as _is_unique_violation)
-from core.harvester import fetch_matches, fetch_betfair_prices
+from core.harvester import fetch_matches
 from core.closing_line import capture_from_exchange, capture_from_scan
 from core.matchbook import fetch_matchbook_prices
 from core.smarkets import fetch_smarkets_prices
@@ -1035,10 +1035,10 @@ def _enrich_from_exchange(items: list, prices: dict, log) -> int:
             continue
 
         # ── Rôle 2 : bouche-trou ─────────────────────────────────────────
-        src = bf.get("_source", "betfair")
+        src = bf.get("_source", "exchange")
         m["odds_pinnacle"] = {"1": bf["1"], "X": bf.get("X", 0.0), "2": bf["2"]}
         m["_exchange"] = src
-        m["_betfair"] = True              # conservé : lu en aval/tests
+        m["_exchange_hit"] = True         # servi par un exchange (lu en aval)
         m.pop("_estimated", None)
         _poser_lignes_sharp(m, bf, log)
         enriched += 1
@@ -1930,7 +1930,7 @@ def _process_spreads(m, name, sport, league, home, away, emoji, signals, sb, now
 # données du run — aucune liste de ligues tenue à la main (règle n°6) :
 #
 #   1. MARCHÉ VIVANT — le prix sharp d'un match du Tier 2 doit être confirmé
-#      par un EXCHANGE (Matchbook/Betfair : contre-expertise `odds_exchange`
+#      par un EXCHANGE (Matchbook/Smarkets : contre-expertise `odds_exchange`
 #      ou bouche-trou `_exchange`). L'exchange ne publie un marché qu'avec un
 #      back ET un lay serrés (core/matchbook.py, MAX_SPREAD_RATIO) : c'est la
 #      liquidité mesurée. Une copie « Pinnacle » d'une source soft sans
@@ -2465,47 +2465,34 @@ def run():
         log.info("💹 REPRICE — %d matchs soft relus du cache", len(matches))
 
     # ── Tier 1.5: exchanges (prix sharp pair-à-pair) ───────────────────
-    # Remplace un prix Pinnacle ESTIMÉ par l'IA — ou absent — par un vrai
-    # prix d'exchange. Deux fournisseurs, dans cet ordre :
+    # Remplace un prix Pinnacle ESTIMÉ — ou absent — par un vrai prix
+    # d'exchange. Deux fournisseurs, sans clé ni compte :
     #
-    #   Betfair   — seulement si BETFAIR_APP_KEY est posée. Rappel : la clé
-    #               « Live » coûte 499 £ et Betfair refuse les IP américaines
-    #               (BETTING_RESTRICTED_LOCATION), donc sur les runners
-    #               GitHub cette branche ne s'exécute jamais en pratique.
-    #   Matchbook — aucune clé, aucun compte, 700 req/min. Le milieu
-    #               back/lay donne une marge d'environ 0,1 %, meilleure que
-    #               Pinnacle (~2 %) : c'est une référence sharp de premier
-    #               ordre, et la seule qui survive à un pool OddsAPI mort.
+    #   Matchbook — 700 req/min, milieu back/lay (marge ≈ 0,1 %) : la
+    #               référence sharp de premier ordre, et la seule qui
+    #               survive à un pool OddsAPI mort.
+    #   Smarkets  — en COMBLEMENT derrière Matchbook, scans standard seuls.
     #
-    # Betfair reste prioritaire quand il répond (intégration historique,
-    # prix ajustés de la commission) ; Matchbook comble le reste.
-    betfair_prices: dict = {}
-    if os.environ.get("BETFAIR_APP_KEY"):
-        log.info("💹 Tier 1.5 — Betfair Exchange (commission -5%%)...")
-        betfair_prices = fetch_betfair_prices(
-            sports=["soccer", "tennis", "basketball", "hockey", "mma", "cricket"],
-            hours_ahead=hours_ahead,
-        )
-        if betfair_prices:
-            log.info("💹 Betfair OK — %d marchés Betfair chargés", len(betfair_prices))
-
+    # Betfair (Tier 1.5 historique, prioritaire quand il répondait) a été
+    # RETIRÉ le 2026-09-09 sur décision opérateur (règle 13) : 0 marché
+    # chargé depuis le 2026-07-09, compte banni puis nouveau compte sans clé
+    # d'application possible. Voir INCIDENTS.md « Betfair retiré ».
+    exchange_prices: dict = {}
     if not _MATCHBOOK_OFF:
         mb_prices = fetch_matchbook_prices(
             sports=["soccer", "basketball", "baseball", "hockey", "tennis", "mma"],
             hours_ahead=hours_ahead,
         )
-        for _k, _v in mb_prices.items():
-            betfair_prices.setdefault(_k, _v)   # Betfair d'abord s'il existe
+        exchange_prices.update(mb_prices)
         if mb_prices:
-            log.info("💹 Matchbook OK — %d marchés sharp (total exchange : %d)",
-                     len(mb_prices), len(betfair_prices))
+            log.info("💹 Matchbook OK — %d marchés sharp", len(mb_prices))
 
-    # Smarkets (2026-09-08) : troisième exchange, sans clé, en COMBLEMENT
-    # derrière Betfair et Matchbook (setdefault) — un match qu'aucun autre
-    # exchange ne cote n'est plus un « MARCHÉ MORT ». Le compte des
-    # « nouveaux » est LA mesure du critère de retrait (core/smarkets.py).
-    # Scans standard seulement : REPRICE a 300 s de budget et Matchbook y
-    # suffit ; Smarkets prend ~100 appels espacés d'une seconde (débit 429).
+    # Smarkets (2026-09-08) : exchange de comblement derrière Matchbook
+    # (setdefault) — un match qu'aucun autre exchange ne cote n'est plus un
+    # « MARCHÉ MORT ». Le compte des « nouveaux » est LA mesure du critère de
+    # retrait (core/smarkets.py). Scans standard seulement : REPRICE a 300 s
+    # de budget et Matchbook y suffit ; Smarkets prend ~100 appels espacés
+    # d'une seconde (débit 429).
     if not _SMARKETS_OFF and not REPRICE:
         sm_prices = fetch_smarkets_prices(
             sports=["soccer", "tennis", "hockey", "baseball", "mma", "basketball"],
@@ -2513,19 +2500,19 @@ def run():
         )
         nouveaux = 0
         for _k, _v in sm_prices.items():
-            if _k in betfair_prices:
+            if _k in exchange_prices:
                 continue
             # « Nouveau » au sens du rapprochement flou (Sheff Utd = Sheffield
             # United) : la mesure du critère de retrait, pas une clé brute.
-            if _lookup_exchange({"home": _v["home"], "away": _v["away"]}, betfair_prices) is None:
+            if _lookup_exchange({"home": _v["home"], "away": _v["away"]}, exchange_prices) is None:
                 nouveaux += 1
-            betfair_prices[_k] = _v
+            exchange_prices[_k] = _v
         if sm_prices:
-            log.info("💹 Smarkets OK — %d marchés sharp (+%d nouveaux hors Matchbook/Betfair, "
-                     "total exchange %d)", len(sm_prices), nouveaux, len(betfair_prices))
+            log.info("💹 Smarkets OK — %d marchés sharp (+%d nouveaux hors Matchbook, "
+                     "total exchange %d)", len(sm_prices), nouveaux, len(exchange_prices))
 
-    if betfair_prices:
-        if _enrich_from_exchange(matches, betfair_prices, log) and \
+    if exchange_prices:
+        if _enrich_from_exchange(matches, exchange_prices, log) and \
                 sharp_source in ("AI/Estimateur", "Aucune"):
             sharp_source = "Exchange+AI"
 
@@ -2544,11 +2531,11 @@ def run():
         # nul, une exécution verte et aucune trace.
         if sb:
             try:
-                capture_from_exchange(sb, matches, betfair_prices, now)
+                capture_from_exchange(sb, matches, exchange_prices, now)
             except Exception as e:
                 log.warning("Closing-line exchange: %s", e)
     else:
-        log.info("💹 Exchange: 0 marché sharp (Betfair absent/refusé, Matchbook vide ou géobloqué)")
+        log.info("💹 Exchange: 0 marché sharp (Matchbook vide ou géobloqué, Smarkets muet)")
 
     # ── Un Tier 1 vide descend au Tier 2, toujours ──────────────────────
     # Jusqu'au 2026-09-01 un tick dont le Tier 1 rendait 0 event sortait ici
@@ -2654,7 +2641,7 @@ def run():
             # quand le réseau et le pipeline vont bien (INCIDENTS.md). Des marchés
             # chargés et zéro match, c'est nous qui avons perdu la donnée.
             _terminer_run(verdict_de_fin(
-                sources_joignables=bool(betfair_prices),
+                sources_joignables=bool(exchange_prices),
                 matches_vus=0), contexte="scan")
             if credentials_failed:
                 raise SystemExit(1)
@@ -2663,8 +2650,8 @@ def run():
         # Second passage de l'exchange : les matchs du Tier 2 viennent
         # d'apparaître, ils n'existaient pas lors du premier. Fait AVANT la
         # recherche web pour que chaque match servi ici n'y soit pas envoyé.
-        if xbet_matches and betfair_prices:
-            _enrich_from_exchange(xbet_matches, betfair_prices, log)
+        if xbet_matches and exchange_prices:
+            _enrich_from_exchange(xbet_matches, exchange_prices, log)
 
         if xbet_matches:
             log.info("%d matchs Tier 2 chargés — tri sharp réel...", len(xbet_matches))

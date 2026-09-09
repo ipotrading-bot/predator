@@ -66,7 +66,7 @@ runs:
     # PRÉFLIGHT D'AMORÇAGE SEULEMENT (C5, 2026-08-27). Ce step ne reçoit plus
     # que les clés Supabase : `pip install` ci-dessus exécute le code de
     # dizaines de paquets tiers, et il n'a rien à faire avec les clés IA, de
-    # cotes, de Telegram ou de Betfair dans son environnement. Le préflight
+    # cotes, de Telegram dans son environnement. Le préflight
     # COMPLET — empreinte Groq, pool Groq, sources de repli — tourne dans le
     # step qui travaille, seul à porter le pool entier.
     - name: Préflight d'amorçage (pool ${{ inputs.pool }})

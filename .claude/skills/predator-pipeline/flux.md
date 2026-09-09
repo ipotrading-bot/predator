@@ -71,7 +71,7 @@ laissez-passer là où l'IP est refusée) — ou Matchbook, qui ne filtre pas.
 |---|---|---|---|---|
 | 1 | The Odds API (`core/odds_api.py`) | sharp + soft | pool `ODDS_API_KEYS` | 500/mois par clé |
 | 1.5 | **Matchbook** (`core/matchbook.py`) | **sharp** (1X2 + totals + handicaps) | aucune | 700 req/min |
-| 1.5 | Betfair (`core/harvester.py`) | sharp | 499 £ + géobloqué US | inopérant sur Actions |
+| 1.5 | ~~Betfair~~ RETIRÉ le 2026-09-09 (règle 13) | — | — | Matchbook + Smarkets tiennent l'exchange |
 | ~~2~~ | ~~api-sports~~ | — | — | RETIRÉE le 2026-09-03 (deux comptes gratuits suspendus) |
 | 2 | **odds-api.io** (`core/odds_api_io.py`) | soft (1X2 + totals + handicaps) | `ODDS_API_IO_KEY` + pool `ODDS_API_IO_KEYS` | 500/jour et 2 books PAR COMPTE |
 | 2 | **Titan007** (`core/titan007.py`) | soft **et** sharp, foot | aucune | ~500/jour (tolérance) |

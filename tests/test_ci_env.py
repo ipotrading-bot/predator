@@ -43,7 +43,7 @@ ci_mode = _module("ci_scan_mode")
 CLES_PRODUCTION = {p.env_key for p in PRODUCTION_SAFE}
 TOUTES_CLES_IA = {p.env_key for p in REGISTRY}
 CLES_PAYANTES = TOUTES_CLES_IA \
-    | set(ci_env.ODDS_SOURCES) | set(ci_env.BETFAIR) | set(ci_env.RELAYS)
+    | set(ci_env.ODDS_SOURCES) | set(ci_env.RELAYS)
 
 # Clés SUPPRIMÉES du pipeline le 2026-09-02 (Groq/Tavily) : aucun pool ne
 # doit plus jamais les transmettre — les réintroduire serait rebrancher une

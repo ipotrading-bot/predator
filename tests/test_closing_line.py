@@ -114,7 +114,6 @@ class TestCaptureClosingLines:
         import core.matchbook as matchbook
         monkeypatch.setattr(matchbook, "fetch_matchbook_prices",
                             lambda **k: {"ajax_feyenoord": {"1": 1.9, "X": 3.4, "2": 4.2}})
-        monkeypatch.delenv("BETFAIR_APP_KEY", raising=False)
 
         def _fake_capture(sb, matches, prices, now=None):
             vus["matches"] = matches
@@ -134,7 +133,6 @@ class TestCaptureClosingLines:
         sig["match_id"] = "mid-1"
         import core.matchbook as matchbook
         monkeypatch.setattr(matchbook, "fetch_matchbook_prices", lambda **k: {})
-        monkeypatch.delenv("BETFAIR_APP_KEY", raising=False)
         assert audit_engine.capture_closing_lines(_FakeSupabase([sig])) == 0
 
     def test_no_candidates_returns_zero(self):

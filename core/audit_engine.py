@@ -376,7 +376,7 @@ def capture_closing_lines(sb, budget: int | None = None) -> int:
     """
     Capture la closing line des signaux à moins de CLOSING_LINE_WINDOW_MIN du
     coup d'envoi, depuis les prix d'EXCHANGE (Matchbook gratuit et illimité,
-    Betfair si la clé est posée) — plus aucun oracle web-search (2026-09-02).
+    Betfair retiré le 2026-09-09) — plus aucun oracle web-search (2026-09-02).
 
     C'était un LLM à qui l'on demandait « la cote Pinnacle » : une génération
     plausible, pas une observation (le motif exact de MAX_ORACLE_DEFAULT = 0,
@@ -404,12 +404,6 @@ def capture_closing_lines(sb, budget: int | None = None) -> int:
     sports = sorted({m["sport"] for m in matches})
     hours = max(1, -(-CLOSING_LINE_WINDOW_MIN // 60))
     prices = fetch_matchbook_prices(sports=sports, hours_ahead=hours) or {}
-    if os.environ.get("BETFAIR_APP_KEY"):
-        from core.harvester import fetch_betfair_prices
-        # Betfair prioritaire quand il répond (prix ajustés de la commission),
-        # même précédence que dans run_engine.
-        bf = fetch_betfair_prices(sports=sports, hours_ahead=hours) or {}
-        prices = {**prices, **bf}
     if not prices:
         log.info("CLOSING LINE — aucun prix d'exchange chargé (%d candidat(s))",
                  len(candidates))

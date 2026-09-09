@@ -14,7 +14,7 @@ et le milieu des deux donne une marge d'environ 0,1 % — meilleur que Pinnacle
 (~2 %). C'est donc une référence sharp de premier ordre, et son endpoint
 `/edge/rest/events` répond sans en-tête d'authentification.
 
-POURQUOI PAS BETFAIR (déjà intégré)
+POURQUOI PAS BETFAIR (intégré jusqu'au 2026-09-09, puis RETIRÉ — règle 13)
 -----------------------------------
 Betfair exige une App Key « Live » à 499 £ et refuse les IP américaines
 (`BETTING_RESTRICTED_LOCATION`, géo MaxMind) : les runners GitHub sont en

@@ -150,7 +150,6 @@ def cabler_reprice(monkeypatch):
     telegrams = []
 
     monkeypatch.setattr(eng, "REPRICE", True)
-    monkeypatch.delenv("BETFAIR_APP_KEY", raising=False)
 
     # Le bouchon honore le nouveau contrat (D3) : la fonction rend le budget
     # armé, que run() journalise — un None ferait planter le %d du log.
@@ -175,7 +174,7 @@ def cabler_reprice(monkeypatch):
 
     # Sentinelles : toute source payante ou recherche web fait ÉCHOUER le test.
     for fn in ("fetch_odds", "fetch_matches",
-               "fetch_betfair_prices", "_odds_api_io_all",
+               "_odds_api_io_all",
                "_titan007_fetch", "capture_from_scan"):
         monkeypatch.setattr(eng, fn, _sentinel(fn))
 

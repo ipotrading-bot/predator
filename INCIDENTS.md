@@ -3464,6 +3464,32 @@ restent reconstituées à l'affichage.
 
 Gardiens : `tests/test_bankroll.py`, `tests/test_bank_page.py`.
 
+### Betfair retiré (2026-09-09, soir) — règle 13, décision opérateur
+
+Chronologie d'une source qui n'a jamais servi : 0 marché chargé depuis le
+2026-07-09 (géo-blocage des runners), proxy Londres le 2026-09-08 → refus
+de certificat (jamais associé au compte) → ~70 logins/jour → ban →
+suspension par clé meta le soir. Le 2026-09-09 l'opérateur ouvre un
+nouveau compte : le visualiseur Betfair rend `APP_KEY_CREATION_FAILED` à la
+création de clé. « Laisse tomber, oublie, abandonne », puis « fais-le
+maintenant » : retrait complet le jour même plutôt qu'à la revue du 22.
+
+Fait : `core/harvester.py` perd tout son bloc Betfair (login cert, backoff,
+suspension, `fetch_betfair_prices`) ; `run_engine` et `audit_engine` ne
+l'appellent plus — le dict d'exchange s'appelle `exchange_prices` (Matchbook
+puis Smarkets en comblement) et le drapeau `_betfair` devient
+`_exchange_hit` ; les cinq secrets `BETFAIR_*` sortent du pool `ci_env`
+(workflows régénérés par `--write`), de `.env.example` et de GitHub
+(`gh secret delete`) ; `tests/test_betfair_backoff.py` et
+`test_betfair_proxy.py` supprimés, les autres tests nettoyés de leurs
+`delenv`/`setattr`. Les clés `meta.betfair_*` restent en base, lues par
+personne. Les noms « Betfair Exchange » dans les listes de books sharp
+d'odds-api.io et titan007 sont des libellés de flux tiers, sans lien avec
+le compte : conservés.
+
+Règle : ne pas réintroduire Betfair. Sortir par un proxy hors du territoire
+du compte est interdit par ses conditions, et l'exchange est déjà couvert.
+
 ### Une version, un seul endroit
 
 `DASHBOARD_VERSION` (`api/index.py`), injectée

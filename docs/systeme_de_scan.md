@@ -8,7 +8,7 @@ Tout le reste (golden, deep, guerrilla) a été supprimé — voir en bas.
 | Mode | Ce qu'il fait | Coût |
 |---|---|---|
 | **standard** | Le VRAI scan : va chercher les cotes (OddsAPI payant + sources gratuites), calcule les edges sur 24 h, émet les signaux, les persiste, envoie le combiné Telegram, puis capte la ligne de clôture. | Crédits OddsAPI, bornés par le rythme mensuel (`core/scan_windows.py`) |
-| **reprice** | Le tick horaire GRATUIT : reprend les cotes photographiées par le dernier standard (cache de 4 h), les recompare aux prix Matchbook/Betfair du moment, capte la clôture d'exchange, et se tait s'il n'y a rien de neuf. Aucune clé payante dans son environnement, c'est mécanique. | Rien |
+| **reprice** | Le tick horaire GRATUIT : reprend les cotes photographiées par le dernier standard (cache de 4 h), les recompare aux prix Matchbook du moment, capte la clôture d'exchange, et se tait s'il n'y a rien de neuf. Aucune clé payante dans son environnement, c'est mécanique. | Rien |
 
 ## Quand (UTC)
 

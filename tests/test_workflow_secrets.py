@@ -196,7 +196,7 @@ def test_secrets_push_nemporte_pas_les_cles_operateur():
     ne les lit."""
     interdits = {"SUPABASE_ACCESS_TOKEN", "SUPABASE_SERVICE_KEY",
                  "VERCEL_TOKEN", "VERCEL_PROJECT", "VERCEL_TEAM_ID",
-                 "GITHUB_PAT", "BETFAIR_PASSWORD"}
+                 "GITHUB_PAT"}
     fuites = sorted(interdits & set(_ops_module()._AI_SECRETS))
     assert not fuites, f"secrets-push pousserait des clés non-IA : {fuites}"
 
@@ -204,14 +204,13 @@ def test_secrets_push_nemporte_pas_les_cles_operateur():
 def test_env_example_documente_les_credentials_reellement_lus():
     """`.env.example` dit « copiez ce fichier en .env ». S'il omet un
     credential que le code lit, la fonctionnalité est inaccessible à qui
-    part d'une copie propre — c'était le cas des cinq variables Betfair et
+    part d'une copie propre — c'était le cas des cinq variables Betfair (retirées
+    le 2026-09-09) et
     de tout le bloc de scripts/ops.py, alors même que CLAUDE.md présente
     `ops.py` comme LA façon de piloter Supabase et Vercel."""
     exemple = (Path(__file__).resolve().parent.parent
                / ".env.example").read_text(encoding="utf-8")
     attendus = [
-        "BETFAIR_USERNAME", "BETFAIR_PASSWORD", "BETFAIR_APP_KEY",
-        "BETFAIR_CERT", "BETFAIR_CERT_KEY",
         "SUPABASE_ACCESS_TOKEN", "SUPABASE_PROJECT_REF",
         "VERCEL_TOKEN", "VERCEL_PROJECT", "VERCEL_TEAM_ID",
         "GITHUB_PAT",

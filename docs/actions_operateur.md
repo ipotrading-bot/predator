@@ -239,40 +239,22 @@ aucun bookmaker sélectionné — écarté »).
 
 ---
 
-## 2ter. Betfair — ABANDONNÉ par l'opérateur ⛔ le 2026-09-09 (suspendu depuis le 2026-09-08)
+## 2ter. Betfair — RETIRÉ ⛔ le 2026-09-09 (décision opérateur, règle 13)
 
-Décision opérateur du 2026-09-09 : « laisse tomber, oublie, abandonne ». Le
-nouveau compte n'a pas pu créer de clé d'application (`APP_KEY_CREATION_FAILED`
-dans le visualiseur Betfair). La suspension ci-dessous RESTE posée : zéro login,
-zéro requête. Retrait complet du code (appels, secrets du pool `ci_env`, tests,
-ce bloc) à faire à la revue du 2026-09-22, règle 13 — ne pas « réparer »
-Betfair d'ici là, ni relever la suspension.
+Chronologie : 0 marché chargé depuis le 2026-07-09 (géo-blocage des runners,
+puis certificat jamais associé), proxy Londres le 2026-09-08, ban du compte
+le soir même, suspension par clé meta, nouveau compte le 2026-09-09 sans clé
+d'application possible (`APP_KEY_CREATION_FAILED`) — « laisse tomber, oublie,
+abandonne ». Retrait complet le jour même : `fetch_betfair_prices` et ses
+appels (run_engine, audit_engine), les cinq secrets `BETFAIR_*` du pool
+`scripts/ci_env.py` (workflows régénérés par `--write`) et de GitHub, les
+tests `test_betfair_*`. Les clés `meta.betfair_suspendu` et
+`meta.betfair_login_backoff_until` ne sont plus lues par personne ; elles
+peuvent rester ou être vidées, sans effet.
 
-
-Décision opérateur du 2026-09-08 au soir : « suspends Betfair pour l'instant,
-mon compte est bloqué, le temps de trouver une solution ». La suspension est
-une clé `meta`, lue à chaque appel par `core.harvester.fetch_betfair_prices`
-(scans ET closing line) : tant qu'elle est posée, AUCUNE tentative de login
-(donc aucun ban entretenu), une ligne INFO par appel, et Matchbook + Smarkets
-tiennent le Tier 1.5. Rien d'autre ne change ; les cinq secrets Betfair
-restent dans le pool `ci_env`.
-
-```bash
-# poser / renouveler (la valeur est le motif, affiché dans les logs)
-python scripts/ops.py supabase meta-set betfair_suspendu "2026-09-08 compte bloque, decision operateur"
-# lever, le jour où le compte est rétabli — effet au scan suivant, sans déploiement
-python scripts/ops.py supabase meta-set betfair_suspendu ""
-# vérifier
-python scripts/ops.py supabase meta betfair
-```
-
-Le backoff automatique (`betfair_login_backoff_until`, posé sur refus de
-compte) est indépendant : il expire tout seul.
-
-Revue le **2026-09-22** (même date que Bet365 et Smarkets) : compte rétabli
-→ lever la suspension et reprendre le critère de retrait du proxy
-(`core/harvester.py`) ; sinon → retrait complet de Betfair (appels dans
-`run_engine`/`audit_engine`, secrets du pool, bloc de doc), règle 13.
+Ne PAS réintroduire Betfair : le proxy fait sortir le compte d'un territoire
+autorisé (interdit par Betfair), et Matchbook + Smarkets tiennent le Tier 1.5
+et la closing line depuis juillet.
 
 ## 3. Cloudflare — Smart Placement ⚠️ ESSAYÉ, INSUFFISANT
 

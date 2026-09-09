@@ -33,7 +33,7 @@ def flip_exchange_prices(row: dict) -> dict:
     silencieux. Les totals, eux, sont symétriques et se recopient.
     """
     out = {"1": row["2"], "X": row.get("X", 0.0), "2": row["1"],
-           "_source": row.get("_source", "betfair")}
+           "_source": row.get("_source", "exchange")}
     if row.get("totals"):
         out["totals"] = row["totals"]
     sp = row.get("spreads")

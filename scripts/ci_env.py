@@ -50,7 +50,7 @@ imprimée, et il ne faut pas ajouter d'`echo` de debug dans ces steps.
 
 POOLS.
     scan        moteur de scan (run_engine.py) — sources + IA du registre
-    closing     capture closing line — Supabase RW + exchange (Betfair opt.)
+    closing     capture closing line — Supabase RW + exchange (Matchbook)
     settlement  audit (run_audit.py) — Supabase RW + clés de RÉSULTATS
                 (api-sports…), AUCUNE clé IA : le settlement est déterministe
                 depuis le 2026-09-02 (Groq/Tavily supprimés)
@@ -96,8 +96,9 @@ ODDS_SOURCES = ("ODDS_API_KEY", "ODDS_API_KEYS")
 # « vivre sans ». Une capacité non câblée est une capacité morte, et elle
 # meurt SANS ERREUR.
 RESULTS_SOURCES = ("THESPORTSDB_API_KEY",)
-BETFAIR = ("BETFAIR_APP_KEY", "BETFAIR_USERNAME", "BETFAIR_PASSWORD",
-           "BETFAIR_CERT", "BETFAIR_CERT_KEY")
+# Les cinq secrets Betfair (BETFAIR_APP_KEY, _USERNAME, _PASSWORD, _CERT,
+# _CERT_KEY) ont été RETIRÉS le 2026-09-09 avec la source (décision
+# opérateur, règle 13) — aucun pool ne doit plus les transmettre.
 # Sortie réseau des sources filtrées par IP (core/net.py) : proxy OU relais
 # Cloudflare Worker, génériques. Les overrides par source ODDS500_*/SEVENM_*
 # sont partis avec odds500 et 7M le 2026-09-03 ; core/score_sources.py (ESPN…)
@@ -139,17 +140,15 @@ AI_FULL = _uniq(AI_KEYS, _companions_of(AI_KEYS))
 # warn_missing: avertissement (pas d'erreur) si absent
 POOLS: dict[str, dict] = {
     "scan": dict(
-        passthrough=_uniq(SUPABASE_RW, TELEGRAM, ODDS_SOURCES, BETFAIR, RELAYS,
+        passthrough=_uniq(SUPABASE_RW, TELEGRAM, ODDS_SOURCES, RELAYS,
                           RESULTS_SOURCES, AI_FULL),
         required=SUPABASE_RW, service_role=True, warn_missing=FALLBACK_SOURCES),
     "closing": dict(
-        # La capture de closing line lit l'EXCHANGE (Matchbook sans clé,
-        # Betfair si les clés sont posées) — plus aucune clé IA/recherche
-        # depuis la suppression de l'oracle web (2026-09-02).
-        # RELAYS depuis le 2026-09-08 : Betfair sort par le proxy
-        # (core/harvester.py, géo-blocage des runners), et la closing line
-        # est son appelant le plus fréquent.
-        passthrough=_uniq(SUPABASE_RW, BETFAIR, RELAYS),
+        # La capture de closing line lit l'EXCHANGE (Matchbook, sans clé) —
+        # plus aucune clé IA/recherche depuis la suppression de l'oracle web
+        # (2026-09-02). RELAYS reste transmis : proxy générique des sources
+        # filtrées par IP (core/net.py).
+        passthrough=_uniq(SUPABASE_RW, RELAYS),
         required=SUPABASE_RW, service_role=True),
     "settlement": dict(
         # AUCUNE clé IA : le settlement est déterministe (MLB statsapi, ESPN
@@ -187,7 +186,7 @@ def bootstrap_keys(pool: str) -> tuple:
     L'action composite `.github/actions/setup` recevait le pool ENTIER. Or
     elle ne fait pas que le préflight : elle restaure un cache et lance
     `pip install -r requirements.txt`. Toutes les clés IA, de cotes, de
-    Telegram et de Betfair étaient donc dans l'environnement d'un `pip`, qui
+    Telegram (et, à l'époque, de Betfair) étaient donc dans l'environnement d'un `pip`, qui
     exécute du code arbitraire de dizaines de paquets tiers. C'est exactement
     le reproche que CLAUDE.md fait au dump `toJSON(secrets)` — « lisible par
     chaque step du job, `actions/checkout` et `pip install` compris » — sous

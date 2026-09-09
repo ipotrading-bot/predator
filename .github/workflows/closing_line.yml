@@ -65,11 +65,6 @@ jobs:
           SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
           SUPABASE_KEY: ${{ secrets.SUPABASE_KEY }}
           SUPABASE_SERVICE_KEY: ${{ secrets.SUPABASE_SERVICE_KEY }}
-          BETFAIR_APP_KEY: ${{ secrets.BETFAIR_APP_KEY }}
-          BETFAIR_USERNAME: ${{ secrets.BETFAIR_USERNAME }}
-          BETFAIR_PASSWORD: ${{ secrets.BETFAIR_PASSWORD }}
-          BETFAIR_CERT: ${{ secrets.BETFAIR_CERT }}
-          BETFAIR_CERT_KEY: ${{ secrets.BETFAIR_CERT_KEY }}
           FREE_SOURCES_PROXY: ${{ secrets.FREE_SOURCES_PROXY }}
           FREE_SOURCES_RELAY: ${{ secrets.FREE_SOURCES_RELAY }}
           FREE_SOURCES_RELAY_TOKEN: ${{ secrets.FREE_SOURCES_RELAY_TOKEN }}

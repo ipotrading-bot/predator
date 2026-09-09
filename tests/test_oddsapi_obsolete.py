@@ -43,7 +43,6 @@ def scan_env(monkeypatch):
 
     monkeypatch.setattr(eng, "ODDS_API_ENABLED", False)
     monkeypatch.setattr(eng, "REPRICE", False)
-    monkeypatch.delenv("BETFAIR_APP_KEY", raising=False)
 
     # Contrat D3 : rend le budget armé (journalisé par run()).
     monkeypatch.setattr(eng, "_arm_global_timeout", lambda mode=None: 900)
@@ -73,7 +72,6 @@ def scan_env(monkeypatch):
     monkeypatch.setattr(eng, "_odds_api_io_all", lambda **_k: [])
     monkeypatch.setattr(eng, "_titan007_fetch", lambda **_k: [])
     monkeypatch.setattr(eng, "fetch_matchbook_prices", lambda **_k: {})
-    monkeypatch.setattr(eng, "fetch_betfair_prices", lambda **_k: {})
 
     return sb, telegrams
 
