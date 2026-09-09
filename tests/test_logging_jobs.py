@@ -22,10 +22,15 @@ un état global de processus, et pytest comme les autres tests en installent.
 Vérifier dans le processus courant ne prouverait rien sur le vrai job.
 Aucun réseau, aucune credential — seuls des imports.
 """
+import pathlib
 import subprocess
 import sys
 
-WORKDIR = "/workspaces/predator"
+# DÉRIVÉE du fichier, jamais codée en dur : une première version portait
+# « /workspaces/predator », ce qui passait en local (pytest y tourne déjà) et
+# faisait tomber la CI sur `FileNotFoundError` — le runner GitHub n'a pas ce
+# chemin. Même convention que tests/test_audit_cadence.py.
+RACINE = pathlib.Path(__file__).resolve().parent.parent
 
 
 def _dans_un_processus_neuf(code: str) -> str:
@@ -35,7 +40,7 @@ def _dans_un_processus_neuf(code: str) -> str:
     STDERR, alors qu'un `print` va sur stdout. Ne lire que stdout faisait
     passer ces tests pour rouges alors que le correctif marchait.
     """
-    res = subprocess.run([sys.executable, "-c", code], cwd=WORKDIR,
+    res = subprocess.run([sys.executable, "-c", code], cwd=str(RACINE),
                          capture_output=True, text=True, timeout=120)
     assert res.returncode == 0, f"le script a échoué : {res.stderr[-800:]}"
     return res.stdout + res.stderr
