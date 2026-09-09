@@ -268,8 +268,9 @@ def monthly_summary(rows: list[dict], tax_rate: float) -> list[dict]:
         lignes = par_mois[mo]
         d = _bloc_decisif([r for r in lignes if r.get("outcome") in _DECISIF], tax_rate)
         clv_real = [r["clv_pct_real"] for r in lignes if r.get("clv_pct_real") is not None]
-        clv_fallback = [r["clv_final"] for r in lignes if r.get("clv_final") is not None]
-        clv = clv_real or clv_fallback
+        # Le repli `clv_final` est SUPPRIMÉ (2026-09-09) : il valait l'edge
+        # d'entrée, jamais négatif — voir INCIDENTS.md « Le CLV du dashboard ».
+        clv = clv_real
         edges = [r["initial_edge"] for r in lignes if r.get("initial_edge") is not None]
         d.update({
             "month": mo, "label": month_label(mo),

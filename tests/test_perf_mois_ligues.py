@@ -89,13 +89,24 @@ class TestMonthlySummary:
         assert carte["win_rate"] is None
         assert carte["above_breakeven"] is False and carte["below_breakeven"] is False
 
-    def test_clv_reel_prime_et_ne_se_melange_pas(self):
+    def test_clv_reel_seul_jamais_de_repli_sur_ledge_dentree(self):
+        """Le CLV affiché vient de la CLÔTURE, ou de rien (2026-09-09).
+
+        `clv_final` a porté, jusqu'à cette date, une re-dérivation de l'edge
+        d'entrée : positive par construction, puisque MIN_EDGE ne laisse
+        jamais passer un edge négatif. Mesuré en base ce jour-là :
+        `was_clv_positive` valait True sur 565 des 566 lignes du ledger et le
+        dashboard annonçait 99,8 % de « CLV positif ». Le repli est donc
+        SUPPRIMÉ : sans capture, la carte rend None et le dit.
+        """
         rows = [_r("2026-09", "WIN", clv_pct_real=3.0, clv_final=-9.0),
                 _r("2026-09", "WIN", clv_final=-9.0)]
         carte = monthly_summary(rows, 0.0)[0]
         assert carte["clv_is_real"] is True and carte["avg_clv"] == 3.0 and carte["clv_n"] == 1
+        # Aucun CLV réel : la case reste VIDE, elle ne recopie pas clv_final.
         carte2 = monthly_summary([_r("2026-09", "WIN", clv_final=-9.0)], 0.0)[0]
-        assert carte2["clv_is_real"] is False and carte2["avg_clv"] == -9.0
+        assert carte2["clv_is_real"] is False
+        assert carte2["avg_clv"] is None and carte2["clv_n"] == 0
 
     def test_ligne_sans_date_ignoree(self):
         assert monthly_summary([{"outcome": "WIN"}], 0.0) == []

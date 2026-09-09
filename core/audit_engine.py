@@ -266,20 +266,25 @@ def audit_one(sb, sig: dict, settle_calls: list, now: datetime) -> str:
         log.info("CLV %+.2f%% %s | %s (closing %s)", clv, "✓" if clv >= 0 else "✗",
                  match, sig.get("closing_source") or "?")
     else:
-        orig_pin = sig.get("pinnacle_price") or 0.0
-        clv      = round((sig["xbet_odd"] / orig_pin - 1) * 100, 2) if orig_pin > 1.01 else 0.0
-        closing_price = orig_pin
-        status   = "expired"
-        log.info("EXPIRED  | %s (proxy CLV %+.2f%%)", match, clv)
+        # PLUS DE PROXY (2026-09-09). On écrivait ici `xbet_odd / pinnacle_price`
+        # — l'edge d'ENTRÉE — dans `clv_pct`, et le prix d'entrée dans
+        # `closing_line`. Les deux mentaient : l'edge d'entrée est positif par
+        # construction, et une « clôture » égale au prix d'ouverture n'a jamais
+        # été observée. Un signal expiré sans capture n'a PAS de CLV ; il le dit
+        # maintenant en restant NUL. Voir INCIDENTS.md « Le CLV du dashboard ».
+        clv           = None
+        closing_price = None
+        status        = "expired"
+        log.info("EXPIRED  | %s (aucune clôture capturée — CLV non mesuré)", match)
 
     ok = _update_signal(sb, sig, {
         "status":       status,
-        "clv_pct":      float(clv),
+        "clv_pct":      float(clv) if clv is not None else None,
         "closing_line": float(closing_price) if closing_price else None,
         "closed_at":    now_iso,
     })
     if ok:
-        log_to_ledger(sb, sig, float(clv), status)
+        log_to_ledger(sb, sig, float(clv) if clv is not None else None, status)
     else:
         log.error("Skipping ledger write for lost signal %s", sig["id"])
     return status

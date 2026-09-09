@@ -134,11 +134,10 @@ def settle_signal(sb, sig: dict, now_iso: str, tsdb_ok: bool = True) -> bool:
     orig_pin = sig.get("pinnacle_price") or 0.0
     # NOT real CLV: xbet_odd/pinnacle_price are the exact same two values
     # already used to compute edge_pct at scan time (see paim_engine.compute_alpha),
-    # so this is a re-derivation of the entry edge, not a closing-line
-    # comparison — it is already stored honestly as `initial_edge` in the
-    # ledger (core/db.py:log_to_ledger). Kept here only to populate the
-    # legacy `signals.clv_pct` display column until core/audit_engine.py's
-    # real closing-line pipeline (Task 3) lands. Never treat this as CLV.
+    # so this is a re-derivation de l'edge d'entrée, pas une comparaison à la
+    # clôture — il est déjà stocké honnêtement en `initial_edge` dans le
+    # ledger (core/db.py:log_to_ledger). Gardé UNIQUEMENT pour la ligne de
+    # log ci-dessous : depuis le 2026-09-09 il n'est plus ÉCRIT nulle part.
     entry_edge_pct = round((sig["xbet_odd"] / orig_pin - 1) * 100, 2) if orig_pin > 1.01 else 0.0
 
     # UPDATE en place. C'était un DELETE + INSERT jusqu'au 2026-08-27, justifié
@@ -150,9 +149,17 @@ def settle_signal(sb, sig: dict, now_iso: str, tsdb_ok: bool = True) -> bool:
     # On ne patche QUE les champs qui changent : réécrire `{**sig, **patch}`
     # renvoyait à la base des colonnes qu'on n'avait aucune raison de toucher,
     # et pouvait écraser une capture de closing line posée entre-temps.
+    # `clv_pct` N'EST PLUS ÉCRIT ICI (2026-09-09). Il valait `entry_edge_pct`,
+    # qui est positif par construction — MIN_EDGE ne laisse jamais passer un
+    # edge négatif. Résultat mesuré ce jour-là : 413 des 414 valeurs de
+    # `signals.clv_pct` étaient >= 0, et le « hit rate CLV » du dashboard
+    # affichait 99,8 % en croyant mesurer la clôture. Une colonne de CLV qui
+    # ne peut pas être négative ne mesure rien. Elle appartient désormais au
+    # SEUL pipeline qui observe un prix postérieur : core/audit_engine.py.
+    # Sans capture de clôture, elle reste NULLE — un trou visible vaut mieux
+    # qu'un chiffre faux. Voir INCIDENTS.md « Le CLV du dashboard ».
     patch = {
         "status":    "settled",
-        "clv_pct":   float(entry_edge_pct),
         "closed_at": now_iso,
         "outcome":   outcome,
     }
@@ -162,8 +169,8 @@ def settle_signal(sb, sig: dict, now_iso: str, tsdb_ok: bool = True) -> bool:
     log.info("SETTLED  | %s %d-%d | outcome=%s | entry edge %+.2f%%", match, hs, as_, outcome, entry_edge_pct)
 
     # Feed ai_learning_ledger with the real settled outcome — this is what
-    # core/learning_layer.py must key off of (never the clv_final/entry-edge
-    # value below, which cannot vary with the actual match result).
-    log_to_ledger(sb, sig, float(entry_edge_pct), outcome)
+    # core/learning_layer.py must key off of. `clv=None` : ce règlement n'a
+    # observé AUCUN prix de clôture, donc il n'a pas de CLV à déclarer.
+    log_to_ledger(sb, sig, None, outcome)
 
     return True

@@ -324,18 +324,20 @@ def _ledger_jumeau_reel(sb, payload: dict) -> bool:
     return True
 
 
-def log_to_ledger(sb, sig: dict, clv: float, outcome: str) -> None:
+def log_to_ledger(sb, sig: dict, clv: float | None, outcome: str) -> None:
     """Insert one row into ai_learning_ledger for a settled/closed/expired
     signal. Failure here is logged CRITICAL (not swallowed as routine) —
     it means /performance and the learning layer silently never see this
     outcome, most commonly because
     sql/migrate_v9_4_ledger_display_fields.sql hasn't been applied yet.
 
-    `clv` is CLV only when the caller genuinely re-fetched a price at a
-    later point in time (core/audit_engine.py's oracle pass); when the
-    caller is core/settlement.py's settle_signal(), it is a re-derivation
-    of the entry edge (identical to `initial_edge` below) and must never be
-    used as a real closing-line signal — see core/settlement.py for why.
+    `clv` n'est renseigné que par l'appelant qui a VU un prix postérieur
+    (la capture de clôture de core/audit_engine.py). Partout ailleurs il
+    vaut None, et `clv_final`/`was_clv_positive` restent NULS. Ils ont
+    porté, jusqu'au 2026-09-09, une re-dérivation de l'edge d'entrée :
+    positive par construction, donc `was_clv_positive` valait True sur
+    565 des 566 lignes du ledger. Une colonne qui ne peut pas être fausse
+    ne prouve rien — voir INCIDENTS.md « Le CLV du dashboard ».
     core/learning_layer.py must key its threshold adjustments off `outcome`
     (real WIN/LOSS), never off this field.
 
@@ -423,7 +425,7 @@ def log_to_ledger(sb, sig: dict, clv: float, outcome: str) -> None:
         "initial_edge":          sig.get("edge_pct"),
         "sharp_divergence_std":  None,
         "clv_final":             clv,
-        "was_clv_positive":      clv > 0,
+        "was_clv_positive":      (clv > 0) if clv is not None else None,
         "outcome":               outcome,
         **_optional,
     }

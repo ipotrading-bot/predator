@@ -2996,6 +2996,66 @@ retrait d'une source doit emporter ce qui n'existait que pour elle — c'est
 déjà la règle appliquée à odds500 (`team_aliases`, `TRANSLATE_CJK`), elle a
 simplement été oubliée pour le proxy.
 
+### Le CLV du dashboard mesurait l'edge d'entrée, jamais la clôture (2026-09-09, soir)
+
+La page `/ledger` annonçait un « CLV Hit Rate » proche de 100 % et affichait à
+côté une cellule « CLV proxy ». Mesuré en base ce soir-là : `signals.clv_pct`
+valait >= 0 sur **413 des 414** lignes renseignées, et
+`ai_learning_ledger.was_clv_positive` valait True sur **565 lignes sur 566**.
+La VRAIE ligne de clôture n'était capturée que sur 81 lignes, et
+`clv_pct_real` n'était renseigné que sur 139.
+
+Cause : trois écritures posaient une re-dérivation de l'edge d'ENTRÉE dans une
+colonne nommée CLV. `core/settlement.py` (`settle_signal`) écrivait
+`clv_pct = entry_edge_pct` (soit `xbet_odd / pinnacle_price`) et le passait à
+`log_to_ledger` ; `core/audit_engine.py`, branche `expired`, écrivait ce même
+edge d'entrée dans `clv_pct` ET le prix d'ENTRÉE dans `closing_line` — une
+« clôture » égale à l'ouverture, jamais observée nulle part ; `core/db.py` en
+dérivait `was_clv_positive = clv > 0`. Cette valeur est positive PAR
+CONSTRUCTION : `MIN_EDGE` ne laisse jamais sortir un signal d'edge négatif.
+**Une métrique qui ne peut pas être mauvaise ne mesure rien.** Le dashboard s'y
+repliait en plus explicitement — `clv_all = clv_real or [clv_final...]` dans
+`api/index.py`, `clv_fallback` dans `core/perf_view.py`.
+
+Ce n'est pas une coquette d'affichage. Le CLV est le seul indicateur qui ne
+dépend pas du résultat, donc le seul qui converge à faible échantillon. Mesure
+du même soir sur les 100 lignes du ledger portant un CLV RÉEL : CLV+ = **67,1 %
+de réussite et +3,5 % de ROI (n=73)**, CLV− = **51,9 % et −23,0 % (n=27)**. Il
+faudrait plusieurs centaines de paris réglés pour établir le même écart par le
+taux de réussite seul ; le dashboard remplaçait ce signal par une tautologie.
+
+Fait : `core/settlement.py` n'écrit plus `clv_pct` du tout et appelle
+`log_to_ledger(..., clv=None, ...)` — l'edge d'entrée reste loggé et reste
+stocké honnêtement en `initial_edge`. La branche `expired` de
+`core/audit_engine.py` pose `clv_pct = None` et `closing_line = None`, avec le
+log « aucune clôture capturée — CLV non mesuré ». `core/db.py` :
+`was_clv_positive = (clv > 0) if clv is not None else None`, signature
+`clv: float | None`. Dans `backfill_ledger.py`, le critère de saut devient
+l'ISSUE et non le CLV — sinon le script sautait désormais toutes les lignes
+réglées, c'est-à-dire exactement celles qu'il existe pour rattraper.
+`api/index.py` : plus de repli sur `clv_final` ; `/ledger` ne filtre plus ses
+lignes sur `clv_pct is not None` (ça aurait vidé la page) et trie par
+`closed_at` ; la ventilation par sport écarte les None avant de sommer.
+`core/perf_view.py` : repli `clv_fallback` supprimé. `templates/ledger.html` :
+les deux blocs CLV fusionnés en UN seul, alimenté par la clôture réelle et
+étiqueté avec son n ; sans capture, la barre affiche « CLV (non capturé) » au
+lieu d'inventer un chiffre.
+
+⛔ **Aucune écriture dans une colonne de CLV sans un prix POSTÉRIEUR réellement
+observé.** Sans capture, la colonne reste NULLE : un trou se voit et se répare,
+un faux chiffre se croit.
+
+⚠️ Reste à faire, et c'est le vrai goulot : la couverture de capture de
+clôture, **81 lignes sur 422**. Tant qu'elle ne monte pas, la page affichera
+surtout « non capturé » — c'est le prix de l'honnêteté, et le prochain
+chantier.
+
+Gardiens : `tests/test_clv_honnete.py` (6 tests : le patch de règlement ne
+contient pas `clv_pct` ; le ledger reçoit None ; `was_clv_positive` nul sans
+CLV et calculé avec ; la branche `expired` ne pose ni `clv_pct` ni
+`closing_line` ; avec une clôture capturée le CLV est bien écrit) et
+`tests/test_perf_mois_ligues.py::TestMonthlySummary::test_clv_reel_seul_jamais_de_repli_sur_ledge_dentree`.
+
 ### Une version, un seul endroit
 
 `DASHBOARD_VERSION` (`api/index.py`), injectée

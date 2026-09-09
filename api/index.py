@@ -490,39 +490,33 @@ def ledger():
             res = (sb.table("signals")
                    .select("*")
                    .in_("status", ["settled", "closed", "expired"])
-                   .order("clv_pct", desc=True)
+                   # Tri par DATE DE CLÔTURE : trier par `clv_pct` mettait en
+                   # tête les lignes qui en ont un, et depuis le 2026-09-09
+                   # c'est une minorité — la page aurait ouvert sur un
+                   # échantillon trié par sa propre métrique.
+                   .order("closed_at", desc=True)
                    .limit(300)
                    .execute())
-            signals = [s for s in (res.data or []) if s.get("clv_pct") is not None]
+            # La page liste les paris AUDITÉS, pas ceux qui ont un CLV : le
+            # filtre `clv_pct is not None` a sauté le 2026-09-09, quand cette
+            # colonne a cessé de porter l'edge d'entrée. Le garder aurait vidé
+            # la page de tout ce qui n'a pas de capture de clôture, c'est-à-dire
+            # de la majorité. Le CLV, lui, ne se calcule QUE sur les lignes qui
+            # en ont un — et `clv_n` dit combien.
+            signals = res.data or []
 
             if signals:
-                clv_vals  = [s["clv_pct"] for s in signals]
-                hit_count = sum(1 for c in clv_vals if c >= 0)
-                stats = {
-                    "total":     len(signals),
-                    "hit_rate":  round(hit_count / len(clv_vals) * 100, 1),
-                    "avg_clv":   round(sum(clv_vals) / len(clv_vals), 2),
-                    "best_clv":  round(max(clv_vals), 2),
-                    "worst_clv": round(min(clv_vals), 2),
-                }
-
-                # Real closing-line CLV — reported SEPARATELY, never merged
-                # into the block above. `clv_pct` is the audit's proxy
-                # (a price fetched hours after kickoff, or a re-derivation of
-                # the entry edge — see core/settlement.py); `clv_pct_real` is
-                # the bet's price against the actual sharp close, captured
-                # before kickoff by core/closing_line.py. Averaging the two
-                # together would let the proxy dilute the only number that
-                # can confirm or kill a market. `real_n` is what makes the
-                # figure readable: until capture has had time to accumulate,
-                # a +8% on n=3 must not look like a verdict.
-                real_vals = [s["clv_pct_real"] for s in signals
-                             if s.get("clv_pct_real") is not None]
-                stats["real_n"] = len(real_vals)
-                if real_vals:
-                    stats["avg_clv_real"]  = round(sum(real_vals) / len(real_vals), 2)
-                    stats["hit_rate_real"] = round(
-                        sum(1 for c in real_vals if c >= 0) / len(real_vals) * 100, 1)
+                clv_vals = [s["clv_pct"] for s in signals
+                            if s.get("clv_pct") is not None]
+                stats = {"total": len(signals), "clv_n": len(clv_vals)}
+                if clv_vals:
+                    hit_count = sum(1 for c in clv_vals if c >= 0)
+                    stats.update({
+                        "hit_rate":  round(hit_count / len(clv_vals) * 100, 1),
+                        "avg_clv":   round(sum(clv_vals) / len(clv_vals), 2),
+                        "best_clv":  round(max(clv_vals), 2),
+                        "worst_clv": round(min(clv_vals), 2),
+                    })
 
                 # Load current dynamic thresholds
                 t_res = sb.table("meta").select("key,value").like("key", "threshold_%").execute()
@@ -551,7 +545,11 @@ def ledger():
                 # audit workflow (learning_layer), not to a dashboard read.
                 all_sports = sorted(set(s.get("sport", "") for s in signals if s.get("sport")))
                 for sport in all_sports:
-                    sv = [s["clv_pct"] for s in signals if s.get("sport") == sport]
+                    # `is not None` OBLIGATOIRE depuis le 2026-09-09 : la
+                    # colonne est nulle sur les lignes sans capture de
+                    # clôture, et sommer des None fait tomber la page.
+                    sv = [s["clv_pct"] for s in signals
+                          if s.get("sport") == sport and s.get("clv_pct") is not None]
                     if not sv:
                         continue
                     avg = round(sum(sv) / len(sv), 2)
@@ -560,16 +558,10 @@ def ledger():
                     cur_t   = thresholds.get(sport, _DEFAULT_T.get(sport, 2.0))
                     def_t   = _DEFAULT_T.get(sport, 2.0)
 
-                    # Per-sport real CLV, same separation as the global block.
-                    rv = [s["clv_pct_real"] for s in signals
-                          if s.get("sport") == sport and s.get("clv_pct_real") is not None]
-
                     sports_stats[sport] = {
                         "count":     len(sv),
                         "hit_rate":  hit,
                         "avg_clv":   avg,
-                        "real_n":    len(rv),
-                        "avg_clv_real": round(sum(rv) / len(rv), 2) if rv else None,
                         "threshold": cur_t,
                         "default_t": def_t,
                         "verdict":   verdict,
@@ -783,7 +775,12 @@ def performance():
                 # looking at, so the page can't quietly label the entry edge
                 # as CLV.
                 clv_real = [r["clv_pct_real"] for r in reco if r.get("clv_pct_real") is not None]
-                clv_all  = clv_real or [r["clv_final"] for r in reco if r.get("clv_final") is not None]
+                # PLUS DE REPLI sur `clv_final` (2026-09-09). Il portait l'edge
+                # d'entrée, positif par construction : la page annonçait un CLV
+                # qui ne pouvait pas être mauvais. Sans capture de clôture, la
+                # case reste VIDE. Un trou se voit et se répare ; un faux
+                # chiffre se croit.
+                clv_all  = clv_real
                 edges    = [r["initial_edge"] for r in reco if r.get("initial_edge") is not None]
 
                 # Task 4: never show a win rate without its Wilson 95% CI

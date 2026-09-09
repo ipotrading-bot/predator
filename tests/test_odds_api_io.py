@@ -254,6 +254,43 @@ def test_les_majeures_passent_avant_le_cap(monkeypatch):
     assert calls["limit"] == "240"       # le calendrier entier pour une requête
 
 
+def test_la_zone_jouable_passe_avant_les_matchs_imminents(monkeypatch):
+    """Le cap ne doit plus être mangé par des fantômes (2026-09-09).
+
+    Le tri était (ligue, heure) : dans une ligue bien classée, la coupe à
+    `cap` prenait les coups d'envoi les PLUS PROCHES — donc ceux qui sortent
+    en fantôme sous T-2h et ne sont jamais envoyés. Mesuré sur le football
+    depuis le 09-03 : 94 fantômes sur 119 lignes du harvester (79 %), délai
+    moyen 105 min, contre 17 % et 308 min pour le Tier 1 payant, qui applique
+    déjà cette borne. Un match imminent d'une GRANDE ligue doit désormais
+    passer DERRIÈRE un match jouable d'une petite (règle n°9 : il n'est pas
+    jeté, il attend la place qui reste).
+    """
+    from datetime import datetime, timedelta, timezone
+    now = datetime.now(timezone.utc)
+    imminent = (now + timedelta(minutes=30)).strftime("%Y-%m-%dT%H:%M:%SZ")
+    jouable  = (now + timedelta(hours=6)).strftime("%Y-%m-%dT%H:%M:%SZ")
+
+    evs = [_event(1, "Inter", "Milan", date=imminent),
+           _event(2, "Petit", "Club", date=jouable)]
+    evs[0]["league"] = {"name": "Italy - Serie A"}
+    evs[1]["league"] = {"name": "Finland - Kolmonen, Western, Group 3"}
+    calls = _wire(monkeypatch, evs, [[]])
+    oai.fetch_sport("soccer", api_key="k", max_events=1)
+    assert calls["multi"] == [["2"]], "le match jouable d'abord, malgré la ligue mineure"
+
+
+def test_une_date_illisible_nest_pas_releguee(monkeypatch):
+    """Un match qu'on n'a pas su dater garde son rang : on ne le traite pas
+    en fantôme sur une simple erreur de format."""
+    evs = [_event(1, "A", "B", date=""), _event(2, "C", "D", date="2030-01-01T20:00:00Z")]
+    evs[0]["league"] = {"name": "Italy - Serie A"}
+    evs[1]["league"] = {"name": "Finland - Kolmonen, Western, Group 3"}
+    calls = _wire(monkeypatch, evs, [[]])
+    oai.fetch_sport("soccer", api_key="k", max_events=1)
+    assert calls["multi"] == [["1"]], "date illisible = rang de ligue normal"
+
+
 def test_le_cap_du_foot_est_120_les_autres_60():
     assert oai.cap_pour("soccer") == 120
     assert oai.cap_pour("tennis") == oai.cap_pour("basketball") == 60

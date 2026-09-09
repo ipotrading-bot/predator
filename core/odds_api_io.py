@@ -66,6 +66,12 @@ from core.constants import EXECUTION_BOOKS
 from core.secret_store import get_secret
 from core.execution_books import book_canonique, est_book_execution, fusionner_lignes, ordre
 from core.source_adapter import league_rank
+# Borne T-2h du fantôme et marge de retard des crons — IMPORTÉES, jamais
+# recopiées (règle n°6) : le Tier 1 payant s'en sert déjà pour son pré-vol
+# (core/odds_api._events_in_window), et les deux sources doivent découper la
+# zone jouable au même endroit.
+from core.learning_layer import _PLAYABLE_MIN_MINUTES as PLAYABLE_MIN_MINUTES
+from core.odds_api import PLAYABLE_MARGIN_MIN
 
 log = logging.getLogger("PREDATOR.odds_api_io")
 
@@ -471,11 +477,30 @@ def fetch_sport(sport: str, api_key: str | None = None, hours_ahead: int = 24,
     # `pending` = à venir. Les statuts live/settled/cancelled n'ont rien à
     # faire dans un scan pré-match.
     a_venir = [e for e in body if str(e.get("status", "")).lower() == "pending"]
-    # Les majeures d'abord, puis l'heure — tri stable : sans ligue connue,
-    # l'ordre reste celui des coups d'envoi, comme avant.
-    a_venir.sort(key=lambda e: (league_rank(str((e.get("league") or {}).get("name", ""))),
+    # ── ZONE JOUABLE D'ABORD (2026-09-09) ─────────────────────────────
+    # Le tri était (ligue, heure) et la coupe à `cap` prenait donc, dans les
+    # ligues bien classées, les coups d'envoi les PLUS PROCHES — exactement
+    # ceux qui sortiront en fantôme sous T-2h et ne seront jamais envoyés.
+    # Mesuré ce jour-là sur le football depuis le 09-03 : 94 fantômes sur 119
+    # lignes côté harvester (79 %), pour un délai moyen de 105 min, contre
+    # 4 sur 23 (17 %) et 308 min côté Tier 1 payant — qui, lui, applique
+    # déjà cette borne dans son pré-vol. Les matchs imminents ne sont PAS
+    # jetés : ils passent en fin de file et remplissent le cap s'il reste de
+    # la place, donc la mesure des fantômes reste possible (règle n°9).
+    seuil = (now + timedelta(minutes=PLAYABLE_MIN_MINUTES + PLAYABLE_MARGIN_MIN)
+             ).strftime("%Y-%m-%dT%H:%M:%SZ")
+
+    def _fantome(e) -> int:
+        """1 si le coup d'envoi est déjà sous la borne. Une date illisible
+        vaut 0 : on ne relègue pas un match qu'on n'a pas su dater."""
+        d = str(e.get("date", ""))
+        return 1 if len(d) >= 19 and d < seuil else 0
+
+    a_venir.sort(key=lambda e: (_fantome(e),
+                                league_rank(str((e.get("league") or {}).get("name", ""))),
                                 str(e.get("date", ""))))
     events = a_venir[:cap]
+    n_fantomes = sum(_fantome(e) for e in events)
     if not events:
         log.info("odds-api.io[%s]: 0 match à venir dans les %dh", sport, hours_ahead)
         return []
@@ -504,9 +529,11 @@ def fetch_sport(sport: str, api_key: str | None = None, hours_ahead: int = 24,
                 matches.append(m)
 
     n_sharp = sum(1 for m in matches if m.get("odds_pinnacle"))
-    log.info("odds-api.io[%s]: %d matchs (%d avec prix sharp) / %d à venir (%d lus) | "
-             "books=%s | comptes=%d/%d | %d/%d req au total aujourd'hui",
-             sport, len(matches), n_sharp, len(a_venir), len(events), book_param,
+    log.info("odds-api.io[%s]: %d matchs (%d avec prix sharp) / %d à venir (%d lus, "
+             "dont %d sous T-%dmin) | books=%s | comptes=%d/%d | "
+             "%d/%d req au total aujourd'hui",
+             sport, len(matches), n_sharp, len(a_venir), len(events), n_fantomes,
+             PLAYABLE_MIN_MINUTES + PLAYABLE_MARGIN_MIN, book_param,
              len(live_keys(keys)), len(keys),
              daily_quota.spent(QUOTA_BUCKET), budget_total)
     return matches

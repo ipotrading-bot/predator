@@ -89,3 +89,5 @@ Détail dans `.claude/rules/` (chargé par chemin), justification dans
     surveillait un FICHIER, pas un MODE*.
 13. Une source n'entre qu'avec budget chiffré, critère de retrait daté,
     test gardien, même commit — `AUDIT.md` §3bis.
+14. ⛔ **Jamais de CLV sans un prix POSTÉRIEUR observé** : sans capture, la
+    colonne reste NULLE — *Le CLV du dashboard mesurait l'edge d'entrée*.

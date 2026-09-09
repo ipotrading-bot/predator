@@ -79,8 +79,12 @@ def run():
 
         clv = sig.get("clv_pct")
         outcome = sig.get("outcome") or sig.get("status")  # fallback to status (closed/expired) if outcome not set
-        if clv is None:
-            # No CLV means audit never actually completed for this row — skip
+        # Le CRITÈRE est l'ISSUE, plus le CLV (2026-09-09). `clv_pct` ne vaut
+        # plus que la vraie clôture et reste NUL partout ailleurs : garder
+        # l'ancien test « pas de CLV → jamais audité » ferait sauter toutes les
+        # lignes réglées, c'est-à-dire exactement celles que ce script existe
+        # pour rattraper. Voir INCIDENTS.md « Le CLV du dashboard ».
+        if not outcome:
             skipped += 1
             continue
 
@@ -101,7 +105,7 @@ def run():
             # Même formule que core/db.py::log_to_ledger (clv > 0) : un CLV
             # exactement nul n'est pas « positif ». Divergeait en >= depuis
             # la création (règle n°6), sans conséquence lue mais mesurable.
-            "was_clv_positive":      clv > 0,
+            "was_clv_positive":      (clv > 0) if clv is not None else None,
             "outcome":               outcome,
         }
         try:
