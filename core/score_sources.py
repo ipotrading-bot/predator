@@ -189,8 +189,9 @@ def reset_cache() -> None:
 def _get_json(url: str, bucket: str, budget: int, source: str | None = None) -> dict | None:
     """GET JSON avec budget partagé. None sur toute panne — jamais d'exception.
 
-    `source` (ex. « espn ») route la requête par `core.net` : relais ou proxy
-    `{SOURCE}_PROXY` / `FREE_SOURCES_PROXY` s'ils sont configurés — la
+    `source` (ex. « espn ») route la requête par `core.net` : proxy
+    `{SOURCE}_PROXY` / `FREE_SOURCES_PROXY` s'il est configuré (le relais
+    Cloudflare est retiré depuis le 2026-09-10) — la
     parade documentée si les runners GitHub se font refuser (leçon
     ESPN/SofaScore, INCIDENTS.md). Sans `source`, chemin direct inchangé."""
     if daily_quota.spent(bucket) >= budget:

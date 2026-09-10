@@ -99,11 +99,15 @@ RESULTS_SOURCES = ("THESPORTSDB_API_KEY",)
 # Les cinq secrets Betfair (BETFAIR_APP_KEY, _USERNAME, _PASSWORD, _CERT,
 # _CERT_KEY) ont été RETIRÉS le 2026-09-09 avec la source (décision
 # opérateur, règle 13) — aucun pool ne doit plus les transmettre.
-# Sortie réseau des sources filtrées par IP (core/net.py) : proxy OU relais
-# Cloudflare Worker, génériques. Les overrides par source ODDS500_*/SEVENM_*
-# sont partis avec odds500 et 7M le 2026-09-03 ; core/score_sources.py (ESPN…)
-# reste le consommateur, avec `{SOURCE}_PROXY` résolu dynamiquement.
-RELAYS = ("FREE_SOURCES_PROXY", "FREE_SOURCES_RELAY", "FREE_SOURCES_RELAY_TOKEN")
+# Sortie réseau des sources filtrées par IP (core/net.py) : proxy générique.
+# Le relais Cloudflare (FREE_SOURCES_RELAY/_TOKEN) est RETIRÉ le 2026-09-10 :
+# resté transmis au pool scan après la suppression du proxy (2026-09-09), il
+# captait ESPN et son Worker à liste blanche vide répondait 403 — 0 signal le
+# 10 (INCIDENTS.md). Aucun pool ne doit plus transmettre un nom *_RELAY*.
+# Les overrides par source ODDS500_*/SEVENM_* sont partis avec odds500 et 7M
+# le 2026-09-03 ; core/score_sources.py (ESPN…) reste le consommateur, avec
+# `{SOURCE}_PROXY` résolu dynamiquement.
+RELAYS = ("FREE_SOURCES_PROXY",)
 # Le pool Groq des scans (GROQ_API_KEY, _2, _4, _5), la clé de réserve du
 # settlement (GROQ_API_KEY_3) et TAVILY_API_KEY ont été SUPPRIMÉS le
 # 2026-09-02 avec Groq/Tavily. Les contrôles `groq_pool`/`groq_fingerprint`

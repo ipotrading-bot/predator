@@ -142,8 +142,6 @@ jobs:
           ODDS_API_KEY: ${{ secrets.ODDS_API_KEY }}
           ODDS_API_KEYS: ${{ secrets.ODDS_API_KEYS }}
           FREE_SOURCES_PROXY: ${{ secrets.FREE_SOURCES_PROXY }}
-          FREE_SOURCES_RELAY: ${{ secrets.FREE_SOURCES_RELAY }}
-          FREE_SOURCES_RELAY_TOKEN: ${{ secrets.FREE_SOURCES_RELAY_TOKEN }}
           THESPORTSDB_API_KEY: ${{ secrets.THESPORTSDB_API_KEY }}
           COHERE_API_KEY: ${{ secrets.COHERE_API_KEY }}
           GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY }}
@@ -189,8 +187,6 @@ jobs:
           SUPABASE_KEY: ${{ secrets.SUPABASE_KEY }}
           SUPABASE_SERVICE_KEY: ${{ secrets.SUPABASE_SERVICE_KEY }}
           FREE_SOURCES_PROXY: ${{ secrets.FREE_SOURCES_PROXY }}
-          FREE_SOURCES_RELAY: ${{ secrets.FREE_SOURCES_RELAY }}
-          FREE_SOURCES_RELAY_TOKEN: ${{ secrets.FREE_SOURCES_RELAY_TOKEN }}
           # ▲ fin du bloc généré (pool `closing`)
         run: python run_closing_line.py
 

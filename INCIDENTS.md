@@ -2996,6 +2996,58 @@ retrait d'une source doit emporter ce qui n'existait que pour elle — c'est
 déjà la règle appliquée à odds500 (`team_aliases`, `TRANSLATE_CJK`), elle a
 simplement été oubliée pour le proxy.
 
+### Le relais resté posé a détourné ESPN vers un Worker qui répondait 403 — 0 signal (2026-09-10)
+
+Suite directe de l'entrée précédente. Depuis le 2026-09-09 21:11 UTC, chaque
+scan standard loggait « score_sources[espn_results]: …/scoreboard — HTTP
+Error 403: Forbidden » (8 à 10 par run), puis « NON RÉGLABLE | … — ESPN muet
+sur ce sport (panne ?), écarté » sur 22 à 32 matchs. Bilans PÉRIMÈTRE : run
+34405404517 (09-09 21:11) 403=2 ; 34415712849 (23:10) 43 matchs → 18
+réglables ; 34459179932 (09-10 09:10) 27 → 0 ; 34469890784 (09-10 11:10)
+32 → 4, toute la Ligue des champions du soir écartée. **0 signal émis le
+2026-09-10** (table `signals`). Recommandés par jour : 10/9/5/11 du 03 au
+06/09, 6/7/7 du 07 au 09, 0 le 10.
+
+Chronologie : 09-09 ~08h UTC, proxy Webshare en 402 ; 09-09 20:27, secret
+`FREE_SOURCES_PROXY` supprimé (commit 310113b) avec la conclusion « sortie
+directe, sans une requête perdue » — vraie pour l'audit (pool `settlement`
+sans RELAYS), FAUSSE pour le scan.
+
+Cause mécanique : `core/net.py::relay_for` résolvait `{SOURCE}_RELAY` puis
+le secret GLOBAL `FREE_SOURCES_RELAY` — posé le 2026-08-26 pour odds500,
+jamais retiré, toujours dans `scripts/ci_env.py::RELAYS`, donc transmis aux
+pools scan et closing. Sans proxy, `prepare()` réécrivait l'URL ESPN vers le
+Worker `predator-relay` ; `scripts/cloudflare_relay_worker.js` avait
+`ALLOWED_HOSTS` VIDE (site.api.espn.com en commentaire) et répondait
+lui-même « forbidden » 403. `score_sources._get_json` loggue l'exception
+brute, pas `describe_failure` : le 403 du Worker s'est lu comme un refus
+d'ESPN. Contre-preuve MESURÉE le 2026-09-10 : depuis le Codespace, ESPN
+répond 200 avec l'UA exact du code (`predator-settlement/1.0
+(+https://github.com/ipotrading-bot/predator)`) ; l'audit de 11:48 réglait
+normalement via LiveScore, zéro 403.
+
+Fait (2026-09-10) : relais RETIRÉ du code (`relay_for`, `_secret`,
+`_RELAY_ENV`, branche 403-relais de `describe_failure` ; `prepare()` conservé
+comme couture identité), `ci_env.RELAYS = ("FREE_SOURCES_PROXY",)` et blocs
+`env:` régénérés (scan.yml et closing_line.yml ne portent plus
+`FREE_SOURCES_RELAY`/`_TOKEN`), `scripts/cloudflare_relay_worker.js` et
+`scripts/relay_smart_placement.py` supprimés, `.env.example` et
+`docs/actions_operateur.md` §3 mis à jour.
+PAS fait : la suppression des secrets GitHub `FREE_SOURCES_RELAY` /
+`FREE_SOURCES_RELAY_TOKEN` (geste de compte, `gh secret delete` refusé
+depuis la session) et du Worker `predator-relay` sur Cloudflare — inertes
+désormais, plus transmis à aucun job.
+
+⛔ Quand on retire UN mécanisme de sortie réseau, vérifier ce sur quoi la
+résolution retombe (`gh secret list`, pools de `ci_env`) : un secret oublié
+n'est pas inerte, il devient le chemin par défaut.
+⚠️ Un 403 avec un relais/proxy configuré n'est pas forcément la source qui
+refuse — c'est peut-être l'intermédiaire.
+Gardien : `tests/test_free_sources_wiring.py::TestRelaisRetire` (aucune
+variable `*_RELAY` ne réécrit une URL, le module ne connaît plus le relais,
+les scripts sont partis),
+`tests/test_ci_env.py::test_aucun_pool_ne_transmet_un_secret_de_relais`.
+
 ### Le CLV du dashboard mesurait l'edge d'entrée, jamais la clôture (2026-09-09, soir)
 
 La page `/ledger` annonçait un « CLV Hit Rate » proche de 100 % et affichait à

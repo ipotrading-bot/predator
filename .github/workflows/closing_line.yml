@@ -66,7 +66,5 @@ jobs:
           SUPABASE_KEY: ${{ secrets.SUPABASE_KEY }}
           SUPABASE_SERVICE_KEY: ${{ secrets.SUPABASE_SERVICE_KEY }}
           FREE_SOURCES_PROXY: ${{ secrets.FREE_SOURCES_PROXY }}
-          FREE_SOURCES_RELAY: ${{ secrets.FREE_SOURCES_RELAY }}
-          FREE_SOURCES_RELAY_TOKEN: ${{ secrets.FREE_SOURCES_RELAY_TOKEN }}
           # ▲ fin du bloc généré (pool `closing`)
         run: python run_closing_line.py

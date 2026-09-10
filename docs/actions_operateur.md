@@ -45,11 +45,9 @@ Un proxy souscrit chez un fournisseur n'entre pas tout seul dans le pipeline.
 
 ### Ce qui a été corrigé côté code
 
-Avant, même posé, il aurait été **ignoré** : la règle était « le relais gagne
-si les deux sont posés ». Le relais est prouvé inopérant depuis les runners
-GitHub (le Worker sort au colo de l'appelant, IAD, et 500.com refuse cette
-IP). La précédence est désormais inversée — un proxy posé l'emporte, et
-`core/net.py` le dit dans les logs.
+Le relais Cloudflare qui coexistait avec le proxy est **RETIRÉ le
+2026-09-10** (INCIDENTS.md, « Le relais resté posé a détourné ESPN ») : un
+seul mécanisme, le proxy, et `core/net.py` est inerte sans lui.
 
 ### La commande
 
@@ -88,8 +86,7 @@ gh run view <id> --log | grep -i odds500
 | ce que tu lis | ce que ça veut dire |
 |---|---|
 | `odds500: N matchs dans les 24h` avec N > 0 | ✅ débloqué |
-| `403 de l'AMONT via le relais (colo …)` | le proxy n'est pas pris — vérifier le nom du secret |
-| `403` sans mention de relais | le proxy est emprunté mais 500.com refuse AUSSI son IP → il faut une autre sortie |
+| `403` | le proxy est emprunté mais la source refuse AUSSI son IP → il faut une autre sortie |
 | `Connection refused` / timeout | le proxy lui-même ne répond pas |
 
 ⚠️ Même débloquée, odds500 **n'émettra aucun signal tout de suite** : elle
@@ -259,53 +256,15 @@ Ne PAS réintroduire Betfair : le proxy fait sortir le compte d'un territoire
 autorisé (interdit par Betfair), et Matchbook + Smarkets tiennent le Tier 1.5
 et la closing line depuis juillet.
 
-## 3. Cloudflare — Smart Placement ⚠️ ESSAYÉ, INSUFFISANT
+## 3. Cloudflare — Smart Placement ⚠️ ESSAYÉ, INSUFFISANT — RETIRÉ le 2026-09-10
 
-Activé le 2026-08-27 à 21:41. Mesuré au run 33119345516 : le colo est passé
-de **IAD** (Washington) à **SEA** (Seattle). Le réglage n'est donc pas inerte
-— il déplace bien l'exécution — mais Cloudflare choisit par LATENCE et le
-plus proche reste américain depuis les runners. 500.com refuse toujours.
-Laissé activé : il ne nuit pas, et le proxy le contourne de toute façon.
-Piste fermée. Section conservée pour la mémoire du geste.
-
-### Le constat
-
-Un Worker s'exécute au colo le plus proche de l'appelant. Le Smart Placement
-inverse la règle : près de l'**origine**. Vérifié en base le 2026-08-27, il
-n'a **jamais** été activé (`placement: {}`).
-
-### La commande
-
-```bash
-python scripts/relay_smart_placement.py          # lecture seule, affiche l'état
-python scripts/relay_smart_placement.py --oui    # active
-python scripts/relay_smart_placement.py --annuler
-```
-
-Si tu obtiens `HTTP 403` : le jeton Cloudflare est en lecture seule sur les
-Workers. Il lui faut la permission **Account | Workers Scripts | Edit**
-(https://dash.cloudflare.com/profile/api-tokens, modèle « Edit Cloudflare
-Workers »), puis remplacer `CLOUDFLARE_API_TOKEN` dans `.env`.
-
-### Ce que ça ne promet pas
-
-Cloudflare optimise la **latence**, pas la géographie : il choisit le colo
-lui-même et rien ne garantit qu'il en retienne un dont 500.com accepte l'IP.
-C'est une hypothèse gratuite qu'on ferme avant d'en payer une autre.
-
-### Vérifier
-
-Comme pour le proxy : seul un run depuis un runner GitHub tranche, et le
-message d'erreur nomme le colo.
-
-```bash
-gh workflow run scan.yml -f mode=standard
-gh run view <id> --log | grep -i odds500
-```
-
-Si le 403 persiste en nommant un colo américain, la conclusion tient : il
-faut une sortie hors des colos US (relais épinglé en Europe sur Fly.io ou
-Render, proxy à IP dédiée, ou runner auto-hébergé en Europe).
+Le relais Cloudflare (`predator-relay`) et son Smart Placement sont retirés
+du code, des pools de `scripts/ci_env.py` et du dépôt (INCIDENTS.md, « Le
+relais resté posé a détourné ESPN »). Reste un geste de compte : supprimer
+le Worker `predator-relay` sur Cloudflare et les secrets GitHub
+`FREE_SOURCES_RELAY` / `FREE_SOURCES_RELAY_TOKEN` (`gh secret delete`, ou
+`python scripts/ops.py secrets-prune --run`). Inertes depuis le retrait,
+ils ne sont plus transmis à aucun job.
 
 ---
 
@@ -413,9 +372,8 @@ workflow n'a pas ce droit non plus — aucune automatisation possible côté
 dépôt, c'est un geste de compte.
 
 ⚠️ `CLOUDFLARE_API_TOKEN` / `CLOUDFLARE_ACCOUNT_ID` servent ENCORE en local
-(fichier de credentials gitignoré) aux scripts du Worker chien de garde et
-du relais (`scripts/deploy_watchdog_worker.py`,
-`scripts/relay_smart_placement.py`) : on les retire de GitHub, pas du poste.
+(fichier de credentials gitignoré) au script du Worker chien de garde
+(`scripts/deploy_watchdog_worker.py`) : on les retire de GitHub, pas du poste.
 Un secret inutile posé n'est pas une panne, c'est une capacité qu'on croit
 avoir.
 

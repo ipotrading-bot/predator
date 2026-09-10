@@ -10,7 +10,8 @@ invariants que les workflows portaient en commentaires :
   - AUCUN pool ne transmet une clé Groq ou Tavily (supprimées le 2026-09-02,
     settlement déterministe) ;
   - REPRICE ne voit aucune clé payante ; readonly ne voit aucune clé d'écriture ;
-  - les sources filtrées par IP gardent leur relais dans le pool scan ;
+  - les sources filtrées par IP gardent leur proxy dans le pool scan, et
+    AUCUN pool ne transmet un nom de relais (retiré le 2026-09-10) ;
   - le préflight échoue fort sur les pannes vécues (clé anon dans
     SUPABASE_SERVICE_KEY, secret absent, _3 = clé de scan) ;
   - la table cron → mode de scan est exactement l'ensemble des crons de scan.yml.
@@ -113,16 +114,27 @@ def test_le_settlement_porte_les_cles_de_resultats():
     manquants = sorted(set(ci_env.RESULTS_SOURCES) - set(env))
     assert not manquants, f"le pool settlement ne transmet pas {manquants}"
 
-def test_le_pool_scan_porte_les_relais_des_sources_filtrees_par_ip():
+def test_le_pool_scan_porte_le_proxy_des_sources_filtrees_par_ip():
     """Les sources filtrées par IP depuis les runners (2026-08-26, odds500
     à l'époque ; les sources de scores aujourd'hui) passent par core/net.py :
-    sans FREE_SOURCES_PROXY/RELAY/_TOKEN dans l'env, le module est INERTE et
-    rien ne change — sans la moindre erreur. C'est exactement le mode de
-    panne que ce fichier existe pour interdire, et CLAUDE.md en fait un
-    invariant."""
+    sans FREE_SOURCES_PROXY dans l'env, le module est INERTE et rien ne
+    change — sans la moindre erreur. C'est exactement le mode de panne que
+    ce fichier existe pour interdire, et CLAUDE.md en fait un invariant."""
     env = ci_env.env_for("scan", {})
     manquants = sorted(set(ci_env.RELAYS) - set(env))
     assert not manquants, f"le pool scan ne transmet pas {manquants} — la sortie réseau resterait inerte"
+
+
+def test_aucun_pool_ne_transmet_un_secret_de_relais():
+    """Le relais Cloudflare est RETIRÉ le 2026-09-10 : resté transmis au pool
+    scan après la suppression du proxy (2026-09-09), FREE_SOURCES_RELAY a
+    capté ESPN et le Worker à liste blanche vide a répondu 403 — 0 signal le
+    10. Un secret GitHub oublié ne doit plus pouvoir atteindre un job."""
+    for pool in ci_env.POOLS:
+        env = ci_env.env_for(pool, {})
+        fuites = sorted(k for k in env if "RELAY" in k.upper())
+        assert not fuites, f"le pool {pool} transmet encore {fuites}"
+    assert not any("RELAY" in k for k in ci_env.RELAYS)
 
 
 # ── Cloisonnements ───────────────────────────────────────────────────

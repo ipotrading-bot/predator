@@ -310,7 +310,7 @@ class TestESPN:
         assert ss.result_from_espn("A FC vs B FC", "soccer", "2026-08-31") is None
 
     def test_la_requete_passe_par_core_net(self, monkeypatch):
-        """Routage par `core.net` (relais / proxy `ESPN_PROXY`) : la parade
+        """Routage par `core.net` (proxy `ESPN_PROXY`) : la parade
         si les runners GitHub sont refusés — sans toucher au code."""
         from core import daily_quota
         monkeypatch.setattr(daily_quota, "spent", lambda b: 0)

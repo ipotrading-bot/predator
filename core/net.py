@@ -27,10 +27,25 @@ MLB statsapi — les scores du settlement). odds500 et 7M, pour qui ce module
 est né, sont RETIRÉES ce jour-là (mur anti-bot EdgeOne, décision opérateur) ;
 les mesures citées plus bas datent de leur époque et restent vraies du
 chemin runner → proxy.
+
+RELAIS CLOUDFLARE RETIRÉ LE 2026-09-10 — UN SEUL MÉCANISME, LE PROXY
+---------------------------------------------------------------------
+Le relais (Worker qui refaisait la requête depuis SON adresse) avait été posé
+le 2026-08-26 pour odds500 et prouvé inopérant depuis les runners (colo IAD
+refusé). Il est resté configuré — secret global FREE_SOURCES_RELAY transmis
+au pool `scan` — après la suppression du proxy le 2026-09-09 : `relay_for`
+a alors capté ESPN, et le Worker, à liste blanche VIDE, a répondu 403 à
+chaque scoreboard pendant 14 h. Lu comme « ESPN muet », ce 403 a fait écarter
+75 à 90 % des matchs de chaque scan standard (32 → 4 réglables le 10 à
+11:10) et aucun signal n'a été émis le 2026-09-10. Depuis un poste de dev,
+ESPN répondait 200 avec l'UA du code : la source n'a jamais refusé.
+Un secret oublié ne doit plus pouvoir détourner une source : le relais est
+retiré du code, des pools de `scripts/ci_env.py` et du dépôt (Worker,
+Smart Placement). `prepare()` reste comme couture, identité. Gardien :
+`tests/test_free_sources_wiring.py::TestRelaisRetire`.
 """
 import logging
 import os
-import urllib.parse
 import urllib.error
 import urllib.request
 
@@ -81,96 +96,15 @@ def reset() -> None:
     _memo.clear()
 
 
-# ── Mode RELAIS (Cloudflare Worker) ─────────────────────────────────────
-#
-# Un Worker n'est PAS un proxy HTTP : il ne parle pas CONNECT, donc
-# `ProxyHandler` ne sait pas s'en servir. Le relais fonctionne autrement — on
-# appelle le Worker en lui passant l'URL cible, et il refait la requête depuis
-# SON adresse. D'où deux mécanismes distincts dans ce module, et pas un seul :
-#
-#     proxy   : la requête part vers odds.500.com via un intermédiaire CONNECT
-#     relais  : la requête part vers le Worker, qui va chercher odds.500.com
-#
-# Le relais gagne sur le proxy si les deux sont configurés (il est plus
-# spécifique). Le déploiement du Worker est décrit dans
-# `scripts/cloudflare_relay_worker.js`.
-#
-# ⚠️ CE QUI RESTE INCONNU : rien ne garantit que 500.com accepte les adresses
-# de sortie de Cloudflare. Le blocage constaté vise les plages GitHub/Azure ;
-# que l'edge Cloudflare passe se VÉRIFIE, ne se suppose pas — `ops.py sources`
-# après déploiement, puis un vrai run GitHub Actions.
-_RELAY_ENV = "FREE_SOURCES_RELAY"
-_RELAY_TOKEN_ENV = "FREE_SOURCES_RELAY_TOKEN"
-
-
-def _secret(name: str) -> str:
-    try:
-        from core.secret_store import get_secret
-        return (get_secret(name) or "").strip()
-    except Exception:
-        return (os.environ.get(name) or "").strip()
-
-
-def relay_for(source: str) -> str:
-    """URL du Worker relais pour cette source, ou "" s'il n'y en a pas."""
-    key = f"relay:{source.lower()}"
-    if key in _memo:
-        return _memo[key]
-    value = _secret(f"{source.upper()}_RELAY") or _secret(_RELAY_ENV)
-    _memo[key] = value
-    return value
-
-
 def prepare(source: str, url: str, headers: dict) -> tuple:
-    """(url, en-têtes) à utiliser réellement pour joindre `url`.
+    """(url, en-têtes) à utiliser réellement pour joindre `url` — IDENTITÉ.
 
-    Sans relais configuré, rend l'URL et les en-têtes INCHANGÉS — c'est le
-    cas nominal, et il ne coûte rien. Avec relais, l'URL cible passe en
-    paramètre `u` et le jeton partagé en en-tête.
-
-    Le jeton n'est pas décoratif : un Worker qui relaie n'importe quelle URL
-    pour n'importe qui est un proxy ouvert, que le premier venu utilisera
-    pour autre chose. Le Worker vérifie AUSSI une liste blanche d'hôtes.
+    Couture conservée pour les appelants (core/score_sources). Le relais qui
+    réécrivait l'URL vers un Worker Cloudflare est RETIRÉ le 2026-09-10 (en
+    tête de fichier) : rien ne réécrit plus une URL ici, et une variable
+    `FREE_SOURCES_RELAY` qui traînerait dans un environnement est ignorée.
     """
-    relay = relay_for(source)
-    if not relay:
-        return url, headers
-
-    # ── UN PROXY POSÉ L'EMPORTE SUR LE RELAIS (2026-08-27) ───────────
-    # La règle inverse (« le relais gagne si les deux sont posés ») datait du
-    # 2026-08-26, quand le relais était le seul mécanisme et qu'on ignorait
-    # encore d'où il sortirait. On le sait maintenant, et c'est tranché : un
-    # Worker s'exécute au colo le plus proche de l'APPELANT, donc IAD depuis
-    # les runners GitHub, et 500.com REFUSE cette IP de sortie (run engine
-    # 32994959190). Le relais est donc PROUVÉ inopérant là où le pipeline
-    # tourne, tandis que le proxy est le remède documenté.
-    #
-    # Garder l'ancienne précédence menait au pire scénario possible :
-    # l'opérateur pose un proxy pour débloquer la source, le relais continue
-    # de capter l'URL, et rien ne change — sans un seul message d'erreur qui
-    # le dise. Une capacité payée et jamais utilisée, invisible dans les logs.
-    #
-    # Poser un proxy est un geste EXPLICITE : il n'a qu'une raison d'être, et
-    # c'est de contourner exactement ce blocage.
-    if proxy_for(source):
-        # UNE fois par source et par processus. `prepare()` est appelé à
-        # CHAQUE requête : le logger ici sans mémoire noyait le run sous
-        # quinze lignes identiques, et un log qu'on ne lit plus ne sert à
-        # rien — c'est la raison d'être du reste de ce fichier.
-        drapeau = f"log-proxy:{source.lower()}"
-        if drapeau not in _memo:
-            _memo[drapeau] = "1"
-            log.info("net[%s]: proxy configuré — le relais est ignoré pour "
-                     "cette source (le relais sort au colo de l'appelant, ce "
-                     "que 500.com refuse depuis les runners)", source)
-        return url, headers
-
-    target = urllib.parse.quote(url, safe="")
-    out = dict(headers or {})
-    token = _secret(f"{source.upper()}_RELAY_TOKEN") or _secret(_RELAY_TOKEN_ENV)
-    if token:
-        out["X-Relay-Token"] = token
-    return f"{relay.rstrip('/')}?u={target}", out
+    return url, headers
 
 
 def opener_for(source: str):
@@ -277,25 +211,6 @@ def describe_failure(source: str, exc: Exception) -> str:
     les deux, c'est ce qui a laissé odds500 muette trois jours sans que la
     cause soit nommée.
     """
-    # 403 EN MODE RELAIS : deux causes qui n'appellent pas la même action, et
-    # que le seul code HTTP ne distingue pas. Le Worker pose `X-Relay-By` sur
-    # toute réponse qu'il a RELAYÉE ; ses propres refus (jeton, hôte) ne le
-    # portent pas. Et `cf-ray` nomme le colo Cloudflare qui a exécuté le
-    # Worker — donc l'IP de sortie vue par l'amont. Mesuré le 2026-08-26 :
-    # 200 via le relais depuis un poste de dev (colo LHR), 403 depuis les
-    # runners GitHub (colos US) avec le MÊME jeton — la piste géographique
-    # ne se voit qu'avec ce colo dans le log.
-    if isinstance(exc, urllib.error.HTTPError) and exc.code == 403 and relay_for(source):
-        hdrs = exc.headers or {}
-        ray = str(hdrs.get("cf-ray") or "")
-        colo = ray.rsplit("-", 1)[-1] if "-" in ray else "?"
-        if hdrs.get("X-Relay-By"):
-            return (f"{source}: 403 de l'AMONT via le relais (colo Cloudflare {colo}) "
-                    f"— le site refuse l'IP de sortie de cet edge ; ni le jeton ni "
-                    f"le code ne sont en cause")
-        return (f"{source}: 403 du RELAIS lui-même (colo {colo}) — jeton "
-                f"{source.upper()}_RELAY_TOKEN/{_RELAY_TOKEN_ENV} désaccordé avec le "
-                f"Worker, ou hôte hors liste blanche")
     txt = str(exc)
     refus = ("Connection refused" in txt or "timed out" in txt
              or "Temporary failure in name resolution" in txt

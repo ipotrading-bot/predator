@@ -2,8 +2,8 @@
 tests/test_free_sources_wiring.py — la sortie réseau (core/net.py) et le
 consensus Kalshi/Polymarket, ce qui reste de la « mission 3 ».
 
-1. `core/net.py` — porte de sortie proxy/relais pour les sources filtrées
-   par IP. Née pour odds.500.com (200 depuis un poste de dev, `Connection
+1. `core/net.py` — porte de sortie proxy pour les sources filtrées par IP
+   (le relais Cloudflare est RETIRÉ le 2026-09-10, voir TestRelaisRetire). Née pour odds.500.com (200 depuis un poste de dev, `Connection
    refused` depuis les runners GitHub : la PLAGE D'IP est refusée, aucune
    correction de code ne lève ça), elle sert aujourd'hui aux sources de
    SCORES du settlement (core/score_sources.py, ESPN…). Le module doit
@@ -19,7 +19,6 @@ anti-bot EdgeOne, décision opérateur) — leurs tests avec eux.
 
 Aucun réseau (tests/conftest.py) : tout ce qui sort est stubbé.
 """
-import logging
 import os
 from datetime import datetime, timezone
 
@@ -79,46 +78,6 @@ class TestPorteDeSortieProxy:
         monkeypatch.setenv("ESPN_PROXY", "http://p:1")
         msg = net.describe_failure("espn", OSError("Connection refused"))
         assert "malgré le proxy" in msg
-
-
-class TestDiagnostic403Relais:
-    """Un 403 en mode relais a deux causes qui n'appellent pas la même action.
-
-    Le Worker pose `X-Relay-By` sur ce qu'il a relayé ; ses propres refus ne
-    le portent pas. Mesuré le 2026-08-26 : même jeton, 200 depuis un poste de
-    dev (colo LHR), 403 depuis les runners GitHub — sans ce diagnostic, on
-    accuse le jeton alors que c'est l'amont qui refuse l'edge."""
-
-    @staticmethod
-    def _http403(headers: dict):
-        import email.message
-        import io as _io
-        import urllib.error
-        h = email.message.Message()
-        for k, v in headers.items():
-            h[k] = v
-        return urllib.error.HTTPError("https://x/?u=y", 403, "Forbidden", h, _io.BytesIO(b"forbidden"))
-
-    def test_403_relaye_accuse_l_amont_et_nomme_le_colo(self, monkeypatch):
-        monkeypatch.setenv("FREE_SOURCES_RELAY", "https://r.example")
-        net.reset()
-        msg = net.describe_failure("espn", self._http403({"X-Relay-By": "predator", "cf-ray": "a314-IAD"}))
-        assert "AMONT" in msg and "IAD" in msg and "jeton" in msg
-
-    def test_403_du_worker_accuse_le_jeton(self, monkeypatch):
-        monkeypatch.setenv("FREE_SOURCES_RELAY", "https://r.example")
-        net.reset()
-        msg = net.describe_failure("espn", self._http403({"cf-ray": "a314-LHR"}))
-        assert "RELAIS lui-même" in msg and "LHR" in msg and "RELAY_TOKEN" in msg
-
-    def test_sans_relais_un_403_reste_un_403_ordinaire(self, monkeypatch):
-        # `_secret` lit secret_store puis l'environnement (et un fichier de
-        # credentials local peut porter FREE_SOURCES_RELAY) : on coupe la
-        # résolution à la source, pas seulement les variables.
-        monkeypatch.setattr(net, "_secret", lambda name: "")
-        net.reset()
-        msg = net.describe_failure("espn", self._http403({}))
-        assert "AMONT" not in msg and "RELAIS" not in msg
 
 
 class TestRepriseSurEchecPassager:
@@ -231,122 +190,42 @@ class TestRepriseSurEchecPassager:
             "core/score_sources.py n'a pas de reprise sur échec de transport"
 
 
-class TestModeRelais:
-    """Le relais (Cloudflare Worker) réécrit l'URL ; le proxy, lui, tunnelise.
+class TestRelaisRetire:
+    """Le relais Cloudflare est RETIRÉ (2026-09-10) et ne doit pas revenir.
 
-    Ce sont DEUX mécanismes, pas deux réglages du même : un Worker ne parle
-    pas CONNECT, `ProxyHandler` ne sait donc pas s'en servir.
-    """
+    Posé le 2026-08-26 pour odds500 (retirée le 09-03), prouvé inopérant
+    depuis les runners (colo IAD). Resté dans le pool scan après la
+    suppression du proxy (09-09 20:27), il a capté ESPN : le Worker, à liste
+    blanche VIDE, répondait 403 — lu comme « ESPN muet », 75-90 % des matchs
+    écartés à chaque scan standard, 0 signal émis le 10. Un secret oublié ne
+    doit plus pouvoir détourner une source : ni code, ni nom transmis, ni
+    script à redéployer."""
 
-    @pytest.fixture(autouse=True)
-    def _memo_neuf(self, monkeypatch):
-        net.reset()
+    def test_aucune_variable_de_relais_ne_reecrit_une_url(self, monkeypatch):
+        for v in ("FREE_SOURCES_RELAY", "ESPN_RELAY"):
+            monkeypatch.setenv(v, "https://w.example.dev")
+        monkeypatch.setenv("FREE_SOURCES_RELAY_TOKEN", "t")
         monkeypatch.setattr("core.secret_store.get_secret",
                             lambda name, **_k: os.environ.get(name) or None)
-        for v in ("FREE_SOURCES_RELAY", "FREE_SOURCES_RELAY_TOKEN",
-                  "ESPN_RELAY", "ESPN_RELAY_TOKEN", "ESPN_PROXY"):
-            monkeypatch.delenv(v, raising=False)
-        yield
         net.reset()
-
-    def test_inerte_sans_relais(self):
-        """Cas nominal : URL et en-têtes rendus tels quels."""
         u, h = net.prepare("espn", "https://site.api.espn.com/", {"User-Agent": "X"})
         assert u == "https://site.api.espn.com/"
         assert h == {"User-Agent": "X"}
-
-    def test_url_cible_encodee_et_jeton_ajoute(self, monkeypatch):
-        monkeypatch.setenv("ESPN_RELAY", "https://w.example.workers.dev/")
-        monkeypatch.setenv("FREE_SOURCES_RELAY_TOKEN", "s3cr3t")
-        u, h = net.prepare("espn", "https://site.api.espn.com/apis/v2/scoreboard",
-                           {"User-Agent": "X"})
-        # La cible est encodée : sinon son propre chemin casserait la query.
-        assert u == ("https://w.example.workers.dev"
-                     "?u=https%3A%2F%2Fsite.api.espn.com%2Fapis%2Fv2%2Fscoreboard")
-        assert h["X-Relay-Token"] == "s3cr3t"
-        assert h["User-Agent"] == "X"          # l'UA honnête est préservé
-
-    def test_un_proxy_pose_l_emporte_sur_le_relais(self, monkeypatch):
-        """La panne la plus coûteuse serait SILENCIEUSE.
-
-        Le relais est PROUVÉ inopérant depuis les runners GitHub : un Worker
-        s'exécute au colo le plus proche de l'APPELANT (IAD), et l'amont
-        peut refuser cette IP de sortie. Avec l'ancienne précédence, un
-        opérateur qui pose un proxy pour débloquer la source voyait le relais
-        capter l'URL malgré tout — capacité payée, jamais utilisée, et pas
-        une ligne de log pour le dire.
-        """
-        monkeypatch.setenv("FREE_SOURCES_RELAY", "https://w.example.dev")
-        monkeypatch.setenv("FREE_SOURCES_RELAY_TOKEN", "t")
-        monkeypatch.setenv("ESPN_PROXY", "http://u:p@eu-proxy.example:8080")
         net.reset()
-        u, h = net.prepare("espn", "https://site.api.espn.com/", {"User-Agent": "X"})
-        assert u == "https://site.api.espn.com/", "le relais a capté l'URL malgré le proxy"
-        assert "X-Relay-Token" not in h
-        # Et le proxy est bien celui qui sera emprunté.
-        assert net.proxy_for("espn") == "http://u:p@eu-proxy.example:8080"
 
-    def test_le_message_proxy_n_est_logge_qu_une_fois(self, monkeypatch, caplog):
-        """`prepare()` est appelé à chaque requête : sans mémoire, un run
-        sortait quinze lignes identiques. Un log qu'on ne lit plus ne sert à
-        rien."""
-        monkeypatch.setenv("FREE_SOURCES_RELAY", "https://w.example.dev")
-        monkeypatch.setenv("ESPN_PROXY", "http://u:p@eu.example:8080")
-        net.reset()
-        with caplog.at_level(logging.INFO, logger="PREDATOR.net"):
-            for _ in range(5):
-                net.prepare("espn", "https://site.api.espn.com/", {})
-        lignes = [r for r in caplog.records if "proxy configuré" in r.getMessage()]
-        assert len(lignes) == 1, f"{len(lignes)} lignes au lieu d'une"
-
-    def test_sans_proxy_le_relais_reprend_la_main(self, monkeypatch):
-        """L'inversion ne doit pas désactiver le relais pour tout le monde :
-        il reste le chemin par défaut quand aucun proxy n'est posé."""
-        monkeypatch.setenv("FREE_SOURCES_RELAY", "https://w.example.dev")
-        monkeypatch.delenv("FREE_SOURCES_PROXY", raising=False)
-        net.reset()
-        u, _h = net.prepare("espn", "https://site.api.espn.com/", {})
-        assert u.startswith("https://w.example.dev?u=")
-
-    def test_les_entetes_appelants_ne_sont_pas_mutes(self, monkeypatch):
-        """`_HEADERS` est un dict de MODULE partagé : le muter contaminerait
-        tous les appels suivants, y compris hors relais."""
-        monkeypatch.setenv("FREE_SOURCES_RELAY", "https://w.example.dev")
-        monkeypatch.setenv("FREE_SOURCES_RELAY_TOKEN", "t")
-        origine = {"User-Agent": "X"}
-        net.prepare("espn", "https://site.api.espn.com/", origine)
-        assert origine == {"User-Agent": "X"}
-
-    def test_le_worker_garde_sa_liste_blanche_et_son_jeton(self):
-        """Un relais sans ces deux gardes EST un proxy ouvert.
-
-        Vérifié sur la source du Worker : c'est le seul endroit où ces gardes
-        vivent, et les retirer « pour tester » est exactement ce qu'il ne faut
-        pas pouvoir faire sans que la suite le dise. Depuis le retrait
-        d'odds500/7M la liste blanche est VIDE : le Worker ne relaie rien tant
-        qu'une source n'y inscrit pas son hôte — c'est le comportement sûr.
-        """
+    def test_le_module_ne_connait_plus_le_relais(self):
         from pathlib import Path
-        src = (Path(__file__).resolve().parent.parent
-               / "scripts" / "cloudflare_relay_worker.js").read_text(encoding="utf-8")
-        assert "ALLOWED_HOSTS" in src
-        assert "X-Relay-Token" in src and "RELAY_TOKEN" in src
-        liste = src.split("const ALLOWED_HOSTS")[1].split("]);")[0]
-        for host in ("odds.500.com", "7msport.com", "7mdt.com"):
-            assert host not in liste, \
-                f"{host} : source retirée le 2026-09-03, hôte encore relayé"
-        # Le corps doit rester des OCTETS : `.text()` transcoderait un corps
-        # non UTF-8 et rendrait les libellés illisibles.
-        #
-        # Vérifié sur le CODE, commentaires retirés : ce fichier explique
-        # justement pourquoi il ne faut PAS appeler `.text()`, et une
-        # recherche sur le texte brut se déclencherait sur cette explication
-        # (même piège que les noms de modèles morts dans le registre IA).
-        import re as _re
-        code = _re.sub(r"/\*.*?\*/", "", src, flags=_re.S)
-        code = _re.sub(r"^\s*//.*$", "", code, flags=_re.M)
-        assert "upstream.body" in code
-        assert ".text()" not in code
+        assert not hasattr(net, "relay_for")
+        code = Path(net.__file__).read_text(encoding="utf-8")
+        code = code.split('"""', 2)[2]                 # hors docstring d'en-tête
+        for motif in ("relay_for", "X-Relay-Token", "?u=", "_RELAY_ENV"):
+            assert motif not in code, f"{motif} : le relais revient dans core/net.py"
+
+    def test_les_scripts_du_relais_sont_partis(self):
+        from pathlib import Path
+        racine = Path(__file__).resolve().parent.parent
+        for f in ("scripts/cloudflare_relay_worker.js", "scripts/relay_smart_placement.py"):
+            assert not (racine / f).exists(), f"{f} : script du relais revenu"
 
 
 # ── 2. Kalshi/Polymarket branchés ───────────────────────────────────────
