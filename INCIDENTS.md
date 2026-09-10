@@ -3102,6 +3102,14 @@ Puis, sur instruction « corriger toutes les anomalies avant de geler »
   de sources retirées (api-sports, odds500, 7M, Tavily, Groq, IA), 14
   `alert_system_*` de plus de 7 jours, 2 clés Betfair, 3 caches vides —
   aucune n'était lue par le code. Aucune ligne de résultat touchée.
+- **Relance sans issue** : après la clôture des 10 signaux expirés, l'audit
+  disait encore « 6 sans score » — les lignes de LEDGER orphelines à
+  `outcome='expired'` (août, signaux disparus) repassaient à chaque audit
+  sans qu'aucune source ne couvre plus ces dates. Passées `closed` au-delà
+  de 7 jours (lignes conservées, règle 9).
+- Contrôle après push (run 34484677567, 13:46) : 30 → 26 réglables, 2
+  signaux émis, Titan007 4/40 en 404 en INFO, plus de ligne IA, créneau
+  réclamé en base.
 
 ### Le CLV du dashboard mesurait l'edge d'entrée, jamais la clôture (2026-09-09, soir)
 
