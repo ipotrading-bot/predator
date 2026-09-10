@@ -1132,3 +1132,35 @@ class TestSeuilEpoqueRegle10:
         sb = _FakeSupabaseAvecSeuils({"soccer": self._vieilles_lignes()}, [])
         compute_and_save(sb)
         assert sb.deleted == []
+
+
+class TestMisePlateEtEpoque:
+    """2026-09-10 : le verdict du football proposait un retrait sur un ROI
+    Kelly de −19,8 % alors qu'à mise plate les mêmes lignes faisaient
+    +3,36 u ; et le classement comptait un basket d'août sans une ligne
+    depuis la correction. Les deux lectures, et rien d'avant l'époque."""
+
+    def test_sport_stats_expose_la_mise_plate(self):
+        stats = _sport_stats([_row("WIN", odds=2.0)] * 3 + [_row("LOSS", odds=2.0)])
+        from core.constants import net_b
+        assert stats["pnl_flat"] == pytest.approx(3 * net_b(2.0, TAX_RATE) - 1.0)
+        assert stats["roi_flat"] == pytest.approx(stats["pnl_flat"] / 4)
+        assert _sport_stats([])["pnl_flat"] is None
+
+    def test_le_verdict_montre_kelly_et_mise_plate(self):
+        from core.learning_layer import _save_sport_verdicts
+        rows = [_row("WIN", odds=1.5)] * 20 + [_row("LOSS", odds=1.5)] * 12   # n=32, non démontré
+        sb = _FakeSupabase({"soccer": rows})
+        lignes = _save_sport_verdicts(sb, {"soccer": _sport_stats(rows)}, {}, "2026-09-10T12:00:00+00:00")
+        assert len(lignes) == 1 and "retrait proposé" in lignes[0]
+        assert "ROI Kelly" in lignes[0] and "mise plate" in lignes[0]
+
+    def test_le_classement_ignore_les_lignes_d_avant_la_correction(self):
+        avant = "2026-08-01T12:00:00+00:00"                       # < CALIBRATION_EPOCH
+        sb = _FakeSupabase({
+            "basketball": [_row("WIN", created_at=avant)] * 40,   # 100 % mais d'un autre moteur
+            "soccer": [_row("WIN")] * 30 + [_row("LOSS")] * 10,
+        })
+        compute_and_save(sb)
+        ecrits = [w for w in sb.meta_writes if w["key"] == "sport_ranking"]
+        assert len(ecrits) == 1 and json.loads(ecrits[0]["value"]) == ["soccer"]

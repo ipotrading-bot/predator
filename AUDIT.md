@@ -88,6 +88,9 @@ C'est le tableau à consulter avant de toucher à quoi que ce soit.
 | Le curseur tourne : toutes les lignes sont couvertes, pas seulement les 12 premières | `…::TestLeBudgetEtLeCurseur` |
 | Une panne de relance ne fait pas échouer un audit qui a réglé | `…::test_une_panne_de_relance_ne_fait_pas_echouer_laudit` |
 | Le pool `scan` porte le proxy des sources filtrées par IP | `…::test_le_pool_scan_porte_le_proxy_des_sources_filtrees_par_ip` |
+| Un scan qui écarte plus de la moitié de ses marchés vivants prévient Telegram (`alert_perimetre`, TTL `_ALERT_TTL_H`) ; muet sans Supabase et sous 5 vivants | `tests/test_perimetre.py::TestAlertePerimetre` |
+| La mesure LiveScore au périmètre COMPTE sans rien laisser passer de plus | `tests/test_perimetre.py::TestMesureLiveScore` |
+| Verdicts et classement par sport : mise plate À CÔTÉ du ROI Kelly, et lignes postérieures à `CALIBRATION_EPOCH` seulement | `tests/test_learning_layer.py::TestMisePlateEtEpoque` |
 | Aucun pool ne transmet un secret de relais Cloudflare, et `core/net.py` n'en connaît plus (retiré le 2026-09-10 : un secret oublié a détourné ESPN vers un Worker qui répondait 403) | `…::test_aucun_pool_ne_transmet_un_secret_de_relais`, `tests/test_free_sources_wiring.py::TestRelaisRetire` |
 | Le préflight refuse une `SUPABASE_SERVICE_KEY` qui n'est pas `service_role` | `…::test_preflight_refuse_une_cle_qui_nest_pas_service_role` |
 | `ODDS_API_KEY` n'est PLUS requise (la garde échouait fermé) | `…::test_preflight_odds_api_key_nest_plus_requise` |

@@ -642,6 +642,29 @@ def _ls_camp(noms: list, attendu: str) -> bool:
     return any(n and strict_team_match(attendu, n) for n in noms)
 
 
+def livescore_connait(match_name: str, sport: str, match_date: str) -> bool:
+    """Le match figure-t-il dans la journée LiveScore de son coup d'envoi ?
+
+    MESURE du périmètre (2026-09-10), sans effet sur l'émission : le filtre
+    d'entrée (run_engine._reglable) ne connaît qu'ESPN, posé le 09-03, alors
+    que le règlement lit AUSSI LiveScore depuis le 09-05. Sur le scan de
+    12:33 le 09-10, 9 des 10 matchs écartés « ligue non couverte » étaient
+    dans LiveScore. Élargir le périmètre est une décision opérateur (règle
+    11) : on compte d'abord, dans le bilan PÉRIMÈTRE de chaque scan.
+    Même appariement strict que le règlement (les DEUX camps), n'importe quel
+    statut. Une requête par journée et par processus (cache `_CACHE_LS`),
+    sur le budget partagé `livescore_results`. False sur tout ce qui n'est
+    pas mesurable (sport hors LiveScore, nom illisible, panne)."""
+    parts = _split(match_name)
+    segment = _LS_SPORTS.get((sport or "").lower())
+    jour = str(match_date or "")[:10]
+    if not parts or not segment or len(jour) != 10:
+        return False
+    home, away = parts
+    return any(_ls_camp(ev["home"], home) and _ls_camp(ev["away"], away)
+               for ev in _livescore_du_jour(segment, jour))
+
+
 def result_from_livescore(match_name: str, sport: str, match_date: str) -> dict | None:
     """Score final via l'API publique LiveScore. Même contrat que les autres
     voies : les DEUX noms appariés sur le MÊME événement, candidat UNIQUE,

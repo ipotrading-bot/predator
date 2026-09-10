@@ -1,5 +1,14 @@
 # Actions opérateur — ce que le code ne peut pas faire à ta place
 
+> ⛔ **GEL DES CHANGEMENTS du 2026-09-10 au 2026-09-17** (décision opérateur,
+> audit du 10/09). Aucune nouvelle source, aucun nouveau book, aucune page,
+> aucun seuil, aucun sport. Seulement des correctifs qui répondent à une
+> MESURE, chacun suivi d'un scan de contrôle depuis les runners (`gh
+> workflow run scan.yml -f mode=standard -f force=true`, puis lire la ligne
+> `PÉRIMÈTRE` et le nombre de 403 dans le journal). Motif : 107 commits en
+> 10 jours, 13 retraits ; chaque changement non mesuré a produit la panne
+> du lendemain (bankroll, Betfair, proxy, relais).
+
 > **Rien d'ouvert au 2026-09-09 (soir).** Le proxy Webshare répondait
 > « 402 Payment Required » depuis ~15:10 UTC (quota du plan gratuit épuisé),
 > ce qui faisait passer les sources de scores pour muettes et écartait 36 à

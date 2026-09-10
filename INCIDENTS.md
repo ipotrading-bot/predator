@@ -3048,6 +3048,34 @@ variable `*_RELAY` ne réécrit une URL, le module ne connaît plus le relais,
 les scripts sont partis),
 `tests/test_ci_env.py::test_aucun_pool_ne_transmet_un_secret_de_relais`.
 
+Fait le même jour, après l'audit complet (six décisions opérateur) :
+- **Alerte sur le CONTENU d'un scan** (`run_engine._alerte_perimetre`) : à
+  partir de 5 marchés vivants, si plus de la moitié sont écartés comme non
+  réglables, Telegram est prévenu (clé `alert_perimetre`, TTL 6 h). Cette
+  panne aurait sonné à 21:11 le 09 au lieu d'être lue à 11:10 le 10. Le
+  chien de garde continue de surveiller la cadence ; ceci surveille le
+  résultat. Gardien : `tests/test_perimetre.py::TestAlertePerimetre`.
+- **Mesure LiveScore au périmètre** (`score_sources.livescore_connait`) :
+  9 des 10 « ligue non couverte » du scan de 12:33 étaient dans LiveScore,
+  que le règlement lit déjà. Compté dans le bilan `PÉRIMÈTRE` de chaque
+  scan, sans rien émettre de plus — l'élargissement est une décision
+  opérateur (règle 11) qui se prendra sur ce compte. Gardien :
+  `tests/test_perimetre.py::TestMesureLiveScore`.
+- **Verdicts par sport** : mise plate affichée à côté du ROI Kelly (le
+  « retrait proposé » du football tenait à −19,8 % de ROI pondéré quand les
+  mêmes 33 lignes faisaient +3,36 u à plat), et verdicts + classement
+  calculés sur les lignes postérieures à `CALIBRATION_EPOCH` seulement
+  (un basket n=26 venu d'août classait un moteur disparu). Gardien :
+  `tests/test_learning_layer.py::TestMisePlateEtEpoque`.
+- **CLV archivés** (`sql/migrate_v10_15_clv_archive.sql`, appliquée) : 21
+  CLV « oracle » (LLM, pas un prix observé) et les |CLV| > 10 % capturés
+  avant le correctif du 09 (Chindia–Voluntari +55 %) copiés dans
+  `meta.clv_archive_v10_15` puis retirés des colonnes ; lignes conservées.
+- Stock terminé : 6 expirés sans aucune source de score (rejoués à chaque
+  audit depuis le 06) et le fantôme 10091 (actif 27 h après son coup
+  d'envoi) passés `closed`.
+- Gel des changements jusqu'au 2026-09-17 (docs/actions_operateur.md).
+
 ### Le CLV du dashboard mesurait l'edge d'entrée, jamais la clôture (2026-09-09, soir)
 
 La page `/ledger` annonçait un « CLV Hit Rate » proche de 100 % et affichait à

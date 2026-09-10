@@ -31,7 +31,7 @@ import logging
 import os
 from datetime import datetime, timezone
 
-from core.constants import TAX_RATE as _TAX_RATE, roi_net_of_tax
+from core.constants import TAX_RATE as _TAX_RATE, net_b, roi_net_of_tax
 from core.stats_utils import (bucket_predictions, brier_reference, brier_score,
                               p_breakeven, wilson_ci)
 
@@ -133,6 +133,7 @@ def sport_verdict(stats: dict, clv: dict | None = None) -> dict:
     avg_clv = (clv or {}).get("avg_clv")
     out = {"n": n, "wilson_lower": lo, "wilson_upper": hi, "p_breakeven": be,
            "hit_rate": stats.get("hit_rate"), "roi": stats.get("roi"),
+           "pnl_flat": stats.get("pnl_flat"), "roi_flat": stats.get("roi_flat"),
            "avg_clv": avg_clv, "clv_n": (clv or {}).get("n", 0)}
     if n < _PROMOTION_MIN_SAMPLES or lo is None or be is None:
         out.update(status="insuffisant", retrait_propose=False,
@@ -148,6 +149,18 @@ def sport_verdict(stats: dict, clv: dict | None = None) -> dict:
                    reason=(f"IC [{lo*100:.1f}–{(hi or 0)*100:.1f}%] chevauche la "
                            f"rentabilité {be*100:.1f}% après {n} réglés"))
     return out
+
+
+def _lecture_roi(v: dict) -> str:
+    """« ROI Kelly x · mise plate y u » — TOUJOURS les deux (2026-09-10) :
+    un verdict lu sur le seul ROI pondéré a proposé le retrait d'un sport
+    positif à mise plate."""
+    roi, pnl = v.get("roi"), v.get("pnl_flat")
+    if roi is None and pnl is None:
+        return ""
+    k = f"ROI Kelly {roi:+.1%}" if roi is not None else "ROI Kelly n/a"
+    p = f"mise plate {pnl:+.2f} u" if pnl is not None else "mise plate n/a"
+    return f" [{k} · {p}]"
 
 
 def _save_sport_verdicts(sb, stats_by_sport: dict[str, dict],
@@ -169,10 +182,10 @@ def _save_sport_verdicts(sb, stats_by_sport: dict[str, dict],
             log.warning("sport_verdict[%s]: %s", sport, e)
         if v["status"] == "promotion_eligible":
             lines.append(f"{sport}: ✅ edge validé ({v['reason']}) — éligible à la "
-                         f"restauration progressive de sa fraction Kelly")
+                         f"restauration progressive de sa fraction Kelly{_lecture_roi(v)}")
         elif v["retrait_propose"]:
             lines.append(f"{sport}: ⚠️ retrait proposé — {v['reason']} "
-                         f"(décision opérateur, rien d'automatique)")
+                         f"(décision opérateur, rien d'automatique){_lecture_roi(v)}")
     return lines
 
 
@@ -356,7 +369,8 @@ def _sport_stats(rows: list[dict]) -> dict:
     n = len(decisive)
     if n == 0:
         return {"n": 0, "hit_rate": None, "roi": None, "wilson_lower": None,
-                "wilson_upper": None, "p_breakeven": None}
+                "wilson_upper": None, "p_breakeven": None,
+                "pnl_flat": None, "roi_flat": None}
 
     wins = sum(1 for r in decisive if r["outcome"] == "WIN")
     hit_rate = wins / n
@@ -379,6 +393,16 @@ def _sport_stats(rows: list[dict]) -> dict:
 
     roi = roi_net_of_tax(decisive, _TAX_RATE)
 
+    # Mise PLATE à côté du ROI pondéré Kelly (2026-09-10) : le verdict
+    # « retrait proposé » du football affichait −19,8 % de ROI Kelly quand
+    # les mêmes 33 lignes faisaient +3,36 u à mise plate. Les deux sont vrais
+    # (les grosses mises Kelly sont tombées sur des perdants), mais un seul
+    # était montré, et c'est sur ce texte que l'opérateur décide d'un retrait.
+    misables = [r for r in decisive if r.get("odds")]
+    pnl_flat = (sum(net_b(r["odds"], _TAX_RATE) if r["outcome"] == "WIN" else -1.0
+                    for r in misables) if misables else None)
+    roi_flat = pnl_flat / len(misables) if misables else None
+
     return {
         "n": n,
         "hit_rate": hit_rate,
@@ -386,6 +410,8 @@ def _sport_stats(rows: list[dict]) -> dict:
         "wilson_lower": wilson_lower,
         "wilson_upper": wilson_upper,
         "p_breakeven": breakeven,
+        "pnl_flat": pnl_flat,
+        "roi_flat": roi_flat,
     }
 
 
@@ -940,9 +966,20 @@ def compute_and_save(sb) -> dict[str, float]:
                          sport, len(rows), len(raw_rows),
                          _PLAYABLE_MIN_MINUTES, _PLAYABLE_MAX_MINUTES)
 
-            stats = _sport_stats(rows)
+            # Verdicts et classement : lignes POSTÉRIEURES à la correction
+            # seulement (2026-09-10). Ils ne sont jamais appliqués, mais ils
+            # sont MONTRÉS (learning_summary → Telegram, rapport hebdo) : un
+            # basket « n=26 » venu d'août, sans une ligne recommandée depuis
+            # le 27/08, classait un moteur qui n'existe plus (règle 10).
+            appliquables = post_correction_rows(rows)
+            if len(appliquables) != len(rows):
+                log.info("[%s] plafonds, verdict, classement : %d/%d lignes "
+                         "postérieures au %s (le reste décrit un moteur qui "
+                         "n'existe plus)", sport, len(appliquables), len(rows),
+                         CALIBRATION_EPOCH)
+            stats = _sport_stats(appliquables)
             ranking_stats[sport] = stats
-            clv_by_sport[sport] = _clv_stats(rows)
+            clv_by_sport[sport] = _clv_stats(appliquables)
             all_preds.extend(
                 (r["sharp_prob"], 1 if r["outcome"] == "WIN" else 0)
                 for r in rows
@@ -961,14 +998,10 @@ def compute_and_save(sb) -> dict[str, float]:
             # c'était FAUX, et threshold_soccer=5.6 (appris le 2026-08-24
             # sur les edges de l'ANCIEN moteur) a gaté l'émission du nouveau
             # jusqu'au 2026-08-28. Tout ce qui est appliqué ne se calcule
-            # que sur des lignes postérieures à CALIBRATION_EPOCH ; seul le
-            # loggé (verdicts, classement, diagnostics) lit le ledger entier.
-            appliquables = post_correction_rows(rows)
-            if len(appliquables) != len(rows):
-                log.info("[%s] plafonds : %d/%d lignes postérieures au %s "
-                         "(le reste décrit un moteur qui n'existe plus)",
-                         sport, len(appliquables), len(rows), CALIBRATION_EPOCH)
-
+            # que sur des lignes postérieures à CALIBRATION_EPOCH — et depuis
+            # le 2026-09-10 les verdicts et le classement aussi (ci-dessus) ;
+            # seuls les diagnostics de bandes et la calibration lisent encore
+            # le ledger entier.
             top_fake, ceiling, band_n, best_band_lo = _top_band_verdict(appliquables)
             if top_fake and ceiling is not None:
                 log.warning("[%s] Plafond d'edge %.1f%% — la bande haute perd plus "
@@ -1004,7 +1037,7 @@ def compute_and_save(sb) -> dict[str, float]:
             # lignes post-époque, et un seuil posé que ces lignes ne portent
             # plus est RETIRÉ (retour à SPORT_DEFAULTS) — même mécanique que
             # les plafonds, même incident d'origine (f30b317).
-            stats_appl = _sport_stats(appliquables)
+            stats_appl = stats                      # déjà post-correction
             if stats_appl["n"] < _MIN_SAMPLES:
                 if f"threshold_{sport}" in seuils_poses:
                     _drop_stale_ceiling(sb, f"threshold_{sport}", sport,

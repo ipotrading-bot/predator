@@ -103,7 +103,71 @@ class TestFiltre:
     def test_le_filtre_precede_la_photographie_du_slate(self):
         import inspect
         src = inspect.getsource(eng.run)
-        assert src.index("_filtrer_perimetre(matches, log, _ligues_exclues(sb))") < src.index('_set_cached(sb, "cache_soft_slate"')
+        assert src.index("_filtrer_perimetre(matches, log, _ligues_exclues(sb), sb=sb)") < src.index('_set_cached(sb, "cache_soft_slate"')
+
+
+class TestMesureLiveScore:
+    """Le filtre d'entrée ne connaît qu'ESPN ; le règlement lit aussi
+    LiveScore. On COMPTE ce que l'un refuse et que l'autre réglerait — sans
+    rien émettre de plus (2026-09-10, décision opérateur en attente)."""
+
+    def test_compte_sans_changer_le_verdict(self, monkeypatch, caplog):
+        monkeypatch.setattr(eng, "_fixtures_espn", lambda s, a, b: [_ev("X", "Y")])
+        vus = []
+        monkeypatch.setattr(eng, "_livescore_connait",
+                            lambda m, s, d: vus.append((m, s, d)) or m.startswith("A FC"))
+        matches = [_m(_exchange="matchbook"), _m(match="C FC vs D FC", _exchange="matchbook")]
+        with caplog.at_level(logging.INFO, logger="PREDATOR"):
+            gardes = eng._filtrer_perimetre(matches, logging.getLogger("PREDATOR"))
+        assert gardes == [], "la mesure ne doit rien laisser passer de plus"
+        assert vus == [("A FC vs B FC", "soccer", "2026-09-04"), ("C FC vs D FC", "soccer", "2026-09-04")]
+        assert "NON RÉGLABLE | A FC vs B FC" in caplog.text and "LiveScore le connaît" in caplog.text
+        assert "LiveScore connaît 1 des 2 matchs écartés" in caplog.text
+
+    def test_livescore_connait_apparie_les_deux_camps(self, monkeypatch):
+        rows = [{"home": ["A FC"], "away": ["B FC"], "status": "ns"},
+                {"home": ["A FC"], "away": ["Z FC"], "status": "ft"}]
+        monkeypatch.setattr(ss, "_livescore_du_jour", lambda seg, jour: rows)
+        assert ss.livescore_connait("A FC vs B FC", "soccer", "2026-09-10T18:00:00Z")
+        assert not ss.livescore_connait("A FC vs C FC", "soccer", "2026-09-10")
+        assert not ss.livescore_connait("A vs B", "tennis", "2026-09-10")   # hors LiveScore
+        assert not ss.livescore_connait("A FC vs B FC", "soccer", "")
+
+
+class TestAlertePerimetre:
+    """Le chien de garde voit la cadence, pas le contenu : 27 h de scans
+    verts à 0-4 réglables le 09-10. Un run qui écarte plus de la moitié de
+    ses marchés vivants prévient Telegram, une fois par TTL."""
+
+    def _capture(self, monkeypatch):
+        envois = []
+        monkeypatch.setattr(eng, "_alert_once", lambda sb, key, text, **k: envois.append((key, text)) or True)
+        return envois
+
+    def test_espn_muet_declenche_l_alerte(self, monkeypatch, caplog):
+        envois = self._capture(monkeypatch)
+        monkeypatch.setattr(eng, "_fixtures_espn", lambda s, a, b: [])
+        matches = [_m(match=f"T{i} FC vs U{i} FC", _exchange="matchbook") for i in range(6)]
+        with caplog.at_level(logging.WARNING, logger="PREDATOR"):
+            assert eng._filtrer_perimetre(matches, logging.getLogger("PREDATOR"), sb=object()) == []
+        assert [k for k, _ in envois] == ["alert_perimetre"]
+        assert "0/6" in envois[0][1] and "ESPN muet" in envois[0][1]
+        assert "alerte Telegram" in caplog.text
+
+    def test_pas_d_alerte_quand_la_majorite_passe(self, monkeypatch):
+        envois = self._capture(monkeypatch)
+        monkeypatch.setattr(eng, "_fixtures_espn",
+                            lambda s, a, b: [_ev(f"T{i} FC", f"U{i} FC") for i in range(4)])
+        matches = [_m(match=f"T{i} FC vs U{i} FC", _exchange="matchbook") for i in range(6)]
+        gardes = eng._filtrer_perimetre(matches, logging.getLogger("PREDATOR"), sb=object())
+        assert len(gardes) == 4 and envois == []
+
+    def test_muet_sans_supabase_et_sous_le_plancher(self, monkeypatch):
+        envois = self._capture(monkeypatch)
+        monkeypatch.setattr(eng, "_fixtures_espn", lambda s, a, b: [])
+        eng._filtrer_perimetre([_m(_exchange="matchbook")] * 6, logging.getLogger("PREDATOR"))
+        eng._filtrer_perimetre([_m(_exchange="matchbook")] * 3, logging.getLogger("PREDATOR"), sb=object())
+        assert envois == []
 
 
 class TestESPNFixtures:
@@ -305,4 +369,4 @@ class TestLiguesExcluesParLOperateur:
     def test_le_point_dappel_passe_la_cle_meta(self):
         import inspect
         src = inspect.getsource(eng)
-        assert "_filtrer_perimetre(matches, log, _ligues_exclues(sb))" in src
+        assert "_filtrer_perimetre(matches, log, _ligues_exclues(sb), sb=sb)" in src

@@ -35,6 +35,7 @@ from core.tax_engine import optimal_stake_fraction as _optimal_stake_fraction
 from core.learning_layer import _PLAYABLE_MIN_MINUTES
 from core.paim_engine import section_jeunes as _section_jeunes
 from core.source_adapter import ligue_exclue as _ligue_exclue
+from core.score_sources import livescore_connait as _livescore_connait
 from core.score_sources import (fixtures_espn as _fixtures_espn, fixture_connue as _fixture_connue,
                                 sports_reglables as _sports_reglables)
 from core.odds_api import (SPORT_KEYS, fetch_odds, pool_status as _odds_pool_status,
@@ -1972,12 +1973,45 @@ def _ligues_exclues(sb) -> tuple[str, ...]:
     return tuple(m.strip() for m in raw.replace("\n", ";").split(";") if m.strip())
 
 
-def _filtrer_perimetre(matches: list, log, ligues_exclues: tuple = ()) -> list:
+# ── Alerte sur le CONTENU d'un scan (2026-09-10) ──────────────────────
+# Le chien de garde surveille la cadence des runs, pas ce qu'ils produisent :
+# un scan qui jette ses matchs (proxy en 402 le 09-09, relais 403 du 09-09
+# au 09-10) reste vert, le dashboard reste « frais », et rien ne sonne — 27 h
+# de fenêtre d'émission fermée avant qu'un humain ouvre un journal (INCIDENTS
+# « Le relais resté posé a détourné ESPN »). Ici on regarde le RATIO
+# réglables/vivants du run : à partir de _PERIMETRE_ALERTE_MIN_VIVANTS marchés
+# vivants, si plus de _PERIMETRE_ALERTE_PART_MAX sont écartés, Telegram est
+# prévenu, au plus une fois par _ALERT_TTL_H (clé meta `alert_perimetre`).
+_PERIMETRE_ALERTE_MIN_VIVANTS = 5
+_PERIMETRE_ALERTE_PART_MAX = 0.5
+_RAISON_NON_COUVERTE = "absent des sources de scores (ligue non couverte)"
+
+
+def _alerte_perimetre(sb, vivants: int, gardes: int, motifs: dict, log) -> bool:
+    """Telegram quand un run écarte plus de la moitié de ses marchés vivants.
+    Rend True si l'alerte est partie. Sans Supabase (tests, base en panne) :
+    rien — la dédup vit dans meta, et sans elle on spammerait à chaque tick."""
+    if sb is None or vivants < _PERIMETRE_ALERTE_MIN_VIVANTS:
+        return False
+    ecartes = vivants - gardes
+    if ecartes <= vivants * _PERIMETRE_ALERTE_PART_MAX:
+        return False
+    detail = " · ".join(f"{k} ×{v}" for k, v in sorted(motifs.items(), key=lambda kv: -kv[1]))
+    text = (f"⚠️ PÉRIMÈTRE — {gardes}/{vivants} marchés vivants réglables, "
+            f"{ecartes} écartés ({ecartes / vivants:.0%}) : {detail}. "
+            f"Un scan qui jette ses matchs n'émet rien — vérifier ESPN et les "
+            f"sources de scores (INCIDENTS « Le relais resté posé a détourné ESPN »).")
+    log.warning("PÉRIMÈTRE | %d/%d réglables seulement — alerte Telegram", gardes, vivants)
+    return _alert_once(sb, "alert_perimetre", text)
+
+
+def _filtrer_perimetre(matches: list, log, ligues_exclues: tuple = (), sb=None) -> list:
     """Applique les gardes du périmètre, loggue chaque refus, rend les
     matchs conservés. Une requête ESPN par sport présent, sur une fenêtre
     couvrant tous les coups d'envoi du run (cache de run, budget partagé).
     `ligues_exclues` : motifs opérateur (voir `_ligues_exclues`), appliqués
-    AVANT tout le reste — un match d'une ligue exclue ne coûte rien."""
+    AVANT tout le reste — un match d'une ligue exclue ne coûte rien.
+    `sb` : pour l'alerte de contenu (`_alerte_perimetre`) ; None = muet."""
     if ligues_exclues:
         restants = []
         for m in matches:
@@ -2013,21 +2047,35 @@ def _filtrer_perimetre(matches: list, log, ligues_exclues: tuple = ()) -> list:
             log.warning("PÉRIMÈTRE | ESPN %s : %s — sport traité comme muet", sport, e)
             fixtures_par_sport[sport] = []
     gardes = []
+    motifs: dict[str, int] = {}
+    ls_connus = 0
     for m in vivants:
         if _reglable(m, fixtures_par_sport):
             gardes.append(m)
-        else:
-            sport = (m.get("sport") or "").lower()
-            raison = ("ligue de jeunes, hors périmètre depuis le 2026-09-08"
-                      if _section_jeunes(m.get("league") or "")
-                      else "aucune source de scores pour ce sport"
-                      if fixtures_par_sport.get(sport) is None
-                      else "ESPN muet sur ce sport (panne ?)" if fixtures_par_sport.get(sport) == []
-                      else "absent des sources de scores (ligue non couverte)")
-            log.info("NON RÉGLABLE | %s (%s, %s) — %s, écarté",
-                     m.get("match", "?"), m.get("league", "?"), sport, raison)
+            continue
+        sport = (m.get("sport") or "").lower()
+        raison = ("ligue de jeunes, hors périmètre depuis le 2026-09-08"
+                  if _section_jeunes(m.get("league") or "")
+                  else "aucune source de scores pour ce sport"
+                  if fixtures_par_sport.get(sport) is None
+                  else "ESPN muet sur ce sport (panne ?)" if fixtures_par_sport.get(sport) == []
+                  else _RAISON_NON_COUVERTE)
+        motifs[raison] = motifs.get(raison, 0) + 1
+        if raison == _RAISON_NON_COUVERTE and _livescore_connait(
+                m.get("match") or "", sport, str(m.get("commence_time") or "")[:10]):
+            # MESURE (2026-09-10), sans effet sur l'émission — voir
+            # core.score_sources.livescore_connait.
+            ls_connus += 1
+            raison += " — LiveScore le connaît"
+        log.info("NON RÉGLABLE | %s (%s, %s) — %s, écarté",
+                 m.get("match", "?"), m.get("league", "?"), sport, raison)
     log.info("PÉRIMÈTRE | %d matchs → %d marchés vivants → %d réglables",
              len(matches), len(vivants), len(gardes))
+    non_couverts = motifs.get(_RAISON_NON_COUVERTE, 0)
+    if non_couverts:
+        log.info("PÉRIMÈTRE | LiveScore connaît %d des %d matchs écartés « ligue non "
+                 "couverte » (mesure, sans effet sur l'émission)", ls_connus, non_couverts)
+    _alerte_perimetre(sb, len(vivants), len(gardes), motifs, log)
     return gardes
 
 
@@ -2678,7 +2726,7 @@ def run():
     # ── Périmètre : marchés vivants, ligues réglables (2026-09-03) ────────
     # AVANT la photographie du slate : un match banni ne doit pas revenir
     # par le cache du tick reprice suivant.
-    matches = _filtrer_perimetre(matches, log, _ligues_exclues(sb))
+    matches = _filtrer_perimetre(matches, log, _ligues_exclues(sb), sb=sb)
     if not matches:
         log.warning("PÉRIMÈTRE | aucun match ne passe les gardes (marché vivant + réglable)")
         if sb:
