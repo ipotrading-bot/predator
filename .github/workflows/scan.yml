@@ -143,15 +143,6 @@ jobs:
           ODDS_API_KEYS: ${{ secrets.ODDS_API_KEYS }}
           FREE_SOURCES_PROXY: ${{ secrets.FREE_SOURCES_PROXY }}
           THESPORTSDB_API_KEY: ${{ secrets.THESPORTSDB_API_KEY }}
-          COHERE_API_KEY: ${{ secrets.COHERE_API_KEY }}
-          GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY }}
-          MISTRAL_API_KEY: ${{ secrets.MISTRAL_API_KEY }}
-          MODELSCOPE_API_KEY: ${{ secrets.MODELSCOPE_API_KEY }}
-          NEBIUS_API_KEY: ${{ secrets.NEBIUS_API_KEY }}
-          NVIDIA_NIM_API_KEY: ${{ secrets.NVIDIA_NIM_API_KEY }}
-          OLLAMA_API_KEY: ${{ secrets.OLLAMA_API_KEY }}
-          OPENROUTER_API_KEY: ${{ secrets.OPENROUTER_API_KEY }}
-          OVH_AI_API_KEY: ${{ secrets.OVH_AI_API_KEY }}
           # ▲ fin du bloc généré (pool `scan`)
         run: |
           # Préflight COMPLET : ce step est le seul à porter le pool entier

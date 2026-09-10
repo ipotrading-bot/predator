@@ -3076,6 +3076,33 @@ Fait le même jour, après l'audit complet (six décisions opérateur) :
   d'envoi) passés `closed`.
 - Gel des changements jusqu'au 2026-09-17 (docs/actions_operateur.md).
 
+Puis, sur instruction « corriger toutes les anomalies avant de geler »
+(même jour, après-midi) :
+- **Titan007** : 18 des 40 fichiers de cotes demandés par scan répondaient
+  404 (122 avertissements en 3 jours) et consommaient le cap. Mémoire des
+  sid sans cotes (`meta.titan007_sans_cotes`, TTL 6 h) : un sid connu
+  absent n'est pas redemandé, le cap sert aux suivants ; un 404 se logge
+  en INFO. Ligne de bilan inchangée (critère de retrait), complétée par
+  « n sautés ». Gardien : `tests/test_titan007.py::test_un_sid_sans_cotes_*`.
+- **Doublons de scan payant** (04, 05, 08/09 : deux scans standard à 10 min
+  d'écart) : le créneau est RÉCLAMÉ au début du run
+  (`meta.scan_standard_slot_claim`, TTL 20 min) ; le marquage « servi »
+  n'arrivait qu'en fin de run. Gardien :
+  `tests/test_ci_env.py::TestDegradationDuDoublon`.
+- **IA hors du scan** : le pool scan transmettait six clés IA pour une
+  découverte de catalogues que rien ne consommait, et chaque run loggait
+  « IA : aucun fournisseur configuré ». Retirées du pool, appel supprimé ;
+  aucun job ne porte plus de clé IA. Gardien :
+  `tests/test_ci_env.py::test_aucun_pool_ne_transmet_de_cle_ia`.
+- **Ledger complété** : 188 signaux `settled` sans ligne de ledger (75
+  recommandés, réglés du 01/08 au 08/09, 50 le seul 27/08) réinjectés par
+  `core.db.log_to_ledger` avec `created_at` = leur `closed_at` réel.
+  Aucun cas depuis le 08/09.
+- **`meta` nettoyée** : 530 `ai_cache_*`, 5 `ai_health_*`, 122 compteurs
+  de sources retirées (api-sports, odds500, 7M, Tavily, Groq, IA), 14
+  `alert_system_*` de plus de 7 jours, 2 clés Betfair, 3 caches vides —
+  aucune n'était lue par le code. Aucune ligne de résultat touchée.
+
 ### Le CLV du dashboard mesurait l'edge d'entrée, jamais la clôture (2026-09-09, soir)
 
 La page `/ledger` annonçait un « CLV Hit Rate » proche de 100 % et affichait à

@@ -160,10 +160,38 @@ def _meta_set(key: str, value: str) -> bool:
     return True
 
 
-def slot_deja_servi(slot: str) -> bool:
+SLOT_CLAIM_KEY = "scan_standard_slot_claim"
+SLOT_CLAIM_TTL_MIN = int(os.environ.get("SCAN_SLOT_CLAIM_TTL_MIN", "20"))
+
+
+def slot_deja_servi(slot: str, now: datetime | None = None) -> bool:
     """Ce créneau a-t-il déjà eu SON scan payant ? Sans Supabase : non — mieux
-    vaut un scan de trop qu'un créneau sans couverture."""
-    return _meta_get(SLOT_META_KEY) == slot
+    vaut un scan de trop qu'un créneau sans couverture.
+
+    Deux marques : « servi » (posée APRÈS un scan réussi, `--note-slot`) et
+    « réclamé » (posée au DÉBUT d'un scan standard, `reclamer_slot`). La
+    seconde date du 2026-09-10 : le marquage de fin laissait 5 min pendant
+    lesquelles un cron GitHub en retard tombant derrière le rattrapage du
+    chien de garde repayait le même créneau (mesuré les 04, 05 et 08/09 —
+    deux scans standard à 10 min d'écart). Une réclamation vaut « servi »
+    pendant SLOT_CLAIM_TTL_MIN ; si le premier run meurt, elle expire et le
+    créneau redevient dû."""
+    if _meta_get(SLOT_META_KEY) == slot:
+        return True
+    claim = _meta_get(SLOT_CLAIM_KEY) or ""
+    if "|" not in claim:
+        return False
+    s, ts = claim.split("|", 1)
+    try:
+        age = (now or datetime.now(timezone.utc)) - datetime.fromisoformat(ts)
+    except ValueError:
+        return False
+    return s == slot and timedelta(0) <= age < timedelta(minutes=SLOT_CLAIM_TTL_MIN)
+
+
+def reclamer_slot(slot: str, now: datetime) -> bool:
+    """Marque le créneau « en cours » avant de payer (voir slot_deja_servi)."""
+    return _meta_set(SLOT_CLAIM_KEY, f"{slot}|{now.isoformat()}")
 
 
 def resolve(event_name: str, schedule: str, input_mode: str) -> str:
@@ -273,6 +301,9 @@ def main(argv: list[str] | None = None) -> int:
         final = "reprice"
         print(f"::notice::Créneau {slot} déjà servi par un scan payant — ce run "
               "se dégrade en `reprice` (gratuit) au lieu de repayer les mêmes ligues")
+
+    if final == "standard" and not args.dry_run:
+        reclamer_slot(slot, now)
 
     env = env_for(final, os.environ.get("INPUT_HOURS", ""))
 

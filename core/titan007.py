@@ -72,10 +72,12 @@ les sept bilans cités ; le gardien
 `tests/test_titan007.py::test_le_critere_de_retrait_est_ecrit_et_la_source_est_au_registre`
 tombe si la source ou ce paragraphe disparaît seul.
 """
+import json
 import logging
 import os
 import re
 import time
+import urllib.error
 import urllib.request
 from datetime import datetime, timedelta, timezone
 
@@ -135,11 +137,66 @@ def _get(url: str) -> str | None:
         req = urllib.request.Request(url, headers=_HEADERS)
         with urllib.request.urlopen(req, timeout=TIMEOUT) as r:
             return r.read().decode("utf-8", "replace")
+    except urllib.error.HTTPError as e:
+        # Un 404 sur un fichier de cotes = pas encore publié : attendu sur un
+        # calendrier plein (mesuré 18/40 par scan le 2026-09-10), donc INFO ;
+        # la mémoire `_sans_cotes_*` évite de le redemander. Tout autre code
+        # reste un avertissement. L'URL entière (sans query string, par
+        # construction) : le critère de retrait demande de savoir si les 404
+        # frappent toujours les mêmes sid.
+        (log.info if e.code == 404 else log.warning)("titan007: %s — %s", url, e)
+        return None
     except Exception as e:
-        # L'URL entière (sans query string, par construction) : le critère de
-        # retrait demande de savoir si les 404 frappent toujours les mêmes sid.
         log.warning("titan007: %s — %s", url, e)
         return None
+
+
+# ── Mémoire des fichiers de cotes absents (2026-09-10) ────────────────
+# Mesuré à l'audit : 18 des 40 fichiers `1x2d` demandés répondaient 404 à
+# CHAQUE scan standard (122 avertissements en 3 jours), et le cap de 40
+# s'épuisait sur des matchs sans cotes pendant que d'autres, plus loin dans
+# le calendrier, en avaient. Un 404 = fichier pas encore publié ; il peut
+# apparaître plus tard dans la journée, d'où une mémoire à durée limitée
+# (SANS_COTES_TTL_H) partagée entre runs via `meta`, et non « pour la
+# journée ». Sans base (tests, panne) : mémoire vide, comportement d'avant.
+SANS_COTES_KEY = "titan007_sans_cotes"
+SANS_COTES_TTL_H = float(os.environ.get("TITAN007_SANS_COTES_TTL_H", "6"))
+
+
+def _sans_cotes_lire() -> dict:
+    sb = daily_quota._db()
+    if sb is None:
+        return {}
+    try:
+        row = sb.table("meta").select("value").eq("key", SANS_COTES_KEY).maybe_single().execute()
+        data = json.loads((row.data or {}).get("value") or "{}") if row and row.data else {}
+        return data if isinstance(data, dict) else {}
+    except Exception as e:                                       # noqa: BLE001
+        log.debug("titan007: mémoire sans-cotes illisible (%s)", e)
+        return {}
+
+
+def _sans_cotes_ecrire(memo: dict) -> None:
+    sb = daily_quota._db()
+    if sb is None:
+        return
+    try:
+        now = datetime.now(timezone.utc).isoformat()
+        sb.table("meta").upsert({"key": SANS_COTES_KEY, "value": json.dumps(memo),
+                                 "updated_at": now}, on_conflict="key").execute()
+    except Exception as e:                                       # noqa: BLE001
+        log.debug("titan007: mémoire sans-cotes non écrite (%s)", e)
+
+
+def _sans_cotes_frais(memo: dict, sid: str, now: datetime) -> bool:
+    """Ce sid a-t-il répondu « sans cotes » il y a moins de SANS_COTES_TTL_H ?"""
+    ts = memo.get(str(sid))
+    if not ts:
+        return False
+    try:
+        return (now - datetime.fromisoformat(ts)).total_seconds() < SANS_COTES_TTL_H * 3600
+    except (TypeError, ValueError):
+        return False
 
 
 def _odd(val) -> float:
@@ -326,18 +383,28 @@ def fetch_matches(hours_ahead: int = 24, max_matches: int | None = None) -> list
     n_sharp = 0
     n_asked = 0          # fichiers de cotes demandés
     n_unreachable = 0    # … dont sans cotes (404, timeout, fichier vide) — CRITÈRE DE RETRAIT
-    for i, fx in enumerate(upcoming[:cap]):
+    n_sautes = 0         # sid connus sans cotes depuis < SANS_COTES_TTL_H, pas redemandés
+    now = datetime.now(timezone.utc)
+    memo = _sans_cotes_lire()
+    for fx in upcoming:
+        if n_asked >= cap:
+            break
+        if _sans_cotes_frais(memo, fx["sid"], now):
+            n_sautes += 1
+            continue
         if daily_quota.spent(QUOTA_BUCKET) >= DAILY_BUDGET:
             log.warning("titan007: budget épuisé en cours de cycle — %d matchs conservés",
                         len(matches))
             break
-        if i:
+        if n_asked:
             time.sleep(REQUEST_DELAY)      # cadence volontairement basse
         n_asked += 1
         books = fetch_odds(fx["sid"])
         if not books:
             n_unreachable += 1
+            memo[str(fx["sid"])] = now.isoformat()
             continue
+        memo.pop(str(fx["sid"]), None)
         par_book = _soft_prices(books)
         soft  = par_book[min(par_book, key=ordre)] if par_book else None
         sharp = _sharp_price(books)
@@ -367,9 +434,11 @@ def fetch_matches(hours_ahead: int = 24, max_matches: int | None = None) -> list
     # Les deux compteurs du critère de retrait sont sur CETTE ligne, pour que
     # la mesure se fasse par grep sur les logs des runs « Scan standard ».
     log.info("titan007: %d matchs (%d avec prix sharp) / %d à venir | "
-             "%d sans cotes (404/vide) sur %d demandées | %d req aujourd'hui",
+             "%d sans cotes (404/vide) sur %d demandées | %d req aujourd'hui | "
+             "%d sautés (sans cotes il y a < %.0fh)",
              len(matches), n_sharp, len(upcoming), n_unreachable, n_asked,
-             daily_quota.spent(QUOTA_BUCKET))
+             daily_quota.spent(QUOTA_BUCKET), n_sautes, SANS_COTES_TTL_H)
+    _sans_cotes_ecrire({s: t for s, t in memo.items() if _sans_cotes_frais(memo, s, now)})
     return matches
 
 

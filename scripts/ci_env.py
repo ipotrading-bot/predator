@@ -132,7 +132,7 @@ def _uniq(*groups) -> tuple:
     return tuple(out)
 
 
-AI_FULL = _uniq(AI_KEYS, _companions_of(AI_KEYS))
+AI_FULL = _uniq(AI_KEYS, _companions_of(AI_KEYS))   # plus transmis à aucun pool (2026-09-10)
 
 # ── Pools ─────────────────────────────────────────────────────────────
 # passthrough : nom d'env ← secret du même nom (vide si absent, comme
@@ -144,8 +144,13 @@ AI_FULL = _uniq(AI_KEYS, _companions_of(AI_KEYS))
 # warn_missing: avertissement (pas d'erreur) si absent
 POOLS: dict[str, dict] = {
     "scan": dict(
+        # AUCUNE clé IA depuis le 2026-09-10 : le scan n'appelait plus que la
+        # découverte des catalogues (aucun modèle consommé depuis le retrait
+        # de la lane CJK le 09-03) et chaque run loggait « IA : aucun
+        # fournisseur configuré ». Le registre (core/ai_router) reste pour
+        # `ops.py ai` ; aucun job ne porte plus de clé IA.
         passthrough=_uniq(SUPABASE_RW, TELEGRAM, ODDS_SOURCES, RELAYS,
-                          RESULTS_SOURCES, AI_FULL),
+                          RESULTS_SOURCES),
         required=SUPABASE_RW, service_role=True, warn_missing=FALLBACK_SOURCES),
     "closing": dict(
         # La capture de closing line lit l'EXCHANGE (Matchbook, sans clé) —

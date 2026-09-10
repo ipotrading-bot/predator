@@ -5,8 +5,7 @@ Remplace la vérification par regex des blocs `${{ secrets.X }}` des workflows
 (tests/test_workflow_secrets.py, refonte 2026-08-26) : il n'y a plus de bloc à
 comparer, il y a scripts/ci_env.py et ses pools. Ces tests encodent les
 invariants que les workflows portaient en commentaires :
-  - tout fournisseur PRODUCTION_SAFE atteint le pool scan (le seul qui
-    consomme encore de l'IA — alias CJK) ;
+  - AUCUN pool ne transmet de clé IA (plus rien n'en consomme, 2026-09-10) ;
   - AUCUN pool ne transmet une clé Groq ou Tavily (supprimées le 2026-09-02,
     settlement déterministe) ;
   - REPRICE ne voit aucune clé payante ; readonly ne voit aucune clé d'écriture ;
@@ -71,12 +70,14 @@ def _secrets(**extra):
 
 # ── Couverture des fournisseurs ───────────────────────────────────────
 
-def test_tout_fournisseur_de_production_atteint_le_pool_scan():
-    """Le scan est le SEUL pool qui consomme encore de l'IA (alias CJK,
-    analyse) depuis que le settlement est déterministe (2026-09-02)."""
-    env = ci_env.env_for("scan", {})
-    manquants = sorted(CLES_PRODUCTION - set(env))
-    assert not manquants, f"pool scan ne transmet pas {manquants} — capacité morte SANS ERREUR"
+@pytest.mark.parametrize("pool", sorted(ci_env.POOLS))
+def test_aucun_pool_ne_transmet_de_cle_ia(pool):
+    """Plus aucun job ne consomme un modèle (lane CJK retirée le 09-03,
+    settlement déterministe depuis le 09-02) : le scan recevait encore six
+    clés pour une découverte de catalogues que rien n'utilisait, et loggait
+    « IA : aucun fournisseur configuré » à chaque run (audit du 2026-09-10).
+    Une clé transmise pour rien est une capacité qu'on croit avoir."""
+    assert not (set(ci_env.env_for(pool, {})) & TOUTES_CLES_IA), pool
 
 
 def test_chaque_jeton_a_compagnon_voyage_avec_lui():
@@ -308,13 +309,38 @@ class TestDegradationDuDoublon:
                          ("INPUT_HOURS", "")):
             monkeypatch.setenv(var, val)
         monkeypatch.setattr(ci_mode, "consume_manual_flag", lambda: manual)
-        monkeypatch.setattr(ci_mode, "slot_deja_servi", lambda slot: servi)
+        monkeypatch.setattr(ci_mode, "slot_deja_servi", lambda slot, now=None: servi)
+        self.reclames = []
+        monkeypatch.setattr(ci_mode, "reclamer_slot",
+                            lambda slot, now: self.reclames.append(slot) or True)
         assert ci_mode.main([]) == 0
         return dict(l.split("=", 1) for l in
                     sortie.read_text(encoding="utf-8").splitlines() if "=" in l)
 
     def test_le_premier_run_du_creneau_paie(self, tmp_path, monkeypatch):
         assert self._run(tmp_path, monkeypatch, servi=False)["mode"] == "standard"
+        assert len(self.reclames) == 1, "le créneau doit être réclamé AVANT de payer"
+
+    def test_un_run_degrade_ne_reclame_pas(self, tmp_path, monkeypatch):
+        self._run(tmp_path, monkeypatch, servi=True)
+        assert self.reclames == []
+
+    def test_une_reclamation_fraiche_vaut_servi_une_perimee_non(self, monkeypatch):
+        """Deux scans standard à 10 min d'écart sur le même créneau (04, 05,
+        08/09) : la réclamation du premier dégrade le second. Passé le TTL
+        (premier run mort), le créneau redevient dû."""
+        from datetime import datetime, timedelta, timezone
+        now = datetime(2026, 9, 10, 16, 15, tzinfo=timezone.utc)
+        etat = {}
+        monkeypatch.setattr(ci_mode, "_meta_get", lambda k: etat.get(k))
+        assert not ci_mode.slot_deja_servi("2026-09-10T16:03", now)
+        etat[ci_mode.SLOT_CLAIM_KEY] = f"2026-09-10T16:03|{(now - timedelta(minutes=5)).isoformat()}"
+        assert ci_mode.slot_deja_servi("2026-09-10T16:03", now)
+        assert not ci_mode.slot_deja_servi("2026-09-10T19:03", now)
+        etat[ci_mode.SLOT_CLAIM_KEY] = f"2026-09-10T16:03|{(now - timedelta(minutes=ci_mode.SLOT_CLAIM_TTL_MIN + 1)).isoformat()}"
+        assert not ci_mode.slot_deja_servi("2026-09-10T16:03", now)
+        etat[ci_mode.SLOT_META_KEY] = "2026-09-10T16:03"
+        assert ci_mode.slot_deja_servi("2026-09-10T16:03", now)
 
     def test_le_second_run_du_meme_creneau_se_degrade(self, tmp_path, monkeypatch):
         """Le cron en retard derrière le rattrapage : gratuit, pas muet — il

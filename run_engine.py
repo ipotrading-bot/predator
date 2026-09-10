@@ -330,28 +330,6 @@ def _telegram(text):
         log.error("Telegram: %s", e)
 
 
-def _refresh_ai_catalogues() -> None:
-    """Découverte des catalogues IA au démarrage du run (mission 4).
-
-    C'est ICI que se détecte la panne silencieuse : un fournisseur dont le
-    modèle préféré a disparu bascule sur le suivant, et une lane qui tombe
-    sous deux fournisseurs sains déclenche une alerte Telegram. Sans ce
-    passage, un repli mort reste mort sans que personne ne le sache — c'était
-    le cas d'OpenRouter jusqu'au 2026-08-22 (modèle `:free` retiré du
-    catalogue, appels perdus à chaque run).
-
-    Jamais bloquant : un routeur en panne ne doit pas empêcher un scan.
-    """
-    try:
-        from core.ai_router import refresh_catalogues
-        report = refresh_catalogues(alert=_telegram)
-        actifs = [f"{n}={v['model']}" for n, v in report["providers"].items()]
-        log.info("IA: %d fournisseur(s) actif(s) — %s",
-                 len(actifs), " | ".join(actifs) or "aucun")
-    except Exception as e:
-        log.warning("IA: découverte des catalogues impossible (%s)", e)
-
-
 # Columns optional at DB level — strip only as last-resort fallback
 _OPTIONAL_COLS = {"selection_name", "kelly_pct", "advice", "sharp_sources", "consensus_score", "correlation_group",
                   # sql/migrate_v10_12_signals_shadow.sql — posées à l'émission, voir _shadow_partition
@@ -2326,7 +2304,6 @@ def run():
     mode = "REPRICE 💹 Matchbook vs slate soft" if REPRICE else "STANDARD 24h"
     log.info("PAIM v8.8 — %s | Multi-Sport + Portfolio Balancer | Session: %s | "
              "budget %ds", mode, session, budget)
-    _refresh_ai_catalogues()
     log.info("Scan start: %s | max_events=%d | quotas=%s",
              now.strftime("%Y-%m-%d %H:%M:%S UTC"), MAX_MATCHES,
              " ".join(f"{k}={v}" for k, v in SPORT_QUOTA.items()))

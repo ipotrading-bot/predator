@@ -323,3 +323,41 @@ def test_le_critere_de_retrait_est_ecrit_et_la_source_est_au_registre():
     assert "CRITÈRE DE RETRAIT" in doc
     assert "2026-09-07" in doc.split("CRITÈRE DE RETRAIT", 1)[1]
     assert "titan007" in CALL_ORDER
+
+
+# ── Mémoire des fichiers de cotes absents (2026-09-10) ────────────────
+
+def test_un_sid_sans_cotes_recemment_nest_pas_redemande(monkeypatch):
+    """18/40 fichiers en 404 à chaque scan : on ne redemande pas un sid connu
+    sans cotes depuis moins de SANS_COTES_TTL_H, et le cap sert aux
+    suivants. Un sid marqué il y a plus longtemps est redemandé."""
+    from datetime import datetime, timedelta, timezone
+    now = datetime.now(timezone.utc)
+    ko = now + timedelta(hours=6)
+    site = ko + timedelta(hours=t7.SITE_UTC_OFFSET_H)
+    rows = [_row(sid=str(i), date=f"{site.month}-{site.day}", hhmm=site.strftime("%H:%M"),
+                 year=str(site.year)) for i in (1, 2, 3)]
+    calls = _wire(monkeypatch, rows, _BOOKS)
+    memo = {"1": (now - timedelta(hours=1)).isoformat(),          # frais : sauté
+            "2": (now - timedelta(hours=t7.SANS_COTES_TTL_H + 1)).isoformat()}   # périmé : redemandé
+    ecrit = {}
+    monkeypatch.setattr(t7, "_sans_cotes_lire", lambda: dict(memo))
+    monkeypatch.setattr(t7, "_sans_cotes_ecrire", lambda m: ecrit.update(m))
+    out = t7.fetch_matches(hours_ahead=24, max_matches=2)
+    demandes = [u.rsplit("/", 1)[-1] for u in calls["odds"]]
+    assert demandes == ["2.js", "3.js"], demandes       # 1 sauté, cap de 2 servi par 2 et 3
+    assert len(out) == 2
+    assert ecrit == {"1": memo["1"]}    # 1 reste mémorisé (frais) ; 2 a répondu, donc oublié
+
+
+def test_un_404_est_memorise_pour_le_prochain_run(monkeypatch):
+    from datetime import datetime, timedelta, timezone
+    ko = datetime.now(timezone.utc) + timedelta(hours=6)
+    site = ko + timedelta(hours=t7.SITE_UTC_OFFSET_H)
+    _wire(monkeypatch, [_row(sid="7", date=f"{site.month}-{site.day}",
+                             hhmm=site.strftime("%H:%M"), year=str(site.year))], [])
+    ecrit = {}
+    monkeypatch.setattr(t7, "_sans_cotes_lire", lambda: {})
+    monkeypatch.setattr(t7, "_sans_cotes_ecrire", lambda m: ecrit.update(m))
+    assert t7.fetch_matches(hours_ahead=24) == []
+    assert set(ecrit) == {"7"}
