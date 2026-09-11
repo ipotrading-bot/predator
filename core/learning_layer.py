@@ -825,8 +825,44 @@ def _decide_threshold(old_t: float, stats: dict, clv: dict, overconfident: bool,
                   f"(n={stats['n']}) — ne tranche pas, hold")
 
 
-_LEDGER_SELECT = ("outcome, kelly_pct, odds, market_type, initial_edge, sharp_prob, "
+_LEDGER_SELECT = ("signal_id, outcome, kelly_pct, odds, market_type, initial_edge, sharp_prob, "
                   "clv_pct_real, time_to_match_minutes, created_at")
+
+
+def _dater_par_signal(sb, rows: list[dict]) -> list[dict]:
+    """Pose `signal_created_at` (date d'ÉMISSION du signal) sur chaque ligne
+    qui porte un `signal_id`, en lisant `signals` puis `signals_archive`.
+
+    Pourquoi : `ai_learning_ledger.created_at` est la date du RÈGLEMENT, pas
+    celle du signal. Mesuré le 2026-09-11 : 131 lignes réglées les 27-28/08
+    (vague de backfill) portaient des signaux du 7 au 26 août — l'ancien
+    moteur — et passaient pour post-époque ; en zone jouable elles font 26-6
+    et posaient un faux plateau à 81 % en tête de toute courbe, d'où « le
+    taux de pertes ne fait que baisser ». Un signal introuvable (30 lignes,
+    purgées avant la règle d'archivage) reste NON daté : écarté des mesures
+    appliquées, jamais compté comme preuve (post_correction_rows). Une
+    lecture qui échoue fait de même, en le disant.
+    """
+    ids = sorted({r["signal_id"] for r in rows if r.get("signal_id") is not None})
+    if not ids:
+        return rows
+    dates: dict = {}
+    for table in ("signals", "signals_archive"):
+        manquants = [i for i in ids if i not in dates]
+        if not manquants:
+            break
+        try:
+            res = sb.table(table).select("id,created_at").in_("id", manquants).execute()
+            for s in (res.data or []):
+                if s.get("created_at"):
+                    dates[s["id"]] = s["created_at"]
+        except Exception as e:
+            log.warning("datation par signal (%s) : %s — les lignes non datées sont "
+                        "ÉCARTÉES des mesures appliquées", table, e)
+    for r in rows:
+        if r.get("signal_id") is not None:
+            r["signal_created_at"] = dates.get(r["signal_id"])
+    return rows
 
 
 # ── ÉPOQUE DE CALIBRATION (2026-08-27) ────────────────────────────────
@@ -858,13 +894,25 @@ CALIBRATION_EPOCH = os.environ.get("CALIBRATION_EPOCH", "2026-08-27")
 def post_correction_rows(rows: list[dict]) -> list[dict]:
     """Lignes réglées POSTÉRIEURES à la correction A6 (voir CALIBRATION_EPOCH).
 
-    Une ligne sans `created_at` est ÉCARTÉE — contrairement à playable_rows,
+    La date qui compte est celle du SIGNAL (`signal_created_at`, posée par
+    _dater_par_signal), pas celle de la ligne de ledger, qui est la date du
+    règlement : réglé après la correction ne veut pas dire émis par le moteur
+    corrigé (2026-09-11 : 131 lignes du backfill des 27-28/08 datées
+    post-époque pour des signaux d'août). Une ligne que personne n'a datée
+    par signal (pas de clé) se lit encore par `created_at` : c'est le cas des
+    lignes synthétiques et des lecteurs qui n'ont pas accès à `signals`.
+
+    Une ligne sans date est ÉCARTÉE — contrairement à playable_rows,
     qui conserve l'inconnu. Le contrat est inverse ici : playable_rows filtre
     ce qu'on OBSERVE (jeter l'inconnu viderait l'historique), celle-ci filtre
     ce qu'on IMPOSE au moteur (garder l'inconnu ferait passer une ligne de
     l'ancien moteur pour une preuve).
     """
-    return [r for r in rows if (r.get("created_at") or "")[:10] >= CALIBRATION_EPOCH]
+    def _date(r: dict) -> str:
+        if "signal_created_at" in r:
+            return r.get("signal_created_at") or ""
+        return r.get("created_at") or ""
+    return [r for r in rows if _date(r)[:10] >= CALIBRATION_EPOCH]
 
 
 def playable_rows(rows: list[dict]) -> list[dict]:
@@ -956,7 +1004,7 @@ def compute_and_save(sb) -> dict[str, float]:
                    .order("created_at", desc=True)
                    .limit(120)
                    .execute())
-            raw_rows = res.data or []
+            raw_rows = _dater_par_signal(sb, res.data or [])
             # 120 et non 50 : le filtre de zone jouable retire ~55% des lignes,
             # une fenêtre de 50 n'en laissait plus assez pour atteindre
             # _MIN_SAMPLES sur autre chose que le football.

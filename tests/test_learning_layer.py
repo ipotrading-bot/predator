@@ -1164,3 +1164,90 @@ class TestMisePlateEtEpoque:
         compute_and_save(sb)
         ecrits = [w for w in sb.meta_writes if w["key"] == "sport_ranking"]
         assert len(ecrits) == 1 and json.loads(ecrits[0]["value"]) == ["soccer"]
+
+
+class TestDatationParSignal:
+    """La date d'époque est celle du SIGNAL, pas du règlement (2026-09-11) :
+    131 lignes réglées les 27-28/08 pour des signaux d'août passaient pour
+    post-A6 et posaient un faux plateau à 81 % en tête de courbe."""
+
+    class _Q:
+        def __init__(self, data, boom=False):
+            self._data, self._boom = data, boom
+            self.asked = None
+
+        def select(self, *_a, **_k):
+            return self
+
+        def in_(self, _col, ids):
+            self.asked = list(ids)
+            return self
+
+        def execute(self):
+            if self._boom:
+                raise RuntimeError("signals injoignable")
+            return type("R", (), {"data": [d for d in self._data if d["id"] in self.asked]})()
+
+    class _SB:
+        def __init__(self, signals, archive=(), boom=False):
+            self.q = {"signals": TestDatationParSignal._Q(signals, boom),
+                      "signals_archive": TestDatationParSignal._Q(list(archive))}
+
+        def table(self, name):
+            return self.q[name]
+
+    def test_post_correction_rows_prefere_la_date_du_signal(self):
+        from core.learning_layer import post_correction_rows
+        regle_apres_emis_avant = {"created_at": "2026-08-28T00:00:00+00:00",
+                                  "signal_created_at": "2026-08-10T00:00:00+00:00"}
+        emis_apres = {"created_at": "2026-09-01T00:00:00+00:00",
+                      "signal_created_at": "2026-08-30T00:00:00+00:00"}
+        non_date = {"created_at": "2026-09-01T00:00:00+00:00", "signal_created_at": None}
+        assert post_correction_rows([regle_apres_emis_avant, emis_apres, non_date]) == [emis_apres]
+
+    def test_sans_cle_la_date_de_la_ligne_fait_foi(self):
+        from core.learning_layer import post_correction_rows
+        assert post_correction_rows([{"created_at": "2026-09-01T00:00:00+00:00"}])
+
+    def test_les_lignes_sont_datees_par_signals_puis_par_l_archive(self):
+        from core.learning_layer import _dater_par_signal
+        rows = [{"signal_id": 1, "created_at": "2026-08-28T00:00:00+00:00"},
+                {"signal_id": 2, "created_at": "2026-08-28T00:00:00+00:00"},
+                {"signal_id": 3, "created_at": "2026-08-28T00:00:00+00:00"}]
+        sb = self._SB(signals=[{"id": 1, "created_at": "2026-08-10T00:00:00+00:00"}],
+                      archive=[{"id": 2, "created_at": "2026-09-02T00:00:00+00:00"}])
+        _dater_par_signal(sb, rows)
+        assert rows[0]["signal_created_at"] == "2026-08-10T00:00:00+00:00"
+        assert rows[1]["signal_created_at"] == "2026-09-02T00:00:00+00:00"
+        assert rows[2]["signal_created_at"] is None             # purgé avant l'archivage
+        assert sb.q["signals_archive"].asked == [2, 3]           # seuls les manquants
+
+    def test_une_lecture_qui_echoue_ecarte_plutot_que_de_compter(self):
+        from core.learning_layer import _dater_par_signal, post_correction_rows
+        rows = [{"signal_id": 1, "created_at": "2026-09-01T00:00:00+00:00"}]
+        _dater_par_signal(self._SB(signals=[], boom=True), rows)
+        assert rows[0]["signal_created_at"] is None
+        assert post_correction_rows(rows) == []
+
+    def test_sans_signal_id_aucune_requete(self):
+        from core.learning_layer import _dater_par_signal
+
+        class _Jamais:
+            def table(self, _name):
+                raise AssertionError("un appel pour rien")
+
+        rows = [{"created_at": "2026-09-01T00:00:00+00:00"}]
+        assert _dater_par_signal(_Jamais(), rows) is rows and "signal_created_at" not in rows[0]
+
+    def test_le_backfill_du_27_08_ne_fait_plus_preuve(self):
+        """Rejeu : 40 lignes WIN réglées le 28/08 pour des signaux du 10/08,
+        et 10 lignes du moteur courant. Seules les 10 comptent."""
+        from core.learning_layer import _dater_par_signal, post_correction_rows
+        rows = ([{"signal_id": i, "created_at": "2026-08-28T03:00:00+00:00", "outcome": "WIN"}
+                 for i in range(40)]
+                + [{"signal_id": 100 + i, "created_at": "2026-09-05T03:00:00+00:00", "outcome": "LOSS"}
+                   for i in range(10)])
+        signals = ([{"id": i, "created_at": "2026-08-10T12:00:00+00:00"} for i in range(40)]
+                   + [{"id": 100 + i, "created_at": "2026-09-04T12:00:00+00:00"} for i in range(10)])
+        kept = post_correction_rows(_dater_par_signal(self._SB(signals), rows))
+        assert len(kept) == 10 and all(r["outcome"] == "LOSS" for r in kept)

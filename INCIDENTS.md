@@ -1524,6 +1524,63 @@ Gardiens : `tests/test_score_sources.py::TestLiveScore` (dont
 `tests/test_watchdog_worker.py`, `tests/test_documentation.py`.
 
 
+### « Le taux de pertes ne fait qu'augmenter » : l'époque était datée par le règlement, pas par le signal (2026-09-11)
+
+Symptôme (opérateur) : la courbe de réussite « ne fait que baisser » depuis
+la correction A6 du 27/08.
+
+Mesuré (recommandés jouables, `ai_learning_ledger ⋈ signals`, Wilson 95 %,
+point mort à taxe 0) :
+- par date de SIGNAL, le cumul post-A6 est **42-28** (60 % pour 58 % de
+  point mort, −0.27 u à mise plate) : l'équilibre, pas une pente. Ce qui se
+  voit est une **cassure sur trois jours**, 08-10/09 : 10-16 (38 %, Wilson
+  [22 ; 58], PM 54.8 %, −8.1 u) — Fisher p = 0.01 contre les dix jours
+  précédents, mais P(≤ 10 sur 26 | au point mort) = 0.07. Différent
+  d'avant, pas prouvé perdant.
+- **Artefact de mesure** : `ai_learning_ledger.created_at` est la date du
+  RÈGLEMENT. 131 lignes réglées les 27-28/08 (vague de backfill) portaient
+  des signaux du 7 au 26 août — l'ancien moteur — et passaient pour
+  post-époque dans `post_correction_rows()` ; en zone jouable elles font
+  26-6 (81 %) et posent un faux plateau en tête de toute courbe lue par
+  date de ligne. 30 d'entre elles n'ont plus de signal du tout (purgé avant
+  la règle d'archivage n°9), ni dans `signals` ni dans `signals_archive`.
+- **Artefact de mise** : la tranche 08-10/09 fait −13.35 % de bankroll en
+  Kelly, dont −9.95 % sur trois Youth League (Barcelona U19 : Kelly 8.25 %,
+  cote 1.13, edge 8.6 % calculé contre un `pinnacle_price` 1.04 qui est le
+  prix des SENIORS — l'incident « U19 réglé sur les seniors »). Sans elles :
+  −3.4 %. Les jeunes sont hors périmètre depuis le 08/09.
+- Le règlement n'est PAS en cause : 23 LOSS sur 25 et 6 PUSH sur 6
+  recalculés depuis le score (LiveScore, MLB statsapi, ESPN) ; 2 non
+  vérifiables (Copa Bolivia). Pas de différence 1xbet / bet365, ni par
+  marché, ni par bande d'edge ou de cote.
+- Indices, non démontrés (aucun segment à n ≥ 30) : créneau de création
+  19-23 UTC **2-10** (MLB totals, Amériques, jeunes ; seul segment dont la
+  borne HAUTE de Wilson passe sous le point mort) ; bande sharp_prob < 0.55
+  réalisée à 36 % (n=22) ; CLV réel moyen +1.5 % pour 3.8 % d'edge annoncé
+  (n=16, corrélation edge↔CLV −0.29) ; depuis le 08/09 la cote moyenne
+  passe de 1.62 à 1.9 (paris plus proches du pile-ou-face).
+
+Fait : `core/learning_layer._dater_par_signal` pose `signal_created_at`
+(lu dans `signals`, puis `signals_archive`) sur chaque ligne du ledger ;
+`post_correction_rows` date par le signal quand la clé est là, écarte une
+ligne non datée, et ne lit `created_at` que pour les lignes que personne
+n'a datées (synthétiques). Une lecture qui échoue écarte, en le disant.
+Sans effet sur les plafonds et seuils appliqués ce jour (la fenêtre des 120
+dernières lignes de chaque sport est déjà toute post-époque par signal) :
+c'est l'avenir de la mesure qui est protégé, pas le présent corrigé.
+
+⚠️ Aucun seuil touché (règle 10) : rien n'est démontré à n < 30. Refaire
+la table quand la tranche post-08/09 dépasse 30 recommandés jouables. Le
+ledger ne stocke AUCUN score : rejouer une issue exige une requête externe
+— une colonne score + source de règlement est la suite naturelle (schéma).
+`_top_band_verdict` pose encore un plafond sans test statistique (n=5) :
+à revoir après le gel, le plafond n'a écarté aucune ligne depuis le 10/09.
+
+Gardiens : `tests/test_learning_layer.py::TestDatationParSignal` (date du
+signal préférée, archive consultée pour les manquants seulement, lecture en
+échec = écartée, rejeu du backfill du 27-28/08 : 40 WIN d'août ne comptent
+plus, les 10 lignes du moteur courant si).
+
 ## Couche IA
 
 Le paysage des paliers gratuits change tous les mois. Rien de ce qui suit
