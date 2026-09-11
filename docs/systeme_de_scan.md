@@ -93,6 +93,16 @@ n'est JAMAIS dégradé. Pour relancer un scan payant sur un créneau déjà serv
 lancer `scan.yml` à la main en cochant **« Payer même si le créneau a déjà été
 servi »**.
 
+Depuis le 11 septembre 2026, **chaque créneau a sa part de l'allocation du
+jour** : 1/8 par créneau standard, cumulée au fil des créneaux dus (à 16:10,
+5/8 ; à 23:10, tout). Ce que le matin n'engage pas reste au soir ; le matin ne
+peut pas engager la part du soir. Avant, une droite ouvrait 55 % du budget à
+11:10 : mesuré le samedi 6 septembre, les créneaux 06/09/11 engageaient 60 %,
+puis le 16:03 n'achetait que 2 ligues du Big 5 et le 19:03 refusait Mexique,
+Brésil et Argentine en pleine fenêtre. Un scan manuel de nuit obtient la part
+du premier créneau, pas un crédit de plus. La ligne « RYTHME | allocation … —
+encore engageables à cette heure » de chaque run montre le plafond du moment.
+
 ## Ce qui n'entre PAS (depuis le 3 septembre 2026, ta décision)
 
 - Un match dont le prix sharp n'est qu'une copie d'une source soft, sans

@@ -235,7 +235,7 @@ from core.scan_windows import daily_allowance, intraday_cap, BACKGROUND_SHARE, E
 
 class TestRythme:
     NIGHT = _utc(2026, 9, 2, 1)        # 01:00 UTC, mercredi : SA/MLB favorables, EPL de fond
-    EVENING = _utc(2026, 9, 2, 22)     # 22:00 UTC : plafond intra-journée = 100 %
+    EVENING = _utc(2026, 9, 2, 23, 30)  # 23:30 UTC : dernier créneau dû, plafond = 100 %
 
     def test_allocation_du_jour_est_pool_sur_jours_restants(self):
         assert daily_allowance(2500, 30) == pytest.approx(2500 / 30)
@@ -243,11 +243,18 @@ class TestRythme:
         assert daily_allowance(None, 30) is None
         assert daily_allowance(2500, None) is None
 
-    def test_plafond_intra_journee_monte_lineairement(self):
-        assert intraday_cap(240, _utc(2026, 9, 2, 0)) == pytest.approx(240 * 2 / 24)
-        assert intraday_cap(240, _utc(2026, 9, 2, 10)) == pytest.approx(240 * 12 / 24)
-        assert intraday_cap(240, self.EVENING) == 240
-        assert intraday_cap(240, _utc(2026, 9, 2, 23, 30)) == 240
+    def test_plafond_intra_journee_monte_par_creneau(self):
+        """Une part ÉGALE par créneau `standard`, cumulée au fil des créneaux
+        DUS (2026-09-11, décision opérateur). La droite d'avant ouvrait 55 %
+        à 11:10 : mesuré le samedi 2026-09-06, le matin prenait 60 % et 16:03
+        puis 19:03 refusaient des ligues EN FENÊTRE."""
+        h = [6, 9, 11, 13, 16, 19, 21, 23]
+        assert intraday_cap(240, _utc(2026, 9, 2, 0), h) == pytest.approx(240 / 8)   # plancher
+        assert intraday_cap(240, _utc(2026, 9, 2, 6, 10), h) == pytest.approx(240 / 8)
+        assert intraday_cap(240, _utc(2026, 9, 2, 10), h) == pytest.approx(240 * 2 / 8)
+        assert intraday_cap(240, _utc(2026, 9, 2, 16, 10), h) == pytest.approx(240 * 5 / 8)
+        assert intraday_cap(240, _utc(2026, 9, 2, 22, 59), h) == pytest.approx(240 * 7 / 8)
+        assert intraday_cap(240, self.EVENING, h) == 240
 
     def _pol(self, allowance, spent=0.0, exempt=()):
         noted = []
@@ -258,7 +265,7 @@ class TestRythme:
 
     def test_fenetre_favorable_bornee_par_le_plafond_du_jour(self):
         dawn = _utc(2026, 9, 2, 5)                   # 05:00 : KBO/NPB en fenêtre
-        p, _ = self._pol(allowance=12, spent=0)     # plafond 12 × 7/24 = 3,5
+        p, _ = self._pol(allowance=24, spent=0)     # plafond 24 × 1/8 = 3 (plancher)
         ok, why = p.allow("baseball_kbo", "baseball", dawn, 2000, cost=2)
         assert ok and why == "fenêtre favorable"
         ok, why = p.allow("baseball_npb", "baseball", dawn, 2000, cost=3)
@@ -351,9 +358,10 @@ def test_fetch_odds_sert_les_ligues_les_plus_peuplees_d_abord(monkeypatch):
     monkeypatch.setattr(odds_api.requests, "get", fake_get)
     monkeypatch.setattr(odds_api, "datetime", _FrozenDT)
     noted = []
-    # Mardi 04:00 : les deux ligues sont de fond → plafond 1000 × 6/24 × 0,5 = 125.
-    # À 123 engagés, il reste 2 crédits : KBO (h2h,totals = 2) passe, EPL (3) non.
-    pol = SpendPolicy(lambda _k: None, lambda _k: None, allowance=1000, spent_today=123,
+    # Mardi 04:00 : les deux ligues sont de fond → plafond 1000 × 1/8 × 0,5 = 62,5
+    # (part du premier créneau, plancher). À 60 engagés, il reste 2,5 crédits :
+    # KBO (h2h,totals = 2) passe, EPL (3) non.
+    pol = SpendPolicy(lambda _k: None, lambda _k: None, allowance=1000, spent_today=60,
                       note_spent=noted.append)
     odds_api.fetch_odds(api_key="k", hours_ahead=24,
                         sport_keys={"soccer_epl": "soccer", "baseball_kbo": "baseball"},
@@ -427,3 +435,65 @@ def test_build_spend_policy_porte_le_rythme(monkeypatch):
     pol.note_paid("soccer_epl", 3)
     assert eng._oddsapi_spent_today(sb, now) == 3.0
     assert eng._build_spend_policy(None, now) is None
+
+
+class TestPartsParCreneau:
+    """Le plafond intra-journée est PAR CRÉNEAU depuis le 2026-09-11 (décision
+    opérateur, INCIDENTS.md « Le matin mangeait le soir »). Les heures sont
+    DÉRIVÉES du cron `standard` (règle n°6), chaque créneau a sa part, et
+    l'inutilisé roule vers le soir — jamais l'inverse."""
+
+    def test_les_creneaux_viennent_du_cron_de_scan_yml(self):
+        from core.scan_windows import standard_slot_hours
+        from scripts.ci_scan_mode import standard_slots
+        assert standard_slot_hours() == standard_slots()[1]
+        assert len(standard_slot_hours()) == 8
+
+    def test_le_plafond_par_defaut_lit_les_creneaux_derives(self):
+        from core.scan_windows import standard_slot_hours
+        hs = standard_slot_hours()
+        assert intraday_cap(80, _utc(2026, 9, 12, hs[-1], 5)) == 80
+        assert intraday_cap(80, _utc(2026, 9, 12, hs[0], 5)) == pytest.approx(80 / len(hs))
+
+    def test_le_samedi_2026_09_06_rejoue_16h_et_19h_gardent_leur_part(self):
+        """Mesuré : 06:10→20, 09:10→28, 11:10→22 (70 engagés, 60 %), puis
+        16:10 achète 2 ligues du Big 5 sur 5 et 19:10 refuse Mexique, Brésil,
+        Argentine EN FENÊTRE. Avec des parts par créneau, quoi qu'ait fait le
+        matin, 16:03 et 19:03 disposent chacun d'au moins 1/8 de l'allocation."""
+        h = [6, 9, 11, 13, 16, 19, 21, 23]
+        alloc = 117
+        # Le matin ne peut plus dépasser 3/8 à 11:10, exemption 1,1× comprise.
+        assert intraday_cap(alloc, _utc(2026, 9, 6, 11, 10), h) * EXEMPT_SHARE < 70
+        # 16:03 : au moins une part entière au-dessus de tout ce que 13:03 pouvait engager.
+        part = alloc / 8
+        assert intraday_cap(alloc, _utc(2026, 9, 6, 16, 10), h) \
+            - intraday_cap(alloc, _utc(2026, 9, 6, 13, 10), h) == pytest.approx(part)
+        assert part >= 5 * 3 - 1          # un Big 5 complet à 3 crédits la ligue (arrondi)
+        # 19:03 : idem pour la soirée sud-américaine.
+        assert intraday_cap(alloc, _utc(2026, 9, 6, 19, 10), h) \
+            - intraday_cap(alloc, _utc(2026, 9, 6, 16, 10), h) == pytest.approx(part)
+
+    def test_l_inutilise_du_matin_roule_vers_le_soir_jamais_l_inverse(self):
+        h = [6, 9, 11, 13, 16, 19, 21, 23]
+        p = SpendPolicy(lambda _k: None, lambda _k: None, allowance=80, spent_today=0)
+        # 16:10, rien dépensé le matin : 5/8 × 80 = 50 disponibles en fenêtre.
+        soir = _utc(2026, 9, 6, 16, 10)
+        n = sum(1 for _ in range(30) if p.allow("soccer_epl", "soccer", soir, 2000, cost=3)[0])
+        assert n * 3 <= 50 and n * 3 > 45
+        # 06:10 : jamais plus que la part du premier créneau, même le fond.
+        matin = _utc(2026, 9, 6, 6, 10)
+        assert intraday_cap(80, matin, h) == 10
+
+    def test_le_21h_ne_mange_pas_la_part_du_23h(self):
+        """Mesuré le 2026-09-10 : 21:31 engage 128 (1,1 × 119) et 23:10 paie
+        0 crédit — US Open en fenêtre et AFL/NRL du lendemain sautés. Avec
+        7/8 à 21:xx, le débordement 1,1× reste sous l'allocation entière."""
+        h = [6, 9, 11, 13, 16, 19, 21, 23]
+        assert intraday_cap(119, _utc(2026, 9, 10, 21, 31), h) * EXEMPT_SHARE < 119
+
+    def test_le_plancher_couvre_un_scan_manuel_de_nuit_sans_credit_de_plus(self):
+        """Bouton « Scanner » à 01:20 le 2026-09-11 : il obtient la part du
+        premier créneau (1/8), qui sera d'autant réduite à 06:03."""
+        h = [6, 9, 11, 13, 16, 19, 21, 23]
+        assert intraday_cap(120, _utc(2026, 9, 11, 1, 20), h) == 15
+        assert intraday_cap(120, _utc(2026, 9, 11, 6, 3), h) == 15

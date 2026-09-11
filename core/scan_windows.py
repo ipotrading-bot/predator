@@ -150,9 +150,18 @@ def favorable_leagues(now: datetime | None = None) -> set[str]:
 #   1. allocation du jour = crédits restants du POOL ÷ jours restants du cycle
 #      — recalculée à chaque scan, donc l'inutilisé d'un jour creux est
 #      reporté sur les suivants (« maximum d'utilisation ») ;
-#   2. plafond intra-journée linéaire (INTRADAY_LEAD_H) : à 02:00 UTC on ne
-#      peut engager que ~15 % de l'allocation, à 22:00 la totalité — le tick
-#      de nuit (SA/MLB) ne mange pas la soirée Big 5, qui porte le volume ;
+#   2. plafond intra-journée PAR CRÉNEAU (2026-09-11, décision opérateur) :
+#      chaque créneau `standard` du cron (scripts/ci_scan_mode.py, 8 par
+#      jour) reçoit une part ÉGALE de l'allocation, et le plafond à une heure
+#      donnée est la somme des parts des créneaux déjà dus — l'inutilisé d'un
+#      créneau roule vers les suivants, jamais l'inverse. Avant : une droite
+#      (INTRADAY_LEAD_H) qui ouvrait 55 % de l'allocation à 11:10 ; mesuré
+#      le samedi 2026-09-06 : 06/09/11 engagent 70 crédits (60 %), puis
+#      16:03 achète 2 ligues du Big 5 sur 5 et 19:03 refuse Mexique, Brésil
+#      et Argentine EN FENÊTRE (« fenêtre favorable mais rythme : 102 + 3 >
+#      plafond 103 »). Avec des parts par créneau, 16:03 et 19:03 ont
+#      chacun ≥ 1/8 de l'allocation (≈ 15 crédits = un Big 5 ou une soirée
+#      sud-américaine complète) quoi qu'ait fait le matin ;
 #   3. parts par priorité, TOUTES adossées au plafond horaire du (2) depuis
 #      le 2026-09-05 : closing line imminente jusqu'à EXEMPT_SHARE, fenêtre
 #      favorable jusqu'à 100 %, scan de fond jusqu'à BACKGROUND_SHARE — le
@@ -164,7 +173,13 @@ PACING_ENABLED = os.environ.get("ODDS_API_PACING", "1") == "1"
 CYCLE_DAYS = float(os.environ.get("ODDS_API_CYCLE_DAYS", "30"))
 BACKGROUND_SHARE = float(os.environ.get("ODDS_API_BACKGROUND_SHARE", "0.5"))
 EXEMPT_SHARE = float(os.environ.get("ODDS_API_EXEMPT_SHARE", "1.1"))
-INTRADAY_LEAD_H = float(os.environ.get("ODDS_API_INTRADAY_LEAD_H", "2"))
+
+
+def standard_slot_hours() -> list[int]:
+    """Heures UTC des créneaux `standard`, DÉRIVÉES du cron de scan.yml via
+    scripts/ci_scan_mode.py (règle n°6 : jamais recopiées ici)."""
+    from scripts.ci_scan_mode import standard_slots   # stdlib seul à l'import
+    return standard_slots()[1]
 
 
 def daily_allowance(pool_remaining: int | float | None, days_left: float | None) -> float | None:
@@ -175,12 +190,25 @@ def daily_allowance(pool_remaining: int | float | None, days_left: float | None)
     return max(0.0, float(pool_remaining)) / max(1.0, float(days_left))
 
 
-def intraday_cap(allowance: float, now: datetime) -> float:
-    """Part de l'allocation engageable à cette heure UTC : linéaire, 100 %
-    atteint à (24 - INTRADAY_LEAD_H) h. La journée démarre douce pour que le
-    soir — les fenêtres qui comptent — trouve encore du budget."""
-    frac = (now.hour + now.minute / 60.0 + INTRADAY_LEAD_H) / 24.0
-    return allowance * min(1.0, max(0.0, frac))
+def intraday_cap(allowance: float, now: datetime,
+                 slot_hours: list[int] | None = None) -> float:
+    """Part de l'allocation engageable à cette heure UTC : k/n, où n est le
+    nombre de créneaux `standard` du jour et k le nombre de créneaux déjà
+    DUS (heure de créneau ≤ heure courante), jamais moins de 1/n.
+
+    Chaque créneau a donc sa part réservée : ce que le matin n'a pas engagé
+    reste disponible au soir, mais le matin ne peut pas engager la part du
+    soir. Le plancher 1/n couvre un scan manuel dans le trou de nuit
+    (bouton « Scanner » à 01:20 le 2026-09-11) : il consomme la part du
+    premier créneau, pas un crédit de plus. Un scan en retard sert le créneau
+    qu'il rattrape : à 10:47 pour le 09:03, k compte 06 et 09, comme prévu.
+    """
+    hours = sorted(slot_hours if slot_hours is not None else standard_slot_hours())
+    n = len(hours)
+    if n == 0:
+        return allowance
+    k = sum(1 for h in hours if h <= now.hour)
+    return allowance * max(1, k) / n
 
 
 class SpendPolicy:

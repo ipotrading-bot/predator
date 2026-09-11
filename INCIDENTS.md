@@ -2163,6 +2163,47 @@ réservée aux créneaux du soir, ou un plafond qui ne soit plus linéaire — e
 une DÉCISION OPÉRATEUR (politique de dépense, comme le 05/09), à prendre sur
 une deuxième journée mesurée, un jour de semaine celle-ci.
 
+### Le matin mangeait le soir : le plafond intra-journée devient une part par créneau (2026-09-11, décision opérateur)
+
+Suite de l'entrée précédente, sur la « deuxième journée mesurée » qu'elle
+demandait. Relevé des lignes « RYTHME | allocation … » et « DÉPENSE | … sauté »
+des runs `Scan standard` :
+
+- samedi 2026-09-06 (allocation 117-118) : 06:10→20, 09:10→28, 11:10→22, soit
+  **70 crédits (60 %) avant midi** ; 13:10→11 (Serie A, Ligue 1, Mexique
+  refusées « closing line imminente mais rythme : 81 + 3 > plafond 81 ») ;
+  16:10→15 (Liga, Serie A, Ligue 1 refusées à 96/97) ; **19:10→6 : Mexique,
+  Brésil, Argentine refusées EN FENÊTRE** (« fenêtre favorable mais rythme :
+  102 + 3 > plafond 103 ») ; 21:07→9 ; 23:10→15.
+- jeudi 2026-09-10 (allocation 119-120) : le soir est servi (19:10→31,
+  21:31→29) mais 21:31 monte à 128 = 1,1 × l'allocation et **23:10 paie 0** :
+  US Open en fenêtre refusé, AFL/NRL du lendemain sautés.
+
+Cause : la droite `intraday_cap` (INTRADAY_LEAD_H) ouvrait 34 % de
+l'allocation dès 06:10 et 55 % à 11:10 ; le week-end, les trois créneaux du
+matin (Big 5 en fenêtre dès 09:03) les prennent, et l'exemption closing line
+(1,1×) laisse 21:03 finir la journée avant 23:03.
+
+Fait, sur DÉCISION OPÉRATEUR du 2026-09-11 (« part réservée aux créneaux du
+soir, budget journalier inchangé ») : `intraday_cap` = k/n de l'allocation,
+n = créneaux `standard` du cron (DÉRIVÉS de `scripts/ci_scan_mode.py`, jamais
+recopiés), k = créneaux déjà dus, plancher 1/n. Chaque créneau a sa part
+(≈ 15 crédits = un Big 5 ou une soirée sud-américaine) ; l'inutilisé du matin
+roule vers le soir, jamais l'inverse ; à 21:xx le débordement 1,1 × 7/8 reste
+sous l'allocation, le 23:03 garde sa part. Le rejeu du 06/09 donne au 16:03
+et au 19:03 chacun 1/8 quoi qu'ait fait le matin. Les parts sont ÉGALES faute
+de mesure par créneau ; les pondérer serait une nouvelle décision, à prendre
+sur le P&L par heure de création des recommandés jouables.
+
+⚠️ Ce plafond gouverne la DÉPENSE, pas l'émission : aucun seuil d'edge n'a
+bougé (règle 10). Mesurer le samedi 2026-09-12 puis un jour de semaine : les
+lignes RYTHME/DÉPENSE de chaque créneau, et si 16:03/19:03 achètent le Big 5
+et l'Amérique du Sud en entier.
+
+Gardiens : `tests/test_scan_windows.py::TestPartsParCreneau` (créneaux dérivés
+du cron, rejeu du 06/09, roulement matin→soir seulement, 23:03 protégé du
+21:03, plancher de nuit) et `TestRythme::test_plafond_intra_journee_monte_par_creneau`.
+
 ### Le règlement servait les fantômes avant les recommandés, sur le budget rare (2026-09-05)
 
 Symptôme : TheSportsDB saturé (150/150) trois jours d'affilée, des recommandés
