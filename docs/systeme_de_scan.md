@@ -47,6 +47,25 @@ toutes les 10 minutes et rattrape :
   retard n'émettait plus que des fantômes (< T-2h) : 137 lignes sur 198
   depuis le 27 août.
 
+Le chien de garde peut lui-même se taire : le 11 septembre 2026, Cloudflare
+(« Workers Cron Triggers degraded ») n'a plus invoqué le Worker de 07:30 à
+l'après-midi — 0 invocation, 0 erreur, rien à voir dans le dépôt. Le créneau
+11:03 n'a pas été servi, 14 ticks de closing line sur 15 ont sauté, et tous
+les runs livrés étaient verts. Deux gardes depuis ce jour :
+
+- le digest Telegram (`run_rapport.py`, toutes les 2 h à H+35) compare le
+  dernier créneau `standard` DÛ à la marque `meta.scan_standard_slot` et
+  alerte « créneau non servi » au-delà de 20 min — pas la fraîcheur d'un
+  fichier, le créneau (règle dure n°12) ;
+- `python scripts/ops.py watchdog` tranche la cause en un écran : PAT du
+  Worker (expiration), cron et secret posés, invocations sur 24 h, incident
+  Cloudflare ouvert, dernier dispatch vu par GitHub, créneau dû servi ou non.
+
+Rattrapage à la main pendant que Cloudflare est muet : `gh workflow run
+closing_line.yml`, `gh workflow run scan.yml -f mode=reprice`, et `gh workflow
+run scan.yml -f mode=standard` seulement si le créneau dû n'est pas servi (il
+paie des crédits).
+
 Jusqu'au 4 septembre 2026 un standard manqué était perdu, et pire : il était
 INVISIBLE. Le chien de garde regardait l'âge du dernier run de `scan.yml`
 tous modes confondus, et les ticks reprice horaires le maintenaient toujours

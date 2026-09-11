@@ -6,6 +6,7 @@ scripts/ops.py — pilotage Supabase + Vercel depuis le terminal, sans CLI.
     python scripts/ops.py status                      # santé en un écran : clés OddsAPI, dernier signal, seuils, dernier déploiement
     python scripts/ops.py sources                     # sonde CHAQUE source de cotes : vivante ? quota ? joignable depuis cette IP ?
     python scripts/ops.py ai                          # sonde CHAQUE fournisseur IA par une INFÉRENCE réelle (catalogue ≠ utilisable)
+    python scripts/ops.py watchdog                    # le chien de garde Cloudflare fait-il son travail ? PAT, cron, invocations 24 h, incident Cloudflare, créneau dû
     python scripts/ops.py secrets-push [--run]        # recopie les clés du .env vers les secrets Actions (403 depuis un Codespace)
     python scripts/ops.py secrets-prune [--run]       # secrets Actions qu'AUCUN workflow ne lit plus (dérivé de l'historique git) → gh secret delete
 
@@ -33,6 +34,9 @@ Credentials (dans .env à la racine — gitignoré — ou l'environnement) :
     VERCEL_TOKEN              vercel.com/account/tokens
     VERCEL_PROJECT            nom ou id du projet (défaut : predator) — `vercel projects` pour le trouver
     VERCEL_TEAM_ID            optionnel (compte d'équipe)
+    CLOUDFLARE_API_TOKEN      Workers Scripts Edit + Account Analytics Read — `watchdog`
+    CLOUDFLARE_ACCOUNT_ID     compte Workers — `watchdog`
+    GITHUB_PAT                le PAT posé comme secret WATCHDOG_PAT du Worker — `watchdog`
 
 Tout est en REST (requests) : aucune dépendance à npm/node/CLI. Les CLIs
 officiels (`supabase`, `vercel`) restent utilisables à côté quand ils sont
@@ -42,7 +46,7 @@ import json
 import os
 import pathlib
 import sys
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 
 import requests
 from dotenv import load_dotenv
@@ -480,12 +484,147 @@ def sources():
           " — le settlement n'en dépend plus (scores structurés, 2026-09-02)")
 
 
+def watchdog():
+    """Le chien de garde Cloudflare (scripts/cloudflare_watchdog_worker.js)
+    fait-il son travail, LÀ, MAINTENANT ? Lecture seule, aucun secret affiché.
+
+    Écrit le 2026-09-11 : le Worker s'est tu de 07:31 à l'après-midi (0
+    invocation, incident Cloudflare « Workers Cron Triggers degraded » ouvert
+    depuis le 09-09), le créneau standard 11:03 n'a pas été servi, 14 ticks
+    de closing line sur 15 ont sauté — tous les runs livrés verts. Rien dans
+    le dépôt ne répondait à « qui s'est tu : le PAT, le cron, Cloudflare ? ».
+    Chaque bloc ci-dessous tranche UNE de ces causes.
+    """
+    from scripts.ci_scan_mode import SLOT_META_KEY, due_slot   # noqa: E402
+
+    now = datetime.now(timezone.utc)
+    pat = os.environ.get("GITHUB_PAT", "")
+    cf_tok = os.environ.get("CLOUDFLARE_API_TOKEN", "")
+    cf_acc = os.environ.get("CLOUDFLARE_ACCOUNT_ID", "")
+    repo = "ipotrading-bot/predator"
+    gh = {"Authorization": f"Bearer {pat}", "Accept": "application/vnd.github+json",
+          "User-Agent": "predator-ops"}
+
+    print("── 1. Le PAT que le Worker utilise (GITHUB_PAT du .env = WATCHDOG_PAT posé) ──")
+    if not pat:
+        print("  GITHUB_PAT ABSENT → impossible de sonder ; le Worker peut porter un PAT différent")
+    else:
+        try:
+            r = requests.get("https://api.github.com/user", headers=gh, timeout=20)
+            exp = r.headers.get("github-authentication-token-expiration", "")
+            print(f"  /user : HTTP {r.status_code}"
+                  + (f" — expire le {exp}" if exp else " — sans expiration"))
+            if exp:
+                try:
+                    dexp = datetime.strptime(exp[:19], "%Y-%m-%d %H:%M:%S").replace(tzinfo=timezone.utc)
+                    jours = (dexp - now).total_seconds() / 86400
+                    print(f"  {'⚠️  ' if jours < 7 else ''}{jours:.1f} jour(s) avant expiration"
+                          + (" — REGÉNÉRER puis `python scripts/deploy_watchdog_worker.py`" if jours < 7 else ""))
+                except ValueError:
+                    pass
+            r = requests.get(f"https://api.github.com/repos/{repo}/actions/workflows/scan.yml/runs",
+                             params={"per_page": 1, "branch": "main"}, headers=gh, timeout=20)
+            print(f"  liste des runs : HTTP {r.status_code} "
+                  f"({'OK' if r.status_code == 200 else 'le Worker ne verrait rien non plus'})")
+        except requests.RequestException as e:
+            print(f"  GitHub injoignable : {type(e).__name__}")
+
+    print("── 2. Cloudflare : script, cron, secret, invocations 24 h ──")
+    if not (cf_tok and cf_acc):
+        print("  CLOUDFLARE_API_TOKEN / CLOUDFLARE_ACCOUNT_ID absents → état du Worker inconnu")
+    else:
+        base = f"https://api.cloudflare.com/client/v4/accounts/{cf_acc}/workers/scripts/predator-watchdog"
+        h = {"Authorization": f"Bearer {cf_tok}"}
+        try:
+            r = requests.get(f"{base}/schedules", headers=h, timeout=20)
+            crons = [s.get("cron") for s in (r.json().get("result") or {}).get("schedules", [])] if r.ok else []
+            print(f"  cron posé      : {crons or 'AUCUN — `python scripts/deploy_watchdog_worker.py`'}"
+                  if r.ok else f"  cron           : HTTP {r.status_code}")
+            r = requests.get(f"{base}/settings", headers=h, timeout=20)
+            noms = [b.get("name") for b in (r.json().get("result") or {}).get("bindings", [])] if r.ok else []
+            print(f"  secret         : {'WATCHDOG_PAT posé' if 'WATCHDOG_PAT' in noms else 'WATCHDOG_PAT ABSENT'}"
+                  if r.ok else f"  settings       : HTTP {r.status_code}")
+            q = """query($acc: String!, $start: Time!) { viewer { accounts(filter: {accountTag: $acc}) {
+                     workersInvocationsAdaptive(limit: 200, orderBy: [datetimeHour_ASC],
+                       filter: {scriptName: "predator-watchdog", datetime_geq: $start}) {
+                       dimensions { datetimeHour } sum { requests errors } } } } }"""
+            r = requests.post("https://api.cloudflare.com/client/v4/graphql",
+                              headers={**h, "Content-Type": "application/json"},
+                              json={"query": q, "variables": {
+                                  "acc": cf_acc,
+                                  "start": (now - timedelta(hours=24)).strftime("%Y-%m-%dT%H:%M:%SZ")}},
+                              timeout=30)
+            body = r.json() if r.content else {}
+            if body.get("errors"):
+                print(f"  invocations    : GraphQL refusé ({str(body['errors'])[:120]}) — "
+                      "jeton sans « Account Analytics Read » ?")
+            else:
+                rows = ((((body.get("data") or {}).get("viewer") or {}).get("accounts") or [{}])[0]
+                        .get("workersInvocationsAdaptive") or [])
+                total = sum(x["sum"]["requests"] for x in rows)
+                erreurs = sum(x["sum"]["errors"] for x in rows)
+                derniere = rows[-1]["dimensions"]["datetimeHour"] if rows else None
+                print(f"  invocations    : {total} sur 24 h ({erreurs} en erreur) — nominal ≈ 144 (une / 10 min)")
+                if derniere:
+                    age_h = (now - datetime.strptime(derniere, "%Y-%m-%dT%H:%M:%SZ")
+                             .replace(tzinfo=timezone.utc)).total_seconds() / 3600
+                    print(f"  dernière heure avec invocation : {derniere} "
+                          f"({'⚠️  MUET depuis ' if age_h > 1.5 else 'il y a '}{age_h:.1f} h)")
+                else:
+                    print("  ⚠️  AUCUNE invocation sur 24 h")
+        except (requests.RequestException, ValueError) as e:
+            print(f"  Cloudflare injoignable : {type(e).__name__}")
+
+    print("── 3. Incidents Cloudflare ouverts (Workers) ──")
+    try:
+        r = requests.get("https://www.cloudflarestatus.com/api/v2/incidents/unresolved.json", timeout=15)
+        incs = [i for i in r.json().get("incidents", [])
+                if "worker" in (i.get("name", "") + " ".join(c.get("name", "") for c in i.get("components", []))).lower()]
+        for i in incs:
+            print(f"  ⚠️  {i['name']} — {i['status']} depuis {i['created_at'][:16]}")
+        if not incs:
+            print("  aucun")
+    except (requests.RequestException, ValueError) as e:
+        print(f"  cloudflarestatus.com injoignable : {type(e).__name__}")
+
+    print("── 4. Ce que ça donne côté GitHub ──")
+    if pat:
+        try:
+            r = requests.get(f"https://api.github.com/repos/{repo}/actions/runs",
+                             params={"event": "workflow_dispatch", "per_page": 1}, headers=gh, timeout=20)
+            runs = r.json().get("workflow_runs", []) if r.ok else []
+            if runs:
+                age_h = (now - datetime.strptime(runs[0]["created_at"], "%Y-%m-%dT%H:%M:%SZ")
+                         .replace(tzinfo=timezone.utc)).total_seconds() / 3600
+                print(f"  dernier dispatch du Worker : {runs[0]['created_at']} "
+                      f"{runs[0].get('name', '')} ({age_h:.1f} h)")
+            else:
+                print(f"  dispatches : {'aucun' if r.ok else 'HTTP ' + str(r.status_code)}")
+        except (requests.RequestException, ValueError) as e:
+            print(f"  GitHub injoignable : {type(e).__name__}")
+    slot = due_slot(now)
+    servi = None
+    if SB_SRV:
+        rows = _rest("GET", "meta", params={"key": f"eq.{SLOT_META_KEY}", "select": "value"})
+        servi = rows[0]["value"] if rows else None
+    retard = (now - datetime.fromisoformat(slot).replace(tzinfo=timezone.utc)).total_seconds() / 60
+    print(f"  créneau standard dû : {slot[11:]} (il y a {retard:.0f} min) — "
+          f"{'SERVI' if servi == slot else '⚠️  NON SERVI (dernier servi : ' + str(servi or '?')[11:] + ')'}"
+          if SB_SRV else f"  créneau standard dû : {slot[11:]} — SUPABASE_SERVICE_KEY absent, marque illisible")
+    print("Rattrapage manuel si le Worker est muet : `gh workflow run closing_line.yml` ; "
+          "`gh workflow run scan.yml -f mode=reprice` ; `gh workflow run scan.yml -f mode=standard` "
+          "seulement si le créneau dû n'est pas servi (il paie).")
+
+
 def doctor():
     print(f"Supabase projet  : {REF}  ({SB_URL})")
     print(f"  SERVICE_KEY    : {'présent' if SB_SRV else 'ABSENT  → secrets/meta/signals indisponibles'}")
     print(f"  ACCESS_TOKEN   : {'présent' if SB_PAT else 'ABSENT  → sql/migrate indisponibles'}")
     print(f"Vercel projet    : {VC_PROJ}{' (team ' + VC_TEAM + ')' if VC_TEAM else ''}")
     print(f"  VERCEL_TOKEN   : {'présent' if VC_TOKEN else 'ABSENT  → deployments/env/redeploy indisponibles'}")
+    print("Chien de garde   : predator-watchdog (Cloudflare)")
+    for var in ("CLOUDFLARE_API_TOKEN", "CLOUDFLARE_ACCOUNT_ID", "GITHUB_PAT"):
+        print(f"  {var:<21}: {'présent' if os.environ.get(var) else 'ABSENT  → watchdog partiel'}")
     if SB_SRV:
         try:
             _rest("GET", "meta", params={"select": "key", "limit": "1"})
@@ -541,6 +680,8 @@ def main(argv):
         sources()
     elif cmd == "ai":
         ai()
+    elif cmd == "watchdog":
+        watchdog()
     elif cmd == "secrets-push":
         # `rest`, pas `argv[2:]` : `--run` est argv[1], et l'ancien découpage
         # le perdait — la commande n'a jamais pu réellement envoyer (constaté

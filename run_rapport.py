@@ -11,6 +11,8 @@ RECOMMANDÉS encore jouables — coup d'envoi devant nous, jamais un fantôme.
   - Rien à lister et moteur vivant : SILENCE (le scan standard dit déjà
     « aucun pari recommandé » à chacun de ses passages).
   - Moteur muet depuis plus de SCAN_STALE_H ou Supabase KO : alerte.
+  - Créneau `standard` DÛ et non servi (CRENEAU_GRACE_MIN) : alerte — c'est
+    le signe que le chien de garde Cloudflare lui-même s'est tu (2026-09-11).
 """
 import logging
 import os
@@ -24,6 +26,8 @@ from core.constants import ELITE_EDGE as _ELITE_EDGE
 from core.db import get_db
 from core.paim_engine import resolve_selection_side as _resolve_side
 from core.learning_layer import load_learning_summary as _load_learning_summary
+from scripts.ci_scan_mode import (SLOT_CLAIM_KEY, SLOT_CLAIM_TTL_MIN, SLOT_META_KEY,
+                                  due_slot)
 
 load_dotenv()
 
@@ -52,6 +56,18 @@ SPORT_EMOJI    = {
 }
 ELITE_EDGE     = _ELITE_EDGE
 SCAN_STALE_H   = 2      # Alerte si aucun scan depuis X heures
+
+# Créneau `standard` dû et non servi : alerte au-delà de cette grâce.
+# Le chien de garde Cloudflare sert un créneau à H+7 au plus tard (grâce
+# 5 min + tick de 10 min), puis le scan réclame le créneau à sa première
+# minute. 20 min laissent ce chemin s'accomplir (file `concurrency`
+# derrière un audit comprise) et restent SOUS le retard du cron GitHub seul
+# (+28 à +104 min mesurés le 2026-09-11) : l'alerte dit précisément « le
+# Worker n'a pas fait son travail », pas « GitHub est en retard ». Le digest
+# tourne à H+35 : un créneau à H+03 non servi y est déjà vieux de 32 min.
+# tests/test_rapport_digest.py::TestCreneauStandard tient la borne basse
+# alignée sur le Worker (grace_min + 10).
+CRENEAU_GRACE_MIN = 20
 
 # « Nouveau » = né depuis le digest précédent. Doit rester ALIGNÉ sur le cron
 # du job `rapport` de reports.yml (toutes les 2 h). Si le cron change,
@@ -191,8 +207,59 @@ def _signal_line(s: dict, now: datetime) -> str | None:
     return line
 
 
+def _creneau_manque(slot_servi: str | None, claim: str | None, now: datetime,
+                    grace_min: int = CRENEAU_GRACE_MIN) -> str | None:
+    """« HH:MM (+N min) » si le dernier créneau `standard` DÛ n'est ni servi ni
+    en cours au-delà de la grâce, sinon None. Pur : les deux marques de
+    scripts/ci_scan_mode.py (`scan_standard_slot`, `scan_standard_slot_claim`)
+    sont passées en clair.
+
+    Règle dure n°12 : on surveille le CRÉNEAU DÛ, jamais la fraîcheur d'un
+    fichier. L'alerte « moteur muet » ci-dessus ne voit pas un standard perdu :
+    les ticks reprice horaires — ceux du chien de garde compris — gardent
+    `last_scan` frais. Le 2026-09-11, le chien de garde lui-même s'est tu
+    (Cloudflare « Workers Cron Triggers degraded ») : 11:03 jamais servi,
+    reprice et closing line perdus 5 h durant, tous les runs livrés verts, et
+    rien ne le disait — ce digest passait à 11:42 en déclarant le moteur
+    vivant.
+    """
+    slot = due_slot(now)
+    if slot_servi == slot:
+        return None
+    if claim and "|" in claim:
+        s, ts = claim.split("|", 1)
+        try:
+            age = now - datetime.fromisoformat(ts)
+        except ValueError:
+            age = None
+        if s == slot and age is not None and timedelta(0) <= age < timedelta(minutes=SLOT_CLAIM_TTL_MIN):
+            return None                    # scan en cours : il réclame avant de payer
+    retard_min = (now - datetime.fromisoformat(slot).replace(tzinfo=timezone.utc)).total_seconds() / 60
+    if retard_min < grace_min:
+        return None
+    return f"{slot[11:]} (+{retard_min:.0f} min)"
+
+
+def _creneau_standard_manque(sb, now: datetime) -> str | None:
+    """_creneau_manque() nourri par `meta` (clé anon : SELECT autorisé).
+    Jamais bloquant : base illisible = pas d'alerte, comme le heartbeat."""
+    try:
+        res = (sb.table("meta").select("key,value")
+               .in_("key", [SLOT_META_KEY, SLOT_CLAIM_KEY]).execute())
+        marques = {r["key"]: r.get("value") for r in (res.data or [])}
+    except Exception as e:
+        log.warning("Meta créneau standard: %s", e)
+        return None
+    manque = _creneau_manque(marques.get(SLOT_META_KEY), marques.get(SLOT_CLAIM_KEY), now)
+    if manque:
+        log.warning("Créneau standard %s non servi — chien de garde muet ? "
+                    "(python scripts/ops.py watchdog)", manque)
+    return manque
+
+
 def _composer(nouveaux: list, rappels: list, now: datetime,
-              stale: bool = False, learning: list | None = None) -> str | None:
+              stale: bool = False, learning: list | None = None,
+              creneau: str | None = None) -> str | None:
     """Le message du digest, ou None s'il n'y a rien à dire.
 
     Deux sections, 🆕 puis ⏳, chaque ligne au format opérateur. On tronque
@@ -200,12 +267,15 @@ def _composer(nouveaux: list, rappels: list, now: datetime,
     `*gras*` coupé affiche des astérisques littéraux). Moteur muet + rien à
     lister : le message ne contient que l'alerte.
     """
-    if not nouveaux and not rappels and not stale:
+    if not nouveaux and not rappels and not stale and not creneau:
         return None
 
     header = f"🎯 *PREDATOR* · {now.strftime('%d/%m %H:%M')} UTC\n"
     if stale:
         header += f"⚠️ _Moteur muet depuis plus de {SCAN_STALE_H} h — vérifiez GitHub Actions → Predator Scan_\n"
+    if creneau:
+        header += (f"⚠️ _Créneau standard {creneau} non servi — chien de garde muet ? "
+                   f"`python scripts/ops.py watchdog`_\n")
     if not nouveaux and not rappels:
         return header
 
@@ -317,7 +387,10 @@ def run():
         log.warning("Learning summary: %s", e)
         learning = []
 
-    msg = _composer(nouveaux, rappels, now, stale=stale, learning=learning)
+    creneau = _creneau_standard_manque(sb, now)
+
+    msg = _composer(nouveaux, rappels, now, stale=stale, learning=learning,
+                    creneau=creneau)
     if msg is None:
         log.info("Rien à annoncer, moteur vivant — silence")
         return

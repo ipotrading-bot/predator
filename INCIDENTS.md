@@ -2349,6 +2349,47 @@ Gardiens : `tests/test_titan007.py::test_le_bilan_compte_les_matchs_sans_cotes`,
 si la source quitte `CALL_ORDER` ou si le critère quitte la docstring, l'un
 sans l'autre).
 
+### Le chien de garde lui-même s'est tu : Cloudflare ne l'invoquait plus (2026-09-11)
+
+Symptôme : aucun `workflow_dispatch` de 07:31 à l'après-midi (0 en 5 h, contre
+35 sur les 19 h précédentes). Le créneau standard 11:03 n'a jamais été servi,
+trois reprice horaires et 14 ticks de closing line sur 15 ont sauté, l'audit a
+eu un trou de 6 h 33 — et TOUS les runs livrés étaient verts. Le digest
+Telegram de 11:42 déclarait le moteur vivant : les crons GitHub, seuls, ont
+livré le 09:03 à 10:47 (+1 h 44) et gardaient `last_scan` frais.
+
+Cause : Cloudflare. `python scripts/ops.py watchdog` (écrit ce jour) : PAT
+valide jusqu'au 25/09, cron `*/10` posé, secret `WATCHDOG_PAT` posé,
+**101 invocations sur 24 h, 0 erreur, dernière à 07:xx** ; incident
+cloudflarestatus.com « Workers Cron Triggers degraded — identified » ouvert
+depuis le 09/09 19:17. Le Worker n'a pas planté : il n'a plus été appelé.
+Rien dans le dépôt ne pouvait le voir — le chien de garde n'avait pas de
+chien de garde, et rien ne répondait à « qui s'est tu : le PAT, le cron,
+Cloudflare ? ».
+
+Fait :
+- `run_rapport.py` : le digest (toutes les 2 h, H+35) compare le dernier
+  créneau `standard` DÛ (`scripts/ci_scan_mode.due_slot`) aux marques
+  `meta.scan_standard_slot` / `scan_standard_slot_claim` et alerte « créneau
+  HH:MM non servi (+N min) » au-delà de `CRENEAU_GRACE_MIN` = 20 min. C'est
+  le CRÉNEAU qu'on surveille, pas la fraîcheur d'un fichier (règle dure
+  n°12) ; la grâce est ≥ grâce du Worker + son tick (il sert en premier) et
+  < au retard du cron GitHub seul (+28 à +104 min mesurés), pour que
+  l'alerte parle du Worker et non de GitHub.
+- `scripts/ops.py watchdog` : le seul diagnostic qui tranche — PAT et son
+  expiration, cron et secret Cloudflare, invocations 24 h (GraphQL), incidents
+  Cloudflare ouverts sur Workers, dernier dispatch vu par GitHub, créneau dû
+  servi ou non. `doctor` dit si les trois credentials sont là.
+- Pas de second ordonnanceur : ajouter des schedules GitHub est l'erreur du
+  2026-07-07, et un cron Vercel Hobby ne tire qu'une fois par jour. Pendant
+  un incident Cloudflare, le rattrapage est MANUEL (`gh workflow run
+  closing_line.yml` ; `scan.yml -f mode=reprice` ; `-f mode=standard`
+  seulement si le créneau dû n'est pas servi — il paie).
+
+Gardiens : `tests/test_rapport_digest.py::TestCreneauStandard` (le cas du
+jour rejoué sur les marques réelles ; servi / réclamé / grâce / réclamation
+expirée ; alerte seule dans le message ; grâce lue dans le JS du Worker).
+
 ### Le verrou `predator-signals-write` ne contient plus `closing_line.yml`
 
 raison courante (« aucune ligne en commun ») est FAUSSE : `purge_rules`
