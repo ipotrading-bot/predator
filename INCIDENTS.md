@@ -1669,7 +1669,9 @@ moins de résultats ? ») — sources publiques rejouées hors quotas :
   retiré ≈ +4 recommandés/semaine (bande 5-4-2, +0,31 u, pas une perte
   prouvée). Les 4 signaux clos sans score (recherche web, deux sources
   chacun) étaient tous PERDUS, dont le recommandé 10141 (Moik Baku −0.5,
-  1-1) — non réinjectés au ledger sans instruction.
+  1-1) — passés LOSS sur instruction opérateur (`sql/migrate_v10_17`,
+  appliquée le 2026-09-15). Exonymes perdus rétablis dans `_ABBREVS`
+  (prague→praha, hegelmann litauen→hegelmann kaunas).
 - Latent, non corrigé : `determine_outcome` règle une ligne en quart
   (±0.25/±0.75) en WIN/LOSS plein au lieu d'un demi ; aucune émise depuis le
   2026-08-02 (égalité exacte de ligne avec l'exchange).
