@@ -208,7 +208,8 @@ _LIAISONS = frozenset({"&", "and", "y", "e", "de", "del", "da", "do", "di",
                        "la", "le", "the", "of"})
 
 
-def strict_team_match(name_a: str, name_b: str, threshold: float = 0.60) -> bool:
+def strict_team_match(name_a: str, name_b: str, threshold: float = 0.60,
+                      restes: bool = True) -> bool:
     """True if both names likely refer to the same team (handles abbreviations).
 
     Deux noms d'ÉTAGES différents (jeunes, réserve, féminines) sont refusés
@@ -252,8 +253,13 @@ def strict_team_match(name_a: str, name_b: str, threshold: float = 0.60) -> bool
     # (« San Martin San Juan » / « San Martín Burzaco »).
     if difflib.SequenceMatcher(None, na, nb).ratio() < threshold:
         return False
+    # `restes=False` : l'ancien ratio seul, pour le test de COUVERTURE à
+    # l'émission (`score_sources.fixture_connue`) et lui seulement. Rejoué le
+    # 2026-09-15 : la règle des restes y retirait 8 matchs sur 193 (−4 % du
+    # foot) dont 10 lignes que LiveScore réglait JUSTE — la couverture n'est
+    # pas un règlement, le règlement (deux noms, `_espn_paire`) reste strict.
     communs = set(na.split()) & set(nb.split())
-    if communs:
+    if restes and communs:
         reste_a = " ".join(t for t in na.split() if t not in communs and t not in _LIAISONS)
         reste_b = " ".join(t for t in nb.split() if t not in communs and t not in _LIAISONS)
         if len(reste_a) > 3 and len(reste_b) > 3:

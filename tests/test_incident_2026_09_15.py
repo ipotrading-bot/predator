@@ -77,6 +77,18 @@ class TestJuvenilEtNoms:
     def test_les_ecritures_d_un_meme_club_restent_appariees(self, a, b):
         assert strict_team_match(a, b)
 
+    def test_la_couverture_a_l_emission_garde_l_ancien_comportement(self):
+        """Rejoué le 2026-09-15 : la règle des restes appliquée au test de
+        couverture ESPN retirait 8 matchs foot sur 193 (Galway United, Bali
+        United…) que LiveScore réglait juste. La couverture reste comme avant ;
+        le RÈGLEMENT ESPN (deux noms) reste strict."""
+        from core import score_sources as ss
+        comp = {"competitors": [
+            {"homeAway": "home", "team": {"displayName": "Leeds United"}},
+            {"homeAway": "away", "team": {"displayName": "Arsenal"}}]}
+        assert ss.fixture_connue("Galway United FC vs Bohemians", [{"competitions": [comp]}])
+        assert ss._espn_paire(comp, "Galway United FC", "Arsenal") is None
+
     def test_la_regle_ne_fait_que_refuser(self):
         """Mesuré sur 972 noms réels : laissée seule, la comparaison des
         restes créait « San Martin San Juan » ≈ « San Martín Burzaco »."""

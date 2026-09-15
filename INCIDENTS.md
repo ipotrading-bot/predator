@@ -1648,6 +1648,32 @@ d'Islande, Singapour — ligues sans source de score, gel des sources) ; la
 dépense OddsAPI (plafond par créneau à 0 dans 15/24 scans : décision
 opérateur).
 
+REJEU APRÈS LIVRAISON (même jour, demande opérateur « plus de signaux ou
+moins de résultats ? ») — sources publiques rejouées hors quotas :
+- Règlement, 253 signaux du 01 au 14/09 : 235 candidats uniques avant, 231
+  après. Perdus : 10198/10199 (faux règlement évité) et DEUX vrais :
+  « Slavia Praha » / « Slavia Prague », « FC Hegelmann Kaunas » /
+  « Hegelmann Litauen » (exonymes : ils attendent au lieu d'être réglés).
+- Cotes (Smarkets, 213 événements) : 228 appariements retirés, 3 du même
+  club (Athletic Club/Bilbao, Deportivo La Coruña, Real Potosí), le reste
+  d'autres clubs (Cubs/White Sox, Mets/Yankees, Real Madrid/Atlético…).
+- ⚠️ Effet NON prévu, corrigé : le test de COUVERTURE ESPN à l'émission
+  (`fixture_connue`, un nom suffit) vivait de faux rapprochements (« Galway
+  United » ≈ « Leeds United ») ; la règle des restes y retirait 8 matchs sur
+  193 (−4 % du foot) dont 10 lignes que LiveScore réglait JUSTE. Le test de
+  couverture compare désormais sans la règle des restes (`restes=False`) :
+  volume d'émission identique à avant ; règlement et cotes restent stricts.
+- Volume (mesuré sur les 26 derniers jours, n < 30 partout, rien de
+  démontré) : garde « un pari par match » ≈ −1 recommandé/semaine ; seuil
+  MLB totals 4,6 → 1,4 ≈ +6,5 recommandés/semaine ; plafond soccer ≥ 6 %
+  retiré ≈ +4 recommandés/semaine (bande 5-4-2, +0,31 u, pas une perte
+  prouvée). Les 4 signaux clos sans score (recherche web, deux sources
+  chacun) étaient tous PERDUS, dont le recommandé 10141 (Moik Baku −0.5,
+  1-1) — non réinjectés au ledger sans instruction.
+- Latent, non corrigé : `determine_outcome` règle une ligne en quart
+  (±0.25/±0.75) en WIN/LOSS plein au lieu d'un demi ; aucune émise depuis le
+  2026-08-02 (égalité exacte de ligne avec l'exchange).
+
 Gardiens : `tests/test_incident_2026_09_15.py` (noms, jeunes, paris opposés,
 cliquet, plafond, règle 7, rapport hebdo) ;
 `tests/test_score_sources.py::TestTheSportsDB::test_une_translitteration_ne_regle_plus_limite_assumee`.

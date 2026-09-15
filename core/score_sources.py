@@ -404,11 +404,13 @@ def _fold(s: str) -> str:
                    if not unicodedata.combining(c)).lower()
 
 
-def _meme_equipe(nom_signal: str, competitor: dict) -> bool:
-    return any(strict_team_match(_fold(nom_signal), _fold(n)) for n in _espn_noms(competitor))
+def _meme_equipe(nom_signal: str, competitor: dict, restes: bool = True) -> bool:
+    return any(strict_team_match(_fold(nom_signal), _fold(n), restes=restes)
+               for n in _espn_noms(competitor))
 
 
-def _espn_cotes(comp: dict, home: str, away: str) -> tuple[int, dict, dict] | None:
+def _espn_cotes(comp: dict, home: str, away: str,
+                restes: bool = True) -> tuple[int, dict, dict] | None:
     """(nombre de côtés appariés, compétiteur domicile, extérieur) pour le
     meilleur ordre — par `homeAway` quand ESPN le donne, sinon (athlètes)
     dans les deux ordres ; None si la competition n'a pas deux compétiteurs."""
@@ -422,7 +424,7 @@ def _espn_cotes(comp: dict, home: str, away: str) -> tuple[int, dict, dict] | No
         return None
     meilleur = None
     for a, b in paires:
-        n = int(_meme_equipe(home, a)) + int(_meme_equipe(away, b))
+        n = int(_meme_equipe(home, a, restes)) + int(_meme_equipe(away, b, restes))
         if meilleur is None or n > meilleur[0]:
             meilleur = (n, a, b)
     return meilleur
@@ -523,14 +525,18 @@ def fixture_connue(match_name: str, events: list, min_sides: int = 1) -> bool:
     « VfB Stuttgart vs 1. FC Köln » était refusé comme « ligue non couverte »
     parce qu'ESPN écrit « FC Cologne » — un faux négatif sur la Bundesliga.
     Le règlement ESPN, lui, exige toujours les deux noms (`_espn_paire`).
-    `min_sides=2` redonne le test strict."""
+    `min_sides=2` redonne le test strict.
+
+    Comparaison des noms SANS la règle des restes (2026-09-15) : le rejeu a
+    montré qu'elle retirait ici −4 % des matchs foot que LiveScore réglait
+    juste. Le comportement d'émission reste celui d'avant le correctif."""
     parts = _split(match_name)
     if not parts:
         return False
     home, away = parts
     for ev in events:
         for comp in _espn_competitions(ev):
-            cotes = _espn_cotes(comp, home, away)
+            cotes = _espn_cotes(comp, home, away, restes=False)
             if cotes and cotes[0] >= max(1, min_sides):
                 return True
     return False
