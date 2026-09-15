@@ -997,10 +997,15 @@ def _drop_stale_ceiling(sb, key: str, sport: str, ancienne, summary_lines: list[
         return
     try:
         sb.table("meta").delete().eq("key", key).execute()
-        log.warning("[%s] %s %s=%s RETIRÉ — mesuré sur des lignes antérieures "
-                    "au %s, donc sur un moteur qui n'existe plus (règle 10)",
-                    sport, nature, key, ancienne, CALIBRATION_EPOCH)
-        summary_lines.append(f"{sport}: {nature} {key} retiré (mesure pré-{CALIBRATION_EPOCH})")
+        # Libellé neutre (2026-09-15) : la même fonction retire un plafond
+        # mesuré sur l'ancien moteur ET un plafond que les réglés récents ne
+        # prouvent pas (trop peu de paris, bande qui gagne). « mesure
+        # pré-2026-08-27 » partait sur Telegram pour le plafond soccer posé
+        # sur 5 paris du moteur COURANT : raison fausse.
+        log.warning("[%s] %s %s=%s RETIRÉ — les réglés postérieurs au %s ne le "
+                    "prouvent pas (règle 10)", sport, nature, key, ancienne,
+                    CALIBRATION_EPOCH)
+        summary_lines.append(f"{sport}: {nature} {key} retiré (non prouvé par les réglés récents)")
     except Exception as e:
         log.warning("[%s] retrait de %s impossible (%s) — il reste appliqué",
                     sport, key, e)
