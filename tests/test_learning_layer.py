@@ -1152,7 +1152,10 @@ class TestMisePlateEtEpoque:
         rows = [_row("WIN", odds=1.5)] * 20 + [_row("LOSS", odds=1.5)] * 12   # n=32, non démontré
         sb = _FakeSupabase({"soccer": rows})
         lignes = _save_sport_verdicts(sb, {"soccer": _sport_stats(rows)}, {}, "2026-09-10T12:00:00+00:00")
-        assert len(lignes) == 1 and "retrait proposé" in lignes[0]
+        # Un intervalle qui chevauche le point mort ne propose plus de retrait
+        # (2026-09-15) : la ligne dit « non démontré », chiffres compris.
+        assert len(lignes) == 1 and "edge non démontré" in lignes[0]
+        assert "retrait proposé" not in lignes[0]
         assert "ROI Kelly" in lignes[0] and "mise plate" in lignes[0]
 
     def test_le_classement_ignore_les_lignes_d_avant_la_correction(self):

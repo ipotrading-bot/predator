@@ -1575,11 +1575,82 @@ ledger ne stocke AUCUN score : rejouer une issue exige une requête externe
 — une colonne score + source de règlement est la suite naturelle (schéma).
 `_top_band_verdict` pose encore un plafond sans test statistique (n=5) :
 à revoir après le gel, le plafond n'a écarté aucune ligne depuis le 10/09.
+→ Corrigé le 2026-09-15, voir l'entrée suivante.
 
 Gardiens : `tests/test_learning_layer.py::TestDatationParSignal` (date du
 signal préférée, archive consultée pour les manquants seulement, lecture en
 échec = écartée, rejeu du backfill du 27-28/08 : 40 WIN d'août ne comptent
 plus, les 10 lignes du moteur courant si).
+
+### Audit 72 h : faux règlement Juvenil, paris opposés, cliquet des seuils, rapport hebdo perdu (2026-09-15)
+
+Demande opérateur : « comment s'est comporté predator ces dernières 72h ?
+vérifier les doublons et les signaux sans résultat », puis « règle tout »
+avec la capture du digest de 19:32. Pipeline sain (24/24 créneaux standard
+et d'audit servis), mais six défauts de DONNÉES, tous mesurés en base.
+
+1. **Faux règlement.** 10198/10199, « Real Valladolid CF vs Real Sociedad »,
+   Division de Honor **Juvenil** (U19, 09-13 10:00), réglés par ESPN sur
+   « Real Oviedo at Real Valladolid 0-3 » (seniors, 14:15Z). Deux causes :
+   `_LIGUE_JEUNES` ignorait « juvenil » (même fuite que l'incident U19 du
+   08/09), et `strict_team_match("Real Sociedad", "Real Oviedo")` était VRAI
+   (ratio global 0,75 : le mot « real » compté comme preuve). Mesuré sur
+   les 972 noms réels du dépôt : l'ancien ratio appariait **425 paires de
+   clubs différents** partageant un mot — Sheffield United/Wednesday,
+   Manchester/Newcastle United, Atletico Nacional/Tucuman, AS Monaco/Roma,
+   Seattle Mariners/Sounders. Correctif : le mot commun retiré, les restes
+   pleins (> 3 lettres) doivent se ressembler ; la règle ne peut que
+   REFUSER ce que le ratio acceptait (seule, elle créait « San Martin San
+   Juan » ≈ « San Martín Burzaco »). Un reste court est un sigle (« CSD
+   Macara » / « Deportivo Macara ») et garde l'ancien ratio. ⚠️ LIMITE
+   ASSUMÉE : une translittération (« Hapoel Acre » / « Hapoel Akko ») n'est
+   plus appariée — indiscernable de Sociedad/Oviedo par les chaînes ; elle
+   attend au lieu d'être réglée, conformément à la doctrine du règlement.
+2. **Paris opposés d'un scan à l'autre.** Santa Cruz 0.0 (16:16) puis
+   Recoleta +0.5 (18:24), même match, même book, tous deux recommandés et
+   montrés par le digest ; Shelbourne en h2h ET en handicap 0.0 (le même
+   pari). `_keep_best_side` n'arbitre qu'intra-scan et l'index (match_id,
+   market_key) laisse coexister `spreads_home`/`spreads_away`.
+   `run_engine._sans_contradiction` : un pari par (match_id EXACT, famille
+   côté|total), le premier arrivé tient ; un h2h qui changerait de camp
+   sous la même clé est refusé (`_save` aurait réécrit le pari annoncé).
+3. **Cliquet des seuils.** `threshold_seg_baseball_totals` à **4,6** : +0,4
+   à chaque audit (toutes les 3 h) sur le MÊME n=20, en partant du seuil
+   qu'il venait de bouger — 0 MLB jouable le 14/09. Aucune ligne LEARN dans
+   les logs d'audit (logger jamais configuré dans ce job) : invisible.
+   Correctif : `meta.learning_bases` garde l'empreinte de l'échantillon du
+   dernier mouvement ; même empreinte = hold. Logger « LEARN » branché dans
+   `core/audit_engine.py`.
+4. **Plafond sur n=5.** `edge_ceiling_soccer=6.0` APPLIQUÉ, posé parce que
+   la bande haute gagnait MOINS que la meilleure — alors que la bande 4-8 %
+   gagnait à 71 % pour ~58 % requis. Une bande n'entre plus dans la série
+   que sous son point mort, et la série doit peser `_CEILING_MIN_N`=10.
+5. **Règle 7 au digest.** « win rate 50% < rentabilité 51% (n=20) »,
+   « perd plus souvent (71%, n=7) » : raisons de seuil et diagnostic de
+   bandes rendent désormais IC95 + point mort (`_lecture_stats`). Et
+   « ⚠️ retrait proposé » du football (mise plate +9,86 u) à chaque digest
+   sur un intervalle qui CHEVAUCHE le point mort : `non_demontre` ne propose
+   plus de retrait, seule une perte prouvée le fait.
+6. **Rapport hebdo perdu.** Lundi 13:43, Telegram HTTP 400 (« can't parse
+   entities », octet 1056 = le `_` de SUSPECT_DATA), job VERT. En plus : CLV
+   affiché ×100 (« +434.0% »), n du rapport (200 lignes sans époque, 57) ≠ n
+   du verdict (39). Correctif : `\_`, repli en texte brut sur refus de mise
+   en forme, sortie 1 si rien n'est parti, CLV en points, chiffres du
+   verdict (le job n'a que la clé anon, qui ne lit pas `signals_archive`).
+
+Données : `sql/migrate_v10_16_faux_reglement_et_jumeaux.sql` archive les
+lignes de ledger 10198/10199 (faux règlement, signaux passés `closed` sans
+issue) et 10219/10182 (jumeaux inter-sources à libellés différents, ids
+vérifiés un à un — jamais de règle floue), et retire le seuil gonflé.
+⚠️ À appliquer APRÈS le déploiement : l'ancien code relancerait le cliquet.
+Pas touché : les 4 signaux clos sans score (Azerbaïdjan, Copa Uruguay, coupe
+d'Islande, Singapour — ligues sans source de score, gel des sources) ; la
+dépense OddsAPI (plafond par créneau à 0 dans 15/24 scans : décision
+opérateur).
+
+Gardiens : `tests/test_incident_2026_09_15.py` (noms, jeunes, paris opposés,
+cliquet, plafond, règle 7, rapport hebdo) ;
+`tests/test_score_sources.py::TestTheSportsDB::test_une_translitteration_ne_regle_plus_limite_assumee`.
 
 ## Couche IA
 

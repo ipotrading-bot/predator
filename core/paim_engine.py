@@ -104,7 +104,9 @@ def convert_to_ah0(v1: float, vx: float, v2: float) -> tuple[float, float]:
     return calc_dnb(v1, v2, vx), calc_dnb(v2, v1, vx)
 
 
-_AGE      = re.compile(r'\bu-?(\d{2})\b')
+# « Sub-20 » (Brésil, Amérique latine) est la même catégorie que « U20 » :
+# sans lui, « Brasileiro Sub-20 » passait pour une ligue senior.
+_AGE      = re.compile(r'\b(?:u-?|sub[- ]?)(\d{2})\b')
 _RESERVE  = re.compile(r'\b(?:reserves?|res)\b|(?:\bii|\bb)\s*$')
 _FEMININ  = re.compile(r'\b(?:women|womens|ladies|feminin\w*|femenino|femminile|frauen|dames)\b'
                        r'|\(w\)|\bw\s*$')
@@ -152,7 +154,13 @@ def _sans_etage(name: str) -> str:
 # Marqueurs d'une LIGUE de jeunes sans catégorie d'âge chiffrée. « UEFA Youth
 # League » est le cas mesuré (2026-09-08) : LiveScore y nomme les équipes
 # « Borussia Dortmund U19 », odds-api.io « Borussia Dortmund » tout court.
-_LIGUE_JEUNES = re.compile(r'\b(?:youth|jeunes|primavera)\b')
+# « División de Honor Juvenil » (Espagne, U19) est le second (2026-09-13) :
+# « juvenil » manquait, la ligue passait pour senior, et l'audit a réglé
+# Valladolid–Real Sociedad juniors sur le 0-3 des seniors Valladolid–Oviedo.
+# « Junioren » (Allemagne) et « Juniores » (Portugal, Brésil) désignent la
+# même catégorie. PAS « junior » seul : c'est un nom de club senior (Atlético
+# Junior) et un niveau amateur senior (Scottish Junior Cup), pas un âge.
+_LIGUE_JEUNES = re.compile(r'\b(?:youth|jeunes|primavera|juvenil|juveniles|junioren|juniores)\b')
 
 
 def section_jeunes(league: str) -> str:
@@ -194,6 +202,12 @@ def nom_avec_etage(match_name: str, league: str) -> str:
     return " vs ".join(camps)
 
 
+# Mots de liaison qu'une source écrit et l'autre non (« Brighton & Hove
+# Albion » / « Brighton and Hove Albion ») : ils ne distinguent aucun club.
+_LIAISONS = frozenset({"&", "and", "y", "e", "de", "del", "da", "do", "di",
+                       "la", "le", "the", "of"})
+
+
 def strict_team_match(name_a: str, name_b: str, threshold: float = 0.60) -> bool:
     """True if both names likely refer to the same team (handles abbreviations).
 
@@ -221,7 +235,30 @@ def strict_team_match(name_a: str, name_b: str, threshold: float = 0.60) -> bool
     nb = _normalize_team(b)
     if na and nb and (na in nb or nb in na):
         return True
-    return difflib.SequenceMatcher(None, na, nb).ratio() >= threshold
+    # Deux clubs qui partagent un mot (« Real », « Atletico », « Manchester »)
+    # ne se ressemblent pas PAR ce mot : le ratio global le comptait comme une
+    # preuve. Mesuré le 2026-09-13 : « Real Sociedad » ≈ « Real Oviedo » à
+    # 0,75 — l'audit a réglé Valladolid–Real Sociedad (juniors) sur le score
+    # de Valladolid–Oviedo (seniors), deux noms « appariés ». Le mot commun
+    # retiré, ce qui reste doit se ressembler.
+    # Seulement entre deux restes PLEINS : un reste de 3 lettres ou moins est
+    # un sigle (« CSD Macara » / « Deportivo Macara », « NY Red Bulls »,
+    # « Sporting KC ») que rien ne rapproche du mot développé — il retombe
+    # sur le ratio global, comme avant, et un reste vide aussi.
+    # La règle ne fait que REFUSER ce que le ratio global acceptait, jamais
+    # l'inverse : mesuré sur 972 noms réels, elle retire 425 faux appariements
+    # (« Atletico Nacional » / « Atletico Tucuman », « Bali United » / « Leeds
+    # United », « AS Monaco » / « AS Roma ») ; laissée seule, elle en créait un
+    # (« San Martin San Juan » / « San Martín Burzaco »).
+    if difflib.SequenceMatcher(None, na, nb).ratio() < threshold:
+        return False
+    communs = set(na.split()) & set(nb.split())
+    if communs:
+        reste_a = " ".join(t for t in na.split() if t not in communs and t not in _LIAISONS)
+        reste_b = " ".join(t for t in nb.split() if t not in communs and t not in _LIAISONS)
+        if len(reste_a) > 3 and len(reste_b) > 3:
+            return difflib.SequenceMatcher(None, reste_a, reste_b).ratio() >= threshold
+    return True
 
 
 def resolve_selection_side(selection: str, home: str, away: str) -> bool | None:

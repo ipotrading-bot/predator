@@ -71,6 +71,17 @@ if not _predator.handlers:
     _predator.addHandler(_handler)
     _predator.propagate = False
 
+# Même panne pour « LEARN » (core/learning_layer.py), constatée le
+# 2026-09-15 : pas une ligne de la couche d'apprentissage dans les logs
+# d'audit, pendant que `threshold_seg_baseball_totals` montait de +0,4 à
+# chaque audit sur le même échantillon, jusqu'à 4,6 — invisible même en
+# fouillant les runs. Même garde `if not .handlers`.
+_learn_log = logging.getLogger("LEARN")
+if not _learn_log.handlers:
+    _learn_log.setLevel(logging.INFO)
+    _learn_log.addHandler(_handler)
+    _learn_log.propagate = False
+
 AUDIT_LAG_H         = int(os.environ.get("AUDIT_LAG_H", 3))          # legacy fallback: scanned_at age, only used when match_time is missing
 SETTLEMENT_GRACE_H  = int(os.environ.get("SETTLEMENT_GRACE_H", 4))   # hours after match_time before we even attempt audit
 # Hours after match_time before a failed settlement is allowed to become the

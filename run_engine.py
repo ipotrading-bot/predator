@@ -1608,6 +1608,85 @@ def _keep_best_side(sides: list, log, emoji, name) -> list:
     return [best]
 
 
+def _famille_et_camp(sig: dict) -> tuple[str, str] | None:
+    """(famille, camp) d'un signal : ("total", "over"|"under") ou
+    ("cote", "home"|"away"). h2h et handicap sont la MÊME famille : ils
+    parient sur le même camp (en foot, le h2h EST un handicap 0). None quand
+    le camp n'est pas lisible — on ne devine pas."""
+    mk = sig.get("market_key") or ""
+    if mk in ("totals_over", "totals_under"):
+        return "total", mk.split("_", 1)[1]
+    if mk in ("spreads_home", "spreads_away"):
+        return "cote", mk.split("_", 1)[1]
+    match = sig.get("match") or ""
+    if mk == "h2h" and " vs " in match:
+        home, away = (p.strip() for p in match.split(" vs ", 1))
+        side = resolve_selection_side(sig.get("selection_name") or "", home, away)
+        if side is not None:
+            return "cote", "home" if side else "away"
+    return None
+
+
+def _sans_contradiction(candidats: list, actifs: list, log) -> list:
+    """Un match = UN pari par famille (côté, total), d'un scan à l'autre.
+
+    `_keep_best_side` n'arbitre que les deux côtés d'un même marché DANS un
+    scan, et l'index unique (match_id, market_key) laisse coexister
+    `spreads_home` et `spreads_away`, deux clés différentes. Le 2026-09-14,
+    CD Santa Cruz 0.0 (16:16) puis Deportes Recoleta +0.5 (18:24) sont sortis
+    recommandés sur le même match, chez le même book, et le digest les a
+    montrés l'un sous l'autre. Même défaut sans contradiction : Shelbourne en
+    h2h ET en handicap 0.0 — le même pari deux fois.
+
+    Le PREMIER arrivé tient : il a déjà été annoncé, peut-être joué. Revoir
+    le même pari (même match_id, même market_key, même camp) passe toujours
+    — c'est le rafraîchissement de `_save`. Un h2h qui changerait de camp
+    sous la même clé est refusé : `_save` aurait réécrit le pari annoncé.
+    La clé est le `match_id` EXACT, jamais un appariement flou des noms
+    (INCIDENTS, « Le même match réel pesait DOUBLE »). Pure : les actifs sont
+    lus par `_actifs_des_matchs`."""
+    tenus: dict[tuple[str, str], dict] = {}
+    for a in actifs:
+        fc = _famille_et_camp(a)
+        if fc and a.get("match_id"):
+            tenus.setdefault((a["match_id"], fc[0]), a)
+    gardes = []
+    for s in candidats:
+        fc, mid = _famille_et_camp(s), s.get("match_id")
+        if not fc or not mid:
+            gardes.append(s)
+            continue
+        occupant = tenus.get((mid, fc[0]))
+        if occupant is None:
+            tenus[(mid, fc[0])] = s
+            gardes.append(s)
+        elif (occupant.get("market_key") == s.get("market_key")
+              and _famille_et_camp(occupant) == fc):
+            gardes.append(s)
+        else:
+            log.info("CONTRADICTOIRE | %s | %s refusé — %s tient déjà ce match",
+                     s.get("match", "?"), s.get("selection_name", "?"),
+                     occupant.get("selection_name", "?"))
+    return gardes
+
+
+def _actifs_des_matchs(sb, candidats: list, log) -> list:
+    """Signaux ACTIFS des matchs candidats, pour `_sans_contradiction`.
+    Erreur réseau → [] + log : la garde inter-scans s'ouvre ce tour (la
+    garde intra-scan tient toujours) plutôt que de faire tomber le scan."""
+    ids = sorted({s["match_id"] for s in candidats if s.get("match_id")})
+    if not sb or not ids:
+        return []
+    try:
+        res = (sb.table("signals").select("match_id,market_key,selection_name,match")
+               .eq("status", "active").in_("match_id", ids).execute())
+        return res.data or []
+    except Exception as e:
+        log.warning("CONTRADICTOIRE | lecture des actifs impossible (%s) — "
+                    "garde inter-scans ouverte ce tour", str(e)[:100])
+        return []
+
+
 def _aligner_sur_meme_ligne(soft: dict, sharp: dict, marche: str, nom: str,
                             emoji: str, log) -> tuple[dict, dict]:
     """Fait coter la MÊME ligne aux deux books, quand ils l'ont tous les deux.
@@ -2776,6 +2855,11 @@ def run():
     if discarded:
         log.info("Portfolio Balancer: %d candidates → %d kept (%d quota-trimmed)",
                  len(candidates), len(signals), discarded)
+
+    # ── Un match = un pari par famille, d'un scan à l'autre (2026-09-15) ──
+    # AVANT le partage fantôme/recommandé : Telegram et la base partent de
+    # `signals`.
+    signals = _sans_contradiction(signals, _actifs_des_matchs(sb, signals, log), log)
     sport_counts = {}
     for s in signals:
         sport_counts[s.get("sport", "?")] = sport_counts.get(s.get("sport", "?"), 0) + 1

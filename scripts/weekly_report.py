@@ -51,6 +51,8 @@ def sport_truth_metrics(rows: list[dict]) -> dict:
     return {
         "n": stats["n"], "hit_rate": stats["hit_rate"],
         "wilson_lower": stats["wilson_lower"], "p_breakeven": stats["p_breakeven"],
+        "wilson_upper": stats["wilson_upper"], "roi": stats["roi"],
+        "pnl_flat": stats["pnl_flat"],
         "roi_net": roi_net,
         "clv_n": clv["n"], "avg_clv": clv["avg_clv"], "clv_positive_rate": clv["positive_rate"],
         "brier": brier_score(preds) if len(preds) >= 10 else None,
@@ -103,7 +105,7 @@ def closing_coverage(signal_rows: list[dict], missed: int) -> list[str]:
         verdict = f"🟢 {abs(delta)} de moins qu'au {CLOSING_BASELINE_DATE}"
     elif delta >= 5:
         verdict = (f"🔴 {delta} de PLUS qu'au {CLOSING_BASELINE_DATE} — vérifier la cadence "
-                   "de closing_line.yml et la passe post-scan de scan.yml")
+                   "de closing\\_line.yml et la passe post-scan de scan.yml")
     else:
         verdict = f"⚪ stable vs {CLOSING_BASELINE_DATE}"
 
@@ -187,6 +189,13 @@ def _pct(x, signed=False):
     return f"{x*100:+.1f}%" if signed else f"{x*100:.1f}%"
 
 
+def _pts(x):
+    """Une grandeur DÉJÀ en points de pourcentage (clv_pct_real). Passée par
+    `_pct`, le CLV sortait multiplié par cent : « CLV réel +434.0% » le
+    2026-09-14 pour +4,34 %."""
+    return "—" if x is None else f"{x:+.2f}%"
+
+
 def format_ai_health(rows: list[dict]) -> list[str]:
     """Section « santé IA » du rapport hebdo (mission 4). Pure.
 
@@ -235,11 +244,20 @@ def format_report(metrics_by_sport: dict[str, dict], verdicts: dict[str, dict],
                 "non_demontre": "⚠️"}.get(v.get("status"), "•")
         brier = (f"Brier {m['brier']:.3f} (réf {m['brier_ref']:.3f}, n={m['brier_n']})"
                  if m["brier"] is not None else "Brier — (n<10)")
+        # Chiffres du VERDICT quand il existe : l'audit les calcule sur les
+        # lignes postérieures à l'époque, datées par signal, avec la clé
+        # service — ce job n'a que la clé anon, qui ne lit pas
+        # signals_archive. Le 2026-09-14 le rapport montrait n=57 (200
+        # dernières lignes, sans époque) au-dessus d'un verdict à 39 réglés.
+        s = v if v.get("n") else m
+        pnl = s.get("pnl_flat")
         lines.append(
-            f"{flag} *{sport}* — n={m['n']} réglés · réussite {_pct(m['hit_rate'])} "
-            f"(Wilson- {_pct(m['wilson_lower'])}, requis {_pct(m['p_breakeven'])})\n"
-            f"   CLV réel {_pct(m['avg_clv'], True)} sur {m['clv_n']} captures "
-            f"({_pct(m['clv_positive_rate'])} positives) · ROI net taxe {_pct(m['roi_net'], True)}\n"
+            f"{flag} *{sport}* — n={s['n']} réglés · réussite {_pct(s.get('hit_rate'))} "
+            f"[IC95 {_pct(s.get('wilson_lower'))}–{_pct(s.get('wilson_upper'))}] · "
+            f"point mort {_pct(s.get('p_breakeven'))}\n"
+            f"   CLV réel {_pts(s.get('avg_clv'))} sur {s.get('clv_n') or 0} captures · "
+            f"ROI Kelly {_pct(s.get('roi'), True)} · mise plate "
+            f"{f'{pnl:+.2f} u' if pnl is not None else '—'}\n"
             f"   {brier}")
         if v.get("status") == "promotion_eligible":
             lines.append(f"   → éligible à la restauration progressive de sa fraction Kelly ({v.get('reason')})")
@@ -247,32 +265,52 @@ def format_report(metrics_by_sport: dict[str, dict], verdicts: dict[str, dict],
             lines.append(f"   → ⚠️ RETRAIT PROPOSÉ — {v.get('reason')} (décision opérateur)")
     sus, total = suspect
     lines.append("")
-    lines.append(f"🔴 SUSPECT_DATA : {sus}/{total} signaux récents "
-                 f"({(100*sus/total):.1f}%)" if total else "🔴 SUSPECT_DATA : aucun signal récent")
+    # `\_` : en Markdown Telegram un `_` nu ouvre un italique. Celui de
+    # SUSPECT_DATA, jamais fermé, a fait refuser le rapport entier le
+    # 2026-09-14 (HTTP 400, « can't parse entities », octet 1056).
+    lines.append(f"🔴 SUSPECT\\_DATA : {sus}/{total} signaux récents "
+                 f"({(100*sus/total):.1f}%)" if total else "🔴 SUSPECT\\_DATA : aucun signal récent")
     alerts = [s for s, v in verdicts.items() if v.get("retrait_propose")]
     if alerts:
         lines.append("")
         lines.append("⚠️ *Alertes* — retrait proposé : " + ", ".join(sorted(alerts))
-                     + " (≥30 réglés, edge non démontré — à trancher par l'opérateur)")
+                     + " (perte prouvée, borne haute de Wilson sous le point mort"
+                     " — à trancher par l'opérateur)")
     lines.extend(leagues or [])
     lines.extend(closing or [])
     lines.extend(format_ai_health(ai_health or []))
     return "\n".join(lines)
 
 
-def _send(text: str) -> None:
+def _send(text: str) -> bool:
+    """True si Telegram a pris le rapport (ou n'est pas configuré).
+
+    Le 2026-09-14 le rapport a été refusé (HTTP 400, mise en forme) et le job
+    est resté VERT : l'opérateur n'a rien reçu, personne ne l'a su. Un refus
+    de MISE EN FORME est retenté en texte brut — le contenu compte plus que
+    le gras ; tout autre échec rend False, et main() sort en échec."""
     token, chat = os.environ.get("TELEGRAM_BOT_TOKEN"), os.environ.get("TELEGRAM_CHAT_ID")
     if not token or not chat:
         log.warning("Telegram non configuré — rapport imprimé seulement")
-        return
-    try:
-        r = requests.post(f"https://api.telegram.org/bot{token}/sendMessage",
-                          json={"chat_id": chat, "text": text, "parse_mode": "Markdown"},
-                          timeout=15)
-        if r.status_code != 200:
-            log.error("Telegram HTTP %d: %s", r.status_code, r.text[:200])
-    except Exception as e:
-        log.error("Telegram: %s", e)
+        return True
+    for mode in ("Markdown", None):
+        payload = {"chat_id": chat, "text": text}
+        if mode:
+            payload["parse_mode"] = mode
+        try:
+            r = requests.post(f"https://api.telegram.org/bot{token}/sendMessage",
+                              json=payload, timeout=15)
+        except Exception as e:
+            log.error("Telegram: %s", e)
+            return False
+        if r.status_code == 200:
+            if mode is None:
+                log.warning("Telegram : rapport envoyé en texte brut (mise en forme refusée)")
+            return True
+        log.error("Telegram HTTP %d: %s", r.status_code, r.text[:200])
+        if not (r.status_code == 400 and "parse entities" in r.text):
+            return False
+    return False
 
 
 def main() -> int:
@@ -317,8 +355,7 @@ def main() -> int:
     text = format_report(metrics, load_sport_verdicts(sb), suspect, now, ai_health, closing,
                          leagues)
     print(text)
-    _send(text)
-    return 0
+    return 0 if _send(text) else 1
 
 
 if __name__ == "__main__":

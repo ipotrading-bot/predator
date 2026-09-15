@@ -35,8 +35,10 @@ class TestVerdict:
         assert v["status"] == "perte_prouvee" and v["retrait_propose"] is True
 
     def test_straddling_ci_after_30_is_not_demonstrated(self):
+        # « Pas prouvé » vaut dans les deux sens : aucun retrait proposé
+        # (2026-09-15, le football positif à mise plate le recevait).
         v = sport_verdict(_stats(35, 0.45, 0.70))
-        assert v["status"] == "non_demontre" and v["retrait_propose"] is True
+        assert v["status"] == "non_demontre" and v["retrait_propose"] is False
 
     def test_threshold_constant_is_30_not_the_learning_min_samples(self):
         from core.learning_layer import _MIN_SAMPLES
@@ -91,7 +93,7 @@ class TestWeeklyReport:
         text = format_report(metrics, verdicts, (1, 40), datetime(2026, 8, 24, 7, tzinfo=timezone.utc))
         assert "soccer" in text and "RETRAIT PROPOSÉ" in text and "Alertes" in text
         assert "boxing" not in text
-        assert "SUSPECT_DATA : 1/40" in text
+        assert "SUSPECT\\_DATA : 1/40" in text      # `_` échappé pour Telegram
 
 
 def test_weekly_workflow_is_scheduled_and_runs_the_report():

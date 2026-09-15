@@ -98,17 +98,30 @@ def _ev(home, away, hs, as_, date="2026-08-31", statut="FT", eid="e1"):
 
 class TestTheSportsDB:
     def test_la_voie_par_equipe_regle_le_cas_reel(self, monkeypatch):
-        """Le cas mesuré le 2026-09-02 : le signal en souffrance depuis 33 h
-        (Hapoel Acre, coup d'envoi 2026-08-31) retrouvé via searchteams →
-        eventslast, noms flous compris."""
+        """Le cas mesuré le 2026-09-02 (Hapoel, coup d'envoi 2026-08-31)
+        retrouvé via searchteams → eventslast, sous une écriture que les deux
+        sources partagent (« Hapoel Akko » / « Hapoel Akko FC »)."""
+        monkeypatch.setattr(ss, "_get_json", _tsdb_router(
+            {"Hapoel Akko FC": [{"idTeam": "136025", "strTeam": "Hapoel Akko",
+                                 "strSport": "Soccer"}]},
+            {"136025": [_ev("Hapoel Akko", "Bnei Yehuda", "0", "3")]}))
+        r = ss.result_from_thesportsdb("Hapoel Akko FC vs Bnei Yehuda", "soccer",
+                                       "2026-08-31")
+        assert r == {"home_score": 0, "away_score": 3, "completed": True,
+                     "source": "thesportsdb"}
+
+    def test_une_translitteration_ne_regle_plus_limite_assumee(self, monkeypatch):
+        """« Hapoel Acre » / « Hapoel Akko » est la même ville (translittération),
+        mais rien dans les chaînes ne la distingue de « Real Sociedad » / « Real
+        Oviedo », qui a produit un FAUX règlement le 2026-09-13. Le mot commun
+        retiré, « acre » et « akko » ne se ressemblent pas : refus. Doctrine du
+        règlement — une attente se rattrape, un WIN/LOSS faux est définitif."""
         monkeypatch.setattr(ss, "_get_json", _tsdb_router(
             {"Hapoel Acre": [{"idTeam": "136025", "strTeam": "Hapoel Akko",
                               "strSport": "Soccer"}]},
             {"136025": [_ev("Hapoel Akko", "Bnei Yehuda", "0", "3")]}))
-        r = ss.result_from_thesportsdb("Hapoel Acre vs Bnei Yehuda", "soccer",
-                                       "2026-08-31")
-        assert r == {"home_score": 0, "away_score": 3, "completed": True,
-                     "source": "thesportsdb"}
+        assert ss.result_from_thesportsdb("Hapoel Acre vs Bnei Yehuda", "soccer",
+                                          "2026-08-31") is None
 
     def test_une_mauvaise_equipe_du_flou_ne_regle_rien(self, monkeypatch):
         """searchteams("AD Pasto") rend « Pastoreo » — mesuré. Ses derniers

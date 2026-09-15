@@ -26,6 +26,7 @@ don't necessarily share the same reliability. _edge_band_diagnostic() logs
 (does not gate on) whether higher-edge signals actually win more often, the
 core assumption the whole system rests on.
 """
+import hashlib
 import json
 import logging
 import os
@@ -125,8 +126,8 @@ def sport_verdict(stats: dict, clv: dict | None = None) -> dict:
                                fraction Kelly d'origine (voir KELLY_FRACTION) ;
       - perte_prouvee        : borne HAUTE < rentabilité — retrait proposé ;
       - non_demontre         : n ≥ 30 et l'intervalle chevauche encore la
-                               rentabilité — edge non démontré, retrait proposé
-                               au rapport hebdo (décision opérateur).
+                               rentabilité — ni gain ni perte prouvés, AUCUN
+                               retrait proposé (2026-09-15).
     `avg_clv` est joint à titre d'éclairage (le CLV réel converge plus vite)."""
     n = stats.get("n", 0) or 0
     lo, hi, be = stats.get("wilson_lower"), stats.get("wilson_upper"), stats.get("p_breakeven")
@@ -145,7 +146,12 @@ def sport_verdict(stats: dict, clv: dict | None = None) -> dict:
         out.update(status="perte_prouvee", retrait_propose=True,
                    reason=f"Wilson haut {hi*100:.1f}% < rentabilité {be*100:.1f}% (n={n})")
     else:
-        out.update(status="non_demontre", retrait_propose=True,
+        # « Pas prouvé » vaut dans les deux sens : aucun retrait proposé sur
+        # un intervalle qui CHEVAUCHE le point mort (2026-09-15). Le football,
+        # seul sport positif à mise plate (+9,86 u), recevait « ⚠️ retrait
+        # proposé » à chaque digest de deux heures ; seule une perte PROUVÉE
+        # (borne haute sous le point mort) propose désormais un retrait.
+        out.update(status="non_demontre", retrait_propose=False,
                    reason=(f"IC [{lo*100:.1f}–{(hi or 0)*100:.1f}%] chevauche la "
                            f"rentabilité {be*100:.1f}% après {n} réglés"))
     return out
@@ -161,6 +167,27 @@ def _lecture_roi(v: dict) -> str:
     k = f"ROI Kelly {roi:+.1%}" if roi is not None else "ROI Kelly n/a"
     p = f"mise plate {pnl:+.2f} u" if pnl is not None else "mise plate n/a"
     return f" [{k} · {p}]"
+
+
+def _lecture_stats(stats: dict) -> str:
+    """« réussite 50% [IC95 30–70%] · point mort 51% (n=20) » — jamais un
+    taux nu (règle 7). Ces raisons partent sur Telegram : le 2026-09-14,
+    « win rate 50% < rentabilité 51% (n=20) » y justifiait une hausse de
+    plancher sur un écart d'un point, dans un intervalle de ±20."""
+    hr, n = stats.get("hit_rate"), stats.get("n", 0)
+    if hr is None:
+        return f"n={n}"
+    lo, hi, be = stats.get("wilson_lower"), stats.get("wilson_upper"), stats.get("p_breakeven")
+    ic = f" [IC95 {lo*100:.0f}–{hi*100:.0f}%]" if lo is not None and hi is not None else ""
+    pm = f" · point mort {be*100:.0f}%" if be is not None else ""
+    return f"réussite {hr*100:.0f}%{ic}{pm} (n={n})"
+
+
+def _lecture_bande(wins: int, n: int, be: float | None) -> str:
+    """`_lecture_stats` pour une bande (edge, cote) comptée à la main."""
+    lo, hi = wilson_ci(wins, n)
+    return _lecture_stats({"hit_rate": wins / n, "n": n, "wilson_lower": lo,
+                           "wilson_upper": hi, "p_breakeven": be})
 
 
 def _save_sport_verdicts(sb, stats_by_sport: dict[str, dict],
@@ -186,6 +213,8 @@ def _save_sport_verdicts(sb, stats_by_sport: dict[str, dict],
         elif v["retrait_propose"]:
             lines.append(f"{sport}: ⚠️ retrait proposé — {v['reason']} "
                          f"(décision opérateur, rien d'automatique){_lecture_roi(v)}")
+        elif v["status"] == "non_demontre":
+            lines.append(f"{sport}: edge non démontré — {v['reason']}{_lecture_roi(v)}")
     return lines
 
 
@@ -447,6 +476,8 @@ _EDGE_BUCKETS = [(0.0, 2.0), (2.0, 4.0), (4.0, 8.0), (8.0, 100.0)]
 
 _CEILING_MIN = 4.0   # % — jamais de plafond en dessous : sous 4% la bande
                      # haute n'est plus « suspecte », c'est le cœur du signal.
+_CEILING_MIN_N = 10  # résultats minimum sous le plafond (voir _top_band_verdict) :
+                     # un plafond coupe l'émission, cinq paris ne le justifient pas.
 
 # Découpage plus fin que _EDGE_BUCKETS pour cette décision précise. Les quatre
 # tranches larges de _EDGE_BUCKETS noient l'information : mesuré le 2026-08-02,
@@ -506,16 +537,22 @@ def _top_band_verdict(rows: list[dict]) -> tuple[bool, float | None, int, float 
     # meilleure : le plafond se pose au BAS de cette série, pas seulement sous
     # la dernière bande. Sinon une bande perdante intermédiaire reste ouverte —
     # soccer perdait dès 6% alors que seule la bande 8%+ aurait été coupée.
+    #
+    # Une bande n'entre dans la série que si elle PERD — marge sous son point
+    # mort —, pas seulement si elle gagne moins que la meilleure ; et la série
+    # doit peser _CEILING_MIN_N résultats. Le 2026-09-14 un plafond soccer à
+    # 6,0 % a été posé et APPLIQUÉ sur n=5, pendant que la bande 4-8 % gagnait
+    # à 71 % pour ~58 % requis : « perdante » parce que moins bonne que 75 %.
     ceiling_lo = None
     covered_n = 0
     for lo, _hi, n, wr in reversed(bucket_wr):
-        if wr < best_wr and lo >= _CEILING_MIN:
+        if wr < best_wr and wr < 0 and lo >= _CEILING_MIN:
             ceiling_lo = lo
             covered_n += n
         else:
             break
 
-    if ceiling_lo is None:
+    if ceiling_lo is None or covered_n < _CEILING_MIN_N:
         return False, None, 0, best_lo
     return True, ceiling_lo, covered_n, best_lo
 
@@ -567,16 +604,16 @@ def _odds_band_verdict(rows: list[dict]) -> tuple[float | None, int, str | None]
         avg_odds = sum(float(r["odds"]) for r in in_b) / len(in_b)
         be = p_breakeven(avg_odds, _TAX_RATE)
         if be is not None and w_hi < be:
-            proven_losing.append((lo, len(in_b), wins / len(in_b), be))
+            proven_losing.append((lo, len(in_b), wins, be))
 
     if not proven_losing:
         return None, 0, None
 
     # La bande prouvée perdante la PLUS BASSE fixe le plafond : tout ce qui est
     # au-dessus est au moins aussi douteux.
-    lo, n, wr, be = min(proven_losing, key=lambda t: t[0])
+    lo, n, wins, be = min(proven_losing, key=lambda t: t[0])
     diag = (f"plafond de cote {lo:.2f} — la bande {lo:.2f}+ perd de façon prouvée "
-            f"({wr*100:.0f}% pour {be*100:.0f}% requis, n={n})")
+            f"({_lecture_bande(wins, n, be)})")
     return lo, sum(t[1] for t in proven_losing), diag
 
 
@@ -601,26 +638,35 @@ def _edge_band_diagnostic(sport: str, rows: list[dict]) -> str | None:
     if len(decisive) < _SEGMENT_MIN_SAMPLES:
         return None
 
-    bucket_wr = []
+    bandes = []
     for lo, hi in _EDGE_BUCKETS:
         in_b = [r for r in decisive if lo <= r["initial_edge"] < hi]
         if len(in_b) < 5:
             continue
         wins = sum(1 for r in in_b if r["outcome"] == "WIN")
-        bucket_wr.append((lo, hi, len(in_b), wins / len(in_b)))
-    if len(bucket_wr) < 2:
+        odds_vals = [r["odds"] for r in in_b if r.get("odds")]
+        be = p_breakeven(sum(odds_vals) / len(odds_vals), _TAX_RATE) if odds_vals else None
+        marge = wins / len(in_b) - (be if be is not None else 0.0)
+        bandes.append((lo, hi, len(in_b), wins, be, marge))
+    if len(bandes) < 2:
         return None
 
-    log.info("[%s] Edge-band win rate: %s", sport,
-              " | ".join(f"{lo:.0f}-{hi:.0f}%: {wr*100:.0f}% (n={n})" for lo, hi, n, wr in bucket_wr))
+    log.info("[%s] Bandes d'edge : %s", sport, " | ".join(
+        f"{lo:.0f}-{hi:.0f}%: {_lecture_bande(w, n, be)}" for lo, hi, n, w, be, _m in bandes))
 
-    top = bucket_wr[-1]
-    others = bucket_wr[:-1]
-    best_other = max(wr for *_, wr in others)
-    if top[3] < best_other:
-        msg = (f"[{sport}] Edge {top[0]:.0f}-{top[1]:.0f}%+ perd plus souvent ({top[3]*100:.0f}%, "
-               f"n={top[2]}) que les tranches inférieures (meilleure: {best_other*100:.0f}%) — "
-               f"possible erreur de données/matching gonflant l'edge, pas une vraie inefficience")
+    # Alerte seulement si la bande haute PERD (sous son point mort) ET fait
+    # pire que la meilleure des autres — comparées en MARGE, chaque bande a sa
+    # cote. Le 2026-09-14 le digest disait « Edge 4-8%+ perd plus souvent
+    # (71%, n=7) » d'une bande qui gagnait au-dessus de son point mort, parce
+    # qu'elle gagnait moins que la meilleure (75 %).
+    top, autres = bandes[-1], bandes[:-1]
+    meilleure = max(autres, key=lambda b: b[5])
+    if top[5] < 0 and top[5] < meilleure[5]:
+        msg = (f"[{sport}] Edge {top[0]:.0f}-{top[1]:.0f}%+ sous son point mort : "
+               f"{_lecture_bande(top[3], top[2], top[4])} — meilleure tranche "
+               f"{meilleure[0]:.0f}-{meilleure[1]:.0f}% : "
+               f"{_lecture_bande(meilleure[3], meilleure[2], meilleure[4])} — "
+               f"possible erreur de données/matching gonflant l'edge")
         log.warning(msg)
         return msg
     return None
@@ -720,16 +766,16 @@ def _decide_threshold(old_t: float, stats: dict, clv: dict, overconfident: bool,
         if best_band_lo is not None:
             new_t = max(_THRESHOLD_MIN, min(_THRESHOLD_MAX, round(best_band_lo, 2)))
             if new_t != old_t:
-                return new_t, (f"win rate {hit_rate*100:.0f}% faible mais la bande HAUTE "
+                return new_t, (f"{_lecture_stats(stats)} faible mais la bande HAUTE "
                                f"sous-performe — plancher ramené sur la meilleure bande "
                                f"mesurée ({new_t:.1f}%), plafond d'edge appliqué")
-        return None, (f"win rate {hit_rate*100:.0f}% faible mais la bande d'edge HAUTE "
+        return None, (f"{_lecture_stats(stats)} faible mais la bande d'edge HAUTE "
                       f"sous-performe — relever le plancher pousserait l'émission "
                       f"dans la bande perdante ; plancher tenu, plafond d'edge appliqué")
 
     if overconfident and not (hit_rate < _TARGET_LO):
         new_t = min(_THRESHOLD_MAX, round(old_t + _STEP_UP, 2))
-        return new_t, f"win rate {hit_rate*100:.0f}% ok but overconfident on 80%+ picks → ↑"
+        return new_t, f"{_lecture_stats(stats)} ok but overconfident on 80%+ picks → ↑"
 
     # ── Montée sur CLV réel nettement négatif — sans attendre le win-rate ──
     # Un CLV moyen sous −1% sur ≥15 lignes dit que le marché n'a JAMAIS
@@ -779,17 +825,16 @@ def _decide_threshold(old_t: float, stats: dict, clv: dict, overconfident: bool,
         # retombe sur l'ancien critère absolu plutôt que de ne rien faire.
         if hit_rate < _TARGET_LO:
             return (min(_THRESHOLD_MAX, round(old_t + _STEP_UP, 2)),
-                    f"win rate {hit_rate*100:.0f}% < {_TARGET_LO*100:.0f}% → ↑ "
+                    f"{_lecture_stats(stats)} < {_TARGET_LO*100:.0f}% → ↑ "
                     f"(pas de cote au ledger, critère absolu de repli)")
-        return None, f"win rate {hit_rate*100:.0f}% — pas de cote au ledger, hold"
+        return None, f"{_lecture_stats(stats)} — pas de cote au ledger, hold"
 
     if hit_rate < be:
         new_t = min(_THRESHOLD_MAX, round(old_t + _STEP_UP, 2))
         tag = ""
         if clv["positive_rate"] is not None and clv["positive_rate"] > 0.5:
             tag = " (CLV réel toujours positif — probable variance, à surveiller)"
-        return new_t, (f"win rate {hit_rate*100:.0f}% < rentabilité {be*100:.0f}% "
-                       f"(n={stats['n']}) → ↑{tag}")
+        return new_t, f"{_lecture_stats(stats)} : sous le point mort → ↑{tag}"
 
     if lo > be:
         if (clv["positive_rate"] is not None and clv["n"] >= _SEGMENT_MIN_SAMPLES
@@ -820,9 +865,8 @@ def _decide_threshold(old_t: float, stats: dict, clv: dict, overconfident: bool,
                            f"{clv['positive_rate']*100:.0f}% positives) — le marché "
                            f"confirme → ↓ sans attendre la borne de Wilson")
 
-    return None, (f"win rate {hit_rate*100:.0f}% au-dessus de la rentabilité "
-                  f"{be*100:.0f}% mais borne basse {lo*100:.0f}% en dessous "
-                  f"(n={stats['n']}) — ne tranche pas, hold")
+    return None, (f"{_lecture_stats(stats)} : l'intervalle chevauche le point mort "
+                  f"— ne tranche pas, hold")
 
 
 _LEDGER_SELECT = ("signal_id, outcome, kelly_pct, odds, market_type, initial_edge, sharp_prob, "
@@ -962,6 +1006,30 @@ def _drop_stale_ceiling(sb, key: str, sport: str, ancienne, summary_lines: list[
                     sport, key, e)
 
 
+_BASES_KEY = "learning_bases"
+
+
+def _empreinte(rows: list[dict]) -> str:
+    """Empreinte de l'ÉCHANTILLON sur lequel un seuil a bougé : (signal,
+    issue, CLV réel) de chaque ligne. Même empreinte = rien de neuf appris."""
+    items = sorted(f"{r.get('signal_id')}:{r.get('outcome')}:{r.get('clv_pct_real')}"
+                   for r in rows)
+    return f"{len(items)}:" + hashlib.sha1("|".join(items).encode()).hexdigest()[:16]
+
+
+def _charger_bases(sb) -> dict[str, str]:
+    """{clé de seuil: empreinte de l'échantillon du dernier mouvement}."""
+    try:
+        res = sb.table("meta").select("key,value").like("key", _BASES_KEY).execute()
+        for r in res.data or []:
+            if r.get("key") == _BASES_KEY:
+                v = json.loads(r["value"])
+                return v if isinstance(v, dict) else {}
+    except Exception as e:
+        log.warning("lecture de %s : %s — aucun mouvement antérieur connu", _BASES_KEY, e)
+    return {}
+
+
 def compute_and_save(sb) -> dict[str, float]:
     """
     Re-compute thresholds from real WIN/LOSS history (plus real CLV and
@@ -990,6 +1058,13 @@ def compute_and_save(sb) -> dict[str, float]:
         seuils_poses = {r["key"] for r in (res_poses.data or [])}
     except Exception as e:
         log.warning("lecture des seuils posés : %s — aucun retrait ce tour", e)
+    # LE CLIQUET (2026-09-15). Chaque audit (toutes les 3 h) rejouait la
+    # décision sur les MÊMES lignes, en partant du seuil qu'il venait de
+    # bouger : `threshold_seg_baseball_totals` a pris +0,4 à chaque passage
+    # sur n=20 inchangé, jusqu'à 4,6 — et plus un MLB total jouable le 14/09.
+    # Un seuil ne bouge plus deux fois sur le même échantillon (règle 10).
+    bases = _charger_bases(sb)
+    bases_avant = dict(bases)
     now     = datetime.now(timezone.utc).isoformat()
     summary_lines: list[str] = []
     ranking_stats: dict[str, dict] = {}   # sport -> stats, pour _save_sport_ranking
@@ -1097,12 +1172,19 @@ def compute_and_save(sb) -> dict[str, float]:
                          SPORT_DEFAULTS[sport])
             else:
                 old_t = current[sport]
+                cle_seuil = f"threshold_{sport}"
+                empreinte = _empreinte(appliquables)
                 clv = _clv_stats(appliquables)
                 overconfident = _calibration_flag(appliquables)
-                new_t, reason = _decide_threshold(old_t, stats_appl, clv, overconfident,
-                                                  top_band_fake=top_fake,
-                                                  best_band_lo=best_band_lo)
+                if bases.get(cle_seuil) == empreinte:
+                    new_t, reason = None, (f"même échantillon qu'au dernier mouvement "
+                                           f"({empreinte}) — rien de neuf, hold")
+                else:
+                    new_t, reason = _decide_threshold(old_t, stats_appl, clv, overconfident,
+                                                      top_band_fake=top_fake,
+                                                      best_band_lo=best_band_lo)
                 if new_t is not None:
+                    bases[cle_seuil] = empreinte
                     updated[sport] = new_t
                     roi_str = f"{stats_appl['roi']*100:+.1f}%" if stats_appl["roi"] is not None else "n/a"
                     log.info("[%s] Threshold %.2f%% → %.2f%% | %s | n=%d | ROI %s",
@@ -1148,8 +1230,14 @@ def compute_and_save(sb) -> dict[str, float]:
                 seg_old = segment_current.get(dict_key, updated[sport])
                 fam_clv = _clv_stats(fam_rows)
                 fam_overconfident = _calibration_flag(fam_rows)
+                fam_empreinte = _empreinte(fam_rows)
+                if bases.get(meta_key) == fam_empreinte:
+                    log.info("[%s/%s] seuil %.2f%% tenu — même échantillon qu'au "
+                             "dernier mouvement (%s)", sport, fam, seg_old, fam_empreinte)
+                    continue
                 seg_new, seg_reason = _decide_threshold(seg_old, fam_stats, fam_clv, fam_overconfident)
                 if seg_new is not None:
+                    bases[meta_key] = fam_empreinte
                     log.info("[%s/%s] Segment threshold %.2f%% → %.2f%% | %s | n=%d",
                              sport, fam, seg_old, seg_new, seg_reason, fam_stats["n"])
                     sb.table("meta").upsert({
@@ -1167,6 +1255,17 @@ def compute_and_save(sb) -> dict[str, float]:
         summary_lines.extend(_save_sport_verdicts(sb, ranking_stats, clv_by_sport, now))
     except Exception as e:
         log.warning("sport verdicts: %s", e)
+
+    if bases != bases_avant:
+        try:
+            sb.table("meta").upsert({
+                "key":        _BASES_KEY,
+                "value":      json.dumps(bases, sort_keys=True),
+                "updated_at": now,
+            }).execute()
+        except Exception as e:
+            log.warning("compute_and_save: %s non persisté (%s) — le prochain "
+                        "audit peut rejouer le même mouvement", _BASES_KEY, e)
 
     try:
         sb.table("meta").upsert({

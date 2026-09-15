@@ -287,7 +287,7 @@ class TestCouvertureAuRapportHebdo:
     def test_une_hausse_est_signalee_en_rouge(self):
         w = self._mod()
         texte = "\n".join(w.closing_coverage([], w.CLOSING_MISSED_BASELINE + 20))
-        assert "🔴" in texte and "closing_line.yml" in texte, \
+        assert "🔴" in texte and "closing\\_line.yml" in texte, \
             "une hausse doit nommer le levier de retour arrière, pas seulement un chiffre"
 
     def test_une_baisse_est_signalee_en_vert(self):
