@@ -19,6 +19,12 @@ _ABBREVS = [
     # Real Madrid–Inter du 2026-09-08 est resté sans prix sharp trois scans
     # de suite (« Échec prix Sharp »). Le « o » optionnel absorbe les deux.
     (r'\binter\s+milano?\b',           'internazionale'),
+    # Exonymes perdus par la règle des restes de `strict_team_match`
+    # (rejeu du 2026-09-15 : « Slavia Praha » / « Slavia Prague », signal
+    # 10125 ; « FC Hegelmann Kaunas » / « Hegelmann Litauen », 10045) — le
+    # mot commun retiré, « praha »/« prague » ne se ressemblent pas.
+    (r'\bprague\b',                    'praha'),
+    (r'\bhegelmann\s+litauen\b',       'hegelmann kaunas'),
 ]
 _STRIP_TAGS = re.compile(r'\s*\b(fc|cf|sc|ac|gfc|afc|fk|sk|bk|rfc|sfc)\b\s*', re.I)
 

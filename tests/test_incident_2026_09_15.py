@@ -73,6 +73,9 @@ class TestJuvenilEtNoms:
         ("Borussia Mönchengladbach", "Borussia M'gladbach"),
         ("Bayern Munchen", "Bayern Munich"),
         ("Olympiakos Piraeus", "Olympiacos Piraeus"),
+        ("Slavia Praha", "Slavia Prague"),           # exonymes perdus au rejeu
+        ("Sparta Praha", "AC Sparta Prague"),
+        ("FC Hegelmann Kaunas", "Hegelmann Litauen"),
     ])
     def test_les_ecritures_d_un_meme_club_restent_appariees(self, a, b):
         assert strict_team_match(a, b)
