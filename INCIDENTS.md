@@ -1879,6 +1879,91 @@ dans la famille, familles dérivées de l'ordre déclaré, aucune clé baseball,
 lignes baseball toujours réglables, fenêtres conservées cohérentes avec les
 retraits), `tests/test_shadow_mode.py`, `tests/test_odds_api_preflight.py`.
 
+### Un audit réglait son unique éligible, puis se déclarait STÉRILE et sortait en échec (2026-09-17)
+
+Symptôme : l'audit 35278342520 (21:44) sort en ÉCHEC avec « AUDIT STÉRILE —
+0 réglé sur 1 éligibles », alerte Telegram partie, `meta.settlement_starved_at`
+posé (donc purge retardée) — alors que le même run, quelques lignes de log
+plus bas, avait réglé ce signal : « SETTLE thesportsdb | Lotte Giants vs SSG
+Landers | 1-4 | Korean KBO League ». Le run avait fait son travail et
+affirmait le contraire.
+
+Cause : le verdict de stérilité se posait AVANT `_relancer_expires`, et sur
+ses seuls compteurs frais. La chaîne de premier choix avait refusé
+TheSportsDB à ce signal (`_tsdb_encore_utile`, fenêtre de repli dépassée —
+comportement voulu, le budget TSDB est étroit), donc le règlement frais
+échouait par POLITIQUE, pas par panne ; la relance, elle, a le droit d'y
+aller, et l'a fait. La docstring de `_relancer_expires` disait « ni entrer
+dans le contrat de fin, qui juge le settlement frais » : raisonnement juste
+pour ses ÉCHECS, faux pour ses RÈGLEMENTS.
+
+Fait : `_relancer_expires` rend son compte-rendu, le verdict et l'alerte sont
+posés APRÈS elle, sur `regles_du_run = frais + signaux + ledger`. Un
+règlement, d'où qu'il vienne, prouve que la chaîne de scores répond.
+
+⚠️ ASYMÉTRIE VOULUE, et c'est tout le correctif : les ÉCHECS de la relance
+restent hors du contrat. Son lot contient par construction des lignes que
+personne ne peut régler (Kakkonen, Vtora Liga, U20 NSW…) ; les compter
+peindrait chaque audit en rouge pour toujours. Un run qui ne règle RIEN reste
+donc stérile : la leçon des 24-26 août (deux jours de vert avec les deux
+quotas de recherche à terre) et celle du 06-09 (un fantôme seul n'est pas un
+éligible) sont intactes.
+
+VÉRIFIÉ AVANT DE LIVRER, sur les logs du 15 au 17/09 : pendant la panne ESPN,
+la relance n'a rien réglé du tout — un seul `SETTLE` en trois jours, celui de
+21:44. Ce correctif n'aurait donc PAS masqué la panne. Le trou théorique qui
+reste — sources mortes ET émission fermée, donc plus aucun éligible frais
+pendant 36 h — est couvert par l'alerte de CONTENU du scan (2026-09-10), pas
+par ce contrat ; c'est écrit dans le chemin « rien de frais à régler ».
+Gardiens : `tests/test_audit_priorite.py` (le scénario du 17/09 ; une ligne
+de ledger réglée compte aussi ; les échecs de la relance ne sauvent rien ;
+une relance muette ne casse pas l'audit), `tests/test_contrat_de_fin.py`
+(câblage du total du run, verdict posé APRÈS la relance).
+
+### On ne paie plus un sport qu'on ne sait pas régler : la boxe sort (2026-09-17)
+
+`boxing_boxing` vivait dans `SPORT_KEYS` alors qu'ESPN n'a AUCUN chemin de
+boxe — `boxing/boxing` rend HTTP 400, mesuré. Donc
+`score_sources.sports_reglables()` excluait la boxe, donc `SpendPolicy`
+refusait déjà de la payer : 0 signal de boxe émis depuis toujours, 0 crédit
+dépensé, et un pré-vol gratuit brûlé à chaque scan (32 runs/jour). Le coût
+était presque nul ; le mensonge de la liste, lui, est exactement ce que la
+règle 6 interdit.
+
+Fait : la clé rejoint `LIGUES_RETIREES` (date + raison), sa fenêtre favorable
+est conservée et annotée, `odds_api.sports_payes()` dérive de `SPORT_KEYS`, et
+un INVARIANT neuf rend la classe de bug impossible : `sports_payes() <=
+sports_reglables()`. Un sport acheté sans voie de règlement est un crédit
+perdu deux fois — on paie la cote, puis on ne saura jamais si le pari était
+bon. Le test tombera le jour où une source de boxe apparaît : c'est voulu, il
+dira alors de rouvrir la ligue.
+
+CE QUI A ÉTÉ MESURÉ PUIS REFUSÉ le même jour, pour que la question ne revienne
+pas :
+- **Ajouter `mma/pfl` et `mma/bellator` à `_ESPN_PATHS`.** Les deux chemins
+  EXISTENT chez ESPN (HTTP 200), et la clé `mma_mixed_martial_arts` est
+  vendue « UFC/PFL/Bellator » — on croyait donc payer des cartes qu'on ne
+  saurait pas régler. Mesure sur 7 jours (11→17/09) : UFC 18 combats sur
+  2 cartes, **PFL 0, Bellator 0**. Et dans les scans du 16-17/09, pas une
+  seule ligne payée `mma_mixed_martial_arts`, pas un seul refus « non
+  réglable » en MMA, 1 seul signal MMA dans toute la base (« UFC Fight
+  Night »). Deux requêtes ESPN de plus par jour pour zéro couverture
+  mesurable : non.
+- **Rebattre l'ordre des familles de dépense.** Mesuré par famille sur les
+  recommandés jouables post-A6 : Big 5 25-5 (+10,17 u, DÉMONTRÉ), coupes
+  d'Europe achetées n=6 (4-2, +1,90 u), Amérique du Sud achetée n≈4, Amérique
+  du Nord n=0. Hors Big 5, tous les échantillons sont à n≈6 : rien ne
+  distingue les familles 2, 3 et 4, donc les bouger serait du bruit. À
+  relire à 60 réglés.
+- **Allonger `SETTLEMENT_GRACE_H` (4 h) par sport.** Aucun dégât mesuré : le
+  tennis règle 5/5, le baseball 42/43, et une tentative trop tôt ne coûte
+  qu'un passage — l'audit repasse toutes les 3 h. On ne touche pas ce qui
+  mesure juste.
+- **Faire remonter la NFL.** Saison ouverte depuis le 2026-09-10
+  (`SEASON_OPENS`), matchs présents, refusée 6 fois en deux jours par le
+  plafond — et **0 signal NFL depuis toujours**. Aucune mesure ne justifie de
+  lui donner la place d'une famille mesurée.
+
 ## Couche IA
 
 Le paysage des paliers gratuits change tous les mois. Rien de ce qui suit

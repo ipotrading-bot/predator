@@ -76,6 +76,8 @@ C'est le tableau à consulter avant de toucher à quoi que ce soit.
 | Un score en direct (statut non terminé) ne règle jamais | `tests/test_score_sources.py::TestTheSportsDB::test_un_score_en_direct_ne_regle_pas` |
 | La recherche d'équipe TheSportsDB ne décide jamais seule (cas Pastoreo) | `…::test_une_mauvaise_equipe_du_flou_ne_regle_rien` |
 | Deux matchs candidats → refus, jamais un WIN/LOSS deviné | `…::test_deux_candidats_font_REFUSER_pas_deviner` |
+| Un run qui a RÉGLÉ n'est jamais déclaré stérile : le contrat compte les règlements de la relance des expirés en plus du settlement frais, et le verdict est posé APRÈS elle ; ses ÉCHECS, eux, restent hors du contrat (son lot contient des lignes que personne ne peut régler) | `tests/test_audit_priorite.py::TestLeContratNeCompteQueLesRecommandes`, `tests/test_contrat_de_fin.py` |
+| On ne PAIE jamais un sport qu'on ne sait pas RÉGLER : `odds_api.sports_payes()` (dérivé de SPORT_KEYS) ⊆ `score_sources.sports_reglables()` ; une ligue retirée (`LIGUES_RETIREES`) n'est jamais aussi achetée | `tests/test_ordre_de_depense.py::TestOnNePaieQueCeQuonSaitRegler` |
 | Un audit qui ne règle rien alerte et repousse la purge | `…::TestAuditSterile`, `…::TestPurgeNeDetruitPasLechantillon` |
 | `expired` n'est plus terminal : chaque audit relance la recherche web | `tests/test_relance_expires.py` |
 | La relance passe APRÈS le settlement frais (réserve IA en négatif) | `…::TestLaPlaceDansLaudit::test_la_relance_passe_apres_le_settlement_frais` |
