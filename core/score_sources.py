@@ -16,8 +16,9 @@ TROIS SOURCES, APRÈS api-sports (qui reste l'étage 1, dans core/settlement.py)
      journée pour tout le slate. Ne sert que le baseball MLB.
   1bis. ESPN (site.api.espn.com, 2026-09-03) — scoreboard public SANS CLÉ,
      ni compte, ni quota publié. `soccer/all` rend TOUTES les ligues de foot
-     du monde en UNE requête par fenêtre de dates (mesuré : 702 événements
-     terminés sur 3 jours, de la Premier League à la J.League) ; les autres
+     du monde en UNE requête par JOUR (mesuré : ~240 événements par jour, de
+     la Premier League à la J.League ; la plage de dates est refusée depuis
+     le 2026-09-15, voir `_espn_jour`) ; les autres
      sports ont un slug par compétition (`_ESPN_PATHS`). Décision opérateur :
      « pour les résultats chercher sources open, pas TheSportsDB » — ESPN
      passe AVANT TheSportsDB, qui reste en dernier recours. Statut TERMINÉ =
@@ -83,9 +84,15 @@ _TSDB_PUBLIC_KEY = "123"
 # suspendu le 2026-08-20 : on bascule avant de se faire couper). statsapi ne
 # publie pas de limite ; TheSportsDB gratuit tolère ~30 req/min.
 MLB_DAILY_BUDGET = int(os.environ.get("MLB_STATSAPI_DAILY_BUDGET", "80"))
-# ESPN ne publie aucune limite ; une requête couvre une fenêtre de 3 jours et
-# TOUT un sport, donc un audit en consomme quelques-unes. Borne prudente.
-ESPN_DAILY_BUDGET = int(os.environ.get("ESPN_DAILY_BUDGET", "400"))
+# ESPN ne publie aucune limite. Depuis le 2026-09-15 il refuse la PLAGE de
+# dates (HTTP 400) : une requête = UN jour × UN chemin (`_espn_jour`), donc
+# une fenêtre de 3 jours en coûte 3. Chiffrage (compteurs `quota_espn_results`
+# du 2026-09-03 au 09-17) : 61 à 76 requêtes/jour en lecture par plage, pointe
+# à 317 le 09-07 (US Open, déjà lu jour par jour) → au plus ~3× la part hors
+# tennis, soit ~650 le jour le plus chargé. Borne à 1200 : le double de cette
+# pointe, et toujours de quoi arrêter une boucle folle (≈30 par run sur les
+# ~40 runs quotidiens).
+ESPN_DAILY_BUDGET = int(os.environ.get("ESPN_DAILY_BUDGET", "1200"))
 TSDB_DAILY_BUDGET = int(os.environ.get("THESPORTSDB_DAILY_BUDGET", "150"))
 # LiveScore rend TOUTE une journée d'un sport en UNE requête (273 matchs de
 # football pour le 2026-09-04, mesuré ; ESPN en rend 115 le même jour). Un
@@ -295,8 +302,9 @@ def result_from_mlb(match_name: str, match_date: str) -> dict | None:
 # ── 1bis. ESPN (scoreboard public, sans clé) ─────────────────────────
 
 def _espn_fenetre(match_date: str) -> str | None:
-    """`dates=AAAAMMJJ-AAAAMMJJ` : veille → lendemain autour de la date, ou
-    les _ESPN_JOURS_SANS_DATE derniers jours sans date."""
+    """Fenêtre `AAAAMMJJ-AAAAMMJJ` : veille → lendemain autour de la date, ou
+    les _ESPN_JOURS_SANS_DATE derniers jours sans date. Elle n'est PAS envoyée
+    telle quelle : `_espn_events` la lit jour par jour (`_espn_jour`)."""
     if match_date:
         try:
             d = datetime.fromisoformat(match_date)
@@ -309,12 +317,24 @@ def _espn_fenetre(match_date: str) -> str | None:
     return f"{debut:%Y%m%d}-{fin:%Y%m%d}"
 
 
-def _espn_par_jour(path: str) -> bool:
-    """Le scoreboard tennis d'ESPN ne rend RIEN sur une plage `dates=A-B`
-    (mesuré le 2026-09-05 : 0 événement, contre le tournoi entier — 625
-    matchs datés — sur `dates=AAAAMMJJ`). Les sports d'équipe acceptent la
-    plage ; le tennis se lit un jour à la fois."""
-    return path.startswith("tennis/")
+def _espn_jour(path: str, jour: str) -> list:
+    """Les événements ESPN d'UN jour (`dates=AAAAMMJJ`), en cache pour le run.
+
+    ⛔ Jamais de plage `dates=A-B` : ESPN la refuse par un HTTP 400 depuis le
+    2026-09-15 (~21:30 UTC ; mesuré le 2026-09-17 sur soccer/all,
+    basketball/nba, basketball/wnba, baseball/mlb — le même chemin sur un
+    jour seul rend 200). Le tennis se lisait déjà ainsi depuis le 09-05 : la
+    plage n'y rendait rien. C'est désormais la règle pour tous les chemins.
+
+    Cache par JOUR et non par fenêtre : l'audit ouvre une fenêtre autour de
+    chaque date de match et deux fenêtres voisines partagent leurs jours —
+    une requête par jour et par chemin pour tout le run."""
+    cle = (path, jour)
+    if cle not in _CACHE_ESPN:
+        url = f"{ESPN_BASE}/{path}/scoreboard?dates={jour}&limit=1000"
+        data = _get_json(url, _ESPN_BUCKET, ESPN_DAILY_BUDGET, source="espn") or {}
+        _CACHE_ESPN[cle] = list(data.get("events") or [])
+    return _CACHE_ESPN[cle]
 
 
 def _jours_de_fenetre(fenetre: str, plafond: int = 10) -> list[str]:
@@ -332,33 +352,37 @@ def _jours_de_fenetre(fenetre: str, plafond: int = 10) -> list[str]:
 
 
 def _espn_events(path: str, fenetre: str) -> list:
-    cle = (path, fenetre)
-    if cle not in _CACHE_ESPN:
-        requetes = _jours_de_fenetre(fenetre) if _espn_par_jour(path) else [fenetre]
-        events: list = []
-        vus: set = set()
-        for dates in requetes:
-            url = f"{ESPN_BASE}/{path}/scoreboard?dates={dates}&limit=1000"
-            data = _get_json(url, _ESPN_BUCKET, ESPN_DAILY_BUDGET, source="espn") or {}
-            for ev in list(data.get("events") or []):
-                # Les tournois (tennis) rendent leurs tableaux entiers : on
-                # borne dès ici les competitions à la fenêtre, une fois pour
-                # tout le run — et un même match rendu par deux jours (id)
-                # n'est gardé qu'une fois.
-                if ev.get("groupings"):
-                    comps = []
-                    for comp in _espn_competitions(ev, dates):
-                        cid = comp.get("id")
-                        if cid and cid in vus:
-                            continue
-                        if cid:
-                            vus.add(cid)
-                        comps.append(comp)
-                    ev["competitions"] = comps
-                    ev["groupings"] = []
-                events.append(ev)
-        _CACHE_ESPN[cle] = events
-    return _CACHE_ESPN[cle]
+    """Les événements du chemin sur la fenêtre, un jour de requête à la fois
+    (`_espn_jour`). Un même match rendu par deux jours voisins — ESPN date au
+    fuseau américain, un coup d'envoi tardif en UTC bascule — n'est gardé
+    qu'une fois."""
+    events: list = []
+    vus_ev: set = set()
+    vus_comp: set = set()
+    for jour in _jours_de_fenetre(fenetre):
+        for ev in _espn_jour(path, jour):
+            # Les tournois (tennis) rendent leurs tableaux entiers quelle que
+            # soit la date demandée : on borne les competitions AU JOUR
+            # demandé. Copie de l'événement — celui du cache sert aux autres
+            # fenêtres du run.
+            if ev.get("groupings"):
+                comps = []
+                for comp in _espn_competitions(ev, jour):
+                    cid = comp.get("id")
+                    if cid and cid in vus_comp:
+                        continue
+                    if cid:
+                        vus_comp.add(cid)
+                    comps.append(comp)
+                events.append(dict(ev, competitions=comps, groupings=[]))
+                continue
+            eid = str(ev.get("id") or "")
+            if eid and eid in vus_ev:
+                continue
+            if eid:
+                vus_ev.add(eid)
+            events.append(ev)
+    return events
 
 
 def _espn_noms(competitor: dict) -> list[str]:
@@ -481,7 +505,8 @@ def _espn_candidat(ev: dict, home: str, away: str) -> tuple[int, int] | None:
 
 
 def _espn_fenetre_entre(date_min: str, date_max: str) -> str | None:
-    """`dates=AAAAMMJJ-AAAAMMJJ` couvrant [date_min − 1 j, date_max + 1 j]."""
+    """Fenêtre `AAAAMMJJ-AAAAMMJJ` couvrant [date_min − 1 j, date_max + 1 j],
+    lue jour par jour par `_espn_events`."""
     try:
         a = datetime.fromisoformat(date_min[:10]) - timedelta(days=1)
         b = datetime.fromisoformat(date_max[:10]) + timedelta(days=1)
@@ -494,8 +519,9 @@ def _espn_fenetre_entre(date_min: str, date_max: str) -> str | None:
 
 def fixtures_espn(sport: str, date_min: str, date_max: str) -> list | None:
     """Tous les événements ESPN (à venir, en cours, terminés) du sport sur la
-    fenêtre — UNE requête par chemin. None si le sport n'a pas de chemin ESPN
-    (aucune vérification possible), [] si ESPN n'a rien rendu."""
+    fenêtre — une requête par chemin ET PAR JOUR (`_espn_jour` : la plage de
+    dates est refusée depuis le 2026-09-15). None si le sport n'a pas de
+    chemin ESPN (aucune vérification possible), [] si ESPN n'a rien rendu."""
     chemins = _ESPN_PATHS.get((sport or "").lower())
     fenetre = _espn_fenetre_entre(date_min, date_max)
     if not chemins or not fenetre:
@@ -504,6 +530,12 @@ def fixtures_espn(sport: str, date_min: str, date_max: str) -> list | None:
     for path in chemins:
         out.extend(_espn_events(path, fenetre))
     return out
+
+
+# Sports réglés sans ESPN, par une voie officielle propre : le périmètre les
+# accepte sans interroger le scoreboard (run_engine._reglable) et un run ne
+# paie pas leurs fixtures ESPN. Une seule liste, lue des deux côtés.
+SPORTS_SANS_ESPN = frozenset({"baseball"})          # MLB statsapi, sans clé
 
 
 def sports_reglables() -> frozenset:

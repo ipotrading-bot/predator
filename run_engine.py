@@ -36,6 +36,7 @@ from core.learning_layer import _PLAYABLE_MIN_MINUTES
 from core.paim_engine import section_jeunes as _section_jeunes
 from core.source_adapter import ligue_exclue as _ligue_exclue
 from core.score_sources import livescore_connait as _livescore_connait
+from core.score_sources import SPORTS_SANS_ESPN as _SPORTS_SANS_ESPN
 from core.score_sources import (fixtures_espn as _fixtures_espn, fixture_connue as _fixture_connue,
                                 sports_reglables as _sports_reglables)
 from core.odds_api import (SPORT_KEYS, fetch_odds, pool_status as _odds_pool_status,
@@ -2005,8 +2006,8 @@ def _reglable(m: dict, fixtures_par_sport: dict) -> bool:
     if _section_jeunes(m.get("league") or ""):
         return False
     sport = (m.get("sport") or "").lower()
-    if sport == "baseball":
-        return True                      # MLB statsapi, sans clé
+    if sport in _SPORTS_SANS_ESPN:
+        return True                      # baseball : MLB statsapi, sans clé
     events = fixtures_par_sport.get(sport)
     if not events:                       # None (pas de source) ou [] (ESPN muet)
         return False
@@ -2091,7 +2092,10 @@ def _filtrer_perimetre(matches: list, log, ligues_exclues: tuple = (), sb=None) 
                      "derrière : personne ne le prend, écarté", m.get("match", "?"),
                      m.get("league", "?"), m.get("_soft_source"))
     fixtures_par_sport: dict[str, list | None] = {}
-    for sport in {(m.get("sport") or "").lower() for m in vivants}:
+    # Les sports réglés hors ESPN (baseball → MLB statsapi) passent la garde
+    # sans fixtures : les demander était une requête ESPN par jour et par run
+    # pour rien (~100/jour sur 32 runs, mesuré le 2026-09-17).
+    for sport in {(m.get("sport") or "").lower() for m in vivants} - _SPORTS_SANS_ESPN:
         dates = sorted(str(m.get("commence_time") or "")[:10]
                        for m in vivants if (m.get("sport") or "").lower() == sport
                        and m.get("commence_time"))

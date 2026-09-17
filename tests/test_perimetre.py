@@ -171,16 +171,29 @@ class TestAlertePerimetre:
 
 
 class TestESPNFixtures:
-    def test_fixtures_espn_une_fenetre_par_chemin(self, monkeypatch):
+    def test_fixtures_espn_un_jour_par_requete_sans_doublon(self, monkeypatch):
+        """Un jour par requête (la plage est refusée depuis le 2026-09-15) et
+        le même événement rendu par deux jours ne compte qu'une fois."""
         appels = []
         def fake(url, bucket, budget, source=None):
-            appels.append(url); return {"events": [_ev("A FC", "B FC")]}
+            # ESPN date au fuseau américain : le même événement (même id)
+            # ressort sur deux jours voisins.
+            appels.append(url); return {"events": [dict(_ev("A FC", "B FC"), id="e1")]}
         monkeypatch.setattr(ss, "_get_json", fake)
         ss.reset_cache()
         evs = ss.fixtures_espn("soccer", "2026-09-04", "2026-09-05")
-        assert len(evs) == 1 and appels[0].endswith("dates=20260903-20260906&limit=1000")
+        assert [u.split("dates=")[1] for u in appels] == [
+            "20260903&limit=1000", "20260904&limit=1000",
+            "20260905&limit=1000", "20260906&limit=1000"]
+        assert len(evs) == 1                          # dédoublonné par id
         assert ss.fixtures_espn("boxing", "2026-09-04", "2026-09-05") is None
         assert ss.fixture_connue("A FC vs B FC", evs) and not ss.fixture_connue("X vs Y", evs)
+
+    def test_les_fixtures_dun_sport_regle_hors_espn_ne_sont_pas_payees(self):
+        """Le baseball se règle par MLB statsapi : le périmètre l'accepte sans
+        fixtures ESPN, et le scan ne dépense rien pour lui."""
+        assert eng._reglable({"sport": "baseball", "match": "Cubs vs Mets"}, {}) is True
+        assert "baseball" in ss.SPORTS_SANS_ESPN
 
     def test_combat_mma_regle_par_le_vainqueur(self, monkeypatch):
         ev = {"id": "card", "competitions": [

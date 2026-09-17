@@ -263,17 +263,40 @@ class TestESPN:
         r = ss.result_from_espn("Defensa y Justicia vs Platense", "soccer", "2026-08-31")
         assert r == {"home_score": 1, "away_score": 0, "completed": True, "source": "espn"}
 
-    def test_une_requete_par_fenetre_et_par_chemin(self, monkeypatch):
-        """`soccer/all` couvre toutes les ligues : deux signaux de la même
-        fenêtre ne coûtent qu'UNE requête (cache de run)."""
+    def test_une_requete_par_jour_et_par_chemin(self, monkeypatch):
+        """`soccer/all` couvre toutes les ligues : la fenêtre de trois jours
+        coûte trois requêtes, et un second signal de la même fenêtre n'en
+        coûte aucune (cache par JOUR, partagé par toutes les fenêtres)."""
         appels = []
         def fake(url, bucket, budget, source=None):
             appels.append(url); return {"events": [_espn_ev("A FC", "B FC", 2, 2)]}
         monkeypatch.setattr(ss, "_get_json", fake)
         ss.result_from_espn("A FC vs B FC", "soccer", "2026-08-31")
         ss.result_from_espn("C FC vs D FC", "soccer", "2026-08-31")
-        assert len(appels) == 1 and "dates=20260830-20260901" in appels[0]
-        assert "/soccer/all/scoreboard" in appels[0]
+        assert [u.split("dates=")[1].split("&")[0] for u in appels] == [
+            "20260830", "20260831", "20260901"]
+        assert all("/soccer/all/scoreboard" in u for u in appels)
+        # La fenêtre voisine ne repaie que le jour qu'elle ajoute.
+        ss.result_from_espn("A FC vs B FC", "soccer", "2026-09-01")
+        assert [u.split("dates=")[1].split("&")[0] for u in appels[3:]] == ["20260902"]
+
+    def test_jamais_une_plage_de_dates(self, monkeypatch):
+        """⛔ ESPN refuse `dates=A-B` par un HTTP 400 depuis le 2026-09-15 :
+        un scan entier jetait ses matchs (« ESPN muet »), l'audit sortait
+        stérile. Aucune URL ne doit porter une plage. Voir INCIDENTS.md."""
+        appels = []
+        def fake(url, bucket, budget, source=None):
+            appels.append(url); return {"events": []}
+        monkeypatch.setattr(ss, "_get_json", fake)
+        for sport in sorted(ss._ESPN_PATHS):
+            ss.reset_cache()
+            ss.fixtures_espn(sport, "2026-09-04", "2026-09-06")
+            ss.result_from_espn("A vs B", sport, "2026-09-05")
+            ss.result_from_espn("A vs B", sport, "")           # fenêtre sans date
+        assert appels
+        for url in appels:
+            dates = url.split("dates=")[1].split("&")[0]
+            assert dates.isdigit() and len(dates) == 8, url
 
     def test_un_score_en_direct_ne_regle_pas(self, monkeypatch):
         for completed, state in ((False, "in"), (True, "in"), (False, "post")):
@@ -316,7 +339,10 @@ class TestESPN:
         monkeypatch.setattr(ss, "_get_json", fake)
         r = ss.result_from_espn("A FC vs B FC", "soccer", "")
         assert r and r["home_score"] == 1
-        assert "dates=" in appels[0] and "-" in appels[0].split("dates=")[1]
+        # Fenêtre des _ESPN_JOURS_SANS_DATE derniers jours, lue jour par jour.
+        jours = [u.split("dates=")[1].split("&")[0] for u in appels]
+        assert len(jours) == ss._ESPN_JOURS_SANS_DATE + 1
+        assert all(j.isdigit() and len(j) == 8 for j in jours)
 
     def test_panne_reseau_rend_none(self, monkeypatch):
         monkeypatch.setattr(ss, "_get_json", lambda *a, **k: None)
@@ -669,13 +695,16 @@ class TestESPNTennisParJour:
         ss.reset_cache()
         assert ss.result_from_espn("Taylor Fritz vs Francisco Cerundolo", "tennis", "2026-09-05") is None
 
-    def test_un_sport_dequipe_garde_sa_plage(self, monkeypatch):
+    def test_un_sport_dequipe_se_lit_aussi_jour_par_jour(self, monkeypatch):
+        """Le tennis se lisait déjà ainsi ; depuis le 2026-09-15 ESPN refuse la
+        plage pour TOUS les chemins (HTTP 400) — les sports d'équipe aussi."""
         appels = []
         def fake(url, bucket, budget, source=None):
             appels.append(url); return {"events": []}
         monkeypatch.setattr(ss, "_get_json", fake)
         ss.fixtures_espn("soccer", "2026-09-05", "2026-09-05")
-        assert appels == [f"{ss.ESPN_BASE}/soccer/all/scoreboard?dates=20260904-20260906&limit=1000"]
+        assert appels == [f"{ss.ESPN_BASE}/soccer/all/scoreboard?dates={j}&limit=1000"
+                          for j in ("20260904", "20260905", "20260906")]
 
     def test_une_fenetre_dun_seul_jour_est_lisible(self):
         assert ss._dans_fenetre("2026-09-05T02:45Z", "20260905")
