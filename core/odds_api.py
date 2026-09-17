@@ -143,7 +143,10 @@ SPORT_KEYS = {
     # seulement (_MARKETS_BY_SPORT). Les semaines sans carte ne coûtent rien :
     # le pré-vol _events_in_window (0 crédit) rend 0 et la ligue est sautée.
     "mma_mixed_martial_arts":                "mma",         # UFC/PFL/Bellator — cartes ven-dim
-    "boxing_boxing":                         "boxing",      # boxe — marché mince, h2h
+    # (boxing_boxing retirée le 2026-09-17 : aucune source de scores n'existe,
+    #  donc la politique de dépense ne pouvait PAS la payer — voir le bloc
+    #  RETIRÉES ci-dessous. Elle ne coûtait que des pré-vols gratuits, mais
+    #  elle faisait mentir cette liste.)
 }
 
 # Frontières de FAMILLE : la première clé de chaque bloc « PRIORITÉ n »
@@ -195,7 +198,19 @@ LIGUES_RETIREES: dict[str, str] = {
     "baseball_mlb": "2026-09-17 — décision opérateur : −3,56 u sur 30 réglés (46,7 % pour 53 % requis)",
     "baseball_kbo": "2026-09-17 — retirée avec le baseball (sport entier)",
     "baseball_npb": "2026-09-17 — retirée avec le baseball (sport entier)",
+    # MESURÉ le 2026-09-17 : ESPN n'a AUCUN chemin de boxe (`boxing/boxing`
+    # rend HTTP 400), donc `score_sources.sports_reglables()` exclut la boxe,
+    # donc `SpendPolicy` refusait déjà de la payer — 0 signal de boxe émis
+    # depuis toujours, 0 crédit dépensé, et un pré-vol gratuit brûlé à chaque
+    # scan. Elle revient le jour où une source de scores de boxe existe.
+    "boxing_boxing": "2026-09-17 — aucune source de scores (ESPN 400), jamais payable, 0 signal émis",
 }
+
+
+def sports_payes() -> frozenset:
+    """Les sport-types que le scan peut réellement payer. Dérivé de
+    SPORT_KEYS — jamais tenu à la main (règle 6)."""
+    return frozenset(SPORT_KEYS.values())
 
 # ── Ouverture de saison : une ligue n'est pas scannée avant cette date ───
 # Le pré-vol ne distingue pas présaison et saison régulière : un match NFL

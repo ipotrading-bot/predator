@@ -16,9 +16,15 @@ from core.odds_api import SPORT_KEYS, _MARKETS_BY_SPORT
 
 
 class TestWiring:
-    def test_sport_keys_map_mma_and_boxing(self):
+    def test_sport_keys_map_mma_le_mma_seul_reste_achete(self):
+        """La boxe est RETIRÉE du scan payant le 2026-09-17 : ESPN n'a aucun
+        chemin de boxe (HTTP 400 mesuré), donc `sports_reglables()` l'exclut,
+        donc la politique de dépense la refusait déjà. Le reste de ce fichier
+        — h2h seul, Kelly, capture de closing line — décrit toujours le MMA,
+        et la boxe reviendra telle quelle si une source de scores apparaît
+        (core.odds_api.LIGUES_RETIREES)."""
         assert SPORT_KEYS["mma_mixed_martial_arts"] == "mma"
-        assert SPORT_KEYS["boxing_boxing"] == "boxing"
+        assert "boxing_boxing" not in SPORT_KEYS
 
     def test_h2h_only_for_combat_sports(self):
         assert _MARKETS_BY_SPORT["mma"] == "h2h"
@@ -42,9 +48,11 @@ class TestWiring:
 
     def test_portfolio_and_sport_keys_cover_them(self):
         from core.odds_api import SPORT_KEYS
+        # Les quotas de portefeuille gardent la boxe (une ligne historique qui
+        # ne coûte rien) ; le scan, lui, ne l'achète plus depuis le 09-17.
         assert "mma" in run_engine.SPORT_QUOTA and "boxing" in run_engine.SPORT_QUOTA
         assert "mma_mixed_martial_arts" in SPORT_KEYS
-        assert "boxing_boxing" in SPORT_KEYS
+        assert "boxing_boxing" not in SPORT_KEYS
 
 
 class _Resp:
@@ -70,6 +78,9 @@ def test_empty_fight_card_costs_zero_credits(monkeypatch):
         return _Resp([])
 
     monkeypatch.setattr(odds_api.requests, "get", fake_get)
+    # `sport_keys` est passé explicitement : ce test décrit le pré-vol, pas le
+    # périmètre. La boxe y reste pour montrer qu'une carte vide ne coûte rien,
+    # même pour un sport qui n'est plus acheté.
     odds_api.fetch_odds(api_key="k", hours_ahead=24,
                         sport_keys={"mma_mixed_martial_arts": "mma",
                                     "boxing_boxing": "boxing"})

@@ -87,8 +87,9 @@ class TestInvariantDesQuatreFichiers:
             # libellés du dashboard — est intact.
 
     def test_aucun_sport_actif_retire(self):
-        # (baseball_mlb retiré le 2026-09-17 — décision opérateur.)
+        # (baseball_mlb et boxing_boxing retirés le 2026-09-17 — décision
+        #  opérateur pour le premier, aucune source de scores pour le second.)
         for key in ("americanfootball_nfl", "basketball_euroleague",
                     "soccer_uefa_champs_league", "mma_mixed_martial_arts",
-                    "boxing_boxing", "basketball_wnba"):
+                    "basketball_wnba"):
             assert key in SPORT_KEYS, key

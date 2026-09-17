@@ -96,16 +96,47 @@ class TestLeBig5EstPremier:
         for big5 in ("soccer_epl", "soccer_spain_la_liga", "soccer_germany_bundesliga",
                      "soccer_italy_serie_a", "soccer_france_ligue_one"):
             for autre in ("soccer_mexico_ligamx", "soccer_brazil_campeonato",
-                          "basketball_nba", "americanfootball_nfl", "boxing_boxing"):
+                          "basketball_nba", "americanfootball_nfl",
+                          "mma_mixed_martial_arts"):
                 assert rangs[big5] < rangs[autre], f"{big5} doit précéder {autre}"
+
+
+class TestOnNePaieQueCeQuonSaitRegler:
+    """L'invariant qui rend la classe de bug impossible : un sport acheté
+    sans voie de règlement est un crédit perdu deux fois (on paie la cote,
+    puis on ne saura jamais si le pari était bon).
+
+    MESURÉ le 2026-09-17 : `boxing_boxing` vivait dans SPORT_KEYS alors
+    qu'ESPN n'a aucun chemin de boxe (`boxing/boxing` → HTTP 400). La
+    politique de dépense la refusait déjà — donc 0 crédit et 0 signal — mais
+    la liste mentait, et un pré-vol gratuit partait à chaque scan. Retirée."""
+
+    def test_chaque_sport_achete_a_une_voie_de_reglement(self):
+        payes = odds_api.sports_payes()
+        assert payes <= sports_reglables(), payes - sports_reglables()
+
+    def test_la_boxe_est_sortie_et_dit_pourquoi(self):
+        assert "boxing_boxing" not in SPORT_KEYS
+        assert "boxing" not in odds_api.sports_payes()
+        assert "boxing" not in sports_reglables(), \
+            "si une source de boxe apparaît, c'est ce test qui doit tomber"
+        assert LIGUES_RETIREES["boxing_boxing"].startswith("2026-")
+
+    def test_la_liste_des_sports_payes_est_derivee(self):
+        """Règle 6 : `sports_payes()` ne doit pas être une seconde liste."""
+        import inspect
+        src = inspect.getsource(odds_api.sports_payes)
+        assert "SPORT_KEYS.values()" in src
 
 
 class TestBaseballRetire:
     def test_aucune_cle_baseball_dans_le_scan_payant(self):
         assert not [k for k in SPORT_KEYS if k.startswith("baseball")]
-        assert set(LIGUES_RETIREES) == {"baseball_mlb", "baseball_kbo", "baseball_npb"}
+        assert {"baseball_mlb", "baseball_kbo", "baseball_npb"} <= set(LIGUES_RETIREES)
         for motif in LIGUES_RETIREES.values():
             assert motif.startswith("2026-"), "une ligue retirée porte sa date"
+        # Une ligue retirée ne peut pas être à la fois retirée et achetée.
+        assert not (set(LIGUES_RETIREES) & set(SPORT_KEYS))
 
     def test_aucun_pari_baseball_nest_plus_recommande(self):
         """Le retrait des clés ne suffit pas : les sources soft peuvent encore

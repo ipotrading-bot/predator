@@ -98,6 +98,8 @@ _WINDOWS: dict[str, list[tuple]] = {
     "rugbyleague_nrl":                   [(_ALL, 23, 24), (_ALL, 5, 8)],
     # Combat : cartes du vendredi au dimanche, 22:00–04:00 UTC → 19:03+
     "mma_mixed_martial_arts":            [((4, 5, 6), 19, 24)],
+    # Boxe RETIRÉE du scan payant le 2026-09-17 (aucune source de scores) :
+    # fenêtre gardée telle quelle pour une réouverture.
     "boxing_boxing":                     [((4, 5, 6), 19, 24)],
     # NCAAF : jeudi/vendredi 23:00–03:00 UTC → 19:03+ ; samedi 16:00–04:00
     # → 13:03 jusqu'à 23:03
