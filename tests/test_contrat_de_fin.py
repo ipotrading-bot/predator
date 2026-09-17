@@ -120,13 +120,27 @@ class TestLeContratEstReellementCable:
         """Éligibles = les RECOMMANDÉS en attente (2026-09-06 : un fantôme
         seul sans score peignait l'audit en rouge, voir
         tests/test_audit_priorite.py::TestLeContratNeCompteQueLesRecommandes) ;
-        réglés = tout ce qui l'a été, fantômes compris."""
+        réglés = tout ce que le RUN a réglé — fantômes compris, et la relance
+        des expirés comprise depuis le 2026-09-17 (un audit avait réglé son
+        unique éligible par la relance, puis crié « stérile » et fini en
+        ÉCHEC)."""
         import inspect
         from core import audit_engine
         src = inspect.getsource(audit_engine.run)
         assert "recommandes = len(pending) - fantomes" in src
         assert "settlement_eligible=recommandes" in src
-        assert 'settlement_regles=counts["settled"]' in src
+        assert "settlement_regles=regles_du_run" in src
+        assert 'counts["settled"] + faits.get("signaux", 0)' in src, \
+            "les règlements de la relance doivent entrer dans le total du run"
+
+    def test_le_verdict_de_sterilite_est_pose_APRES_la_relance(self):
+        """Sinon l'alerte Telegram part avant que la relance ait eu sa chance
+        — c'est ce qui s'est passé le 2026-09-17 à 21:44."""
+        import inspect
+        from core import audit_engine
+        src = inspect.getsource(audit_engine.run)
+        assert src.index("faits = _relancer_expires(sb)") < src.index("_signaler_audit_sterile("), \
+            "la relance doit tourner AVANT le verdict de stérilité"
 
     def test_le_verdict_de_laudit_est_pose_APRES_lapprentissage(self):
         """Un audit stérile doit quand même avoir tenté d'apprendre de ce

@@ -86,13 +86,13 @@ class TestLeContratNeCompteQueLesRecommandes:
     et apprentissage sont tous monkeypatchés — aucun réseau."""
 
     @staticmethod
-    def _jouer(monkeypatch, pending, statuts):
+    def _jouer(monkeypatch, pending, statuts, relance=None):
         alertes = []
         monkeypatch.setattr(audit_engine, "get_db", lambda write=True: object())
         monkeypatch.setattr(audit_engine, "fetch_pending", lambda sb: list(pending))
         monkeypatch.setattr(audit_engine, "audit_one",
                             lambda sb, sig, budget, now: statuts[sig["id"]])
-        monkeypatch.setattr(audit_engine, "_relancer_expires", lambda sb: None)
+        monkeypatch.setattr(audit_engine, "_relancer_expires", lambda sb: relance)
         monkeypatch.setattr(audit_engine, "_learn", lambda sb: None)
         monkeypatch.setattr(audit_engine, "_effacer_marqueur_sterile", lambda sb: None)
         monkeypatch.setattr(audit_engine, "_signaler_audit_sterile",
@@ -118,6 +118,39 @@ class TestLeContratNeCompteQueLesRecommandes:
         code, alertes = self._jouer(monkeypatch, pending, {1: "skipped", 2: "skipped", 3: "skipped"})
         assert code == 1
         assert alertes == [2]
+
+    def test_un_reglement_de_la_relance_sauve_le_run(self, monkeypatch):
+        """2026-09-17, 21:44 : UN éligible, la chaîne de premier choix lui
+        refuse TheSportsDB (fenêtre de repli dépassée), la RELANCE le règle
+        dans le même run — « SETTLE thesportsdb | Lotte Giants vs SSG Landers
+        | 1-4 » — et l'audit criait quand même « 0 réglé sur 1 éligibles »,
+        alertait Telegram et sortait en ÉCHEC."""
+        code, alertes = self._jouer(monkeypatch, [_sig(1, 40)], {1: "expired"},
+                                    relance={"signaux": 1, "ledger": 0})
+        assert code is None, "un run qui a réglé n'est pas stérile"
+        assert alertes == [], "et n'envoie pas d'alerte"
+
+    def test_une_ligne_de_ledger_reglee_par_la_relance_compte_aussi(self, monkeypatch):
+        code, alertes = self._jouer(monkeypatch, [_sig(1, 40)], {1: "skipped"},
+                                    relance={"signaux": 0, "ledger": 2})
+        assert code is None
+        assert alertes == []
+
+    def test_les_echecs_de_la_relance_ne_sauvent_rien(self, monkeypatch):
+        """L'asymétrie est voulue : son lot contient des lignes que personne
+        ne peut régler (Kakkonen, Vtora Liga…). Un run qui ne règle RIEN
+        reste stérile — c'est la leçon des 24-26 août, deux jours de vert
+        avec les deux quotas de recherche à terre."""
+        code, alertes = self._jouer(monkeypatch, [_sig(1, 24)], {1: "skipped"},
+                                    relance={"signaux": 0, "ledger": 0,
+                                             "sans_score": 7, "sans_tsdb": 7})
+        assert code == 1
+        assert alertes == [1]
+
+    def test_une_relance_muette_ne_casse_pas_laudit(self, monkeypatch):
+        """`_relancer_expires` avale ses pannes et peut ne rien rendre."""
+        code, _ = self._jouer(monkeypatch, [_sig(1, 24)], {1: "settled"}, relance=None)
+        assert code is None
 
     def test_un_fantome_regle_prouve_que_les_sources_repondent(self, monkeypatch):
         """Un recommandé sans score AU MILIEU de fantômes réglés n'est pas une

@@ -136,7 +136,15 @@ def _issue(match: str, sport: str, market_key: str, selection: str,
 
 
 def relancer(sb, budget: int | None = None) -> dict:
-    """Retente un lot de lignes expirées. Rend un compte-rendu chiffré."""
+    """Retente un lot de lignes expirées. Rend un compte-rendu chiffré.
+
+    `signaux` + `ledger` = les règlements ABOUTIS. Depuis le 2026-09-17, le
+    contrat de fin de l'audit les compte comme des règlements du run : un
+    règlement, d'où qu'il vienne, prouve que la chaîne de scores répond. Ses
+    ÉCHECS, eux, ne comptent pas — ce lot contient par construction des lignes
+    que personne ne peut régler (Kakkonen, Vtora Liga…), donc les compter
+    peindrait chaque audit en rouge pour toujours. L'asymétrie est le point.
+    """
     faits = {"signaux": 0, "ledger": 0, "sans_score": 0, "indecidable": 0,
              "sans_tsdb": 0}
     budget = RELANCE_BUDGET if budget is None else budget

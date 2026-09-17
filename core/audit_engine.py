@@ -556,12 +556,24 @@ def _effacer_marqueur_sterile(sb) -> None:
     except Exception as e:                                       # noqa: BLE001
         log.debug("effacement %s: %s", SETTLEMENT_STARVED_KEY, e)
 
-def _relancer_expires(sb) -> None:
-    """Reprend un lot de lignes expirées (core/relance_expires.py).
+def _relancer_expires(sb) -> dict:
+    """Reprend un lot de lignes expirées (core/relance_expires.py). Rend son
+    compte-rendu, {} si le lot n'a pas pu tourner.
 
     Import TARDIF et échec avalé : ce lot améliore un état déjà écrit, il ne
     doit jamais pouvoir faire échouer un audit qui a par ailleurs réglé des
-    signaux — ni entrer dans le contrat de fin, qui juge le settlement frais.
+    signaux.
+
+    CE QUI A CHANGÉ LE 2026-09-17 : ses RÈGLEMENTS entrent maintenant dans le
+    contrat de fin. Le 17/09 à 21:44, un audit avec UN seul éligible a réglé
+    ce signal ici même — « SETTLE thesportsdb | Lotte Giants vs SSG Landers |
+    1-4 » — puis a crié « AUDIT STÉRILE — 0 réglé sur 1 éligibles », envoyé
+    son alerte Telegram et fini en ÉCHEC. Le run avait fait son travail, et
+    disait le contraire : la chaîne de premier choix avait refusé TheSportsDB
+    à ce signal (`_tsdb_encore_utile`, fenêtre de repli dépassée) et c'est ce
+    lot-ci qui l'a réglé. Ses ÉCHECS, eux, restent hors du contrat : le lot
+    contient par construction des lignes que personne ne peut régler, les
+    compter peindrait chaque audit en rouge pour toujours.
     """
     try:
         from core.relance_expires import relancer
@@ -575,8 +587,10 @@ def _relancer_expires(sb) -> None:
                  faits.get("signaux", 0), faits.get("ledger", 0),
                  faits.get("sans_score", 0), faits.get("indecidable", 0),
                  faits.get("sans_tsdb", 0))
+        return faits
     except Exception as e:                                       # noqa: BLE001
         log.warning("Relance des expirés: %s", e)
+    return {}
 
 
 def run():
@@ -602,6 +616,12 @@ def run():
         # Rien de frais à régler ne veut pas dire rien à faire : les lignes
         # EXPIRÉES attendent toujours leur score. Un audit à vide est même le
         # meilleur moment pour les reprendre — tout le budget est disponible.
+        # Aucun verdict de fin ici : sans éligible frais, il n'y a rien à
+        # juger, et les ÉCHECS de ce lot ne font pas un run stérile (son lot
+        # contient des lignes que personne ne peut régler). Le trou théorique
+        # — sources mortes ET émission fermée, donc plus aucun éligible frais
+        # pendant 36 h — est couvert par l'alerte de CONTENU du scan
+        # (run_engine, 2026-09-10), pas par ce contrat.
         _relancer_expires(sb)
         log.info("━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━")
         return
@@ -628,13 +648,6 @@ def run():
     # `settled` : s'ils passent, les sources répondent, et un recommandé sans
     # score au milieu n'est pas une panne.
     recommandes = len(pending) - fantomes
-    if counts["settled"]:
-        _effacer_marqueur_sterile(sb)
-    elif recommandes:
-        _signaler_audit_sterile(sb, counts, recommandes)
-    else:
-        log.info("0 réglé sur %d fantôme(s) seuls en attente — voies gratuites "
-                 "seulement, pas un audit stérile", len(pending))
     log.info("Settlement: %d/%d lookups used",
              SETTLE_BUDGET - settle_budget[0], SETTLE_BUDGET)
 
@@ -644,7 +657,21 @@ def run():
     # Ce lot la reprend, mais APRÈS le settlement frais : la réserve IA du
     # settlement est tenue en négatif depuis le 2026-08-02 et un signal du
     # jour vaut plus qu'un match d'il y a deux semaines.
-    _relancer_expires(sb)
+    faits = _relancer_expires(sb) or {}
+
+    # LE VERDICT DE STÉRILITÉ SE POSE ICI, après la relance : ses règlements
+    # sont des règlements du RUN (voir _relancer_expires, 2026-09-17). Avant,
+    # l'alerte Telegram partait AVANT que ce lot ait eu sa chance — le 17/09 à
+    # 21:44, elle est partie pour un signal que le même run venait de régler.
+    regles_du_run = (counts["settled"] + faits.get("signaux", 0)
+                     + faits.get("ledger", 0))
+    if regles_du_run:
+        _effacer_marqueur_sterile(sb)
+    elif recommandes:
+        _signaler_audit_sterile(sb, counts, recommandes)
+    else:
+        log.info("0 réglé sur %d fantôme(s) seuls en attente — voies gratuites "
+                 "seulement, pas un audit stérile", len(pending))
 
     log.info("--- Learning Layer ---")
     try:
@@ -669,5 +696,5 @@ def run():
     # audit stérile doit quand même avoir tenté d'apprendre de ce qu'il a, et
     # sortir avant le priverait de ce tour-là.
     _terminer_run(verdict_de_fin(settlement_eligible=recommandes,
-                                 settlement_regles=counts["settled"]),
+                                 settlement_regles=regles_du_run),
                   contexte="audit")
