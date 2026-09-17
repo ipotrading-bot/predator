@@ -184,8 +184,11 @@ class TestLaScissionTient:
 
     # 5 200 depuis le 2026-09-09 (soir) : le plafond était monté à 6 000 pour
     # la bankroll mensuelle, retirée le jour même ; il redescend avec elle.
-    # Le récit reste dans INCIDENTS.md.
-    PLAFOND = 5_200
+    # 5 400 depuis le 2026-09-17 : 15e règle dure (plage de dates ESPN, 47 h
+    # d'émission fermée). Une RÈGLE a le droit de faire monter ce plafond ;
+    # un RÉCIT, jamais — il reste dans INCIDENTS.md, et quatre lignes de
+    # prose ont été resserrées le même jour pour payer une partie de la place.
+    PLAFOND = 5_400
 
     def test_claude_md_reste_sous_son_plafond(self):
         taille = len(_texte(_CLAUDE).encode("utf-8"))

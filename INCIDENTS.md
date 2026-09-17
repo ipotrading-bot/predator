@@ -1680,6 +1680,79 @@ Gardiens : `tests/test_incident_2026_09_15.py` (noms, jeunes, paris opposés,
 cliquet, plafond, règle 7, rapport hebdo) ;
 `tests/test_score_sources.py::TestTheSportsDB::test_une_translitteration_ne_regle_plus_limite_assumee`.
 
+### ESPN refuse la PLAGE de dates : un HTTP 400 lu comme « sport non couvert » a fermé l'émission 47 h (2026-09-17)
+
+Symptôme, côté opérateur : scan après scan, « Aucun pari recommandé · N
+matchs analysés » sur Telegram, et l'alerte de contenu de scan « PÉRIMÈTRE —
+11/41 marchés vivants réglables, 30 écartés (73 %) : ESPN muet sur ce sport
+(panne ?) ×30 » (06:15 UTC le 17/09), puis 9/47, 38 écartés (81 %) à 13:15.
+En parallèle le workflow « Predator Audit » sortait en ÉCHEC en boucle (runs
+35217894332, 35219111520, 35239664692, 35251634098, 35261357813 le 17/09) :
+« AUDIT STÉRILE — 0 réglé sur 1 éligibles », puis « RUN STÉRILE [audit] » de
+`core/run_contract.py`.
+
+Cause mécanique : ESPN a cessé d'accepter la PLAGE de dates sur son
+scoreboard public. `core.score_sources._espn_events` demandait
+`…/scoreboard?dates=AAAAMMJJ-AAAAMMJJ&limit=1000` (fenêtre veille→lendemain
+construite par `_espn_fenetre` / `_espn_fenetre_entre`) : ESPN répond HTTP
+400. `_get_json` rend None sans lever (contrat du dépôt), donc
+`fixtures_espn` rend `[]` — que `run_engine._reglable` lit comme « ESPN
+muet », c'est-à-dire REFUS de tout le sport à l'émission ; et
+`result_from_espn` ne voyait plus aucun événement, d'où l'audit stérile. Le
+tennis, lui, se lisait déjà jour par jour depuis le 2026-09-05
+(`_espn_par_jour`) parce que la plage n'y rendait rien : l'avertissement
+était là, il n'a pas été généralisé.
+
+MESURÉ le 2026-09-17 depuis ce Codespace — donc PAS un refus d'IP des
+runners : `dates=20260916-20260919` → HTTP 400 sur soccer/all,
+basketball/nba, basketball/wnba, baseball/mlb ; `dates=20260917` → HTTP 200,
+105 événements pour soccer/all, 9 pour baseball/mlb. DATATION par les logs
+GitHub Actions : scan standard du 15/09 21:11 UTC (run 35024134013) = 0
+erreur 400 ; run 35028384277 du 15/09 21:56 UTC = la première 400. Environ
+47 h de dégradation. VOLUME (table `signals`) : 14 à 22 signaux émis par jour
+du 11 au 15/09 (5 à 15 recommandés), 4 émis le 16/09 (2 recommandés), 1 émis
+le 17/09 (1 recommandé). Après correctif, même fenêtre relue en vrai : 310
+événements soccer sur 3 jours, et les matchs écartés le soir même (« Malaga
+vs Villarreal », « Flamengo-RJ vs Independiente del Valle ») repassent le
+test de couverture.
+
+Fait : lecture ESPN JOUR PAR JOUR pour TOUS les chemins (`_espn_jour`,
+nouvelle fonction ; `_espn_par_jour` supprimée — le cas tennis devient la
+règle) ; cache de run par (chemin, JOUR) et non par fenêtre, l'audit ouvrant
+une fenêtre par date de match, les fenêtres voisines partagent désormais
+leurs jours ; dédoublonnage des événements rendus par deux jours voisins
+(ESPN date au fuseau américain) par id d'événement, et par id de competition
+pour les tournois ; l'événement du cache n'est plus muté (copie) puisqu'il
+sert à plusieurs fenêtres. Budget : `ESPN_DAILY_BUDGET` 400 → 1200, chiffré
+sur les compteurs `quota_espn_results` (61 à 76 requêtes/jour en lecture par
+plage du 12 au 17/09, pointe à 317 le 09-07 avec l'US Open déjà lu jour par
+jour) — une fenêtre de 3 jours coûte désormais 3 requêtes, soit ~650 le jour
+le plus chargé, et 1200 laisse le double tout en arrêtant une boucle folle
+(≈30 par run sur les ~40 runs quotidiens). Économie au passage : les sports
+réglés HORS ESPN (baseball → MLB statsapi) ne font plus payer leurs fixtures
+à l'émission — `core.score_sources.SPORTS_SANS_ESPN`, liste unique lue aussi
+par `run_engine._reglable` (règle 6) ; c'était une requête par jour et par
+run pour rien, ~100/jour sur 32 runs.
+
+Pas fait : aucun seuil, aucune source, aucun périmètre touché ; la fenêtre
+veille→lendemain est conservée telle quelle (ESPN date au fuseau américain,
+la resserrer demanderait une mesure qui n'a pas été faite).
+
+⛔ Ne JAMAIS reconstruire une URL ESPN avec `dates=A-B` pour « économiser des
+requêtes » : c'est un HTTP 400, donc un sport entier écarté à l'émission et
+un audit stérile, sans aucune erreur visible ailleurs que dans le log.
+⚠️ Second piège : une panne de source lue comme « refus » est SILENCIEUSE
+côté cadence — les runs restent verts, seul le ratio du bilan PÉRIMÈTRE l'a
+dit. L'alerte de contenu de scan (2026-09-10) a fonctionné : c'est elle qui a
+mis l'opérateur sur la piste.
+Gardiens : `tests/test_score_sources.py::TestESPN::test_jamais_une_plage_de_dates`
+(toute URL ESPN porte un jour de 8 chiffres, tous sports, fenêtre avec et
+sans date), `::TestESPN::test_une_requete_par_jour_et_par_chemin` (cache par
+jour partagé entre fenêtres voisines),
+`::TestESPNTennisParJour::test_un_sport_dequipe_se_lit_aussi_jour_par_jour`,
+`tests/test_perimetre.py::TestESPNFixtures::test_fixtures_espn_un_jour_par_requete_sans_doublon`,
+`::test_les_fixtures_dun_sport_regle_hors_espn_ne_sont_pas_payees`.
+
 ## Couche IA
 
 Le paysage des paliers gratuits change tous les mois. Rien de ce qui suit

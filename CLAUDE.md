@@ -9,11 +9,11 @@ Calcul en crons GitHub Actions ; dashboard en lecture seule.
 - `INCIDENTS.md` — **ce qui a déjà cassé, et pourquoi.** À LIRE AVANT DE
   DIAGNOSTIQUER, et avant de toucher sources, couche IA, workflows ou
   seuils : une règle sans sa raison finit contournée.
-- `docs/systeme_de_scan.md` — le scan en 2 modes, pour l'opérateur.
+- `docs/systeme_de_scan.md` — le scan en 2 modes (opérateur).
 - `AUDIT.md` — invariants → tests gardiens, à lire avant tout ajout (sport,
   fournisseur IA, route, workflow).
 - `.claude/rules/` — le DÉTAIL des règles, chargé par chemin.
-- `.claude/hooks/` — les règles dures en CODE ; README dedans, gardien
+- `.claude/hooks/` — les règles dures en CODE ; gardien
   `tests/test_claude_config.py`.
 - Skills et sub-agents : `.claude/skills/`, `.claude/agents/` (pas de liste
   ici, règle 6). Commencer par `predator-pipeline`, la carte du flux.
@@ -61,13 +61,13 @@ Calcul en crons GitHub Actions ; dashboard en lecture seule.
 
 ## Règles dures — jamais à rediscuter
 
-Détail dans `.claude/rules/` (chargé par chemin), justification dans
-`INCIDENTS.md` (section citée), application mécanique dans `.claude/hooks/`.
+Détail : `.claude/rules/` (chargé par chemin) ; justification :
+`INCIDENTS.md` (section citée) ; application : `.claude/hooks/`.
 
 1. ⛔ **JAMAIS `${{ toJSON(secrets) }}` dans un workflow** : GitHub refuse de
    le faire tourner, zéro job, aucun log — *Les blocs de secrets*.
-2. Les blocs `env:` des workflows sont **générés** par `python scripts/ci_env.py
-   --write`, posés par STEP — jamais écrits à la main.
+2. Les blocs `env:` des workflows sont **générés** (`scripts/ci_env.py
+   --write`), posés par STEP — jamais écrits à la main.
 3. Aucun nom de modèle IA en dur hors de `core/ai_router.py` — *Couche IA*.
 4. `.python-version` vaut 3.12 et **appartient à Vercel** ; l'« aligner »
    casse le déploiement — *Deux interpréteurs*.
@@ -91,3 +91,6 @@ Détail dans `.claude/rules/` (chargé par chemin), justification dans
     test gardien, même commit — `AUDIT.md` §3bis.
 14. ⛔ **Jamais de CLV sans un prix POSTÉRIEUR observé** : sans capture, la
     colonne reste NULLE — *Le CLV du dashboard mesurait l'edge d'entrée*.
+15. ⛔ **Jamais `dates=A-B` sur ESPN** : HTTP 400, donc sport entier écarté
+    et audit stérile, rien hors du log ; un jour par requête (`_espn_jour`)
+    — *ESPN refuse la PLAGE de dates*.
