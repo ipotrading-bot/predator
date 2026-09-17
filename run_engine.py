@@ -33,7 +33,7 @@ from core.math_engine import (to_binary, devig_bounds, is_round_number_line, dev
                               dnb_leg_split as _dnb_leg_split)
 from core.tax_engine import optimal_stake_fraction as _optimal_stake_fraction
 from core.learning_layer import _PLAYABLE_MIN_MINUTES
-from core.paim_engine import section_jeunes as _section_jeunes
+from core.paim_engine import section_jeunes as _section_jeunes, ligne_en_quart as _ligne_en_quart
 from core.source_adapter import ligue_exclue as _ligue_exclue
 from core.score_sources import livescore_connait as _livescore_connait
 from core.score_sources import SPORTS_SANS_ESPN as _SPORTS_SANS_ESPN
@@ -1804,6 +1804,12 @@ def _meme_ligne(soft: dict, sharp: dict, marche: str, nom: str, emoji: str,
         log.info("LINESKIP | %s %s %s — soft %+.2f ≠ sharp %+.2f : deux paris "
                  "différents, l'écart de prix n'est pas un edge",
                  emoji, nom, marche, ligne_soft, ligne_sharp)
+        return None
+    # Ligne en quart : réglée en demi-gain/demi-perte chez le book, que ce
+    # dépôt ne sait pas représenter (voir `paim_engine.ligne_en_quart`).
+    if _ligne_en_quart(ligne_sharp):
+        log.info("QUARTSKIP | %s %s %s — ligne en quart %+.2f : demi-issue non "
+                 "réglable, pari non émis", emoji, nom, marche, ligne_sharp)
         return None
     return ligne_sharp
 

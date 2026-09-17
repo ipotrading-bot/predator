@@ -301,6 +301,18 @@ def resolve_selection_side(selection: str, home: str, away: str) -> bool | None:
     return home_matches
 
 
+def ligne_en_quart(point: float) -> bool:
+    """Ligne asiatique en quart (±0.25, ±0.75, 2.25…) : la mise se partage
+    entre deux lignes voisines et l'issue peut être un DEMI-gain ou une
+    DEMI-perte. Ni le ledger ni ses lecteurs ne connaissent ces issues
+    (« WIN »/« LOSS » écrits en dur à 8 endroits au moins) : décision
+    opérateur du 2026-09-15 (option A) — on ne les émet pas
+    (`run_engine._meme_ligne`) et on ne les règle pas
+    (`settlement.determine_outcome` → UNKNOWN). Aucune émise depuis le
+    2026-08-02 : la garde ne change pas le volume."""
+    return round(abs(float(point)) * 4) % 2 == 1
+
+
 MIN_EDGE = 1.2   # % — floor (lowered for visibility — see all movements)
 
 # ── Sharp Quartet Consensus Engine v7.8 ──────────────────────────────

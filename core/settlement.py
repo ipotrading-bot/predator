@@ -23,7 +23,7 @@ import re
 
 from core.score_sources import fetch_score
 from core.db import log_to_ledger, update_signal_fields
-from core.paim_engine import resolve_selection_side, nom_avec_etage
+from core.paim_engine import resolve_selection_side, nom_avec_etage, ligne_en_quart
 
 log = logging.getLogger("PREDATOR.settlement")
 
@@ -76,6 +76,10 @@ def determine_outcome(sport: str, market_key: str, selection_name: str,
             line = float(re.search(r'[\d.]+', sel).group())
         except Exception:
             return "UNKNOWN"
+        # Ligne en quart : demi-issue possible, jamais un WIN/LOSS plein
+        # (2026-09-15, voir paim_engine.ligne_en_quart).
+        if ligne_en_quart(line):
+            return "UNKNOWN"
         if total == line:
             return "PUSH"
         return "WIN" if ("over" in sel and total > line) or ("under" in sel and total < line) else "LOSS"
@@ -84,6 +88,8 @@ def determine_outcome(sport: str, market_key: str, selection_name: str,
         try:
             point = float(re.search(r'[-+]?[\d.]+', sel).group())
         except Exception:
+            return "UNKNOWN"
+        if ligne_en_quart(point):
             return "UNKNOWN"
         if "spreads_home" in market_key:
             adjusted = home_score + point
