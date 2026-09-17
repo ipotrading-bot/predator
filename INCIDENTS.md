@@ -1753,6 +1753,126 @@ jour partagé entre fenêtres voisines),
 `tests/test_perimetre.py::TestESPNFixtures::test_fixtures_espn_un_jour_par_requete_sans_doublon`,
 `::test_les_fixtures_dun_sport_regle_hors_espn_ne_sont_pas_payees`.
 
+### Un total réglé sans compter : le 1-0 du tennis rendait tout « Moins de » gagnant (2026-09-17)
+
+L'opérateur montre un coupon 1xbet (n° 87078741889, système 4/7 du 11/09)
+dont deux barreaux gagnants sont des TOTAUX de jeux au tennis, et demande ce
+que le pipeline en sait. Le ledger en contenait trois, réglés : « Under
+34.5 » WIN (Zverev–van de Zandschulp), « Under 39.5 » WIN (Shelton–
+Tsitsipas, fantôme), « Over 22.5 » LOSS (Sabalenka–Pegula). Aucune alerte,
+aucun log suspect — et c'est tout le problème.
+
+Cause : ESPN ne publie pas de score chiffré pour un match de tennis ni pour
+un combat, seulement un drapeau `winner` — d'où le 1-0 / 0-1 de
+`core.score_sources._espn_candidat`. Ce couple arrivait tel quel dans
+`core.settlement.determine_outcome`, dont la branche des totaux calcule
+`total = home_score + away_score` : **1 + 0 = 1**, comparé à la ligne. Donc
+TOUT « Moins de » sortait WIN et TOUT « Plus de » sortait LOSS, quelle que
+soit la ligne et quel que soit le match. Ce n'était pas théorique : le
+pipeline ACHÈTE ces marchés (`core.odds_api._MARKETS_BY_SPORT["tennis"] =
+"h2h,totals"`) et les émet.
+
+MESURÉ le 2026-09-17 : `determine_outcome('tennis','totals_under','Under
+34.5','A','B',1,0)` rend WIN, et `('tennis','totals_over','Over 22.5',…,1,0)`
+rend LOSS. Jeux RÉELS relus chez ESPN (`linescores` des scoreboards
+tennis/atp et tennis/wta) : Shelton–Tsitsipas 6-2 6-3 6-4 = 27 jeux,
+Zverev–van de Zandschulp = 27, Sabalenka–Pegula 7-5 6-2 = 20. Les trois
+issues du ledger étaient donc JUSTES — par COÏNCIDENCE : les lignes étaient
+hautes (34.5, 39.5) et le Under y était favori. Une ligne basse aurait été
+enregistrée gagnante à tort.
+
+Fait, sans nouvelle source ni clé — ESPN publie les jeux set par set :
+`_espn_decompte` les somme et rend None si un camp n'a pas de `linescores`
+(on ne complète pas un décompte) ; `result_from_espn` rend ce `decompte` à
+côté du score et le log l'affiche ; `settlement._paire_comptable` exige le
+décompte pour un TOTAL ou un HANDICAP dès que le sport est dans
+`SPORTS_SCORE_DRAPEAU` (tennis, mma), et rend UNKNOWN sans lui. Le h2h garde
+le drapeau : en tennis le vainqueur du match peut avoir MOINS de jeux que son
+adversaire (6-0 6-7 6-7), donc on ne déduit jamais un vainqueur d'un
+décompte, ni l'inverse. SÛR PAR CONSTRUCTION : les appelants qui ne savent
+pas compter (`core/relance_expires.py`,
+`scripts/backfill_expired_results.py`) rendent UNKNOWN au lieu d'inventer.
+
+Pas fait : aucune ligne du ledger corrigée, les trois étaient justes
+(vérifié). Le périmètre d'émission n'est pas touché — un total tennis reste
+émis, et s'il manque un jour ses `linescores` il restera UNKNOWN puis
+expirera, au lieu d'être faux.
+
+⛔ Un marché de COMPTE (total, handicap) ne se règle qu'avec un DÉCOMPTE ;
+sans lui, UNKNOWN. ⚠️ Ne jamais faire passer un drapeau de vainqueur pour un
+score. Le piège tenait à son invisibilité : trois issues justes, aucun log,
+et la signature « tous les Under gagnent » ne se voit qu'en regardant la
+colonne entière.
+Gardien : `tests/test_totaux_tennis.py` (UNKNOWN sans décompte pour tennis et
+mma, total et handicap ; issues justes avec les jeux ; PUSH sur la ligne
+pile ; h2h inchangé même avec un décompte contraire ; rejeu des trois lignes
+du ledger ; somme des `linescores` ; non-régression foot/basket).
+
+### Le budget de scan allait aux ligues BAVARDES, pas aux mieux mesurées ; baseball retiré (2026-09-17, décision opérateur)
+
+Décision opérateur chiffrée, pas une panne. Chiffres HORS TAXE (TAX_RATE=0,
+décision opérateur — règle 11).
+
+Ce qui a été mesuré, sur les recommandés JOUABLES post-A6 :
+
+- **baseball** 14-16 (46,7 %) pour un point mort à 53 % → −3,56 u en mise
+  plate. La perte est concentrée sur `totals_under` (5-11, −6,13 u) quand
+  `totals_over` rapporte +2,70 u et le h2h est à plat (4-3, −0,13 u). Par
+  ligue : MLB 13-16 (−4,23 u), KBO 1-0. Le fantôme baseball du 2026-08-04
+  (48 paris, 42 % pour 56,5 % requis) avait été levé le 2026-09-01 avec une
+  promesse écrite dans `run_engine.py` : « à réévaluer après 30 réglés
+  post-CALIBRATION_EPOCH ». Les 30 étaient faits, et deux moteurs différents
+  donnaient le même verdict.
+- **foot Big 5** 25-5 (83 %), borne basse de Wilson 66 % pour un point mort à
+  61 %, +10,17 u — le SEUL segment du livre dont la borne BASSE passe le
+  point mort. Hors Big 5 : 29-20 (59 %), +1,11 u, rien de démontré. n=30, à
+  relire à 60 réglés.
+
+Ce qui coinçait, mécanique : le plafond d'un scan de fond vaut `allocation ×
+créneaux dus/8 × BACKGROUND_SHARE` — 48 crédits au créneau de 19:11 le 17/09
+pour 53 engagés. Les ligues peuplées en trop sont refusées, et l'ordre de
+paiement était `populated.sort(key=nombre de matchs, reverse=True)` : MLB et
+ses 9 matchs (2 crédits) passaient devant La Liga et ses 2 matchs (3
+crédits). Le scan de 19:11 a ainsi sauté EPL, Bundesliga, Serie A et Ligue 1.
+Dépense du baseball, mesurée : MLB payé dans 5 des 6 scans standard relus du
+17/09, plus NPB et KBO au créneau de 06:11 → ~14 crédits sur les 53 engagés
+(compteur `oddsapi_spent_day`), soit ~26 % de la dépense réelle pour ~15 % du
+volume de signaux. Refus comptés sur les scans standard des 16 et 17/09
+(motif « rythme ») : Libertadores 6, NFL 6, AFL 5, NCAAF 5, **La Liga 4**,
+NPB 4, KBO 4, Brasileirão 3, Serie A 2, Bundesliga 2, Ligue 1 2, EPL 1.
+
+Fait : les trois clés baseball quittent `SPORT_KEYS` et sont inscrites dans
+`core.odds_api.LIGUES_RETIREES` avec date, motif et critère de réouverture ;
+`SHADOW_SPORTS = {"baseball"}` EN PLUS, parce que les sources soft
+(odds-api.io, Smarkets) peuvent encore présenter un match et qu'il
+redeviendrait recommandable sans décision. Le fantôme a été choisi CONTRE
+`RETIRED_SPORTS`, qui aurait effacé le baseball de toutes les vues
+(`core/perf_view.py`) et caché la perte qu'on venait de mesurer. Rien n'est
+supprimé : les 41 lignes réglées restent, le règlement continue (MLB
+statsapi), les fenêtres favorables de `core/scan_windows.py` sont conservées
+et annotées pour une réouverture. Et l'ordre de paiement suit désormais le
+RANG DE FAMILLE dérivé de l'ordre de `SPORT_KEYS` (`DEBUTS_DE_FAMILLE`, huit
+noms — pas une seconde liste de ligues), le volume ne départageant plus que
+DANS une famille : la logique d'origine (un 422 coupe sur la ligue la moins
+fournie) survit là où elle a du sens. Big 5 premier, coupes d'Europe ensuite.
+
+⚠️ NON CORRIGÉ, à connaître avant de rouvrir un sport : `run_engine._reglable`
+accepte TOUT le baseball au motif « MLB statsapi », or statsapi ne couvre que
+la MLB, ESPN n'a qu'un chemin `baseball/mlb`, LiveScore est limité au
+football (`_LS_SPORTS`) et le repli TheSportsDB a une fenêtre courte. KBO et
+NPB passaient donc la garde « réglable » sans qu'aucune source ne sache les
+régler : le signal « Lotte Giants vs SSG Landers » (KBO, 16/09 09:30 UTC) est
+resté bloqué et a expiré. Sans objet pour les nouveaux signaux depuis le
+retrait, le trou reste ouvert pour un futur sport dont toutes les ligues ne
+sont pas couvertes.
+⚠️ L'ordre de `SPORT_KEYS` est désormais PORTEUR — il décide où part le budget
+quand le plafond refuse. La première place du Big 5 tient à une mesure à
+n=30 : elle tombe si la mesure tombe.
+Gardiens : `tests/test_ordre_de_depense.py` (priorité avant volume, volume
+dans la famille, familles dérivées de l'ordre déclaré, aucune clé baseball,
+lignes baseball toujours réglables, fenêtres conservées cohérentes avec les
+retraits), `tests/test_shadow_mode.py`, `tests/test_odds_api_preflight.py`.
+
 ## Couche IA
 
 Le paysage des paliers gratuits change tous les mois. Rien de ce qui suit
