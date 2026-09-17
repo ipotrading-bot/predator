@@ -139,11 +139,25 @@ DEBUG_MODE   = os.environ.get("PREDATOR_DEBUG", "0") == "1"
 # manuelle de réouverture — c'est exactement ce qui a permis de mesurer ce
 # segment — mais l'ajustement automatique, lui, ne les voit plus.
 # Fantôme baseball LEVÉ le 2026-09-01 (décision opérateur) : la mesure du
-# 2026-08-04 (48 paris, 42 % pour 56,5 % requis) date de l'ancien moteur,
-# avant la refonte EV du 2026-08-22 — elle ne dit rien du moteur actuel.
-# À réévaluer après 30 réglés post-CALIBRATION_EPOCH. SHADOW_GOLDEN_HOUR
-# n'est pas concerné.
-SHADOW_SPORTS: set[str] = set()
+# 2026-08-04 (48 paris, 42 % pour 56,5 % requis) datait de l'ancien moteur,
+# avant la refonte EV du 2026-08-22 — elle ne disait rien du moteur actuel.
+# La réévaluation promise (« après 30 réglés post-CALIBRATION_EPOCH ») a été
+# FAITE le 2026-09-17 : 14-16 (46,7 %) sur exactement 30 réglés recommandés
+# et jouables, pour un point mort à 53 % → −3,56 u en mise plate, la perte
+# concentrée sur totals_under (5-11, −6,13 u). Deux moteurs différents, deux
+# échantillons, le même verdict. Fantôme REMIS, et
+# les trois ligues retirées du scan payant (core.odds_api.LIGUES_RETIREES,
+# ~14 crédits/jour rendus au Big 5).
+#
+# Le fantôme reste NÉCESSAIRE en plus du retrait des clés : les sources soft
+# (odds-api.io, Smarkets) peuvent encore présenter un match de baseball, et
+# sans cette ligne il redeviendrait recommandable sans qu'on l'ait décidé.
+# Il n'efface rien : les signaux continuent d'être persistés, réglés (MLB
+# statsapi) et VISIBLES dans les vues — contrairement à RETIRED_SPORTS, qui
+# les ferait disparaître de /perf (core/perf_view.py) et cacherait la perte
+# qu'on vient de mesurer. Réouverture : instruction opérateur.
+# SHADOW_GOLDEN_HOUR n'est pas concerné.
+SHADOW_SPORTS: set[str] = {"baseball"}
 SHADOW_GOLDEN_HOUR = True
 
 # ── Global Timeout Handler (Safety Net) ──────────────────────────────

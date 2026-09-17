@@ -24,12 +24,17 @@ def _sig(sport, match="A vs B"):
 
 
 class TestSegmentsFantomes:
-    def test_baseball_nest_plus_ecarte_de_telegram(self):
-        # Fantôme levé le 2026-09-01 (décision opérateur) : la mesure du
-        # 2026-08-04 datait de l'ancien moteur, avant la refonte EV.
+    def test_le_baseball_est_de_nouveau_ecarte_de_telegram(self):
+        # Fantôme levé le 2026-09-01 « à réévaluer après 30 réglés
+        # post-époque », REMIS le 2026-09-17 sur cette réévaluation : 14-16
+        # (46,7 %) pour un point mort à 53 %, −3,56 u en mise plate, la perte
+        # concentrée sur totals_under. Décision opérateur, hors taxe.
+        # Les trois ligues sont aussi retirées du scan payant
+        # (core.odds_api.LIGUES_RETIREES) : le fantôme couvre ce que les
+        # sources soft pourraient encore présenter.
         kept, shadowed = _partition([_sig("baseball")])
-        assert len(kept) == 1
-        assert shadowed == []
+        assert kept == []
+        assert len(shadowed) == 1
 
     def test_les_autres_sports_passent(self):
         signals = [_sig("soccer"), _sig("basketball")]
@@ -49,8 +54,9 @@ class TestSegmentsFantomes:
 
 
 class TestConfiguration:
-    def test_aucun_sport_en_fantome(self):
-        assert run_engine.SHADOW_SPORTS == set()
+    def test_le_baseball_est_le_seul_sport_en_fantome(self):
+        # Un sport n'entre ici que sur instruction opérateur (règle 11).
+        assert run_engine.SHADOW_SPORTS == {"baseball"}
 
     def test_golden_hour_est_bien_fantome(self):
         assert run_engine.SHADOW_GOLDEN_HOUR is True

@@ -60,17 +60,22 @@ def test_preflight_failure_falls_through_to_the_paid_call(monkeypatch):
     assert calls["odds"] == ["soccer_epl"]
 
 
-def test_busiest_leagues_are_scanned_first(monkeypatch):
-    # Si un 422 interrompt le scan, il doit l'interrompre sur les ligues les
-    # moins fournies — pas au hasard de l'ordre du dictionnaire.
+def test_les_familles_dabord_le_volume_ensuite(monkeypatch):
+    # Depuis le 2026-09-17 : la FAMILLE décide (ordre de SPORT_KEYS), le
+    # volume départage dans la famille. Un sport à 3 matchs ne préempte plus
+    # le budget d'une famille mieux mesurée — voir
+    # tests/test_ordre_de_depense.py. (Si un 422 coupe le scan, il coupe donc
+    # sur la famille la moins prioritaire, puis sur la ligue la moins
+    # fournie.)
     calls = _wire(monkeypatch, {
-        "soccer_epl":     [{"id": "a"}],
-        "baseball_mlb":   [{"id": "b"}, {"id": "c"}, {"id": "d"}],
-        "basketball_nba": [{"id": "e"}, {"id": "f"}],
+        "soccer_epl":            [{"id": "a"}],
+        "soccer_italy_serie_a":  [{"id": "b"}, {"id": "c"}, {"id": "d"}],
+        "basketball_nba":        [{"id": "e"}, {"id": "f"}],
     })
     odds_api.fetch_odds(api_key="k", hours_ahead=24, sport_keys={
-        "soccer_epl": "soccer", "baseball_mlb": "baseball", "basketball_nba": "basketball"})
-    assert calls["odds"] == ["baseball_mlb", "basketball_nba", "soccer_epl"]
+        "soccer_epl": "soccer", "soccer_italy_serie_a": "soccer",
+        "basketball_nba": "basketball"})
+    assert calls["odds"] == ["soccer_italy_serie_a", "soccer_epl", "basketball_nba"]
 
 
 def test_missing_key_returns_empty(monkeypatch):

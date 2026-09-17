@@ -60,7 +60,10 @@ _ALL = None
 # le crédit vaut le plus, le pré-vol empêche de le perdre.
 # Jours : 0=lundi … 6=dimanche ; heure_fin exclue.
 _WINDOWS: dict[str, list[tuple]] = {
-    # KBO/NPB : coups d'envoi 09:00–10:30 UTC → scan de 06:03 seulement
+    # KBO/NPB : coups d'envoi 09:00–10:30 UTC → scan de 06:03 seulement.
+    # Ligues RETIRÉES du scan payant le 2026-09-17 (core.odds_api.
+    # LIGUES_RETIREES) : ces fenêtres ne sont plus consultées, elles sont
+    # gardées telles quelles pour une réouverture sans re-mesure.
     "baseball_kbo":                      [(_ALL, 5, 8)],
     "baseball_npb":                      [(_ALL, 5, 8)],
     # Big 5 + coupes d'Europe : soirée 16:45–19:30 UTC → 13:03 et 16:03 ;
@@ -80,7 +83,8 @@ _WINDOWS: dict[str, list[tuple]] = {
     "soccer_argentina_primera_division": [(_ALL, 19, 24)],
     "soccer_mexico_ligamx":              [(_ALL, 19, 24)],
     "soccer_usa_mls":                    [(_ALL, 19, 24)],
-    # MLB : matinées 17:05–20:10 UTC → 13:03/16:03 ; soirées 23:05–02:40 → 19:03+
+    # MLB : matinées 17:05–20:10 UTC → 13:03/16:03 ; soirées 23:05–02:40 →
+    # 19:03+. Ligue RETIRÉE du scan payant le 2026-09-17 (idem KBO/NPB).
     "baseball_mlb":                      [(_ALL, 13, 17), (_ALL, 19, 24)],
     # NFL : jeudi soir US = vendredi 00:20 UTC (payé jeudi 21:03) ; dimanche
     # 17:00 / 20:25 / 00:20 (13:03 → 23:03) ; lundi soir = mardi 00:15 (21:03)

@@ -68,64 +68,60 @@ CRIS_KEY     = "bookmaker"    # Bookmaker.eu — CRIS network
 #
 # Budget : voir reports/refonte_scope_2026-08.md §4 — le chiffre d'origine
 # (« ~2 640/mois pour 11 clés ») a dérivé deux fois, on ne le recopie plus ici.
+# L'ORDRE DE CE DICTIONNAIRE EST PORTEUR (2026-09-17) : le plafond de dépense
+# d'un scan de fond (allocation × créneaux dus/8 × BACKGROUND_SHARE) ne suffit
+# pas à payer toutes les ligues peuplées, et c'est cet ordre qui décide
+# lesquelles. Il était trié par NOMBRE DE MATCHS : MLB et ses 9 matchs
+# passaient devant La Liga et ses 2, donc devant le seul segment que le ledger
+# démontre (Big 5 : 25-5, +10,17 u, borne basse de Wilson 66 % pour un point
+# mort à 61 %). Le volume ne départage plus que DANS une famille — voir le tri
+# dans fetch_odds, gardé par tests/test_ordre_de_depense.py.
+# Chiffres HORS TAXE (TAX_RATE=0, décision opérateur — règle 11).
 SPORT_KEYS = {
     # (Retiré 2026-08-06 — la Coupe du Monde 2026 est terminée, instruction
     # opérateur. Elle occupait la priorité 1 ; la ligue ne rend plus que des
     # 404 hors saison, mais la garder gardait aussi vivant le calendrier 168h
     # de run_engine.py, supprimé dans le même commit.)
 
-    # ── PRIORITÉ 2 — Playoffs Amérique du Nord (sharps = Kelly 0.25–0.30) ──
-    "basketball_nba":                        "basketball",  # NBA Finals — marché le + sharp au monde
-    "basketball_wnba":                       "basketball",  # WNBA — juin-sept, comble le vide NBA/NHL off-season
-    "icehockey_nhl":                         "hockey",      # NHL Stanley Cup Finals — mouvement max
-    "baseball_mlb":                          "baseball",    # MLB — 10+ matchs/jour, lag US→EU ✓
-
-    # ── PRIORITÉ 3 — Baseball Asie (lag timezone = fenêtre AM UTC) ────
-    "baseball_kbo":                          "baseball",    # KBO Corée — lag Asie 06:00–13:00 UTC ✓
-    "baseball_npb":                          "baseball",    # NPB Japon — lag Asie 06:00–13:00 UTC ✓
-
-    # ── PRIORITÉ 5 — Copa Libertadores (lag SA soirée = fenêtre 21:00 UTC) ─
-    "soccer_conmebol_copa_libertadores":     "soccer",      # R16/QF — lag SA maximal documenté
-
-    # ── PRIORITÉ 6 — Brasileirão (quotidien, lag BR→EU cohérent) ─────
-    "soccer_brazil_campeonato":              "soccer",      # Série A Brésil — marché sharp actif
-
-    # ── PRIORITÉ 7 — MLS (très actif juin–août, lag NA→EU) ───────────
-    "soccer_usa_mls":                        "soccer",      # MLS — volumes élevés, 1XBet actif
-
-    # ── PRIORITÉ 8 — Autres ligues actives en juin ───────────────────
-    "soccer_argentina_primera_division":     "soccer",      # Liga Argentina — marché SA sharp
-    "soccer_mexico_ligamx":                  "soccer",      # Liga MX — actif été
-
-    # ── PRIORITÉ 9 — Big 5 européen (dormant été, reprise mi/fin-août 2026) ──
+    # ── PRIORITÉ 1 — Big 5 européen ──────────────────────────────────
+    # MESURÉ le 2026-09-17 sur les recommandés jouables post-A6 : 25-5
+    # (83 %), borne basse de Wilson 66 % pour un point mort à 61 % — le SEUL
+    # segment du livre dont la borne BASSE passe le point mort. Hors Big 5 :
+    # 29-20 (59 %), +1,11 u, rien de démontré. C'est la raison de la première
+    # place ; elle tombe si la mesure tombe (n=30, à relire à 60 réglés).
     "soccer_epl":                            "soccer",      # EPL — reprise 21/08, Pinnacle+1xBet ✓
     "soccer_spain_la_liga":                  "soccer",      # La Liga — reprise 16/08, Pinnacle+1xBet ✓
     "soccer_germany_bundesliga":             "soccer",      # Bundesliga — reprise 28/08, Pinnacle+1xBet ✓
     "soccer_italy_serie_a":                  "soccer",      # Serie A — reprise 22/08, Pinnacle+1xBet ✓
     "soccer_france_ligue_one":               "soccer",      # Ligue 1 — reprise 22/08, Pinnacle+1xBet ✓
 
-    # ── PRIORITÉ 7 — Australie (marchés Pinnacle très sharps) ────────
+    # ── PRIORITÉ 2 — coupes d'Europe (même famille de marchés) ───────
+    # Placées derrière le Big 5 le 2026-09-17 : même écosystème sharp, mais
+    # n=6 au ledger (UEL 3-0, LdC 1-2) — rien de démontré, un voisinage.
+    "soccer_uefa_champs_league":             "soccer",                 # LdC — phase de ligue mi-sept.
+    "soccer_uefa_europa_league":             "soccer",                 # UEL — idem
+
+    # ── PRIORITÉ 3 — Playoffs/saisons Amérique du Nord (sharps) ──────
+    # (baseball_mlb retiré le 2026-09-17, voir le bloc RETIRÉS plus bas)
+    "basketball_nba":                        "basketball",  # NBA Finals — marché le + sharp au monde
+    "basketball_wnba":                       "basketball",  # WNBA — juin-sept, comble le vide NBA/NHL off-season
+    "icehockey_nhl":                         "hockey",      # NHL Stanley Cup Finals — mouvement max
+
+    # ── PRIORITÉ 4 — Amérique du Sud (lag SA soirée) ─────────────────
+    "soccer_conmebol_copa_libertadores":     "soccer",      # R16/QF — lag SA maximal documenté
+    "soccer_brazil_campeonato":              "soccer",      # Série A Brésil — marché sharp actif
+    "soccer_usa_mls":                        "soccer",      # MLS — volumes élevés, 1XBet actif
+    "soccer_argentina_primera_division":     "soccer",      # Liga Argentina — marché SA sharp
+    "soccer_mexico_ligamx":                  "soccer",      # Liga MX — actif été
+
+    # ── PRIORITÉ 5 — Australie (marchés Pinnacle très sharps) ────────
     "aussierules_afl":                       "aussierules", # AFL — ~9 matchs/semaine, Pinnacle ✓
     "rugbyleague_nrl":                       "rugbyleague", # NRL — ~8 matchs/semaine, Pinnacle ✓
 
-    # ── Sports de combat — flux OddsAPI réel depuis le 2026-08-22 (Phase 1) ──
-    # Le MMA était pricé par recherche web (fetch_mma_events, supprimé) : son
-    # +37,5% de ROI sur 8 paris n'était validable par aucun CLV réel. h2h
-    # seulement (_MARKETS_BY_SPORT). Les semaines sans carte ne coûtent rien :
-    # le pré-vol _events_in_window (0 crédit) rend 0 et la ligue est sautée.
-    "mma_mixed_martial_arts":                "mma",         # UFC/PFL/Bellator — cartes ven-dim
-    "boxing_boxing":                         "boxing",      # boxe — marché mince, h2h
-
-    # ── Phase 2 (2026-08-22) — auto-activation par le pré-vol gratuit ──────
-    # Ajoutées AVANT leur saison : tant qu'aucun match n'est dans la fenêtre,
-    # _events_in_window rend 0 et rien n'est payé. NFL : gardée en plus par
-    # SEASON_OPENS (pas de présaison — lignes molles, rotations imprévisibles).
+    # ── PRIORITÉ 6 — football US (saison régulière seulement) ────────
+    # NFL : gardée en plus par SEASON_OPENS (pas de présaison — lignes
+    # molles, rotations imprévisibles).
     "americanfootball_nfl":                  "americanfootball",       # NFL — saison régulière uniquement
-    "soccer_uefa_champs_league":             "soccer",                 # LdC — phase de ligue mi-sept.
-    "soccer_uefa_europa_league":             "soccer",                 # UEL — idem
-    "basketball_euroleague":                 "euroleague_basketball",  # mécaniques basketball, Kelly dédiée
-
-    # ── Phase 3 (2026-08-22) — NCAAF, sport-type DÉDIÉ ──────────────────────
     # Football universitaire US : 50+ matchs par week-end dès fin août, marché
     # très liquide, lag soft-books documenté, et — ce qui a décidé l'ajout —
     # les « cupcake games » de septembre mettent le favori à 1,05–1,30 : la
@@ -137,6 +133,68 @@ SPORT_KEYS = {
     # Pas de SEASON_OPENS : pas de présaison universitaire, le pré-vol gratuit
     # suffit — 0 crédit tant qu'aucun match n'est dans la fenêtre.
     "americanfootball_ncaaf":                "college_football",
+
+    # ── PRIORITÉ 7 — Euroleague basket ───────────────────────────────
+    "basketball_euroleague":                 "euroleague_basketball",  # mécaniques basketball, Kelly dédiée
+
+    # ── PRIORITÉ 8 — sports de combat (flux OddsAPI réel, Phase 1) ───
+    # Le MMA était pricé par recherche web (fetch_mma_events, supprimé) : son
+    # +37,5% de ROI sur 8 paris n'était validable par aucun CLV réel. h2h
+    # seulement (_MARKETS_BY_SPORT). Les semaines sans carte ne coûtent rien :
+    # le pré-vol _events_in_window (0 crédit) rend 0 et la ligue est sautée.
+    "mma_mixed_martial_arts":                "mma",         # UFC/PFL/Bellator — cartes ven-dim
+    "boxing_boxing":                         "boxing",      # boxe — marché mince, h2h
+}
+
+# Frontières de FAMILLE : la première clé de chaque bloc « PRIORITÉ n »
+# ci-dessus. Le rang d'une ligue est l'indice de sa famille, et le volume de
+# matchs départage DANS la famille — la logique d'origine (un 422 coupe sur la
+# ligue la moins fournie) survit là où elle a du sens, sans laisser un sport à
+# 9 matchs préempter le budget d'une famille mieux mesurée. Huit noms, pas une
+# seconde liste de ligues : chacun doit exister dans SPORT_KEYS (gardien
+# tests/test_ordre_de_depense.py).
+DEBUTS_DE_FAMILLE = (
+    "soccer_epl",                          # 1. Big 5
+    "soccer_uefa_champs_league",           # 2. coupes d'Europe
+    "basketball_nba",                      # 3. Amérique du Nord
+    "soccer_conmebol_copa_libertadores",   # 4. Amérique du Sud
+    "aussierules_afl",                     # 5. Australie
+    "americanfootball_nfl",                # 6. football US
+    "basketball_euroleague",               # 7. Euroleague
+    "mma_mixed_martial_arts",              # 8. sports de combat
+)
+
+
+def rangs_par_famille(cles=None) -> dict[str, int]:
+    """clé de ligue → indice de sa famille, dérivé de l'ORDRE de SPORT_KEYS.
+    Une clé inconnue (tennis dynamique) n'a pas de famille : l'appelant la
+    met en dernier."""
+    rangs, famille = {}, -1
+    for cle in (cles if cles is not None else SPORT_KEYS):
+        if cle in DEBUTS_DE_FAMILLE:
+            famille += 1
+        rangs[cle] = max(famille, 0)
+    return rangs
+
+
+# Ligues RETIRÉES du scan payant, avec leur date et leur raison. Rien n'est
+# effacé ailleurs : les lignes de `signals`/`ai_learning_ledger` restent, leur
+# règlement continue (MLB statsapi pour le baseball), et les fenêtres
+# favorables de core/scan_windows sont conservées telles quelles pour une
+# réouverture. Gardien : tests/test_ordre_de_depense.py.
+LIGUES_RETIREES: dict[str, str] = {
+    # DÉCISION OPÉRATEUR du 2026-09-17 (option « C »), sur mesure du jour :
+    # baseball recommandé+jouable post-A6 = 14-16 (46,7 %) pour un point mort
+    # à 53 %, soit −3,56 u en mise plate ; la perte est concentrée sur
+    # totals_under (5-11, −6,13 u) quand totals_over rapporte +2,70 u. Le sport
+    # consommait ~14 crédits OddsAPI par jour sur les 53 engagés — payés
+    # AVANT le Big 5 parce qu'il a plus de matchs. Réouverture : instruction
+    # opérateur, ou si le Big 5 retombe sous son point mort sur 60 réglés.
+    # Précédent : fantôme du 2026-08-04 (48 paris, 42 %) levé le 2026-09-01
+    # « à réévaluer après 30 réglés post-époque » — les 30 sont faits.
+    "baseball_mlb": "2026-09-17 — décision opérateur : −3,56 u sur 30 réglés (46,7 % pour 53 % requis)",
+    "baseball_kbo": "2026-09-17 — retirée avec le baseball (sport entier)",
+    "baseball_npb": "2026-09-17 — retirée avec le baseball (sport entier)",
 }
 
 # ── Ouverture de saison : une ligue n'est pas scannée avant cette date ───
@@ -779,9 +837,13 @@ def fetch_odds(api_key: str | None = None, hours_ahead: int = 24,
     playable_from = (now + playable_lead).strftime("%Y-%m-%dT%H:%M:%SZ")
 
     # Pré-vol gratuit : on ne garde que les ligues qui ont réellement des
-    # matchs dans la fenêtre, triées par volume décroissant — si un 422
-    # interrompt le scan, il l'aura interrompu sur les ligues les moins
-    # fournies, pas au hasard de l'ordre du dictionnaire.
+    # matchs dans la fenêtre, triées par PRIORITÉ DÉCLARÉE (l'ordre de
+    # SPORT_KEYS), le volume ne départageant qu'à rang égal. Deux effets, le
+    # second est le vrai : un 422 interrompt le scan sur les ligues les moins
+    # importantes, et le plafond de dépense d'un scan de fond — qui refuse
+    # tous les jours des ligues peuplées — est consommé par les ligues qui
+    # valent le plus, plus par celles qui jouent le plus souvent (2026-09-17,
+    # voir le préambule de SPORT_KEYS).
     populated: list = []
     skipped_empty = 0
     saved = 0
@@ -813,7 +875,9 @@ def fetch_odds(api_key: str | None = None, hours_ahead: int = 24,
     # rapportent le plus de matchs par crédit qui passent, pas les premières
     # du dictionnaire. Même ordre pour l'achat : un 422 interrompt sur les
     # ligues les moins fournies.
-    populated.sort(key=lambda x: x[2], reverse=True)
+    rangs = rangs_par_famille()
+    dernier = len(DEBUTS_DE_FAMILLE)      # clés dynamiques (tennis) : en dernier
+    populated.sort(key=lambda x: (rangs.get(x[0], dernier), -x[2]))
     scan_plan: list = []
     for sport_key, sport_type, n_events in populated:
         if spend_policy is not None:

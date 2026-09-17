@@ -37,8 +37,10 @@ class TestWiring:
         assert "americanfootball" in run_engine._MAJOR_SPORTS
 
     def test_no_active_sport_was_removed(self):
-        for key in ("baseball_mlb", "baseball_kbo", "baseball_npb",
-                    "soccer_brazil_campeonato", "soccer_usa_mls",
+        # baseball_mlb/kbo/npb retirés le 2026-09-17 (décision opérateur,
+        # core.odds_api.LIGUES_RETIREES) — gardés par
+        # tests/test_ordre_de_depense.py::TestBaseballRetire.
+        for key in ("soccer_brazil_campeonato", "soccer_usa_mls",
                     "soccer_argentina_primera_division", "soccer_mexico_ligamx",
                     "soccer_conmebol_copa_libertadores", "aussierules_afl",
                     "rugbyleague_nrl", "basketball_wnba", "soccer_epl",
