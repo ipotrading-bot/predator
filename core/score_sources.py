@@ -454,6 +454,33 @@ def _espn_cotes(comp: dict, home: str, away: str,
     return meilleur
 
 
+# Sports dont le « score » n'est PAS un décompte : ESPN ne publie pas de
+# score chiffré pour un combat ni pour un match de tennis, seulement un
+# drapeau `winner` — d'où le 1-0 / 0-1 de `_espn_candidat`. Un tel couple
+# règle un h2h, JAMAIS un total ni un handicap : 1+0 = 1 donnerait « Moins
+# de » gagnant et « Plus de » perdant à tous les coups (mesuré le 2026-09-17,
+# trois totaux tennis du ledger portaient déjà cette signature). Le décompte
+# réel, quand il existe, voyage à part (`decompte`).
+SPORTS_SCORE_DRAPEAU = frozenset({"tennis", "mma"})
+
+
+def _espn_decompte(a: dict, b: dict) -> tuple[int, int] | None:
+    """Décompte réel des deux camps depuis les `linescores` ESPN — pour le
+    tennis, les JEUX set par set (mesuré le 2026-09-17 : Shelton-Tsitsipas
+    6-2 6-3 6-4 = 27 jeux, Sabalenka-Pegula 7-5 6-2 = 20). None si l'un des
+    deux camps n'a pas de ligne de score : on ne complète pas un décompte."""
+    out = []
+    for camp in (a, b):
+        lignes = camp.get("linescores")
+        if not lignes:
+            return None
+        try:
+            out.append(int(sum(float(l.get("value") or 0) for l in lignes)))
+        except (TypeError, ValueError):
+            return None
+    return (out[0], out[1])
+
+
 def _espn_paire(comp: dict, home: str, away: str) -> tuple[dict, dict] | None:
     """(compétiteur domicile, compétiteur extérieur) si les DEUX noms du
     signal s'apparient strictement (accents repliés) ; None sinon. C'est le
@@ -471,13 +498,15 @@ def _espn_camp(competition: dict, camp: str) -> dict | None:
     return None
 
 
-def _espn_candidat(ev: dict, home: str, away: str) -> tuple[int, int] | None:
-    """(home_score, away_score) si UNE competition de l'événement est TERMINÉE
-    et que ses deux compétiteurs s'apparient strictement aux deux noms du
-    signal ; None sinon. Sans score chiffré (combat MMA), le drapeau `winner`
-    donne 1-0 / 0-1 — un combat sans vainqueur déclaré (no contest, nul)
-    ne règle pas. Une même competition rendue deux fois (même id, deux
-    chemins ou deux tableaux) ne compte qu'une fois."""
+def _espn_candidat(ev: dict, home: str, away: str) -> tuple[int, int, tuple | None] | None:
+    """(home_score, away_score, décompte) si UNE competition de l'événement est
+    TERMINÉE et que ses deux compétiteurs s'apparient strictement aux deux noms
+    du signal ; None sinon. Sans score chiffré (combat MMA, match de tennis),
+    le drapeau `winner` donne 1-0 / 0-1 — un combat sans vainqueur déclaré
+    (no contest, nul) ne règle pas. Le `décompte` est le compte réel des
+    `linescores` quand ESPN les publie (jeux du tennis) : c'est LUI qui règle
+    un total, jamais le drapeau. Une même competition rendue deux fois (même
+    id, deux chemins ou deux tableaux) ne compte qu'une fois."""
     trouves = []
     vus_ids: set = set()
     for comp in _espn_competitions(ev):
@@ -492,15 +521,16 @@ def _espn_candidat(ev: dict, home: str, away: str) -> tuple[int, int] | None:
         if comp.get("id"):
             vus_ids.add(comp["id"])
         a, b = paire
+        decompte = _espn_decompte(a, b)
         try:
-            trouves.append((int(a.get("score")), int(b.get("score"))))
+            trouves.append((int(a.get("score")), int(b.get("score")), decompte))
             continue
         except (TypeError, ValueError):
             pass
         if a.get("winner") is True and not b.get("winner"):
-            trouves.append((1, 0))
+            trouves.append((1, 0, decompte))
         elif b.get("winner") is True and not a.get("winner"):
-            trouves.append((0, 1))
+            trouves.append((0, 1, decompte))
     return trouves[0] if len(trouves) == 1 else None
 
 
@@ -593,7 +623,7 @@ def result_from_espn(match_name: str, sport: str, match_date: str) -> dict | Non
     fenetre = _espn_fenetre(match_date)
     if not chemins or not fenetre:
         return None
-    vus: dict[str, tuple[int, int]] = {}
+    vus: dict[str, tuple[int, int, tuple | None]] = {}
     for path in chemins:
         for ev in _espn_events(path, fenetre):
             score = _espn_candidat(ev, home, away)
@@ -602,9 +632,15 @@ def result_from_espn(match_name: str, sport: str, match_date: str) -> dict | Non
                 # atp et wta rendent le même tournoi), sinon celui de l'événement.
                 vus[_espn_cle(ev, home, away, path)] = score
     if len(vus) == 1:
-        hs, as_ = next(iter(vus.values()))
-        log.info("SETTLE espn | %s | %d-%d (0 appel IA)", match_name, hs, as_)
-        return {"home_score": hs, "away_score": as_, "completed": True, "source": "espn"}
+        hs, as_, decompte = next(iter(vus.values()))
+        log.info("SETTLE espn | %s | %d-%d%s (0 appel IA)", match_name, hs, as_,
+                 f" | décompte {decompte[0]}-{decompte[1]}" if decompte else "")
+        out = {"home_score": hs, "away_score": as_, "completed": True, "source": "espn"}
+        if decompte:
+            # Total/handicap : c'est ce décompte qui compte, pas le drapeau —
+            # voir SPORTS_SCORE_DRAPEAU et settlement._paire_comptable.
+            out["decompte"] = decompte
+        return out
     if len(vus) > 1:
         log.info("SETTLE SKIP | %s — %d événements ESPN correspondent, on ne devine pas",
                  match_name, len(vus))

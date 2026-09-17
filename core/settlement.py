@@ -21,7 +21,7 @@ un WIN/LOSS faux l'est.
 import logging
 import re
 
-from core.score_sources import fetch_score
+from core.score_sources import fetch_score, SPORTS_SCORE_DRAPEAU
 from core.db import log_to_ledger, update_signal_fields
 from core.paim_engine import resolve_selection_side, nom_avec_etage, ligne_en_quart
 
@@ -44,10 +44,45 @@ def fetch_match_result(match_name: str, sport: str, match_date: str = "",
     return fetch_score(match_name, sport, match_date, tsdb_ok=tsdb_ok)
 
 
+def _paire_comptable(sport: str, home_score: int, away_score: int,
+                     decompte: tuple | None) -> tuple[int, int] | None:
+    """Le couple de scores COMPTABLE pour un total ou un handicap.
+
+    Pour un sport dont le score est un DRAPEAU de vainqueur — tennis, MMA :
+    ESPN ne publie pas de score chiffré, `_espn_candidat` rend 1-0 — il faut
+    le décompte réel (les JEUX d'un match de tennis, `decompte` de
+    core.score_sources.result_from_espn). Sans lui : None, donc UNKNOWN.
+
+    POURQUOI (mesuré le 2026-09-17) : 1 + 0 = 1, donc tout « Moins de » sortait
+    GAGNANT et tout « Plus de » PERDANT, quelle que soit la ligne et quel que
+    soit le match. Les trois totaux tennis du ledger portaient déjà cette
+    signature (Under 34.5 WIN, Under 39.5 WIN, Over 22.5 LOSS) ; recalculés
+    sur les jeux réels d'ESPN ils tombaient juste par coïncidence — les lignes
+    étaient hautes. Une ligne basse aurait été enregistrée gagnante à tort.
+
+    Le h2h, lui, garde le drapeau : en tennis le vainqueur du match peut avoir
+    MOINS de jeux que son adversaire (6-0 6-7 6-7), donc on ne déduit jamais
+    un vainqueur d'un décompte, ni un décompte d'un vainqueur."""
+    if (sport or "").lower() in SPORTS_SCORE_DRAPEAU:
+        if not decompte or len(decompte) != 2:
+            return None
+        try:
+            return (int(decompte[0]), int(decompte[1]))
+        except (TypeError, ValueError):
+            return None
+    return (home_score, away_score)
+
+
 def determine_outcome(sport: str, market_key: str, selection_name: str,
                       home: str, away: str,
-                      home_score: int, away_score: int) -> str:
-    """Returns 'WIN', 'LOSS', 'PUSH', or 'UNKNOWN'."""
+                      home_score: int, away_score: int,
+                      decompte: tuple | None = None) -> str:
+    """Returns 'WIN', 'LOSS', 'PUSH', or 'UNKNOWN'.
+
+    `decompte` : le compte réel des deux camps quand le score n'en est pas un
+    (tennis, MMA — voir `_paire_comptable`). Son absence rend UNKNOWN sur un
+    total ou un handicap de ces sports : c'est VOULU, un appelant qui ne peut
+    pas compter ne doit pas pouvoir inventer une issue."""
     sel = (selection_name or "").lower().strip()
 
     if market_key == "h2h" and sport == "soccer":
@@ -71,7 +106,10 @@ def determine_outcome(sport: str, market_key: str, selection_name: str,
         return "WIN" if won else "LOSS"
 
     if "totals" in market_key:
-        total = home_score + away_score
+        paire = _paire_comptable(sport, home_score, away_score, decompte)
+        if paire is None:
+            return "UNKNOWN"
+        total = paire[0] + paire[1]
         try:
             line = float(re.search(r'[\d.]+', sel).group())
         except Exception:
@@ -91,11 +129,12 @@ def determine_outcome(sport: str, market_key: str, selection_name: str,
             return "UNKNOWN"
         if ligne_en_quart(point):
             return "UNKNOWN"
-        if "spreads_home" in market_key:
-            adjusted = home_score + point
-        else:
-            adjusted = away_score + point
-        opp = away_score if "spreads_home" in market_key else home_score
+        paire = _paire_comptable(sport, home_score, away_score, decompte)
+        if paire is None:
+            return "UNKNOWN"
+        hs, as_ = paire
+        adjusted = (hs if "spreads_home" in market_key else as_) + point
+        opp = as_ if "spreads_home" in market_key else hs
         if adjusted == opp:
             return "PUSH"
         return "WIN" if adjusted > opp else "LOSS"
@@ -129,12 +168,15 @@ def settle_signal(sb, sig: dict, now_iso: str, tsdb_ok: bool = True) -> bool:
 
     hs  = result["home_score"]
     as_ = result["away_score"]
+    # Décompte réel (jeux du tennis) quand la source en a un : seul lui règle
+    # un total — voir _paire_comptable.
+    decompte = result.get("decompte")
     home = match.split(" vs ")[0].strip() if " vs " in match else ""
     away = match.split(" vs ")[1].strip() if " vs " in match else ""
     outcome = determine_outcome(
         sport, sig.get("market_key", "h2h"),
         sig.get("selection_name", ""),
-        home, away, hs, as_,
+        home, away, hs, as_, decompte,
     )
 
     orig_pin = sig.get("pinnacle_price") or 0.0
