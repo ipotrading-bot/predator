@@ -1856,15 +1856,21 @@ noms — pas une seconde liste de ligues), le volume ne départageant plus que
 DANS une famille : la logique d'origine (un 422 coupe sur la ligue la moins
 fournie) survit là où elle a du sens. Big 5 premier, coupes d'Europe ensuite.
 
-⚠️ NON CORRIGÉ, à connaître avant de rouvrir un sport : `run_engine._reglable`
-accepte TOUT le baseball au motif « MLB statsapi », or statsapi ne couvre que
-la MLB, ESPN n'a qu'un chemin `baseball/mlb`, LiveScore est limité au
-football (`_LS_SPORTS`) et le repli TheSportsDB a une fenêtre courte. KBO et
-NPB passaient donc la garde « réglable » sans qu'aucune source ne sache les
-régler : le signal « Lotte Giants vs SSG Landers » (KBO, 16/09 09:30 UTC) est
-resté bloqué et a expiré. Sans objet pour les nouveaux signaux depuis le
-retrait, le trou reste ouvert pour un futur sport dont toutes les ligues ne
-sont pas couvertes.
+⚠️ Le « trou de périmètre » soupçonné le soir même N'EN EST PAS UN, vérifié le
+2026-09-17 : `run_engine._reglable` accepte TOUT le baseball au motif « MLB
+statsapi », or statsapi ne couvre que la MLB, ESPN n'a AUCUN chemin KBO ni NPB
+(`baseball/kbo` et `baseball/npb` rendent HTTP 400 — mesuré) et LiveScore est
+limité au football (`_LS_SPORTS`). Mais TheSportsDB, lui, connaît la KBO :
+les DEUX signaux KBO jamais émis (Hanwha–KT Wiz du 15/09, Lotte–SSG du 16/09)
+sont réglés, le second à l'audit de 21:44 le 17/09 — « SETTLE thesportsdb |
+Lotte Giants vs SSG Landers | 1-4 | Korean KBO League », par la voie de
+RELANCE DES EXPIRÉS, ~36 h après le coup d'envoi. Le défaut réel est donc un
+DÉLAI, pas une perte : la chaîne de premier choix saute TheSportsDB sous
+contrainte de budget (« repli non tenté — fenêtre de repli dépassée »), et
+c'est la relance des expirés qui finit le travail. Décision du 2026-09-17 :
+on ne corrige pas — coût mesuré nul (2 signaux sur 2 réglés), et la garde
+tient sa promesse. À rouvrir si un sport entre avec des ligues que même
+TheSportsDB ne connaît pas.
 ⚠️ L'ordre de `SPORT_KEYS` est désormais PORTEUR — il décide où part le budget
 quand le plafond refuse. La première place du Big 5 tient à une mesure à
 n=30 : elle tombe si la mesure tombe.
