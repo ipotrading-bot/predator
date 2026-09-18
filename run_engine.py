@@ -52,6 +52,7 @@ from core.learning_layer import load_segment_thresholds as _load_segment_thresho
 from core.learning_layer import load_sport_ranking as _load_sport_ranking
 from core.learning_layer import load_edge_ceilings as _load_edge_ceilings
 from core.learning_layer import load_odds_ceilings as _load_odds_ceilings
+from core.learning_layer import load_learning_summary as _load_learning_summary
 from core.paim_engine import (
     compute_alpha, MIN_EDGE, strict_team_match,
     market_label, SHARP_PROB_BY_MARKET, calculate_consensus_price,
@@ -2380,6 +2381,66 @@ def _telegram_signals(signals: list, now, matches: int, no_pin_count: int,
         _telegram(chunk)
 
 
+def _creneau_standard_du_jour(now) -> bool:
+    """Ce scan sert-il un créneau `standard` de la journée EN COURS ?
+
+    Le créneau DÛ, jamais l'heure du run (règle dure n°12) : un 06:03 livré
+    en retard par GitHub, ou rattrapé par le chien de garde, sert toujours le
+    créneau du matin. Avant le premier créneau du jour, `due_slot` rend le
+    dernier d'hier — un dispatch manuel de 02:00 n'est donc pas « le matin »
+    et ne déclenche pas le message. Les heures viennent de
+    scripts/ci_scan_mode.py, jamais réécrites ici (règle n°6).
+    """
+    from scripts.ci_scan_mode import due_slot
+
+    return due_slot(now)[:10] == now.strftime("%Y-%m-%d")
+
+
+def _learning_ttl_h() -> float:
+    """Fenêtre de dédup du message quotidien, DÉRIVÉE du cron `standard` :
+    plus large que l'amplitude des créneaux (06:03 → 23:03 = 17 h), pour
+    qu'aucun autre scan du jour ne le répète, et sous les 24 h, pour que le
+    lendemain matin le dise à nouveau."""
+    from scripts.ci_scan_mode import standard_slots
+
+    _minute, heures = standard_slots()
+    return (heures[-1] - heures[0]) + 2
+
+
+def _message_learning_du_jour(sb, now):
+    """Le résumé de la couche d'apprentissage, UNE fois par jour (2026-09-18).
+
+    Demande opérateur : « je ne veux pas tout le temps ce message ; learning
+    une fois par jour, avec le message du scan de 6 h ». Il partait jusqu'ici
+    en pied de CHAQUE digest de 2 h — douze pavés par jour, dans lesquels les
+    deux lignes qui comptaient se noyaient. Les ANOMALIES, elles, n'attendent
+    pas ce rendez-vous : le digest les annonce dès le cycle d'audit qui les
+    produit (run_rapport.py::_anomalies_fraiches).
+
+    Le dédup passe par `_alert_once` (meta) et non par « c'est le créneau de
+    6 h » : un scan du matin qui meurt sur zéro match sort AVANT ce point, et
+    le rendez-vous du jour serait perdu en silence. Ici, le premier scan
+    `standard` du jour qui arrive jusqu'au bout parle, les suivants se
+    taisent.
+
+    Jamais bloquant : ce n'est qu'un message, un scan ne meurt pas dessus.
+    """
+    if REPRICE or not _creneau_standard_du_jour(now):
+        return
+    try:
+        lignes = _load_learning_summary(sb) if sb else []
+    except Exception as e:                                    # noqa: BLE001
+        log.warning("Learning summary: %s", e)
+        return
+    if not lignes:
+        log.info("🧠 Learning — rien à dire au dernier cycle")
+        return
+    _alert_once(sb, "learning_digest_quotidien",
+                f"🧠 *PREDATOR Learning* · {now.strftime('%d/%m')} (dernier cycle)\n"
+                + "".join(f"   • {l}\n" for l in lignes[:10]),
+                ttl_h=_learning_ttl_h())
+
+
 def _segment_min_edge(dyn_thresholds: dict, dyn_segment_thresholds: dict,
                        sport: str, market_family: str) -> float:
     """
@@ -2975,6 +3036,10 @@ def run():
             # du run — jusqu'au 2026-09-03 il se taisait, et l'opérateur ne
             # savait pas si le scan avait tourné.
             _telegram_signals(a_annoncer, now, len(matches), no_pin_count, shadowed)
+
+    # Le rendez-vous quotidien de la couche d'apprentissage — hors du bloc
+    # des disjoncteurs ci-dessus : c'est un rapport, pas une recommandation.
+    _message_learning_du_jour(sb, now)
 
     elite = [s for s in signals if s["edge_pct"] >= ELITE_EDGE]
     log.info("Done. %d candidates | %d balanced | %d elite.",

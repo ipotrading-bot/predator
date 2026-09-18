@@ -76,10 +76,12 @@ class TestComposer:
         for absent in ("Performance", "IC 95%", "SOCCER —", "€", "Mise"):
             assert absent not in msg
 
-    def test_learning_en_pied_seulement_avec_des_paris(self):
-        assert run_rapport._composer([], [], NOW, learning=["seuil soccer 1.0→1.5"]) is None
-        msg = run_rapport._composer([_sig(1.0)], [], NOW, learning=["seuil soccer 1.0→1.5"])
-        assert "🧠" in msg and "seuil soccer" in msg
+    def test_le_pave_learning_a_quitte_le_digest(self):
+        # 2026-09-18 : le résumé complet part une fois par jour avec le scan
+        # du matin ; seules ses anomalies passent encore ici, en tête.
+        # tests/test_learning_telegram.py tient la règle des deux côtés.
+        msg = run_rapport._composer([_sig(1.0)], [], NOW)
+        assert "Learning" not in msg and "seuil" not in msg
 
     def test_troncature_entre_deux_paris_jamais_au_milieu(self):
         beaucoup = [_sig(1.0, match=f"Club {i} Longnom vs Adversaire {i} Longnom") for i in range(80)]

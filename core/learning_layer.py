@@ -41,22 +41,46 @@ log = logging.getLogger("LEARN")
 _SUMMARY_KEY = "learning_summary"
 
 
+# Marqueur d'ANOMALIE dans le résumé (2026-09-18, demande opérateur : « le
+# message learning une fois par jour, par contre signaler erreurs et anomalies
+# dès que ça survient »). Une ligne qui le porte est une erreur PROBABLE du
+# pipeline — pas un mouvement de seuil de routine : elle part tout de suite
+# par le digest (run_rapport.py), le reste attend le message du matin
+# (run_engine.py, premier créneau `standard` du jour).
+# Le marqueur est posé À LA SOURCE, là où la ligne est écrite ; personne ne
+# reclasse le texte après coup (règle n°6 : dériver, jamais redire ailleurs).
+# Gardé par tests/test_learning_layer.py::TestAnomalies.
+ANOMALIE_MARQUEUR = "⚠️"
+
+
+def lignes_anomalies(summary: list[str]) -> list[str]:
+    """Les seules lignes du résumé qui valent une alerte immédiate."""
+    return [l for l in summary if ANOMALIE_MARQUEUR in l]
+
+
+def load_learning_summary_at(sb) -> tuple[list[str], str | None]:
+    """(lignes, date de calcul ISO) — la date dit de quel CYCLE d'audit vient
+    le résumé, donc si ses anomalies sont neuves. `None` si illisible."""
+    try:
+        res = (sb.table("meta").select("value,updated_at")
+               .eq("key", _SUMMARY_KEY).limit(1).execute())
+        if res.data:
+            return json.loads(res.data[0]["value"]), res.data[0].get("updated_at")
+    except Exception as e:
+        log.warning("load_learning_summary: %s", e)
+    return [], None
+
+
 def load_learning_summary(sb) -> list[str]:
     """
     Human-readable lines describing what the last compute_and_save() run
     changed and why (threshold moves, segment moves, edge-band warnings) —
-    persisted once per run so Telegram (run_rapport.py) and the dashboard
-    (api/index.py) can both show the same explanation without recomputing
-    it themselves. Empty list if nothing notable happened last run, or the
-    learning layer hasn't run yet.
+    persisted once per run so Telegram (run_engine.py's morning message) and
+    the dashboard (api/index.py) can both show the same explanation without
+    recomputing it themselves. Empty list if nothing notable happened last
+    run, or the learning layer hasn't run yet.
     """
-    try:
-        res = sb.table("meta").select("value").eq("key", _SUMMARY_KEY).limit(1).execute()
-        if res.data:
-            return json.loads(res.data[0]["value"])
-    except Exception as e:
-        log.warning("load_learning_summary: %s", e)
-    return []
+    return load_learning_summary_at(sb)[0]
 
 # Per-sport baseline — uniquement les sports actifs, seuil relevé à 2.0 % minimum.
 # Objectif : moins de signaux, mais plus fiables (gagner ou ne pas jouer).
@@ -662,7 +686,7 @@ def _edge_band_diagnostic(sport: str, rows: list[dict]) -> str | None:
     top, autres = bandes[-1], bandes[:-1]
     meilleure = max(autres, key=lambda b: b[5])
     if top[5] < 0 and top[5] < meilleure[5]:
-        msg = (f"[{sport}] Edge {top[0]:.0f}-{top[1]:.0f}%+ sous son point mort : "
+        msg = (f"{ANOMALIE_MARQUEUR} [{sport}] Edge {top[0]:.0f}-{top[1]:.0f}%+ sous son point mort : "
                f"{_lecture_bande(top[3], top[2], top[4])} — meilleure tranche "
                f"{meilleure[0]:.0f}-{meilleure[1]:.0f}% : "
                f"{_lecture_bande(meilleure[3], meilleure[2], meilleure[4])} — "

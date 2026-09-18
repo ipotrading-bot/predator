@@ -119,7 +119,7 @@ encore engageables à cette heure » de chaque run montre le plafond du moment.
 - **Dashboard, liste des paris** : uniquement les signaux RECOMMANDÉS. Un
   signal à moins de 2 h du coup d'envoi est un « fantôme » : mesuré, réglé,
   appris, mais jamais recommandé ni affiché (colonne `is_shadow`).
-- **Telegram**, trois messages et pas un de plus :
+- **Telegram**, quatre messages et pas un de plus :
   - le scan **standard** parle à chaque passage : « N pari(s) recommandé(s) »
     puis CHAQUE pari en simple (plus de combiné depuis le 3 septembre —
     ta décision), ou « Aucun pari recommandé · 13 matchs analysés ·
@@ -130,6 +130,17 @@ encore engageables à cette heure » de chaque run montre le plafond du moment.
     🆕 ceux nés depuis le digest précédent, ⏳ ceux déjà annoncés. Rien à
     lister et moteur vivant : il se tait. Moteur muet depuis plus de 2 h :
     il alerte.
+  - le **learning** (🧠) UNE fois par jour, avec le premier scan standard du
+    jour (06:03 UTC) : ce que le dernier cycle d'audit a changé et pourquoi.
+    Depuis le 18 septembre il ne suit plus chaque digest — douze fois par
+    jour, ce pavé noyait ce qui comptait (ta décision). Si le scan du matin
+    meurt avant d'avoir parlé, c'est le scan suivant qui le dit, une seule
+    fois quand même.
+- **Les anomalies n'attendent pas ce rendez-vous** : une ligne d'apprentissage
+  qui signale une erreur probable (⚠️ « possible erreur de données/matching
+  gonflant l'edge », ⚠️ retrait d'un sport proposé) part par le digest dès le
+  cycle d'audit qui l'a produite. Il en va de même des alertes déjà en place :
+  moteur muet, créneau standard non servi, Supabase injoignable, disjoncteur.
 - **Bouton « Scanner »** : ramassé au tick suivant (≤ 1 h). Si c'est un tick
   reprice, il devient un scan standard complet. Il n'y a pas de poller dédié,
   et il ne faut pas en ajouter (incident du 2026-07-07 : 288 déclenchements

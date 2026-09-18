@@ -13,6 +13,10 @@ RECOMMANDÉS encore jouables — coup d'envoi devant nous, jamais un fantôme.
   - Moteur muet depuis plus de SCAN_STALE_H ou Supabase KO : alerte.
   - Créneau `standard` DÛ et non servi (CRENEAU_GRACE_MIN) : alerte — c'est
     le signe que le chien de garde Cloudflare lui-même s'est tu (2026-09-11).
+  - Couche d'apprentissage : SEULES ses ANOMALIES passent ici, et seulement
+    au premier digest qui suit le cycle d'audit qui les a produites
+    (2026-09-18). Le résumé complet part UNE fois par jour, avec le message
+    du premier scan `standard` — voir run_engine.py::_message_learning_du_jour.
 """
 import logging
 import os
@@ -25,7 +29,8 @@ from dotenv import load_dotenv
 from core.constants import ELITE_EDGE as _ELITE_EDGE
 from core.db import get_db
 from core.paim_engine import resolve_selection_side as _resolve_side
-from core.learning_layer import load_learning_summary as _load_learning_summary
+from core.learning_layer import (lignes_anomalies as _lignes_anomalies,
+                                 load_learning_summary_at as _load_learning_summary_at)
 from scripts.ci_scan_mode import (SLOT_CLAIM_KEY, SLOT_CLAIM_TTL_MIN, SLOT_META_KEY,
                                   due_slot)
 
@@ -257,8 +262,45 @@ def _creneau_standard_manque(sb, now: datetime) -> str | None:
     return manque
 
 
+def _anomalies_fraiches(summary: list[str], calcule_a: str | None,
+                        now: datetime) -> list[str]:
+    """Les anomalies d'apprentissage NÉES depuis le digest précédent, sinon [].
+
+    Pur, pour être testable. La fraîcheur est la seule mémoire disponible
+    ici : ce job tourne avec la clé anon (pool `readonly`), il ne peut rien
+    marquer en base pour se souvenir de ce qu'il a déjà dit. Un résumé
+    calculé il y a moins de REPORT_WINDOW_H n'a donc pas pu être annoncé par
+    plus d'un digest — au pire deux quand le cron GitHub livre le précédent
+    en retard, jamais les douze de la journée. Sans date lisible on se tait :
+    une anomalie répétée toutes les 2 h est exactement ce que l'opérateur a
+    demandé de supprimer le 2026-09-18.
+    """
+    lignes = _lignes_anomalies(summary or [])
+    if not lignes:
+        return []
+    calcule = _parse_dt(calcule_a)
+    if calcule is None:
+        return []
+    if now - calcule > timedelta(hours=REPORT_WINDOW_H):
+        return []
+    return lignes
+
+
+def _anomalies_neuves(sb, now: datetime) -> list[str]:
+    """_anomalies_fraiches() nourri par `meta`. Jamais bloquant."""
+    try:
+        summary, calcule_a = _load_learning_summary_at(sb)
+    except Exception as e:
+        log.warning("Learning summary: %s", e)
+        return []
+    lignes = _anomalies_fraiches(summary, calcule_a, now)
+    for l in lignes:
+        log.warning("Anomalie d'apprentissage: %s", l)
+    return lignes
+
+
 def _composer(nouveaux: list, rappels: list, now: datetime,
-              stale: bool = False, learning: list | None = None,
+              stale: bool = False, anomalies: list | None = None,
               creneau: str | None = None) -> str | None:
     """Le message du digest, ou None s'il n'y a rien à dire.
 
@@ -266,8 +308,15 @@ def _composer(nouveaux: list, rappels: list, now: datetime,
     entre deux paris complets, jamais au milieu d'une entité Markdown (un
     `*gras*` coupé affiche des astérisques littéraux). Moteur muet + rien à
     lister : le message ne contient que l'alerte.
+
+    `anomalies` (2026-09-18) : les lignes d'apprentissage qui signalent une
+    ERREUR probable — elles vont EN TÊTE, avec les autres alertes, et portent
+    le message à elles seules s'il n'y a aucun pari à lister. Le reste du
+    résumé d'apprentissage ne passe plus par ici : il part une fois par jour
+    avec le premier scan `standard` (demande opérateur — douze fois par jour,
+    ce pavé noyait ce qui comptait).
     """
-    if not nouveaux and not rappels and not stale and not creneau:
+    if not nouveaux and not rappels and not stale and not creneau and not anomalies:
         return None
 
     header = f"🎯 *PREDATOR* · {now.strftime('%d/%m %H:%M')} UTC\n"
@@ -276,6 +325,9 @@ def _composer(nouveaux: list, rappels: list, now: datetime,
     if creneau:
         header += (f"⚠️ _Créneau standard {creneau} non servi — chien de garde muet ? "
                    f"`python scripts/ops.py watchdog`_\n")
+    if anomalies:
+        header += ("🧠 *Anomalie d'apprentissage*\n"
+                   + "".join(f"   • {l}\n" for l in anomalies[:5]))
     if not nouveaux and not rappels:
         return header
 
@@ -287,8 +339,6 @@ def _composer(nouveaux: list, rappels: list, now: datetime,
     header += " · ".join(counts) + "\n"
 
     footer = "\n🔥 Élite | ✅ Value | 📌 Faible"
-    if learning:
-        footer += "\n\n🧠 *Learning* (dernier cycle)\n" + "".join(f"   • {l}\n" for l in learning[:5])
 
     budget = _BUDGET - len(header) - len(footer) - 80
     body = ""
@@ -379,17 +429,10 @@ def run():
     log.info("%d paris jouables : %d nouveaux (< %d h), %d rappels",
              len(signals), len(nouveaux), REPORT_WINDOW_H, len(rappels))
 
-    # core/learning_layer.py::compute_and_save persiste un résumé en clair de
-    # ce que le dernier audit a changé (seuils) : ici, l'opérateur le voit.
-    try:
-        learning = _load_learning_summary(sb) or []
-    except Exception as e:
-        log.warning("Learning summary: %s", e)
-        learning = []
-
+    anomalies = _anomalies_neuves(sb, now)
     creneau = _creneau_standard_manque(sb, now)
 
-    msg = _composer(nouveaux, rappels, now, stale=stale, learning=learning,
+    msg = _composer(nouveaux, rappels, now, stale=stale, anomalies=anomalies,
                     creneau=creneau)
     if msg is None:
         log.info("Rien à annoncer, moteur vivant — silence")
