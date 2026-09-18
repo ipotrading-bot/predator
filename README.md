@@ -528,12 +528,6 @@ réellement mesuré, et où :
 
 ---
 
-## 📄 License
-
-MIT License — Voir [LICENSE](LICENSE) pour les détails.
-
----
-
 ## ⚠️ Disclaimer
 
 > **Le trading sportif comporte des risques.** Les performances passées ne garantissent pas les résultats futurs. N'investissez que ce que vous pouvez vous permettre de perdre. Ce logiciel est fourni à titre éducatif uniquement.
@@ -543,7 +537,6 @@ MIT License — Voir [LICENSE](LICENSE) pour les détails.
 ## 📞 Contact
 
 - **GitHub** : [ipotrading-bot/predator](https://github.com/ipotrading-bot/predator)
-- **Documentation** : [plans/](plans/)
 
 ---
 
