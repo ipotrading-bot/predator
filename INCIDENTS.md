@@ -416,6 +416,123 @@ back/lay, carnet vide/croisé/large, « at » inversé, ligne domicile signée,
 sous-marché jamais demandé, 429 rejoué une fois, géoblocage, budget,
 registre + moteur hors REPRICE + sonde ops.py).
 
+### Les trois revues du 22/09 relevées : deux sources confirmées, une exclusion qui devient une preuve (2026-09-20)
+
+Ce n'est pas un correctif. C'est le RELEVÉ de trois critères ÉCRITS
+D'AVANCE (règle 13), tous datés du 2026-09-22 : Smarkets en comblement, le
+second book Bet365, les ligues exclues. Relevé deux jours plus tôt, le
+2026-09-20. **Rien n'a été modifié** : les trois objets sont des décisions
+opérateur (règle 11), et un critère se relève, il ne se renégocie pas au
+moment où on lit le chiffre.
+
+MÉTHODE, à lire avant les chiffres : `core.constants.TAX_RATE` vaut 0.0
+depuis le 2026-07-08 (voir la chronologie de « TAX_RATE remis à 0.20 contre
+instruction opérateur »), et le 2026-09-17 l'opérateur l'a RECONDUIT après
+que le coupon 1xbet a prouvé que les 20 % sont bien prélevés : « mesurer
+HORS taxe, ne jamais toucher TAX_RATE ». Les points morts
+rendus par `scripts.weekly_report.league_breakdown` sont donc HORS TAXE ;
+les verdicts à 20 % ci-dessous ont été recalculés À PART par
+`core.stats_utils.p_breakeven(cote_moyenne, 0.20)`. Les deux colonnes ne
+sortent pas du même appel — les confondre change tous les verdicts.
+
+**1. Smarkets — RESTE.** Critère (docstring de `core/smarkets.py`, « CRITÈRE
+DE RETRAIT, à relever le 2026-09-22 ») : sortir si M — les marchés qu'aucun
+autre exchange ne couvrait, rapprochement flou `core.exchange_match` — tombe
+sous 10 % de T en médiane sur les scans standard du 09 au 21/09 ; OU HTTP
+401/403/451 sur 3 scans standard consécutifs.
+MESURÉ le 2026-09-20 sur 145 runs `scan.yml` libellés « Scan standard » du
+09-09 au 09-20, logs dépouillés par `gh run view --log`, ligne source
+`run_engine.py:2681` (« 💹 Smarkets OK — N marchés sharp (+M nouveaux hors
+Matchbook, total exchange T) ») :
+- 86 runs portent la ligne. Les 59 autres ne la portent PAS parce qu'ils ont
+  été DÉGRADÉS en reprice (« mode=reprice (demandé=standard, … DOUBLON
+  dégradé) », `scripts/ci_scan_mode.py`) : le cron standard a fiché en retard
+  sur un créneau déjà servi, et Smarkets n'est jamais appelée en reprice
+  (docstring du module). Vérifié run par run sur 5 d'entre eux ;
+- M/T sur les 86 : **médiane 21,0 %**, moyenne 22,4 %, min 0 %, max 100 % ;
+  7 scans sur 86 sous les 10 %. Médianes journalières de 10,4 % (09-11) à
+  27,8 % (09-16) — le plancher journalier reste au-dessus du seuil ;
+- seconde branche : UN SEUL refus, HTTP 403, run 34724729583 du
+  2026-09-12T23:10:54Z. Jamais 3 consécutifs.
+Aucune des deux branches n'est atteinte : **Smarkets RESTE**, prochaine
+échéance 2026-10-22.
+
+**2. Bet365 (second book) — RESTE, et le critère est INAPPLICABLE.** Critère
+écrit dans l'entrée « Le second book revient avec son nom sur chaque ligne »
+(2026-09-08) : retirer de `EXECUTION_BOOKS` si, sur 30 lignes Bet365 réglées,
+le CLV moyen est négatif, OU si l'écart de ligne (« ligne inexistante chez
+le book ») réapparaît.
+MESURÉ le 2026-09-20 sur `ai_learning_ledger`, `created_at >= 2026-09-08`,
+recommandés seuls (`core.perf_view.recommended_rows`) : 167 lignes, dont 98
+recommandées.
+- bet365 : 26 lignes, 20 décisives, 10-10 = 50,0 % [IC95 29,9–70,1], cote
+  moyenne 1,84, point mort 59,7 % à 20 %, P&L −3,31 u. CLV réel capturé sur
+  23 lignes, moyenne **+2,90 %**, positif 17/23 (74 %) ;
+- 1xbet, pour comparaison : 71 lignes, 68 décisives, 39-29 = 57,4 % [IC95
+  45,5–68,4], cote moyenne 1,79, P&L −4,86 u à 20 %. CLV réel +2,73 % sur 66
+  lignes, positif 51/66 (77 %).
+Le seuil de 30 lignes n'est PAS atteint (23/30) : la première branche ne peut
+pas se déclencher. Et le CLV est POSITIF, meilleur que celui de 1xbet.
+**Bet365 RESTE.** Prochaine échéance : à n=30 lignes AVEC CLV, pas à une date
+— un critère en n ne se relève pas au calendrier.
+⚠️ La leçon de cette revue est la seconde branche : elle est NON MESURABLE.
+La formule « ligne inexistante chez le book » ne correspond à AUCUN message
+du code (grep sur tous les `*.py` : zéro occurrence). **Un critère de retrait
+qui cite un symptôme sans trace grepable ne peut pas être relevé** : il doit
+nommer la ligne de log qui le mesure, comme le fait `core/smarkets.py`.
+⛔ `EXECUTION_BOOKS` = décision opérateur (règle 11) : rien n'a été modifié.
+
+**3. Ligues exclues — exclusion CONFIRMÉE, et elle devient une preuve.**
+Décision du 2026-09-08 : Primera División argentine exclue (12 décidés, 5-7,
+−2,44 u, Wilson bas 19 % contre 57 %), explicitement « pas une preuve
+statistique (n petit), une décision opérateur (règle 11) » ; WNBA laissée
+(21 décidés, 11-10, −0,88 u) ; revue le 2026-09-22.
+MESURÉ le 2026-09-20 par `scripts.weekly_report.league_breakdown` sur le
+ledger entier (901 lignes), zone jouable, non shadow :
+- **Primera División argentine** : 21 décidés, 8-13, −5,78 u, IC95 [21–59 %],
+  point mort 57,6 % hors taxe et 62,9 % à 20 %. À 20 %, l'INTERVALLE ENTIER
+  est sous le point mort → **perdante DÉMONTRÉE** au sens de la règle 7. Ce
+  qui était une intuition opérateur à n=12 est une preuve à n=21 ;
+- WNBA : 40 décidés (contre 21 à l'époque), 21-19, −1,18 u, IC95 [37–67 %]
+  contre 58,5 % à 20 % → rien de démontré, elle reste. Note : « saison finie
+  mi-septembre » s'est révélé FAUX, l'échantillon a presque doublé ;
+- MLB, candidat qui n'était PAS dans la décision d'origine : 31 décidés,
+  14-17 (45,2 %), −4,65 u, IC95 [29–62 %] contre 58,9 % à 20 % → rien de
+  démontré. **NON exclue** : l'exclure serait agir sur un taux nu (règle 7) ;
+- La Liga : 12 décidés, 11-1, IC95 [65–99 %] contre 62,0 % → rentable
+  démontrée.
+LE FILTRE NE FUIT PAS, vérifié deux fois : (a) les 67 lignes argentines du
+ledger sont TOUTES réglées avant le 2026-09-08, zéro après, zéro signal
+argentin émis depuis l'exclusion ; (b) contre-épreuve directe avec le
+découpage de production (`run_engine._ligues_exclues` rend `('primera lpf',
+'liga profesional argentina', 'primera division - argentina')`) :
+`core.source_adapter.ligue_exclue` écarte « Primera División - Argentina »,
+« Liga Profesional Argentina » et « Argentina - Primera LPF, Clausura », et
+laisse passer « Primera B Metropolitana », WNBA, La Liga, MLB, MLS.
+⚠️ NON VÉRIFIÉ, et à garder marqué comme tel : le nombre de décidés argentins
+est passé de 12 à 21 ALORS QU'AUCUN signal n'a été émis depuis l'exclusion.
+Cause plausible mais NON PROUVÉE : le contre-audit du 2026-09-08 (12 issues
+corrigées) et `sql/migrate_v10_17` ont rendu DÉCISIVES des lignes qui ne
+l'étaient pas. Tant que ce n'est pas mesuré, ne pas s'en servir pour
+expliquer un autre écart de dénominateur.
+**Exclusion maintenue**, prochaine échéance 2026-10-22.
+⛔ Périmètre sportif = décision opérateur (règle 11) : rien n'a été modifié.
+
+⚠️ PIÈGE TRANSVERSE DE MESURE, payé ici : un run `scan.yml` libellé « Scan
+standard » n'a PAS forcément tourné en standard. Le `run-name` est calculé en
+YAML (`.github/workflows/scan.yml:14-15`) AVANT la résolution du mode par
+`scripts/ci_scan_mode.py`, qui peut dégrader en reprice un créneau déjà
+servi. Toute mesure qui compte des « scans standard » par le LIBELLÉ mélange
+ici 86 vrais scans et 59 reprice : le mode RÉEL se lit dans le log. Ce n'est
+pas un défaut — la dégradation évite de payer deux fois le même créneau —
+c'est un piège de mesure, de la même famille que le chien de garde qui
+surveillait un fichier et non un mode.
+
+Aucun gardien n'est ajouté par ce relevé : il ne change pas de code. Ceux des
+trois sujets restent `tests/test_smarkets.py`,
+`tests/test_second_book_execution.py` et
+`tests/test_perimetre.py::TestLiguesExcluesParLOperateur`.
+
 ### Matchbook : quatre marchés « total » par match, un seul est le match entier (2026-08-28)
 
 REPRICE 15:58 : « Al-Riyadh SC vs Neom SC | SOC Under 2.5 — EV 80.84 % »
