@@ -428,8 +428,93 @@ def _fold(s: str) -> str:
                    if not unicodedata.combining(c)).lower()
 
 
+# ── Exonymes : la même ville, deux langues ───────────────────────────
+#
+# Le 2026-09-19, Hamburger SV vs 1. FC Köln (Bundesliga) n'a pas pu être
+# réglé : ESPN publiait « FC Cologne at Hamburg SV », terminé, et LiveScore
+# « Hamburger SV vs FC Cologne ». Les deux sources traduisent le nom de la
+# ville, la source de cotes ne le fait pas — aucun rapprochement textuel ne
+# peut franchir Köln → Cologne. Le signal est resté actif, l'audit s'est
+# déclaré STÉRILE (2 éligibles, 0 réglé) et la purge a été repoussée.
+#
+# Ce n'est PAS un pont d'alias appris (celui-là avait appris 4 alias faux sur
+# 5, INCIDENTS.md « Le pont d'alias ») : c'est une table FIXE d'exonymes de
+# villes, vérifiable mot à mot, sans apprentissage ni budget. Elle n'assouplit
+# rien : elle ajoute une VARIANTE du nom servi par la source, que
+# `strict_team_match` juge ensuite exactement comme avant — « 1. FC Köln » vs
+# « Viktoria Köln » reste refusé, et les deux voies exigent toujours les DEUX
+# camps sur un candidat UNIQUE.
+#
+# Le mot est remplacé ENTIER (« cologne » ≠ « colognes ») et dans les deux
+# sens, pour ne dépendre ni de la langue de la source ni de celle du book.
+# Gardien : tests/test_exonymes.py.
+_EXONYMES: dict[str, str] = {
+    # Allemagne — Big 5 et coupes d'Europe
+    "cologne":    "koln",
+    "munich":     "munchen",
+    "nuremberg":  "nurnberg",
+    # Italie
+    "milan":      "milano",
+    "turin":      "torino",
+    "naples":     "napoli",
+    "rome":       "roma",
+    "florence":   "firenze",
+    "genoa":      "genova",
+    "venice":     "venezia",
+    # Espagne / Portugal
+    "seville":    "sevilla",
+    "lisbon":     "lisboa",
+    # Reste de l'Europe des coupes
+    "prague":     "praha",
+    "vienna":     "wien",
+    "warsaw":     "warszawa",
+    "copenhagen": "kobenhavn",
+    "moscow":     "moskva",
+    "belgrade":   "beograd",
+    "bucharest":  "bucuresti",
+    "athens":     "athina",
+    "brussels":   "bruxelles",
+    "the hague":  "den haag",
+}
+_EXONYMES_BIDIR = {**_EXONYMES, **{v: k for k, v in _EXONYMES.items()}}
+
+
+def _variantes(nom: str) -> list[str]:
+    """`nom` plié, plus ses traductions d'exonyme quand il en contient une.
+
+    Un seul mot est traduit à la fois (aucun nom réel n'en porte deux) et
+    seulement en MOT ENTIER : « FC Cologne » devient « FC Koln », « Colognes »
+    ne bouge pas.
+
+    Un libellé d'UN SEUL mot n'est jamais traduit. ESPN sert aussi des formes
+    nues (`name`/`shortDisplayName` = « Cologne ») et `strict_team_match`
+    accepte le containment : « Viktoria Köln » aurait alors été apparié à
+    « Cologne », donc au 1. FC. La forme longue (`displayName` = « FC
+    Cologne ») suffit à régler le match, et ce refus garde les voisins de
+    ville hors d'atteinte — mesuré par tests/test_exonymes.py.
+    """
+    plie = _fold(nom)
+    mots = plie.split()
+    sorties = [plie]
+    if len(mots) < 2:
+        return sorties
+    for i, mot in enumerate(mots):
+        autre = _EXONYMES_BIDIR.get(mot)
+        if autre:
+            sorties.append(" ".join(mots[:i] + [autre] + mots[i + 1:]))
+    return sorties
+
+
+def _apparie(nom_signal: str, nom_source: str, restes: bool = True) -> bool:
+    """Le nom du signal et celui de la source désignent-ils la même équipe ?
+    Même jugement qu'avant ; les exonymes n'ajoutent que des variantes."""
+    plie_signal = _fold(nom_signal)
+    return any(strict_team_match(plie_signal, v, restes=restes)
+               for v in _variantes(nom_source))
+
+
 def _meme_equipe(nom_signal: str, competitor: dict, restes: bool = True) -> bool:
-    return any(strict_team_match(_fold(nom_signal), _fold(n), restes=restes)
+    return any(_apparie(nom_signal, n, restes=restes)
                for n in _espn_noms(competitor))
 
 
@@ -712,8 +797,9 @@ def _livescore_du_jour(segment: str, jour: str) -> list:
 
 
 def _ls_camp(noms: list, attendu: str) -> bool:
-    """Un des noms de ce camp correspond-il strictement à celui du signal ?"""
-    return any(n and strict_team_match(attendu, n) for n in noms)
+    """Un des noms de ce camp correspond-il strictement à celui du signal ?
+    Exonymes compris (voir `_variantes`) : LiveScore écrit « FC Cologne »."""
+    return any(n and _apparie(attendu, n) for n in noms)
 
 
 def livescore_connait(match_name: str, sport: str, match_date: str) -> bool:

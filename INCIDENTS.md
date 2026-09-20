@@ -3735,6 +3735,47 @@ Gardiens : `tests/test_learning_telegram.py` (`TestSportHorsPerimetre`,
 son seuil, lui, continue d'être posé ; un résumé identique n'est pas réécrit.
 
 
+### Köln n'est pas Cologne : un match majeur impossible à régler (2026-09-19)
+
+**Symptôme.** Hamburger SV vs 1. FC Köln (Bundesliga, 19/09 13:30 UTC) est
+resté `active` pendant 23 h. Chaque audit : « No score yet … RETRY LATER »,
+puis « AUDIT STÉRILE — 0 réglé sur 2 éligibles », sortie en ÉCHEC, purge
+repoussée. Deux runs rouges de suite, pour UN match.
+
+**Cause.** Le match était là, terminé, dans les deux sources : ESPN publiait
+« FC Cologne at Hamburg SV » (2-1, `STATUS_FULL_TIME`) et LiveScore
+« Hamburger SV vs FC Cologne ». Les sources de scores traduisent le nom de la
+VILLE, la source de cotes garde le nom local. Aucun rapprochement textuel ne
+franchit Köln → Cologne : `strict_team_match` refusait, à raison, et
+`_journal_alias` a bien journalisé un candidat — que personne ne lisait.
+Mesure du jour : 11 autres matchs allemands réglés normalement sur la même
+période ; seul l'exonyme bloquait.
+
+**Correctif.** Une table FIXE d'exonymes de villes (`_EXONYMES`,
+`core/score_sources.py`), qui AJOUTE une variante du nom servi par la source
+— « FC Cologne » vaut aussi « FC Köln » — et laisse `strict_team_match` juger
+comme avant. Ce n'est pas le pont d'alias APPRIS (4 alias faux sur 5, voir
+« Le pont d'alias ») : rien n'est inféré, rien n'est budgété, chaque entrée
+est vérifiable mot à mot.
+
+**Deux gardes posées avec, mesurées pendant l'écriture :**
+
+- *Un libellé d'UN SEUL mot n'est jamais traduit.* ESPN sert aussi
+  `name` = « Cologne » ; traduit, il rapprochait « Viktoria Köln » du 1. FC
+  par containment. La forme longue (`displayName`) suffit à régler.
+- *Ce qui protège du faux règlement n'est pas la finesse du nom*, c'est le
+  contrat des voies de score : les DEUX camps, un candidat UNIQUE, statut
+  terminé. Vérifié : `strict_team_match` rapproche déjà « Viktoria Köln » de
+  « FC Köln » (reste-sigle « FC »), exonyme ou pas — c'est le contrat qui
+  rattrape, et il n'a pas bougé.
+
+Gardiens : `tests/test_exonymes.py` (12 tests : les deux sens, le mot entier,
+le libellé nu refusé, les voisins de ville, le candidat unique).
+`tests/test_perimetre.py::TestCouvertureTolerante` prenait justement Köln /
+Cologne comme exemple d'un camp non appariable — l'exemple a changé, la règle
+qu'il tient (couverture tolérante à un camp, règlement exigeant les deux) non.
+
+
 ## La règle transverse
 
 ### Listes qui divergent — la panne la plus fréquente de ce dépôt
