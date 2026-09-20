@@ -35,6 +35,7 @@ _RACINE = pathlib.Path(__file__).resolve().parent.parent
 _CLAUDE_DIR = _RACINE / ".claude"
 _SETTINGS = _CLAUDE_DIR / "settings.json"
 _MCP = _RACINE / ".mcp.json"
+_PONT_MCP = _RACINE / "scripts" / "mcp_supabase.sh"
 
 
 def _fichiers_claude():
@@ -92,11 +93,46 @@ class TestLeServeurMcpEstEpingle:
         assert "@latest" not in _MCP.read_text(encoding="utf-8"), \
             ".mcp.json porte un @latest : épingler la version exacte"
 
+    def test_le_pont_mcp_n_epingle_pas_un_latest(self):
+        """Le 2026-09-20, la version npm a QUITTÉ .mcp.json pour le pont
+        `scripts/mcp_supabase.sh` (le jeton ne pouvait pas vivre dans un
+        fichier versionné). Le gardien au-dessus est alors devenu vide :
+        il surveillait un fichier que la version avait quitté — exactement
+        la règle dure n°6. Il en faut donc un sur le pont aussi."""
+        assert "@latest" not in _PONT_MCP.read_text(encoding="utf-8"), \
+            f"{_PONT_MCP.name} porte un @latest : épingler la version exacte"
+        assert re.search(r"@supabase/mcp-server-supabase@\d+\.\d+\.\d+",
+                         _PONT_MCP.read_text(encoding="utf-8")), \
+            f"{_PONT_MCP.name} doit épingler une version exacte du serveur MCP"
+
     def test_le_serveur_supabase_est_en_lecture_seule(self):
         config = json.loads(_MCP.read_text(encoding="utf-8"))
         args = config["mcpServers"]["supabase"]["args"]
         assert "--read-only" in args, \
             "le serveur MCP Supabase doit rester --read-only (écritures via ops.py)"
+
+    def test_mcp_json_lance_le_pont_et_le_pont_existe(self):
+        """Même principe que le câblage des hooks : vérifier que le chemin
+        référencé existe ET qu'il est exécutable, pas seulement qu'il est
+        écrit quelque part."""
+        config = json.loads(_MCP.read_text(encoding="utf-8"))
+        commande = config["mcpServers"]["supabase"]["command"]
+        pont = (_RACINE / commande).resolve()
+        assert pont == _PONT_MCP.resolve(), \
+            f".mcp.json lance {commande!r} et non le pont {_PONT_MCP.name}"
+        assert pont.exists(), f"{commande} référencé mais absent"
+        assert os.access(pont, os.X_OK), f"{commande} n'est pas exécutable (chmod +x)"
+
+    def test_aucun_jeton_supabase_dans_un_fichier_versionne(self):
+        """`.gitignore` ne couvre que `.env` EXACT : un jeton `sbp_…` posé
+        dans .mcp.json ou dans les settings versionnés serait committé. Le
+        pont existe précisément pour que ça n'arrive jamais."""
+        for fichier in (_MCP, _SETTINGS, _PONT_MCP):
+            texte = fichier.read_text(encoding="utf-8")
+            assert "sbp_" not in texte, \
+                f"{fichier.name} contient un jeton Supabase en clair"
+            assert "github_pat_" not in texte and "ghp_" not in texte, \
+                f"{fichier.name} contient un PAT GitHub en clair"
 
 
 # ── Exécution réelle des hooks (cas bloquant / cas neutre) ────────────────
