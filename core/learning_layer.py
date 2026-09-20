@@ -82,6 +82,32 @@ def load_learning_summary(sb) -> list[str]:
     """
     return load_learning_summary_at(sb)[0]
 
+def _persister_resume(sb, lignes: list[str], now: str) -> bool:
+    """Écrit le résumé, et seulement s'il a CHANGÉ. Rend True s'il a été écrit.
+
+    `updated_at` est la date du dernier CHANGEMENT, pas du dernier calcul :
+    l'audit tourne toutes les 3 h et réécrivait le même résumé à chaque
+    passage, sa date restait donc éternellement fraîche — et le digest, qui
+    n'a que cette fraîcheur pour mémoire (clé anon, il ne peut rien marquer en
+    base), a répété la même anomalie baseball toutes les 2 h les 19 et
+    20/09/2026. La prochaine alerte attend désormais une vraie nouveauté.
+    """
+    nouveau = json.dumps(lignes[:20])
+    if nouveau == json.dumps(load_learning_summary(sb)):
+        log.info("learning_summary inchangé — date de changement conservée")
+        return False
+    try:
+        sb.table("meta").upsert({
+            "key":        _SUMMARY_KEY,
+            "value":      nouveau,
+            "updated_at": now,
+        }).execute()
+    except Exception as e:
+        log.warning("compute_and_save: failed to persist learning_summary: %s", e)
+        return False
+    return True
+
+
 # Per-sport baseline — uniquement les sports actifs, seuil relevé à 2.0 % minimum.
 # Objectif : moins de signaux, mais plus fiables (gagner ou ne pas jouer).
 SPORT_DEFAULTS: dict[str, float] = {
@@ -215,10 +241,16 @@ def _lecture_bande(wins: int, n: int, be: float | None) -> str:
 
 
 def _save_sport_verdicts(sb, stats_by_sport: dict[str, dict],
-                         clv_by_sport: dict[str, dict], now: str) -> list[str]:
-    """Persiste un verdict par sport dans meta et rend les lignes de résumé
-    (reprises par run_rapport.py via learning_summary — c'est l'alerte
-    Telegram rapide ; le rapport hebdo formalise la proposition)."""
+                         clv_by_sport: dict[str, dict], now: str,
+                         perimetre: frozenset | set | None = None) -> list[str]:
+    """Persiste un verdict par sport dans meta et rend les lignes de résumé.
+
+    Le verdict de CHAQUE sport est persisté — le rapport hebdo et le dashboard
+    les lisent tous, et c'est par là qu'un sport retiré redevient un jour
+    éligible. Seules les LIGNES rendues sont filtrées sur `perimetre` (None =
+    tout dire) : proposer le retrait d'un sport déjà retiré, ou valider l'edge
+    d'un sport qu'on n'achète plus, n'appelle aucune décision.
+    """
     lines: list[str] = []
     for sport, stats in stats_by_sport.items():
         v = sport_verdict(stats, clv_by_sport.get(sport))
@@ -231,6 +263,8 @@ def _save_sport_verdicts(sb, stats_by_sport: dict[str, dict],
             }).execute()
         except Exception as e:
             log.warning("sport_verdict[%s]: %s", sport, e)
+        if perimetre is not None and sport not in perimetre:
+            continue
         if v["status"] == "promotion_eligible":
             lines.append(f"{sport}: ✅ edge validé ({v['reason']}) — éligible à la "
                          f"restauration progressive de sa fraction Kelly{_lecture_roi(v)}")
@@ -1096,11 +1130,19 @@ def compute_and_save(sb) -> dict[str, float]:
     bases_avant = dict(bases)
     now     = datetime.now(timezone.utc).isoformat()
     summary_lines: list[str] = []
+    # Import tardif : core.odds_api importe ce module (zone jouable), les
+    # deux ne peuvent pas se lire à l'import.
+    from core.odds_api import sports_au_perimetre
+
+    perimetre = sports_au_perimetre()
     ranking_stats: dict[str, dict] = {}   # sport -> stats, pour _save_sport_ranking
     clv_by_sport: dict[str, dict] = {}    # sport -> _clv_stats, pour les verdicts
     all_preds: list[tuple[float, int]] = []   # calibration, tous sports confondus
 
     for sport in SPORT_DEFAULTS:
+        # Tampon par sport : ce qui est DIT à l'opérateur passe par le filtre
+        # du périmètre en fin d'itération, ce qui est MESURÉ ne l'est jamais.
+        lignes_sport: list[str] = []
         try:
             res = (sb.table("ai_learning_ledger")
                    .select(_LEDGER_SELECT)
@@ -1163,14 +1205,14 @@ def compute_and_save(sb) -> dict[str, float]:
                     "value":      str(ceiling),
                     "updated_at": now,
                 }).execute()
-                summary_lines.append(
+                lignes_sport.append(
                     f"{sport}: plafond edge {ceiling:.1f}% (bande haute perdante, n={band_n})")
             else:
                 # Gater les écritures FUTURES ne suffit pas : un plafond posé
                 # avant l'époque resterait appliqué indéfiniment, cette couche
                 # ne faisant que des upserts. Il est retiré, pas laissé.
                 _drop_stale_ceiling(sb, f"edge_ceiling_{sport}", sport,
-                                    edge_ceilings_posed.get(sport), summary_lines)
+                                    edge_ceilings_posed.get(sport), lignes_sport)
 
             odds_cap, odds_n, odds_diag = _odds_band_verdict(appliquables)
             if odds_cap is not None:
@@ -1180,10 +1222,10 @@ def compute_and_save(sb) -> dict[str, float]:
                     "value":      str(odds_cap),
                     "updated_at": now,
                 }).execute()
-                summary_lines.append(f"{sport}: {odds_diag}")
+                lignes_sport.append(f"{sport}: {odds_diag}")
             else:
                 _drop_stale_ceiling(sb, f"odds_ceiling_{sport}", sport,
-                                    odds_ceilings_posed.get(sport), summary_lines)
+                                    odds_ceilings_posed.get(sport), lignes_sport)
 
             # Le seuil est appliqué par le scan : il ne se décide que sur les
             # lignes post-époque, et un seuil posé que ces lignes ne portent
@@ -1193,7 +1235,7 @@ def compute_and_save(sb) -> dict[str, float]:
             if stats_appl["n"] < _MIN_SAMPLES:
                 if f"threshold_{sport}" in seuils_poses:
                     _drop_stale_ceiling(sb, f"threshold_{sport}", sport,
-                                        current[sport], summary_lines,
+                                        current[sport], lignes_sport,
                                         nature="plancher appris")
                     updated[sport] = SPORT_DEFAULTS[sport]
                 log.info("[%s] %d réglés post-%s < %d — seuil par défaut (%.1f%%)",
@@ -1223,13 +1265,13 @@ def compute_and_save(sb) -> dict[str, float]:
                         "value":      str(new_t),
                         "updated_at": now,
                     }).execute()
-                    summary_lines.append(f"{sport}: seuil {old_t:.2f}% → {new_t:.2f}% ({reason})")
+                    lignes_sport.append(f"{sport}: seuil {old_t:.2f}% → {new_t:.2f}% ({reason})")
                 else:
                     log.info("[%s] %s (%.1f%%)", sport, reason, old_t)
 
             edge_warning = _edge_band_diagnostic(sport, rows)
             if edge_warning:
-                summary_lines.append(edge_warning)
+                lignes_sport.append(edge_warning)
 
             # Segment layer: same rows, sliced by market family (h2h/totals/
             # spreads) — a narrower question ("is THIS market within this
@@ -1253,7 +1295,7 @@ def compute_and_save(sb) -> dict[str, float]:
                 if fam_stats["n"] < _SEGMENT_MIN_SAMPLES:
                     if dict_key in segment_current:
                         _drop_stale_ceiling(sb, meta_key, sport,
-                                            segment_current[dict_key], summary_lines,
+                                            segment_current[dict_key], lignes_sport,
                                             nature="plancher appris")
                     continue
                 seg_old = segment_current.get(dict_key, updated[sport])
@@ -1274,14 +1316,26 @@ def compute_and_save(sb) -> dict[str, float]:
                         "value":      str(seg_new),
                         "updated_at": now,
                     }).execute()
-                    summary_lines.append(f"{sport}/{fam}: seuil {seg_old:.2f}% → {seg_new:.2f}% ({seg_reason})")
+                    lignes_sport.append(f"{sport}/{fam}: seuil {seg_old:.2f}% → {seg_new:.2f}% ({seg_reason})")
+
+            if sport in perimetre:
+                summary_lines.extend(lignes_sport)
+            elif lignes_sport:
+                # Sport retiré du scan payant (core/odds_api.LIGUES_RETIREES) :
+                # ses lignes restent réglées et apprises — utiles le jour d'une
+                # réouverture — mais plus rien n'en est annoncé. Le 2026-09-20,
+                # le digest criait une anomalie de bande d'edge sur le baseball
+                # toutes les 2 h, trois jours après sa sortie du scan.
+                log.info("[%s] hors périmètre — %d ligne(s) de résumé tues : %s",
+                         sport, len(lignes_sport), " | ".join(lignes_sport))
 
         except Exception as e:
             log.error("learning_layer [%s]: %s", sport, e)
 
     # Verdicts promotion/rétrogradation (Phase 4) — loggés, jamais appliqués.
     try:
-        summary_lines.extend(_save_sport_verdicts(sb, ranking_stats, clv_by_sport, now))
+        summary_lines.extend(_save_sport_verdicts(sb, ranking_stats, clv_by_sport, now,
+                                                  perimetre=perimetre))
     except Exception as e:
         log.warning("sport verdicts: %s", e)
 
@@ -1296,14 +1350,7 @@ def compute_and_save(sb) -> dict[str, float]:
             log.warning("compute_and_save: %s non persisté (%s) — le prochain "
                         "audit peut rejouer le même mouvement", _BASES_KEY, e)
 
-    try:
-        sb.table("meta").upsert({
-            "key":        _SUMMARY_KEY,
-            "value":      json.dumps(summary_lines[:20]),
-            "updated_at": now,
-        }).execute()
-    except Exception as e:
-        log.warning("compute_and_save: failed to persist learning_summary: %s", e)
+    _persister_resume(sb, summary_lines, now)
 
     _save_sport_ranking(sb, ranking_stats, now)
     _save_calibration_snapshot(sb, all_preds, now)

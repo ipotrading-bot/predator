@@ -93,6 +93,15 @@ class _EmptyMetaSelect:
     def like(self, *_a, **_k):
         return self
 
+    # load_learning_summary() interroge `meta` de la même façon (eq/limit) :
+    # sans ces deux-là, la fake ferait échouer la lecture au lieu de rendre
+    # « rien encore » — et le test ne verrait plus le vrai chemin.
+    def eq(self, *_a, **_k):
+        return self
+
+    def limit(self, *_a, **_k):
+        return self
+
     def execute(self):
         return _Result([])
 

@@ -3700,6 +3700,41 @@ dans les 6 templates et rendue par `/api/health`. Ne jamais réécrire un
 numéro de version dans un pied de page.
 
 
+### L'anomalie d'un sport retiré, criée toutes les 2 h (2026-09-20)
+
+**Symptôme.** Deux digests d'affilée (19/09 21:01 puis 22:25), la même alerte
+en tête : « ⚠️ baseball Edge 4-8%+ sous son point mort … possible erreur de
+données/matching gonflant l'edge ». Le baseball est sorti du scan payant le
+2026-09-17 (décision opérateur, `LIGUES_RETIREES`) : plus un signal émis, donc
+plus rien à corriger. L'opérateur : « ce message revient sans cesse alors que
+baseball est mis de côté, non ? »
+
+**Deux causes, aucune dans le message lui-même.**
+
+1. *La date mentait.* Le digest tourne avec la clé anon : il ne peut rien
+   marquer en base, sa seule mémoire est la date du résumé
+   (`meta.learning_summary.updated_at`). Or l'audit, toutes les 3 h,
+   ré-upsertait le MÊME résumé avec `updated_at = now` : la date restait
+   éternellement fraîche, donc chaque digest croyait découvrir l'anomalie.
+   Une fenêtre de fraîcheur ne vaut que si la date est celle du dernier
+   CHANGEMENT — `_persister_resume` n'écrit plus un résumé identique.
+2. *Le périmètre n'était pas relu.* `compute_and_save` boucle sur
+   `SPORT_DEFAULTS`, une liste qui contient encore les sports retirés — la
+   panne habituelle de ce dépôt (voir la règle transverse). La MESURE doit
+   continuer (les lignes se règlent, s'apprennent, et c'est par là qu'un sport
+   rouvre), mais la PAROLE s'arrête : les lignes de résumé d'un sport absent
+   de `odds_api.sports_au_perimetre()` (dérivé de `SPORT_KEYS`, plus le tennis
+   dynamique) sont loggées, jamais annoncées. Idem pour les verdicts, qui
+   restent persistés pour l'hebdo et le dashboard.
+
+**Règle.** Ne jamais alerter sur un sport qu'on n'achète plus, et ne jamais
+faire porter une dédup par une date qu'on rafraîchit sans raison.
+
+Gardiens : `tests/test_learning_telegram.py` (`TestSportHorsPerimetre`,
+`TestResumeInchange`) — le résumé écrit ne nomme pas un sport retiré alors que
+son seuil, lui, continue d'être posé ; un résumé identique n'est pas réécrit.
+
+
 ## La règle transverse
 
 ### Listes qui divergent — la panne la plus fréquente de ce dépôt

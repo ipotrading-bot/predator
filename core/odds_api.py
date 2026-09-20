@@ -212,6 +212,22 @@ def sports_payes() -> frozenset:
     SPORT_KEYS — jamais tenu à la main (règle 6)."""
     return frozenset(SPORT_KEYS.values())
 
+
+def sports_au_perimetre() -> frozenset:
+    """Les sport-types que le moteur émet encore aujourd'hui : ceux de
+    SPORT_KEYS, plus le tennis dont les clés sont DYNAMIQUES (un tournoi
+    n'existe que quelques jours, voir discover_tennis_keys) et n'apparaissent
+    donc jamais dans la table statique.
+
+    Sert à ne plus parler à l'opérateur d'un sport RETIRÉ (LIGUES_RETIREES) :
+    le 2026-09-20 le digest criait toutes les 2 h une anomalie de bande
+    d'edge sur le baseball, sorti du scan payant le 2026-09-17 — un diagnostic
+    sur un sport qu'on n'achète plus ne peut plus rien corriger. Les lignes
+    continuent d'être réglées, mesurées et apprises : c'est la PAROLE qui
+    s'arrête, pas la mesure (règle n°9).
+    """
+    return sports_payes() | {TENNIS_SPORT}
+
 # ── Ouverture de saison : une ligue n'est pas scannée avant cette date ───
 # Le pré-vol ne distingue pas présaison et saison régulière : un match NFL
 # d'août est un match. Or la présaison est exactement ce qu'on ne veut pas
@@ -264,6 +280,7 @@ TENNIS_TOURNAMENTS: tuple = (
     "china_open", "wuhan",
 )
 _TENNIS_PREFIXES = ("tennis_atp_", "tennis_wta_")
+TENNIS_SPORT = "tennis"       # sport-type des clés dynamiques, nommé une fois
 
 
 def discover_tennis_keys(api_key: str, catalogue: list | None = None) -> dict[str, str]:
