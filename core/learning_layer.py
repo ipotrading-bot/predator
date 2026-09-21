@@ -312,6 +312,37 @@ def load_sport_verdicts(sb) -> dict[str, dict]:
 _PLAYABLE_MIN_MINUTES = 120     # T-2h — en deçà, c'est la golden hour, en fantôme
 _PLAYABLE_MAX_MINUTES = 1440    # T-24h — au-delà, le scan ne va plus chercher
 
+# ── Expérience PRÉ-ENREGISTRÉE sur la borne basse (2026-09-21) ─────────
+# La borne basse vaut 120 min, mais sa justification d'origine ne porte PAS sur
+# cette grandeur : run_engine._shadow_reason le dit lui-même, « la mesure du
+# 2026-08-04 (39 % de réussite sur la tranche T-2h) portait sur la TRANCHE
+# HORAIRE » — l'heure de la journée, pas le délai avant le coup d'envoi. La
+# règle a donc été posée sur une grandeur et justifiée par une autre, sans
+# re-mesure depuis.
+#
+# MESURÉ le 2026-09-21 (soccer, post-A6, datation par signal), par bande de
+# délai : 0-30 min −5,7 % d'EV/pari, 30-60 min −21,6 %, 60-120 min **+19,8 %**,
+# 2-4 h +11,4 %, 4-8 h +6,1 %, 8-24 h +18,3 %. Agrégé à la coupure 60 min :
+# ≥60 min = 85-45 (+15,16 u), <60 min = 49-46 (−13,29 u), écart 13,8 points,
+# z = 2,08. La bande 60-120 min — la MEILLEURE mesurée — est aujourd'hui jetée.
+#
+# ⚠️ CE N'EST PAS UNE PREUVE, et c'est pour ça que rien n'a bougé. Le scan de
+# TOUTES les coupures de 20 à 300 min donne z > 1,96 seulement à 40, 60 et 290
+# (290 = bruit, 53 lignes du côté haut). Avec 29 coupures scannées, Bonferroni
+# exige z ≈ 2,99 : le maximum est 2,08. La DIRECTION est robuste (z positif aux
+# 29 coupures, +1,0 à +2,1) ; le POINT de coupure ne l'est pas. Et la coupure
+# actuelle n'est pas mieux justifiée : z = 1,54 à 120 min.
+#
+# D'où une pré-enregistration, pour que la décision arrive sur preuve et non sur
+# la coupure qui ressort le mieux après coup (le chemin bifurquant qui a produit
+# l'erreur ci-dessus). On fixe À L'AVANCE la coupure testée, la taille requise
+# et la règle de décision ; on ne re-scanne PLUS les coupures. Les données
+# arrivent gratuitement : les signaux sous 120 min sont déjà émis, réglés et
+# enregistrés en fantôme. Avancement rendu par scripts/weekly_report.frontiere_jouable.
+FRONTIERE_TESTEE_MINUTES = 60
+FRONTIERE_N_REQUIS = 200        # par groupe, 80 % de puissance pour 13,8 points d'écart
+FRONTIERE_DECISION_LE = "2026-10-19"   # 28 j au débit mesuré (9,0 lignes/j, 42 % sous la coupure)
+
 # Écart de calibration toléré (probabilité annoncée − taux réalisé), en points.
 # Voir _calibration_flag pour la mesure qui a fixé cette valeur.
 _CALIBRATION_MAX_GAP = 0.10

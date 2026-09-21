@@ -14,6 +14,7 @@ Lancé par .github/workflows/reports.yml, job `hebdo` (lundi 07:00 UTC).
 """
 import json
 import logging
+import math
 import os
 from datetime import datetime, timezone
 
@@ -24,8 +25,11 @@ from core.closing_line import CAUSES_KEY as _CAUSES_KEY, CAUSES_NON_CAPTURE
 from core.constants import (CLOSING_SRC_EXCHANGE, CLOSING_SRC_ODDSAPI,
                             CLOSING_SRC_ORACLE, TAX_RATE)
 from core.db import get_db
-from core.learning_layer import (SPORT_DEFAULTS, _LEDGER_SELECT, _clv_stats,
-                                 _sport_stats, load_sport_verdicts, playable_rows)
+from core.learning_layer import (FRONTIERE_DECISION_LE, FRONTIERE_N_REQUIS,
+                                 FRONTIERE_TESTEE_MINUTES, SPORT_DEFAULTS,
+                                 _LEDGER_SELECT, _clv_stats, _sport_stats,
+                                 load_sport_verdicts, playable_rows,
+                                 post_correction_rows)
 from core.stats_utils import brier_reference, brier_score, p_breakeven, wilson_ci
 
 logging.basicConfig(level=logging.WARNING, format="%(levelname)s | %(message)s")
@@ -209,6 +213,96 @@ _LEAGUE_MIN_DECIDED = int(os.environ.get("WEEKLY_LEAGUE_MIN_DECIDED", "10"))
 _LEAGUE_SELECT = "league, sport, outcome, odds, time_to_match_minutes, is_shadow, created_at"
 
 
+# ── Frontière jouable : expérience PRÉ-ENREGISTRÉE (2026-09-21) ─────────
+
+def frontiere_jouable(rows: list[dict], coupure: int = FRONTIERE_TESTEE_MINUTES,
+                      n_requis: int = FRONTIERE_N_REQUIS) -> dict:
+    """Avancement de l'expérience pré-enregistrée sur la borne basse. Pure.
+
+    La coupure, la taille requise et la date de décision sont FIXÉES À
+    L'AVANCE dans core.learning_layer (voir le bloc FRONTIERE_*) : cette
+    fonction ne cherche pas la meilleure coupure, elle mesure celle qui a été
+    annoncée. C'est toute la différence avec le scan qui a produit z = 2,08 en
+    regardant 29 coupures — un maximum sélectionné n'est pas une preuve.
+
+    Datation : `post_correction_rows` pour ne garder que les lignes post-A6.
+    ⚠️ Sans jointure sur `signals`, elle retombe sur `created_at` du ledger, qui
+    est la date de RÈGLEMENT et non d'émission (contrat documenté dans sa
+    docstring) : la fenêtre est donc légèrement trop large aux premiers jours de
+    l'époque. Effet négligeable aujourd'hui (A6 date du 2026-08-27) et dit ici
+    plutôt que supposé.
+
+    Rend `decidable=False` tant que les DEUX groupes n'ont pas `n_requis`
+    lignes : sous cette barre on n'annonce rien, quel que soit l'écart."""
+    decisifs = [r for r in post_correction_rows(rows)
+                if r.get("outcome") in _DECISIVE
+                and r.get("time_to_match_minutes") is not None
+                and r.get("odds")]
+    sous = [r for r in decisifs if float(r["time_to_match_minutes"]) < coupure]
+    sur = [r for r in decisifs if float(r["time_to_match_minutes"]) >= coupure]
+
+    def _bloc(groupe: list[dict]) -> dict:
+        n = len(groupe)
+        if not n:
+            return {"n": 0, "wins": 0, "hit_rate": None, "wilson_lower": None,
+                    "avg_odds": None, "p_breakeven": None, "ev_par_pari": None}
+        w = sum(1 for r in groupe if r["outcome"] == "WIN")
+        cote = sum(float(r["odds"]) for r in groupe) / n
+        lo, _hi = wilson_ci(w, n)
+        return {"n": n, "wins": w, "hit_rate": w / n, "wilson_lower": lo,
+                "avg_odds": cote, "p_breakeven": p_breakeven(cote, TAX_RATE),
+                "ev_par_pari": (w / n) * cote - 1}
+
+    a, b = _bloc(sous), _bloc(sur)
+    z = None
+    if a["n"] and b["n"]:
+        pool = (a["wins"] + b["wins"]) / (a["n"] + b["n"])
+        se = math.sqrt(pool * (1 - pool) * (1 / a["n"] + 1 / b["n"]))
+        if se:
+            z = (b["hit_rate"] - a["hit_rate"]) / se
+    return {"coupure": coupure, "n_requis": n_requis, "sous": a, "sur": b, "z": z,
+            "decidable": a["n"] >= n_requis and b["n"] >= n_requis,
+            "decision_le": FRONTIERE_DECISION_LE}
+
+
+def format_frontiere(etat: dict) -> list[str]:
+    """Section « frontière jouable » du rapport hebdo. Pure.
+
+    Ne conclut JAMAIS sous la taille requise : sans cette garde, la section
+    rejouerait chaque semaine la tentation de croire un z de 2,0 obtenu sur un
+    échantillon deux fois trop petit."""
+    a, b, c = etat["sous"], etat["sur"], etat["coupure"]
+    if not a["n"] or not b["n"]:
+        return []
+    lignes = ["", f"🧭 *Frontière jouable — test pré-enregistré à T-{c} min*",
+              f"   sous {c} min : {a['wins']}-{a['n'] - a['wins']} "
+              f"({a['hit_rate']:.1%}, point mort {a['p_breakeven']:.1%}, "
+              f"EV/pari {a['ev_par_pari']:+.1%})",
+              f"   dès {c} min : {b['wins']}-{b['n'] - b['wins']} "
+              f"({b['hit_rate']:.1%}, point mort {b['p_breakeven']:.1%}, "
+              f"EV/pari {b['ev_par_pari']:+.1%})"]
+    z = etat["z"]
+    manque = max(0, etat["n_requis"] - a["n"]) + max(0, etat["n_requis"] - b["n"])
+    if not etat["decidable"]:
+        lignes.append(f"   ⚪ n insuffisant ({a['n']} et {b['n']} sur "
+                      f"{etat['n_requis']} requis, {manque} lignes à venir) — "
+                      f"AUCUNE conclusion. Échéance {etat['decision_le']}"
+                      + (f", z actuel {z:+.2f}" if z is not None else ""))
+    elif z is not None and z > 1.96:
+        lignes.append(f"   🔴 écart significatif (z {z:+.2f}) — dès {c} min on gagne, "
+                      f"sous {c} min on perd : _PLAYABLE_MIN_MINUTES doit DESCENDRE "
+                      f"à {c} (on récupère la bande {c}-120 min). Décision mûre, "
+                      f"relire INCIDENTS.md avant de basculer")
+    elif z is not None and z < -1.96:
+        lignes.append(f"   🔴 écart significatif INVERSE (z {z:+.2f}) — sous {c} min "
+                      f"on fait MIEUX. La borne actuelle est trop permissive : "
+                      f"_PLAYABLE_MIN_MINUTES doit MONTER, pas descendre")
+    else:
+        lignes.append(f"   🟢 n atteint, écart NON significatif (z {z:+.2f}) — la "
+                      f"frontière actuelle tient, expérience close")
+    return lignes
+
+
 def league_breakdown(rows: list[dict], min_decided: int = _LEAGUE_MIN_DECIDED) -> list[dict]:
     """Par ligue : décidés, gagnés, réussite, Wilson bas, point mort (cote
     moyenne, TAX_RATE), P&L à mise plate d'une unité. Zone jouable et non
@@ -300,7 +394,8 @@ def format_report(metrics_by_sport: dict[str, dict], verdicts: dict[str, dict],
                   suspect: tuple[int, int], now: datetime,
                   ai_health: list[dict] | None = None,
                   closing: list[str] | None = None,
-                  leagues: list[str] | None = None) -> str:
+                  leagues: list[str] | None = None,
+                  frontiere: list[str] | None = None) -> str:
     """Texte Telegram/console du rapport hebdo. Pure."""
     lines = [f"📚 *PREDATOR — rapport hebdo de vérité* · {now:%d/%m %H:%M} UTC",
              "CLV réel > 0 et calibration stable = l'objectif ; le ROI court terme n'est qu'un témoin.",
@@ -348,6 +443,7 @@ def format_report(metrics_by_sport: dict[str, dict], verdicts: dict[str, dict],
                      + " (perte prouvée, borne haute de Wilson sous le point mort"
                      " — à trancher par l'opérateur)")
     lines.extend(leagues or [])
+    lines.extend(frontiere or [])
     lines.extend(closing or [])
     lines.extend(format_ai_health(ai_health or []))
     return "\n".join(lines)
@@ -420,12 +516,22 @@ def main() -> int:
     try:
         res = (sb.table("ai_learning_ledger").select(_LEAGUE_SELECT)
                .order("created_at", desc=True).limit(LEAGUE_LIMIT).execute())
-        leagues = format_leagues(league_breakdown(res.data or []))
+        ledger_rows = res.data or []
+        leagues = format_leagues(league_breakdown(ledger_rows))
     except Exception as e:                  # jamais bloquant pour le rapport
         print(f"par ligue : lecture impossible — {e}")
-        leagues = []
+        ledger_rows, leagues = [], []
+    try:
+        # MÊME lecture que la section par ligue — zéro requête de plus, et les
+        # deux sections parlent des mêmes lignes. Celle-ci a besoin des
+        # FANTÔMES (le groupe « sous la coupure » en est fait), donc elle lit
+        # `ledger_rows` brut et non le filtre non-shadow de league_breakdown.
+        frontiere = format_frontiere(frontiere_jouable(ledger_rows))
+    except Exception as e:                  # jamais bloquant pour le rapport
+        print(f"frontière jouable : calcul impossible — {e}")
+        frontiere = []
     text = format_report(metrics, load_sport_verdicts(sb), suspect, now, ai_health, closing,
-                         leagues)
+                         leagues, frontiere)
     print(text)
     return 0 if _send(text) else 1
 
