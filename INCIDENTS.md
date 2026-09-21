@@ -278,6 +278,56 @@ empirique et tout backtest qui les ignorerait aurait un biais de survie.
 Une source qui « répond » ne porte pas forcément un prix, et une source qui
 échoue ne le fait presque jamais bruyamment.
 
+### La porte d'émission était plus stricte que le règlement (2026-09-21)
+
+Symptôme : alerte Telegram « PÉRIMÈTRE — 3/8 marchés vivants réglables, 5
+écartés (62 %) », et **zéro signal de toute la journée** du 21/09. L'alerte
+envoyait vérifier ESPN et relire l'incident du relais — alors que le log,
+une ligne plus bas, disait « LiveScore connaît 5 des 5 matchs écartés ».
+
+Cause : `run_engine._reglable` ne demandait qu'« ESPN liste-t-il ce match ? »
+(posé le 2026-09-03), alors que le RÈGLEMENT lit aussi LiveScore depuis le
+2026-09-05. La porte d'émission était donc plus stricte que la capacité de
+règlement, et jetait des matchs **avant même de les valoriser** : on ne saura
+jamais ce qu'ils valaient.
+
+Mesuré sur 8 scans standard du 21/09 : **23 des 54 marchés vivants écartés
+(43 %), et LiveScore en connaissait 21 sur 21** — la totalité, dans chaque
+scan où la mesure apparaît. Le scan de 13:10 : Bulgarie Vtora Liga ×3,
+Danemark 1st Division, Roumanie Superliga.
+
+Et ESPN allait bien : 3 matchs ont passé la porte. Ces 3 survivants avaient
+tous des EV franchement négatives (−2,9 % à −14,7 %, Géorgie, Suède D3,
+Argentine D2) — aucun quasi-raté. **Zéro signal était le bon comportement ;
+c'est la base de marchés, réduite à 3, qui était le problème.**
+
+Correctif, décision opérateur (règle 11) : `_reglable` admet un match que
+LiveScore connaît. Base attendue 31 → ~52 marchés (+68 %). Budget chiffré
+(règle 13) : **ZÉRO requête supplémentaire** — `livescore_connait` était déjà
+appelé sur chacun de ces matchs depuis le 09-10 pour la mesure, sur le budget
+partagé `livescore_results`. On a rendu décisif un appel qui avait déjà lieu.
+
+Critère de retrait DATÉ : revue le **2026-10-19**. L'élargissement sort si les
+ligues admises montrent un taux de résolution (`perf_view.resolution_rate`)
+inférieur aux ligues couvertes par ESPN — « LiveScore connaît le match » n'est
+PAS « LiveScore publie un score final fiable », et un signal non réglé finit
+`expired`, ce qui DÉTRUIT la ligne d'échantillon. Interrupteur d'arrêt sans
+déploiement, sur le précédent de `meta.betfair_suspendu` :
+`ops.py supabase meta-set perimetre_livescore off`.
+
+Deux défauts corrigés au passage, tous deux silencieux :
+- l'alerte désignait ESPN dans TOUS les cas ; elle nomme désormais la vraie
+  cause quand LiveScore couvre les écartés, et ne garde l'ESPN que sinon ;
+- en déplaçant le comptage, le suffixe « — LiveScore le connaît » est entré un
+  instant dans la CLÉ du motif, scindant `_RAISON_NON_COUVERTE` en deux et
+  ramenant `non_couverts` à 0 — l'alerte repartait désigner ESPN, le défaut
+  qu'on venait de corriger. Un suffixe est un libellé de log, jamais une
+  catégorie. Gardien : `test_le_suffixe_livescore_ne_scinde_pas_la_categorie`.
+
+Gardiens : `tests/test_perimetre.py::TestMesureLiveScore` (admission,
+interrupteur, actif par défaut et sur panne de lecture, budget et date de
+retrait présents dans le code) et `TestAlertePerimetre`.
+
 ### Sources de cotes : lesquelles portent RÉELLEMENT un signal
 
 la règle est « authentifié par clé = joignable, sinon filtré

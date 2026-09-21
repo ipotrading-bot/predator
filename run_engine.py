@@ -2067,6 +2067,51 @@ _PERIMETRE_ALERTE_MIN_VIVANTS = 5
 _PERIMETRE_ALERTE_PART_MAX = 0.5
 _RAISON_NON_COUVERTE = "absent des sources de scores (ligue non couverte)"
 
+# ── Périmètre élargi à LiveScore (2026-09-21, DÉCISION OPÉRATEUR, règle 11) ──
+# `_reglable` ne demandait qu'« ESPN liste-t-il ce match ? », posé le 09-03,
+# alors que le RÈGLEMENT lit aussi LiveScore depuis le 09-05 : la porte
+# d'émission était plus stricte que la capacité de règlement.
+#
+# MESURE qui a motivé la décision (8 scans standard du 2026-09-21) : 23 des 54
+# marchés vivants écartés « ligue non couverte » (43 %), et LiveScore en
+# connaissait 21 sur 21 — la TOTALITÉ, dans chaque scan où la mesure apparaît.
+# Le scan de 13:10 : Bulgarie Vtora Liga ×3, Danemark 1st Division, Roumanie
+# Superliga. Ces matchs étaient jetés AVANT d'être valorisés : on ne saura
+# jamais ce qu'ils valaient. Base de marchés attendue : 31 → ~52 (+68 %).
+#
+# BUDGET CHIFFRÉ (règle 13) : ZÉRO requête supplémentaire. `livescore_connait`
+# est DÉJÀ appelé sur chacun de ces matchs depuis le 09-10 pour la mesure, avec
+# un cache par journée et par processus sur le budget partagé
+# `livescore_results` (LIVESCORE_DAILY_BUDGET = 120/jour). On rend décisif un
+# appel qui avait déjà lieu.
+#
+# CRITÈRE DE RETRAIT DATÉ (règle 13) — revue le 2026-10-19, même échéance que
+# l'expérience de frontière. L'élargissement SORT si les ligues nouvellement
+# admises montrent un taux de résolution (réglés / réglés+expired,
+# `perf_view.resolution_rate`) inférieur à celui des ligues couvertes par ESPN :
+# « LiveScore connaît le match » n'est PAS « LiveScore publie un score final
+# fiable », et un signal non réglé finit `expired` — ce qui DÉTRUIT la ligne
+# d'échantillon au lieu de simplement la perdre. Les ligues admises apparaissent
+# nommément dans `weekly_report.league_breakdown`, avec leur compte d'`expired`.
+#
+# INTERRUPTEUR D'ARRÊT, sur le précédent de `meta.betfair_suspendu` : poser
+# `ops.py supabase meta-set perimetre_livescore off` coupe l'élargissement au
+# scan suivant, sans déploiement. Toute autre valeur (ou l'absence de clé)
+# le laisse actif.
+PERIMETRE_LIVESCORE_META_KEY = "perimetre_livescore"
+_PERIMETRE_LIVESCORE_OFF = ("off", "0", "false", "non")
+
+
+def _perimetre_livescore_actif(sb) -> bool:
+    """L'élargissement est-il actif ? Actif par défaut (décision opérateur du
+    2026-09-21) ; coupé par `meta.perimetre_livescore` = off/0/false/non.
+    Sans base : actif — on ne restreint pas le périmètre sur une panne de
+    lecture, on le restreint sur une décision."""
+    if sb is None:
+        return True
+    valeur = _meta_get(sb, PERIMETRE_LIVESCORE_META_KEY)
+    return (valeur or "").strip().lower() not in _PERIMETRE_LIVESCORE_OFF
+
 
 def _alerte_perimetre(sb, vivants: int, gardes: int, motifs: dict, log,
                       ls_connus: int = 0, non_couverts: int = 0) -> bool:
@@ -2160,7 +2205,9 @@ def _filtrer_perimetre(matches: list, log, ligues_exclues: tuple = (), sb=None) 
             fixtures_par_sport[sport] = []
     gardes = []
     motifs: dict[str, int] = {}
-    ls_connus = 0
+    ls_connus = 0          # écartés QUAND MÊME, que LiveScore connaît
+    ls_admis = 0           # admis GRÂCE à LiveScore (élargissement du 21/09)
+    elargi = _perimetre_livescore_actif(sb)
     for m in vivants:
         if _reglable(m, fixtures_par_sport):
             gardes.append(m)
@@ -2172,21 +2219,40 @@ def _filtrer_perimetre(matches: list, log, ligues_exclues: tuple = (), sb=None) 
                   if fixtures_par_sport.get(sport) is None
                   else "ESPN muet sur ce sport (panne ?)" if fixtures_par_sport.get(sport) == []
                   else _RAISON_NON_COUVERTE)
-        motifs[raison] = motifs.get(raison, 0) + 1
         if raison == _RAISON_NON_COUVERTE and _livescore_connait(
                 m.get("match") or "", sport, str(m.get("commence_time") or "")[:10]):
-            # MESURE (2026-09-10), sans effet sur l'émission — voir
-            # core.score_sources.livescore_connait.
+            # Décisif depuis le 2026-09-21 (voir PERIMETRE_LIVESCORE_META_KEY) ;
+            # simple mesure du 09-10 au 09-21, et à nouveau si l'opérateur
+            # coupe l'élargissement.
+            if elargi:
+                ls_admis += 1
+                gardes.append(m)
+                log.info("RÉGLABLE VIA LIVESCORE | %s (%s, %s) — ESPN ne couvre pas "
+                         "cette ligue ; LiveScore la règle depuis le 2026-09-05, admis",
+                         m.get("match", "?"), m.get("league", "?"), sport)
+                continue
             ls_connus += 1
-            raison += " — LiveScore le connaît"
+            libelle = raison + " — LiveScore le connaît"
+        else:
+            libelle = raison
+        # On compte sur la raison NUE : le suffixe est un libellé de log, pas
+        # une catégorie. L'y mettre scindait `_RAISON_NON_COUVERTE` en deux
+        # clés et ramenait `non_couverts` à 0 — donc une alerte qui repartait
+        # désigner ESPN, exactement le défaut corrigé le 2026-09-21.
+        motifs[raison] = motifs.get(raison, 0) + 1
         log.info("NON RÉGLABLE | %s (%s, %s) — %s, écarté",
-                 m.get("match", "?"), m.get("league", "?"), sport, raison)
+                 m.get("match", "?"), m.get("league", "?"), sport, libelle)
     log.info("PÉRIMÈTRE | %d matchs → %d marchés vivants → %d réglables",
              len(matches), len(vivants), len(gardes))
+    if ls_admis:
+        log.info("PÉRIMÈTRE | %d match(s) admis GRÂCE à LiveScore (élargissement du "
+                 "2026-09-21, revue le 2026-10-19) — sans eux : %d réglables",
+                 ls_admis, len(gardes) - ls_admis)
     non_couverts = motifs.get(_RAISON_NON_COUVERTE, 0)
     if non_couverts:
         log.info("PÉRIMÈTRE | LiveScore connaît %d des %d matchs écartés « ligue non "
-                 "couverte » (mesure, sans effet sur l'émission)", ls_connus, non_couverts)
+                 "couverte » — restés écartés (élargissement %s)", ls_connus, non_couverts,
+                 "coupé par l'opérateur" if not elargi else "actif")
     _alerte_perimetre(sb, len(vivants), len(gardes), motifs, log, ls_connus, non_couverts)
     return gardes
 
