@@ -2068,20 +2068,48 @@ _PERIMETRE_ALERTE_PART_MAX = 0.5
 _RAISON_NON_COUVERTE = "absent des sources de scores (ligue non couverte)"
 
 
-def _alerte_perimetre(sb, vivants: int, gardes: int, motifs: dict, log) -> bool:
+def _alerte_perimetre(sb, vivants: int, gardes: int, motifs: dict, log,
+                      ls_connus: int = 0, non_couverts: int = 0) -> bool:
     """Telegram quand un run écarte plus de la moitié de ses marchés vivants.
     Rend True si l'alerte est partie. Sans Supabase (tests, base en panne) :
-    rien — la dédup vit dans meta, et sans elle on spammerait à chaque tick."""
+    rien — la dédup vit dans meta, et sans elle on spammerait à chaque tick.
+
+    LE TEXTE DOIT DÉSIGNER LA BONNE CAUSE (2026-09-21). Il envoyait vérifier
+    ESPN et relire l'incident du relais dans TOUS les cas — y compris quand le
+    log immédiatement au-dessus disait « LiveScore connaît 5 des 5 matchs
+    écartés ». Mesuré ce jour-là sur 8 scans standard : 23 des 54 marchés
+    vivants écartés, et LiveScore en connaissait 21 sur 21 — soit la TOTALITÉ,
+    dans chaque scan où la mesure apparaît. Ce n'est donc pas une panne ESPN,
+    c'est l'écart connu entre la porte d'émission (`_reglable` : « ESPN
+    liste-t-il ce match ? ») et la capacité de RÈGLEMENT, qui lit aussi
+    LiveScore depuis le 2026-09-05. L'alerte a coûté un aller-retour de
+    diagnostic vers le mauvais endroit : elle nomme désormais la cause.
+
+    Élargir la porte reste une DÉCISION OPÉRATEUR (règle 11) — le message la
+    pose, il ne la prend pas."""
     if sb is None or vivants < _PERIMETRE_ALERTE_MIN_VIVANTS:
         return False
     ecartes = vivants - gardes
     if ecartes <= vivants * _PERIMETRE_ALERTE_PART_MAX:
         return False
     detail = " · ".join(f"{k} ×{v}" for k, v in sorted(motifs.items(), key=lambda kv: -kv[1]))
+    # Le trou de couverture connu, et non une panne : LiveScore couvre TOUT ce
+    # qui a été écarté « ligue non couverte ». Envoyer vérifier ESPN serait
+    # envoyer au mauvais endroit.
+    if non_couverts and ls_connus == non_couverts:
+        cause = (f"LiveScore connaît les {ls_connus} écarté(s) « ligue non couverte » : "
+                 f"ce n'est PAS une panne ESPN, c'est la porte d'émission (_reglable, "
+                 f"« ESPN liste-t-il ce match ? ») plus stricte que le règlement, qui "
+                 f"lit LiveScore depuis le 2026-09-05. Élargir = décision opérateur.")
+    elif non_couverts:
+        cause = (f"LiveScore n'en connaît que {ls_connus} sur {non_couverts} — "
+                 f"vérifier ESPN et les sources de scores (INCIDENTS « Le relais "
+                 f"resté posé a détourné ESPN »).")
+    else:
+        cause = ("Un scan qui jette ses matchs n'émet rien — vérifier ESPN et les "
+                 "sources de scores (INCIDENTS « Le relais resté posé a détourné ESPN »).")
     text = (f"⚠️ PÉRIMÈTRE — {gardes}/{vivants} marchés vivants réglables, "
-            f"{ecartes} écartés ({ecartes / vivants:.0%}) : {detail}. "
-            f"Un scan qui jette ses matchs n'émet rien — vérifier ESPN et les "
-            f"sources de scores (INCIDENTS « Le relais resté posé a détourné ESPN »).")
+            f"{ecartes} écartés ({ecartes / vivants:.0%}) : {detail}. {cause}")
     log.warning("PÉRIMÈTRE | %d/%d réglables seulement — alerte Telegram", gardes, vivants)
     return _alert_once(sb, "alert_perimetre", text)
 
@@ -2159,7 +2187,7 @@ def _filtrer_perimetre(matches: list, log, ligues_exclues: tuple = (), sb=None) 
     if non_couverts:
         log.info("PÉRIMÈTRE | LiveScore connaît %d des %d matchs écartés « ligue non "
                  "couverte » (mesure, sans effet sur l'émission)", ls_connus, non_couverts)
-    _alerte_perimetre(sb, len(vivants), len(gardes), motifs, log)
+    _alerte_perimetre(sb, len(vivants), len(gardes), motifs, log, ls_connus, non_couverts)
     return gardes
 
 

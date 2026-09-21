@@ -169,6 +169,50 @@ class TestAlertePerimetre:
         eng._filtrer_perimetre([_m(_exchange="matchbook")] * 3, logging.getLogger("PREDATOR"), sb=object())
         assert envois == []
 
+    def test_l_alerte_ne_designe_pas_espn_quand_livescore_couvre_tout(self, monkeypatch):
+        """2026-09-21 — le texte envoyait vérifier ESPN dans TOUS les cas, y
+        compris quand le log juste au-dessus disait « LiveScore connaît 5 des
+        5 ». Mesuré sur 8 scans standard ce jour-là : 23 marchés écartés sur
+        54 vivants, LiveScore en connaissait 21 sur 21. Ce n'est pas une panne
+        ESPN, c'est `_reglable` (« ESPN liste-t-il ce match ? ») plus strict
+        que le règlement, qui lit LiveScore depuis le 2026-09-05. L'alerte a
+        coûté un aller-retour de diagnostic vers le mauvais endroit."""
+        envois = self._capture(monkeypatch)
+        # ESPN RÉPOND (il liste un match) : pas de panne. Les autres sont
+        # simplement hors de sa couverture, et LiveScore les connaît tous.
+        monkeypatch.setattr(eng, "_fixtures_espn", lambda s, a, b: [_ev("T0 FC", "U0 FC")])
+        monkeypatch.setattr(eng, "_livescore_connait", lambda *a, **k: True)
+        matches = [_m(match=f"T{i} FC vs U{i} FC", _exchange="matchbook") for i in range(6)]
+        eng._filtrer_perimetre(matches, logging.getLogger("PREDATOR"), sb=object())
+        assert len(envois) == 1
+        texte = envois[0][1]
+        assert "1/6" in texte
+        assert "PAS une panne ESPN" in texte
+        assert "décision opérateur" in texte
+        assert "relais resté posé" not in texte, "ne plus envoyer vers le mauvais incident"
+
+    def test_l_alerte_designe_espn_quand_livescore_ne_couvre_pas(self, monkeypatch):
+        """L'inverse doit rester vrai : si LiveScore ne connaît pas les
+        écartés, c'est bien vers ESPN qu'il faut envoyer."""
+        envois = self._capture(monkeypatch)
+        monkeypatch.setattr(eng, "_fixtures_espn", lambda s, a, b: [_ev("T0 FC", "U0 FC")])
+        monkeypatch.setattr(eng, "_livescore_connait", lambda *a, **k: False)
+        matches = [_m(match=f"T{i} FC vs U{i} FC", _exchange="matchbook") for i in range(6)]
+        eng._filtrer_perimetre(matches, logging.getLogger("PREDATOR"), sb=object())
+        texte = envois[0][1]
+        assert "relais resté posé" in texte and "n'en connaît que 0 sur 5" in texte
+
+    def test_le_texte_ne_change_pas_la_condition_de_declenchement(self, monkeypatch):
+        """La correction du 2026-09-21 touche le TEXTE, jamais le seuil : une
+        majorité qui passe ne doit toujours rien envoyer, LiveScore ou pas."""
+        envois = self._capture(monkeypatch)
+        monkeypatch.setattr(eng, "_livescore_connait", lambda *a, **k: True)
+        monkeypatch.setattr(eng, "_fixtures_espn",
+                            lambda s, a, b: [_ev(f"T{i} FC", f"U{i} FC") for i in range(4)])
+        matches = [_m(match=f"T{i} FC vs U{i} FC", _exchange="matchbook") for i in range(6)]
+        assert len(eng._filtrer_perimetre(matches, logging.getLogger("PREDATOR"), sb=object())) == 4
+        assert envois == []
+
 
 class TestESPNFixtures:
     def test_fixtures_espn_un_jour_par_requete_sans_doublon(self, monkeypatch):
