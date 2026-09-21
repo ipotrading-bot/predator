@@ -21,7 +21,9 @@ from core.db import (get_db, MissingCredentialsError,
                      log_to_ledger as _log_to_ledger,
                      is_unique_violation as _is_unique_violation)
 from core.harvester import fetch_matches
-from core.closing_line import capture_from_exchange, capture_from_scan
+from core.closing_line import (capture_from_exchange, capture_from_scan,
+                               reset_causes as _reset_causes_closing,
+                               persister_causes as _persister_causes_closing)
 from core.matchbook import fetch_matchbook_prices
 from core.smarkets import fetch_smarkets_prices
 # Appariement slate ↔ exchange : déplacé dans core/ le 2026-08-26 pour que
@@ -2481,6 +2483,10 @@ def _segment_min_edge(dyn_thresholds: dict, dyn_segment_thresholds: dict,
 
 def run():
     budget = _arm_global_timeout()
+    # Compteurs de non-capture de closing line : remis à zéro UNE fois par
+    # run, pas par passe — `capture_from_scan` et `capture_from_exchange`
+    # tournent tous deux dans ce run et leurs décomptes s'additionnent.
+    _reset_causes_closing()
     now     = datetime.now(timezone.utc)
     session = _market_session(now.hour)
     log.info("━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━")
@@ -2824,6 +2830,15 @@ def run():
             _alert_once(sb, "alert_no_matches", msg)
             if sb:
                 _heartbeat(sb, now, 0, 0)
+                # Vidange des causes de non-capture AUSSI sur cette sortie :
+                # capture_from_scan et capture_from_exchange ont pu tourner
+                # avant d'arriver ici, et leur décompte serait perdu. La
+                # fonction est idempotente (elle remet à zéro après écriture),
+                # donc l'appeler aux deux sorties ne double jamais le total.
+                try:
+                    _persister_causes_closing(sb, now)
+                except Exception as e:
+                    log.warning("closing causes: %s", e)
             # CONTRAT DE FIN (B5). Zéro match n'est un échec que si des sources
             # ont RÉPONDU : un créneau réellement creux reste vert. Matchbook
             # sert de témoin — gratuit, illimité, il rend 141 à 202 marchés
@@ -3068,6 +3083,20 @@ def run():
         # Compte des RECOMMANDÉS : c'est ce que le dashboard affiche ; annoncer
         # « 12 signaux » pour 0 visible ferait chercher une panne d'affichage.
         _heartbeat(sb, now, len(matches), len(recommandes))
+
+    # Pourquoi une capture de closing line a manqué — APRÈS le heartbeat et
+    # la recommandation : de la MESURE ne passe jamais devant un pari, et
+    # n'entre PAS dans le contrat de fin (un compteur en panne ne doit pas
+    # rendre un run rouge, ni un compteur qui écrit rendre vert un run
+    # stérile). Le rapport hebdo lit ces clés journalières.
+    if sb:
+        try:
+            total = _persister_causes_closing(sb, now)
+            if total:
+                log.info("CLOSING CAUSES (cumul du jour) | %s",
+                         " ".join(f"{c}={n}" for c, n in sorted(total.items())))
+        except Exception as e:
+            log.warning("closing causes: %s", e)
 
     # CONTRAT DE FIN (B5). `saved_count` ne vaut 0 avec `signals` non vide que
     # si CHAQUE écriture a échoué — c'est l'incident du 2026-07-07, ~17 h de

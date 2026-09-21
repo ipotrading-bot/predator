@@ -12,6 +12,7 @@ La définition opérationnelle de « s'approcher de la perfection » : CLV réel
 Lecture seule sur Supabase (clé anon), envoi Telegram si configuré.
 Lancé par .github/workflows/reports.yml, job `hebdo` (lundi 07:00 UTC).
 """
+import json
 import logging
 import os
 from datetime import datetime, timezone
@@ -19,6 +20,7 @@ from datetime import datetime, timezone
 import requests
 
 from core.audit_engine import count_missed_closing_lines
+from core.closing_line import CAUSES_KEY as _CAUSES_KEY, CAUSES_NON_CAPTURE
 from core.constants import (CLOSING_SRC_EXCHANGE, CLOSING_SRC_ODDSAPI,
                             CLOSING_SRC_ORACLE, TAX_RATE)
 from core.db import get_db
@@ -77,7 +79,42 @@ CLOSING_MISSED_BASELINE = 77
 CLOSING_BASELINE_DATE = "2026-08-26"
 
 
-def closing_coverage(signal_rows: list[dict], missed: int) -> list[str]:
+def causes_de_non_capture(sb, jours: int = 7, aujourdhui=None) -> dict:
+    """Somme, sur `jours` glissants, des causes de non-capture de closing line
+    (clés `meta` journalières posées par core.closing_line.persister_causes).
+
+    POURQUOI. La couverture du CLV plafonnait à 77,8 % en zone jouable et
+    51,4 % en fantôme (mesuré le 2026-09-21) : ~36 % des lignes réglées ne
+    portent aucun `clv_pct_real`. Or le CLV converge ~3× plus vite que le
+    résultat et c'est un critère de PREMIER rang des seuils. Le module
+    énumérait quatre causes possibles dans ses logs sans en attribuer aucune :
+    impossible de savoir laquelle corriger. Cette section rend la cause
+    DOMINANTE visible, pour que le correctif suive une mesure et non une
+    intuition.
+
+    Le nom de clé et la liste des causes sont IMPORTÉS de core.closing_line,
+    jamais recopiés (règle n°6). Ne lève jamais : une section absente vaut
+    mieux qu'un rapport qui ne part pas."""
+    from datetime import datetime, timedelta, timezone
+
+    base = aujourdhui or datetime.now(timezone.utc)
+    total: dict = {}
+    for d in range(jours):
+        cle = _CAUSES_KEY.format(jour=(base - timedelta(days=d)).strftime("%Y%m%d"))
+        try:
+            row = sb.table("meta").select("value").eq("key", cle).maybe_single().execute()
+            if not (row and row.data and row.data.get("value")):
+                continue
+            for cause, n in json.loads(row.data["value"]).items():
+                if cause in CAUSES_NON_CAPTURE:
+                    total[cause] = total.get(cause, 0) + int(n)
+        except Exception as e:
+            log.debug("causes de non-capture [%s] : %s", cle, e)
+    return total
+
+
+def closing_coverage(signal_rows: list[dict], missed: int,
+                     causes: dict | None = None) -> list[str]:
     """Section « couverture closing line » du rapport hebdo. Pure.
 
     POURQUOI ELLE EXISTE. Le CLV réel est le juge de rentabilité de tout ce
@@ -125,6 +162,40 @@ def closing_coverage(signal_rows: list[dict], missed: int) -> list[str]:
         lignes.append("   ⚠️ ZÉRO capture `exchange` — `capture_from_exchange` ne produit rien. "
                       "Elle est appelée après `_enrich_from_exchange` dans run_engine.py ; "
                       "un slate sans marché Matchbook apparié donne ce résultat.")
+    lignes.extend(_ventilation_causes(causes or {}))
+    return lignes
+
+
+# Libellés en français des causes techniques : le rapport est lu par
+# l'opérateur, pas par le code. Dérivé de CAUSES_NON_CAPTURE — un gardien
+# vérifie qu'aucune cause n'est sans libellé (règle n°6).
+_LIBELLE_CAUSE = {
+    "sans_cote_exchange":    "l'exchange ne cotait pas le match",
+    "ligne_illisible":       "ligne du pari illisible",
+    "ligne_absente_echelle": "ligne absente de l'échelle exchange",
+    "ligne_bougee":          "ligne bougée (autre pari)",
+    "selection_non_resolue": "sélection h2h non résolue",
+    "sans_prix_de_nul":      "h2h sans cote de nul (DNB impossible)",
+}
+
+
+def _ventilation_causes(causes: dict) -> list[str]:
+    """Pourquoi les captures ont manqué, la cause dominante en premier. Pure.
+
+    Sans chiffre, on ne dit rien plutôt que d'afficher un tableau vide : une
+    semaine sans non-capture est une bonne nouvelle, pas une section à remplir.
+    """
+    chiffres = {c: n for c, n in causes.items() if n}
+    if not chiffres:
+        return []
+    total = sum(chiffres.values())
+    classe = sorted(chiffres.items(), key=lambda kv: -kv[1])
+    tete, n_tete = classe[0]
+    lignes = [f"   Causes de non-capture (7 j, {total} refus) — dominante : "
+              f"{_LIBELLE_CAUSE.get(tete, tete)} ({n_tete}, {n_tete / total:.0%})"]
+    detail = " · ".join(f"{_LIBELLE_CAUSE.get(c, c)} {n}" for c, n in classe[1:])
+    if detail:
+        lignes.append(f"   Puis — {detail}")
     return lignes
 
 
@@ -335,7 +406,8 @@ def main() -> int:
         print(f"signals: lecture impossible — {e}")
         signal_rows, suspect = [], (0, 0)
     try:
-        closing = closing_coverage(signal_rows, count_missed_closing_lines(sb))
+        closing = closing_coverage(signal_rows, count_missed_closing_lines(sb),
+                                   causes_de_non_capture(sb))
     except Exception as e:                  # jamais bloquant pour le rapport
         print(f"couverture closing line : lecture impossible — {e}")
         closing = []

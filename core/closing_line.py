@@ -42,6 +42,7 @@ CONTRACT
     delete-then-insert would expose the row to loss, and hand it a new id,
     on every single refresh.
 """
+import json
 import logging
 import re
 from datetime import datetime, timedelta, timezone
@@ -65,6 +66,107 @@ LINE_TOLERANCE = 0.01
 _ID_CHUNK = 40
 
 _TRAILING_NUMBER = re.compile(r"(-?\+?\d+(?:\.\d+)?)\s*$")
+
+
+# ── Pourquoi une capture n'a PAS eu lieu (2026-09-21) ─────────────────
+# Mesuré sur les lignes réglées post-A6 : 105/135 en zone jouable (77,8 %) et
+# 73/142 en fantôme (51,4 %) portent un `clv_pct_real`. Donc ~36 % des lignes
+# réglées n'en portent aucun. Or le CLV converge ~3× plus vite que le résultat
+# (core/learning_layer.py, _CLV_MIN_SAMPLES=15 contre _MIN_SAMPLES=20) et c'est
+# un critère de PREMIER rang dans _decide_threshold : chaque capture perdue
+# coûte plus cher qu'une ligne de résultat perdue.
+#
+# Ce module énumérait DÉJÀ quatre causes possibles dans ses logs — et n'en
+# attribuait AUCUNE. On ne pouvait donc pas savoir laquelle corriger. Ici on
+# COMPTE, on ne devine pas : la correction viendra après la mesure, jamais
+# avant. Rien ici ne change une capture ; c'est de l'instrumentation pure.
+CAUSES_NON_CAPTURE = (
+    "sans_cote_exchange",       # l'exchange ne cote pas ce match (état normal)
+    "ligne_illisible",          # `selection_name` ne rend pas de point exploitable
+    "ligne_absente_echelle",    # la ligne pariée n'est pas un barreau de l'échelle
+    "ligne_bougee",             # la ligne a bougé : ce n'est plus le même pari
+    "selection_non_resolue",    # h2h dont la sélection n'est ni un côté ni l'autre
+    "sans_prix_de_nul",         # h2h sans cote de nul : pas de DNB reconstituable
+)
+
+_causes: dict = {}
+
+
+def reset_causes() -> None:
+    """Remet les compteurs à zéro.
+
+    APPELÉ PAR L'APPELANT, UNE FOIS PAR RUN, et non par chaque passe : les
+    deux passes (`capture_from_exchange` puis `capture_from_scan`) tournent
+    dans le même run, et un reset par passe ferait que la seconde effacerait
+    le décompte de la première. Le total d'un run est la somme des deux.
+    Un run de CI est un processus neuf, donc un oubli de reset ne cumule
+    jamais d'un run sur l'autre — mais les tests, eux, doivent reset."""
+    _causes.clear()
+
+
+def note_cause(cause: str, combien: int = 1) -> None:
+    """Compte une non-capture. Lève sur une cause inconnue : un code inventé
+    ne doit pas se perdre dans un compteur que personne ne relira."""
+    if cause not in CAUSES_NON_CAPTURE:
+        raise ValueError(f"cause de non-capture inconnue : {cause!r}")
+    _causes[cause] = _causes.get(cause, 0) + combien
+
+
+def causes_courantes() -> dict:
+    """Copie des compteurs de la passe en cours, causes nulles omises."""
+    return {c: _causes[c] for c in CAUSES_NON_CAPTURE if _causes.get(c)}
+
+
+def _resume_causes() -> str:
+    cc = causes_courantes()
+    return " ".join(f"{c}={n}" for c, n in cc.items()) if cc else "aucune"
+
+
+# Une clé `meta` PAR JOUR, sur le patron de core.source_adapter._SCORECARD_KEY
+# (JSON dans `meta`, jamais de table dédiée pour un compteur). Journalière parce
+# que le rapport hebdo doit pouvoir lire une fenêtre : un compteur cumulatif
+# unique ne dirait jamais si la situation s'améliore.
+CAUSES_KEY = "closing_causes_{jour}"
+
+
+def persister_causes(sb, now: datetime | None = None) -> dict:
+    """VIDANGE le décompte du run dans le total du jour (`meta`). Ne lève JAMAIS.
+
+    Additif (lecture puis somme) et non écrasant : plusieurs runs écrivent la
+    même clé dans la journée. Rend le total du jour APRÈS ajout, ou {} si rien
+    n'a pu être écrit — un compteur en panne ne doit jamais faire échouer une
+    capture ni un scan.
+
+    SÉMANTIQUE DE VIDANGE, et c'est volontaire : après une écriture réussie les
+    compteurs en mémoire sont remis à zéro, donc la fonction est IDEMPOTENTE.
+    `run_engine.run()` a plusieurs sorties (le chemin « zéro match » sort avant
+    la fin normale, et il peut suivre une capture), or il faut appeler la
+    vidange à chacune sans risquer de compter deux fois. Sans cette remise à
+    zéro, deux appels doubleraient le total du jour en silence."""
+    cc = causes_courantes()
+    if not sb or not cc:
+        return {}
+    jour = (now or datetime.now(timezone.utc)).strftime("%Y%m%d")
+    cle = CAUSES_KEY.format(jour=jour)
+    total = dict(cc)
+    try:
+        row = sb.table("meta").select("value").eq("key", cle).maybe_single().execute()
+        if row and row.data and row.data.get("value"):
+            deja = json.loads(row.data["value"])
+            total = {c: int(deja.get(c, 0)) + cc.get(c, 0)
+                     for c in set(deja) | set(cc)}
+    except Exception as e:
+        log.debug("closing causes: lecture impossible (%s)", e)
+    try:
+        sb.table("meta").upsert(
+            {"key": cle, "value": json.dumps(total, ensure_ascii=False),
+             "updated_at": datetime.now(timezone.utc).isoformat()},
+            on_conflict="key").execute()
+    except Exception as e:
+        log.warning("closing causes: écriture impossible (%s)", e)
+        return {}
+    reset_causes()          # vidange : voir la docstring (idempotence)
+    return total
 
 
 def _parse_time(value) -> datetime | None:
@@ -183,6 +285,7 @@ def capture_from_exchange(sb, matches: list[dict], exchange_prices: dict,
             continue
         in_window[mid] = (m, row, kickoff)
     if sans_cote:
+        note_cause("sans_cote_exchange", sans_cote)
         log.info("CLOSE SKIP | %d match(s) en fenêtre sans cote exchange "
                  "exploitable (appariement raté ou marché non coté)", sans_cote)
     if not in_window:
@@ -232,6 +335,7 @@ def capture_from_exchange(sb, matches: list[dict], exchange_prices: dict,
 
     if captured:
         log.info("📉 Closing line (exchange): %d signal(s) priced — 0 extra request", captured)
+    log.info("CLOSING CAUSES (exchange) | %s", _resume_causes())
     return captured
 
 
@@ -247,6 +351,7 @@ def _exchange_line_close(sig: dict, row: dict) -> float | None:
     mk = sig.get("market_key") or ""
     bet_point = _selection_point(sig.get("selection_name") or "")
     if bet_point is None:
+        note_cause("ligne_illisible")
         log.info("CLOSE SKIP | %s %s — ligne illisible dans '%s'",
                  sig.get("match"), mk, sig.get("selection_name"))
         return None
@@ -268,6 +373,7 @@ def _exchange_line_close(sig: dict, row: dict) -> float | None:
         if abs(pt - cible) <= LINE_TOLERANCE:
             price = float(r.get(side) or 0.0)
             return price if price > 1.01 else None
+    note_cause("ligne_absente_echelle")
     log.info("LINEMOVE | %s %s — ligne %s absente de l'échelle exchange (%d barreau(x)) — no CLV",
              sig.get("match"), mk, bet_point, len(rungs))
     return None
@@ -290,6 +396,7 @@ def _exchange_h2h_close(sig: dict, match: dict, row: dict) -> float | None:
     side = resolve_selection_side(sig.get("selection_name") or "",
                                   match.get("home", ""), match.get("away", ""))
     if side is None:
+        note_cause("selection_non_resolue")
         log.info("CLOSE SKIP | %s h2h — selection '%s' resolves to neither side",
                  sig.get("match"), sig.get("selection_name"))
         return None
@@ -299,6 +406,7 @@ def _exchange_h2h_close(sig: dict, match: dict, row: dict) -> float | None:
     if sport == "soccer":
         draw = float(row.get("X") or 0.0)
         if draw <= 1.01:
+            note_cause("sans_prix_de_nul")
             log.info("CLOSE SKIP | %s h2h — exchange sans prix de nul, un DNB ne peut "
                      "pas se comparer à un moneyline", sig.get("match"))
             return None
@@ -321,6 +429,7 @@ def _h2h_close(sig: dict, event: dict, sport: str) -> float | None:
     side = resolve_selection_side(sig.get("selection_name") or "",
                                   event.get("home", ""), event.get("away", ""))
     if side is None:
+        note_cause("selection_non_resolue")
         log.info("CLOSE SKIP | %s h2h — selection '%s' resolves to neither side",
                  sig.get("match"), sig.get("selection_name"))
         return None
@@ -356,10 +465,12 @@ def _line_market_close(sig: dict, event: dict, sport: str,
         home_point = pin.get("point")
         close_point = -float(home_point) if home_point is not None else None
     if bet_point is None or close_point is None:
+        note_cause("ligne_illisible")
         log.info("CLOSE SKIP | %s %s — line unknown (bet=%s close=%s)",
                  sig.get("match"), sig.get("market_key"), bet_point, close_point)
         return None
     if abs(float(close_point) - bet_point) > LINE_TOLERANCE:
+        note_cause("ligne_bougee")
         log.info("LINEMOVE | %s %s — bet %.2f closed %.2f, not the same bet — no CLV",
                  sig.get("match"), sig.get("market_key"), bet_point, float(close_point))
         return None
@@ -488,4 +599,5 @@ def capture_from_scan(sb, events: list[dict], now: datetime | None = None,
     if captured:
         log.info("📉 Closing line (scan feed): %d signal(s) priced — 0 extra OddsAPI credits",
                  captured)
+    log.info("CLOSING CAUSES (scan feed) | %s", _resume_causes())
     return captured
