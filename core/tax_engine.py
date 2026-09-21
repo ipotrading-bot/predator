@@ -179,9 +179,36 @@ def min_edge_required(k: int = 1, true_prob: float = DEFAULT_REFERENCE_PROB,
     O = (fair_odds*(1+e))**k), solving the same breakeven condition for the
     combo's compounded edge (1+e)**k - 1 gives:
         e > [1 + tax_rate*(1-P)/(1-tax_rate)] ** (1/k)  -  1
-    which collapses to the k=1 formula above when k=1. Increasing k raises
-    the required per-leg edge — tax compounds on the combined payout faster
-    than a flat sum of per-leg edges can outrun it.
+    which collapses to the k=1 formula above when k=1.
+
+    ⚠️ CORRIGÉ le 2026-09-21. Ce paragraphe affirmait l'inverse : « Increasing
+    k raises the required per-leg edge — tax compounds on the combined payout
+    faster than a flat sum of per-leg edges can outrun it. » La formule
+    ci-dessus dit le CONTRAIRE, et la fonction aussi. À true_prob=0.607 et
+    tax_rate=0.20, elle rend :
+
+        k = 1 → 9.825 %      k = 3 → 6.091 %
+        k = 2 → 7.605 %      k = 4 → 5.012 %      k = 5 → 4.217 %
+
+    L'edge requis par jambe **DÉCROÎT** avec k. La raison : le facteur
+    tax_rate*(1-P)/(1-tax_rate) est borné par tax_rate/(1-tax_rate) quand P
+    tend vers 0, donc le seuil total est plafonné — tandis que la racine k-ième
+    répartit ce plafond sur k jambes. Autrement dit la taxe frappe UNE fois le
+    gain net du ticket, pendant que l'edge se compose multiplicativement.
+    Vérifié en exécutant la fonction, pas en la relisant. Le gardien existait
+    DÉJÀ et affirmait la décroissance, avec la bonne explication :
+    tests/test_tax_engine.py::TestMinEdgeRequired::
+    test_per_leg_edge_shrinks_but_total_combo_edge_grows_with_k. La docstring
+    contredisait donc à la fois son propre code et son propre test — c'est
+    pourquoi une docstring n'est jamais une preuve (cf. la règle transverse
+    d'INCIDENTS.md).
+
+    ⚠️ Cela ne fait PAS des combinés le bon choix en général : à tax_rate = 0
+    cette fonction rend 0 pour tout k, et le critère qui tranche devient le
+    taux de croissance de Kelly PAR SIGNAL CONSOMMÉ — mesuré le 2026-09-21,
+    un simple le maximise (0,00294) devant le meilleur système partiel 2/5
+    (0,00282) et loin devant un combiné à 3 jambes (0,00163). La combinaison
+    n'était un gain que comme contournement de la taxe.
 
     NOTE: assumes every leg shares the same true_prob — a simplification to
     get a single scalar "how much edge is needed at this k" floor. Real

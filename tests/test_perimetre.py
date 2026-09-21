@@ -107,11 +107,18 @@ class TestFiltre:
 
 
 class TestMesureLiveScore:
-    """Le filtre d'entrée ne connaît qu'ESPN ; le règlement lit aussi
-    LiveScore. On COMPTE ce que l'un refuse et que l'autre réglerait — sans
-    rien émettre de plus (2026-09-10, décision opérateur en attente)."""
+    """LiveScore est passé de MESURE à DÉCISION le 2026-09-21.
 
-    def test_compte_sans_changer_le_verdict(self, monkeypatch, caplog):
+    Du 09-10 au 09-21 on COMPTAIT ce qu'ESPN refusait et que LiveScore
+    réglerait, sans rien émettre de plus — décision opérateur en attente.
+    Mesuré le 21/09 sur 8 scans standard : 23 des 54 marchés vivants écartés
+    « ligue non couverte » (43 %), LiveScore en connaissait 21 sur 21 — la
+    TOTALITÉ. Ces matchs étaient jetés AVANT d'être valorisés. L'opérateur a
+    tranché : élargir. Coût en requêtes : ZÉRO, l'appel avait déjà lieu pour
+    la mesure. Revue le 2026-10-19 sur le taux de résolution des ligues
+    admises — « LiveScore connaît » n'est PAS « LiveScore règle »."""
+
+    def test_un_match_connu_de_livescore_est_desormais_ADMIS(self, monkeypatch, caplog):
         monkeypatch.setattr(eng, "_fixtures_espn", lambda s, a, b: [_ev("X", "Y")])
         vus = []
         monkeypatch.setattr(eng, "_livescore_connait",
@@ -119,10 +126,64 @@ class TestMesureLiveScore:
         matches = [_m(_exchange="matchbook"), _m(match="C FC vs D FC", _exchange="matchbook")]
         with caplog.at_level(logging.INFO, logger="PREDATOR"):
             gardes = eng._filtrer_perimetre(matches, logging.getLogger("PREDATOR"))
-        assert gardes == [], "la mesure ne doit rien laisser passer de plus"
+        assert [g["match"] for g in gardes] == ["A FC vs B FC"]
         assert vus == [("A FC vs B FC", "soccer", "2026-09-04"), ("C FC vs D FC", "soccer", "2026-09-04")]
-        assert "NON RÉGLABLE | A FC vs B FC" in caplog.text and "LiveScore le connaît" in caplog.text
+        assert "RÉGLABLE VIA LIVESCORE | A FC vs B FC" in caplog.text
+        assert "NON RÉGLABLE | C FC vs D FC" in caplog.text
+        assert "1 match(s) admis GRÂCE à LiveScore" in caplog.text
+
+    def test_l_interrupteur_meta_coupe_l_elargissement(self, monkeypatch, caplog):
+        """Précédent `meta.betfair_suspendu` : l'opérateur doit pouvoir couper
+        sans déploiement, et on revient EXACTEMENT au comportement de mesure."""
+        monkeypatch.setattr(eng, "_fixtures_espn", lambda s, a, b: [_ev("X", "Y")])
+        monkeypatch.setattr(eng, "_livescore_connait", lambda m, s, d: m.startswith("A FC"))
+        monkeypatch.setattr(eng, "_meta_get",
+                            lambda sb, key: "off" if key == eng.PERIMETRE_LIVESCORE_META_KEY else None)
+        matches = [_m(_exchange="matchbook"), _m(match="C FC vs D FC", _exchange="matchbook")]
+        with caplog.at_level(logging.INFO, logger="PREDATOR"):
+            gardes = eng._filtrer_perimetre(matches, logging.getLogger("PREDATOR"), sb=object())
+        assert gardes == [], "coupé, l'élargissement ne doit rien laisser passer"
+        assert "LiveScore le connaît" in caplog.text
+        assert "coupé par l'opérateur" in caplog.text
+
+    def test_le_suffixe_livescore_ne_scinde_pas_la_categorie(self, monkeypatch, caplog):
+        """Bug attrapé le 2026-09-21 en écrivant l'élargissement : le suffixe
+        « — LiveScore le connaît » était ajouté à `raison` AVANT le comptage,
+        donc `_RAISON_NON_COUVERTE` se scindait en deux clés et `non_couverts`
+        retombait à 0 — l'alerte repartait désigner ESPN, exactement le défaut
+        qu'on venait de corriger. Le suffixe est un libellé de LOG, jamais une
+        catégorie."""
+        monkeypatch.setattr(eng, "_fixtures_espn", lambda s, a, b: [_ev("X", "Y")])
+        monkeypatch.setattr(eng, "_livescore_connait", lambda m, s, d: m.startswith("A FC"))
+        monkeypatch.setattr(eng, "_meta_get", lambda sb, key: "off")
+        matches = [_m(_exchange="matchbook"), _m(match="C FC vs D FC", _exchange="matchbook")]
+        with caplog.at_level(logging.INFO, logger="PREDATOR"):
+            eng._filtrer_perimetre(matches, logging.getLogger("PREDATOR"), sb=object())
+        # 2 écartés dans UNE seule catégorie, pas deux
         assert "LiveScore connaît 1 des 2 matchs écartés" in caplog.text
+        assert "LiveScore le connaît" in caplog.text        # le libellé survit au log
+
+    def test_actif_par_defaut_et_sur_panne_de_lecture(self, monkeypatch):
+        """On ne restreint pas le périmètre sur une panne de lecture meta : on
+        le restreint sur une DÉCISION."""
+        assert eng._perimetre_livescore_actif(None) is True
+        monkeypatch.setattr(eng, "_meta_get", lambda sb, key: None)
+        assert eng._perimetre_livescore_actif(object()) is True
+        for valeur in ("off", "OFF", " 0 ", "false", "non"):
+            monkeypatch.setattr(eng, "_meta_get", lambda sb, key, v=valeur: v)
+            assert eng._perimetre_livescore_actif(object()) is False
+        monkeypatch.setattr(eng, "_meta_get", lambda sb, key: "on")
+        assert eng._perimetre_livescore_actif(object()) is True
+
+    def test_le_budget_et_le_critere_de_retrait_sont_dates(self):
+        """Règle 13 : un élargissement de périmètre porte son budget chiffré et
+        sa date de retrait, dans le MÊME commit."""
+        import inspect
+        src = inspect.getsource(eng)
+        bloc = src[src.index("Périmètre élargi à LiveScore"):][:2600]
+        assert "ZÉRO requête supplémentaire" in bloc
+        assert "2026-10-19" in bloc
+        assert "resolution_rate" in bloc
 
     def test_livescore_connait_apparie_les_deux_camps(self, monkeypatch):
         rows = [{"home": ["A FC"], "away": ["B FC"], "status": "ns"},
@@ -167,6 +228,66 @@ class TestAlertePerimetre:
         monkeypatch.setattr(eng, "_fixtures_espn", lambda s, a, b: [])
         eng._filtrer_perimetre([_m(_exchange="matchbook")] * 6, logging.getLogger("PREDATOR"))
         eng._filtrer_perimetre([_m(_exchange="matchbook")] * 3, logging.getLogger("PREDATOR"), sb=object())
+        assert envois == []
+
+    def test_l_alerte_ne_designe_pas_espn_quand_livescore_couvre_tout(self, monkeypatch):
+        """2026-09-21 — le texte envoyait vérifier ESPN dans TOUS les cas, y
+        compris quand le log juste au-dessus disait « LiveScore connaît 5 des
+        5 ». Mesuré sur 8 scans standard ce jour-là : 23 marchés écartés sur
+        54 vivants, LiveScore en connaissait 21 sur 21. Ce n'est pas une panne
+        ESPN, c'est `_reglable` (« ESPN liste-t-il ce match ? ») plus strict
+        que le règlement, qui lit LiveScore depuis le 2026-09-05. L'alerte a
+        coûté un aller-retour de diagnostic vers le mauvais endroit."""
+        envois = self._capture(monkeypatch)
+        # ESPN RÉPOND (il liste un match) : pas de panne. Les autres sont
+        # simplement hors de sa couverture, et LiveScore les connaît tous.
+        # Depuis l'élargissement du 21/09 ce cas ne se produit plus qu'avec
+        # l'interrupteur COUPÉ — sinon ces matchs sont admis, pas écartés.
+        monkeypatch.setattr(eng, "_fixtures_espn", lambda s, a, b: [_ev("T0 FC", "U0 FC")])
+        monkeypatch.setattr(eng, "_livescore_connait", lambda *a, **k: True)
+        monkeypatch.setattr(eng, "_meta_get", lambda sb, key: "off")
+        matches = [_m(match=f"T{i} FC vs U{i} FC", _exchange="matchbook") for i in range(6)]
+        eng._filtrer_perimetre(matches, logging.getLogger("PREDATOR"), sb=object())
+        assert len(envois) == 1
+        texte = envois[0][1]
+        assert "1/6" in texte
+        assert "PAS une panne ESPN" in texte
+        assert "décision opérateur" in texte
+        assert "relais resté posé" not in texte, "ne plus envoyer vers le mauvais incident"
+
+    def test_l_elargissement_actif_eteint_l_alerte(self, monkeypatch):
+        """Conséquence directe de l'élargissement : ce qui déclenchait l'alerte
+        le 21/09 (5/8 écartés, tous connus de LiveScore) devient une journée
+        normale — les matchs sont admis au lieu d'être jetés."""
+        envois = self._capture(monkeypatch)
+        monkeypatch.setattr(eng, "_fixtures_espn", lambda s, a, b: [_ev("T0 FC", "U0 FC")])
+        monkeypatch.setattr(eng, "_livescore_connait", lambda *a, **k: True)
+        matches = [_m(match=f"T{i} FC vs U{i} FC", _exchange="matchbook") for i in range(6)]
+        gardes = eng._filtrer_perimetre(matches, logging.getLogger("PREDATOR"), sb=object())
+        assert len(gardes) == 6, "tous admis : 1 par ESPN, 5 par LiveScore"
+        assert envois == [], "plus rien à signaler"
+
+    def test_l_alerte_designe_espn_quand_livescore_ne_couvre_pas(self, monkeypatch):
+        """L'inverse doit rester vrai : si LiveScore ne connaît pas les
+        écartés, c'est bien vers ESPN qu'il faut envoyer."""
+        envois = self._capture(monkeypatch)
+        monkeypatch.setattr(eng, "_fixtures_espn", lambda s, a, b: [_ev("T0 FC", "U0 FC")])
+        monkeypatch.setattr(eng, "_livescore_connait", lambda *a, **k: False)
+        matches = [_m(match=f"T{i} FC vs U{i} FC", _exchange="matchbook") for i in range(6)]
+        eng._filtrer_perimetre(matches, logging.getLogger("PREDATOR"), sb=object())
+        texte = envois[0][1]
+        assert "relais resté posé" in texte and "n'en connaît que 0 sur 5" in texte
+
+    def test_le_texte_ne_change_pas_la_condition_de_declenchement(self, monkeypatch):
+        """La correction du 2026-09-21 touche le TEXTE, jamais le seuil : une
+        majorité qui passe ne doit toujours rien envoyer, LiveScore ou pas."""
+        envois = self._capture(monkeypatch)
+        monkeypatch.setattr(eng, "_livescore_connait", lambda *a, **k: True)
+        monkeypatch.setattr(eng, "_meta_get", lambda sb, key: "off")   # élargissement coupé
+        monkeypatch.setattr(eng, "_fixtures_espn",
+                            lambda s, a, b: [_ev(f"T{i} FC", f"U{i} FC") for i in range(4)])
+        matches = [_m(match=f"T{i} FC vs U{i} FC", _exchange="matchbook") for i in range(6)]
+        assert len(eng._filtrer_perimetre(matches, logging.getLogger("PREDATOR"), sb=object())) == 4
         assert envois == []
 
 

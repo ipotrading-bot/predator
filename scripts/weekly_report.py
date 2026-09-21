@@ -12,18 +12,25 @@ La définition opérationnelle de « s'approcher de la perfection » : CLV réel
 Lecture seule sur Supabase (clé anon), envoi Telegram si configuré.
 Lancé par .github/workflows/reports.yml, job `hebdo` (lundi 07:00 UTC).
 """
+import json
 import logging
+import math
 import os
 from datetime import datetime, timezone
 
 import requests
 
 from core.audit_engine import count_missed_closing_lines
+from core.closing_line import CAUSES_KEY as _CAUSES_KEY, CAUSES_NON_CAPTURE
 from core.constants import (CLOSING_SRC_EXCHANGE, CLOSING_SRC_ODDSAPI,
                             CLOSING_SRC_ORACLE, TAX_RATE)
 from core.db import get_db
-from core.learning_layer import (SPORT_DEFAULTS, _LEDGER_SELECT, _clv_stats,
-                                 _sport_stats, load_sport_verdicts, playable_rows)
+from core.learning_layer import (FRONTIERE_DECISION_LE, FRONTIERE_N_REQUIS,
+                                 FRONTIERE_SPORT, FRONTIERE_TESTEE_MINUTES,
+                                 SPORT_DEFAULTS, _LEDGER_SELECT, _PLAYABLE_MAX_MINUTES,
+                                 _clv_stats, _dater_par_signal, _sport_stats,
+                                 load_sport_verdicts, playable_rows,
+                                 post_correction_rows)
 from core.stats_utils import brier_reference, brier_score, p_breakeven, wilson_ci
 
 logging.basicConfig(level=logging.WARNING, format="%(levelname)s | %(message)s")
@@ -77,7 +84,42 @@ CLOSING_MISSED_BASELINE = 77
 CLOSING_BASELINE_DATE = "2026-08-26"
 
 
-def closing_coverage(signal_rows: list[dict], missed: int) -> list[str]:
+def causes_de_non_capture(sb, jours: int = 7, aujourdhui=None) -> dict:
+    """Somme, sur `jours` glissants, des causes de non-capture de closing line
+    (clés `meta` journalières posées par core.closing_line.persister_causes).
+
+    POURQUOI. La couverture du CLV plafonnait à 77,8 % en zone jouable et
+    51,4 % en fantôme (mesuré le 2026-09-21) : ~36 % des lignes réglées ne
+    portent aucun `clv_pct_real`. Or le CLV converge ~3× plus vite que le
+    résultat et c'est un critère de PREMIER rang des seuils. Le module
+    énumérait quatre causes possibles dans ses logs sans en attribuer aucune :
+    impossible de savoir laquelle corriger. Cette section rend la cause
+    DOMINANTE visible, pour que le correctif suive une mesure et non une
+    intuition.
+
+    Le nom de clé et la liste des causes sont IMPORTÉS de core.closing_line,
+    jamais recopiés (règle n°6). Ne lève jamais : une section absente vaut
+    mieux qu'un rapport qui ne part pas."""
+    from datetime import datetime, timedelta, timezone
+
+    base = aujourdhui or datetime.now(timezone.utc)
+    total: dict = {}
+    for d in range(jours):
+        cle = _CAUSES_KEY.format(jour=(base - timedelta(days=d)).strftime("%Y%m%d"))
+        try:
+            row = sb.table("meta").select("value").eq("key", cle).maybe_single().execute()
+            if not (row and row.data and row.data.get("value")):
+                continue
+            for cause, n in json.loads(row.data["value"]).items():
+                if cause in CAUSES_NON_CAPTURE:
+                    total[cause] = total.get(cause, 0) + int(n)
+        except Exception as e:
+            log.debug("causes de non-capture [%s] : %s", cle, e)
+    return total
+
+
+def closing_coverage(signal_rows: list[dict], missed: int,
+                     causes: dict | None = None) -> list[str]:
     """Section « couverture closing line » du rapport hebdo. Pure.
 
     POURQUOI ELLE EXISTE. Le CLV réel est le juge de rentabilité de tout ce
@@ -125,6 +167,40 @@ def closing_coverage(signal_rows: list[dict], missed: int) -> list[str]:
         lignes.append("   ⚠️ ZÉRO capture `exchange` — `capture_from_exchange` ne produit rien. "
                       "Elle est appelée après `_enrich_from_exchange` dans run_engine.py ; "
                       "un slate sans marché Matchbook apparié donne ce résultat.")
+    lignes.extend(_ventilation_causes(causes or {}))
+    return lignes
+
+
+# Libellés en français des causes techniques : le rapport est lu par
+# l'opérateur, pas par le code. Dérivé de CAUSES_NON_CAPTURE — un gardien
+# vérifie qu'aucune cause n'est sans libellé (règle n°6).
+_LIBELLE_CAUSE = {
+    "sans_cote_exchange":    "l'exchange ne cotait pas le match",
+    "ligne_illisible":       "ligne du pari illisible",
+    "ligne_absente_echelle": "ligne absente de l'échelle exchange",
+    "ligne_bougee":          "ligne bougée (autre pari)",
+    "selection_non_resolue": "sélection h2h non résolue",
+    "sans_prix_de_nul":      "h2h sans cote de nul (DNB impossible)",
+}
+
+
+def _ventilation_causes(causes: dict) -> list[str]:
+    """Pourquoi les captures ont manqué, la cause dominante en premier. Pure.
+
+    Sans chiffre, on ne dit rien plutôt que d'afficher un tableau vide : une
+    semaine sans non-capture est une bonne nouvelle, pas une section à remplir.
+    """
+    chiffres = {c: n for c, n in causes.items() if n}
+    if not chiffres:
+        return []
+    total = sum(chiffres.values())
+    classe = sorted(chiffres.items(), key=lambda kv: -kv[1])
+    tete, n_tete = classe[0]
+    lignes = [f"   Causes de non-capture (7 j, {total} refus) — dominante : "
+              f"{_LIBELLE_CAUSE.get(tete, tete)} ({n_tete}, {n_tete / total:.0%})"]
+    detail = " · ".join(f"{_LIBELLE_CAUSE.get(c, c)} {n}" for c, n in classe[1:])
+    if detail:
+        lignes.append(f"   Puis — {detail}")
     return lignes
 
 
@@ -135,7 +211,115 @@ def closing_coverage(signal_rows: list[dict], missed: int) -> list[str]:
 # la lisait. Même contrat que le reste du rapport : zone jouable, non shadow,
 # Wilson bas contre le point mort après taxe — jamais un taux nu (règle n°7).
 _LEAGUE_MIN_DECIDED = int(os.environ.get("WEEKLY_LEAGUE_MIN_DECIDED", "10"))
-_LEAGUE_SELECT = "league, sport, outcome, odds, time_to_match_minutes, is_shadow, created_at"
+_LEAGUE_SELECT = ("league, sport, outcome, odds, time_to_match_minutes, is_shadow, "
+                  "created_at, signal_id")   # signal_id : datation par SIGNAL de la
+# section frontière (voir FRONTIERE_SPORT). Une colonne de plus sur une lecture qui
+# existait déjà — zéro requête ajoutée.
+
+
+# ── Frontière jouable : expérience PRÉ-ENREGISTRÉE (2026-09-21) ─────────
+
+def frontiere_jouable(rows: list[dict], coupure: int = FRONTIERE_TESTEE_MINUTES,
+                      n_requis: int = FRONTIERE_N_REQUIS) -> dict:
+    """Avancement de l'expérience pré-enregistrée sur la borne basse. Pure.
+
+    La coupure, la taille requise et la date de décision sont FIXÉES À
+    L'AVANCE dans core.learning_layer (voir le bloc FRONTIERE_*) : cette
+    fonction ne cherche pas la meilleure coupure, elle mesure celle qui a été
+    annoncée. C'est toute la différence avec le scan qui a produit z = 2,08 en
+    regardant 29 coupures — un maximum sélectionné n'est pas une preuve.
+
+    LA POPULATION AUSSI est pré-enregistrée (`FRONTIERE_SPORT`, zone
+    ≤ `_PLAYABLE_MAX_MINUTES`, datation par SIGNAL) — et ce n'était pas le cas
+    au premier jet. Le premier run réel l'a révélé : le même test rendait
+    z = 2,08 sur « soccer, datation par signal » et z = 1,31 sur « tous sports,
+    datation par règlement ». Une pré-enregistration qui laisse la population
+    ouverte n'en est pas une : elle garde la liberté de choisir la tranche qui
+    arrange, le jour de la décision.
+
+    L'appelant doit avoir posé `signal_created_at` (`_dater_par_signal`) : sans
+    lui, `post_correction_rows` retombe sur `created_at` du ledger, qui est la
+    date de RÈGLEMENT — l'incident du 2026-09-11 (131 lignes d'août comptées
+    post-époque) dit ce que ça coûte. Un gardien vérifie que `main()` le fait.
+
+    ⚠️ EXCEPTION ASSUMÉE à `.claude/rules/learning.md` (« toute analyse du
+    ledger se conditionne sur la zone jouable 2-24 h AVANT de conclure ») :
+    cette fonction NE conditionne PAS sur la borne basse, parce que c'est
+    précisément elle qu'elle met à l'épreuve. Le groupe « sous la coupure » est
+    fait de fantômes ; les filtrer viderait l'expérience de son objet. La borne
+    HAUTE, elle, est bien appliquée — au-delà on ne parle plus de la même borne.
+
+    Rend `decidable=False` tant que les DEUX groupes n'ont pas `n_requis`
+    lignes : sous cette barre on n'annonce rien, quel que soit l'écart."""
+    population = [r for r in rows
+                  if (r.get("sport") or "") == FRONTIERE_SPORT
+                  and r.get("time_to_match_minutes") is not None
+                  and float(r["time_to_match_minutes"]) <= _PLAYABLE_MAX_MINUTES]
+    decisifs = [r for r in post_correction_rows(population)
+                if r.get("outcome") in _DECISIVE and r.get("odds")]
+    sous = [r for r in decisifs if float(r["time_to_match_minutes"]) < coupure]
+    sur = [r for r in decisifs if float(r["time_to_match_minutes"]) >= coupure]
+
+    def _bloc(groupe: list[dict]) -> dict:
+        n = len(groupe)
+        if not n:
+            return {"n": 0, "wins": 0, "hit_rate": None, "wilson_lower": None,
+                    "avg_odds": None, "p_breakeven": None, "ev_par_pari": None}
+        w = sum(1 for r in groupe if r["outcome"] == "WIN")
+        cote = sum(float(r["odds"]) for r in groupe) / n
+        lo, _hi = wilson_ci(w, n)
+        return {"n": n, "wins": w, "hit_rate": w / n, "wilson_lower": lo,
+                "avg_odds": cote, "p_breakeven": p_breakeven(cote, TAX_RATE),
+                "ev_par_pari": (w / n) * cote - 1}
+
+    a, b = _bloc(sous), _bloc(sur)
+    z = None
+    if a["n"] and b["n"]:
+        pool = (a["wins"] + b["wins"]) / (a["n"] + b["n"])
+        se = math.sqrt(pool * (1 - pool) * (1 / a["n"] + 1 / b["n"]))
+        if se:
+            z = (b["hit_rate"] - a["hit_rate"]) / se
+    return {"coupure": coupure, "n_requis": n_requis, "sous": a, "sur": b, "z": z,
+            "decidable": a["n"] >= n_requis and b["n"] >= n_requis,
+            "decision_le": FRONTIERE_DECISION_LE}
+
+
+def format_frontiere(etat: dict) -> list[str]:
+    """Section « frontière jouable » du rapport hebdo. Pure.
+
+    Ne conclut JAMAIS sous la taille requise : sans cette garde, la section
+    rejouerait chaque semaine la tentation de croire un z de 2,0 obtenu sur un
+    échantillon deux fois trop petit."""
+    a, b, c = etat["sous"], etat["sur"], etat["coupure"]
+    if not a["n"] or not b["n"]:
+        return []
+    lignes = ["", f"🧭 *Frontière jouable — test pré-enregistré à T-{c} min*",
+              f"   sous {c} min : {a['wins']}-{a['n'] - a['wins']} "
+              f"({a['hit_rate']:.1%}, point mort {a['p_breakeven']:.1%}, "
+              f"EV/pari {a['ev_par_pari']:+.1%})",
+              f"   dès {c} min : {b['wins']}-{b['n'] - b['wins']} "
+              f"({b['hit_rate']:.1%}, point mort {b['p_breakeven']:.1%}, "
+              f"EV/pari {b['ev_par_pari']:+.1%})"]
+    z = etat["z"]
+    manque = max(0, etat["n_requis"] - a["n"]) + max(0, etat["n_requis"] - b["n"])
+    if not etat["decidable"]:
+        lignes.append(f"   ⚪ n insuffisant ({a['n']} et {b['n']} sur "
+                      f"{etat['n_requis']} requis, {manque} lignes à venir) — "
+                      f"AUCUNE conclusion. Échéance {etat['decision_le']}"
+                      + (f", z actuel {z:+.2f}" if z is not None else ""))
+    elif z is not None and z > 1.96:
+        lignes.append(f"   🔴 écart significatif (z {z:+.2f}) — dès {c} min on gagne, "
+                      f"sous {c} min on perd : _PLAYABLE_MIN_MINUTES doit DESCENDRE "
+                      f"à {c} (on récupère la bande {c}-120 min). Décision mûre, "
+                      f"relire INCIDENTS.md avant de basculer")
+    elif z is not None and z < -1.96:
+        lignes.append(f"   🔴 écart significatif INVERSE (z {z:+.2f}) — sous {c} min "
+                      f"on fait MIEUX. La borne actuelle est trop permissive : "
+                      f"_PLAYABLE_MIN_MINUTES doit MONTER, pas descendre")
+    else:
+        lignes.append(f"   🟢 n atteint, écart NON significatif (z {z:+.2f}) — la "
+                      f"frontière actuelle tient, expérience close")
+    return lignes
 
 
 def league_breakdown(rows: list[dict], min_decided: int = _LEAGUE_MIN_DECIDED) -> list[dict]:
@@ -229,7 +413,8 @@ def format_report(metrics_by_sport: dict[str, dict], verdicts: dict[str, dict],
                   suspect: tuple[int, int], now: datetime,
                   ai_health: list[dict] | None = None,
                   closing: list[str] | None = None,
-                  leagues: list[str] | None = None) -> str:
+                  leagues: list[str] | None = None,
+                  frontiere: list[str] | None = None) -> str:
     """Texte Telegram/console du rapport hebdo. Pure."""
     lines = [f"📚 *PREDATOR — rapport hebdo de vérité* · {now:%d/%m %H:%M} UTC",
              "CLV réel > 0 et calibration stable = l'objectif ; le ROI court terme n'est qu'un témoin.",
@@ -277,6 +462,7 @@ def format_report(metrics_by_sport: dict[str, dict], verdicts: dict[str, dict],
                      + " (perte prouvée, borne haute de Wilson sous le point mort"
                      " — à trancher par l'opérateur)")
     lines.extend(leagues or [])
+    lines.extend(frontiere or [])
     lines.extend(closing or [])
     lines.extend(format_ai_health(ai_health or []))
     return "\n".join(lines)
@@ -335,7 +521,8 @@ def main() -> int:
         print(f"signals: lecture impossible — {e}")
         signal_rows, suspect = [], (0, 0)
     try:
-        closing = closing_coverage(signal_rows, count_missed_closing_lines(sb))
+        closing = closing_coverage(signal_rows, count_missed_closing_lines(sb),
+                                   causes_de_non_capture(sb))
     except Exception as e:                  # jamais bloquant pour le rapport
         print(f"couverture closing line : lecture impossible — {e}")
         closing = []
@@ -348,12 +535,25 @@ def main() -> int:
     try:
         res = (sb.table("ai_learning_ledger").select(_LEAGUE_SELECT)
                .order("created_at", desc=True).limit(LEAGUE_LIMIT).execute())
-        leagues = format_leagues(league_breakdown(res.data or []))
+        ledger_rows = res.data or []
+        leagues = format_leagues(league_breakdown(ledger_rows))
     except Exception as e:                  # jamais bloquant pour le rapport
         print(f"par ligue : lecture impossible — {e}")
-        leagues = []
+        ledger_rows, leagues = [], []
+    try:
+        # MÊME lecture que la section par ligue — zéro requête de plus, et les
+        # deux sections parlent des mêmes lignes. Celle-ci a besoin des
+        # FANTÔMES (le groupe « sous la coupure » en est fait), donc elle lit
+        # `ledger_rows` brut et non le filtre non-shadow de league_breakdown.
+        # Datation par SIGNAL avant toute mesure appliquée (règle 10) : le
+        # `created_at` du ledger est la date de RÈGLEMENT. Fait ICI et non dans
+        # la fonction pure, qui ne doit pas toucher la base.
+        frontiere = format_frontiere(frontiere_jouable(_dater_par_signal(sb, ledger_rows)))
+    except Exception as e:                  # jamais bloquant pour le rapport
+        print(f"frontière jouable : calcul impossible — {e}")
+        frontiere = []
     text = format_report(metrics, load_sport_verdicts(sb), suspect, now, ai_health, closing,
-                         leagues)
+                         leagues, frontiere)
     print(text)
     return 0 if _send(text) else 1
 

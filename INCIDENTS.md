@@ -278,6 +278,56 @@ empirique et tout backtest qui les ignorerait aurait un biais de survie.
 Une source qui « répond » ne porte pas forcément un prix, et une source qui
 échoue ne le fait presque jamais bruyamment.
 
+### La porte d'émission était plus stricte que le règlement (2026-09-21)
+
+Symptôme : alerte Telegram « PÉRIMÈTRE — 3/8 marchés vivants réglables, 5
+écartés (62 %) », et **zéro signal de toute la journée** du 21/09. L'alerte
+envoyait vérifier ESPN et relire l'incident du relais — alors que le log,
+une ligne plus bas, disait « LiveScore connaît 5 des 5 matchs écartés ».
+
+Cause : `run_engine._reglable` ne demandait qu'« ESPN liste-t-il ce match ? »
+(posé le 2026-09-03), alors que le RÈGLEMENT lit aussi LiveScore depuis le
+2026-09-05. La porte d'émission était donc plus stricte que la capacité de
+règlement, et jetait des matchs **avant même de les valoriser** : on ne saura
+jamais ce qu'ils valaient.
+
+Mesuré sur 8 scans standard du 21/09 : **23 des 54 marchés vivants écartés
+(43 %), et LiveScore en connaissait 21 sur 21** — la totalité, dans chaque
+scan où la mesure apparaît. Le scan de 13:10 : Bulgarie Vtora Liga ×3,
+Danemark 1st Division, Roumanie Superliga.
+
+Et ESPN allait bien : 3 matchs ont passé la porte. Ces 3 survivants avaient
+tous des EV franchement négatives (−2,9 % à −14,7 %, Géorgie, Suède D3,
+Argentine D2) — aucun quasi-raté. **Zéro signal était le bon comportement ;
+c'est la base de marchés, réduite à 3, qui était le problème.**
+
+Correctif, décision opérateur (règle 11) : `_reglable` admet un match que
+LiveScore connaît. Base attendue 31 → ~52 marchés (+68 %). Budget chiffré
+(règle 13) : **ZÉRO requête supplémentaire** — `livescore_connait` était déjà
+appelé sur chacun de ces matchs depuis le 09-10 pour la mesure, sur le budget
+partagé `livescore_results`. On a rendu décisif un appel qui avait déjà lieu.
+
+Critère de retrait DATÉ : revue le **2026-10-19**. L'élargissement sort si les
+ligues admises montrent un taux de résolution (`perf_view.resolution_rate`)
+inférieur aux ligues couvertes par ESPN — « LiveScore connaît le match » n'est
+PAS « LiveScore publie un score final fiable », et un signal non réglé finit
+`expired`, ce qui DÉTRUIT la ligne d'échantillon. Interrupteur d'arrêt sans
+déploiement, sur le précédent de `meta.betfair_suspendu` :
+`ops.py supabase meta-set perimetre_livescore off`.
+
+Deux défauts corrigés au passage, tous deux silencieux :
+- l'alerte désignait ESPN dans TOUS les cas ; elle nomme désormais la vraie
+  cause quand LiveScore couvre les écartés, et ne garde l'ESPN que sinon ;
+- en déplaçant le comptage, le suffixe « — LiveScore le connaît » est entré un
+  instant dans la CLÉ du motif, scindant `_RAISON_NON_COUVERTE` en deux et
+  ramenant `non_couverts` à 0 — l'alerte repartait désigner ESPN, le défaut
+  qu'on venait de corriger. Un suffixe est un libellé de log, jamais une
+  catégorie. Gardien : `test_le_suffixe_livescore_ne_scinde_pas_la_categorie`.
+
+Gardiens : `tests/test_perimetre.py::TestMesureLiveScore` (admission,
+interrupteur, actif par défaut et sur panne de lecture, budget et date de
+retrait présents dans le code) et `TestAlertePerimetre`.
+
 ### Sources de cotes : lesquelles portent RÉELLEMENT un signal
 
 la règle est « authentifié par clé = joignable, sinon filtré
@@ -1183,6 +1233,109 @@ endpoint — gardé par `tests/test_odds500.py::TestRobotsTxt`.
 
 Un règlement manqué ne retarde pas l'apprentissage : il DÉTRUIT
 l'échantillon, parce qu'un signal non réglé finit purgé en `expired`.
+
+### Le maximum sélectionné n'est pas une preuve (2026-09-21)
+
+Symptôme : aucun — c'est une erreur d'ANALYSE, attrapée avant d'atteindre le
+code. Elle est consignée parce qu'elle s'est produite deux fois dans la même
+session, sur deux sujets différents, et qu'elle est la plus facile à refaire.
+
+**Premier cas — trois métriques qui n'en font qu'une.** Mesuré en zone jouable
+post-A6 : `spreads_home` +3,13 u et `spreads_away` −6,44 u, avec un CLV réel
+(+3,64 contre −0,97) et une calibration (+6,3 contre −23,8 points) qui
+concordaient. Conclusion tirée : segmenter le seuil par CÔTÉ. Le test de
+réplication en zone FANTÔME — même moteur, même période, données non utilisées
+pour la mesure — inverse TOUT : `spreads_home` −11,03 u (perdant démontré),
+`spreads_away` +2,67 u, CLV +5,52 (5/5 captures positives), calibration en
+miroir exact (−22,9 contre +6,8). Idem sur les totals.
+
+Cause : P&L, CLV et calibration calculés sur les **mêmes 17 lignes** ne sont pas
+trois preuves indépendantes — ils sont corrélés par construction. Si les paris
+ont perdu, le taux réalisé est bas ET le prix a bougé contre nous ET la
+probabilité annoncée paraît surconfiante. Un seul échantillon vu sous trois
+angles avait été présenté comme trois tests.
+
+**Second cas — la frontière jouable.** Par bande de délai avant le coup
+d'envoi (soccer, post-A6, datation par signal) : 0-30 min −5,7 % d'EV/pari,
+30-60 min −21,6 %, 60-120 min **+19,8 %**, 2-4 h +11,4 %, 4-8 h +6,1 %,
+8-24 h +18,3 %. Agrégé à la coupure 60 min : ≥60 = 85-45 (+15,16 u), <60 =
+49-46 (−13,29 u), écart 13,8 points, z = 2,08. La bande 60-120 min — la
+MEILLEURE mesurée — est jetée par `_PLAYABLE_MIN_MINUTES = 120`.
+
+Cause de l'erreur : six bandes regardées, puis la coupure qui ressortait le
+mieux choisie comme si elle avait été postulée. Le scan de TOUTES les coupures
+de 20 à 300 min montre que z > 1,96 n'apparaît qu'à 40, 60 et 290 (290 = bruit,
+53 lignes du côté haut) ; avec 29 coupures testées, Bonferroni exige z ≈ 2,99 et
+le maximum est 2,08. La DIRECTION est robuste (z positif aux 29 coupures, de
++1,0 à +2,1), le POINT de coupure ne l'est pas. Et la coupure actuelle n'est pas
+mieux justifiée : z = 1,54 à 120 min. Rien n'a bougé.
+
+À retenir, et c'est la règle : **avant de croire une asymétrie, la répliquer sur
+des données qui n'ont pas servi à la trouver ; et avant de croire un seuil, se
+demander combien de seuils ont été essayés.** Trois vues du même échantillon ne
+valent pas trois tests. Un z de 2,0 choisi parmi 29 vaut un z de 1,0 postulé.
+
+Mesure de fond qui recadre tout : le facteur limitant de ce dépôt est la
+PUISSANCE STATISTIQUE, pas la stratégie. Trancher la frontière demande ~200
+lignes par groupe (80 % de puissance) ; on en a 95 et 130. Les verdicts par
+sport demandent 30, seul le soccer les atteint. Le MMA pèse n=2 sur tout le
+ledger. À 9,0 lignes réglées par jour, la bonne question n'est jamais « quelle
+idée » mais « combien de temps avant de pouvoir trancher ».
+
+**Troisième cas, révélé par le premier run réel de l'instrument lui-même.** La
+pré-enregistration fixait la coupure (60 min), la taille requise (200 par
+groupe) et la date (2026-10-19) — mais **pas la POPULATION**. Lancée en
+production, la section a rendu **z = +1,31** là où la mesure à la main donnait
+2,08 : la première portait sur « tous sports, datation par règlement », la
+seconde sur « soccer, datation par signal ». Une pré-enregistration qui laisse
+la population ouverte n'en est pas une — elle garde la liberté de choisir la
+tranche qui arrange, le jour de la décision. C'est le même chemin bifurquant,
+déplacé d'un cran, et il a fallu que l'instrument tourne pour qu'il se voie.
+
+Correctif : la population est pré-enregistrée elle aussi (`FRONTIERE_SPORT` =
+soccer, seul sport à masse statistique ; zone ≤ `_PLAYABLE_MAX_MINUTES` ;
+datation par SIGNAL via `_dater_par_signal`, `created_at` du ledger étant la
+date de RÈGLEMENT). Gardiens : un autre sport n'entre pas, la borne haute
+s'applique, une ligne réglée après l'époque mais ÉMISE avant est écartée, et
+`main()` doit dater par signal avant de mesurer.
+
+Correctif principal : rien n'a été appliqué, et c'est le correctif. À la place,
+une expérience PRÉ-ENREGISTRÉE — coupure (60 min), taille requise (200 par groupe)
+et date de décision (2026-10-19) fixées à l'avance dans
+`core/learning_layer.py`, à côté de la constante qu'elles testent. Le rapport
+hebdo rend l'avancement et REFUSE de conclure sous la taille requise. Les
+données arrivent gratuitement : les signaux sous 120 min sont déjà émis, réglés
+et enregistrés en fantôme. Gardiens : `tests/test_frontiere_jouable.py`, dont
+`test_les_chiffres_reels_du_21_09_ne_concluent_rien` rejoue z = 2,08 et exige
+« AUCUNE conclusion ».
+
+### 36 % des lignes réglées ne portaient aucun CLV, sans qu'on sache pourquoi (2026-09-21)
+
+Symptôme : couverture du `clv_pct_real` à 105/135 en zone jouable (77,8 %) et
+73/142 en fantôme (51,4 %) sur les lignes réglées post-A6.
+
+Pourquoi ça coûte plus qu'il n'y paraît : le CLV converge ~3× plus vite que le
+résultat (`_CLV_MIN_SAMPLES = 15` contre `_MIN_SAMPLES = 20`) et c'est un
+critère de PREMIER rang dans `_decide_threshold`. Une capture perdue coûte donc
+davantage qu'une ligne de résultat perdue — et la puissance statistique est le
+facteur limitant du dépôt.
+
+Cause de l'aveuglement : `core/closing_line.py` énumérait DÉJÀ quatre causes
+possibles dans ses logs (ligne absente de l'échelle, match sans cote exchange,
+émission née après la dernière passe, settlement en famine) et **n'en attribuait
+aucune**. Impossible de savoir laquelle corriger, donc impossible de corriger.
+
+Correctif : on COMPTE les sept points de non-capture (`CAUSES_NON_CAPTURE`), on
+persiste par jour dans `meta` (`closing_causes_YYYYMMDD`, patron de
+`source_adapter._SCORECARD_KEY`), et le rapport hebdo nomme la cause DOMINANTE
+avec sa part. La correction de la cause viendra APRÈS la mesure, jamais avant.
+Instrumentation pure : aucune capture modifiée, compteur hors du contrat de fin,
+une panne d'écriture ne lève jamais, un run sans refus ne coûte aucune requête.
+Sémantique de VIDANGE (remise à zéro après écriture) parce que `run()` a
+plusieurs sorties et que le chemin « zéro match » peut suivre une capture.
+Gardiens : `tests/test_closing_causes.py` — toute cause notée est déclarée ET
+toute cause déclarée est notée, chaque cause a un libellé français, chaque
+sortie de `run()` vidange.
 
 ### Les totals et handicaps passaient le coup d'envoi sans prix de clôture (2026-09-08)
 

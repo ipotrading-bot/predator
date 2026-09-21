@@ -21,7 +21,9 @@ from core.db import (get_db, MissingCredentialsError,
                      log_to_ledger as _log_to_ledger,
                      is_unique_violation as _is_unique_violation)
 from core.harvester import fetch_matches
-from core.closing_line import capture_from_exchange, capture_from_scan
+from core.closing_line import (capture_from_exchange, capture_from_scan,
+                               reset_causes as _reset_causes_closing,
+                               persister_causes as _persister_causes_closing)
 from core.matchbook import fetch_matchbook_prices
 from core.smarkets import fetch_smarkets_prices
 # Appariement slate ↔ exchange : déplacé dans core/ le 2026-08-26 pour que
@@ -32,7 +34,7 @@ from core.titan007 import fetch_matches as _titan007_fetch
 from core.math_engine import (to_binary, devig_bounds, is_round_number_line, devig as _devig,
                               dnb_leg_split as _dnb_leg_split)
 from core.tax_engine import optimal_stake_fraction as _optimal_stake_fraction
-from core.learning_layer import _PLAYABLE_MIN_MINUTES
+from core.learning_layer import _PLAYABLE_MIN_MINUTES, _PLAYABLE_MAX_MINUTES
 from core.paim_engine import section_jeunes as _section_jeunes, ligne_en_quart as _ligne_en_quart
 from core.source_adapter import ligue_exclue as _ligue_exclue
 from core.score_sources import livescore_connait as _livescore_connait
@@ -2065,21 +2067,94 @@ _PERIMETRE_ALERTE_MIN_VIVANTS = 5
 _PERIMETRE_ALERTE_PART_MAX = 0.5
 _RAISON_NON_COUVERTE = "absent des sources de scores (ligue non couverte)"
 
+# ── Périmètre élargi à LiveScore (2026-09-21, DÉCISION OPÉRATEUR, règle 11) ──
+# `_reglable` ne demandait qu'« ESPN liste-t-il ce match ? », posé le 09-03,
+# alors que le RÈGLEMENT lit aussi LiveScore depuis le 09-05 : la porte
+# d'émission était plus stricte que la capacité de règlement.
+#
+# MESURE qui a motivé la décision (8 scans standard du 2026-09-21) : 23 des 54
+# marchés vivants écartés « ligue non couverte » (43 %), et LiveScore en
+# connaissait 21 sur 21 — la TOTALITÉ, dans chaque scan où la mesure apparaît.
+# Le scan de 13:10 : Bulgarie Vtora Liga ×3, Danemark 1st Division, Roumanie
+# Superliga. Ces matchs étaient jetés AVANT d'être valorisés : on ne saura
+# jamais ce qu'ils valaient. Base de marchés attendue : 31 → ~52 (+68 %).
+#
+# BUDGET CHIFFRÉ (règle 13) : ZÉRO requête supplémentaire. `livescore_connait`
+# est DÉJÀ appelé sur chacun de ces matchs depuis le 09-10 pour la mesure, avec
+# un cache par journée et par processus sur le budget partagé
+# `livescore_results` (LIVESCORE_DAILY_BUDGET = 120/jour). On rend décisif un
+# appel qui avait déjà lieu.
+#
+# CRITÈRE DE RETRAIT DATÉ (règle 13) — revue le 2026-10-19, même échéance que
+# l'expérience de frontière. L'élargissement SORT si les ligues nouvellement
+# admises montrent un taux de résolution (réglés / réglés+expired,
+# `perf_view.resolution_rate`) inférieur à celui des ligues couvertes par ESPN :
+# « LiveScore connaît le match » n'est PAS « LiveScore publie un score final
+# fiable », et un signal non réglé finit `expired` — ce qui DÉTRUIT la ligne
+# d'échantillon au lieu de simplement la perdre. Les ligues admises apparaissent
+# nommément dans `weekly_report.league_breakdown`, avec leur compte d'`expired`.
+#
+# INTERRUPTEUR D'ARRÊT, sur le précédent de `meta.betfair_suspendu` : poser
+# `ops.py supabase meta-set perimetre_livescore off` coupe l'élargissement au
+# scan suivant, sans déploiement. Toute autre valeur (ou l'absence de clé)
+# le laisse actif.
+PERIMETRE_LIVESCORE_META_KEY = "perimetre_livescore"
+_PERIMETRE_LIVESCORE_OFF = ("off", "0", "false", "non")
 
-def _alerte_perimetre(sb, vivants: int, gardes: int, motifs: dict, log) -> bool:
+
+def _perimetre_livescore_actif(sb) -> bool:
+    """L'élargissement est-il actif ? Actif par défaut (décision opérateur du
+    2026-09-21) ; coupé par `meta.perimetre_livescore` = off/0/false/non.
+    Sans base : actif — on ne restreint pas le périmètre sur une panne de
+    lecture, on le restreint sur une décision."""
+    if sb is None:
+        return True
+    valeur = _meta_get(sb, PERIMETRE_LIVESCORE_META_KEY)
+    return (valeur or "").strip().lower() not in _PERIMETRE_LIVESCORE_OFF
+
+
+def _alerte_perimetre(sb, vivants: int, gardes: int, motifs: dict, log,
+                      ls_connus: int = 0, non_couverts: int = 0) -> bool:
     """Telegram quand un run écarte plus de la moitié de ses marchés vivants.
     Rend True si l'alerte est partie. Sans Supabase (tests, base en panne) :
-    rien — la dédup vit dans meta, et sans elle on spammerait à chaque tick."""
+    rien — la dédup vit dans meta, et sans elle on spammerait à chaque tick.
+
+    LE TEXTE DOIT DÉSIGNER LA BONNE CAUSE (2026-09-21). Il envoyait vérifier
+    ESPN et relire l'incident du relais dans TOUS les cas — y compris quand le
+    log immédiatement au-dessus disait « LiveScore connaît 5 des 5 matchs
+    écartés ». Mesuré ce jour-là sur 8 scans standard : 23 des 54 marchés
+    vivants écartés, et LiveScore en connaissait 21 sur 21 — soit la TOTALITÉ,
+    dans chaque scan où la mesure apparaît. Ce n'est donc pas une panne ESPN,
+    c'est l'écart connu entre la porte d'émission (`_reglable` : « ESPN
+    liste-t-il ce match ? ») et la capacité de RÈGLEMENT, qui lit aussi
+    LiveScore depuis le 2026-09-05. L'alerte a coûté un aller-retour de
+    diagnostic vers le mauvais endroit : elle nomme désormais la cause.
+
+    Élargir la porte reste une DÉCISION OPÉRATEUR (règle 11) — le message la
+    pose, il ne la prend pas."""
     if sb is None or vivants < _PERIMETRE_ALERTE_MIN_VIVANTS:
         return False
     ecartes = vivants - gardes
     if ecartes <= vivants * _PERIMETRE_ALERTE_PART_MAX:
         return False
     detail = " · ".join(f"{k} ×{v}" for k, v in sorted(motifs.items(), key=lambda kv: -kv[1]))
+    # Le trou de couverture connu, et non une panne : LiveScore couvre TOUT ce
+    # qui a été écarté « ligue non couverte ». Envoyer vérifier ESPN serait
+    # envoyer au mauvais endroit.
+    if non_couverts and ls_connus == non_couverts:
+        cause = (f"LiveScore connaît les {ls_connus} écarté(s) « ligue non couverte » : "
+                 f"ce n'est PAS une panne ESPN, c'est la porte d'émission (_reglable, "
+                 f"« ESPN liste-t-il ce match ? ») plus stricte que le règlement, qui "
+                 f"lit LiveScore depuis le 2026-09-05. Élargir = décision opérateur.")
+    elif non_couverts:
+        cause = (f"LiveScore n'en connaît que {ls_connus} sur {non_couverts} — "
+                 f"vérifier ESPN et les sources de scores (INCIDENTS « Le relais "
+                 f"resté posé a détourné ESPN »).")
+    else:
+        cause = ("Un scan qui jette ses matchs n'émet rien — vérifier ESPN et les "
+                 "sources de scores (INCIDENTS « Le relais resté posé a détourné ESPN »).")
     text = (f"⚠️ PÉRIMÈTRE — {gardes}/{vivants} marchés vivants réglables, "
-            f"{ecartes} écartés ({ecartes / vivants:.0%}) : {detail}. "
-            f"Un scan qui jette ses matchs n'émet rien — vérifier ESPN et les "
-            f"sources de scores (INCIDENTS « Le relais resté posé a détourné ESPN »).")
+            f"{ecartes} écartés ({ecartes / vivants:.0%}) : {detail}. {cause}")
     log.warning("PÉRIMÈTRE | %d/%d réglables seulement — alerte Telegram", gardes, vivants)
     return _alert_once(sb, "alert_perimetre", text)
 
@@ -2130,7 +2205,9 @@ def _filtrer_perimetre(matches: list, log, ligues_exclues: tuple = (), sb=None) 
             fixtures_par_sport[sport] = []
     gardes = []
     motifs: dict[str, int] = {}
-    ls_connus = 0
+    ls_connus = 0          # écartés QUAND MÊME, que LiveScore connaît
+    ls_admis = 0           # admis GRÂCE à LiveScore (élargissement du 21/09)
+    elargi = _perimetre_livescore_actif(sb)
     for m in vivants:
         if _reglable(m, fixtures_par_sport):
             gardes.append(m)
@@ -2142,22 +2219,41 @@ def _filtrer_perimetre(matches: list, log, ligues_exclues: tuple = (), sb=None) 
                   if fixtures_par_sport.get(sport) is None
                   else "ESPN muet sur ce sport (panne ?)" if fixtures_par_sport.get(sport) == []
                   else _RAISON_NON_COUVERTE)
-        motifs[raison] = motifs.get(raison, 0) + 1
         if raison == _RAISON_NON_COUVERTE and _livescore_connait(
                 m.get("match") or "", sport, str(m.get("commence_time") or "")[:10]):
-            # MESURE (2026-09-10), sans effet sur l'émission — voir
-            # core.score_sources.livescore_connait.
+            # Décisif depuis le 2026-09-21 (voir PERIMETRE_LIVESCORE_META_KEY) ;
+            # simple mesure du 09-10 au 09-21, et à nouveau si l'opérateur
+            # coupe l'élargissement.
+            if elargi:
+                ls_admis += 1
+                gardes.append(m)
+                log.info("RÉGLABLE VIA LIVESCORE | %s (%s, %s) — ESPN ne couvre pas "
+                         "cette ligue ; LiveScore la règle depuis le 2026-09-05, admis",
+                         m.get("match", "?"), m.get("league", "?"), sport)
+                continue
             ls_connus += 1
-            raison += " — LiveScore le connaît"
+            libelle = raison + " — LiveScore le connaît"
+        else:
+            libelle = raison
+        # On compte sur la raison NUE : le suffixe est un libellé de log, pas
+        # une catégorie. L'y mettre scindait `_RAISON_NON_COUVERTE` en deux
+        # clés et ramenait `non_couverts` à 0 — donc une alerte qui repartait
+        # désigner ESPN, exactement le défaut corrigé le 2026-09-21.
+        motifs[raison] = motifs.get(raison, 0) + 1
         log.info("NON RÉGLABLE | %s (%s, %s) — %s, écarté",
-                 m.get("match", "?"), m.get("league", "?"), sport, raison)
+                 m.get("match", "?"), m.get("league", "?"), sport, libelle)
     log.info("PÉRIMÈTRE | %d matchs → %d marchés vivants → %d réglables",
              len(matches), len(vivants), len(gardes))
+    if ls_admis:
+        log.info("PÉRIMÈTRE | %d match(s) admis GRÂCE à LiveScore (élargissement du "
+                 "2026-09-21, revue le 2026-10-19) — sans eux : %d réglables",
+                 ls_admis, len(gardes) - ls_admis)
     non_couverts = motifs.get(_RAISON_NON_COUVERTE, 0)
     if non_couverts:
         log.info("PÉRIMÈTRE | LiveScore connaît %d des %d matchs écartés « ligue non "
-                 "couverte » (mesure, sans effet sur l'émission)", ls_connus, non_couverts)
-    _alerte_perimetre(sb, len(vivants), len(gardes), motifs, log)
+                 "couverte » — restés écartés (élargissement %s)", ls_connus, non_couverts,
+                 "coupé par l'opérateur" if not elargi else "actif")
+    _alerte_perimetre(sb, len(vivants), len(gardes), motifs, log, ls_connus, non_couverts)
     return gardes
 
 
@@ -2181,7 +2277,7 @@ def _minutes_avant_coup_denvoi(s: dict) -> float | None:
 def _shadow_reason(s: dict) -> str | None:
     """Pourquoi ce signal est fantôme — None s'il est à recommander.
 
-    Deux raisons, dans l'ordre, et TOUTES DEUX par SIGNAL (aucune ne dépend
+    Trois raisons, dans l'ordre, et TOUTES par SIGNAL (aucune ne dépend
     du mode du run) :
       · `shadow_sport`  — sport listé dans SHADOW_SPORTS (décision opérateur) ;
       · `t_minus_2h`    — le signal est à moins de
@@ -2192,6 +2288,23 @@ def _shadow_reason(s: dict) -> str | None:
         15:00 émettait un signal T-66 min recommandé, envoyé, affiché. Borne
         IMPORTÉE, pas recopiée (règle n°6) : le moteur, la couche
         d'apprentissage et /performance découpent au même endroit.
+      · `hors_zone_haute` — le signal est à PLUS de
+        core.learning_layer._PLAYABLE_MAX_MINUTES du coup d'envoi (2026-09-21).
+        La borne BASSE était importée et testée ici depuis le 2026-09-03 ; la
+        borne HAUTE ne l'était pas, et la symétrie était rompue en silence.
+        `HOURS_AHEAD` (run() — surchargeable par dispatch) et
+        _PLAYABLE_MAX_MINUTES sont deux constantes INDÉPENDANTES qui
+        coïncident aujourd'hui par hasard : dès qu'elles se découplent, un
+        signal à T+30 h n'était pas fantôme, donc recommandé et envoyé, tout
+        en étant exclu de learning_layer.playable_rows ET de
+        perf_view.is_phantom — un pari conseillé que RIEN ne juge, le
+        symétrique exact de l'incident des fantômes de septembre. Ce n'est pas
+        théorique : 2 lignes de début août portent `is_shadow = false` au-delà
+        de 48 h (ère du mode guerrilla, horizon 48 h, retiré le 2026-09-03).
+        Aujourd'hui la branche ne change RIEN — 0 signal au-delà de 24 h dans
+        tout le ledger post-A6 — c'est un filet posé avant d'en avoir besoin,
+        pour qu'élargir la fenêtre un jour ne recrée pas le bug à l'autre bout
+        de l'échelle.
     La raison `golden_hour` (tout le run en mode golden) a disparu avec le
     mode le 2026-09-03 ; les lignes qui la portent en base sont de l'histoire,
     jamais réécrites (règle n°9).
@@ -2201,6 +2314,8 @@ def _shadow_reason(s: dict) -> str | None:
     minutes = _minutes_avant_coup_denvoi(s)
     if SHADOW_GOLDEN_HOUR and minutes is not None and minutes < _PLAYABLE_MIN_MINUTES:
         return "t_minus_2h"
+    if minutes is not None and minutes > _PLAYABLE_MAX_MINUTES:
+        return "hors_zone_haute"
     return None
 
 
@@ -2462,6 +2577,10 @@ def _segment_min_edge(dyn_thresholds: dict, dyn_segment_thresholds: dict,
 
 def run():
     budget = _arm_global_timeout()
+    # Compteurs de non-capture de closing line : remis à zéro UNE fois par
+    # run, pas par passe — `capture_from_scan` et `capture_from_exchange`
+    # tournent tous deux dans ce run et leurs décomptes s'additionnent.
+    _reset_causes_closing()
     now     = datetime.now(timezone.utc)
     session = _market_session(now.hour)
     log.info("━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━")
@@ -2805,6 +2924,15 @@ def run():
             _alert_once(sb, "alert_no_matches", msg)
             if sb:
                 _heartbeat(sb, now, 0, 0)
+                # Vidange des causes de non-capture AUSSI sur cette sortie :
+                # capture_from_scan et capture_from_exchange ont pu tourner
+                # avant d'arriver ici, et leur décompte serait perdu. La
+                # fonction est idempotente (elle remet à zéro après écriture),
+                # donc l'appeler aux deux sorties ne double jamais le total.
+                try:
+                    _persister_causes_closing(sb, now)
+                except Exception as e:
+                    log.warning("closing causes: %s", e)
             # CONTRAT DE FIN (B5). Zéro match n'est un échec que si des sources
             # ont RÉPONDU : un créneau réellement creux reste vert. Matchbook
             # sert de témoin — gratuit, illimité, il rend 141 à 202 marchés
@@ -3049,6 +3177,20 @@ def run():
         # Compte des RECOMMANDÉS : c'est ce que le dashboard affiche ; annoncer
         # « 12 signaux » pour 0 visible ferait chercher une panne d'affichage.
         _heartbeat(sb, now, len(matches), len(recommandes))
+
+    # Pourquoi une capture de closing line a manqué — APRÈS le heartbeat et
+    # la recommandation : de la MESURE ne passe jamais devant un pari, et
+    # n'entre PAS dans le contrat de fin (un compteur en panne ne doit pas
+    # rendre un run rouge, ni un compteur qui écrit rendre vert un run
+    # stérile). Le rapport hebdo lit ces clés journalières.
+    if sb:
+        try:
+            total = _persister_causes_closing(sb, now)
+            if total:
+                log.info("CLOSING CAUSES (cumul du jour) | %s",
+                         " ".join(f"{c}={n}" for c, n in sorted(total.items())))
+        except Exception as e:
+            log.warning("closing causes: %s", e)
 
     # CONTRAT DE FIN (B5). `saved_count` ne vaut 0 avec `signals` non vide que
     # si CHAQUE écriture a échoué — c'est l'incident du 2026-07-07, ~17 h de

@@ -19,7 +19,7 @@ import pathlib
 import run_engine as eng
 from core import db as core_db
 from core import perf_view
-from core.learning_layer import _PLAYABLE_MIN_MINUTES
+from core.learning_layer import _PLAYABLE_MIN_MINUTES, _PLAYABLE_MAX_MINUTES
 
 RACINE = pathlib.Path(__file__).resolve().parent.parent
 SCAN = "2026-09-03T14:00:00+00:00"
@@ -49,6 +49,37 @@ class TestRaisonDuFantome:
     def test_la_borne_est_importee_pas_recopiee(self):
         src = inspect.getsource(eng._shadow_reason)
         assert "_PLAYABLE_MIN_MINUTES" in src and "120" not in src
+
+    def test_hors_zone_haute_est_fantome(self):
+        """2026-09-21 — la borne HAUTE manquait, et la symétrie était rompue.
+
+        Un signal au-delà de _PLAYABLE_MAX_MINUTES n'était pas fantôme, donc
+        recommandé et envoyé, alors que learning_layer.playable_rows ET
+        perf_view.is_phantom l'excluent tous deux : un pari conseillé que rien
+        ne juge. Mesuré : 2 lignes de début août portent is_shadow = false
+        au-delà de 48 h (ère du mode guerrilla, horizon 48 h)."""
+        assert eng._shadow_reason(_sig(minutes=_PLAYABLE_MAX_MINUTES + 1)) == "hors_zone_haute"
+        assert eng._shadow_reason(_sig(minutes=_PLAYABLE_MAX_MINUTES)) is None
+        assert eng._shadow_reason(_sig(minutes=3000)) == "hors_zone_haute"
+
+    def test_les_deux_bornes_sont_importees_de_la_meme_source(self):
+        """Règle n°6 : le moteur, la couche d'apprentissage et /performance
+        découpent au même endroit — aux DEUX bouts, pas seulement en bas."""
+        src = inspect.getsource(eng._shadow_reason)
+        assert "_PLAYABLE_MAX_MINUTES" in src and "1440" not in src
+        from core import learning_layer
+        assert eng._PLAYABLE_MIN_MINUTES is learning_layer._PLAYABLE_MIN_MINUTES
+        assert eng._PLAYABLE_MAX_MINUTES is learning_layer._PLAYABLE_MAX_MINUTES
+
+    def test_la_zone_du_moteur_est_celle_de_perf_view(self):
+        """Un signal que le moteur recommande doit être en zone pour
+        perf_view : sinon il est recommandé et hors de toute statistique."""
+        for minutes in (_PLAYABLE_MIN_MINUTES, 600, _PLAYABLE_MAX_MINUTES):
+            assert eng._shadow_reason(_sig(minutes=minutes)) is None
+            assert perf_view.playable_zone({"time_to_match_minutes": minutes}) == "zone"
+        for minutes in (_PLAYABLE_MIN_MINUTES - 1, _PLAYABLE_MAX_MINUTES + 1):
+            assert eng._shadow_reason(_sig(minutes=minutes)) is not None
+            assert perf_view.playable_zone({"time_to_match_minutes": minutes}) != "zone"
 
     def test_aucune_raison_par_mode(self, monkeypatch):
         """2026-09-03 : la raison `golden_hour` (tout le run) est partie avec
