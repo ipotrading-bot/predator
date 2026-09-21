@@ -32,7 +32,7 @@ from core.titan007 import fetch_matches as _titan007_fetch
 from core.math_engine import (to_binary, devig_bounds, is_round_number_line, devig as _devig,
                               dnb_leg_split as _dnb_leg_split)
 from core.tax_engine import optimal_stake_fraction as _optimal_stake_fraction
-from core.learning_layer import _PLAYABLE_MIN_MINUTES
+from core.learning_layer import _PLAYABLE_MIN_MINUTES, _PLAYABLE_MAX_MINUTES
 from core.paim_engine import section_jeunes as _section_jeunes, ligne_en_quart as _ligne_en_quart
 from core.source_adapter import ligue_exclue as _ligue_exclue
 from core.score_sources import livescore_connait as _livescore_connait
@@ -2181,7 +2181,7 @@ def _minutes_avant_coup_denvoi(s: dict) -> float | None:
 def _shadow_reason(s: dict) -> str | None:
     """Pourquoi ce signal est fantôme — None s'il est à recommander.
 
-    Deux raisons, dans l'ordre, et TOUTES DEUX par SIGNAL (aucune ne dépend
+    Trois raisons, dans l'ordre, et TOUTES par SIGNAL (aucune ne dépend
     du mode du run) :
       · `shadow_sport`  — sport listé dans SHADOW_SPORTS (décision opérateur) ;
       · `t_minus_2h`    — le signal est à moins de
@@ -2192,6 +2192,23 @@ def _shadow_reason(s: dict) -> str | None:
         15:00 émettait un signal T-66 min recommandé, envoyé, affiché. Borne
         IMPORTÉE, pas recopiée (règle n°6) : le moteur, la couche
         d'apprentissage et /performance découpent au même endroit.
+      · `hors_zone_haute` — le signal est à PLUS de
+        core.learning_layer._PLAYABLE_MAX_MINUTES du coup d'envoi (2026-09-21).
+        La borne BASSE était importée et testée ici depuis le 2026-09-03 ; la
+        borne HAUTE ne l'était pas, et la symétrie était rompue en silence.
+        `HOURS_AHEAD` (run() — surchargeable par dispatch) et
+        _PLAYABLE_MAX_MINUTES sont deux constantes INDÉPENDANTES qui
+        coïncident aujourd'hui par hasard : dès qu'elles se découplent, un
+        signal à T+30 h n'était pas fantôme, donc recommandé et envoyé, tout
+        en étant exclu de learning_layer.playable_rows ET de
+        perf_view.is_phantom — un pari conseillé que RIEN ne juge, le
+        symétrique exact de l'incident des fantômes de septembre. Ce n'est pas
+        théorique : 2 lignes de début août portent `is_shadow = false` au-delà
+        de 48 h (ère du mode guerrilla, horizon 48 h, retiré le 2026-09-03).
+        Aujourd'hui la branche ne change RIEN — 0 signal au-delà de 24 h dans
+        tout le ledger post-A6 — c'est un filet posé avant d'en avoir besoin,
+        pour qu'élargir la fenêtre un jour ne recrée pas le bug à l'autre bout
+        de l'échelle.
     La raison `golden_hour` (tout le run en mode golden) a disparu avec le
     mode le 2026-09-03 ; les lignes qui la portent en base sont de l'histoire,
     jamais réécrites (règle n°9).
@@ -2201,6 +2218,8 @@ def _shadow_reason(s: dict) -> str | None:
     minutes = _minutes_avant_coup_denvoi(s)
     if SHADOW_GOLDEN_HOUR and minutes is not None and minutes < _PLAYABLE_MIN_MINUTES:
         return "t_minus_2h"
+    if minutes is not None and minutes > _PLAYABLE_MAX_MINUTES:
+        return "hors_zone_haute"
     return None
 
 
