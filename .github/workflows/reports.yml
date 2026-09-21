@@ -29,7 +29,10 @@ on:
         default: rapport
         options: [rapport, hebdo]
   push:
-    # Toucher un script hebdo le rejoue (boucle courte pour l'ajuster).
+    # Toucher un script hebdo le rejoue (boucle courte pour l'ajuster) —
+    # en MUET : le rapport est calculé et imprimé, jamais envoyé (voir la
+    # ligne `run:` du job hebdo). rank_sports et calibration n'envoient
+    # rien par construction : ils impriment.
     # weekly_report.py était absent de cette liste dans rank_sports.yml : le
     # modifier ne rejouait rien, alors que c'est le rapport qu'on ajuste le plus.
     paths:
@@ -116,4 +119,9 @@ jobs:
           TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
           TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID }}
           # ▲ fin du bloc généré (pool `readonly`)
-        run: python scripts/weekly_report.py
+        # Un push ne PARLE PAS : il rejoue le rapport pour prouver qu'il ne
+        # casse pas, et l'imprime dans le log. Sans ce drapeau, chaque commit
+        # touchant un script de rapport expédiait le bundle à l'opérateur —
+        # 4 envois le 2026-09-21, dont un seul dû (le cron du lundi).
+        # Gardien : tests/test_weekly_report_leagues.py::TestPushMuet.
+        run: python scripts/weekly_report.py ${{ github.event_name == 'push' && '--no-telegram' || '' }}

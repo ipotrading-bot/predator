@@ -2533,6 +2533,46 @@ TestFetchMatchResult::test_no_ai_layer_involved`,
 Cinq workflows sur six ont tourné à vide pendant une journée sans produire
 un seul log. C'est le mode de panne le plus coûteux du dépôt.
 
+### Le rapport hebdo partait à chaque commit (2026-09-21)
+
+Symptôme, signalé par l'opérateur : « j'ai reçu le rapport hebdo plusieurs
+fois sur Telegram et ça se répète sans cesse ». Le 21/09 il l'a reçu QUATRE
+fois — 00:48, 13:11, 13:42 et 14:01 UTC — pour un seul envoi dû.
+
+Cause : le job `hebdo` de `reports.yml` porte `github.event_name == 'push'`
+dans son `if:`, et le déclencheur `push` n'a AUCUN filtre de branche. Tout
+commit touchant `scripts/rank_sports.py`, `scripts/calibration_report.py`,
+`scripts/weekly_report.py` ou le workflow lui-même rejouait donc le bundle
+complet et l'EXPÉDIAIT — depuis une branche de travail comme depuis `main`.
+C'était délibéré en août (« boucle courte pour l'ajuster »), mais la boucle
+courte écrivait sur le vrai canal. La journée du 21/09 touchait
+`weekly_report.py` trois fois : trois envois parasites, plus la fusion.
+
+Le quatrième, à 13:42, était le VRAI hebdo du lundi — le cron `0 7 * * 1`
+fiché avec **6h42 de retard**. Rien à réparer là : c'est la ponctualité
+GitHub, déjà mesurée ici (0,48 exécution/h pour un cron horaire). Mais il
+est arrivé collé aux trois autres, ce qui a donné l'impression d'une boucle
+emballée plutôt que d'un déclencheur de trop.
+
+Correctif, décision opérateur : le push GARDE son rejeu — c'est la seule
+preuve automatique qu'une retouche de rapport ne casse pas — mais il ne
+parle plus. `scripts/weekly_report.py` accepte `--no-telegram` (calcule,
+imprime, n'envoie pas) et la ligne `run:` du job le passe quand
+`github.event_name == 'push'`. Aucun bloc `env:` touché (règle dure n°2) :
+c'est la commande qui change, pas les secrets.
+
+Un seul script parlait : `rank_sports.py` et `calibration_report.py`
+impriment sur stdout et ne postent rien, malgré les secrets Telegram que
+leur pool leur pose. Un test le VERROUILLE désormais — si l'un se met à
+parler un jour, il le dira avant l'opérateur.
+
+⚠️ La règle : **un déclencheur de confort ne doit jamais écrire sur le canal
+de production.** Il calcule, il imprime, il prouve qu'il ne casse pas — il
+se tait. Même famille que la règle dure n°12 : ce qu'on croit surveiller
+(« le rapport tourne ») n'est pas ce qu'on reçoit (« le rapport arrive »).
+Gardien : `tests/test_weekly_report_leagues.py::TestPushMuet` (les deux
+sens du drapeau, la ligne du workflow, et le mutisme des deux autres).
+
 ### Les blocs de secrets des workflows sont GÉNÉRÉS, jamais écrits à la main (2026-08-26)
 
 (2026-08-26). `python scripts/ci_env.py --write` les régénère depuis les

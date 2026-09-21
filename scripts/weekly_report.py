@@ -11,11 +11,19 @@ La définition opérationnelle de « s'approcher de la perfection » : CLV réel
     couche d'apprentissage à chaque audit — jamais appliqué automatiquement).
 Lecture seule sur Supabase (clé anon), envoi Telegram si configuré.
 Lancé par .github/workflows/reports.yml, job `hebdo` (lundi 07:00 UTC).
+
+`--no-telegram` calcule et IMPRIME le rapport sans l'envoyer. Le job `hebdo`
+se rejoue aussi sur un `push` qui touche un script de rapport (boucle courte
+pour l'ajuster) : sans ce drapeau, chaque commit de travail expédiait le
+bundle complet à l'opérateur — 4 envois le 2026-09-21, dont un seul dû.
+Le push garde ainsi sa valeur de preuve (le rapport ne casse pas) et perd son
+bruit. Voir INCIDENTS.md « Le rapport hebdo partait à chaque commit ».
 """
 import json
 import logging
 import math
 import os
+import sys
 from datetime import datetime, timezone
 
 import requests
@@ -499,7 +507,8 @@ def _send(text: str) -> bool:
     return False
 
 
-def main() -> int:
+def main(argv: list[str] | None = None) -> int:
+    muet = "--no-telegram" in (sys.argv[1:] if argv is None else argv)
     sb = get_db(write=False)
     now = datetime.now(timezone.utc)
     metrics: dict[str, dict] = {}
@@ -555,6 +564,9 @@ def main() -> int:
     text = format_report(metrics, load_sport_verdicts(sb), suspect, now, ai_health, closing,
                          leagues, frontiere)
     print(text)
+    if muet:
+        log.info("--no-telegram : rapport calculé et imprimé, rien envoyé")
+        return 0
     return 0 if _send(text) else 1
 
 
