@@ -53,3 +53,57 @@ class TestFormat:
         texte = format_report({}, {}, (0, 0), __import__("datetime").datetime(2026, 9, 7),
                               leagues=["", "🏟 *Par ligue*", "• X — 1-0"])
         assert "🏟 *Par ligue*" in texte
+
+
+class TestPushMuet:
+    """Le 2026-09-21 l'opérateur a reçu le bundle hebdo QUATRE fois : le cron
+    du lundi (en retard de 6h42) et trois `push` touchant un script de rapport,
+    sur une branche de travail comme sur `main`. Le job `hebdo` se rejoue
+    exprès sur push (boucle courte pour ajuster le rapport) — mais il parlait.
+    `--no-telegram` garde le rejeu et supprime l'envoi."""
+
+    class _Res:
+        data: list = []
+
+    class _Q:
+        def __getattr__(self, _):
+            return lambda *a, **k: self
+
+        def execute(self):
+            return TestPushMuet._Res()
+
+    class _SB:
+        def table(self, *a, **k):
+            return TestPushMuet._Q()
+
+    def _sans_base(self, monkeypatch):
+        import core.ai_router
+        from scripts import weekly_report as wr
+        monkeypatch.setattr(wr, "get_db", lambda **k: self._SB())
+        monkeypatch.setattr(core.ai_router, "health_summary", lambda: [])
+        envois = []
+        monkeypatch.setattr(wr, "_send", lambda text: envois.append(text) or True)
+        return wr, envois
+
+    def test_le_drapeau_calcule_le_rapport_sans_l_envoyer(self, monkeypatch):
+        wr, envois = self._sans_base(monkeypatch)
+        assert wr.main(["--no-telegram"]) == 0
+        assert envois == [], "un push ne doit RIEN envoyer sur Telegram"
+
+    def test_sans_drapeau_le_rapport_part(self, monkeypatch):
+        wr, envois = self._sans_base(monkeypatch)
+        assert wr.main([]) == 0
+        assert len(envois) == 1
+
+    def test_le_workflow_passe_le_drapeau_sur_un_push(self):
+        yml = open(".github/workflows/reports.yml", encoding="utf-8").read()
+        ligne = next(l for l in yml.splitlines()
+                     if "run: python scripts/weekly_report.py" in l)
+        assert "github.event_name == 'push'" in ligne and "--no-telegram" in ligne, ligne
+
+    def test_les_deux_autres_rapports_n_envoient_rien(self):
+        """Ils n'ont pas besoin du drapeau : ils impriment, ils ne postent pas.
+        Si l'un se met à parler un jour, ce test le dit avant l'opérateur."""
+        for script in ("scripts/rank_sports.py", "scripts/calibration_report.py"):
+            src = open(script, encoding="utf-8").read()
+            assert "api.telegram.org" not in src, f"{script} envoie sur Telegram"
