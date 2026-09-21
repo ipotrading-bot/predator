@@ -1232,8 +1232,25 @@ sport demandent 30, seul le soccer les atteint. Le MMA pèse n=2 sur tout le
 ledger. À 9,0 lignes réglées par jour, la bonne question n'est jamais « quelle
 idée » mais « combien de temps avant de pouvoir trancher ».
 
-Correctif : rien n'a été appliqué, et c'est le correctif. À la place, une
-expérience PRÉ-ENREGISTRÉE — coupure (60 min), taille requise (200 par groupe)
+**Troisième cas, révélé par le premier run réel de l'instrument lui-même.** La
+pré-enregistration fixait la coupure (60 min), la taille requise (200 par
+groupe) et la date (2026-10-19) — mais **pas la POPULATION**. Lancée en
+production, la section a rendu **z = +1,31** là où la mesure à la main donnait
+2,08 : la première portait sur « tous sports, datation par règlement », la
+seconde sur « soccer, datation par signal ». Une pré-enregistration qui laisse
+la population ouverte n'en est pas une — elle garde la liberté de choisir la
+tranche qui arrange, le jour de la décision. C'est le même chemin bifurquant,
+déplacé d'un cran, et il a fallu que l'instrument tourne pour qu'il se voie.
+
+Correctif : la population est pré-enregistrée elle aussi (`FRONTIERE_SPORT` =
+soccer, seul sport à masse statistique ; zone ≤ `_PLAYABLE_MAX_MINUTES` ;
+datation par SIGNAL via `_dater_par_signal`, `created_at` du ledger étant la
+date de RÈGLEMENT). Gardiens : un autre sport n'entre pas, la borne haute
+s'applique, une ligne réglée après l'époque mais ÉMISE avant est écartée, et
+`main()` doit dater par signal avant de mesurer.
+
+Correctif principal : rien n'a été appliqué, et c'est le correctif. À la place,
+une expérience PRÉ-ENREGISTRÉE — coupure (60 min), taille requise (200 par groupe)
 et date de décision (2026-10-19) fixées à l'avance dans
 `core/learning_layer.py`, à côté de la constante qu'elles testent. Le rapport
 hebdo rend l'avancement et REFUSE de conclure sous la taille requise. Les

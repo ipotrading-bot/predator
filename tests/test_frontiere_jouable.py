@@ -31,13 +31,15 @@ Ces tests gardent la discipline qui remplace l'intuition :
 import inspect
 
 from core.learning_layer import (FRONTIERE_DECISION_LE, FRONTIERE_N_REQUIS,
-                                 FRONTIERE_TESTEE_MINUTES, _PLAYABLE_MIN_MINUTES)
+                                 FRONTIERE_SPORT, FRONTIERE_TESTEE_MINUTES,
+                                 _PLAYABLE_MAX_MINUTES, _PLAYABLE_MIN_MINUTES)
 from scripts import weekly_report as wr
 
 
-def _ligne(ttm, outcome, odds=1.757, shadow=None, quand="2026-09-10T00:00:00+00:00"):
+def _ligne(ttm, outcome, odds=1.757, shadow=None, quand="2026-09-10T00:00:00+00:00",
+           sport=FRONTIERE_SPORT):
     d = {"time_to_match_minutes": ttm, "outcome": outcome, "odds": odds,
-         "created_at": quand}
+         "sport": sport, "signal_created_at": quand, "created_at": quand}
     if shadow is not None:
         d["is_shadow"] = shadow
     return d
@@ -150,3 +152,60 @@ class TestContrat:
         from datetime import datetime, timezone
         texte = wr.format_report({}, {}, (0, 0), datetime(2026, 9, 21, tzinfo=timezone.utc))
         assert "Frontière jouable" not in texte
+
+
+class TestPopulationPreEnregistree:
+    """Le défaut que le PREMIER RUN RÉEL a révélé, et qui est corrigé ici.
+
+    Au premier jet, la coupure, la taille requise et la date étaient fixées —
+    mais pas SUR QUOI on mesure. Le même test rendait z = 2,08 sur « soccer,
+    datation par signal » et z = 1,31 sur « tous sports, datation par
+    règlement ». Une pré-enregistration qui laisse la population ouverte n'en
+    est pas une : elle garde la liberté de prendre la tranche qui arrange, le
+    jour de la décision. C'est le chemin bifurquant, déplacé d'un cran."""
+
+    def test_un_autre_sport_nentre_pas(self):
+        """Le soccer est le seul sport à masse statistique (221 lignes post-A6
+        contre 42 au baseball, n ≤ 3 ailleurs) et c'est sur lui que la borne
+        s'applique. Mélanger les sports change le résultat."""
+        avec = _jeu(49, 46, 85, 45)
+        pollution = [_ligne(600, "LOSS", sport="baseball")] * 80
+        assert (wr.frontiere_jouable(avec + pollution)["sur"]["n"]
+                == wr.frontiere_jouable(avec)["sur"]["n"] == 130)
+
+    def test_la_borne_haute_est_appliquee(self):
+        """Au-delà de la zone, on ne parle plus de la même frontière."""
+        hors = [_ligne(_PLAYABLE_MAX_MINUTES + 1, "WIN")] * 40
+        assert wr.frontiere_jouable(_jeu(49, 46, 85, 45) + hors)["sur"]["n"] == 130
+
+    def test_la_datation_par_signal_prime_sur_le_reglement(self):
+        """Règle 10 : une ligne RÉGLÉE après l'époque mais ÉMISE avant vient de
+        l'ancien moteur. L'incident du 2026-09-11 (131 lignes d'août comptées
+        post-époque) dit ce que ça coûte."""
+        piege = [{"sport": FRONTIERE_SPORT, "time_to_match_minutes": 600,
+                  "outcome": "WIN", "odds": 1.757,
+                  "signal_created_at": "2026-08-01T00:00:00+00:00",   # avant A6
+                  "created_at": "2026-09-10T00:00:00+00:00"}] * 50    # réglée après
+        assert wr.frontiere_jouable(_jeu(49, 46, 85, 45) + piege)["sur"]["n"] == 130
+
+    def test_la_population_est_importee_pas_recopiee(self):
+        """Règle n°6 : la population vit dans core.learning_layer, avec la
+        coupure et la taille requise."""
+        src = inspect.getsource(wr.frontiere_jouable)
+        assert "FRONTIERE_SPORT" in src and '"soccer"' not in src
+        assert "_PLAYABLE_MAX_MINUTES" in src and "1440" not in src
+
+    def test_main_date_par_signal_avant_de_mesurer(self):
+        """La fonction est PURE : c'est à l'appelant de dater. Sans cet appel,
+        `post_correction_rows` retombe silencieusement sur la date de
+        règlement — et l'expérience mesure autre chose que ce qu'elle annonce."""
+        src = inspect.getsource(wr.main)
+        assert "_dater_par_signal(sb, ledger_rows)" in src
+        assert "signal_id" in wr._LEAGUE_SELECT
+
+    def test_lexception_a_la_regle_de_zone_est_ecrite(self):
+        """`.claude/rules/learning.md` impose de conditionner sur la zone
+        jouable avant de conclure. Cette fonction ne le fait PAS sur la borne
+        basse, exprès — ça doit être écrit, pas deviné."""
+        doc = wr.frontiere_jouable.__doc__
+        assert "EXCEPTION ASSUMÉE" in doc and "borne basse" in doc

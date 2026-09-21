@@ -343,6 +343,24 @@ FRONTIERE_TESTEE_MINUTES = 60
 FRONTIERE_N_REQUIS = 200        # par groupe, 80 % de puissance pour 13,8 points d'écart
 FRONTIERE_DECISION_LE = "2026-10-19"   # 28 j au débit mesuré (9,0 lignes/j, 42 % sous la coupure)
 
+# LA POPULATION AUSSI EST PRÉ-ENREGISTRÉE, et ce n'était pas le cas au premier
+# jet — c'est le défaut que le premier run réel a révélé. La coupure, la taille
+# et la date étaient fixées, mais pas SUR QUOI on mesure : le même test rendait
+# z = 2,08 sur « soccer, datation par signal » et z = 1,31 sur « tous sports,
+# datation par règlement ». Laisser ce choix ouvert, c'est garder la liberté de
+# prendre la tranche qui arrange le jour de la décision — exactement le chemin
+# bifurquant que cette pré-enregistration existe pour fermer.
+#
+# Population retenue, et pourquoi chaque terme :
+#   · soccer SEUL — c'est le seul sport avec une masse statistique (221 lignes
+#     post-A6 contre 42 au baseball et n ≤ 3 partout ailleurs) et c'est sur lui
+#     que la borne s'applique réellement ;
+#   · datation par SIGNAL (_dater_par_signal) — `created_at` du ledger est la
+#     date de RÈGLEMENT ; l'incident du 2026-09-11 a montré 131 lignes d'août
+#     comptées post-époque pour cette raison ;
+#   · zone ≤ _PLAYABLE_MAX_MINUTES — au-delà on ne parle plus de la même borne.
+FRONTIERE_SPORT = "soccer"
+
 # Écart de calibration toléré (probabilité annoncée − taux réalisé), en points.
 # Voir _calibration_flag pour la mesure qui a fixé cette valeur.
 _CALIBRATION_MAX_GAP = 0.10

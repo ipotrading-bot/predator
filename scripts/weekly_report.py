@@ -26,8 +26,9 @@ from core.constants import (CLOSING_SRC_EXCHANGE, CLOSING_SRC_ODDSAPI,
                             CLOSING_SRC_ORACLE, TAX_RATE)
 from core.db import get_db
 from core.learning_layer import (FRONTIERE_DECISION_LE, FRONTIERE_N_REQUIS,
-                                 FRONTIERE_TESTEE_MINUTES, SPORT_DEFAULTS,
-                                 _LEDGER_SELECT, _clv_stats, _sport_stats,
+                                 FRONTIERE_SPORT, FRONTIERE_TESTEE_MINUTES,
+                                 SPORT_DEFAULTS, _LEDGER_SELECT, _PLAYABLE_MAX_MINUTES,
+                                 _clv_stats, _dater_par_signal, _sport_stats,
                                  load_sport_verdicts, playable_rows,
                                  post_correction_rows)
 from core.stats_utils import brier_reference, brier_score, p_breakeven, wilson_ci
@@ -210,7 +211,10 @@ def _ventilation_causes(causes: dict) -> list[str]:
 # la lisait. Même contrat que le reste du rapport : zone jouable, non shadow,
 # Wilson bas contre le point mort après taxe — jamais un taux nu (règle n°7).
 _LEAGUE_MIN_DECIDED = int(os.environ.get("WEEKLY_LEAGUE_MIN_DECIDED", "10"))
-_LEAGUE_SELECT = "league, sport, outcome, odds, time_to_match_minutes, is_shadow, created_at"
+_LEAGUE_SELECT = ("league, sport, outcome, odds, time_to_match_minutes, is_shadow, "
+                  "created_at, signal_id")   # signal_id : datation par SIGNAL de la
+# section frontière (voir FRONTIERE_SPORT). Une colonne de plus sur une lecture qui
+# existait déjà — zéro requête ajoutée.
 
 
 # ── Frontière jouable : expérience PRÉ-ENREGISTRÉE (2026-09-21) ─────────
@@ -225,19 +229,34 @@ def frontiere_jouable(rows: list[dict], coupure: int = FRONTIERE_TESTEE_MINUTES,
     annoncée. C'est toute la différence avec le scan qui a produit z = 2,08 en
     regardant 29 coupures — un maximum sélectionné n'est pas une preuve.
 
-    Datation : `post_correction_rows` pour ne garder que les lignes post-A6.
-    ⚠️ Sans jointure sur `signals`, elle retombe sur `created_at` du ledger, qui
-    est la date de RÈGLEMENT et non d'émission (contrat documenté dans sa
-    docstring) : la fenêtre est donc légèrement trop large aux premiers jours de
-    l'époque. Effet négligeable aujourd'hui (A6 date du 2026-08-27) et dit ici
-    plutôt que supposé.
+    LA POPULATION AUSSI est pré-enregistrée (`FRONTIERE_SPORT`, zone
+    ≤ `_PLAYABLE_MAX_MINUTES`, datation par SIGNAL) — et ce n'était pas le cas
+    au premier jet. Le premier run réel l'a révélé : le même test rendait
+    z = 2,08 sur « soccer, datation par signal » et z = 1,31 sur « tous sports,
+    datation par règlement ». Une pré-enregistration qui laisse la population
+    ouverte n'en est pas une : elle garde la liberté de choisir la tranche qui
+    arrange, le jour de la décision.
+
+    L'appelant doit avoir posé `signal_created_at` (`_dater_par_signal`) : sans
+    lui, `post_correction_rows` retombe sur `created_at` du ledger, qui est la
+    date de RÈGLEMENT — l'incident du 2026-09-11 (131 lignes d'août comptées
+    post-époque) dit ce que ça coûte. Un gardien vérifie que `main()` le fait.
+
+    ⚠️ EXCEPTION ASSUMÉE à `.claude/rules/learning.md` (« toute analyse du
+    ledger se conditionne sur la zone jouable 2-24 h AVANT de conclure ») :
+    cette fonction NE conditionne PAS sur la borne basse, parce que c'est
+    précisément elle qu'elle met à l'épreuve. Le groupe « sous la coupure » est
+    fait de fantômes ; les filtrer viderait l'expérience de son objet. La borne
+    HAUTE, elle, est bien appliquée — au-delà on ne parle plus de la même borne.
 
     Rend `decidable=False` tant que les DEUX groupes n'ont pas `n_requis`
     lignes : sous cette barre on n'annonce rien, quel que soit l'écart."""
-    decisifs = [r for r in post_correction_rows(rows)
-                if r.get("outcome") in _DECISIVE
-                and r.get("time_to_match_minutes") is not None
-                and r.get("odds")]
+    population = [r for r in rows
+                  if (r.get("sport") or "") == FRONTIERE_SPORT
+                  and r.get("time_to_match_minutes") is not None
+                  and float(r["time_to_match_minutes"]) <= _PLAYABLE_MAX_MINUTES]
+    decisifs = [r for r in post_correction_rows(population)
+                if r.get("outcome") in _DECISIVE and r.get("odds")]
     sous = [r for r in decisifs if float(r["time_to_match_minutes"]) < coupure]
     sur = [r for r in decisifs if float(r["time_to_match_minutes"]) >= coupure]
 
@@ -526,7 +545,10 @@ def main() -> int:
         # deux sections parlent des mêmes lignes. Celle-ci a besoin des
         # FANTÔMES (le groupe « sous la coupure » en est fait), donc elle lit
         # `ledger_rows` brut et non le filtre non-shadow de league_breakdown.
-        frontiere = format_frontiere(frontiere_jouable(ledger_rows))
+        # Datation par SIGNAL avant toute mesure appliquée (règle 10) : le
+        # `created_at` du ledger est la date de RÈGLEMENT. Fait ICI et non dans
+        # la fonction pure, qui ne doit pas toucher la base.
+        frontiere = format_frontiere(frontiere_jouable(_dater_par_signal(sb, ledger_rows)))
     except Exception as e:                  # jamais bloquant pour le rapport
         print(f"frontière jouable : calcul impossible — {e}")
         frontiere = []
