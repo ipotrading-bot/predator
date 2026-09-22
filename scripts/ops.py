@@ -5,6 +5,7 @@ scripts/ops.py — pilotage Supabase + Vercel depuis le terminal, sans CLI.
     python scripts/ops.py doctor                      # quelles credentials sont présentes, que peut-on faire
     python scripts/ops.py status                      # santé en un écran : clés OddsAPI, dernier signal, seuils, dernier déploiement
     python scripts/ops.py sources                     # sonde CHAQUE source de cotes : vivante ? quota ? joignable depuis cette IP ?
+    python scripts/ops.py ligues [prefixe] [jours]     # catalogue d'un sport : matchs a venir, jouables, credits/semaine (0 credit)
     python scripts/ops.py ai                          # sonde CHAQUE fournisseur IA par une INFÉRENCE réelle (catalogue ≠ utilisable)
     python scripts/ops.py watchdog                    # le chien de garde Cloudflare fait-il son travail ? PAT, cron, invocations 24 h, incident Cloudflare, créneau dû
     python scripts/ops.py secrets-push [--run]        # recopie les clés du .env vers les secrets Actions (403 depuis un Codespace)
@@ -667,6 +668,120 @@ def status():
         vc_deployments(["3"])
 
 
+def ligues(args):
+    """Catalogue OddsAPI des ligues d'un sport, avec le nombre de matchs à
+    venir et ce que coûterait leur scan — 0 CRÉDIT (/v4/sports et
+    /v4/sports/<clé>/events sont gratuits, comme le pré-vol du moteur).
+
+    Sert la règle 13 : « une source n'entre qu'avec budget chiffré ». Une
+    ligue ne se juge pas sur son nom mais sur (a) combien de matchs elle
+    fournit par semaine, (b) combien de ces matchs sont JOUABLES (coup
+    d'envoi au-delà de T-2h30, sinon le signal sort fantôme), (c) ce que
+    coûtent ses cotes. Défaut : soccer, 7 jours.
+    """
+    from core.odds_api import (candidate_keys, SPORT_KEYS, BASE_URL,      # noqa: E402
+                               league_cost, _MARKETS_BY_SPORT)
+    import requests                                                        # noqa: E402
+    from datetime import datetime, timedelta, timezone                     # noqa: E402
+
+    prefixe = (args[0] if args else "soccer").rstrip("_") + "_"
+    jours = int(args[1]) if len(args) > 1 else 7
+    keys = candidate_keys()
+    if not keys:
+        die("aucune cle OddsAPI (ni app_secrets ni environnement)")
+    key = keys[0]
+    r = requests.get(f"{BASE_URL}/sports/", params={"apiKey": key}, timeout=20)
+    if r.status_code != 200:
+        die(f"catalogue HTTP {r.status_code}")
+    reste_avant = r.headers.get("x-requests-remaining")
+    cat = [s for s in (r.json() or [])
+           if str(s.get("key", "")).startswith(prefixe) and s.get("active")]
+
+    now = datetime.now(timezone.utc)
+    fmt = "%Y-%m-%dT%H:%M:%SZ"
+    t_from, t_to = now.strftime(fmt), (now + timedelta(days=jours)).strftime(fmt)
+    jouable_des = (now + timedelta(minutes=150)).strftime(fmt)
+
+    sport_type = SPORT_KEYS.get(next((k for k in SPORT_KEYS
+                                      if k.startswith(prefixe)), ""), "soccer")
+    cout = league_cost(sport_type)
+    lignes = []
+    for s in cat:
+        k = s["key"]
+        try:
+            e = requests.get(f"{BASE_URL}/sports/{k}/events/",
+                             params={"apiKey": key, "commenceTimeFrom": t_from,
+                                     "commenceTimeTo": t_to}, timeout=15)
+            ev = (e.json() or []) if e.status_code == 200 else []
+            jouables = sum(1 for x in ev
+                           if str(x.get("commence_time", "")) >= jouable_des)
+        except Exception:
+            ev, jouables = [], 0
+        lignes.append((k, str(s.get("title", ""))[:34], len(ev), jouables, ev))
+
+    # COUVERTURE DE REGLEMENT (regle 13 : une ligue qu'on ne sait pas regler
+    # est un credit perdu deux fois). Pour chaque ligue candidate, on prend
+    # ses prochains matchs et on demande a ESPN puis a LiveScore s'ils les
+    # connaissent — exactement la porte `run_engine._reglable`. ESPN se lit
+    # UN JOUR PAR REQUETE (regle dure 15 : une plage rend HTTP 400).
+    def couverture(cles_evts):
+        from core.score_sources import (_espn_jour, fixture_connue,      # noqa: E402
+                                        livescore_connait)
+        vus, connus = 0, 0
+        cache_jour = {}
+        for ev in cles_evts[:6]:
+            ct = str(ev.get("commence_time", ""))
+            nom = f"{ev.get('home_team', '')} vs {ev.get('away_team', '')}"
+            if not ct or "vs" == nom.strip():
+                continue
+            jour = ct[:10].replace("-", "")
+            if jour not in cache_jour:
+                try:
+                    cache_jour[jour] = _espn_jour("soccer/all", jour)
+                except Exception:
+                    cache_jour[jour] = []
+            vus += 1
+            if fixture_connue(nom, cache_jour[jour]):
+                connus += 1
+            else:
+                try:
+                    if livescore_connait(nom, "soccer", ct[:10]):
+                        connus += 1
+                except Exception:
+                    pass
+        return vus, connus
+
+    lignes.sort(key=lambda x: -x[2])
+    deja = set(SPORT_KEYS)
+    print(f"-- Catalogue {prefixe}* sur {jours} j -- marches « "
+          f"{_MARKETS_BY_SPORT.get(sport_type, 'h2h')} » = {cout} credits par scan de ligue --")
+    print(f"{'cle':40s} {'titre':30s} {'matchs':>6s} {'jouab':>6s} {'cred/sem':>8s} "
+          f"{'reglables':>10s}  scannee")
+    tot_nouveaux = 0
+    for k, t, n, j, evts in lignes:
+        # Une ligue DEJA scannee est affichee meme a 0 match : « ma ligue
+        # dort-elle cette semaine ? » est la premiere question quand
+        # l'emission tombe (treve internationale, intersaison).
+        if n == 0 and k not in deja:
+            continue
+        # Une ligue n'est payee que les jours ou elle a un match jouable :
+        # le pre-vol saute les autres. Majorant : 1 scan payant par jour avec
+        # match (le plafond par creneau empeche d'y revenir huit fois).
+        sem = cout * min(jours, max(1, j)) if j else 0
+        marque = "OUI" if k in deja else ""
+        if not marque and j:
+            tot_nouveaux += sem
+        vus, connus = couverture(evts) if (j and k not in deja) else (0, 0)
+        cov = f"{connus}/{vus}" if vus else "-"
+        print(f"{k:40s} {t[:30]:30s} {n:6d} {j:6d} {sem:8d} {cov:>10s}  {marque}")
+    n_new = len([x for x in lignes if x[2] and x[0] not in deja])
+    print(f"\n{n_new} ligue(s) hors scan avec au moins un match ; les ajouter "
+          f"TOUTES couterait ~{tot_nouveaux} credits/semaine, soit "
+          f"{tot_nouveaux / 7:.0f}/jour.")
+    print(f"Credits restants sur la cle sondee : {reste_avant} -> "
+          f"{r.headers.get('x-requests-remaining')} (la sonde est gratuite).")
+
+
 def main(argv):
     if not argv or argv[0] in ("-h", "--help"):
         print(__doc__)
@@ -678,6 +793,8 @@ def main(argv):
         status()
     elif cmd == "sources":
         sources()
+    elif cmd == "ligues":
+        ligues(rest)
     elif cmd == "ai":
         ai()
     elif cmd == "watchdog":
