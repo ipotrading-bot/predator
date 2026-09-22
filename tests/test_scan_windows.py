@@ -230,18 +230,50 @@ def test_sports_with_imminent_signals(monkeypatch):
 # « 1 mois seulement, maximum d'utilisation, suffisant pour tenir 30 jours » :
 # le pool entier doit être dépensé sur le cycle, jamais avant sa fin.
 
-from core.scan_windows import daily_allowance, intraday_cap, BACKGROUND_SHARE, EXEMPT_SHARE  # noqa: E402
+from core.scan_windows import (daily_allowance, intraday_cap, weekday_weight,  # noqa: E402
+                               weekday_relative, BACKGROUND_SHARE, EXEMPT_SHARE)
 
 
 class TestRythme:
     NIGHT = _utc(2026, 9, 2, 1)        # 01:00 UTC, mercredi : SA/MLB favorables, EPL de fond
     EVENING = _utc(2026, 9, 2, 23, 30)  # 23:30 UTC : dernier créneau dû, plafond = 100 %
 
-    def test_allocation_du_jour_est_pool_sur_jours_restants(self):
-        assert daily_allowance(2500, 30) == pytest.approx(2500 / 30)
-        assert daily_allowance(2500, 0.2) == 2500          # dernier jour : tout
-        assert daily_allowance(None, 30) is None
-        assert daily_allowance(2500, None) is None
+    def test_allocation_du_jour_est_ponderee_par_le_jour(self):
+        """Le samedi reçoit plus que le lundi (2026-09-22, décision opérateur).
+        Mesure : septembre a brûlé 139 crédits le samedi 19 et 46 le lundi 21
+        pour une allocation PLATE de 127-139 ; le samedi refusait 24 ligues
+        (dont 13 en fenêtre favorable ou closing line), le lundi en refusait
+        zéro et laissait ~85 crédits sur la table."""
+        samedi, lundi = _utc(2026, 9, 19, 6), _utc(2026, 9, 21, 6)
+        assert daily_allowance(1293, 9.1, samedi) > daily_allowance(1293, 9.1, lundi)
+        assert daily_allowance(2500, 0.2, samedi) == 2500   # dernier jour : tout
+        assert daily_allowance(2500, 0.2, lundi) == 2500    # quel que soit le poids
+        assert daily_allowance(None, 30, samedi) is None
+        assert daily_allowance(2500, None, samedi) is None
+
+    def test_a_poids_egaux_on_retrouve_l_ancienne_formule(self, monkeypatch):
+        """Garantie de non-régression : la pondération DÉGÉNÈRE en
+        `pool ÷ jours restants` dès que tous les jours pèsent pareil. C'est
+        ce qui rend le changement sûr — il ne déplace que le RELIEF de la
+        semaine, jamais le total du cycle."""
+        import core.scan_windows as sw
+        monkeypatch.setattr(sw, "weekday_weight", lambda _wd: 7.0)
+        for jours in (30, 12.5, 9.1, 2.0):
+            assert sw.daily_allowance(2500, jours, _utc(2026, 9, 19, 6)) == \
+                pytest.approx(2500 / jours)
+
+    def test_le_cycle_entier_depense_le_pool_et_rien_de_plus(self):
+        """Dépenser CHAQUE jour exactement son allocation vide le pool à la
+        fin du cycle — ni avant (rationnement), ni après (crédits perdus,
+        les comptes gratuits ne reportent rien)."""
+        pool, jours = 1000.0, 10
+        minuit = _utc(2026, 9, 22, 0)
+        for i in range(jours):
+            part = daily_allowance(pool, jours - i, minuit + timedelta(days=i))
+            assert part > 0
+            pool -= part
+            assert pool >= -1e-6
+        assert pool == pytest.approx(0.0, abs=1e-6)
 
     def test_plafond_intra_journee_monte_par_creneau(self):
         """Une part ÉGALE par créneau `standard`, cumulée au fil des créneaux
@@ -429,12 +461,71 @@ def test_build_spend_policy_porte_le_rythme(monkeypatch):
     monkeypatch.setattr(eng, "_sports_with_imminent_signals", lambda _sb, _now: {"mma"})
     now = datetime.now(timezone.utc)
     pol = eng._build_spend_policy(sb, now)
-    assert pol.allowance == pytest.approx(2400 / 30, rel=0.01)
+    # Allocation PONDÉRÉE par le jour (2026-09-22) : le moteur porte ce que
+    # rend core.scan_windows pour CE jour, pas la moyenne plate.
+    assert pol.allowance == pytest.approx(daily_allowance(2400, 30, now))
+    assert 0.7 * (2400 / 30) < pol.allowance < 1.4 * (2400 / 30)
     assert pol.exempt_sports == {"mma"}
     assert not hasattr(pol, "imminent_mode")   # le rang « golden T-2h » est parti avec le mode
     pol.note_paid("soccer_epl", 3)
     assert eng._oddsapi_spent_today(sb, now) == 3.0
     assert eng._build_spend_policy(None, now) is None
+
+
+class TestPoidsParJour:
+    """Le poids d'un jour est DÉRIVÉ de la carte des fenêtres et du cron
+    (règle n°6) : aucune table « lundi=0.9, samedi=1.2 » n'est écrite à la
+    main, sinon elle divergerait de `_WINDOWS` au premier sport ajouté."""
+
+    def test_le_poids_est_recalculable_depuis_la_carte_et_le_cron(self):
+        from core.scan_windows import _WINDOWS, is_favorable, standard_slot_hours
+        from core.odds_api import LIGUES_RETIREES
+        heures = standard_slot_hours()
+        lundi = _utc(2026, 9, 21, 0)
+        for d in range(7):
+            jour = lundi + timedelta(days=d)
+            attendu = sum(1 for k in _WINDOWS if k not in LIGUES_RETIREES
+                          for h in heures if is_favorable(k, jour.replace(hour=h)))
+            assert weekday_weight(jour.weekday()) == float(attendu)
+
+    def test_une_ligue_retiree_ne_pese_rien(self, monkeypatch):
+        """Une ligue sortie du scan payant (LIGUES_RETIREES) ne crée plus de
+        demande : sinon le samedi garderait le poids du MLB, retiré le
+        2026-09-17, et volerait des crédits aux ligues encore achetées."""
+        import core.odds_api as oa
+        from core.scan_windows import _WINDOWS
+        avant = weekday_weight(5)
+        cible = next(k for k in _WINDOWS
+                     if k not in oa.LIGUES_RETIREES and is_favorable(k, _utc(2026, 9, 19, 23)))
+        monkeypatch.setattr(oa, "LIGUES_RETIREES",
+                            {**oa.LIGUES_RETIREES, cible: "test"})
+        assert weekday_weight(5) < avant
+
+    def test_le_week_end_pese_plus_que_le_debut_de_semaine(self):
+        """Le relief attendu, mesuré sur la carte de septembre 2026. Si un
+        jour de semaine passait devant le samedi, c'est que la carte a changé
+        d'équilibre — à re-mesurer avant de laisser filer."""
+        lun, mar, sam, dim = (weekday_weight(d) for d in (0, 1, 5, 6))
+        assert sam >= lun and sam >= mar
+        assert dim >= lun and dim >= mar
+        assert weekday_relative(_utc(2026, 9, 19, 6)) > 1.0    # samedi
+        assert weekday_relative(_utc(2026, 9, 22, 6)) < 1.0    # mardi
+
+    def test_la_demande_refusee_au_plafond_est_comptee(self):
+        """`refuse_plafond` = ce que le plafond du jour a dit non à une ligue
+        PEUPLÉE. C'est la mesure qui dira si les poids structurels suffisent :
+        sans elle, remesurer veut dire re-télécharger huit logs par jour."""
+        pol = SpendPolicy(lambda _k: None, lambda _k: None, log=None,
+                          allowance=10.0, spent_today=9.0)
+        # 9 déjà engagés sur 10 : la ligue suivante est refusée au plafond.
+        ok, _ = pol.allow("soccer_epl", "soccer", TestRythme.EVENING, 500, cost=3.0)
+        assert ok is False
+        assert pol.refuse_plafond == 3.0
+        # Un refus qui n'est PAS un plafond ne compte pas comme demande.
+        pol2 = SpendPolicy(lambda _k: None, lambda _k: None, log=None,
+                           allowance=1000.0, spent_today=0.0, reglables={"soccer"})
+        ok, _ = pol2.allow("basketball_nba", "basketball", TestRythme.EVENING, 500, cost=3.0)
+        assert ok is False and pol2.refuse_plafond == 0.0
 
 
 class TestPartsParCreneau:

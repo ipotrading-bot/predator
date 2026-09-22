@@ -46,7 +46,8 @@ from core.odds_api import (SPORT_KEYS, fetch_odds, pool_status as _odds_pool_sta
                            pool_totals as _odds_pool_totals,
                            pool_total_remaining as _odds_pool_total_remaining)
 from core.scan_windows import (SpendPolicy as _SpendPolicy, CYCLE_DAYS as _ODDS_CYCLE_DAYS,
-                               daily_allowance as _odds_daily_allowance)
+                               daily_allowance as _odds_daily_allowance,
+                               weekday_relative as _odds_weekday_relative)
 from core.constants import CLOSING_LINE_WINDOW_MIN as _CLOSING_LINE_WINDOW_MIN
 from core.run_contract import terminer as _terminer_run, verdict_de_fin
 from core.learning_layer import load_thresholds as _load_thresholds
@@ -768,6 +769,34 @@ def _oddsapi_note_spent(sb, now, cost: float) -> None:
     _meta_stamp(sb, "oddsapi_spent_day", f"{now.strftime('%Y-%m-%d')}:{total:.0f}")
 
 
+def _oddsapi_note_demand(sb, now, engage: float, refuse: float) -> None:
+    """Demande RÉELLE du jour = crédits engagés + crédits refusés au plafond,
+    meta `oddsapi_demande_YYYYMMDD` = "engage/refuse" (même forme que les
+    compteurs `quota_*`, une clé par jour, jamais écrasée d'un jour à
+    l'autre).
+
+    POURQUOI : la pondération par jour de la semaine (core/scan_windows) est
+    STRUCTURELLE — elle compte les ligues qui ont une fenêtre, pas les matchs
+    qui existent. Le samedi 2026-09-19 a demandé ≈ 178 crédits pour une
+    allocation de 127, le lundi 21 en a demandé 46 : ×3.9, quand les poids
+    structurels ne disent que ×1.36. Sans cette clé, remesurer veut dire
+    re-télécharger huit logs de runs par jour — c'est ce qu'a coûté le
+    diagnostic du 2026-09-22. Deux semaines de ces lignes suffisent à
+    remplacer les poids par la mesure (règle : aucune politique de dépense
+    changée sans chiffre)."""
+    if not sb:
+        return
+    cle = f"oddsapi_demande_{now.strftime('%Y%m%d')}"
+    vieux_e, vieux_r = 0.0, 0.0
+    brut = _meta_get(sb, cle) or ""
+    if "/" in brut:
+        try:
+            vieux_e, vieux_r = (float(x) for x in brut.split("/", 1))
+        except ValueError:
+            vieux_e, vieux_r = 0.0, 0.0
+    _meta_stamp(sb, cle, f"{vieux_e + float(engage):.0f}/{vieux_r + float(refuse):.0f}")
+
+
 def _build_spend_policy(sb, now):
     """Politique de dépense OddsAPI (core/scan_windows) adossée aux
     horodatages meta `scan_paid_<ligue>` et, depuis le 2026-09-01, au rythme
@@ -786,13 +815,19 @@ def _build_spend_policy(sb, now):
 
     pool_total = _odds_pool_total_remaining()          # sondes gratuites, toutes les clés
     days_left = _oddsapi_cycle_days_left(sb, now)
-    allowance = _odds_daily_allowance(pool_total, days_left)
+    allowance = _odds_daily_allowance(pool_total, days_left, now)
     spent = _oddsapi_spent_today(sb, now)
     if allowance is None:
         log.info("RYTHME | pool inconnu — pas de rythme ce run, politique classique")
     else:
-        log.info("RYTHME | pool %d crédits, %.1f j restants du cycle → allocation %.0f/j ; "
-                 "engagés aujourd'hui %.0f", pool_total, days_left, allowance, spent)
+        # Le poids du jour est DIT : une allocation qui change d'un jour à
+        # l'autre sans raison lisible est une allocation qu'on finit par
+        # contourner (2026-09-22).
+        jours = ("lundi", "mardi", "mercredi", "jeudi", "vendredi", "samedi", "dimanche")
+        log.info("RYTHME | pool %d crédits, %.1f j restants du cycle ; %s ×%.2f "
+                 "(demande du jour) → allocation %.0f/j ; engagés aujourd'hui %.0f",
+                 pool_total, days_left, jours[now.weekday()],
+                 _odds_weekday_relative(now), allowance, spent)
 
     # Seuls les sports RÉGLABLES sont payés (liste dérivée de
     # core/score_sources, jamais écrite ici) : le périmètre refuserait de
@@ -2712,6 +2747,9 @@ def run():
             log.info("DÉPENSE | %d ligue(s) peuplée(s) non payée(s) ce scan : %s",
                      len(spend_policy.skipped),
                      ", ".join(k for k, _ in spend_policy.skipped))
+        if spend_policy is not None:
+            _oddsapi_note_demand(sb, now, spend_policy.engaged,
+                                 spend_policy.refuse_plafond)
         _alert_oddsapi_pool_levels(sb)
         if not oddsapi_events:
             _alert_oddsapi_pool_if_dead(sb)
