@@ -17,7 +17,7 @@ Deux décisions à garder :
 """
 import run_engine
 from core import odds_api, scan_windows
-from core.odds_api import SPORT_KEYS, LIGUES_RETIREES
+from core.odds_api import SPORT_KEYS, LIGUES_RETIREES, LIGUES_EN_ESSAI
 from core.score_sources import sports_reglables
 
 
@@ -157,3 +157,40 @@ class TestBaseballRetire:
         conservée sans ligue retirée, ou l'inverse)."""
         inertes = {k for k in scan_windows._WINDOWS if k not in SPORT_KEYS}
         assert inertes == set(LIGUES_RETIREES), inertes ^ set(LIGUES_RETIREES)
+
+
+class TestLiguesEnEssai:
+    """Règle 13 (AUDIT.md §3bis) : une ligue n'entre qu'avec un budget chiffré,
+    un critère de retrait DATÉ et un gardien. Ces cinq-là sont entrées le
+    2026-09-22, le jour où la mesure a montré que 10 des 11 ligues de foot
+    scannées n'avaient aucun match de la semaine (trêve internationale)."""
+
+    def test_chaque_ligue_en_essai_est_reellement_achetee(self):
+        """Un registre d'essai qui nomme une ligue qu'on n'achète pas est un
+        mensonge — c'est exactement ce que la boxe faisait avant son retrait."""
+        for cle in LIGUES_EN_ESSAI:
+            assert cle in SPORT_KEYS, cle
+            assert cle not in LIGUES_RETIREES, cle
+
+    def test_chaque_essai_porte_son_budget_et_sa_date_de_retrait(self):
+        for cle, motif in LIGUES_EN_ESSAI.items():
+            assert motif.startswith("2026-"), f"{cle} : pas de date d'entrée"
+            assert "créd/j" in motif, f"{cle} : pas de budget chiffré"
+            assert "retrait le 2026-" in motif, f"{cle} : pas de critère daté"
+
+    def test_une_ligue_en_essai_a_sa_fenetre_de_depense(self):
+        """L'invariant qui casse le plus souvent (règle 6) : une clé présente
+        dans SPORT_KEYS mais absente de `_WINDOWS` n'est jamais achetée qu'en
+        scan de fond — donc à peu près jamais, et en silence."""
+        for cle in LIGUES_EN_ESSAI:
+            assert cle in scan_windows._WINDOWS, cle
+            assert scan_windows._WINDOWS[cle], cle
+
+    def test_les_essais_ne_preemptent_aucune_famille_mesuree(self):
+        """Elles n'ont AUCUNE ligne au ledger : elles passent en dernier, et
+        un jour saturé les refuse avant le Big 5 (2026-09-19 : 24 refus)."""
+        rangs = odds_api.rangs_par_famille()
+        dernier = max(rangs.values())
+        for cle in LIGUES_EN_ESSAI:
+            assert rangs[cle] == dernier, cle
+        assert rangs["soccer_epl"] < dernier

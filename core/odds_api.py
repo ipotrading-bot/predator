@@ -143,6 +143,21 @@ SPORT_KEYS = {
     # seulement (_MARKETS_BY_SPORT). Les semaines sans carte ne coûtent rien :
     # le pré-vol _events_in_window (0 crédit) rend 0 et la ligue est sautée.
     "mma_mixed_martial_arts":                "mma",         # UFC/PFL/Bellator — cartes ven-dim
+
+    # ── PRIORITÉ 9 — élargissement du foot (2026-09-22, décision opérateur) ──
+    # DERNIÈRE famille, et c'est voulu : ces ligues n'ont AUCUNE ligne au
+    # ledger. Elles ne doivent jamais préempter le budget d'une famille
+    # mesurée — un jour saturé les refuse en premier, par construction de
+    # `rangs_par_famille`.
+    # POURQUOI maintenant : mesuré le 2026-09-22, 10 des 11 ligues de foot
+    # scannées avaient ZÉRO match sur 7 jours (trêve internationale) — seules
+    # MLS et Liga MX jouaient. Le moteur n'était pas en panne, son univers
+    # dormait. Budget et couverture de règlement : voir LIGUES_EN_ESSAI.
+    "soccer_uefa_nations_league":            "soccer",      # 41 matchs/7j — sélections A
+    "soccer_england_league1":                "soccer",      # D3 anglaise — samedi 14h UTC
+    "soccer_england_league2":                "soccer",      # D4 anglaise — samedi 14h UTC
+    "soccer_spain_segunda_division":         "soccer",      # D2 espagnole — ven-lun
+    "soccer_brazil_serie_b":                 "soccer",      # D2 brésilienne — soirées 19-23h UTC
     # (boxing_boxing retirée le 2026-09-17 : aucune source de scores n'existe,
     #  donc la politique de dépense ne pouvait PAS la payer — voir le bloc
     #  RETIRÉES ci-dessous. Elle ne coûtait que des pré-vols gratuits, mais
@@ -165,6 +180,7 @@ DEBUTS_DE_FAMILLE = (
     "americanfootball_nfl",                # 6. football US
     "basketball_euroleague",               # 7. Euroleague
     "mma_mixed_martial_arts",              # 8. sports de combat
+    "soccer_uefa_nations_league",          # 9. élargissement foot (non mesuré)
 )
 
 
@@ -178,6 +194,41 @@ def rangs_par_famille(cles=None) -> dict[str, int]:
             famille += 1
         rangs[cle] = max(famille, 0)
     return rangs
+
+
+# Ligues EN ESSAI : entrées avec leur budget chiffré et leur critère de
+# retrait DATÉ, comme l'exige la règle 13 (AUDIT.md §3bis). Une ligue qui ne
+# peut pas énoncer ce qui la fera sortir n'a pas de raison d'entrer.
+#
+# Budget MESURÉ le 2026-09-22 par `ops.py ligues soccer` (0 crédit) et par le
+# rejeu des fenêtres proposées sur les coups d'envoi réels des 10 jours
+# suivants : **18,6 crédits/jour pour les cinq**, quand le pool laissait
+# 50 à 90 crédits inutilisés par jour et s'apprêtait à en perdre ~400 en fin
+# de cycle. Couverture de règlement vérifiée sur les 6 prochains matchs de
+# chaque ligue : 6/6 pour les cinq (ESPN `soccer/all`, LiveScore en repli).
+#
+# ⚠️ Le bloc d'exclusions historique en tête de ce module écartait « Brazil B »
+# pour cause de « Pinnacle peu liquide » (août 2026). La référence sharp n'est
+# plus Pinnacle seul depuis Matchbook et Smarkets — mais c'est exactement ce
+# que le critère « < 20 % des matchs avec prix sharp » va trancher, ligue par
+# ligue, sur des lignes réglées.
+LIGUES_EN_ESSAI: dict[str, str] = {
+    "soccer_uefa_nations_league":
+        "2026-09-22, ~5.4 créd/j — retrait le 2026-10-20 si < 20 % des matchs "
+        "avec prix sharp, ou sous le point mort sur 30 réglés",
+    "soccer_england_league1":
+        "2026-09-22, ~0.9 créd/j — retrait le 2026-10-20 si < 20 % des matchs "
+        "avec prix sharp, ou sous le point mort sur 30 réglés",
+    "soccer_england_league2":
+        "2026-09-22, ~1.8 créd/j — retrait le 2026-10-20 si < 20 % des matchs "
+        "avec prix sharp, ou sous le point mort sur 30 réglés",
+    "soccer_spain_segunda_division":
+        "2026-09-22, ~3.6 créd/j — retrait le 2026-10-20 si < 20 % des matchs "
+        "avec prix sharp, ou sous le point mort sur 30 réglés",
+    "soccer_brazil_serie_b":
+        "2026-09-22, ~6.9 créd/j — retrait le 2026-10-20 si < 20 % des matchs "
+        "avec prix sharp, ou sous le point mort sur 30 réglés",
+}
 
 
 # Ligues RETIRÉES du scan payant, avec leur date et leur raison. Rien n'est
