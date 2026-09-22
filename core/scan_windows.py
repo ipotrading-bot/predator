@@ -32,7 +32,7 @@ La carte des fenêtres (UTC) vient de la mission « recentrage sports »
 `CLOSING_LINE_BUDGET` (run_closing_line.py) n'est PAS touché par ce module.
 """
 import os
-from datetime import datetime, timezone
+from datetime import datetime, time, timedelta, timezone
 
 # ── Paramètres ────────────────────────────────────────────────────────
 BACKGROUND_MIN_INTERVAL_MIN = int(os.environ.get("BACKGROUND_MIN_INTERVAL_MIN", "180"))
@@ -188,12 +188,104 @@ def standard_slot_hours() -> list[int]:
     return standard_slots()[1]
 
 
-def daily_allowance(pool_remaining: int | float | None, days_left: float | None) -> float | None:
-    """Crédits à engager aujourd'hui pour finir le pool à la fin du cycle.
-    None si l'un des deux est inconnu : pas de rythme, on paie comme avant."""
+# ── Poids de demande par JOUR de la semaine (2026-09-22) ──────────────
+# `pool ÷ jours restants` traite un lundi comme un samedi. Mesuré sur le
+# cycle de septembre (lignes « RYTHME | allocation … » et « DÉPENSE | …
+# sauté » des runs `Scan standard`, pool relevé à 06:11 chaque jour) :
+#   mercredi 16 : 65 crédits brûlés ; jeudi 17 : 92 ; vendredi 18 : 138 ;
+#   samedi 19 : 139 ; dimanche 20 : 111 ; lundi 21 : 46 — pour une allocation
+#   PLATE de 127 à 139 tous les jours.
+# Le samedi 2026-09-19, le plafond est atteint dès 11:03 (« encore
+# engageables à cette heure : 0 » à 11, 13, 16, 21 et 23) et les scans du
+# soir refusent 24 ligues, dont 13 de rang HAUT : Argentine, Mexique, MLS en
+# « closing line imminente mais rythme », Brésil, WNBA, NCAAF, NRL, MMA en
+# « fenêtre favorable mais rythme ». Le lundi suivant, ZÉRO refus et ~85
+# crédits d'allocation non engagés — que le report `pool ÷ jours` étale
+# ensuite sur 9 jours (+9/j) au lieu de les rendre au samedi suivant.
+# Le poids d'un jour est le nombre de couples (ligue × créneau standard) en
+# fenêtre favorable ce jour-là : DÉRIVÉ de `_WINDOWS` et du cron (règle n°6),
+# jamais une table écrite à la main, et les ligues retirées du scan payant
+# (core.odds_api.LIGUES_RETIREES) n'y comptent pas. Il vaut aujourd'hui 60
+# le samedi et le dimanche, 44 le lundi, 42 le mardi et le mercredi — soit
+# ×1.21 contre ×0.85. C'est une pondération STRUCTURELLE (quelles ligues ont
+# une fenêtre ce jour-là), pas un comptage de matchs : elle ne rend qu'une
+# partie de l'écart mesuré (×3.9 entre samedi et lundi), et c'est pourquoi
+# `oddsapi_demande_<jour>` enregistre désormais la demande RÉELLE (engagée +
+# refusée au plafond) — de quoi remplacer ces poids par la mesure après deux
+# semaines, sans re-fouiller les logs.
+_POIDS_CACHE: dict = {}
+_LUNDI_DE_REFERENCE = datetime(2026, 1, 5, tzinfo=timezone.utc)   # un lundi
+
+
+def weekday_weight(weekday: int) -> float:
+    """Poids de demande du jour `weekday` (0=lundi … 6=dimanche) : couples
+    (ligue × créneau standard) en fenêtre favorable. Dérivé, jamais écrit."""
+    try:
+        from core.odds_api import LIGUES_RETIREES      # import tardif : cycle
+    except Exception:                                   # pragma: no cover
+        LIGUES_RETIREES = {}
+    hours = tuple(standard_slot_hours())
+    cle = (weekday % 7, hours, frozenset(LIGUES_RETIREES))
+    if cle not in _POIDS_CACHE:
+        jour = _LUNDI_DE_REFERENCE + timedelta(days=weekday % 7)
+        _POIDS_CACHE[cle] = float(sum(
+            1 for k in _WINDOWS if k not in LIGUES_RETIREES
+            for h in hours if is_favorable(k, jour.replace(hour=h))))
+    return _POIDS_CACHE[cle]
+
+
+def weekday_relative(now: datetime | None = None) -> float:
+    """Poids du jour rapporté à la moyenne de la semaine — le « ×1.21 »
+    lisible dans le log RYTHME. 1.0 si les poids sont indisponibles."""
+    now = now or datetime.now(timezone.utc)
+    semaine = [weekday_weight(d) for d in range(7)]
+    moyenne = sum(semaine) / 7.0
+    return weekday_weight(now.weekday()) / moyenne if moyenne > 0 else 1.0
+
+
+def _fractions_de_jours(now: datetime, days_left: float) -> list[tuple[int, float]]:
+    """(jour de la semaine, fraction de journée couverte par le cycle) pour
+    chaque date restante. La somme des fractions vaut `days_left` : c'est ce
+    qui fait dégénérer la pondération vers `pool ÷ jours` quand tous les
+    poids sont égaux."""
+    fin = now + timedelta(days=max(0.0, days_left))
+    out: list[tuple[int, float]] = []
+    curseur = now
+    for _ in range(400):                       # garde-fou : 30 j au plus
+        minuit = datetime.combine((curseur + timedelta(days=1)).date(),
+                                  time(0), tzinfo=timezone.utc)
+        borne = min(minuit, fin)
+        out.append((curseur.weekday(),
+                    max(0.0, (borne - curseur).total_seconds() / 86400.0)))
+        if borne >= fin:
+            break
+        curseur = borne
+    return out
+
+
+def daily_allowance(pool_remaining: int | float | None, days_left: float | None,
+                    now: datetime | None = None) -> float | None:
+    """Crédits à engager aujourd'hui pour finir le pool à la fin du cycle,
+    PONDÉRÉS par le jour de la semaine (2026-09-22, décision opérateur) :
+    `pool × poids(aujourd'hui) ÷ Σ poids(jour) × fraction(jour)`.
+
+    La valeur rendue est celle d'une JOURNÉE ENTIÈRE — `intraday_cap` la
+    découpe ensuite par créneau. À poids égaux la formule rend exactement
+    `pool ÷ jours restants`, l'ancien comportement. None si l'un des deux
+    est inconnu : pas de rythme, on paie comme avant."""
     if pool_remaining is None or days_left is None:
         return None
-    return max(0.0, float(pool_remaining)) / max(1.0, float(days_left))
+    pool = max(0.0, float(pool_remaining))
+    jours = max(1.0, float(days_left))
+    if float(days_left) <= 1.0:
+        return pool          # dernier jour du cycle : tout, poids ou pas
+    now = now or datetime.now(timezone.utc)
+    denominateur = sum(weekday_weight(wd) * frac
+                       for wd, frac in _fractions_de_jours(now, jours))
+    poids_du_jour = weekday_weight(now.weekday())
+    if denominateur <= 0 or poids_du_jour <= 0:      # carte vide : rythme plat
+        return pool / jours
+    return pool * poids_du_jour / denominateur
 
 
 def intraday_cap(allowance: float, now: datetime,
@@ -255,6 +347,12 @@ class SpendPolicy:
         self.allowance = allowance if PACING_ENABLED else None
         self.spent_today = float(spent_today)
         self.engaged = 0.0            # crédits accordés par allow() dans CE scan
+        # Crédits qu'une ligue peuplée a DEMANDÉS et que le plafond du jour a
+        # refusés (rythme seul — ni « sport non réglable », ni « fond déjà
+        # payé », ni la réserve). engaged + refuse_plafond = la demande RÉELLE
+        # du scan, la seule mesure qui dise si l'allocation du jour est trop
+        # petite ou trop grande (2026-09-22).
+        self.refuse_plafond = 0.0
         self.skipped: list[tuple[str, str]] = []   # (sport_key, raison) — pour le rapport
 
     # ── Rythme ──
@@ -300,6 +398,7 @@ class SpendPolicy:
             if ok:
                 self.engaged += cost
                 return True, "closing line imminente"
+            self.refuse_plafond += cost
             self._skip(sport_key, "closing line imminente mais " + why)
             return False, why
         if is_favorable(sport_key, now):
@@ -308,6 +407,7 @@ class SpendPolicy:
             if ok:
                 self.engaged += cost
                 return True, rank
+            self.refuse_plafond += cost
             self._skip(sport_key, f"{rank} mais {why}")
             return False, why
         age = self._age(sport_key)
@@ -324,6 +424,7 @@ class SpendPolicy:
             return False, reason
         ok, why = self._within(cost, BACKGROUND_SHARE, now, intraday=True)
         if not ok:
+            self.refuse_plafond += cost
             self._skip(sport_key, "scan de fond : " + why)
             return False, why
         self.engaged += cost

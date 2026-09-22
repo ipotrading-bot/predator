@@ -2913,6 +2913,70 @@ réservée aux créneaux du soir, ou un plafond qui ne soit plus linéaire — e
 une DÉCISION OPÉRATEUR (politique de dépense, comme le 05/09), à prendre sur
 une deuxième journée mesurée, un jour de semaine celle-ci.
 
+### L'allocation traitait un lundi comme un samedi (2026-09-22, décision opérateur)
+
+Suite directe de l'entrée ci-dessous, qui refermait sur : « Les parts sont
+ÉGALES faute de mesure par créneau ; les pondérer serait une nouvelle
+décision. » Même question, autre axe : le JOUR.
+
+Mesure — pool relevé sur la ligne « Quota OddsAPI » du scan de 06:11, jour
+par jour, et refus comptés sur les lignes « DÉPENSE | … sauté » :
+
+| jour | brûlé | allocation | refus au plafond |
+|---|---|---|---|
+| mercredi 16 | 65 | 123 | — |
+| jeudi 17 | 92 | 127 | — |
+| vendredi 18 | 138 | 130 | — |
+| samedi 19 | **139** | 127 | **24, dont 13 de rang haut** |
+| dimanche 20 | 111 | 128 | 4 en fenêtre favorable |
+| lundi 21 | **46** | 130 | **0** (≈ 85 crédits non engagés) |
+
+Le samedi 19, le plafond est atteint dès 11:03 (« encore engageables à cette
+heure : 0 » à 11, 13, 16, 21 et 23) et le soir refuse l'Argentine, le Mexique
+et la MLS en « **closing line imminente** mais rythme : 139 + 3 > plafond
+139 », plus le Brésil, la WNBA, la NCAAF, la NRL et le MMA en « **fenêtre
+favorable** mais rythme ». Demande réelle du samedi ≈ 178-210 pour une
+allocation de 127. Le lundi, zéro refus et ~85 crédits laissés sur la table —
+que `pool ÷ jours restants` étale ensuite sur 9 jours (+9/j) au lieu de les
+rendre au samedi suivant.
+
+Cause : `daily_allowance` = `pool ÷ jours restants` ne connaît pas le jour de
+la semaine. Le report existe (le pool non dépensé fait monter l'allocation :
+127 → 142 en trois jours) mais il est LENT et UNIFORME, alors que la demande
+est hebdomadaire.
+
+Fait, sur DÉCISION OPÉRATEUR du 2026-09-22 (« fais le mieux, plus rentable et
+efficace ») : `daily_allowance(pool, jours, now)` =
+`pool × poids(aujourd'hui) ÷ Σ poids(jour) × fraction(jour)`. Le poids d'un
+jour est le nombre de couples (ligue × créneau standard) en fenêtre favorable
+ce jour-là — DÉRIVÉ de `_WINDOWS` et de `scripts/ci_scan_mode` (règle n°6),
+les ligues de `LIGUES_RETIREES` n'y comptant pas. Il vaut 60 le samedi et le
+dimanche, 50 le vendredi, 49 le jeudi, 44 le lundi, 42 le mardi et le
+mercredi. Effet immédiat : mardi 22/09 passe de 142 à 124, et un samedi à
+pool égal de 254 à 310. À poids égaux la formule rend EXACTEMENT
+`pool ÷ jours` (gardien) : elle déplace le relief de la semaine, jamais le
+total du cycle, et le dernier jour dépense tout quoi qu'il arrive.
+
+⚠️ La pondération est STRUCTURELLE — elle compte les ligues qui ont une
+fenêtre, pas les matchs qui existent. Elle rend ×1.36 entre samedi et lundi
+quand la mesure dit ×3.9. C'est pourquoi le même commit pose
+`meta.oddsapi_demande_<YYYYMMDD>` = « engagés/refusés au plafond », écrit à
+chaque scan : deux semaines de ces lignes remplacent les poids structurels
+par la mesure, sans re-télécharger huit logs de runs par jour — c'est ce
+qu'a coûté ce diagnostic. Mesurer le samedi 2026-09-26 et le lundi 2026-09-28.
+
+⚠️ Ce plafond gouverne la DÉPENSE, pas l'émission : aucun seuil d'edge n'a
+bougé (règle 10). `EXEMPT_SHARE` n'a pas bougé non plus — les trois captures
+de closing line refusées le 19 n'ont coûté AUCUN CLV (0 ligne sans
+`clv_pct_real` le 19, 2 le 20, les exchanges couvrent la capture), donc rien
+ne justifiait d'y toucher.
+
+Gardiens : `tests/test_scan_windows.py::TestPoidsParJour` (poids recalculable
+depuis la carte et le cron, une ligue retirée ne pèse rien, relief du
+week-end, demande refusée comptée) et `TestRythme`
+(`test_a_poids_egaux_on_retrouve_l_ancienne_formule`,
+`test_le_cycle_entier_depense_le_pool_et_rien_de_plus`).
+
 ### Le matin mangeait le soir : le plafond intra-journée devient une part par créneau (2026-09-11, décision opérateur)
 
 Suite de l'entrée précédente, sur la « deuxième journée mesurée » qu'elle
