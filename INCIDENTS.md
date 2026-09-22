@@ -403,6 +403,77 @@ Gardien : `tests/test_tier2_toujours.py` — 6 tests sur le source (style
 REPRICE seul, LOWPROB présent dans `_process_totals`/`_process_spreads`,
 pas de retour de `pending`, PURGE loggée en `info`.
 
+### Dix ligues sur onze n'avaient aucun match : la trêve, prise pour une panne (2026-09-22, décision opérateur)
+
+L'opérateur : « predator est pauvre en signaux », « je suis obligé de jouer
+n'importe quoi sur 1xbet ». Volume réellement émis (table `signals`, date
+d'ÉMISSION — pas `ai_learning_ledger.created_at`, qui est la date du
+RÈGLEMENT) : 7 à 15 recommandés/jour du 08 au 15/09, puis 2, 2, 10, 10, 3, 3
+et 1 le 22/09.
+
+Deux causes, aucune n'étant une panne :
+
+1. **Le retrait du baseball le 2026-09-17** : 31 des 125 recommandés du début
+   du mois, soit **25 % du volume**, supprimés d'un coup. Décision juste — le
+   baseball pèse −2,29 u sur 32 lignes réglées — mais son effet sur le volume
+   n'avait pas été chiffré.
+2. **La trêve internationale.** Mesuré le 2026-09-22 par `ops.py ligues
+   soccer 7` (0 crédit) : sur les 11 ligues de foot au scan payant, **10 ont
+   ZÉRO match sur 7 jours** — EPL, La Liga, Serie A, Bundesliga, Ligue 1,
+   LdC, UEL, Brésil A, Argentine, Libertadores. Seules MLS (16) et Liga MX
+   (9) jouent. Et la Ligue des Nations, **41 matchs cette semaine**, n'était
+   pas au catalogue.
+
+Le moteur n'était pas en panne : son univers dormait, et rien ne le disait.
+Le pré-vol annonçait « 19/21 ligues sans match dans la fenêtre » à chaque
+scan depuis des jours — l'information était là, personne ne la lisait comme
+un CALENDRIER.
+
+Fait, sur DÉCISION OPÉRATEUR du 2026-09-22 (« ajouter ligues »), cinq ligues
+entrent avec, dans le MÊME commit, ce qu'exige la règle 13 :
+
+| ligue | matchs/7j | crédits/j | réglables |
+|---|---|---|---|
+| UEFA Nations League | 41 | 5.4 | 6/6 |
+| Angleterre League 1 | 11 | 0.9 | 6/6 |
+| Angleterre League 2 | 12 | 1.8 | 6/6 |
+| Espagne Segunda | 11 | 3.6 | 6/6 |
+| Brésil Série B | 10 | 6.9 | 6/6 |
+
+**18,6 crédits/jour au total**, mesurés en rejouant les fenêtres proposées
+sur les coups d'envoi réels des 10 jours suivants — pas une estimation au
+doigt mouillé. Le pool laissait 50 à 90 crédits inutilisés par jour et
+s'apprêtait à en perdre ~400 en fin de cycle. La couverture de règlement est
+vérifiée match par match (ESPN `soccer/all` un jour par requête — règle dure
+15 — puis LiveScore) : **6/6 pour les cinq**, aucune n'est un crédit perdu
+deux fois.
+
+Les fenêtres de dépense sont DÉRIVÉES des coups d'envoi relevés, jamais
+recopiées d'une ligue voisine : Ligue des Nations 13:00/16:00/18:00 UTC →
+scans de 09:03, 11:03, 13:03 ; D3/D4 anglaises et Segunda → le motif du Big 5
+(week-end 09-13, semaine 13-17) ; Série B brésilienne 19:00→00:00 → 16:03 à
+23:03.
+
+⚠️ Elles entrent en **DERNIÈRE famille** de `SPORT_KEYS` (priorité 9) : aucune
+n'a de ligne au ledger, donc aucune ne doit préempter le budget d'une famille
+mesurée. Un jour saturé les refuse en premier — c'est le comportement voulu,
+pas un effet de bord.
+
+⚠️ Le bloc d'exclusions d'août écartait « Brazil B » pour « Pinnacle peu
+liquide ». La référence sharp n'est plus Pinnacle seul depuis Matchbook et
+Smarkets, et c'est précisément ce que le critère « < 20 % des matchs avec
+prix sharp » tranchera. Critère de retrait commun aux cinq, **daté du
+2026-10-20** : sortir si < 20 % des matchs portent un prix sharp, ou si la
+ligue est sous son point mort sur 30 lignes réglées.
+
+Aucun seuil d'émission n'a bougé (règle 10), aucune borne de zone jouable non
+plus : cette entrée ajoute des MATCHS, pas des paris par match.
+
+Gardiens : `tests/test_ordre_de_depense.py::TestLiguesEnEssai` (chaque essai
+est réellement acheté, porte son budget et sa date de retrait, a sa fenêtre
+de dépense, et ne préempte aucune famille mesurée) et l'outil qui a produit
+les chiffres, `ops.py ligues`, réutilisable pour la prochaine ligue.
+
 ### Smarkets entre en comblement, sans clé, avec son critère de retrait (2026-09-08)
 
 Symptôme : soirée de Ligue des champions à 0 signal (quatre scans standard,

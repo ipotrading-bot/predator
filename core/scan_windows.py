@@ -104,6 +104,24 @@ _WINDOWS: dict[str, list[tuple]] = {
     # NCAAF : jeudi/vendredi 23:00–03:00 UTC → 19:03+ ; samedi 16:00–04:00
     # → 13:03 jusqu'à 23:03
     "americanfootball_ncaaf":            [((3, 4), 19, 24), ((5,), 13, 24)],
+    # ── Élargissement du foot (2026-09-22, décision opérateur) ────────
+    # Fenêtres DÉRIVÉES des coups d'envoi réels des 10 jours suivants, relevés
+    # le 2026-09-22 sur le flux `events` d'OddsAPI (0 crédit) — pas recopiées
+    # d'une ligue voisine. Budget et critère de retrait : core.odds_api.
+    # LIGUES_EN_ESSAI.
+    # Ligue des Nations : coups d'envoi 13:00 (×2), 16:00 (×14), 18:00 (×29)
+    # UTC → scans de 09:03, 11:03 et 13:03.
+    "soccer_uefa_nations_league":        [(_ALL, 9, 14)],
+    # D3/D4 anglaises : samedi 14:00 UTC (et 11:00 pour la League 2), plus les
+    # soirées de semaine 18:45 comme le Big 5 — l'échantillon du 22/09 tombe
+    # en trêve, la partie « semaine » vient du calendrier anglais habituel et
+    # ne coûte rien les jours sans match (pré-vol gratuit).
+    "soccer_england_league1":            [((5, 6), 9, 13), (_ALL, 13, 17)],
+    "soccer_england_league2":            [((5, 6), 6, 13), (_ALL, 13, 17)],
+    # Segunda : 12:00→19:00 UTC du vendredi au lundi → 09:03 à 16:03.
+    "soccer_spain_segunda_division":     [((5, 6), 9, 13), (_ALL, 13, 17)],
+    # Série B brésilienne : 19:00→00:00 UTC → 16:03, 19:03, 21:03, 23:03.
+    "soccer_brazil_serie_b":             [(_ALL, 16, 24)],
 }
 
 # Fenêtres par PRÉFIXE de clé — pour les ligues dont la clé exacte n'existe
