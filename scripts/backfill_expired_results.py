@@ -36,6 +36,12 @@ IDEMPOTENT : une ligne déjà réglée est sautée. Rejouable sans dommage.
 
     python scripts/backfill_expired_results.py                  # à blanc
     python scripts/backfill_expired_results.py --write          # applique
+    python scripts/backfill_expired_results.py --statut active \
+        --scores reports/backfill_scores_2026-09-24.json --write  # signaux restés actifs
+
+`--statut active` (2026-09-24) : un signal qu'aucune source ne trouve reste
+`active` jusqu'à expirer, et chaque audit entre-temps sort STÉRILE. Même
+chemin d'écriture ; seule la sélection des signaux change.
 """
 
 from __future__ import annotations
@@ -74,6 +80,8 @@ def main(argv=None) -> int:
     ap.add_argument("--write", action="store_true",
                     help="applique réellement (sinon : simulation)")
     ap.add_argument("--scores", default=str(SCORES))
+    ap.add_argument("--statut", default="expired", choices=("expired", "active"),
+                    help="statut des signaux à rattraper (défaut : expired)")
     args = ap.parse_args(argv)
 
     scores = json.load(open(args.scores, encoding="utf-8"))
@@ -86,7 +94,7 @@ def main(argv=None) -> int:
     faits = {"signal": 0, "ledger": 0, "saute": 0, "indecidable": 0, "sans_score": 0}
 
     # ── 1. Signaux encore présents ────────────────────────────────────
-    sigs = (sb.table("signals").select("*").eq("status", "expired").execute()).data or []
+    sigs = (sb.table("signals").select("*").eq("status", args.statut).execute()).data or []
     for sig in sigs:
         sc = scores.get(sig["match"])
         if not sc:
@@ -104,7 +112,7 @@ def main(argv=None) -> int:
             # l'idempotence. Restauré juste après, le processus étant partagé.
             vrai = settlement.fetch_match_result
             settlement.fetch_match_result = (
-                lambda m, s, d="", _sc=sc: {"home_score": int(_sc[0]),
+                lambda m, s, d="", _sc=sc, **_kw: {"home_score": int(_sc[0]),
                                             "away_score": int(_sc[1]),
                                             "completed": True,
                                             "source": "backfill_manuel"})

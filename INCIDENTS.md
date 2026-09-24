@@ -4221,6 +4221,89 @@ Cologne comme exemple d'un camp non appariable — l'exemple a changé, la règl
 qu'il tient (couverture tolérante à un camp, règlement exigeant les deux) non.
 
 
+### Un match de coupe fini aux tirs au but ne se réglait jamais (2026-09-24)
+
+**Symptôme.** Trois runs « Predator Audit » de suite en ÉCHEC, RUN STÉRILE
+(contrat `core/run_contract`) : 35924530154 (23/09 21:46 UTC), 35954503529
+(24/09 04:10), 35959823740 (24/09 05:24), chacun « AUDIT STÉRILE — 0 réglé
+sur 3 éligibles ». Quatre signaux restés `active` :
+
+- 10396 Grorud IL vs Moss FK (Norway - NM Cup, Under 3.5) ;
+- 10402, même match (fantôme, AH 0 Moss) ;
+- 10406 Club Fernando de La Mora vs Libertad Asuncion (Paraguay - Copa
+  Paraguay, +1.5) ;
+- 10400 AL Bataeh (UAE) vs FC Palm City (UAE Presidents Cup, Palm City +1.0).
+
+Le log le disait en clair : « SETTLE SKIP livescore | Grorud IL vs Moss FK —
+statut 'ap', on n'ecrit pas ».
+
+**Cause 1 (prouvée).** `core/score_sources.py` : `_LS_FINISHED = {"ft"}`.
+Le refus d'« AP » était VOLONTAIRE, posé le 2026-09-05 : `Tr1`/`Tr2` peuvent
+porter le score de la séance de tirs au but. Tant que LiveScore ne voyait que
+des championnats, ce refus ne coûtait rien. Mais depuis l'élargissement du
+périmètre à LiveScore (2026-09-21, décision opérateur, voir « La porte
+d'émission était plus stricte que le règlement »), des matchs de COUPE
+nationale sont admis au scan. Un match décidé en prolongation ou aux tirs au
+but restait donc `active` jusqu'à expirer, ce qui DÉTRUIT la ligne
+d'échantillon, avec des audits stériles en attendant.
+
+MESURÉ le 2026-09-24 sur l'API publique LiveScore, journée 20260923 : 72
+événements (FT 66, AP 4, AET 1, Postp. 1). Les champs `Tr1OR`/`Tr2OR`
+(« ordinary », score à 90 minutes) sont présents sur les 4 AP et sur le AET :
+
+- Kladno–Banik Ostrava (Czech Cup, AET) : `Tr` 1-2, `Tr1ET`/`Tr2ET` 1-2,
+  `OR` 1-1 ;
+- Grorud–Moss (AP) : `Tr` 1-1, `OR` 1-1, `Trp` 6-5 ;
+- Fernando de la Mora–Libertad (AP) : `OR` 1-1, `Trp` 2-3.
+
+**Correctif.** « FT » règle sur `Tr1`/`Tr2`, comme avant. « AP » et « AET »
+(`_LS_FINISHED_APRES_90`) règlent UNIQUEMENT sur `Tr1OR`/`Tr2OR`. Si ces
+champs manquent, la ligne est refusée et continue vers les autres voies. Le
+refus du 09-05 n'est pas défait : un « AP » sans score à 90 minutes ne règle
+toujours pas.
+
+**Cause 2 (NON EXPLIQUÉE).** AL Bataeh–Palm City a été admis au scan reprice
+de 11:52 le 23/09 (run 35857024332) GRÂCE à LiveScore (`livescore_connait`
+vrai). Après le match, pourtant, la journée LiveScore du 23 ne contient AUCUN
+match des Émirats (0 stage), quel que soit le décalage horaire ou le paramètre
+testé (`MD`, `countryCode`). Autre relevé du 24/09, les volumes par journée :
+22/09 = 144, 23/09 = 72, 24/09 = 64, 25/09 = 146, contre 273 mesurés le
+2026-09-04. **Cause inconnue, rien n'a été corrigé ici.** Un match que
+LiveScore « connaît » avant le coup d'envoi peut donc disparaître de son flux
+après : c'est exactement ce que mesure le critère de retrait daté de
+l'élargissement (revue du **2026-10-19**, taux de résolution des ligues
+admises). Ce cas y compte.
+
+**Règlement manuel.** Les 4 signaux ont été réglés le 2026-09-24 par
+`scripts/backfill_expired_results.py`, avec une nouvelle option
+`--statut active` et le fichier `reports/backfill_scores_2026-09-24.json`.
+Scores trouvés par recherche web, deux sources concordantes par match :
+soccervital + flashscore 0-2, sokascore + footlive 1-1, abc.com.py 1-1 à 90
+min. Les issues sont calculées par `core.settlement.determine_outcome` via
+`settle_signal`, sans rien saisir à la main : 10400 WIN, 10396 WIN, 10402 PUSH,
+10406 WIN. Signal et ledger vérifiés cohérents. Le script lui-même était
+cassé : son substitut de `fetch_match_result` ne prenait pas le kwarg
+`tsdb_ok` ajouté depuis (TypeError au premier `--write`, rien écrit). Corrigé
+par `**_kw`. Un outil de rattrapage qu'on ne lance jamais casse sans bruit.
+
+**Risque NON VÉRIFIÉ.** `_TSDB_FINISHED` accepte « aet » et « pen » chez
+TheSportsDB. On n'a pas vérifié si `intHomeScore` y inclut la prolongation.
+Si c'est le cas, la même faute existe sur cette voie, dans l'autre sens : un
+match réglé sur le score après 120 minutes au lieu d'être refusé.
+
+⛔ Une source de scores ne règle que sur le score à 90 minutes. Un statut
+terminé après prolongation n'est réglable que si la source publie SÉPARÉMENT
+le score réglementaire. Jamais `Tr1`/`Tr2` sur un « AP »/« AET ».
+
+⚠️ Ne pas « simplifier » en ajoutant « ap »/« aet » à `_LS_FINISHED` : le
+match serait réglé sur le score après prolongation (Kladno–Ostrava : 1-2 au
+lieu de 1-1, donc un handicap et un total faux).
+
+Gardiens : `tests/test_score_sources.py::TestLiveScore::test_prolongation_regle_sur_le_score_a_90_minutes`
+(AP et AET), `::test_prolongation_sans_score_a_90_minutes_ne_regle_pas`,
+`::test_les_tirs_au_but_ne_reglent_pas` (AP sans `OR`, conservé).
+
+
 ## La règle transverse
 
 ### Listes qui divergent — la panne la plus fréquente de ce dépôt
