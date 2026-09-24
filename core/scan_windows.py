@@ -91,6 +91,8 @@ _WINDOWS: dict[str, list[tuple]] = {
     "americanfootball_nfl":              [((3,), 21, 24), ((6,), 13, 24), ((0,), 21, 24)],
     # NBA/WNBA/NHL : tip-off 23:00–03:30 UTC → 19:03, 21:03, 23:03
     "basketball_nba":                    [(_ALL, 19, 24)],
+    # WNBA retirée du scan payant le 2026-09-24 (LIGUES_RETIREES) : fenêtre
+    # conservée pour une réouverture, plus consultée.
     "basketball_wnba":                   [(_ALL, 19, 24)],
     "icehockey_nhl":                     [(_ALL, 19, 24)],
     # Australie : AFL/NRL 03:00–10:00 UTC → 23:03 la veille et 06:03

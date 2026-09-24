@@ -159,6 +159,20 @@ class TestBaseballRetire:
         assert inertes == set(LIGUES_RETIREES), inertes ^ set(LIGUES_RETIREES)
 
 
+class TestWnbaRetiree:
+    """Décision opérateur du 2026-09-24 : WNBA suspendue définitivement."""
+
+    def test_wnba_nest_plus_achetee(self):
+        assert "basketball_wnba" not in SPORT_KEYS
+        assert "basketball_wnba" in LIGUES_RETIREES
+        # La NBA partage le sport-type : elle, reste achetée.
+        assert "basketball_nba" in SPORT_KEYS
+
+    def test_les_lignes_wnba_restent_reglables(self):
+        """Règle 9 : les signaux WNBA encore ouverts se règlent toujours."""
+        assert "basketball" in sports_reglables()
+
+
 class TestLiguesEnEssai:
     """Règle 13 (AUDIT.md §3bis) : une ligue n'entre qu'avec un budget chiffré,
     un critère de retrait DATÉ et un gardien. Ces cinq-là sont entrées le
