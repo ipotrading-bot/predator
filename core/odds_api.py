@@ -104,7 +104,7 @@ SPORT_KEYS = {
     # ── PRIORITÉ 3 — Playoffs/saisons Amérique du Nord (sharps) ──────
     # (baseball_mlb retiré le 2026-09-17, voir le bloc RETIRÉS plus bas)
     "basketball_nba":                        "basketball",  # NBA Finals — marché le + sharp au monde
-    "basketball_wnba":                       "basketball",  # WNBA — juin-sept, comble le vide NBA/NHL off-season
+    # (basketball_wnba retirée le 2026-09-24, voir le bloc RETIRÉS plus bas)
     "icehockey_nhl":                         "hockey",      # NHL Stanley Cup Finals — mouvement max
 
     # ── PRIORITÉ 4 — Amérique du Sud (lag SA soirée) ─────────────────
@@ -254,6 +254,14 @@ LIGUES_RETIREES: dict[str, str] = {
     # donc `SpendPolicy` refusait déjà de la payer — 0 signal de boxe émis
     # depuis toujours, 0 crédit dépensé, et un pré-vol gratuit brûlé à chaque
     # scan. Elle revient le jour où une source de scores de boxe existe.
+    # DÉCISION OPÉRATEUR du 2026-09-24 (« WNBA perd trop, suspends-la
+    # définitivement »). Mesure du jour, zone jouable, non shadow, mise plate :
+    # 43 décidés, 22-21, −2,26 u, dont 1-3 (−2,08 u) sur les 10 derniers
+    # jours. Wilson IC95 [37–65 %] : PAS une preuve de perte (règle 7), une
+    # décision opérateur (règle 11), comme l'Argentine du 2026-09-08. Le
+    # retrait de la clé coupe la dépense OddsAPI ; le motif « wnba » de
+    # `meta.perimetre_ligues_exclues` écarte les libellés des autres sources.
+    "basketball_wnba": "2026-09-24 — décision opérateur : 22-21, −2,26 u sur 43 réglés en zone jouable",
     "boxing_boxing": "2026-09-17 — aucune source de scores (ESPN 400), jamais payable, 0 signal émis",
 }
 

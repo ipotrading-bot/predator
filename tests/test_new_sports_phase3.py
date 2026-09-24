@@ -90,6 +90,5 @@ class TestInvariantDesQuatreFichiers:
         # (baseball_mlb et boxing_boxing retirés le 2026-09-17 — décision
         #  opérateur pour le premier, aucune source de scores pour le second.)
         for key in ("americanfootball_nfl", "basketball_euroleague",
-                    "soccer_uefa_champs_league", "mma_mixed_martial_arts",
-                    "basketball_wnba"):
+                    "soccer_uefa_champs_league", "mma_mixed_martial_arts"):
             assert key in SPORT_KEYS, key

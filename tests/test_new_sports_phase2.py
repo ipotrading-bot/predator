@@ -43,7 +43,7 @@ class TestWiring:
         for key in ("soccer_brazil_campeonato", "soccer_usa_mls",
                     "soccer_argentina_primera_division", "soccer_mexico_ligamx",
                     "soccer_conmebol_copa_libertadores", "aussierules_afl",
-                    "rugbyleague_nrl", "basketball_wnba", "soccer_epl",
+                    "rugbyleague_nrl", "soccer_epl",
                     "soccer_spain_la_liga", "soccer_germany_bundesliga",
                     "soccer_italy_serie_a", "soccer_france_ligue_one"):
             assert key in SPORT_KEYS, key
