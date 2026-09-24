@@ -31,7 +31,7 @@ _SETTLEMENT_OPTIONAL = frozenset({"outcome", "settled_at"})
 
 
 def fetch_match_result(match_name: str, sport: str, match_date: str = "",
-                       tsdb_ok: bool = True) -> dict | None:
+                       tsdb_ok: bool = True, web_ok: bool = False) -> dict | None:
     """
     Score final d'un match terminé — chaîne déterministe de core/score_sources
     (MLB statsapi, ESPN, TheSportsDB).
@@ -40,8 +40,11 @@ def fetch_match_result(match_name: str, sport: str, match_date: str = "",
 
     `tsdb_ok=False` coupe le repli TheSportsDB, dont le budget journalier est
     étroit — voir core.score_sources.fetch_score.
+
+    `web_ok=True` ouvre le dernier recours par recherche web (2026-09-24) —
+    voir core.score_sources.result_from_web.
     """
-    return fetch_score(match_name, sport, match_date, tsdb_ok=tsdb_ok)
+    return fetch_score(match_name, sport, match_date, tsdb_ok=tsdb_ok, web_ok=web_ok)
 
 
 def _paire_comptable(sport: str, home_score: int, away_score: int,
@@ -142,7 +145,8 @@ def determine_outcome(sport: str, market_key: str, selection_name: str,
     return "UNKNOWN"
 
 
-def settle_signal(sb, sig: dict, now_iso: str, tsdb_ok: bool = True) -> bool:
+def settle_signal(sb, sig: dict, now_iso: str, tsdb_ok: bool = True,
+                  web_ok: bool = False) -> bool:
     """
     Try to settle one signal using real match score.
     Returns True if settled, False if score not found.
@@ -162,7 +166,7 @@ def settle_signal(sb, sig: dict, now_iso: str, tsdb_ok: bool = True) -> bool:
     # le pari des jeunes (mesuré le 2026-09-08). Idempotent sur un nom déjà
     # qualifié, neutre sur une ligue senior.
     cherche = nom_avec_etage(match, sig.get("league") or "")
-    result = fetch_match_result(cherche, sport, match_date, tsdb_ok=tsdb_ok)
+    result = fetch_match_result(cherche, sport, match_date, tsdb_ok=tsdb_ok, web_ok=web_ok)
     if not result or not result.get("completed"):
         return False
 

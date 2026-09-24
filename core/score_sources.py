@@ -61,6 +61,7 @@ from __future__ import annotations
 import json
 import logging
 import os
+import re
 import unicodedata
 import urllib.parse
 import urllib.request
@@ -1039,8 +1040,222 @@ def tsdb_budget_restant() -> int:
     return daily_quota.remaining(_TSDB_BUCKET, TSDB_DAILY_BUDGET)
 
 
+# ── 5. Recherche web (Ollama web_search) — DÉCISION OPÉRATEUR 2026-09-24 ──
+#
+# POURQUOI. Trois audits STÉRILES le 23-24/09 sur des matchs de coupe que ni
+# ESPN, ni LiveScore, ni TheSportsDB n'avaient (AL Bataeh–Palm City, coupe
+# des Émirats, disparu du flux LiveScore après le match). Réglés À LA MAIN
+# par recherche web, deux sources concordantes. L'opérateur : « si trouve
+# pas de sources, lancer recherche web », avec les IA déjà installées.
+#
+# CE QUE CET ÉTAGE N'EST PAS : un score demandé à un LLM. La décision du
+# 2026-09-02 (Groq/Tavily supprimés, INCIDENTS.md) tient : on n'utilise
+# d'Ollama que son API de RECHERCHE (`/api/web_search`, pages réelles), et le
+# score se lit DÉTERMINISTEMENT dans le TITRE des pages (« Grorud 1:1 Moss »,
+# « Grorud vs Moss 1-1 »), les deux camps appariés par `_apparie` comme
+# partout ailleurs.
+#
+# GARDES, toutes en REFUS plutôt qu'en devinette :
+#   - football seulement (un titre de tennis porte des sets, pas des buts) ;
+#   - recommandés seulement, et 12 h après le coup d'envoi au plus tôt
+#     (`WEB_SEARCH_MIN_AGE_H`) — les voies structurées ont eu leur chance ;
+#   - DEUX domaines distincts donnent le même score, et AUCUN autre domaine
+#     ne donne un score différent ;
+#   - JAMAIS une compétition à élimination directe (`ligue_a_elimination`) :
+#     son score final peut être celui d'APRÈS prolongation, et rien dans un
+#     titre ne le dit. MESURÉ en live le 2026-09-24 : Kladno–Ostrava (coupe
+#     tchèque, 1-1 à 90 min, 1-2 a.p.) — footballcritic « Kladno vs Ostrava
+#     (1-2) » et tvspravy « Kladno - Baník 1:2p » ont RÉGLÉ 1-2 dans la
+#     première version de cet étage, parce que la prolongation n'était dite
+#     qu'en tchèque (« prodloužení ») et sur des pages sans score au titre.
+#     Les coupes restent réglées par LiveScore, qui publie le score à 90 min
+#     (`Tr1OR`/`Tr2OR`) ;
+#   - en plus, une mention de prolongation / tirs au but dans N'IMPORTE QUEL
+#     résultat fait tout refuser (liste multilingue, jamais complète — c'est
+#     pourquoi le garde par ligue passe d'abord).
+#
+# BUDGET CHIFFRÉ (règle 13) : `WEB_SEARCH_DAILY_BUDGET` = 20 requêtes/jour,
+# palier gratuit Ollama, clé `OLLAMA_SEARCH_KEY` lue dans app_secrets (JAMAIS
+# transmise par un pool CI : aucun pool ne porte de clé IA, test_ci_env).
+# Mesure de départ : 1 recommandé sans source sur les 3 jours précédents.
+#
+# CRITÈRE DE RETRAIT DATÉ (règle 13) — revue le 2026-10-24 : l'étage SORT si
+# une seule issue réglée par lui est contredite par une source structurée ou
+# un contre-audit, ou si moins de la moitié de ses tentatives règlent
+# (ligne grepable : « SETTLE web | » contre « SETTLE SKIP web | »).
+WEB_SEARCH_URL = "https://ollama.com/api/web_search"
+WEB_SEARCH_KEY_NAME = "OLLAMA_SEARCH_KEY"
+WEB_SEARCH_DAILY_BUDGET = 20
+WEB_SEARCH_MIN_AGE_H = 12
+WEB_SEARCH_SPORTS = frozenset({"soccer"})
+_WEB_BUCKET = "web_search_results"
+_WEB_MAX_RESULTS = 8
+_WEB_FENETRE_MOTS = 6
+# Un score : 1-2 chiffres de part et d'autre de « - », « : » ou « – », jamais
+# collé à un autre chiffre ni à un séparateur de date/heure (« 2026-09-23 »).
+_WEB_SCORE_RE = re.compile(r"(?<![\d./:\-])(\d{1,2})\s*[-:–]\s*(\d{1,2})(?![\d./:\-])")
+_WEB_SEP_VS = re.compile(r"\s+(?:vs\.?|v\.?|x|-|–)\s+", re.IGNORECASE)
+_WEB_PROLONGATION = ("extra time", "extra-time", "a.e.t", " aet", "after extra",
+                     "penalties", "penalty shootout", "shootout", "shoot-out",
+                     "on pens", "prolongation", "tirs au but", "t.a.b", "prorroga",
+                     "penales", "elfmeterschiessen", "verlangerung", "rigori",
+                     "supplementari", "straffespark", "prodlouzeni", "predlzenie",
+                     "jatkoaika", "forlangning", "ekstra tid", "overtime",
+                     "hosszabbitas", "dogrywka", "karne", "uzatma", "prelungiri",
+                     "produzetci", "penaltami", "penalty rozstrel", "a.p.")
+# Libellés de compétition à ÉLIMINATION DIRECTE (prolongation possible),
+# comparés au libellé plié. Un faux positif ne coûte qu'un refus.
+_WEB_ELIMINATION = ("cup", "coupe", "copa", "pokal", "coppa", "taca", "beker",
+                    "kupa", "puchar", "pohar", "cupen", "kupen", "trophy",
+                    "shield", "play-off", "playoff", "knockout", "final",
+                    "libertadores", "sudamericana", "champions league",
+                    "europa league", "conference league", "presidents",
+                    "president's", "super cup", "supercup", "supercopa",
+                    "relegation", "promotion", "qualif")
+
+
+def ligue_a_elimination(label: str) -> bool:
+    """La compétition peut-elle aller en prolongation ? Pure. Un libellé
+    vide est traité comme tel (refus) : on ne peut pas prouver le contraire."""
+    plie = _fold(label or "")
+    return not plie.strip() or any(m in plie for m in _WEB_ELIMINATION)
+
+
+def _web_cle() -> str:
+    """Clé Ollama de RECHERCHE : app_secrets d'abord, environnement ensuite
+    (OLLAMA_API_KEY en dernier filet, pour un lancement local)."""
+    try:
+        from core.secret_store import get_secret
+        cle = get_secret(WEB_SEARCH_KEY_NAME) or ""
+    except Exception:                                              # noqa: BLE001
+        cle = os.environ.get(WEB_SEARCH_KEY_NAME, "")
+    return (cle or os.environ.get("OLLAMA_API_KEY", "")).strip()
+
+
+def _web_recherche(requete: str) -> list:
+    """Résultats bruts de l'API de recherche Ollama, [] sur toute panne ou
+    budget atteint — même convention que `_get_json`, en POST."""
+    cle = _web_cle()
+    if not cle:
+        log.info("score_sources[%s]: aucune clé %s — étage web inactif",
+                 _WEB_BUCKET, WEB_SEARCH_KEY_NAME)
+        return []
+    if daily_quota.spent(_WEB_BUCKET) >= WEB_SEARCH_DAILY_BUDGET:
+        log.warning("score_sources[%s]: budget journalier atteint (%d) — requête sautée",
+                    _WEB_BUCKET, WEB_SEARCH_DAILY_BUDGET)
+        return []
+    corps = json.dumps({"query": requete, "max_results": _WEB_MAX_RESULTS}).encode()
+    req = urllib.request.Request(WEB_SEARCH_URL, data=corps, method="POST", headers={
+        "Authorization": f"Bearer {cle}", "Content-Type": "application/json"})
+    try:
+        with urllib.request.urlopen(req, timeout=_TIMEOUT) as resp:
+            data = json.loads(resp.read().decode("utf-8", errors="replace"))
+        return list((data or {}).get("results") or [])
+    except Exception as e:                                         # noqa: BLE001
+        log.warning("score_sources[%s]: %s", _WEB_BUCKET, e)
+        return []
+    finally:
+        daily_quota.add(_WEB_BUCKET, 1)
+
+
+def _web_camp_en_fin(texte: str, attendu: str) -> bool:
+    """Le texte FINIT-il par le nom attendu (fenêtre de 1 à 6 mots) ?"""
+    mots = texte.split()
+    for n in range(1, min(_WEB_FENETRE_MOTS, len(mots)) + 1):
+        cand = " ".join(mots[-n:]).strip(" .,;|—-")
+        if len(cand) >= 3 and _apparie(attendu, cand):
+            return True
+    return False
+
+
+def _web_camp_en_tete(texte: str, attendu: str) -> bool:
+    """Le texte COMMENCE-t-il par le nom attendu (fenêtre de 1 à 6 mots) ?"""
+    mots = texte.split()
+    for n in range(1, min(_WEB_FENETRE_MOTS, len(mots)) + 1):
+        cand = " ".join(mots[:n]).strip(" .,;|—-")
+        if len(cand) >= 3 and _apparie(attendu, cand):
+            return True
+    return False
+
+
+def score_du_titre(titre: str, home: str, away: str) -> tuple[int, int] | None:
+    """Score (domicile, extérieur) lu dans un titre de page, ou None.
+
+    Deux formes, domicile TOUJOURS avant extérieur (une page qui inverse les
+    camps est ignorée, pas retournée) :
+      A. « <domicile> 1:1 <extérieur> »       (live-result, flashscore…)
+      B. « <domicile> vs <extérieur> 1-1 »   (sokascore, footlive…)
+    Pure — testable sans réseau."""
+    for m in _WEB_SCORE_RE.finditer(titre or ""):
+        hs, as_ = int(m.group(1)), int(m.group(2))
+        if hs > 15 or as_ > 15:
+            continue
+        avant, apres = titre[:m.start()], titre[m.end():]
+        if _web_camp_en_fin(avant, home) and _web_camp_en_tete(apres, away):
+            return hs, as_
+        parts = _WEB_SEP_VS.split(avant.strip(), maxsplit=1)
+        if (len(parts) == 2 and _web_camp_en_fin(parts[0], home)
+                and _web_camp_en_tete(parts[1], away)):
+            return hs, as_
+    return None
+
+
+def _web_domaine(url: str) -> str:
+    hote = urllib.parse.urlparse(url or "").netloc.lower()
+    return hote[4:] if hote.startswith("www.") else hote
+
+
+def score_web_concordant(resultats: list, home: str, away: str) -> tuple[int, int] | None:
+    """Le score à retenir parmi des résultats de recherche, ou None.
+
+    Exige DEUX domaines distincts sur le même score, AUCUN domaine sur un
+    autre, et AUCUNE mention de prolongation / tirs au but. Pure."""
+    par_score: dict[tuple[int, int], set] = {}
+    for r in resultats or []:
+        titre = str(r.get("title") or "")
+        # TOUS les résultats, pas seulement ceux dont le titre porte un score :
+        # le 2026-09-24, la prolongation n'était dite que sur des pages SANS
+        # score au titre (idnes, ceskenoviny, denik).
+        if any(mot in _fold(f"{titre} {r.get('content') or ''}")
+               for mot in _WEB_PROLONGATION):
+            log.info("SETTLE SKIP web | %s vs %s — prolongation/tirs au but "
+                     "mentionnés (%s), on n'ecrit pas", home, away, _web_domaine(r.get("url")))
+            return None
+        sc = score_du_titre(titre, home, away)
+        if sc is not None:
+            par_score.setdefault(sc, set()).add(_web_domaine(r.get("url")))
+    if len(par_score) != 1:
+        if len(par_score) > 1:
+            log.info("SETTLE SKIP web | %s vs %s — scores discordants %s",
+                     home, away, sorted(par_score))
+        return None
+    sc, domaines = next(iter(par_score.items()))
+    return sc if len(domaines - {""}) >= 2 else None
+
+
+def result_from_web(match_name: str, sport: str, match_date: str) -> dict | None:
+    """Dernier étage : score par recherche web, deux domaines concordants.
+    Même contrat que les autres voies. Voir le bloc ci-dessus."""
+    parts = _split(match_name)
+    if not parts or (sport or "").lower() not in WEB_SEARCH_SPORTS:
+        return None
+    home, away = parts
+    jour = str(match_date or "")[:10]
+    resultats = _web_recherche(f"{home} vs {away} {jour} final score")
+    sc = score_web_concordant(resultats, home, away)
+    if sc is None:
+        if resultats:
+            log.info("SETTLE SKIP web | %s — pas deux sources concordantes "
+                     "sur %d résultat(s)", match_name, len(resultats))
+        return None
+    log.info("SETTLE web | %s | %d-%d (2 domaines concordants, 0 appel IA)",
+             match_name, sc[0], sc[1])
+    return {"home_score": sc[0], "away_score": sc[1], "completed": True,
+            "source": "web"}
+
+
 def fetch_score(match_name: str, sport: str, match_date: str = "",
-                tsdb_ok: bool = True) -> dict | None:
+                tsdb_ok: bool = True, web_ok: bool = False) -> dict | None:
     """Score final par la chaîne déterministe (après api-sports, étage 1 dans
     core/settlement.py). Rend {"home_score", "away_score", "completed": True,
     "source"} ou None — et None veut dire « pas trouvé AUJOURD'HUI », jamais
@@ -1058,7 +1273,10 @@ def fetch_score(match_name: str, sport: str, match_date: str = "",
     `AUDIT STÉRILE — 0 réglé sur 15 éligibles` qui, eux, bloquaient le
     règlement de matchs parfaitement réglables. Une source qui n'a pas le
     score d'un match 12 h après le coup d'envoi ne l'aura pas au 6e essai ;
-    l'appelant décide (core/audit_engine._tsdb_encore_utile)."""
+    l'appelant décide (core/audit_engine._tsdb_encore_utile).
+
+    `web_ok=True` ouvre le dernier recours par recherche web (2026-09-24),
+    que l'appelant réserve aux recommandés vieux de 12 h (`result_from_web`)."""
     if (sport or "").lower() == "baseball":
         r = result_from_mlb(match_name, match_date)
         if r:
@@ -1072,8 +1290,15 @@ def fetch_score(match_name: str, sport: str, match_date: str = "",
     r = result_from_livescore(match_name, sport, match_date)
     if r:
         return r
-    if not tsdb_ok:
+    if tsdb_ok:
+        r = result_from_thesportsdb(match_name, sport, match_date)
+        if r:
+            return r
+    else:
         log.info("score_sources[tsdb_results]: repli non tenté pour %s "
                  "(fenêtre de repli dépassée) — budget préservé", match_name)
-        return None
-    return result_from_thesportsdb(match_name, sport, match_date)
+    # Dernier recours, décidé par l'appelant (recommandé, ≥ 12 h) — voir
+    # `result_from_web` et core/audit_engine._web_encore_utile.
+    if web_ok:
+        return result_from_web(match_name, sport, match_date)
+    return None

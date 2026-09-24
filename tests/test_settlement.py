@@ -10,6 +10,7 @@ chaîne de repli testée ici est celle des SOURCES STRUCTURÉES.
 
 Aucun appel HTTP réel — les deux étages sont monkeypatchés.
 """
+import pytest
 import core.settlement as settlement
 
 
@@ -127,3 +128,35 @@ class TestDetermineOutcome:
         outcome = settlement.determine_outcome(
             "basketball", "h2h", "Miami", "Miami Heat", "Miami Hurricanes", 100, 90)
         assert outcome == "UNKNOWN"
+
+
+class TestPorteWebAudit:
+    """Le dernier recours web (2026-09-24) : recommandés seulement, 12 h au
+    plus tôt après le coup d'envoi, jamais un signal indatable."""
+
+    def test_porte(self):
+        from datetime import datetime, timedelta, timezone
+        from core.audit_engine import _web_encore_utile
+        from core.score_sources import WEB_SEARCH_MIN_AGE_H
+        now = datetime(2026, 9, 24, 12, tzinfo=timezone.utc)
+        vieux = (now - timedelta(hours=WEB_SEARCH_MIN_AGE_H + 1)).isoformat()
+        jeune = (now - timedelta(hours=WEB_SEARCH_MIN_AGE_H - 1)).isoformat()
+        ligue = "Bulgaria - Vtora Liga"
+        assert _web_encore_utile({"match_time": vieux, "league": ligue}, now)
+        assert not _web_encore_utile({"match_time": jeune, "league": ligue}, now)
+        assert not _web_encore_utile({"match_time": vieux, "league": ligue,
+                                      "is_shadow": True}, now)
+        assert not _web_encore_utile({"league": ligue}, now)
+
+    @pytest.mark.parametrize("ligue", [
+        "Czech Republic - Cup", "Norway - NM Cup", "Paraguay - Copa Paraguay",
+        "United Arab Emirates - Presidents Cup", "UEFA Champions League",
+        "DFB-Pokal", "Coppa Italia", "", "Denmark - 1st Division, Relegation Round"])
+    def test_jamais_une_competition_a_elimination(self, ligue):
+        """Kladno–Ostrava (coupe tchèque, 2026-09-24) : le web a lu 1-2, le
+        score APRÈS prolongation ; à 90 min c'était 1-1."""
+        from datetime import datetime, timedelta, timezone
+        from core.audit_engine import _web_encore_utile
+        now = datetime(2026, 9, 24, 12, tzinfo=timezone.utc)
+        sig = {"match_time": (now - timedelta(hours=20)).isoformat(), "league": ligue}
+        assert not _web_encore_utile(sig, now)
