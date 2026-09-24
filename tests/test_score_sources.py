@@ -731,3 +731,107 @@ class TestESPNTennisParJour:
         assert ss._jours_de_fenetre("20260904-20260906") == ["20260904", "20260905", "20260906"]
         assert ss._jours_de_fenetre("20260905") == ["20260905"]
         assert len(ss._jours_de_fenetre("20260101-20261231")) == 10          # plafond
+
+
+# ── Recherche web, dernier recours (décision opérateur du 2026-09-24) ─────
+#
+# Titres RÉELS rendus par l'API de recherche Ollama pour Grorud–Moss et
+# AL Bataeh–Palm City (23/09), réglés à la main le 24/09.
+
+def _res(titre, url, contenu=""):
+    return {"title": titre, "url": url, "content": contenu}
+
+
+class TestRechercheWeb:
+    H, A = "Grorud IL", "Moss FK"
+
+    @pytest.mark.parametrize("titre", [
+        "Football. Grorud 1:1 Moss - result and match statistics, online - Live-Result",
+        "Grorud vs Moss 1-1 — Live Score, Result & Lineups | SokaScore",
+    ])
+    def test_les_deux_formes_de_titre_se_lisent(self, titre):
+        assert ss.score_du_titre(titre, self.H, self.A) == (1, 1)
+
+    @pytest.mark.parametrize("titre", [
+        "Moss 1:1 Grorud",                                   # camps inversés
+        "Grorud IL vs Moss FK live score - NM Cup 23 September 2026",
+        "Grorud vs Moss 2026-09-23 preview",                 # une date
+        "Grorud vs Moss kick-off 16:00",                     # une heure
+        "Lillestrom 1:1 Moss",                               # un seul camp
+    ])
+    def test_un_titre_douteux_ne_donne_rien(self, titre):
+        assert ss.score_du_titre(titre, self.H, self.A) is None
+
+    def test_deux_domaines_concordants_reglent(self):
+        res = [_res("Grorud 1:1 Moss", "https://www.live-result.com/x"),
+               _res("Grorud vs Moss 1-1 — Result", "https://sokascore.com/y")]
+        assert ss.score_web_concordant(res, self.H, self.A) == (1, 1)
+
+    def test_un_seul_domaine_ne_regle_pas(self):
+        res = [_res("Grorud 1:1 Moss", "https://live-result.com/a"),
+               _res("Grorud vs Moss 1-1", "https://www.live-result.com/b")]
+        assert ss.score_web_concordant(res, self.H, self.A) is None
+
+    def test_une_discordance_fait_refuser(self):
+        res = [_res("Grorud 1:1 Moss", "https://live-result.com/a"),
+               _res("Grorud vs Moss 1-1", "https://sokascore.com/b"),
+               _res("Grorud 2:1 Moss", "https://autre.com/c")]
+        assert ss.score_web_concordant(res, self.H, self.A) is None
+
+    @pytest.mark.parametrize("mention", ["after extra time", "won on penalties",
+                                         "a.e.t.", "tirs au but", "prórroga"])
+    def test_prolongation_mentionnee_fait_refuser(self, mention):
+        """Kladno–Ostrava (23/09) : 1-2 après prolongation, 1-1 à 90 min. Un
+        titre porte le premier ; nos marchés mesurent le second."""
+        res = [_res("Kladno 1-2 Ostrava", "https://a.com", f"Kladno lost {mention}"),
+               _res("Kladno vs Ostrava 1-2", "https://b.com")]
+        assert ss.score_web_concordant(res, "SK Kladno", "Banik Ostrava") is None
+
+    def test_prolongation_dite_sur_une_page_sans_score_fait_refuser(self):
+        """Résultats RÉELS du 2026-09-24 pour Kladno–Ostrava : le score au
+        titre (1-2) est celui d'après prolongation, dite seulement en tchèque
+        sur des pages sans score au titre."""
+        res = [_res("Fotbalisté Ostravy udolali v poháru Kladno až v prodloužení",
+                    "https://www.idnes.cz/a"),
+               _res("Kladno vs Ostrava (1-2) Sep 23, 2026 Live Updates",
+                    "https://www.footballcritic.com/b"),
+               _res("Kladno - Baník 1:2 Favorit utrpěl postup", "https://tvspravy.sk/c")]
+        assert ss.score_web_concordant(res, "SK Kladno", "Banik Ostrava") is None
+
+    def test_hors_football_rien_nest_cherche(self, monkeypatch):
+        appels = []
+        monkeypatch.setattr(ss, "_web_recherche", lambda q: appels.append(q) or [])
+        assert ss.result_from_web("Lakers vs Celtics", "basketball", "2026-09-23") is None
+        assert not appels
+
+    def test_le_resultat_porte_sa_source(self, monkeypatch):
+        monkeypatch.setattr(ss, "_web_recherche", lambda q: [
+            _res("Al Bataeh 0-2 Palm City", "https://soccervital.com/x"),
+            _res("AL Bataeh vs FC Palm City 0:2 | xscores", "https://www.xscores.com/y")])
+        r = ss.result_from_web("AL Bataeh (UAE) vs FC Palm City", "soccer", "2026-09-23")
+        assert r == {"home_score": 0, "away_score": 2, "completed": True, "source": "web"}
+
+    def test_budget_atteint_aucune_requete(self, monkeypatch):
+        monkeypatch.setattr(ss, "_web_cle", lambda: "k")
+        monkeypatch.setattr(ss.daily_quota, "spent", lambda b: ss.WEB_SEARCH_DAILY_BUDGET)
+        monkeypatch.setattr(ss.urllib.request, "urlopen",
+                            lambda *a, **k: pytest.fail("requête hors budget"))
+        assert ss._web_recherche("x") == []
+
+    def test_letage_web_est_ferme_par_defaut(self, monkeypatch):
+        """Seul l'audit l'ouvre (web_ok) : le backfill manuel et tout autre
+        appelant de fetch_score n'y touchent pas."""
+        for nom in ("result_from_mlb", "result_from_espn", "result_from_livescore",
+                    "result_from_thesportsdb"):
+            monkeypatch.setattr(ss, nom, lambda *a, **k: None)
+        monkeypatch.setattr(ss, "result_from_web",
+                            lambda *a, **k: pytest.fail("étage web ouvert"))
+        assert ss.fetch_score("A FC vs B FC", "soccer", "2026-09-23") is None
+
+    def test_aucune_ia_ne_lit_le_score(self):
+        """Décision du 2026-09-02 : on n'emploie d'Ollama que sa RECHERCHE,
+        jamais une inférence — aucun import du routeur IA dans ce module."""
+        import inspect
+        src = inspect.getsource(ss)
+        assert "ai_router" not in src and "ai_search" not in src
+        assert "/api/web_search" in ss.WEB_SEARCH_URL

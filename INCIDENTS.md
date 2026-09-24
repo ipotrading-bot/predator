@@ -4303,6 +4303,34 @@ Gardiens : `tests/test_score_sources.py::TestLiveScore::test_prolongation_regle_
 (AP et AET), `::test_prolongation_sans_score_a_90_minutes_ne_regle_pas`,
 `::test_les_tirs_au_but_ne_reglent_pas` (AP sans `OR`, conservé).
 
+**Suite du même jour — dernier recours par recherche web (DÉCISION
+OPÉRATEUR).** Consigne : « si trouve pas de sources, lancer recherche web »,
+avec les IA déjà installées (routine cloud impossible : GitHub non connecté
+au compte Claude). Sondé en live : l'API `/api/web_search` d'Ollama répond
+avec la clé existante (Mistral : aucune clé ; grounding Gemini : mort en
+gratuit). Étage `core.score_sources.result_from_web`, ouvert par l'audit
+aux recommandés ≥ 12 h, football seul, 20 req/jour, clé `OLLAMA_SEARCH_KEY`
+en app_secrets. **Aucun LLM ne lit le score** (décision du 2026-09-02
+tenue) : lecture déterministe du TITRE, deux domaines concordants, aucun
+discordant.
+
+⛔ **La première version a RÉGLÉ FAUX en live** : Kladno–Ostrava (coupe
+tchèque) lu 1-2 par footballcritic et tvspravy — score APRÈS prolongation,
+1-1 à 90 min. La prolongation n'était dite qu'en tchèque (« prodloužení »),
+sur des pages SANS score au titre, que le garde par mots-clés ne regardait
+pas. Rien n'a été écrit (test à blanc), mais c'est la raison des deux gardes
+finales : (1) jamais une compétition à élimination directe
+(`ligue_a_elimination`, libellé vide compris) ; (2) une mention de
+prolongation dans N'IMPORTE QUEL résultat fait tout refuser. Contre-épreuve
+sur 10 matchs de championnat déjà réglés : 2 réglés par le web, 2 issues
+identiques à la base, 8 abstentions.
+
+Critère de retrait daté : revue le **2026-10-24** — l'étage SORT à la
+première issue contredite, ou sous 50 % de tentatives réglées (« SETTLE web
+| » contre « SETTLE SKIP web | »).
+Gardiens : `tests/test_score_sources.py::TestRechercheWeb`,
+`tests/test_settlement.py::TestPorteWebAudit`.
+
 
 ## La règle transverse
 

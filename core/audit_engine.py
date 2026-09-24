@@ -38,6 +38,7 @@ from core.constants import CLOSING_LINE_WINDOW_MIN
 from core.learning_layer import compute_and_save as _learn
 from core.run_contract import terminer as _terminer_run, verdict_de_fin
 from core.settlement import settle_signal
+from core.score_sources import WEB_SEARCH_MIN_AGE_H, ligue_a_elimination
 
 load_dotenv()
 
@@ -241,6 +242,20 @@ def _tsdb_encore_utile(sig: dict, now: datetime) -> bool:
     return age is None or age < TSDB_RETRY_WINDOW_H
 
 
+def _web_encore_utile(sig: dict, now: datetime) -> bool:
+    """Le dernier recours web (core.score_sources.result_from_web) est-il
+    ouvert pour ce signal ? RECOMMANDÉ seulement, et au moins
+    WEB_SEARCH_MIN_AGE_H après le coup d'envoi : avant, les voies
+    structurées n'ont pas fini d'essayer, et le budget (20/jour) est réservé
+    aux paris que l'opérateur a réellement pu jouer. Indatable : refusé.
+    Compétition à élimination directe : refusé — le score d'un titre peut
+    être celui d'après prolongation (Kladno–Ostrava, 2026-09-24)."""
+    if sig.get("is_shadow") or ligue_a_elimination(sig.get("league") or ""):
+        return False
+    age = _age_h(sig, now)
+    return age is not None and age >= WEB_SEARCH_MIN_AGE_H
+
+
 def prioriser(pending: list[dict]) -> list[dict]:
     """Les RECOMMANDÉS d'abord, les fantômes ensuite — chaque groupe dans
     l'ordre rendu par `fetch_pending` (coup d'envoi croissant). Tri stable.
@@ -265,7 +280,8 @@ def audit_one(sb, sig: dict, settle_calls: list, now: datetime) -> str:
     # ── Pass 1 : Settlement via real score ───────────────────────────
     if settle_calls[0] > 0:
         settle_calls[0] -= 1
-        if settle_signal(sb, sig, now_iso, tsdb_ok=_tsdb_encore_utile(sig, now)):
+        if settle_signal(sb, sig, now_iso, tsdb_ok=_tsdb_encore_utile(sig, now),
+                         web_ok=_web_encore_utile(sig, now)):
             return "settled"
         log.info("No score yet for %s — falling back to CLV audit", match)
 

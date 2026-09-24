@@ -39,7 +39,7 @@ class TestOrdreDeService:
     def test_un_budget_court_sert_dabord_les_recommandes(self, monkeypatch):
         regles = []
         monkeypatch.setattr(audit_engine, "settle_signal",
-                            lambda sb, sig, now_iso, tsdb_ok=True: regles.append(sig["id"]) or True)
+                            lambda sb, sig, now_iso, tsdb_ok=True, web_ok=False: regles.append(sig["id"]) or True)
         pending = audit_engine.prioriser([_sig(1, 20, shadow=True), _sig(2, 10), _sig(3, 9)])
         budget = [2]
         for sig in pending:
@@ -51,7 +51,7 @@ class TestTheSportsDBReserveAuxRecommandes:
     def _tsdb_ok_pour(self, monkeypatch, sig) -> bool | None:
         vu = {}
         monkeypatch.setattr(audit_engine, "settle_signal",
-                            lambda sb, s, now_iso, tsdb_ok=True: vu.setdefault("ok", tsdb_ok) or True)
+                            lambda sb, s, now_iso, tsdb_ok=True, web_ok=False: vu.setdefault("ok", tsdb_ok) or True)
         audit_engine.audit_one(None, sig, [5], NOW)
         return vu.get("ok")
 
@@ -64,7 +64,7 @@ class TestTheSportsDBReserveAuxRecommandes:
     def test_un_fantome_est_tout_de_meme_regle_par_les_voies_gratuites(self, monkeypatch):
         appels = []
         monkeypatch.setattr(audit_engine, "settle_signal",
-                            lambda sb, s, now_iso, tsdb_ok=True: appels.append(s["id"]) or True)
+                            lambda sb, s, now_iso, tsdb_ok=True, web_ok=False: appels.append(s["id"]) or True)
         assert audit_engine.audit_one(None, _sig(9, 5, shadow=True), [5], NOW) == "settled"
         assert appels == [9]
 
