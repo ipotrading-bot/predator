@@ -451,13 +451,16 @@ class TestLEtageDuClubNestJamaisHerite:
 # 115, avec un vocabulaire de statut à lui (« FT », « AP », les minutes en
 # direct) et des camps sous forme de LISTES.
 
-def _ls_payload(events, ligue="Indonesia - Super League"):
-    """Une réponse LiveScore : Stages[] > Events[], camps en listes."""
+def _ls_payload(events, ligue="Indonesia - Super League", score_90=None):
+    """Une réponse LiveScore : Stages[] > Events[], camps en listes.
+    `score_90` pose `Tr1OR`/`Tr2OR` (score à 90 minutes) sur chaque match."""
+    extra = ({"Tr1OR": str(score_90[0]), "Tr2OR": str(score_90[1])}
+             if score_90 else {})
     return {"Stages": [{"Cnm": ligue.split(" - ")[0],
                         "Snm": ligue.split(" - ")[-1],
                         "Events": [
                             {"Eid": eid, "T1": [{"Nm": h}], "T2": [{"Nm": a}],
-                             "Tr1": hs, "Tr2": as_, "Eps": st}
+                             "Tr1": hs, "Tr2": as_, "Eps": st, **extra}
                             for (eid, h, a, hs, as_, st) in events]}]}
 
 
@@ -478,12 +481,28 @@ class TestLiveScore:
                                         "2026-09-04") is None
 
     def test_les_tirs_au_but_ne_reglent_pas(self, monkeypatch):
-        """« AP » (après tirs au but) est TERMINÉ mais Tr1/Tr2 peuvent porter
+        """« AP » SANS `Tr1OR`/`Tr2OR` : terminé, mais Tr1/Tr2 peuvent porter
         le score de la séance, que nos marchés 1X2 et totaux ne mesurent pas.
         La ligne continue vers ESPN et TheSportsDB — refus, pas devinette."""
         monkeypatch.setattr(ss, "_get_json", lambda url, b, bud, source=None:
                             _ls_payload([("1", "A FC", "B FC", 4, 3, "AP")]))
         assert ss.result_from_livescore("A FC vs B FC", "soccer", "2026-09-04") is None
+
+    @pytest.mark.parametrize("statut", ["AP", "AET"])
+    def test_prolongation_regle_sur_le_score_a_90_minutes(self, monkeypatch, statut):
+        """Kladno–Ostrava, 2026-09-23 (AET) : Tr 1-2 après prolongation, OR
+        1-1 à 90 minutes. Seul le second règle nos marchés : un Under 2.5
+        gagné, un handicap +0.5 de Kladno gagné."""
+        monkeypatch.setattr(ss, "_get_json", lambda url, b, bud, source=None:
+                            _ls_payload([("1", "A FC", "B FC", 1, 2, statut)],
+                                        score_90=(1, 1)))
+        r = ss.result_from_livescore("A FC vs B FC", "soccer", "2026-09-23")
+        assert (r["home_score"], r["away_score"]) == (1, 1)
+
+    def test_prolongation_sans_score_a_90_minutes_ne_regle_pas(self, monkeypatch):
+        monkeypatch.setattr(ss, "_get_json", lambda url, b, bud, source=None:
+                            _ls_payload([("1", "A FC", "B FC", 1, 2, "AET")]))
+        assert ss.result_from_livescore("A FC vs B FC", "soccer", "2026-09-23") is None
 
     def test_un_seul_nom_apparie_ne_regle_pas(self, monkeypatch):
         """Même contrat que toutes les autres voies : les DEUX camps."""

@@ -97,6 +97,7 @@ C'est le tableau à consulter avant de toucher à quoi que ce soit.
 | Le pool `scan` porte le proxy des sources filtrées par IP | `…::test_le_pool_scan_porte_le_proxy_des_sources_filtrees_par_ip` |
 | Un scan qui écarte plus de la moitié de ses marchés vivants prévient Telegram (`alert_perimetre`, TTL `_ALERT_TTL_H`) ; muet sans Supabase et sous 5 vivants | `tests/test_perimetre.py::TestAlertePerimetre` |
 | La mesure LiveScore au périmètre COMPTE sans rien laisser passer de plus | `tests/test_perimetre.py::TestMesureLiveScore` |
+| Un match fini en prolongation / aux tirs au but ne se règle que sur le score à 90 min (LiveScore `Tr1OR`/`Tr2OR`), sinon refus | `tests/test_score_sources.py::TestLiveScore` |
 | Verdicts et classement par sport : mise plate À CÔTÉ du ROI Kelly, et lignes postérieures à `CALIBRATION_EPOCH` seulement | `tests/test_learning_layer.py::TestMisePlateEtEpoque` |
 | Aucun pool ne transmet de clé IA (plus rien n'en consomme) | `tests/test_ci_env.py::test_aucun_pool_ne_transmet_de_cle_ia` |
 | Un scan standard RÉCLAME son créneau avant de payer ; une réclamation fraîche dégrade le second run du même créneau | `tests/test_ci_env.py::TestDegradationDuDoublon` |

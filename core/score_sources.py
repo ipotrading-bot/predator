@@ -745,12 +745,20 @@ def result_from_espn(match_name: str, sport: str, match_date: str) -> dict | Non
 # budget étroit au lieu d'en créer un second : elle s'intercale entre ESPN et
 # TheSportsDB pour que le troisième étage ne serve plus qu'à la traîne.
 #
-# ⚠️ SEUL « FT » RÈGLE. LiveScore publie aussi « AP » (après tirs au but) et
-# les minutes en direct. Sur un match décidé aux tirs au but, `Tr1`/`Tr2`
-# peuvent porter le score de la séance et non celui du temps réglementaire,
-# qui est le seul que nos marchés 1X2 et totaux mesurent : régler dessus
-# écrirait un WIN/LOSS faux et DÉFINITIF. Ces matchs-là continuent donc vers
-# ESPN et TheSportsDB, comme avant cette voie. Refus plutôt que devinette.
+# ⚠️ TEMPS RÉGLEMENTAIRE SEULEMENT. LiveScore publie aussi « AP » (après tirs
+# au but), « AET » (après prolongation) et les minutes en direct. Sur ces
+# deux statuts, `Tr1`/`Tr2` portent le score APRÈS prolongation (ou celui de
+# la séance), jamais celui des 90 minutes, seul que nos marchés 1X2, totaux
+# et handicaps mesurent : régler dessus écrirait un WIN/LOSS faux et
+# DÉFINITIF. Ils ne règlent donc que sur `Tr1OR`/`Tr2OR` (« ordinary »),
+# le score à 90 minutes, et restent refusés quand LiveScore ne le publie pas.
+#
+# MESURÉ le 2026-09-24 sur la journée du 23 : `OR` présent sur les 4 « AP »
+# et le « AET » ; Kladno–Ostrava (AET) Tr 1-2, OR 1-1 ; Grorud–Moss (AP)
+# Tr 1-1, OR 1-1, séance `Trp` 6-5. Avant ce jour, SEUL « FT » réglait :
+# chaque match de coupe décidé en prolongation ou aux tirs au but restait
+# `active` jusqu'à expirer, et chaque audit entre-temps sortait STÉRILE
+# (Grorud–Moss, Fernando de la Mora–Libertad : 3 audits rouges).
 _LS_URL = "https://prod-public-api.livescore.com/v1/api/app/date"
 # Sport interne → segment d'URL LiveScore. Sondés le 2026-09-05 pour le
 # 2026-09-04 : soccer 273 événements, tennis 79, hockey 31, cricket 16,
@@ -762,9 +770,10 @@ _LS_URL = "https://prod-public-api.livescore.com/v1/api/app/date"
 # lire. Ajouter une ligne ici sans la mesurer serait une liste qu'on croit
 # exhaustive (règle n°6).
 _LS_SPORTS = {"soccer": "soccer"}
-# Statuts TERMINÉS retenus. Volontairement RÉDUIT à « FT » — voir l'alerte
-# ci-dessus sur « AP ».
+# Statuts TERMINÉS retenus. « FT » règle sur `Tr1`/`Tr2` ; « AP »/« AET »
+# seulement sur `Tr1OR`/`Tr2OR` — voir l'alerte ci-dessus.
 _LS_FINISHED = frozenset({"ft"})
+_LS_FINISHED_APRES_90 = frozenset({"ap", "aet"})
 
 
 def _livescore_du_jour(segment: str, jour: str) -> list:
@@ -788,6 +797,10 @@ def _livescore_du_jour(segment: str, jour: str) -> list:
                     "away": [t.get("Nm") or "" for t in (ev.get("T2") or [])],
                     "home_score": ev.get("Tr1"),
                     "away_score": ev.get("Tr2"),
+                    # Score à 90 minutes (« ordinary ») : seul lisible sur un
+                    # match allé en prolongation ou aux tirs au but.
+                    "home_score_90": ev.get("Tr1OR"),
+                    "away_score_90": ev.get("Tr2OR"),
                     "status": str(ev.get("Eps") or "").strip().lower(),
                     "id": str(ev.get("Eid") or ""),
                     "league": ligue,
@@ -839,16 +852,21 @@ def result_from_livescore(match_name: str, sport: str, match_date: str) -> dict 
         for ev in _livescore_du_jour(segment, jour):
             if not (_ls_camp(ev["home"], home) and _ls_camp(ev["away"], away)):
                 continue
-            if ev["status"] not in _LS_FINISHED:
-                # Match trouvé mais pas terminé (ou terminé aux tirs au but) :
-                # on ne règle pas, et on ne le dit qu'une fois — la ligne
-                # repassera au prochain audit.
+            if ev["status"] in _LS_FINISHED:
+                paire = (ev["home_score"], ev["away_score"])
+            elif ev["status"] in _LS_FINISHED_APRES_90:
+                # Prolongation / tirs au but : le score à 90 minutes ou rien.
+                paire = (ev.get("home_score_90"), ev.get("away_score_90"))
+            else:
+                paire = None
+            try:
+                hs, as_ = int(paire[0]), int(paire[1])
+            except (TypeError, ValueError):
+                # Match trouvé mais pas terminé, ou terminé sans score à 90
+                # minutes publié : on ne règle pas — la ligne repassera au
+                # prochain audit.
                 log.info("SETTLE SKIP livescore | %s — statut %r, on n'ecrit pas",
                          match_name, ev["status"])
-                continue
-            try:
-                hs, as_ = int(ev["home_score"]), int(ev["away_score"])
-            except (TypeError, ValueError):
                 continue
             vus[ev["id"] or f"{jour}|{ev['league']}"] = (hs, as_)
     if len(vus) == 1:
