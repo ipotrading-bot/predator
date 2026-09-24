@@ -175,7 +175,7 @@ details[open] > summary.sec-hdr::before { content: '▾'; }
       <div class="pk-v {{ 'pos' if global_s.pnl_units >= 0 else 'neg' }}">{{ "%+.1f"|format(global_s.pnl_units) }}</div>
       <div class="pk-l">Unités</div>
     </div>
-    <div class="pk" title="Paris recommandés réglés ; hors {{ global_s.phantoms.wins }}–{{ global_s.phantoms.losses }} fantômes à moins de 2 h du coup d'envoi, jamais envoyés">
+    <div class="pk" title="{{ global_s.wins + global_s.losses }} gagnés ou perdus + {{ global_s.pushes }} remboursés (mise rendue, hors taux) ; hors {{ global_s.phantoms.wins }}–{{ global_s.phantoms.losses }} fantômes à moins de 2 h du coup d'envoi, jamais envoyés">
       <div class="pk-v" style="color:var(--t1)">{{ global_s.settled }}</div>
       <div class="pk-l">Réglés</div>
     </div>
