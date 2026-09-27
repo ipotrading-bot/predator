@@ -1418,6 +1418,24 @@ Markdown sans le fermer. Telegram aurait refusé le rapport ENTIER, comme avec
 SUSPECT\_DATA le 2026-09-14. Un gardien vérifie désormais la parité des `*` et
 des `_`.
 
+**Décision opérateur, le même jour** : « ne pas attendre 200 paris, proposer ces
+signaux, je déciderai de les jouer ». Dans la zone, la bande était DÉJÀ
+recommandée : 32 signaux sur 101 depuis le 13/09. Ce qui s'ajoute, ce sont ses
+signaux sous T-2h, jusque-là fantômes (13 sur 64 sur la même période).
+`run_engine.BANDE_COTE_PROPOSEE` les rend recommandés. Ils sont envoyés sur
+Telegram, affichés au dashboard, et réglés en priorité avec le recours web.
+Chaque pari de la bande porte « 🎯 tranche 1,50-1,75 » sur Telegram et 🎯 au
+dashboard. Rien n'est remplacé : le reste des fantômes sous T-2h, SHADOW_SPORTS
+et la borne T-24h ne bougent pas. Les seuils appris (`playable_rows`) et la
+mesure pré-enregistrée (zone seule) NE comptent PAS ces paris sous T-2h : leur
+population ne change pas en cours de route. En revanche, `is_shadow` passe à
+false et /performance les compte désormais parmi les recommandés, ce qui est
+exact puisqu'ils sont proposés. Pour les isoler dans une mesure, il suffit de
+les dériver : cote dans la bande, `time_to_match_minutes` < 120 et non-shadow.
+Aucune colonne n'a été ajoutée (règle 6). Définition unique de la bande :
+`core.learning_layer.dans_bande_cote`. Retrait : `BANDE_COTE_PROPOSEE = False`,
+sur instruction opérateur.
+
 À retenir : **un taux de réussite se lit contre la probabilité annoncée, jamais
 contre un objectif fixe** ; pour « faire mieux », il faut battre l'annonce du
 marché, et le taux brut suit la cote qu'on choisit. Gardiens :

@@ -166,7 +166,80 @@ class TestContrat:
                 assert ligne.count("*") % 2 == 0
                 assert ligne.replace("\\_", "").count("_") % 2 == 0
 
-    def test_la_section_ne_touche_pas_lemission(self):
-        """Règles 10 et 11 : l'hypothèse ne filtre rien d'elle-même."""
-        import run_engine
-        assert "BANDE_COTE" not in inspect.getsource(run_engine)
+    def test_la_mesure_ignore_les_propositions_sous_t2h(self):
+        """Décision du 2026-09-27 : la bande est aussi proposée sous T-2h. Ces
+        paris-là ne doivent PAS entrer dans la mesure pré-enregistrée, qui
+        porte sur la zone : sinon l'ajout changerait la population en cours
+        de route."""
+        sous = _jeu(10, 0, ttm=_PLAYABLE_MIN_MINUTES - 30)
+        assert wr.bande_cote(sous + _jeu(3, 2))["n"] == 5
+
+
+class TestProposition:
+    """Décision opérateur du 2026-09-27 : « ne pas attendre 200 paris, proposer
+    ces signaux, je déciderai de les jouer ». Sous T-2h, un signal de la bande
+    est recommandé au lieu d'être fantôme. C'est un AJOUT : rien d'autre ne
+    change."""
+
+    @staticmethod
+    def _sig(minutes, cote, sport="soccer", cle="executable_odd"):
+        from datetime import datetime, timedelta
+        scan = datetime(2026, 9, 28, 14, tzinfo=timezone.utc)
+        return {"sport": sport, "scanned_at": scan.isoformat(),
+                "match_time": (scan + timedelta(minutes=minutes)).isoformat(), cle: cote}
+
+    def test_la_definition_de_la_bande(self):
+        from core.learning_layer import dans_bande_cote
+        assert dans_bande_cote(BANDE_COTE_MIN) and dans_bande_cote("1.74")
+        assert not dans_bande_cote(BANDE_COTE_MAX) and not dans_bande_cote(1.49)
+        assert not dans_bande_cote(None) and not dans_bande_cote("n/a")
+
+    def test_sous_t2h_la_bande_est_recommandee(self):
+        import run_engine as eng
+        assert eng.BANDE_COTE_PROPOSEE is True
+        assert eng._shadow_reason(self._sig(60, 1.65)) is None
+        assert eng._shadow_reason(self._sig(60, 1.65, cle="xbet_odd")) is None
+
+    def test_hors_bande_le_fantome_reste(self):
+        """Pas un remplacement : sous T-2h hors bande, rien ne change."""
+        import run_engine as eng
+        for cote in (1.40, BANDE_COTE_MAX, 1.95, None):
+            assert eng._shadow_reason(self._sig(60, cote)) == "t_minus_2h"
+
+    def test_les_autres_raisons_priment(self):
+        """Sport en ombre et au-delà de T-24h : la bande n'y change rien."""
+        import run_engine as eng
+        assert eng._shadow_reason(self._sig(60, 1.65, sport="baseball")) == "shadow_sport"
+        assert eng._shadow_reason(self._sig(_PLAYABLE_MAX_MINUTES + 60, 1.65)) == "hors_zone_haute"
+
+    def test_interrupteur(self, monkeypatch):
+        import run_engine as eng
+        monkeypatch.setattr(eng, "BANDE_COTE_PROPOSEE", False)
+        assert eng._shadow_reason(self._sig(60, 1.65)) == "t_minus_2h"
+
+    def test_la_bande_nest_pas_recopiee_dans_le_moteur(self):
+        """Règle 6 : une seule définition, dans core.learning_layer."""
+        import run_engine as eng
+        src = inspect.getsource(eng._dans_bande)
+        assert "dans_bande_cote" in src and "1.5" not in src and "1.75" not in src
+
+    def test_telegram_etiquette_la_bande(self):
+        import run_engine as eng
+        from datetime import datetime
+        now = datetime(2026, 9, 28, 14, tzinfo=timezone.utc)
+        base = {"match": "A vs B", "sport": "soccer", "edge_pct": 3.0,
+                "selection_name": "A", "market_key": "totals"}
+        dedans = eng._signal_block(dict(base, executable_odd=1.62), now)
+        dehors = eng._signal_block(dict(base, executable_odd=1.90), now)
+        assert "🎯 tranche 1,50-1,75" in dedans and "tranche" not in dehors
+        assert dedans.count("*") % 2 == 0 and dedans.count("`") % 2 == 0
+
+    def test_le_dashboard_marque_la_bande(self):
+        """Pas de rendu de template dans les tests : on vérifie que la route
+        pose le drapeau avec la définition importée, et que le gabarit le lit."""
+        import pathlib
+        from api import index as api
+        assert "dans_bande_cote" in inspect.getsource(api.dashboard)
+        gabarit = (pathlib.Path(__file__).resolve().parent.parent
+                   / "templates" / "index.html").read_text(encoding="utf-8")
+        assert "s.bande_cote" in gabarit

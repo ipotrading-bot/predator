@@ -397,6 +397,25 @@ BANDE_COTE_DEPUIS = "2026-09-28"
 BANDE_COTE_N_REQUIS = 200
 BANDE_COTE_DECISION_LE = "2027-01-31"
 
+# DÉCISION OPÉRATEUR du 2026-09-27, le même jour, en connaissance de cause :
+# « ne pas attendre 200 paris, proposer ces signaux, je déciderai de les
+# jouer ». Dans la zone jouable, la bande était DÉJÀ recommandée ; ce qui
+# s'ajoute, ce sont ses signaux sous T-2h, jusque-là fantômes (21-9 depuis
+# A6). run_engine.BANDE_COTE_PROPOSEE les rend recommandés. Rien n'est
+# remplacé : la mesure pré-enregistrée ci-dessus reste sur la ZONE et ne
+# les compte pas (bornes _PLAYABLE_*), les seuils non plus (playable_rows).
+
+
+def dans_bande_cote(cote) -> bool:
+    """La cote tombe-t-elle dans la bande BANDE_COTE_MIN ≤ cote < BANDE_COTE_MAX ?
+    Une cote absente ou illisible n'y est pas. Seule définition de la bande :
+    le moteur, Telegram, le dashboard et le rapport hebdo l'importent (règle 6)."""
+    try:
+        c = float(cote)
+    except (TypeError, ValueError):
+        return False
+    return BANDE_COTE_MIN <= c < BANDE_COTE_MAX
+
 # Écart de calibration toléré (probabilité annoncée − taux réalisé), en points.
 # Voir _calibration_flag pour la mesure qui a fixé cette valeur.
 _CALIBRATION_MAX_GAP = 0.10

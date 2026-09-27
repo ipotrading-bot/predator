@@ -369,6 +369,12 @@ def dashboard():
 
             _sans_mise(signals)
 
+            # Bande 1,50-1,75 (décision opérateur du 2026-09-27) : marquée
+            # pour que l'opérateur la reconnaisse, définition importée.
+            from core.learning_layer import dans_bande_cote
+            for s in signals:
+                s["bande_cote"] = dans_bande_cote(s.get("xbet_odd"))
+
             # Parse sharp_sources JSON string → dict, consensus_score → int
             for s in signals:
                 ss = s.get("sharp_sources")
