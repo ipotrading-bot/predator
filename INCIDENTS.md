@@ -1441,6 +1441,55 @@ contre un objectif fixe** ; pour « faire mieux », il faut battre l'annonce du
 marché, et le taux brut suit la cote qu'on choisit. Gardiens :
 `tests/test_bande_cote.py`.
 
+### L'apprentissage jugeait l'edge par lui-même, sur la moitié des preuves (2026-09-27)
+
+Symptôme : aucun visible. La question de l'opérateur (« rendre le ledger plus
+intelligent pour octobre ») a fait relire ce que la couche apprend. Trois défauts
+sont apparus. Ils la faisaient apprendre PEU, apprendre sur un critère CIRCULAIRE,
+ou apprendre sur des étiquettes FAUSSES.
+
+**Moitié des preuves.** `compute_and_save` lisait les 120 dernières lignes par
+sport, fantômes compris. Le football était jugé sur 65 paris réglés en zone
+(`learning_summary` du 27/09), alors que 130 existaient depuis A6. Correctif :
+lecture de toute l'époque (`.gte("created_at", CALIBRATION_EPOCH)`), avec
+`_LECTURE_MAX` = 5 000 comme simple garde-fou. L'essai à blanc sur la base du
+27/09 juge le football sur 130 paris (IC [55 ; 72] contre [48 ; 71]).
+
+**Critère circulaire.** `clv_pct_real` = cote prise / clôture sharp − 1, donc
+≈ l'edge d'ENTRÉE tant que le sharp ne bouge pas. Mesuré sur 301 lignes le 24/09 :
+CLV +2,63 % pour un edge d'entrée de +2,73 %, et une dérive du sharp de −0,10 %
+(106 hausses, 105 baisses). Tout signal émis a un edge positif, donc « CLV >
++1 % » était vrai par construction : la « descente accélérée, le marché
+confirme » jugeait l'edge par lui-même. Correctif : les DÉCISIONS de seuil lisent
+`_derive_stats`, soit (1 / sharp_prob) / clôture − 1, dans la même unité et la
+même forme. Seule la part que l'edge d'entrée ne contient pas y entre. Le CLV
+reste AFFICHÉ (verdicts, rapport hebdo). Premier effet mesuré à blanc : les
+handicaps football montrent une dérive de −1,88 % sur 47 lignes, le marché
+s'éloigne de nos sélections, et le seuil passe de 1,0 à 1,4. Ce n'est pas un
+changement d'émission (plancher `EV_EDGE_FLOOR` 1,5) : c'est le premier
+signal réel que ce critère ait jamais porté.
+
+**Étiquettes fausses** (audit du 24/09, restées ouvertes) :
+- ESPN réglait `STATUS_FINAL_AET` / `STATUS_FINAL_PEN` sur le score après
+  prolongation. `_espn_apres_prolongation` les refuse, et l'étage suivant
+  (LiveScore, score à 90 min) prend la main. `STATUS_FINAL_OT` des sports US
+  n'est pas touché : la prolongation y compte pour le pari.
+- Les totals et handicaps se lisaient sur le PREMIER nombre du libellé :
+  « FC Iberia 1999 +0.5 » était réglé sur 1999, donc WIN quel que soit le score.
+  `settlement._ligne_du_libelle` lit le DERNIER nombre, avec la regex de la
+  capture de clôture (règle 6). Les 365 libellés de lignes en base finissent
+  tous par leur nombre. Les 2 lignes d'août touchées (signal 9790, FC Iberia
+  1999, WIN ; Amed Sportif U19 +0.5, WIN) ne sont PAS réécrites ici : corriger
+  un résultat est une décision séparée (règle 9).
+
+À retenir : **un critère d'apprentissage qui contient déjà la quantité qu'il
+prétend confirmer ne confirme rien** ; avant d'ajouter de l'« intelligence »,
+vérifier que la couche voit toutes ses preuves et que ses étiquettes sont
+justes. Mesure de fond du même jour : sur 326 paris post-A6, le réalisé égale
+l'annoncé (187 pour 194,9 attendus, z −0,91) et la pente rendement/edge n'est
+pas significative (z +1,16). Il n'existe pas encore de motif fin à apprendre.
+Gardiens : `tests/test_apprentissage_derive.py`.
+
 ### 36 % des lignes réglées ne portaient aucun CLV, sans qu'on sache pourquoi (2026-09-21)
 
 Symptôme : couverture du `clv_pct_real` à 105/135 en zone jouable (77,8 %) et

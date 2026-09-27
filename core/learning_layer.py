@@ -633,6 +633,43 @@ def _clv_stats(rows: list[dict]) -> dict:
     return {"n": n, "avg_clv": sum(real) / n, "positive_rate": positive / n}
 
 
+def _derive_stats(rows: list[dict]) -> dict:
+    """Dérive du prix SHARP entre l'émission et la clôture, en % du prix —
+    la même forme et la même unité que `_clv_stats` (`n`, `avg_clv`,
+    `positive_rate`), pour que `_decide_threshold` la lise sans changer.
+
+        dérive = (1 / sharp_prob) / closing_pinnacle_price − 1
+
+    Positive quand le marché sharp est venu vers notre sélection (sa cote a
+    baissé entre l'entrée et la clôture) : c'est la seule partie du CLV que
+    l'edge d'entrée ne contient pas déjà.
+
+    Pourquoi pas `clv_pct_real` (2026-09-27) : il vaut cote prise / clôture
+    sharp − 1, donc ≈ l'edge d'ENTRÉE tant que le sharp ne bouge pas. Mesuré
+    le 2026-09-24 sur 301 lignes : CLV moyen +2,63 % pour +2,73 % d'edge
+    d'entrée ; dérive −0,10 %, 106 positives contre 105 négatives. Tout
+    signal émis ayant un edge positif par construction, « CLV > +1 % » était
+    toujours vrai : la descente accélérée jugeait l'edge par lui-même. Le
+    CLV reste AFFICHÉ (verdicts, rapport hebdo) ; il ne DÉCIDE plus rien.
+    Une ligne sans clôture capturée ou sans sharp_prob est ignorée, jamais
+    comptée à zéro (règle 14)."""
+    derives = []
+    for r in rows:
+        p, close = r.get("sharp_prob"), r.get("closing_pinnacle_price")
+        try:
+            p, close = float(p), float(close)
+        except (TypeError, ValueError):
+            continue
+        if p <= 0 or close <= 1.0:
+            continue
+        derives.append(((1 / p) / close - 1) * 100)
+    n = len(derives)
+    if n == 0:
+        return {"n": 0, "avg_clv": None, "positive_rate": None}
+    return {"n": n, "avg_clv": sum(derives) / n,
+            "positive_rate": sum(1 for d in derives if d > 0) / n}
+
+
 _EDGE_BUCKETS = [(0.0, 2.0), (2.0, 4.0), (4.0, 8.0), (8.0, 100.0)]
 
 
@@ -949,8 +986,8 @@ def _decide_threshold(old_t: float, stats: dict, clv: dict, overconfident: bool,
             and clv["n"] >= _CLV_MIN_SAMPLES and clv["avg_clv"] < -_CLV_STRONG):
         new_t = min(_THRESHOLD_MAX, round(old_t + _STEP_UP, 2))
         if new_t != old_t:
-            return new_t, (f"CLV réel moyen {clv['avg_clv']:+.2f}% sur {clv['n']} "
-                           f"lignes — le marché n'a jamais confirmé ces prix → ↑ "
+            return new_t, (f"dérive sharp moyenne {clv['avg_clv']:+.2f}% sur {clv['n']} "
+                           f"lignes — le marché s'est éloigné de nos sélections → ↑ "
                            f"(sans attendre le win-rate)")
 
     # ── Le critère est la RENTABILITÉ mesurée, plus un taux absolu ───────
@@ -995,14 +1032,14 @@ def _decide_threshold(old_t: float, stats: dict, clv: dict, overconfident: bool,
         new_t = min(_THRESHOLD_MAX, round(old_t + _STEP_UP, 2))
         tag = ""
         if clv["positive_rate"] is not None and clv["positive_rate"] > 0.5:
-            tag = " (CLV réel toujours positif — probable variance, à surveiller)"
+            tag = " (dérive sharp majoritairement positive — probable variance, à surveiller)"
         return new_t, f"{_lecture_stats(stats)} : sous le point mort → ↑{tag}"
 
     if lo > be:
         if (clv["positive_rate"] is not None and clv["n"] >= _SEGMENT_MIN_SAMPLES
                 and clv["positive_rate"] < 0.5):
-            return None, (f"gain établi ({lo*100:.0f}% > {be*100:.0f}%) mais CLV réel "
-                          f"négatif ({clv['positive_rate']*100:.0f}% positif sur "
+            return None, (f"gain établi ({lo*100:.0f}% > {be*100:.0f}%) mais dérive sharp "
+                          f"défavorable ({clv['positive_rate']*100:.0f}% positive sur "
                           f"{clv['n']} lignes) — le marché ne confirme pas, hold")
         new_t = max(_THRESHOLD_MIN, round(old_t - _STEP_DOWN, 2))
         return new_t, (f"gain établi : borne basse {lo*100:.0f}% > rentabilité "
@@ -1023,7 +1060,7 @@ def _decide_threshold(old_t: float, stats: dict, clv: dict, overconfident: bool,
             and clv.get("positive_rate") is not None and clv["positive_rate"] >= 0.5):
         new_t = max(_THRESHOLD_MIN, round(old_t - _STEP_DOWN, 2))
         if new_t != old_t:
-            return new_t, (f"CLV réel moyen {clv['avg_clv']:+.2f}% ({clv['n']} lignes, "
+            return new_t, (f"dérive sharp moyenne {clv['avg_clv']:+.2f}% ({clv['n']} lignes, "
                            f"{clv['positive_rate']*100:.0f}% positives) — le marché "
                            f"confirme → ↓ sans attendre la borne de Wilson")
 
@@ -1032,7 +1069,8 @@ def _decide_threshold(old_t: float, stats: dict, clv: dict, overconfident: bool,
 
 
 _LEDGER_SELECT = ("signal_id, outcome, kelly_pct, odds, market_type, initial_edge, sharp_prob, "
-                  "clv_pct_real, time_to_match_minutes, created_at")
+                  "clv_pct_real, closing_pinnacle_price, time_to_match_minutes, created_at")
+_LECTURE_MAX = 5000   # garde-fou de volume de compute_and_save, pas une fenêtre
 
 
 def _dater_par_signal(sb, rows: list[dict]) -> list[dict]:
@@ -1248,16 +1286,22 @@ def compute_and_save(sb) -> dict[str, float]:
         # du périmètre en fin d'itération, ce qui est MESURÉ ne l'est jamais.
         lignes_sport: list[str] = []
         try:
+            # TOUTE l'époque, plus une fenêtre des N dernières lignes
+            # (2026-09-27). La fenêtre de 120 comptait les FANTÔMES : le
+            # football était jugé sur 65 paris réglés en zone, alors que 130
+            # existaient depuis A6 — la moitié des preuves jetée, des
+            # intervalles 1,4 fois trop larges. `created_at` du ledger est la
+            # date de RÈGLEMENT, sur-ensemble de la date de signal :
+            # post_correction_rows refiltre ensuite par signal. La borne
+            # _LECTURE_MAX n'est qu'un garde-fou de volume.
             res = (sb.table("ai_learning_ledger")
                    .select(_LEDGER_SELECT)
                    .eq("sport", sport)
+                   .gte("created_at", CALIBRATION_EPOCH)
                    .order("created_at", desc=True)
-                   .limit(120)
+                   .limit(_LECTURE_MAX)
                    .execute())
             raw_rows = _dater_par_signal(sb, res.data or [])
-            # 120 et non 50 : le filtre de zone jouable retire ~55% des lignes,
-            # une fenêtre de 50 n'en laissait plus assez pour atteindre
-            # _MIN_SAMPLES sur autre chose que le football.
             rows = playable_rows(raw_rows)
             if len(raw_rows) != len(rows):
                 log.info("[%s] apprentissage sur %d/%d lignes (zone jouable %d-%dmin)",
@@ -1349,7 +1393,7 @@ def compute_and_save(sb) -> dict[str, float]:
                 old_t = current[sport]
                 cle_seuil = f"threshold_{sport}"
                 empreinte = _empreinte(appliquables)
-                clv = _clv_stats(appliquables)
+                clv = _derive_stats(appliquables)   # pas le CLV : voir _derive_stats
                 overconfident = _calibration_flag(appliquables)
                 if bases.get(cle_seuil) == empreinte:
                     new_t, reason = None, (f"même échantillon qu'au dernier mouvement "
@@ -1403,7 +1447,7 @@ def compute_and_save(sb) -> dict[str, float]:
                                             nature="plancher appris")
                     continue
                 seg_old = segment_current.get(dict_key, updated[sport])
-                fam_clv = _clv_stats(fam_rows)
+                fam_clv = _derive_stats(fam_rows)   # pas le CLV : voir _derive_stats
                 fam_overconfident = _calibration_flag(fam_rows)
                 fam_empreinte = _empreinte(fam_rows)
                 if bases.get(meta_key) == fam_empreinte:

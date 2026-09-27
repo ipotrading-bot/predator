@@ -584,6 +584,19 @@ def _espn_camp(competition: dict, camp: str) -> dict | None:
     return None
 
 
+def _espn_apres_prolongation(statut: dict) -> bool:
+    """Match de football conclu après prolongation ou aux tirs au but
+    (`STATUS_FINAL_AET`, `STATUS_FINAL_PEN`) : ESPN n'en publie que le score
+    FINAL, alors qu'un pari se règle à 90 minutes. Refusé ici, le match passe
+    à l'étage suivant — LiveScore lit le score à 90 min depuis le 2026-09-24.
+    Audit du 2026-09-24 : 5 FINAL_PEN en 5 jours dans soccer/all, et le
+    correctif LiveScore était contourné dès qu'ESPN connaissait le match.
+    Les prolongations des sports US (`STATUS_FINAL_OT`) comptent pour le pari
+    et ne sont PAS concernées."""
+    nom = (statut.get("name") or "").upper()
+    return nom.endswith("_AET") or nom.endswith("_PEN")
+
+
 def _espn_candidat(ev: dict, home: str, away: str) -> tuple[int, int, tuple | None] | None:
     """(home_score, away_score, décompte) si UNE competition de l'événement est
     TERMINÉE et que ses deux compétiteurs s'apparient strictement aux deux noms
@@ -598,6 +611,8 @@ def _espn_candidat(ev: dict, home: str, away: str) -> tuple[int, int, tuple | No
     for comp in _espn_competitions(ev):
         statut = (comp.get("status") or {}).get("type") or {}
         if not (statut.get("completed") and statut.get("state") == "post"):
+            continue
+        if _espn_apres_prolongation(statut):
             continue
         paire = _espn_paire(comp, home, away)
         if not paire:
