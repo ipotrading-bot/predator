@@ -33,9 +33,12 @@ from core.closing_line import CAUSES_KEY as _CAUSES_KEY, CAUSES_NON_CAPTURE
 from core.constants import (CLOSING_SRC_EXCHANGE, CLOSING_SRC_ODDSAPI,
                             CLOSING_SRC_ORACLE, TAX_RATE)
 from core.db import get_db
-from core.learning_layer import (FRONTIERE_DECISION_LE, FRONTIERE_N_REQUIS,
+from core.learning_layer import (BANDE_COTE_DECISION_LE, BANDE_COTE_DEPUIS,
+                                 BANDE_COTE_MAX, BANDE_COTE_MIN, BANDE_COTE_N_REQUIS,
+                                 FRONTIERE_DECISION_LE, FRONTIERE_N_REQUIS,
                                  FRONTIERE_SPORT, FRONTIERE_TESTEE_MINUTES,
                                  SPORT_DEFAULTS, _LEDGER_SELECT, _PLAYABLE_MAX_MINUTES,
+                                 _PLAYABLE_MIN_MINUTES,
                                  _clv_stats, _dater_par_signal, _sport_stats,
                                  load_sport_verdicts, playable_rows,
                                  post_correction_rows)
@@ -220,9 +223,10 @@ def _ventilation_causes(causes: dict) -> list[str]:
 # Wilson bas contre le point mort après taxe — jamais un taux nu (règle n°7).
 _LEAGUE_MIN_DECIDED = int(os.environ.get("WEEKLY_LEAGUE_MIN_DECIDED", "10"))
 _LEAGUE_SELECT = ("league, sport, outcome, odds, time_to_match_minutes, is_shadow, "
-                  "created_at, signal_id")   # signal_id : datation par SIGNAL de la
-# section frontière (voir FRONTIERE_SPORT). Une colonne de plus sur une lecture qui
-# existait déjà — zéro requête ajoutée.
+                  "created_at, signal_id, sharp_prob")   # signal_id : datation par SIGNAL de la
+# section frontière (voir FRONTIERE_SPORT) ; sharp_prob : probabilité annoncée
+# contre laquelle la section bande de cote mesure. Des colonnes de plus sur une
+# lecture qui existait déjà — zéro requête ajoutée.
 
 
 # ── Frontière jouable : expérience PRÉ-ENREGISTRÉE (2026-09-21) ─────────
@@ -330,6 +334,109 @@ def format_frontiere(etat: dict) -> list[str]:
     return lignes
 
 
+# ── Bande de cote 1,50-1,75 : hypothèse PRÉ-ENREGISTRÉE (2026-09-27) ────
+
+def bande_cote(rows: list[dict], n_requis: int = BANDE_COTE_N_REQUIS) -> dict:
+    """Avancement du test pré-enregistré sur la bande de cote. Pure.
+
+    Bornes, population, taille requise et échéance sont FIGÉES dans
+    core.learning_layer (bloc BANDE_COTE_*) : cette fonction mesure ce qui a
+    été annoncé, elle ne cherche pas la meilleure bande.
+
+    Mesure = excès de calibration DANS la bande : taux réalisé contre la
+    `sharp_prob` annoncée à l'émission, z = (W − Σp) / √Σp(1−p). Jamais un
+    taux comparé à celui d'une autre bande : le taux de réussite dépend de la
+    cote par construction (75 % sous 1,50, 48 % au-dessus de 2,0 le
+    2026-09-27), le comparer d'une bande à l'autre ne dirait rien de l'edge.
+
+    Population : zone jouable, non-shadow, SIGNAL émis à partir de
+    `BANDE_COTE_DEPUIS`. L'appelant doit avoir posé `signal_created_at`
+    (`_dater_par_signal`) ; une ligne non datée est écartée — sans signal on ne
+    sait pas si elle appartient aux données qui ont fait naître l'hypothèse.
+    Une ligne sans `sharp_prob` est écartée et COMPTÉE (`sans_prob`).
+
+    `tronque` : la lecture du rapport est bornée (LEAGUE_LIMIT). Si la plus
+    vieille ligne lue a été réglée après le début de la fenêtre, des lignes de
+    la bande manquent peut-être — le compte est alors un plancher, dit tel.
+
+    Rend `decidable=False` tant que la bande n'a pas `n_requis` lignes."""
+    dans = []
+    sans_prob = 0
+    for r in rows:
+        emis = r.get("signal_created_at") or ""
+        if emis[:10] < BANDE_COTE_DEPUIS or r.get("is_shadow"):
+            continue
+        if r.get("outcome") not in _DECISIVE or not r.get("odds"):
+            continue
+        ttm = r.get("time_to_match_minutes")
+        if ttm is None or not (_PLAYABLE_MIN_MINUTES <= float(ttm) <= _PLAYABLE_MAX_MINUTES):
+            continue
+        if not (BANDE_COTE_MIN <= float(r["odds"]) < BANDE_COTE_MAX):
+            continue
+        if r.get("sharp_prob") is None:
+            sans_prob += 1
+            continue
+        dans.append(r)
+    lus = [r.get("created_at") or "" for r in rows if r.get("created_at")]
+    tronque = bool(lus) and min(lus)[:10] > BANDE_COTE_DEPUIS
+    n = len(dans)
+    etat = {"n": n, "n_requis": n_requis, "sans_prob": sans_prob, "tronque": tronque,
+            "decidable": n >= n_requis, "decision_le": BANDE_COTE_DECISION_LE,
+            "depuis": BANDE_COTE_DEPUIS, "wins": 0, "hit_rate": None,
+            "annonce": None, "wilson_lower": None, "wilson_upper": None,
+            "avg_odds": None, "p_breakeven": None, "pnl_flat": None, "z": None}
+    if not n:
+        return etat
+    w = sum(1 for r in dans if r["outcome"] == "WIN")
+    probs = [float(r["sharp_prob"]) for r in dans]
+    cote = sum(float(r["odds"]) for r in dans) / n
+    lo, hi = wilson_ci(w, n)
+    var = sum(p * (1 - p) for p in probs)
+    etat.update({"wins": w, "hit_rate": w / n, "annonce": sum(probs) / n,
+                 "wilson_lower": lo, "wilson_upper": hi, "avg_odds": cote,
+                 "p_breakeven": p_breakeven(cote, TAX_RATE),
+                 # Mise plate HORS taxe : c'est ainsi que l'opérateur mesure
+                 # (décision du 2026-09-17) ; le point mort taxé est à côté.
+                 "pnl_flat": sum(float(r["odds"]) - 1 if r["outcome"] == "WIN" else -1
+                                 for r in dans),
+                 "z": (w - sum(probs)) / math.sqrt(var) if var else None})
+    return etat
+
+
+def format_bande_cote(etat: dict) -> list[str]:
+    """Section « bande de cote » du rapport hebdo. Pure.
+
+    Ne conclut JAMAIS sous la taille requise, et même au-delà ne touche à
+    rien : une bande confirmée ouvre une décision opérateur (règles 10 et 11),
+    elle ne filtre pas l'émission d'elle-même."""
+    n, req = etat["n"], etat["n_requis"]
+    tete = ["", f"🎯 *Bande de cote {BANDE_COTE_MIN:.2f}-{BANDE_COTE_MAX:.2f} — "
+                 f"test pré-enregistré (signaux dès le {etat['depuis']})*"]
+    if not n:
+        return tete + [f"   ⚪ 0/{req} — AUCUNE conclusion. Échéance {etat['decision_le']}"]
+    lignes = tete + [
+        f"   {etat['wins']}-{n - etat['wins']} · réussite {etat['hit_rate']:.1%} "
+        f"[IC95 {etat['wilson_lower']:.1%}–{etat['wilson_upper']:.1%}] · "
+        f"annoncé {etat['annonce']:.1%} · point mort {etat['p_breakeven']:.1%} · "
+        f"mise plate {etat['pnl_flat']:+.2f} u"]
+    z = etat["z"]
+    if etat["sans_prob"]:
+        lignes.append(f"   {etat['sans_prob']} ligne(s) sans sharp\\_prob écartée(s)")
+    if etat["tronque"]:
+        lignes.append("   ⚠️ lecture tronquée (LEAGUE\\_LIMIT) : n est un plancher")
+    if not etat["decidable"]:
+        lignes.append(f"   ⚪ n insuffisant ({n}/{req}, {req - n} lignes à venir) — "
+                      f"AUCUNE conclusion. Échéance {etat['decision_le']}"
+                      + (f", z actuel {z:+.2f}" if z is not None else ""))
+    elif z is not None and z >= 1.96:
+        lignes.append(f"   🔴 bande CONFIRMÉE (z {z:+.2f}) : on y bat la probabilité "
+                      f"annoncée. Décision opérateur, relire INCIDENTS.md")
+    else:
+        lignes.append(f"   🟢 n atteint, NON démontré (z "
+                      f"{f'{z:+.2f}' if z is not None else '—'}) — hypothèse close")
+    return lignes
+
+
 def league_breakdown(rows: list[dict], min_decided: int = _LEAGUE_MIN_DECIDED) -> list[dict]:
     """Par ligue : décidés, gagnés, réussite, Wilson bas, point mort (cote
     moyenne, TAX_RATE), P&L à mise plate d'une unité. Zone jouable et non
@@ -422,7 +529,8 @@ def format_report(metrics_by_sport: dict[str, dict], verdicts: dict[str, dict],
                   ai_health: list[dict] | None = None,
                   closing: list[str] | None = None,
                   leagues: list[str] | None = None,
-                  frontiere: list[str] | None = None) -> str:
+                  frontiere: list[str] | None = None,
+                  bande: list[str] | None = None) -> str:
     """Texte Telegram/console du rapport hebdo. Pure."""
     lines = [f"📚 *PREDATOR — rapport hebdo de vérité* · {now:%d/%m %H:%M} UTC",
              "CLV réel > 0 et calibration stable = l'objectif ; le ROI court terme n'est qu'un témoin.",
@@ -471,6 +579,7 @@ def format_report(metrics_by_sport: dict[str, dict], verdicts: dict[str, dict],
                      " — à trancher par l'opérateur)")
     lines.extend(leagues or [])
     lines.extend(frontiere or [])
+    lines.extend(bande or [])
     lines.extend(closing or [])
     lines.extend(format_ai_health(ai_health or []))
     return "\n".join(lines)
@@ -561,8 +670,15 @@ def main(argv: list[str] | None = None) -> int:
     except Exception as e:                  # jamais bloquant pour le rapport
         print(f"frontière jouable : calcul impossible — {e}")
         frontiere = []
+    try:
+        # Mêmes lignes, déjà datées par signal ci-dessus (_dater_par_signal
+        # pose `signal_created_at` sur place) : zéro requête de plus.
+        bande = format_bande_cote(bande_cote(ledger_rows))
+    except Exception as e:                  # jamais bloquant pour le rapport
+        print(f"bande de cote : calcul impossible — {e}")
+        bande = []
     text = format_report(metrics, load_sport_verdicts(sb), suspect, now, ai_health, closing,
-                         leagues, frontiere)
+                         leagues, frontiere, bande)
     print(text)
     if muet:
         log.info("--no-telegram : rapport calculé et imprimé, rien envoyé")

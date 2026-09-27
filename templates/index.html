@@ -167,7 +167,7 @@
           {% endif %}
         </div>
         <div class="leg-l2">
-          <span class="sig-odd">@ {{ "%.2f"|format(s.xbet_odd) }}{% if s.soft_book %} <span class="sig-book" title="Book qui cote ce prix">{{ s.soft_book }}</span>{% endif %}</span>
+          <span class="sig-odd">@ {{ "%.2f"|format(s.xbet_odd) }}{% if s.soft_book %} <span class="sig-book" title="Book qui cote ce prix">{{ s.soft_book }}</span>{% endif %}{% if s.bande_cote %} <span class="sig-book" title="Tranche de cote 1,50-1,75 : proposée même sous T-2h (décision du 27/09), non démontrée">🎯</span>{% endif %}</span>
           <span class="sig-edge {% if is_suspect %}e-sus{% elif s.edge_pct >= 5 %}e-high{% elif s.edge_pct >= 2.5 %}e-mid{% else %}e-low{% endif %}">
             +{{ "%.1f"|format(s.edge_pct) }}%
           </span>

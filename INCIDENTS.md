@@ -1380,6 +1380,67 @@ et enregistrés en fantôme. Gardiens : `tests/test_frontiere_jouable.py`, dont
 `test_les_chiffres_reels_du_21_09_ne_concluent_rien` rejoue z = 2,08 et exige
 « AUCUNE conclusion ».
 
+### 60 % n'est pas un plafond, c'est la calibration (2026-09-27)
+
+Symptôme : l'opérateur voit la réussite « stagner vers 60 % » et demande comment
+atteindre 70 %. Aucune panne : c'est une question de LECTURE du chiffre.
+
+Mesure (post-A6, datation par signal, zone jouable, hors shadow, 171 décisifs) :
+**60,2 %** réalisé [53 ; 67] pour une `sharp_prob` annoncée de **59,6 %**. Le
+moteur tient ce qu'il annonce. Le taux de réussite se règle par la COTE : 75 %
+sous 1,50, 52 % à 1,75-2,0, 48 % au-dessus de 2,0. Viser 70 % reviendrait à
+jouer des cotes vers 1,45, dont le point mort est déjà à 69 % hors taxe, sans
+rien gagner. Le chiffre qui compte est l'écart entre le réalisé et l'annoncé,
+puis au point mort : +4,4 % d'EV hors taxe (+7,58 u), et un point mort taxé
+d'environ 62 % à la cote moyenne de 1,77.
+
+Découpés par marché, par edge et par sport, les segments « gagnants »
+s'INVERSENT sur les fantômes (même moteur, données non utilisées pour les
+trouver) : totals_over +27,5 % → −8,5 %, totals_under −13 % → +19,6 %, edge
+0-2 +13,6 % → −32 %. Une seule bande tient des deux côtés : cote 1,50-1,75,
+zone 37-13 (annoncé 62,6 %, EV +22 %) et fantômes 21-9 (EV +15,5 %). Mais
+elle a été lue parmi cinq bandes après coup (voir l'entrée précédente).
+
+Correctif : rien n'a été appliqué à l'émission (règles 10 et 11). À la place,
+une hypothèse PRÉ-ENREGISTRÉE dans `core/learning_layer.py` (bloc
+`BANDE_COTE_*`). Les bornes sont celles qui ont été vues. La population est
+fixée : tous sports, zone jouable, non-shadow, signaux émis dès le 2026-09-28
+SEULEMENT, puisque les données de la découverte ne peuvent pas la confirmer. La
+mesure se fait contre la `sharp_prob` annoncée et jamais contre une autre bande,
+parce que le taux dépend de la cote. Il faut n = 200 (80 % de puissance pour
++10 points). L'échéance est le 2027-01-31, au débit de 1,6 ligne par jour dans
+la bande. `scripts/weekly_report.bande_cote` rend l'avancement et refuse de
+conclure sous n. Rejouées sans le filtre de date, les lignes de la découverte
+donnent z = +1,67 sur n = 50 : aucune conclusion.
+
+Piège évité au passage : le premier jet du titre de section ouvrait un `*`
+Markdown sans le fermer. Telegram aurait refusé le rapport ENTIER, comme avec
+SUSPECT\_DATA le 2026-09-14. Un gardien vérifie désormais la parité des `*` et
+des `_`.
+
+**Décision opérateur, le même jour** : « ne pas attendre 200 paris, proposer ces
+signaux, je déciderai de les jouer ». Dans la zone, la bande était DÉJÀ
+recommandée : 32 signaux sur 101 depuis le 13/09. Ce qui s'ajoute, ce sont ses
+signaux sous T-2h, jusque-là fantômes (13 sur 64 sur la même période).
+`run_engine.BANDE_COTE_PROPOSEE` les rend recommandés. Ils sont envoyés sur
+Telegram, affichés au dashboard, et réglés en priorité avec le recours web.
+Chaque pari de la bande porte « 🎯 tranche 1,50-1,75 » sur Telegram et 🎯 au
+dashboard. Rien n'est remplacé : le reste des fantômes sous T-2h, SHADOW_SPORTS
+et la borne T-24h ne bougent pas. Les seuils appris (`playable_rows`) et la
+mesure pré-enregistrée (zone seule) NE comptent PAS ces paris sous T-2h : leur
+population ne change pas en cours de route. En revanche, `is_shadow` passe à
+false et /performance les compte désormais parmi les recommandés, ce qui est
+exact puisqu'ils sont proposés. Pour les isoler dans une mesure, il suffit de
+les dériver : cote dans la bande, `time_to_match_minutes` < 120 et non-shadow.
+Aucune colonne n'a été ajoutée (règle 6). Définition unique de la bande :
+`core.learning_layer.dans_bande_cote`. Retrait : `BANDE_COTE_PROPOSEE = False`,
+sur instruction opérateur.
+
+À retenir : **un taux de réussite se lit contre la probabilité annoncée, jamais
+contre un objectif fixe** ; pour « faire mieux », il faut battre l'annonce du
+marché, et le taux brut suit la cote qu'on choisit. Gardiens :
+`tests/test_bande_cote.py`.
+
 ### 36 % des lignes réglées ne portaient aucun CLV, sans qu'on sache pourquoi (2026-09-21)
 
 Symptôme : couverture du `clv_pct_real` à 105/135 en zone jouable (77,8 %) et

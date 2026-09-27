@@ -361,6 +361,61 @@ FRONTIERE_DECISION_LE = "2026-10-19"   # 28 j au débit mesuré (9,0 lignes/j, 4
 #   · zone ≤ _PLAYABLE_MAX_MINUTES — au-delà on ne parle plus de la même borne.
 FRONTIERE_SPORT = "soccer"
 
+# ── BANDE DE COTE 1,50-1,75 : hypothèse PRÉ-ENREGISTRÉE (2026-09-27) ──
+# Question de l'opérateur : « on stagne à 60 %, comment monter à 70 % ? ».
+# Mesure (post-A6, datation par signal, zone jouable, hors shadow, n=171) :
+# réalisé 60,2 % pour une sharp_prob annoncée de 59,6 % — le moteur est
+# CALIBRÉ, 60 % est ce que le marché prédit aux cotes jouées. Le taux de
+# réussite se règle par la cote (75 % sous 1,50, 48 % au-dessus de 2,0) :
+# viser 70 % reviendrait à jouer plus bas, sans rien gagner.
+#
+# Découpé par marché, par edge et par sport, chaque segment « gagnant »
+# s'INVERSE sur les fantômes (totals_over +27,5 % → −8,5 % d'EV, edge 0-2
+# +13,6 % → −32 %). Une seule bande tient des deux côtés : cote 1,50-1,75,
+# zone 37-13 (annoncé 62,6 %, EV +22 %), fantômes 21-9 (EV +15,5 %). Mais
+# elle a été lue parmi CINQ bandes après coup — le maximum sélectionné
+# n'est pas une preuve (INCIDENTS.md, 2026-09-21). D'où cette
+# pré-enregistration, qui ne change RIEN à l'émission (règles 10 et 11).
+#
+# Ce qui est figé, et pourquoi :
+#   · bornes 1,50 ≤ cote < 1,75 — celles qui ont été vues, sans retouche ;
+#   · population : tous sports, zone jouable (_PLAYABLE_MIN/MAX_MINUTES),
+#     non-shadow (ce que l'opérateur joue), datation par SIGNAL, émis à
+#     partir de BANDE_COTE_DEPUIS SEULEMENT — les lignes qui ont fait naître
+#     l'hypothèse ne peuvent pas la confirmer ;
+#   · statistique : excès de calibration DANS la bande, réalisé contre
+#     sharp_prob annoncée, z = (W − Σp) / √Σp(1−p). Jamais un taux brut
+#     comparé à une autre bande : le taux dépend de la cote par construction ;
+#   · n requis 200 : 80 % de puissance pour +10 points (72,5 contre 62,5)
+#     donne ≈ 183, arrondi comme FRONTIERE_N_REQUIS ;
+#   · échéance : 50 lignes en 31 jours dans la bande, soit 1,6/jour → ≈ 125
+#     jours pour 200.
+# Avancement rendu par scripts/weekly_report.bande_cote.
+BANDE_COTE_MIN = 1.50
+BANDE_COTE_MAX = 1.75           # exclue
+BANDE_COTE_DEPUIS = "2026-09-28"
+BANDE_COTE_N_REQUIS = 200
+BANDE_COTE_DECISION_LE = "2027-01-31"
+
+# DÉCISION OPÉRATEUR du 2026-09-27, le même jour, en connaissance de cause :
+# « ne pas attendre 200 paris, proposer ces signaux, je déciderai de les
+# jouer ». Dans la zone jouable, la bande était DÉJÀ recommandée ; ce qui
+# s'ajoute, ce sont ses signaux sous T-2h, jusque-là fantômes (21-9 depuis
+# A6). run_engine.BANDE_COTE_PROPOSEE les rend recommandés. Rien n'est
+# remplacé : la mesure pré-enregistrée ci-dessus reste sur la ZONE et ne
+# les compte pas (bornes _PLAYABLE_*), les seuils non plus (playable_rows).
+
+
+def dans_bande_cote(cote) -> bool:
+    """La cote tombe-t-elle dans la bande BANDE_COTE_MIN ≤ cote < BANDE_COTE_MAX ?
+    Une cote absente ou illisible n'y est pas. Seule définition de la bande :
+    le moteur, Telegram, le dashboard et le rapport hebdo l'importent (règle 6)."""
+    try:
+        c = float(cote)
+    except (TypeError, ValueError):
+        return False
+    return BANDE_COTE_MIN <= c < BANDE_COTE_MAX
+
 # Écart de calibration toléré (probabilité annoncée − taux réalisé), en points.
 # Voir _calibration_flag pour la mesure qui a fixé cette valeur.
 _CALIBRATION_MAX_GAP = 0.10

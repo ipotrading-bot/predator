@@ -34,7 +34,8 @@ from core.titan007 import fetch_matches as _titan007_fetch
 from core.math_engine import (to_binary, devig_bounds, is_round_number_line, devig as _devig,
                               dnb_leg_split as _dnb_leg_split)
 from core.tax_engine import optimal_stake_fraction as _optimal_stake_fraction
-from core.learning_layer import _PLAYABLE_MIN_MINUTES, _PLAYABLE_MAX_MINUTES
+from core.learning_layer import (_PLAYABLE_MIN_MINUTES, _PLAYABLE_MAX_MINUTES,
+                                 dans_bande_cote)
 from core.paim_engine import section_jeunes as _section_jeunes, ligne_en_quart as _ligne_en_quart
 from core.source_adapter import ligue_exclue as _ligue_exclue
 from core.score_sources import livescore_connait as _livescore_connait
@@ -163,6 +164,15 @@ DEBUG_MODE   = os.environ.get("PREDATOR_DEBUG", "0") == "1"
 # SHADOW_GOLDEN_HOUR n'est pas concerné.
 SHADOW_SPORTS: set[str] = {"baseball"}
 SHADOW_GOLDEN_HOUR = True
+# Exception à SHADOW_GOLDEN_HOUR, DÉCISION OPÉRATEUR du 2026-09-27 : un signal
+# sous T-2h dont la cote exécutable tombe dans la bande 1,50-1,75
+# (core.learning_layer.dans_bande_cote) est RECOMMANDÉ au lieu d'être fantôme —
+# un ajout aux paris existants, que l'opérateur choisit de jouer ou non.
+# Mesure qui l'a motivée : bande sous T-2h 21-9 depuis A6, lue parmi cinq
+# bandes après coup (hypothèse, pas preuve — voir le bloc BANDE_COTE_* et
+# INCIDENTS.md « 60 % n'est pas un plafond »). Ne s'applique ni à
+# SHADOW_SPORTS ni au-delà de T-24h. Retrait : instruction opérateur.
+BANDE_COTE_PROPOSEE = True
 
 # ── Global Timeout Handler (Safety Net) ──────────────────────────────
 # Prevents Engine from hanging GitHub Actions (5+ min on Tier 2/3 fallback)
@@ -2340,6 +2350,9 @@ def _shadow_reason(s: dict) -> str | None:
         tout le ledger post-A6 — c'est un filet posé avant d'en avoir besoin,
         pour qu'élargir la fenêtre un jour ne recrée pas le bug à l'autre bout
         de l'échelle.
+    Exception à `t_minus_2h` (BANDE_COTE_PROPOSEE, décision opérateur du
+    2026-09-27) : une cote exécutable dans la bande 1,50-1,75 reste
+    recommandée sous T-2h.
     La raison `golden_hour` (tout le run en mode golden) a disparu avec le
     mode le 2026-09-03 ; les lignes qui la portent en base sont de l'histoire,
     jamais réécrites (règle n°9).
@@ -2348,10 +2361,19 @@ def _shadow_reason(s: dict) -> str | None:
         return "shadow_sport"
     minutes = _minutes_avant_coup_denvoi(s)
     if SHADOW_GOLDEN_HOUR and minutes is not None and minutes < _PLAYABLE_MIN_MINUTES:
+        if BANDE_COTE_PROPOSEE and _dans_bande(s):
+            return None
         return "t_minus_2h"
     if minutes is not None and minutes > _PLAYABLE_MAX_MINUTES:
         return "hors_zone_haute"
     return None
+
+
+def _dans_bande(s: dict) -> bool:
+    """Cote exécutable du signal dans la bande 1,50-1,75. `executable_odd`
+    avant persistance, `xbet_odd` une fois en base (renommée à l'écriture)."""
+    cote = s.get("executable_odd")
+    return dans_bande_cote(cote if cote is not None else s.get("xbet_odd"))
 
 
 def _shadow_partition(signals: list) -> tuple[list, list]:
@@ -2482,6 +2504,10 @@ def _signal_block(s: dict, now) -> str:
     book = s.get("soft_book")
     chez = f" · chez *{book}*" if book else ""
     lines.append(f"   → {sel}{tag} `@ {s.get('executable_odd', 0):.2f}` · valeur `+{s.get('edge_pct', 0):.1f}%`{chez}\n")
+    # Bande 1,50-1,75 (décision opérateur du 2026-09-27) : l'opérateur la
+    # reconnaît d'un coup d'œil, qu'elle vienne de la zone ou de sous T-2h.
+    if _dans_bande(s):
+        lines.append("   🎯 tranche 1,50-1,75\n")
     return "".join(lines)
 
 
