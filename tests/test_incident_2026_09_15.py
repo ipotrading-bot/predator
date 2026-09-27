@@ -178,6 +178,11 @@ class _Ledger:
             self.sport = val
         return self
 
+    def gte(self, *_a, **_k):
+        # Borne d'époque de compute_and_save : filtrée côté SQL en
+        # production, les lignes de test sont déjà choisies.
+        return self
+
     def order(self, *_a, **_k):
         return self
 

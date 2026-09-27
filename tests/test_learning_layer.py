@@ -62,6 +62,11 @@ class _LedgerQuery:
             self._sport = value
         return self
 
+    def gte(self, *_a, **_k):
+        # Borne d'époque de compute_and_save : filtrée côté SQL en
+        # production, les lignes de test sont déjà choisies.
+        return self
+
     def order(self, *_a, **_k):
         return self
 
@@ -415,7 +420,7 @@ class TestDecideThreshold:
         clv = {"n": 30, "avg_clv": -1.0, "positive_rate": 0.2}
         new_t, reason = _decide_threshold(2.0, stats, clv, overconfident=False)
         assert new_t is None
-        assert "CLV" in reason
+        assert "dérive sharp" in reason
 
     def test_positive_real_clv_does_not_block_lowering(self):
         stats = self._stats(hit_rate=0.90)
@@ -450,7 +455,7 @@ class TestClvFirstRankRules:
         clv = {"n": 20, "avg_clv": -2.5, "positive_rate": 0.3}
         new_t, reason = _decide_threshold(2.0, stats, clv, overconfident=False)
         assert new_t is not None and new_t > 2.0
-        assert "CLV" in reason and "↑" in reason
+        assert "dérive sharp" in reason and "↑" in reason
 
     def test_negative_clv_below_sample_bar_does_not_raise(self):
         stats = self._stats(hit_rate=0.65)
@@ -472,7 +477,7 @@ class TestClvFirstRankRules:
         clv = {"n": 20, "avg_clv": 2.0, "positive_rate": 0.6}
         new_t, reason = _decide_threshold(2.0, stats, clv, overconfident=False)
         assert new_t is not None and new_t < 2.0
-        assert "CLV" in reason and "↓" in reason
+        assert "dérive sharp" in reason and "↓" in reason
 
     def test_positive_clv_with_minority_positive_rate_holds(self):
         # Une moyenne tirée par quelques grosses captures ne suffit pas :

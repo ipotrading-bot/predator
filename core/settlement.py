@@ -19,11 +19,11 @@ laisse la ligne repasser au prochain audit — l'attente n'est pas définitive,
 un WIN/LOSS faux l'est.
 """
 import logging
-import re
 
 from core.score_sources import fetch_score, SPORTS_SCORE_DRAPEAU
 from core.db import log_to_ledger, update_signal_fields
 from core.paim_engine import resolve_selection_side, nom_avec_etage, ligne_en_quart
+from core.closing_line import _TRAILING_NUMBER
 
 log = logging.getLogger("PREDATOR.settlement")
 
@@ -76,6 +76,25 @@ def _paire_comptable(sport: str, home_score: int, away_score: int,
     return (home_score, away_score)
 
 
+def _ligne_du_libelle(sel: str) -> float | None:
+    """La ligne d'un total ou d'un handicap : le DERNIER nombre du libellé.
+
+    Jusqu'au 2026-09-27, le règlement prenait le PREMIER : « FC Iberia 1999
+    +0.5 » se réglait sur un handicap de 1999, donc WIN quel que soit le
+    score (audit du 2026-09-24 ; 2 lignes d'août touchées, dont un U19).
+    Les 365 libellés de lignes en base finissent tous par leur nombre ; la
+    même lecture sert déjà la capture de clôture (closing_line), une seule
+    règle pour les deux (règle 6). Illisible → None → UNKNOWN, jamais un
+    résultat deviné."""
+    m = _TRAILING_NUMBER.search(sel or "")
+    if not m:
+        return None
+    try:
+        return float(m.group(1))
+    except ValueError:
+        return None
+
+
 def determine_outcome(sport: str, market_key: str, selection_name: str,
                       home: str, away: str,
                       home_score: int, away_score: int,
@@ -113,9 +132,8 @@ def determine_outcome(sport: str, market_key: str, selection_name: str,
         if paire is None:
             return "UNKNOWN"
         total = paire[0] + paire[1]
-        try:
-            line = float(re.search(r'[\d.]+', sel).group())
-        except Exception:
+        line = _ligne_du_libelle(sel)
+        if line is None:
             return "UNKNOWN"
         # Ligne en quart : demi-issue possible, jamais un WIN/LOSS plein
         # (2026-09-15, voir paim_engine.ligne_en_quart).
@@ -126,9 +144,8 @@ def determine_outcome(sport: str, market_key: str, selection_name: str,
         return "WIN" if ("over" in sel and total > line) or ("under" in sel and total < line) else "LOSS"
 
     if "spreads" in market_key:
-        try:
-            point = float(re.search(r'[-+]?[\d.]+', sel).group())
-        except Exception:
+        point = _ligne_du_libelle(sel)
+        if point is None:
             return "UNKNOWN"
         if ligne_en_quart(point):
             return "UNKNOWN"
