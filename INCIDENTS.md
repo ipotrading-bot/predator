@@ -1109,6 +1109,38 @@ aucun nom en dur moteur/dashboard) ;
 derniers remplacent `test_un_book_d_execution_fige_ne_donne_pas_de_prix`
 cité par l'entrée du 07/09).
 
+### Le meilleur prix envoyait chez Bet365 des paris que 1xbet servait (2026-09-27)
+
+Symptôme (opérateur) : « certains paris de Bet365 n'existent pas chez 1xbet, par
+exemple des +0.5 ; je ne joue que 1xbet ». Mesuré du 09/09 au 27/09 : 48
+recommandés sur 141 (34 %) sont sortis chez Bet365, dont 28 handicaps, 18
+totaux et 2 h2h.
+
+Cause : `fusionner_lignes` gardait, par ligne et par côté, le MEILLEUR prix des
+deux books, et oubliait l'autre. Bet365 à 2,12 contre 1xbet à 2,08 sur la même
+ligne donnait un signal Bet365, injouable pour l'opérateur, alors que 2,08
+passait les barrières. Une partie des cas vient bien de lignes absentes chez
+1xbet (+0.5 chez Bet365, +0.25/+0.75 chez 1xbet). Le reste était un choix de prix.
+Second trou : le digest de 2 h ne nommait pas le book.
+
+Correctif, sans couper Bet365 (`EXECUTION_BOOKS` inchangé, règle 11) :
+- la fusion garde TOUS les prix par barreau (`prix_books`) ; le meilleur prix et
+  `books` ne changent pas ;
+- `run_engine._emit_book_prefere` (totaux et handicaps) tente d'abord `_emit` au
+  prix du book de référence (`execution_books.prix_reference`, premier de
+  `EXECUTION_BOOKS`), puis au meilleur prix seulement s'il n'émet pas. `_emit`
+  est pur : toutes ses barrières servent deux fois, aucune n'est recopiée ;
+- un signal resté chez un autre book porte « ⚠️ bet365 seulement — absent ou
+  insuffisant chez 1xbet » (Telegram et digest). Le digest nomme désormais
+  le book, et le badge du dashboard porte ⚠ avec l'explication au survol.
+
+Le moteur ne nomme toujours aucun book : seul `core/execution_books.py`
+connaît la liste (`tests/test_book_execution.py`). Hors périmètre : le h2h
+(2 cas, et un bloc 1X2 à deux jambes chez un seul book), et toute
+« équivalence » entre lignes différentes (A6). Le ledger enregistre désormais
+le prix 1xbet quand il est retenu : c'est le prix réellement joué. Gardiens :
+`tests/test_book_prefere.py`.
+
 ### Périmètre sports (2026-08-22)
 
 eSports/tennis de table/volley/handball RETIRÉS

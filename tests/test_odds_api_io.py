@@ -140,7 +140,7 @@ def test_markets_map_to_engine_shapes(monkeypatch):
     (m,) = oai.fetch_sport("soccer", api_key="k")
     assert m["odds_1xbet"] == {"1": 1.34, "X": 4.8, "2": 10.0}
     # ligne principale = prix les plus proches, pas la première publiée
-    principale = lambda d: {k: v for k, v in d.items() if k not in ("ladder", "books")}
+    principale = lambda d: {k: v for k, v in d.items() if k not in ("ladder", "books", "prix_books")}
     assert principale(m["spreads_1xbet"]) == {"home": 1.88, "away": 1.92,
                                               "point": -1.25, "away_point": 1.25}
     assert principale(m["totals_1xbet"]) == {"over": 1.89, "under": 1.91, "point": 2.25}

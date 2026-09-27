@@ -88,11 +88,16 @@ def fusionner_lignes(par_book: dict[str, dict], marche: str) -> dict | None:
                 point = float(row.get("point"))
             except (TypeError, ValueError):
                 continue
-            cible = par_point.setdefault(point, {"point": point, a: 0.0, b: 0.0, "books": {}})
+            cible = par_point.setdefault(point, {"point": point, a: 0.0, b: 0.0, "books": {},
+                                                 "prix_books": {a: {}, b: {}}})
             if marche == "spreads":
                 cible["away_point"] = -point
             for cote in (a, b):
                 prix = float(row.get(cote) or 0)
+                if prix > 1.01:
+                    # TOUS les prix, pas seulement le meilleur (2026-09-27) :
+                    # voir prix_du_book.
+                    cible["prix_books"][cote][book] = prix
                 if prix > 1.01 and prix > cible[cote]:
                     cible[cote] = prix
                     cible["books"][cote] = book
@@ -134,3 +139,44 @@ def choisir_bloc_h2h(par_book: dict[str, dict], sport: str, home: str, away: str
         if prix > meilleur[2]:
             meilleur = (book, bloc, prix, fav)
     return meilleur
+
+
+def prix_du_book(bloc: dict, cote: str, book: str) -> float:
+    """Le prix que CE book affiche sur ce côté du barreau retenu, 0.0 s'il ne
+    le cote pas (ou si la ligne vient d'une source non fusionnée).
+
+    Pourquoi (2026-09-27) : la fusion ne gardait que le MEILLEUR prix par
+    côté. Bet365 à 1,95 contre 1xbet à 1,90 sur la même ligne, et le signal
+    partait chez Bet365 — que l'opérateur ne joue pas — alors que 1,90
+    passait largement le seuil. 48 recommandés sur 141 (34 %) sont sortis
+    chez Bet365 du 09/09 au 27/09. Garder chaque prix permet au moteur de
+    proposer d'abord le book de référence (run_engine._emit_book_prefere)."""
+    try:
+        return float(((bloc or {}).get("prix_books") or {}).get(cote, {}).get(book) or 0.0)
+    except (TypeError, ValueError, AttributeError):
+        return 0.0
+
+
+def prix_reference(bloc: dict, cote: str) -> tuple[str, float]:
+    """(book de référence, son prix sur ce côté du barreau) — le book de
+    référence est le premier de EXECUTION_BOOKS, celui que l'opérateur joue
+    (2026-09-27). Prix 0.0 s'il ne cote pas ce côté de cette ligne. Seul ce
+    module connaît la liste : le moteur ne nomme aucun book (voir
+    tests/test_book_execution.py)."""
+    reference = EXECUTION_BOOKS[0]
+    return reference, prix_du_book(bloc, cote, reference)
+
+
+def avertissement_hors_reference(book: str | None) -> str | None:
+    """« ⚠️ bet365 seulement — absent ou insuffisant chez 1xbet » pour un
+    signal émis chez un autre book que celui de référence ; None sinon (ou
+    book inconnu : on n'avertit pas sur ce qu'on ne sait pas).
+
+    Depuis `run_engine._emit_book_prefere` (2026-09-27), un signal ne sort
+    chez un second book QUE si le book de référence ne cote pas cette ligne
+    ou n'y passe pas les barrières : l'avertissement dit exactement cela.
+    Pas de `*` ni de `_` : il s'insère dans du Markdown Telegram."""
+    canon = book_canonique(book or "")
+    if canon is None or canon == EXECUTION_BOOKS[0]:
+        return None
+    return f"⚠️ {canon} seulement — absent ou insuffisant chez {EXECUTION_BOOKS[0]}"
