@@ -186,7 +186,8 @@ BANDE_COTE_PROPOSEE = True
 from core.constants import GLOBAL_TIMEOUT, SCAN_TIMEOUTS
 # Second book d'exécution (2026-09-08) : le bloc 1X2 d'UN book, le book de
 # chaque côté d'un barreau — voir core/execution_books.py.
-from core.execution_books import book_du_cote, choisir_bloc_h2h
+from core.execution_books import (book_du_cote, choisir_bloc_h2h, prix_reference,
+                                  avertissement_hors_reference)
 
 _budget_arme = GLOBAL_TIMEOUT      # renseigné par _arm_global_timeout, pour le message
 
@@ -1690,6 +1691,40 @@ def _process_h2h(m, name, sport, league, home, away, emoji, signals, sb, now, lo
           ah0_value=ah0_value, soft_book=soft_book)
 
 
+def _emit_book_prefere(bloc: dict, side: str, meilleur_prix: float, sides: list,
+                       sb, now, log, name, sport, league, mkt_key, mkt_label,
+                       pin_odd, sharp_prob, emoji, **kw) -> None:
+    """Marchés à ligne : le book de RÉFÉRENCE d'abord, le meilleur prix ensuite
+    (2026-09-27, demande opérateur : « je ne joue que 1xbet, sans couper
+    Bet365 »).
+
+    La fusion garde le meilleur prix par côté : Bet365 à 1,95 contre 1xbet à
+    1,90 sur la MÊME ligne envoyait le signal chez Bet365, 48 recommandés sur
+    141 du 09/09 au 27/09. Désormais, si le book de référence
+    (core.execution_books.prix_reference) cote ce côté de cette ligne,
+    `_emit` est tenté d'abord à SON prix ; s'il émet, c'est ce signal,
+    au prix que l'opérateur prend vraiment. Sinon (ligne absente chez lui, ou
+    prix sous les barrières), `_emit` au meilleur prix comme avant : Bet365
+    continue de servir ce que 1xbet ne sert pas.
+
+    `_emit` est pur (aucune écriture) : l'appeler deux fois réutilise TOUTES
+    ses barrières sans en recopier une. Aucune équivalence entre lignes
+    différentes (+0.5 ≠ +0.25/+0.75, A6)."""
+    meilleur_book = book_du_cote(bloc, side)
+    reference, prix_ref = prix_reference(bloc, side)
+    if meilleur_book and meilleur_book != reference and prix_ref > 1.01:
+        avant = len(sides)
+        _emit(sides, sb, now, log, name, sport, league, mkt_key, mkt_label,
+              prix_ref, pin_odd, sharp_prob, emoji, soft_book=reference, **kw)
+        if len(sides) > avant:
+            log.info("BOOK    | %s %s | %s — %s @ %.2f retenu (%s @ %.2f meilleur prix)",
+                     emoji, name, mkt_label, reference, prix_ref,
+                     meilleur_book, meilleur_prix)
+            return
+    _emit(sides, sb, now, log, name, sport, league, mkt_key, mkt_label,
+          meilleur_prix, pin_odd, sharp_prob, emoji, soft_book=meilleur_book, **kw)
+
+
 def _keep_best_side(sides: list, log, emoji, name) -> list:
     """Sur un marché à deux côtés opposés (Over/Under, handicap home/away),
     ne garder que celui au plus gros edge.
@@ -1988,14 +2023,14 @@ def _process_totals(m, name, sport, league, emoji, signals, sb, now, log, min_ed
             continue
         lbl = market_label("totals", side, point, sport)
         sel = f"{'Over' if side == 'over' else 'Under'}{(' ' + str(point)) if point else ''}"
-        _emit(sides, sb, now, log, name, sport, league,
-              f"totals_{side}", lbl, x_odd, p_odd, sharp_prob, emoji,
+        _emit_book_prefere(xt, side, x_odd,
+              sides, sb, now, log, name, sport, league,
+              f"totals_{side}", lbl, p_odd, sharp_prob, emoji,
               sharp_prob_cons=sharp_cons,
               selection_name=sel, min_edge=min_edge,
               match_time=m.get("commence_time", ""), match_id=m.get("id", ""),
               sharp_sources=sources_found if sources_found else None,
-              consensus_score=consensus_score if sources_found else None,
-              soft_book=book_du_cote(xt, side))
+              consensus_score=consensus_score if sources_found else None)
 
     signals.extend(_keep_best_side(sides, log, emoji, name))
 
@@ -2057,14 +2092,14 @@ def _process_spreads(m, name, sport, league, home, away, emoji, signals, sb, now
             continue
         lbl = market_label("spreads", side, pt, sport)
         pt_str = f"+{pt}" if pt > 0 else str(pt)
-        _emit(sides, sb, now, log, name, sport, league,
-              f"spreads_{side}", lbl, x_odd, p_odd, sharp_prob, emoji,
+        _emit_book_prefere(xs, side, x_odd,
+              sides, sb, now, log, name, sport, league,
+              f"spreads_{side}", lbl, p_odd, sharp_prob, emoji,
               sharp_prob_cons=sharp_cons,
               selection_name=f"{team} {pt_str}", min_edge=min_edge,
               match_time=m.get("commence_time", ""), match_id=m.get("id", ""),
               sharp_sources=sources_found if sources_found else None,
-              consensus_score=consensus_score if sources_found else None,
-              soft_book=book_du_cote(xs, side))
+              consensus_score=consensus_score if sources_found else None)
 
     signals.extend(_keep_best_side(sides, log, emoji, name))
 
@@ -2547,6 +2582,11 @@ def _signal_block(s: dict, now) -> str:
     # reconnaît d'un coup d'œil, qu'elle vienne de la zone ou de sous T-2h.
     if _dans_bande(s):
         lines.append("   🎯 tranche 1,50-1,75\n")
+    # Book autre que celui de référence (2026-09-27) : l'opérateur ne joue
+    # que celui-là, il doit voir d'un coup d'œil ce qu'il ne peut pas prendre.
+    hors_ref = avertissement_hors_reference(book)
+    if hors_ref:
+        lines.append(f"   {hors_ref}\n")
     return "".join(lines)
 
 

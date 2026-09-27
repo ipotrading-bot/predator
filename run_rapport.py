@@ -28,6 +28,7 @@ from dotenv import load_dotenv
 
 from core.constants import ELITE_EDGE as _ELITE_EDGE
 from core.db import get_db
+from core.execution_books import avertissement_hors_reference
 from core.paim_engine import resolve_selection_side as _resolve_side
 from core.learning_layer import (lignes_anomalies as _lignes_anomalies,
                                  load_learning_summary_at as _load_learning_summary_at)
@@ -208,7 +209,14 @@ def _signal_line(s: dict, now: datetime) -> str | None:
     if fav and fav != sel:
         line += f"   Favori : {fav}\n"
     tag = " (favori)" if fav and fav == sel else ""
-    line += f"   {risk_icon} {sel}{tag} `@ {xbet_odd:.2f}` · valeur `+{edge:.1f}%`\n"
+    # Le book de CETTE ligne (2026-09-27) : le digest ne le nommait pas, un
+    # pari Bet365 y ressemblait à un pari 1xbet. Même format que Telegram.
+    book = s.get("soft_book")
+    chez = f" · chez *{book}*" if book else ""
+    line += f"   {risk_icon} {sel}{tag} `@ {xbet_odd:.2f}` · valeur `+{edge:.1f}%`{chez}\n"
+    hors_ref = avertissement_hors_reference(book)
+    if hors_ref:
+        line += f"   {hors_ref}\n"
     return line
 
 
