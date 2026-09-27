@@ -32,7 +32,8 @@ from core.exchange_match import lookup_exchange as _lookup_exchange
 from core.odds_api_io import fetch_all as _odds_api_io_all
 from core.titan007 import fetch_matches as _titan007_fetch
 from core.math_engine import (to_binary, devig_bounds, is_round_number_line, devig as _devig,
-                              dnb_leg_split as _dnb_leg_split)
+                              dnb_leg_split as _dnb_leg_split,
+                              executable_price as _prix_executable)
 from core.tax_engine import optimal_stake_fraction as _optimal_stake_fraction
 from core.learning_layer import (_PLAYABLE_MIN_MINUTES, _PLAYABLE_MAX_MINUTES,
                                  dans_bande_cote)
@@ -1531,6 +1532,41 @@ def _dnb_draw_odd(bloc: dict, sport: str) -> float:
     return float(o.get("X") or 0.0)
 
 
+def _mesurer_outsider(par_book: dict, sport: str, name: str, emoji: str,
+                      outsider: str, cle: str, prob: float, log) -> float | None:
+    """MESURE SEULE, jamais une émission (2026-09-27) : l'EV du côté que le
+    moteur n'évalue pas.
+
+    Hors football, `to_binary` ne teste que le FAVORI du book soft. Mesuré
+    le week-end du 26/09 : chaque combat MMA sortait à EV négatif sur ce
+    côté (−1,4 à −7 %), la marge de 1xbet/Bet365 sur un combat (~5-8 %)
+    dépassant celle de Pinnacle (~3 %). Reste une question ouverte :
+    l'OUTSIDER, jamais regardé, porte-t-il un prix trop généreux quand le
+    book soft est en retard ? Aucun historique ne permet d'y répondre
+    (cache_soft_slate est écrasé à chaque scan), d'où cette ligne de log,
+    à zéro crédit.
+
+    Prix : meilleur prix brut de l'outsider parmi les books d'exécution
+    (une moneyline hors football n'a qu'une jambe, prendre le meilleur
+    book est légitime). Probabilité : 1 − sharp_prob du favori, le même
+    devig binaire que le moteur. Lecture prévue après deux week-ends de
+    cartes (échéance 2026-10-13) : part des lignes « OUTSIDER » à EV ≥
+    seuil du sport, par sport. Élargir l'évaluation aux deux côtés est une
+    décision OPÉRATEUR (périmètre : des cotes > 2,0 jamais proposées)."""
+    meilleur, book_retenu = 0.0, None
+    for book, bloc in (par_book or {}).items():
+        prix = _prix_executable(bloc or {}, sport, cle)
+        if prix > meilleur:
+            meilleur, book_retenu = prix, book
+    if meilleur <= 1.01 or not 0 < prob < 1:
+        return None
+    ev = prob * meilleur - 1
+    log.info("OUTSIDER | %s %s — %s @ %.2f (%s) · prob sharp %.1f%% · EV %+.2f%% — "
+             "mesuré, jamais émis", emoji, name, outsider, meilleur,
+             book_retenu or "?", prob * 100, ev * 100)
+    return ev
+
+
 def _process_h2h(m, name, sport, league, home, away, emoji, signals, sb, now, log, min_edge=None):
     """H2H market: DNB for soccer, Moneyline for NBA/Tennis + Prob.Sharp filter."""
     prob_min    = SHARP_PROB_BY_MARKET.get("h2h_soccer" if sport == "soccer" else "h2h", 0.52)
@@ -1621,6 +1657,9 @@ def _process_h2h(m, name, sport, league, home, away, emoji, signals, sb, now, lo
             pin_price = con_fav
         opp_for_devig = con_opp if con_opp > 1.01 else opp_price
         sharp_prob, sharp_cons = devig_bounds(pin_price, opp_for_devig)
+        _mesurer_outsider(par_book or {"?": bloc_h2h}, sport, name, emoji,
+                          home if soft_fav != home else away,
+                          opp_key, 1 - sharp_prob, log)
 
     pin_fav = soft_fav  # Same outcome guaranteed — no cross-book mismatch possible
 
