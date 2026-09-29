@@ -76,14 +76,39 @@ const CRENEAUX = [
 
 async function gh(env, path, init = {}) {
   return fetch(`https://api.github.com${path}`, {
+    // Jamais de réponse en cache : une liste de runs périmée fait dispatcher
+    // un rattrapage déjà servi (2026-09-28/29, voir `runsFrais`).
+    cache: "no-store",
     ...init,
     headers: {
       "Authorization": `Bearer ${env.WATCHDOG_PAT}`,
       "Accept": "application/vnd.github+json",
       "User-Agent": "predator-watchdog",
+      "Cache-Control": "no-cache",
       ...(init.headers || {}),
     },
   });
+}
+
+// LECTURE PÉRIMÉE (2026-09-28/29). Le Worker a dispatché des rattrapages de
+// runs qui existaient déjà : audit.yml (cadence 3 h) à 10:01, 10:11, 10:41,
+// 10:51, 11:31 et 11:51 le 29/09 ; neuf `Scan standard` en trop le 28/09,
+// huit le 29/09 avant midi (tous dégradés en reprice par
+// scripts/ci_scan_mode.py, donc sans crédit payé deux fois) ; à 07:41 un
+// standard ET un reprice dans le même passage, 20 min après un standard.
+// La liste GitHub lue par le Worker manquait donc par moments les runs des
+// dernières heures, alors que la même requête faite ailleurs était juste —
+// cause non reproduite (aucun incident GitHub déclaré ces jours-là, une
+// seule version du Worker à 100 %).
+// Parade qui ne dépend pas de la cause : avant de dispatcher, RELIRE par une
+// requête de forme différente (sans filtre `branch`, filtrée ici) et ne
+// dispatcher que si les deux lectures concluent au retard. Une lecture en
+// plus, et seulement quand un rattrapage est sur le point de partir.
+async function runsFrais(env, file, perPage) {
+  const r = await gh(env, `/repos/${REPO}/actions/workflows/${file}/runs?per_page=${perPage}`);
+  if (!r.ok) return null;
+  const data = await r.json();
+  return (data.workflow_runs || []).filter((run) => run.head_branch === "main");
 }
 
 /** Le dernier créneau dû (ms epoch UTC) à l'instant `now`, ou null. */
@@ -126,11 +151,19 @@ async function creneau(env, w, now) {
   const data = await r.json();
   // Un rattrapage déjà dispatché porte le MÊME run-name : il honore le
   // créneau et empêche donc un second dispatch, `queued` compris.
-  const livre = (data.workflow_runs || []).some(
+  const honore = (runs) => runs.some(
     (run) => (run.name === w.run_name || run.display_title === w.run_name)
              && Date.parse(run.created_at) >= du);
-  if (livre) {
+  if (honore(data.workflow_runs || [])) {
     console.log(`${w.file} ${w.run_name}: créneau ${quand} honoré`);
+    return;
+  }
+  // Relecture impossible : on dispatche comme avant (un créneau manqué coûte
+  // plus cher qu'un doublon, que scripts/ci_scan_mode.py dégrade en reprice).
+  const relue = await runsFrais(env, w.file, 50);
+  if (relue !== null && honore(relue)) {
+    console.log(`${w.file} ${w.run_name}: créneau ${quand} — LECTURE PÉRIMÉE ` +
+                `(la relecture le voit servi), pas de dispatch`);
     return;
   }
   const d = await gh(env, `/repos/${REPO}/actions/workflows/${w.file}/dispatches`,
@@ -167,6 +200,16 @@ async function tick(env) {
         : Infinity;
       if (ageMin <= w.stale_min) {
         console.log(`${w.file}: frais (${ageMin.toFixed(0)} min)`);
+        continue;
+      }
+      // Même relecture que pour les créneaux ; impossible → on dispatche.
+      const relue = await runsFrais(env, w.file, 5);
+      const ageRelu = relue && relue.length
+        ? (Date.now() - Date.parse(relue[0].created_at)) / 60000
+        : Infinity;
+      if (relue !== null && ageRelu <= w.stale_min) {
+        console.log(`${w.file}: LECTURE PÉRIMÉE (${ageMin.toFixed(0)} min lus, ` +
+                    `${ageRelu.toFixed(0)} min relus), pas de dispatch`);
         continue;
       }
       const d = await gh(

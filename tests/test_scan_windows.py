@@ -8,6 +8,7 @@ favorables et la capture de closing line ne sont JAMAIS espacées.
 """
 import pytest
 from datetime import datetime, timedelta, timezone
+from pathlib import Path
 
 from core import odds_api
 from core.scan_windows import (BACKGROUND_MIN_INTERVAL_MIN, RESERVE_CREDITS,
@@ -444,13 +445,46 @@ def test_compteurs_meta_du_rythme(monkeypatch):
     eng._oddsapi_note_spent(sb, now, 2)
     assert eng._oddsapi_spent_today(sb, now) == 5.0
     assert eng._oddsapi_spent_today(sb, now + timedelta(days=1)) == 0.0   # nouveau jour
-    # Cycle : démarre à la première lecture (≈ 30 j restants), redémarre après 30 j.
-    days = eng._oddsapi_cycle_days_left(sb, datetime.now(timezone.utc))
-    assert 29.9 < days <= 30.0
-    sb.store["oddsapi_cycle_start"]["value"] = (datetime.now(timezone.utc)
-                                                - timedelta(days=31)).isoformat()
-    days = eng._oddsapi_cycle_days_left(sb, datetime.now(timezone.utc))
-    assert 29.9 < days <= 30.0
+
+
+class TestCycleCalendaire:
+    """La fin du cycle est la RECHARGE d'OddsAPI — le 1er du mois, 00:00 UTC
+    (FAQ OddsAPI, 2026-09-29) — jamais un cycle glissant de 30 jours, qui
+    dérivait d'un jour par mois de 31 jours (INCIDENTS.md, 2026-09-29)."""
+
+    def test_jours_jusqu_au_premier_du_mois(self):
+        from core.scan_windows import days_until_reset
+        assert days_until_reset(datetime(2026, 9, 29, 12, tzinfo=timezone.utc)) == pytest.approx(1.5)
+        assert days_until_reset(datetime(2026, 10, 1, 0, 0, 1, tzinfo=timezone.utc)) == pytest.approx(31.0, abs=1e-4)
+        # Décembre : la recharge est au 1er janvier de l'année suivante.
+        assert days_until_reset(datetime(2026, 12, 31, 18, tzinfo=timezone.utc)) == pytest.approx(0.25)
+        # Février (28 j) : pas de reliquat d'un cycle de 30 j.
+        assert days_until_reset(datetime(2027, 2, 1, tzinfo=timezone.utc)) == pytest.approx(28.0)
+
+    def test_le_31_octobre_n_est_pas_un_debut_de_cycle(self):
+        """Le cycle glissant ouvert le 2026-09-01T14:26 se relançait le samedi
+        31 octobre à 14:26 avec le reliquat ÷ 30 : soirée affamée. Le dernier
+        jour d'un mois, l'allocation est le pool ENTIER (il sera rechargé à
+        minuit)."""
+        from core.scan_windows import days_until_reset
+        samedi_soir = datetime(2026, 10, 31, 16, tzinfo=timezone.utc)
+        assert days_until_reset(samedi_soir) < 1.0
+        assert daily_allowance(800, days_until_reset(samedi_soir), samedi_soir) == 800
+
+    def test_le_matin_du_1er_n_est_pas_un_dernier_jour(self):
+        """1er octobre, 06:03 : comptes rechargés, et le rythme doit être
+        celui d'un mois entier — pas « tout le pool » comme le faisait le
+        cycle glissant jusqu'à 14:26."""
+        from core.scan_windows import days_until_reset
+        matin = datetime(2026, 10, 1, 6, 3, tzinfo=timezone.utc)
+        alloc = daily_allowance(4500, days_until_reset(matin), matin)
+        assert 0.5 * 4500 / 31 < alloc < 2.0 * 4500 / 31
+
+    def test_le_moteur_ne_lit_plus_de_cycle_glissant(self):
+        """Rien à stocker : le moteur dérive les jours restants du calendrier."""
+        src = (Path(__file__).resolve().parent.parent / "run_engine.py").read_text(encoding="utf-8")
+        assert "_odds_days_until_reset(now)" in src
+        assert "oddsapi_cycle_start\"" not in src and "_ODDS_CYCLE_DAYS" not in src
 
 
 def test_build_spend_policy_porte_le_rythme(monkeypatch):
@@ -459,12 +493,18 @@ def test_build_spend_policy_porte_le_rythme(monkeypatch):
     sb = FakeSB()
     monkeypatch.setattr(eng, "_odds_pool_total_remaining", lambda: 2400)
     monkeypatch.setattr(eng, "_sports_with_imminent_signals", lambda _sb, _now: {"mma"})
-    now = datetime.now(timezone.utc)
+    # Date FIGÉE en milieu de mois : jours restants = jusqu'à la recharge du
+    # 1er (2026-09-29), et un test qui dépendrait du jour de la CI tomberait
+    # en fin de mois.
+    now = datetime(2026, 9, 10, 12, tzinfo=timezone.utc)
     pol = eng._build_spend_policy(sb, now)
     # Allocation PONDÉRÉE par le jour (2026-09-22) : le moteur porte ce que
     # rend core.scan_windows pour CE jour, pas la moyenne plate.
-    assert pol.allowance == pytest.approx(daily_allowance(2400, 30, now))
-    assert 0.7 * (2400 / 30) < pol.allowance < 1.4 * (2400 / 30)
+    from core.scan_windows import days_until_reset
+    jours = days_until_reset(now)
+    assert jours == pytest.approx(20.5)
+    assert pol.allowance == pytest.approx(daily_allowance(2400, jours, now))
+    assert 0.7 * (2400 / jours) < pol.allowance < 1.4 * (2400 / jours)
     assert pol.exempt_sports == {"mma"}
     assert not hasattr(pol, "imminent_mode")   # le rang « golden T-2h » est parti avec le mode
     pol.note_paid("soccer_epl", 3)

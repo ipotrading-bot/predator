@@ -70,3 +70,30 @@ class TestLaPurgeEstHonnete:
         # pour être visibles (« aucune réduction silencieuse »).
         assert re.search(r'log\.info\("PURGE \|', _SOURCE), (
             "La purge ne logge plus ses destructions au niveau info.")
+
+
+class TestLaPurgeNeToucheQueLesActifs:
+    """Toute suppression de `signals` dans la purge porte `status='active'`
+    (2026-09-29 : les nettoyages « legacy » totals/spreads et « Moneyline »
+    ne l'étaient pas). Une purge non scopée détruit des lignes RÉGLÉES :
+    c'est la panne qui a affamé le ledger des mois durant."""
+
+    _CORPS = _SOURCE.split("def _purge_old_signals(sb):", 1)[1].split("\ndef ", 1)[0]
+
+    def test_chaque_delete_de_signals_est_scope(self):
+        occurrences = list(re.finditer(r'table\("signals"\)\s*\.delete\(\)', self._CORPS))
+        assert occurrences, "plus aucun DELETE trouvé : le test ne voit plus la purge"
+        for m in occurrences:
+            chaine = self._CORPS[m.start(): self._CORPS.find(".execute()", m.start())]
+            assert 'eq("status", "active")' in chaine, (
+                "DELETE de signals non scopé à status='active' : "
+                + " ".join(chaine.split())[:120])
+
+    def test_la_table_de_regles_ne_desactive_jamais_le_scope(self):
+        regles = self._CORPS.split("purge_rules = [", 1)[1].split("]", 1)[0]
+        lignes = [l for l in regles.splitlines() if l.strip().startswith("(")]
+        assert lignes and all(l.rstrip().rstrip(",").rstrip(")").rstrip().endswith("True")
+                              for l in lignes), "une règle de purge passe active_only=False"
+
+    def test_les_tampons_telegram_expires_sont_purges(self):
+        assert 'like("key", "alert_signal_%")' in self._CORPS

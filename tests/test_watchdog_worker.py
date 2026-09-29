@@ -210,3 +210,31 @@ def test_aucun_secret_dans_le_js():
     assert "WATCHDOG_PAT" in WORKER, "le Worker doit lire le PAT depuis env.WATCHDOG_PAT"
     assert not re.search(r"gh[pousr]_[A-Za-z0-9]{20,}", WORKER), (
         "un jeton GitHub est écrit en clair dans le Worker")
+
+
+class TestLecturePerimee:
+    """2026-09-28/29 : le Worker lisait par moments une liste de runs vieille
+    de plusieurs heures et dispatchait des rattrapages déjà servis (audit.yml
+    six fois en deux heures, huit `Scan standard` en trop avant midi). Un
+    dispatch n'a lieu que si une RELECTURE de forme différente confirme le
+    retard — et une relecture impossible ne muselle jamais le chien de garde."""
+
+    def test_aucune_lecture_en_cache(self):
+        corps = WORKER.split("async function gh(", 1)[1].split("\n}\n", 1)[0]
+        assert 'cache: "no-store"' in corps
+
+    def test_chaque_dispatch_est_precede_d_une_relecture(self):
+        # Deux chemins de dispatch (CRENEAUX, WATCH) → deux relectures.
+        assert WORKER.count("/dispatches`") == 2
+        for bloc in WORKER.split("/dispatches`")[:-1]:
+            dernier = bloc.rsplit("async function", 1)[-1]
+            assert "await runsFrais(" in dernier, (
+                "un chemin de dispatch ne relit pas la liste avant de tirer")
+
+    def test_la_relecture_est_de_forme_differente(self):
+        corps = WORKER.split("async function runsFrais(", 1)[1].split("\n}\n", 1)[0]
+        assert "branch=" not in corps and 'head_branch === "main"' in corps
+
+    def test_une_relecture_impossible_laisse_partir_le_rattrapage(self):
+        assert WORKER.count("relue !== null &&") == 2
+        assert "relue === null ||" not in WORKER

@@ -575,6 +575,27 @@ def watchdog():
                           f"({'⚠️  MUET depuis ' if age_h > 1.5 else 'il y a '}{age_h:.1f} h)")
                 else:
                     print("  ⚠️  AUCUNE invocation sur 24 h")
+            # Journal du Worker (Workers Logs, activé par deploy_watchdog_worker
+            # le 2026-09-29) : combien de rattrapages PARTIS, combien RETENUS
+            # parce que la relecture voyait le run déjà là (lecture périmée).
+            t_ms = int(now.timestamp() * 1000)
+            compte = {}
+            for motif in ("-> dispatch HTTP", "LECTURE PÉRIMÉE", "Error"):
+                r = requests.post(
+                    f"https://api.cloudflare.com/client/v4/accounts/{cf_acc}/workers/observability/telemetry/query",
+                    headers={**h, "Content-Type": "application/json"}, timeout=30,
+                    json={"queryId": "ops-watchdog", "view": "events", "limit": 2000,
+                          "timeframe": {"from": t_ms - 24 * 3600 * 1000, "to": t_ms},
+                          "parameters": {"filters": [{"key": "$metadata.message", "operation": "includes",
+                                                      "type": "string", "value": motif}]}})
+                ev = ((r.json().get("result") or {}).get("events") or {}).get("events") if r.ok else None
+                compte[motif] = None if ev is None else len(ev)
+            if all(v is None for v in compte.values()):
+                print("  journal 24 h   : illisible (Workers Logs désactivé ? rejouer le déploiement)")
+            else:
+                print(f"  journal 24 h   : {compte['-> dispatch HTTP']} dispatch(s), "
+                      f"{compte['LECTURE PÉRIMÉE']} retenu(s) sur lecture périmée, "
+                      f"{compte['Error']} erreur(s) JS")
         except (requests.RequestException, ValueError) as e:
             print(f"  Cloudflare injoignable : {type(e).__name__}")
 
@@ -663,7 +684,16 @@ def status():
         print("── Seuils (meta.threshold_*) ──")
         sb_meta(["threshold_"])
         print("── Horodatages incident (meta.alert_* / harvest_empty_at) ──")
-        sb_meta(["alert_"])
+        # Les tampons de dé-doublonnage Telegram (`alert_signal_<empreinte>`,
+        # un par pari annoncé) ne sont pas des incidents : comptés, pas listés.
+        rows = _rest("GET", "meta", params={"select": "key,value,updated_at", "order": "key",
+                                            "key": "like.alert_%"})
+        for r in rows:
+            if not r["key"].startswith("alert_signal_"):
+                print(f"{r['key']:<32} {str(r.get('value') or '')[:70]:<70} "
+                      f"{str(r.get('updated_at') or '')[:19]}")
+        n_sig = sum(1 for r in rows if r["key"].startswith("alert_signal_"))
+        print(f"{'alert_signal_* (dédup Telegram)':<32} {n_sig} tampon(s) — purgés après 7 j par le moteur")
         sb_meta(["harvest_"])
     if VC_TOKEN:
         print("── Vercel ──")
