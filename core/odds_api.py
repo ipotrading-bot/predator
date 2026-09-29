@@ -481,6 +481,20 @@ def _execution_keys() -> list[str]:
     return [ODDS_API_BOOK_KEYS[b] for b in EXECUTION_BOOKS if b in ODDS_API_BOOK_KEYS]
 
 
+def _pourquoi_inexploitable(recus: list) -> str:
+    """Ce qui manque aux matchs d'une ligue payée pour passer `_parse_event` :
+    le prix sharp (Pinnacle) ou un book d'exécution. Compté sur les books
+    présents, pas sur le parsing — c'est la cause qu'on veut lire."""
+    exe = set(_execution_keys())
+    sans_pin = sans_exe = 0
+    for ev in recus:
+        cles = {b.get("key") for b in (ev.get("bookmakers") or []) if isinstance(b, dict)}
+        sans_pin += PINNACLE_KEY not in cles
+        sans_exe += not (cles & exe)
+    return (f"sans {PINNACLE_KEY} : {sans_pin}/{len(recus)}, sans book d'exécution "
+            f"({'/'.join(sorted(exe)) or 'aucun'}) : {sans_exe}/{len(recus)}")
+
+
 def _parse_event(ev: dict, sport_type: str) -> dict | None:
     home = str(ev.get("home_team", "")).strip()
     away = str(ev.get("away_team", "")).strip()
@@ -1049,9 +1063,17 @@ def fetch_odds(api_key: str | None = None, hours_ahead: int = 24,
                 log.warning("%s: HTTP %d", sport_key, r.status_code)
                 continue
 
-            events = [_parse_event(e, sport_type) for e in r.json()]
+            recus = r.json() or []
+            events = [_parse_event(e, sport_type) for e in recus]
             events = [e for e in events if e]
             all_events.extend(events)
+            if recus and not events:
+                # Payé, reçu, tout jeté — et jusqu'au 2026-09-29 sans un mot :
+                # la NFL a été achetée à chaque créneau depuis l'ouverture de
+                # sa saison sans qu'OddsAPI y cote jamais 1xbet (0/16 mesuré
+                # par `ops.py books`). Le crédit part ; que la raison reste.
+                log.warning("PAYÉ SANS RETOUR | %s : %d match(s) reçu(s), 0 exploitable — %s",
+                            sport_key, len(recus), _pourquoi_inexploitable(recus))
             if events:
                 has_totals  = sum(1 for e in events if "totals_1xbet"  in e)
                 has_spreads = sum(1 for e in events if "spreads_1xbet" in e)

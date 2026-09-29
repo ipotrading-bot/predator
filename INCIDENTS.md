@@ -278,6 +278,81 @@ empirique et tout backtest qui les ignorerait aurait un biais de survie.
 Une source qui « répond » ne porte pas forcément un prix, et une source qui
 échoue ne le fait presque jamais bruyamment.
 
+### La NFL payée depuis son ouverture, sans UN match exploitable (2026-09-29)
+
+**Symptôme.** Question opérateur du 2026-09-29 : « pourquoi j'ai pas la
+NFL ? ». Zéro signal `americanfootball` ou `college_football` depuis
+TOUJOURS (`signals` et `ai_learning_ledger`), alors que la NFL est dans
+`SPORT_KEYS` depuis la Phase 2, que sa saison est ouverte depuis le
+2026-09-10 (`SEASON_OPENS`) et que ses fenêtres de dépense (jeudi soir,
+dimanche, lundi soir) sont servies.
+
+**Cause (prouvée).** OddsAPI ne cote PAS 1xbet sur la NFL. `ops.py books
+americanfootball_nfl` (1 crédit, région eu, h2h, le 2026-09-29) : 16 matchs,
+20 books, **onexbet 0/16**, Pinnacle 10/16. `core/odds_api._parse_event`
+exige Pinnacle ET un book d'exécution : chaque match était jeté. La ligue,
+elle, était payée — `meta.scan_paid_americanfootball_nfl` =
+2026-09-28T21:11:33, run 36484364475 dont le log ne montre QUE la NHL ;
+idem `scan_paid_americanfootball_ncaaf` le 2026-09-26. Et rien ne le disait :
+la ligne « N events » n'est écrite que si N > 0.
+
+**Ce qui existait déjà, sans être demandé.** odds-api.io cote le football
+américain chez 1xbet ET Bet365 (ML, Spread, Totals — 98 matchs à 7 jours :
+95 NCAA, 2 CFL, 1 NFL ouvert). Matchbook (sport 1) et Smarkets
+(`american_football_match`) cotent NFL et NCAAF, gratuitement — le moteur
+ne leur demandait pas ce sport.
+
+**Correctif.**
+- `core/odds_api` : « PAYÉ SANS RETOUR | <ligue> : N reçus, 0 exploitable —
+  sans pinnacle : a/N, sans book d'exécution (onexbet) : b/N » ;
+- `core/odds_api_io` : sport `americanfootball` (slug `american-football`),
+  ROUTÉ par ligue (`sport_de_ligue`) : NFL → `americanfootball`, NCAA →
+  `college_football`, CFL et présaison hors périmètre, écartées AVANT la
+  coupe donc jamais payées ; NFL servie avant la NCAA ; cap 30. Budget ≤ 4
+  req/scan, ≤ 32 req/j (287/400 mesuré le 09-28). Critère de retrait daté du
+  2026-10-27 dans la docstring (règle 13) ;
+- `run_engine` : Matchbook et Smarkets reçoivent `americanfootball` ;
+- `scripts/ops.py books <clé> [slug-io]` : quels books cotent RÉELLEMENT une
+  ligue. `ligues` compte les matchs, `books` dit s'ils sont jouables.
+
+**PAS fait — décision opérateur.** OddsAPI continue de payer
+`americanfootball_nfl` et `americanfootball_ncaaf` (~3 crédits par créneau
+servi) pour un retour nul : les retirer de `SPORT_KEYS` sortirait le sport
+de `sports_payes()`, donc du périmètre (règle 11). La ligne PAYÉ SANS RETOUR
+chiffre désormais ce coût.
+
+**Règle.** Une ligue ajoutée au scan payant se vérifie par `ops.py books`,
+pas seulement par `ops.py ligues` : des matchs à venir ne prouvent pas un
+prix exécutable.
+
+Gardiens : `tests/test_football_americain.py`.
+
+### Smarkets muet cinq jours : l'API a changé ses paramètres (2026-09-25 → 09-29)
+
+**Symptôme.** Du 2026-09-25 au 2026-09-29, chaque scan standard : six
+« Smarkets: HTTP 400 sur events », puis « Smarkets: 0 marchés sharp (0
+événements) ». Jusqu'au 24/09 : 82 à 205 marchés par scan. Aucune alerte :
+un 400 n'est pas un géoblocage (401/403/451), la source rendait `{}` en
+silence, et Matchbook masquait le trou.
+
+**Cause (prouvée par l'appel direct).** Smarkets refuse désormais
+`end_datetime_max` sur /events/ et `limit` sur /markets/ et /contracts/ :
+`{"data": "Unknown query string properties: end_datetime_max",
+"error_type": "REQUEST_VALIDATION_ERROR"}`. /events/ est aussi plafonné à 50
+par page, suite dans `pagination.next_page`.
+
+**Correctif.** `core/smarkets` : `start_datetime_max` (le coup d'envoi, ce
+que le moteur voulait de toute façon), pages suivies jusqu'à `MAX_EVENTS`,
+plus de `limit` là où il est refusé ; un refus 4xx loggue le MOTIF de l'API.
+Vérifié en direct le 2026-09-29 : 64 marchés de foot sur 24 h.
+
+**Règle.** Un « HTTP 400 » sans son corps a coûté cinq jours. Le log d'une
+source affiche le motif rendu par l'API, pas seulement le code.
+⚠️ Le critère de retrait « 3 scans consécutifs en 401/403/451 » ne voyait
+PAS cette panne : c'était un 400.
+
+Gardiens : `tests/test_smarkets.py` (fenêtre + pagination, motif loggué).
+
 ### La porte d'émission était plus stricte que le règlement (2026-09-21)
 
 Symptôme : alerte Telegram « PÉRIMÈTRE — 3/8 marchés vivants réglables, 5

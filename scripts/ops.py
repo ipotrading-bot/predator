@@ -6,6 +6,7 @@ scripts/ops.py — pilotage Supabase + Vercel depuis le terminal, sans CLI.
     python scripts/ops.py status                      # santé en un écran : clés OddsAPI, dernier signal, seuils, dernier déploiement
     python scripts/ops.py sources                     # sonde CHAQUE source de cotes : vivante ? quota ? joignable depuis cette IP ?
     python scripts/ops.py ligues [prefixe] [jours]     # catalogue d'un sport : matchs a venir, jouables, credits/semaine (0 credit)
+    python scripts/ops.py books <cle> [slug-io]       # quels books cotent une ligue : 1 CREDIT OddsAPI (+2 req odds-api.io si slug)
     python scripts/ops.py ai                          # sonde CHAQUE fournisseur IA par une INFÉRENCE réelle (catalogue ≠ utilisable)
     python scripts/ops.py watchdog                    # le chien de garde Cloudflare fait-il son travail ? PAT, cron, invocations 24 h, incident Cloudflare, créneau dû
     python scripts/ops.py secrets-push [--run]        # recopie les clés du .env vers les secrets Actions (403 depuis un Codespace)
@@ -782,6 +783,81 @@ def ligues(args):
           f"{r.headers.get('x-requests-remaining')} (la sonde est gratuite).")
 
 
+def books(args):
+    """Quels books cotent RÉELLEMENT une ligue — 1 CRÉDIT OddsAPI (h2h, région
+    eu, sans filtre de book), plus 2 requêtes odds-api.io si un slug y est
+    donné.
+
+    Écrit le 2026-09-29 : la NFL était payée à chaque créneau et ne rendait
+    AUCUN match exploitable — `_parse_event` exige Pinnacle ET un book
+    d'exécution, et rien ne disait lequel manquait. `ligues` compte les
+    matchs (gratuit) ; `books` dit si ces matchs sont jouables.
+
+        ops.py books americanfootball_nfl [slug-odds-api.io]
+    """
+    from core.odds_api import (candidate_keys, BASE_URL, PINNACLE_KEY,    # noqa: E402
+                               _execution_keys)
+    from collections import Counter                                        # noqa: E402
+    import requests                                                        # noqa: E402
+
+    sport_key = args[0] if args else "americanfootball_nfl"
+    keys = candidate_keys()
+    if not keys:
+        die("aucune cle OddsAPI (ni app_secrets ni environnement)")
+    r = None
+    for k in keys:
+        r = requests.get(f"{BASE_URL}/sports/{sport_key}/odds/", timeout=20,
+                         params={"apiKey": k, "regions": "eu", "markets": "h2h",
+                                 "oddsFormat": "decimal"})
+        if r.status_code not in (401, 403, 422):
+            break
+    if r is None or r.status_code != 200:
+        die(f"OddsAPI {sport_key} : HTTP {r.status_code if r is not None else '?'}")
+    evs = r.json() or []
+    compte = Counter(b.get("key") for e in evs for b in e.get("bookmakers") or [])
+    exe = _execution_keys()
+    jouables = sum(1 for e in evs
+                   if {b.get("key") for b in e.get("bookmakers") or []} >= {PINNACLE_KEY}
+                   and any(b.get("key") in exe for b in e.get("bookmakers") or []))
+    print(f"── OddsAPI {sport_key} (région eu, h2h) — {len(evs)} match(s) ──")
+    for book, n in compte.most_common():
+        marque = " ← sharp" if book == PINNACLE_KEY else (" ← exécution" if book in exe else "")
+        print(f"  {book:24s} {n:4d}{marque}")
+    print(f"  exploitables par le moteur (Pinnacle + {'/'.join(exe)}) : {jouables}/{len(evs)}")
+    print(f"  crédit dépensé : {r.headers.get('x-requests-last')} — restants sur la clé : "
+          f"{r.headers.get('x-requests-remaining')}")
+
+    if len(args) > 1:
+        from core import odds_api_io as io                                 # noqa: E402
+        from datetime import datetime, timedelta, timezone                 # noqa: E402
+        slug = args[1]
+        now = datetime.now(timezone.utc)
+        pool = io.candidate_keys()
+        if not pool:
+            die("aucune cle odds-api.io")
+        cle = pool[0]
+        status, body = io._get("events", cle, {
+            "sport": slug,
+            "from": now.strftime("%Y-%m-%dT%H:%M:%SZ"),
+            "to": (now + timedelta(days=7)).strftime("%Y-%m-%dT%H:%M:%SZ"),
+            "limit": "100"})
+        evs = [e for e in (body if isinstance(body, list) else [])
+               if str(e.get("status", "")).lower() == "pending"]
+        print(f"── odds-api.io « {slug} » — HTTP {status}, {len(evs)} match(s) à venir sur 7 j ──")
+        if not evs:
+            return
+        ligues_io = Counter(str((e.get("league") or {}).get("name", "?")) for e in evs)
+        print("  ligues : " + ", ".join(f"{n} {k}" for k, n in ligues_io.most_common(6)))
+        ids = ",".join(str(e.get("id")) for e in evs[:10])
+        demandes = ",".join(io.usable_bookmakers(cle))
+        status, body = io._get("odds/multi", cle, {"eventIds": ids, "bookmakers": demandes})
+        for e in (body if isinstance(body, list) else []):
+            bk = e.get("bookmakers") or {}
+            marches = {b: sorted({str(m.get("name")) for m in (v or [])}) for b, v in bk.items()}
+            print(f"  {e.get('home')} vs {e.get('away')} — {marches or 'aucun prix'}")
+        print(f"  books demandés : {demandes or 'aucun'} — 2 requêtes dépensées")
+
+
 def main(argv):
     if not argv or argv[0] in ("-h", "--help"):
         print(__doc__)
@@ -795,6 +871,8 @@ def main(argv):
         sources()
     elif cmd == "ligues":
         ligues(rest)
+    elif cmd == "books":
+        books(rest)
     elif cmd == "ai":
         ai()
     elif cmd == "watchdog":

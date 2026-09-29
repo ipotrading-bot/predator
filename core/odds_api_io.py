@@ -50,6 +50,33 @@ Si l'un des books sélectionnés est un exchange ou un book sharp (voir
 SHARP_NAMES), son prix ressort en `odds_pinnacle` et le match devient
 exploitable sans aucune autre source.
 
+FOOTBALL AMÉRICAIN (2026-09-29) — la seule voie exécutable de la NFL
+---------------------------------------------------------------------
+La NFL était payée à OddsAPI à chaque créneau depuis l'ouverture de sa
+saison (2026-09-10) sans produire UN match exploitable : OddsAPI n'y cote
+pas 1xbet (`ops.py books americanfootball_nfl` : 16 matchs, 20 books,
+onexbet 0/16, Pinnacle 10/16). odds-api.io, si : le même jour, 98 matchs à
+7 jours (95 NCAA, 2 CFL, 1 NFL déjà ouvert), 1xbet ET Bet365 en ML, Spread
+et Totals. Le prix sharp vient des exchanges, déjà branchés et gratuits :
+Matchbook (sport 1) et Smarkets (`american_football_match`) cotent NFL et
+NCAAF — le moteur ne le leur demandait simplement pas.
+Un seul slug, trois championnats : chaque match est ROUTÉ par son libellé
+de ligue (`sport_de_ligue`) — NFL → `americanfootball`, NCAA →
+`college_football` (règlement ESPN et Kelly différents) ; CFL, présaison et
+tout le reste sont HORS PÉRIMÈTRE et écartés AVANT la coupe, donc jamais
+payés. La NFL passe avant la NCAA dans la coupe.
+BUDGET (règle 13) : 1 requête de calendrier + ceil(cap/10) de cotes par
+scan standard, cap `ODDS_API_IO_MAX_EVENTS_AMERICANFOOTBALL` = 30 → au plus
+4 req/scan, 32 req/j sur 8 scans ; mesuré le 2026-09-28 : 287/400 en fin
+de journée → ≤ 319/400. Le rythme de dépense (`paced_allowance`) reste
+le garde-fou.
+CRITÈRE DE RETRAIT (règle 13) — à relever le 2026-10-27 : retirer
+`americanfootball` de `SPORTS` si AUCUN signal `americanfootball` ni
+`college_football` n'a été émis entre le 2026-09-30 et le 2026-10-27
+(`SELECT count(*) FROM signals WHERE sport IN ('americanfootball',
+'college_football') AND created_at >= '2026-09-30'`), ou si ces deux sports
+sont sous leur point mort (Wilson, règle 7) sur 30 lignes réglées.
+
 CGU : les cotes servent au CALCUL interne. Leur redistribution telle quelle
 est interdite — ne pas les republier brutes sur le dashboard public.
 """
@@ -86,7 +113,42 @@ SPORTS: dict[str, tuple[str, int, bool]] = {
     "mma":        ("mixed-martial-arts", 5, False),
     "baseball":   ("baseball",           6, False),
     "hockey":     ("ice-hockey",         7, False),
+    # 10 = l'identifiant que core/odds_api donne au football américain.
+    # Routé par ligue : voir « FOOTBALL AMÉRICAIN » en tête et sport_de_ligue.
+    "americanfootball": ("american-football", 10, False),
 }
+
+# Sports dont le slug odds-api.io mélange plusieurs championnats : chaque
+# match est rendu au sport-type du moteur par un motif de son libellé de
+# ligue, DANS CET ORDRE (qui est aussi l'ordre de priorité dans la coupe).
+# Un libellé qui ne matche aucun motif est hors périmètre. La présaison est
+# refusée avant tout (instruction opérateur, voir SEASON_OPENS d'OddsAPI).
+ROUTAGE_PAR_LIGUE: dict[str, tuple[tuple[str, str], ...]] = {
+    "americanfootball": (("nfl", "americanfootball"),
+                         ("college", "college_football"),
+                         ("ncaa", "college_football")),
+}
+_HORS_SAISON = ("preseason", "pre-season")
+
+
+def _route(sport: str, league: str) -> tuple[int, str | None]:
+    """(rang du motif, sport-type) — (0, sport) pour un sport non routé."""
+    routes = ROUTAGE_PAR_LIGUE.get(sport)
+    if routes is None:
+        return 0, sport
+    low = (league or "").lower()
+    if any(m in low for m in _HORS_SAISON):
+        return len(routes), None
+    for rang, (motif, cible) in enumerate(routes):
+        if motif in low:
+            return rang, cible
+    return len(routes), None
+
+
+def sport_de_ligue(sport: str, league: str) -> str | None:
+    """Sport-type du moteur pour ce libellé de ligue, ou None s'il est hors
+    périmètre (« Canada - CFL », présaison NFL)."""
+    return _route(sport, league)[1]
 
 # Plan gratuit : 500 requêtes/jour. On garde une marge : le settlement et
 # d'éventuels appels manuels passent par le même compte.
@@ -120,7 +182,11 @@ MAX_EVENTS   = int(os.environ.get("ODDS_API_IO_MAX_EVENTS", "60"))
 # après (règle 13 : budget chiffré ; retrait si la ligne de bilan dépasse
 # 360/400 deux jours de suite).
 EVENTS_LIMIT = int(os.environ.get("ODDS_API_IO_EVENTS_LIMIT", "240"))
-MAX_EVENTS_PAR_SPORT = {"soccer": int(os.environ.get("ODDS_API_IO_MAX_EVENTS_SOCCER", "120"))}
+MAX_EVENTS_PAR_SPORT = {
+    "soccer": int(os.environ.get("ODDS_API_IO_MAX_EVENTS_SOCCER", "120")),
+    # Budget chiffré dans l'en-tête (« FOOTBALL AMÉRICAIN ») : ≤ 4 req/scan.
+    "americanfootball": int(os.environ.get("ODDS_API_IO_MAX_EVENTS_AMERICANFOOTBALL", "30")),
+}
 
 
 def cap_pour(sport: str) -> int:
@@ -402,7 +468,7 @@ def _to_match(ev: dict, sport: str, sport_id: int, draw: bool) -> dict | None:
         "home":          home,
         "away":          away,
         "league":        str((ev.get("league") or {}).get("name", "Unknown")),
-        "sport":         sport,
+        "sport":         sport_de_ligue(sport, str((ev.get("league") or {}).get("name", ""))) or sport,
         "sport_id":      sport_id,
         "commence_time": str(ev.get("date", "")),
         "odds_1xbet":    soft_h2h,
@@ -477,6 +543,14 @@ def fetch_sport(sport: str, api_key: str | None = None, hours_ahead: int = 24,
     # `pending` = à venir. Les statuts live/settled/cancelled n'ont rien à
     # faire dans un scan pré-match.
     a_venir = [e for e in body if str(e.get("status", "")).lower() == "pending"]
+    # Hors périmètre (CFL, présaison…) : écarté AVANT la coupe, jamais payé.
+    hors = [e for e in a_venir
+            if sport_de_ligue(sport, str((e.get("league") or {}).get("name", ""))) is None]
+    if hors:
+        a_venir = [e for e in a_venir if e not in hors]
+        log.info("odds-api.io[%s]: %d match(s) hors périmètre écarté(s) avant paiement (%s)",
+                 sport, len(hors), ", ".join(sorted({str((e.get("league") or {}).get("name", "?"))
+                                                     for e in hors})))
     # ── ZONE JOUABLE D'ABORD (2026-09-09) ─────────────────────────────
     # Le tri était (ligue, heure) et la coupe à `cap` prenait donc, dans les
     # ligues bien classées, les coups d'envoi les PLUS PROCHES — exactement
@@ -497,6 +571,7 @@ def fetch_sport(sport: str, api_key: str | None = None, hours_ahead: int = 24,
         return 1 if len(d) >= 19 and d < seuil else 0
 
     a_venir.sort(key=lambda e: (_fantome(e),
+                                _route(sport, str((e.get("league") or {}).get("name", "")))[0],
                                 league_rank(str((e.get("league") or {}).get("name", ""))),
                                 str(e.get("date", ""))))
     events = a_venir[:cap]

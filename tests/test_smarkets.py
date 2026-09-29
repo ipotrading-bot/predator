@@ -208,3 +208,56 @@ def test_le_critere_de_retrait_est_ecrit_et_la_source_est_au_registre():
     assert "if not _SMARKETS_OFF and not REPRICE:" in moteur
     ops = (RACINE / "scripts" / "ops.py").read_text(encoding="utf-8")
     assert "from core.smarkets import probe" in ops
+
+
+# ── L'API du 2026-09-25 : fenêtre, pagination, paramètres refusés ──────────
+
+def test_la_fenetre_se_lit_sur_le_coup_d_envoi_et_les_pages_sont_suivies(monkeypatch):
+    """Du 25 au 29/09 Smarkets a refusé `end_datetime_max` (HTTP 400 à chaque
+    scan, 0 marché pendant cinq jours) et plafonné /events/ à 50 par page.
+    Le filtre s'écrit `start_datetime_max`, les pages se suivent par
+    `pagination.next_page`, et /markets/ /contracts/ ne reçoivent plus de
+    `limit` (refusé lui aussi)."""
+    from datetime import datetime, timedelta, timezone
+    start = (datetime.now(timezone.utc) + timedelta(hours=5)).strftime("%Y-%m-%dT%H:%M:%SZ")
+    vus = []
+
+    def fake_get(url, params=None, headers=None, timeout=None):
+        vus.append((url, dict(params or {})))
+        if url.endswith("/events/"):
+            if (params or {}).get("pagination_last_id"):
+                return _Resp({"events": [{"id": "2", "name": "C vs D", "start_datetime": start}],
+                              "pagination": {"next_page": None}})
+            return _Resp({"events": [{"id": "1", "name": "A vs B", "start_datetime": start}],
+                          "pagination": {"next_page": "?state=upcoming&type=football_match"
+                                                      "&pagination_last_id=1"}})
+        if url.endswith("/markets/"):
+            return _Resp({"markets": [{"id": f"w{e}", "event_id": e, "state": "open",
+                                       "market_type": {"name": "WINNER_3_WAY"}} for e in ("1", "2")]})
+        if url.endswith("/contracts/"):
+            return _Resp({"contracts": _contracts("w1", "A", "Draw", "B") + _contracts("w2", "C", "Draw", "D")})
+        if url.endswith("/quotes/"):
+            q = {"0": _q([4854], [4902]), "1": _q([2500], [2564]), "2": _q([2564], [2632])}
+            return _Resp({f"w{e}-{i}": v for e in ("1", "2") for i, v in q.items()})
+        raise AssertionError(url)
+
+    monkeypatch.setattr(sm.requests, "get", fake_get)
+    out = sm.fetch_smarkets_prices(sports=["soccer"], hours_ahead=24)
+    assert set(out) == {"a_b", "c_d"}, "la seconde page d'événements est lue"
+    premiere = next(p for u, p in vus if u.endswith("/events/"))
+    assert "start_datetime_max" in premiere and "end_datetime_max" not in premiere
+    assert all("limit" not in p for u, p in vus if u.endswith(("/markets/", "/contracts/")))
+
+
+def test_un_refus_de_l_api_loggue_son_motif(monkeypatch, caplog):
+    class _R400:
+        status_code = 400
+
+        def json(self):
+            return {"data": "Unknown query string properties: end_datetime_max",
+                    "error_type": "REQUEST_VALIDATION_ERROR"}
+
+    monkeypatch.setattr(sm.requests, "get", lambda *a, **k: _R400())
+    with caplog.at_level(logging.WARNING, logger="PREDATOR.smarkets"):
+        assert sm.fetch_smarkets_prices(sports=["soccer"], hours_ahead=24) == {}
+    assert any("Unknown query string properties" in r.getMessage() for r in caplog.records)
