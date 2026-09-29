@@ -302,3 +302,12 @@ def test_un_sport_retire_ne_revient_pas_par_le_tier_2():
     moteur = (RACINE / "run_engine.py").read_text(encoding="utf-8")
     t2 = moteur[moteur.index("xbet_matches = fetch_matches()"):]
     assert t2.index("not in perimetre") < t2.index("_repartir_par_sport(")
+
+
+def test_un_sport_retire_ne_coute_plus_une_requete_odds_api_io(monkeypatch, _io):
+    """Le compte de 400 req/j finance le football américain avec ce que le
+    baseball retiré gaspillait (~24 req/j)."""
+    touched = []
+    monkeypatch.setattr(oai.requests, "get", lambda *a, **k: touched.append(a))
+    assert oai.fetch_sport("baseball", api_key="k") == []
+    assert touched == []
