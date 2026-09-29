@@ -49,7 +49,8 @@ from core.odds_api import (SPORT_KEYS, fetch_odds, pool_status as _odds_pool_sta
                            pool_total_remaining as _odds_pool_total_remaining,
                            sharp_sans_execution as _oddsapi_sharp_sans_execution,
                            sports_au_perimetre as _sports_au_perimetre)
-from core.scan_windows import (SpendPolicy as _SpendPolicy, CYCLE_DAYS as _ODDS_CYCLE_DAYS,
+from core.scan_windows import (SpendPolicy as _SpendPolicy,
+                               days_until_reset as _odds_days_until_reset,
                                daily_allowance as _odds_daily_allowance,
                                weekday_relative as _odds_weekday_relative)
 from core.constants import CLOSING_LINE_WINDOW_MIN as _CLOSING_LINE_WINDOW_MIN
@@ -753,18 +754,6 @@ def _meta_get(sb, key: str) -> str | None:
         return None
 
 
-def _oddsapi_cycle_days_left(sb, now) -> float:
-    """Jours restants du cycle de dépense (ODDS_API_CYCLE_DAYS, 30 par
-    défaut). Le cycle démarre à la première lecture et REDÉMARRE tout seul
-    une fois écoulé : les comptes gratuits se rechargent chacun à leur date,
-    le pool re-mesuré à chaque scan absorbe ça sans réglage."""
-    age_h = _meta_stamp_age_h(sb, "oddsapi_cycle_start")
-    if age_h is None or age_h / 24.0 >= _ODDS_CYCLE_DAYS:
-        _meta_stamp(sb, "oddsapi_cycle_start", now.isoformat())
-        age_h = 0.0
-    return max(1.0, _ODDS_CYCLE_DAYS - age_h / 24.0)
-
-
 def _oddsapi_spent_today(sb, now) -> float:
     """Crédits engagés aujourd'hui (UTC), tous runs confondus —
     meta `oddsapi_spent_day` = "YYYY-MM-DD:crédits"."""
@@ -814,9 +803,9 @@ def _oddsapi_note_demand(sb, now, engage: float, refuse: float) -> None:
 def _build_spend_policy(sb, now):
     """Politique de dépense OddsAPI (core/scan_windows) adossée aux
     horodatages meta `scan_paid_<ligue>` et, depuis le 2026-09-01, au rythme
-    mensuel : allocation du jour = pool restant ÷ jours restants du cycle.
-    Sans Supabase : None (on paie comme avant — mieux vaut un crédit de trop
-    qu'un trou de couverture)."""
+    mensuel : allocation du jour = pool restant ÷ jours restants avant la
+    recharge du 1er du mois. Sans Supabase : None (on paie comme avant —
+    mieux vaut un crédit de trop qu'un trou de couverture)."""
     if not sb:
         return None
 
@@ -828,7 +817,9 @@ def _build_spend_policy(sb, now):
         _meta_stamp(sb, f"scan_paid_{sport_key}", datetime.now(timezone.utc).isoformat())
 
     pool_total = _odds_pool_total_remaining()          # sondes gratuites, toutes les clés
-    days_left = _oddsapi_cycle_days_left(sb, now)
+    # Fin du cycle = recharge d'OddsAPI le 1er du mois (core/scan_windows,
+    # 2026-09-29) ; meta.oddsapi_cycle_start n'est plus lu.
+    days_left = _odds_days_until_reset(now)
     allowance = _odds_daily_allowance(pool_total, days_left, now)
     spent = _oddsapi_spent_today(sb, now)
     if allowance is None:
@@ -838,7 +829,7 @@ def _build_spend_policy(sb, now):
         # l'autre sans raison lisible est une allocation qu'on finit par
         # contourner (2026-09-22).
         jours = ("lundi", "mardi", "mercredi", "jeudi", "vendredi", "samedi", "dimanche")
-        log.info("RYTHME | pool %d crédits, %.1f j restants du cycle ; %s ×%.2f "
+        log.info("RYTHME | pool %d crédits, %.1f j avant la recharge du 1er ; %s ×%.2f "
                  "(demande du jour) → allocation %.0f/j ; engagés aujourd'hui %.0f",
                  pool_total, days_left, jours[now.weekday()],
                  _odds_weekday_relative(now), allowance, spent)

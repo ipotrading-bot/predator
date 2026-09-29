@@ -174,6 +174,7 @@ def favorable_leagues(now: datetime | None = None) -> set[str]:
 # l'opérateur voulait brûler ; celui-là vise 100 % du pool, à la bonne
 # vitesse. Trois mécanismes, tous loggés :
 #   1. allocation du jour = crédits restants du POOL ÷ jours restants du cycle
+#      (jusqu'à la recharge du 1er du mois, `days_until_reset`, 2026-09-29)
 #      — recalculée à chaque scan, donc l'inutilisé d'un jour creux est
 #      reporté sur les suivants (« maximum d'utilisation ») ;
 #   2. plafond intra-journée PAR CRÉNEAU (2026-09-11, décision opérateur) :
@@ -196,9 +197,37 @@ def favorable_leagues(now: datetime | None = None) -> set[str]:
 #      nuit mangeait la soirée (INCIDENTS.md, 2026-09-05).
 # ODDS_API_PACING=0 remet l'ancien comportement (paie tout, réserve seule).
 PACING_ENABLED = os.environ.get("ODDS_API_PACING", "1") == "1"
-CYCLE_DAYS = float(os.environ.get("ODDS_API_CYCLE_DAYS", "30"))
 BACKGROUND_SHARE = float(os.environ.get("ODDS_API_BACKGROUND_SHARE", "0.5"))
 EXEMPT_SHARE = float(os.environ.get("ODDS_API_EXEMPT_SHARE", "1.1"))
+
+
+# ── Fin du cycle = RECHARGE d'OddsAPI, le 1er du mois (2026-09-29) ─────
+# « Usage credits are automatically reset on the first of every month »
+# (the-odds-api.com/manage/faqs.html, relevé le 2026-09-29). Tous les comptes
+# du pool rechargent donc ENSEMBLE, au changement de mois — pas 30 jours
+# après la première lecture du moteur.
+# Le cycle glissant de 30 j (meta.oddsapi_cycle_start, ouvert le
+# 2026-09-01T14:26 et relancé tout seul tous les 30 j) dérivait du calendrier
+# d'un jour par mois de 31 jours, cinq jours par an :
+#   - 1er octobre 00:00 → 14:26 : les comptes rechargés (4 500 crédits) mais
+#     le moteur encore en « dernier jour du cycle » → allocation = le pool
+#     ENTIER, rythme éteint pour les créneaux du matin ;
+#   - le cycle suivant finissait le samedi 31 octobre à 14:26 : relancé avec
+#     le reliquat ÷ 30 jours, il affamait la soirée du samedi (Big 5, NFL,
+#     Amérique du Sud) jusqu'à la recharge de minuit ;
+#   - la dérive s'aggrave : fin de cycle le 26 septembre 2027, cinq jours de
+#     famine avant la recharge du 1er octobre.
+# Le calendrier ne se trompe pas : jours restants = temps jusqu'au prochain
+# 1er du mois, 00:00 UTC. Rien à stocker, rien à relancer.
+def days_until_reset(now: datetime | None = None) -> float:
+    """Jours (fractionnaires) jusqu'à la recharge mensuelle d'OddsAPI : le
+    prochain 1er du mois à 00:00 UTC. Toujours > 0."""
+    now = now or datetime.now(timezone.utc)
+    if now.month == 12:
+        recharge = datetime(now.year + 1, 1, 1, tzinfo=timezone.utc)
+    else:
+        recharge = datetime(now.year, now.month + 1, 1, tzinfo=timezone.utc)
+    return (recharge - now).total_seconds() / 86400.0
 
 
 def standard_slot_hours() -> list[int]:
