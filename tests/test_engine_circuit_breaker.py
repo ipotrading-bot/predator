@@ -254,7 +254,7 @@ def test_tier2_matches_are_enriched_before_the_web_search():
     src = inspect.getsource(eng.run)
     after_t2 = src[src.index("xbet_matches = fetch_matches()"):]
     call = after_t2.index("_enrich_from_exchange(xbet_matches")
-    tri = after_t2.index("for m in xbet_matches[:MAX_MATCHES]")
+    tri = after_t2.index("retenus = _repartir_par_sport(")
     assert call < tri, "l'exchange doit servir AVANT le tri sharp"
 
 

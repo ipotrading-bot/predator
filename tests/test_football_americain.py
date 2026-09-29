@@ -58,25 +58,52 @@ def _sans_supabase(monkeypatch):
     monkeypatch.setattr(odds_api, "get_secret", lambda name, **kw: None)
 
 
-def test_une_ligue_payee_sans_match_exploitable_le_dit_avec_sa_cause(monkeypatch, caplog,
-                                                                      _sans_supabase):
+def _cabler_oddsapi(monkeypatch, payload):
     def fake_get(url, params=None, timeout=None):
         if url.rstrip("/").endswith("/sports"):
             return _RespOA([])
         if "/events" in url:
             return _RespOA([{"id": "x", "commence_time": "2030-01-01T00:15:00Z"}])
-        return _RespOA(_nfl_sans_1xbet())
+        return _RespOA(payload)
 
     monkeypatch.setattr(odds_api.requests, "get", fake_get)
-    with caplog.at_level(logging.WARNING, logger="PREDATOR.odds_api"):
+
+
+def test_le_pinnacle_paye_sans_1xbet_est_garde_comme_reference(monkeypatch, caplog,
+                                                                _sans_supabase):
+    """Décision opérateur du 2026-09-29 : « continue à payer, mais il me faut
+    des matchs exploitables ». Le crédit NFL achète désormais le prix sharp."""
+    _cabler_oddsapi(monkeypatch, _nfl_sans_1xbet())
+    with caplog.at_level(logging.INFO, logger="PREDATOR.odds_api"):
         out = odds_api.fetch_odds(api_key="k", hours_ahead=24,
                                   sport_keys={"americanfootball_nfl": "americanfootball"})
-    assert out == []
+    assert out == [], "pas de book d'exécution : pas un match du Tier 1"
+    pool = odds_api.sharp_sans_execution()
+    row = pool["cleveland browns_pittsburgh steelers"]
+    assert (row["1"], row["2"], row["_source"]) == (2.45, 1.62, "pinnacle")
+    msgs = [r.getMessage() for r in caplog.records]
+    assert any("PAYÉ POUR LE SHARP" in m and "sans book d'exécution" in m for m in msgs)
+    assert not any("PAYÉ SANS RETOUR" in m for m in msgs)
+
+
+def test_sans_pinnacle_circa_prend_le_relais():
+    ev = _nfl_sans_1xbet()[0]
+    ev["bookmakers"] = [{"key": odds_api.CIRCA_KEY, "markets": [{"key": "h2h", "outcomes": [
+        {"name": "Cleveland Browns", "price": 2.40}, {"name": "Pittsburgh Steelers", "price": 1.63}]}]}]
+    assert odds_api.sharp_seul(ev, "americanfootball")["_source"] == "circa"
+
+
+def test_une_ligue_payee_sans_rien_d_utilisable_le_dit_avec_sa_cause(monkeypatch, caplog,
+                                                                      _sans_supabase):
+    ev = _nfl_sans_1xbet()[0]
+    ev["bookmakers"] = [b for b in ev["bookmakers"] if b["key"] != "pinnacle"]
+    _cabler_oddsapi(monkeypatch, [ev])
+    with caplog.at_level(logging.WARNING, logger="PREDATOR.odds_api"):
+        assert odds_api.fetch_odds(api_key="k", hours_ahead=24,
+                                   sport_keys={"americanfootball_nfl": "americanfootball"}) == []
     msgs = [r.getMessage() for r in caplog.records if "PAYÉ SANS RETOUR" in r.getMessage()]
-    assert msgs, "un crédit payé pour rien doit laisser une trace"
-    assert "americanfootball_nfl" in msgs[0]
-    assert "sans pinnacle : 0/1" in msgs[0]
-    assert "sans book d'exécution" in msgs[0] and ": 1/1" in msgs[0]
+    assert msgs and "sans pinnacle : 1/1" in msgs[0] and ": 1/1" in msgs[0]
+    assert odds_api.sharp_sans_execution() == {}
 
 
 def test_une_ligue_payee_qui_rend_ses_matchs_ne_crie_pas(monkeypatch, caplog, _sans_supabase):
@@ -219,3 +246,47 @@ def test_matchbook_et_smarkets_sont_interroges_sur_le_football_americain():
 def test_la_sonde_des_books_existe():
     ops = (RACINE / "scripts" / "ops.py").read_text(encoding="utf-8")
     assert "def books(" in ops and 'cmd == "books"' in ops
+
+
+# ── 4. Le chemin entier : du harvest au match réglable ─────────────────
+
+def test_un_match_nfl_odds_api_io_devient_vivant_grace_au_pinnacle_paye():
+    """odds-api.io apporte 1xbet, OddsAPI le Pinnacle payé : le match a son
+    prix sharp, et la garde « marché vivant » le laisse passer."""
+    import run_engine as eng
+    m = {"match": "Cleveland Browns vs Pittsburgh Steelers", "home": "Cleveland Browns",
+         "away": "Pittsburgh Steelers", "sport": "americanfootball",
+         "odds_1xbet": {"1": 2.55, "X": 0.0, "2": 1.57}, "_soft_source": "odds_api_io"}
+    pool = {"cleveland browns_pittsburgh steelers": odds_api.sharp_seul(
+        _nfl_sans_1xbet()[0], "americanfootball")}
+
+    class _Log:
+        def info(self, *a, **k): pass
+        warning = info
+
+    assert eng._enrich_from_exchange([m], pool, _Log()) == 1
+    assert m["odds_pinnacle"] == {"1": 2.45, "X": 0.0, "2": 1.62}
+    assert eng._marche_vivant(m)
+
+
+def test_le_plafond_du_tier_2_se_repartit_entre_sports():
+    """289 matchs chargés, 50 regardés, tous de foot (scan du 2026-09-29
+    09:11) : le plafond doit laisser sa place à chaque sport."""
+    import run_engine as eng
+    items = ([{"sport": "soccer", "i": i} for i in range(80)]
+             + [{"sport": "americanfootball", "i": i} for i in range(3)]
+             + [{"sport": "hockey", "i": i} for i in range(10)])
+    out = eng._repartir_par_sport(items, 50)
+    assert len(out) == 50
+    assert sum(1 for m in out if m["sport"] == "americanfootball") == 3
+    assert sum(1 for m in out if m["sport"] == "hockey") == 10
+    assert [m["i"] for m in out if m["sport"] == "soccer"] == list(range(37)), "ordre gardé"
+    assert eng._repartir_par_sport(items[:5], 50) == items[:5]
+
+
+def test_le_moteur_trie_sur_le_prix_sharp_avant_de_couper():
+    moteur = (RACINE / "run_engine.py").read_text(encoding="utf-8")
+    assert "for m in xbet_matches[:MAX_MATCHES]:" not in moteur
+    t2 = moteur[moteur.index("xbet_matches = fetch_matches()"):]
+    assert t2.index("_oddsapi_sharp_sans_execution()") < t2.index("_enrich_from_exchange(xbet_matches, exchange_prices")
+    assert t2.index("_enrich_from_exchange(xbet_matches, exchange_prices") < t2.index("_repartir_par_sport(")

@@ -617,7 +617,10 @@ def fetch_sport(sport: str, api_key: str | None = None, hours_ahead: int = 24,
 def fetch_all(hours_ahead: int = 24, sports: list[str] | None = None) -> list[dict]:
     """Tous les sports demandés ; l'échec de l'un n'emporte pas les autres."""
     out: list[dict] = []
-    for sport in (sports or ["soccer", "basketball", "baseball", "hockey"]):
+    # Par défaut TOUS les sports de SPORTS, dérivés — jamais une liste tenue
+    # à la main (règle 6) : celle-ci avait oublié tennis, MMA et le football
+    # américain sur le chemin de repli du harvest.
+    for sport in (sports or list(SPORTS)):
         try:
             out.extend(fetch_sport(sport, hours_ahead=hours_ahead))
         except Exception as e:

@@ -481,6 +481,52 @@ def _execution_keys() -> list[str]:
     return [ODDS_API_BOOK_KEYS[b] for b in EXECUTION_BOOKS if b in ODDS_API_BOOK_KEYS]
 
 
+# ── Prix sharp achetés SANS book d'exécution (2026-09-29) ──────────────
+# La NFL est payée ici (décision opérateur du 2026-09-29 : « continue à
+# payer ») mais OddsAPI n'y cote pas 1xbet : `_parse_event` jette le match.
+# Son prix sharp, lui, est bon — Pinnacle, ou à défaut Circa / Bookmaker.eu,
+# les deux books sharp US déjà demandés dans la même requête. On le GARDE,
+# au format des exchanges (core/matchbook), pour qu'il serve de référence
+# aux matchs dont odds-api.io apporte le prix 1xbet/Bet365 : le crédit
+# achète enfin quelque chose. Vidé au début de chaque `fetch_odds`.
+SHARP_SANS_EXECUTION: dict[str, dict] = {}
+_SHARP_US = ((PINNACLE_KEY, "pinnacle"), (CIRCA_KEY, "circa"), (CRIS_KEY, "bookmaker.eu"))
+
+
+def sharp_seul(ev: dict, sport_type: str) -> dict | None:
+    """Le prix sharp d'un match sans book d'exécution, au format exchange
+    ({"match","home","away","1","X","2","commence_time","_source",
+    "totals"?, "spreads"?}), ou None si aucun book sharp ne le cote."""
+    home = str(ev.get("home_team", "")).strip()
+    away = str(ev.get("away_team", "")).strip()
+    if not home or not away:
+        return None
+    bookmakers = ev.get("bookmakers") or []
+    for cle, nom in _SHARP_US:
+        h2h = _extract_h2h(bookmakers, cle, home, away)
+        if not h2h or h2h["1"] <= 1.01 or h2h["2"] <= 1.01:
+            continue
+        row = {"match": f"{home} vs {away}", "home": home, "away": away,
+               "1": h2h["1"], "X": h2h["X"], "2": h2h["2"],
+               "commence_time": ev.get("commence_time", ""), "sport": sport_type,
+               "_source": nom}
+        tot = _extract_totals(bookmakers, cle)
+        if tot:
+            row["totals"] = tot
+        spr = _extract_spreads(bookmakers, cle, home, away)
+        if spr:
+            row["spreads"] = spr
+        return row
+    return None
+
+
+def sharp_sans_execution() -> dict[str, dict]:
+    """Copie du pool du dernier `fetch_odds` — clés « home_away » en
+    minuscules, celles que `core.exchange_match.lookup_exchange` essaie en
+    premier."""
+    return dict(SHARP_SANS_EXECUTION)
+
+
 def _pourquoi_inexploitable(recus: list) -> str:
     """Ce qui manque aux matchs d'une ligue payée pour passer `_parse_event` :
     le prix sharp (Pinnacle) ou un book d'exécution. Compté sur les books
@@ -927,6 +973,7 @@ def fetch_odds(api_key: str | None = None, hours_ahead: int = 24,
         return []
     assert api_key is not None  # narrow type after early return
 
+    SHARP_SANS_EXECUTION.clear()
     keys_to_scan = sport_keys if sport_keys is not None else SPORT_KEYS
     # Tennis : clés éphémères résolues à chaque scan (0 crédit). Fusionnées
     # ICI — et non dans SPORT_KEYS / GOLDEN_SPORT_KEYS — pour couvrir les
@@ -1064,10 +1111,23 @@ def fetch_odds(api_key: str | None = None, hours_ahead: int = 24,
                 continue
 
             recus = r.json() or []
-            events = [_parse_event(e, sport_type) for e in recus]
-            events = [e for e in events if e]
+            events = []
+            gardes_sharp = 0
+            for brut in recus:
+                ev_ok = _parse_event(brut, sport_type)
+                if ev_ok:
+                    events.append(ev_ok)
+                    continue
+                row = sharp_seul(brut, sport_type)
+                if row:
+                    SHARP_SANS_EXECUTION[f"{row['home'].lower()}_{row['away'].lower()}"] = row
+                    gardes_sharp += 1
             all_events.extend(events)
-            if recus and not events:
+            if gardes_sharp:
+                log.info("PAYÉ POUR LE SHARP | %s : %d match(s) sans book d'exécution — leur "
+                         "prix sharp sert de référence aux matchs d'odds-api.io (%s)",
+                         sport_key, gardes_sharp, _pourquoi_inexploitable(recus))
+            elif recus and not events:
                 # Payé, reçu, tout jeté — et jusqu'au 2026-09-29 sans un mot :
                 # la NFL a été achetée à chaque créneau depuis l'ouverture de
                 # sa saison sans qu'OddsAPI y cote jamais 1xbet (0/16 mesuré
