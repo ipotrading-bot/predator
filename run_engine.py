@@ -1314,18 +1314,36 @@ def _purge_old_signals(sb):
         log.debug("Supabase purge (h2h SUSPECT): %s", str(e)[:60])
 
     # ── Legacy market_key cleanup ──────────────────────────────────────
+    # Scopé `status='active'` comme toute purge (2026-09-29) : ces deux
+    # DELETE ne l'étaient pas. Aucune ligne n'y répond aujourd'hui (plus rien
+    # n'écrit `totals`/`spreads` nus ni « Moneyline » en foot), mais une
+    # purge non scopée détruirait des lignes RÉGLÉES le jour où un libellé
+    # reviendrait — c'est la panne qui a affamé le ledger des mois durant.
     for legacy_key in ("totals", "spreads"):
         try:
-            sb.table("signals").delete().eq("market_key", legacy_key).execute()
+            sb.table("signals").delete().eq("status", "active").eq("market_key", legacy_key).execute()
             if DEBUG_MODE:
                 log.debug("Purged legacy market_key='%s'", legacy_key)
         except Exception as e:
             log.debug("Supabase purge (legacy %s): %s", legacy_key, str(e)[:60])
     try:
-        sb.table("signals").delete().eq("sport", "soccer").eq("market", "Moneyline").execute()
-        log.info("Purged: legacy soccer Moneyline")
+        sb.table("signals").delete().eq("status", "active").eq("sport", "soccer").eq("market", "Moneyline").execute()
     except Exception as e:
         log.error("Supabase purge (soccer Moneyline): %s", e)
+
+    # ── Tampons de dé-doublonnage Telegram expirés ────────────────────
+    # `alert_signal_<empreinte>` ne sert que _SIGNAL_ALERT_TTL_H (24 h) ; rien
+    # ne les retirait : 191 clés au 2026-09-29, ~8 de plus par jour, qui
+    # noyaient `ops.py status`. Marge d'une semaine : jamais un tampon vivant.
+    try:
+        seuil = (datetime.now(timezone.utc) - timedelta(days=7)).isoformat()
+        res = (sb.table("meta").delete().like("key", "alert_signal_%")
+               .lt("updated_at", seuil).execute())
+        n = len(res.data or []) if res is not None else 0
+        if n:
+            log.info("PURGE | %d tampon(s) alert_signal_* de plus de 7 jours retirés de meta", n)
+    except Exception as e:
+        log.debug("Supabase purge (alert_signal_*): %s", str(e)[:60])
     # sport-specific past-match purges removed — already covered by global
     # "delete where status=active AND match_time < now" above
 

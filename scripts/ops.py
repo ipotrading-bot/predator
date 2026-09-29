@@ -684,7 +684,16 @@ def status():
         print("── Seuils (meta.threshold_*) ──")
         sb_meta(["threshold_"])
         print("── Horodatages incident (meta.alert_* / harvest_empty_at) ──")
-        sb_meta(["alert_"])
+        # Les tampons de dé-doublonnage Telegram (`alert_signal_<empreinte>`,
+        # un par pari annoncé) ne sont pas des incidents : comptés, pas listés.
+        rows = _rest("GET", "meta", params={"select": "key,value,updated_at", "order": "key",
+                                            "key": "like.alert_%"})
+        for r in rows:
+            if not r["key"].startswith("alert_signal_"):
+                print(f"{r['key']:<32} {str(r.get('value') or '')[:70]:<70} "
+                      f"{str(r.get('updated_at') or '')[:19]}")
+        n_sig = sum(1 for r in rows if r["key"].startswith("alert_signal_"))
+        print(f"{'alert_signal_* (dédup Telegram)':<32} {n_sig} tampon(s) — purgés après 7 j par le moteur")
         sb_meta(["harvest_"])
     if VC_TOKEN:
         print("── Vercel ──")
