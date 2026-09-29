@@ -278,6 +278,43 @@ empirique et tout backtest qui les ignorerait aurait un biais de survie.
 Une source qui « répond » ne porte pas forcément un prix, et une source qui
 échoue ne le fait presque jamais bruyamment.
 
+### Le cycle OddsAPI glissait de 30 jours, la recharge tombe le 1er du mois (2026-09-29)
+
+**Symptôme.** Aucun encore — trouvé par l'audit du 2026-09-29 avant de
+coûter. Log du scan de 11:11 : « RYTHME | pool 1127 crédits, 2.1 j restants
+du cycle ». Or le 29 septembre à midi, il reste 1,5 jour avant la recharge.
+
+**Cause (prouvée).** `run_engine._oddsapi_cycle_days_left` comptait un
+cycle de 30 jours ouvert à la première lecture (`meta.oddsapi_cycle_start`
+= 2026-09-01T14:26) et relancé tout seul tous les 30 jours. OddsAPI, lui,
+recharge TOUS les comptes le 1er du mois : « Usage credits are
+automatically reset on the first of every month » (FAQ,
+the-odds-api.com/manage/faqs.html, relevée le 2026-09-29). Le cycle
+glissant dérive d'un jour par mois de 31 jours, cinq jours par an.
+
+**Ce que ça allait coûter (calculé, pas observé).**
+- 1er octobre 00:00 → 14:26 : comptes rechargés (9 × 500), moteur en
+  « dernier jour du cycle » → allocation = le pool ENTIER, rythme éteint
+  pour les créneaux 06/09/11/13 ;
+- cycle suivant clos le samedi 31 octobre à 14:26, relancé avec le
+  reliquat ÷ 30 → soirée du samedi (Big 5, NFL, Amérique du Sud) affamée
+  jusqu'à la recharge de minuit ;
+- fin de cycle le 26 septembre 2027 : cinq jours de famine avant la
+  recharge.
+
+**Correctif.** `core.scan_windows.days_until_reset` : jours restants =
+temps jusqu'au prochain 1er du mois, 00:00 UTC. Rien à stocker ;
+`meta.oddsapi_cycle_start` n'est plus lu, `ODDS_API_CYCLE_DAYS` disparaît
+(aucun workflow ne le posait). La pondération par jour et les parts par
+créneau sont inchangées ; le dernier jour du mois rend toujours le pool
+entier (il sera rechargé à minuit).
+
+⚠️ Heure exacte de la recharge non documentée (UTC supposé). Si elle
+tombe plus tard, le seul effet est quelques heures d'allocation calculée
+sur le reliquat : le pool est re-sondé à chaque scan.
+
+Gardien : `tests/test_scan_windows.py::TestCycleCalendaire`.
+
 ### La NFL payée depuis son ouverture, sans UN match exploitable (2026-09-29)
 
 **Symptôme.** Question opérateur du 2026-09-29 : « pourquoi j'ai pas la
@@ -2859,6 +2896,47 @@ TestFetchMatchResult::test_no_ai_layer_involved`,
 Cinq workflows sur six ont tourné à vide pendant une journée sans produire
 un seul log. C'est le mode de panne le plus coûteux du dépôt.
 
+### Le chien de garde dispatchait des rattrapages déjà servis : liste de runs périmée (2026-09-28/29)
+
+**Symptôme.** `audit.yml` (cadence 3 h) dispatché à 09:21, 10:01, 10:11,
+10:41, 10:51, 11:31 et 11:51 le 29/09 — 16 audits le 28, 14 avant midi le
+29, contre 10-12 par jour avant. `Scan standard` : 17 dispatchs le 28, 11
+avant midi le 29, pour 8 créneaux. À 07:41 le même passage a dispatché un
+standard ET un reprice, 20 min après un standard de 07:21. Tous portent la
+signature du Worker (HH:x1:0x).
+
+**Cause (partiellement prouvée).** Le Worker ne dispatche que si SA liste
+de runs dit « en retard » : il a donc lu, par moments, des listes qui
+manquaient les runs des dernières heures. La même requête faite depuis le
+Codespace, avec le même PAT, était juste. Vérifié : une seule version du
+Worker déployée à 100 %, identique au dépôt ; un seul Worker sur le compte ;
+aucun incident GitHub Actions déclaré. **Cause racine NON reproduite.**
+
+**Coût réel : nul en crédits.** Les huit standards en trop du 29 se sont
+tous dégradés en `reprice` (« DOUBLON dégradé », `scripts/ci_scan_mode.py`)
+— la garde « un créneau = un scan payant » du 2026-09-05 a tenu. Les audits
+en trop tiennent dans les budgets de scores (ESPN 238/1200, LiveScore
+17/120 à midi). Dépôt public : minutes Actions illimitées.
+
+**Correctif, indépendant de la cause.**
+- lectures GitHub en `cache: "no-store"` ;
+- avant tout dispatch, RELECTURE par une requête de forme différente
+  (sans filtre `branch`, filtrée dans le Worker) : on ne tire que si les
+  deux lectures voient le retard. Relecture impossible → on tire comme
+  avant : le chien de garde ne se muselle jamais ;
+- Workers Logs activé au déploiement ; `ops.py watchdog` compte les
+  rattrapages partis, ceux retenus sur lecture périmée (« LECTURE
+  PÉRIMÉE ») et les erreurs JS. Sans journal, rien ne disait POURQUOI.
+
+Simulé sous Node (quatre cas), déployé par
+`scripts/deploy_watchdog_worker.py`, contenu relu identique au dépôt.
+
+⚠️ À relever : si « retenu(s) sur lecture périmée » reste à 0 et que les
+dispatchs en trop continuent, l'hypothèse de la lecture périmée est fausse
+— chercher ailleurs.
+
+Gardien : `tests/test_watchdog_worker.py::TestLecturePerimee`.
+
 ### Le rapport hebdo partait à chaque commit (2026-09-21)
 
 Symptôme, signalé par l'opérateur : « j'ai reçu le rapport hebdo plusieurs
@@ -3605,6 +3683,23 @@ une valeur périmée dans la table gagne quand même.
 
 
 ## Dashboard et base
+
+### Deux DELETE de la purge n'étaient pas scopés `status='active'` (2026-09-29)
+
+Trouvé en lisant `run_engine._purge_old_signals` pendant l'audit du
+2026-09-29 : le nettoyage « legacy » des `market_key` `totals`/`spreads`
+nus et celui du foot « Moneyline » supprimaient SANS `status='active'`.
+MESURÉ en base le même jour : aucune ligne n'y répondait (`market_key` :
+h2h, spreads_home/away, totals_over/under seulement ; 0 « Moneyline ») —
+aucune perte. Mais le jour où un de ces libellés serait revenu, la purge
+aurait détruit des lignes RÉGLÉES, la panne qui a affamé le ledger des
+mois durant. Scopés ; le log « Purged: legacy soccer Moneyline », écrit à
+chaque run sans rien retirer, disparaît.
+Même passe : `meta.alert_signal_*` (dé-doublonnage Telegram, TTL 24 h) —
+191 clés, ~8 par jour, jamais retirées — purgées après 7 jours ;
+`ops.py status` les compte au lieu de les lister.
+Gardien : `tests/test_tier2_toujours.py::TestLaPurgeNeToucheQueLesActifs`
+(échoue sur la version précédente : deux DELETE non scopés).
 
 ### Le dashboard écrit DEUX fois
 
