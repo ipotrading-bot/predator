@@ -77,9 +77,15 @@ def main() -> int:
 
     # 1. Upload du module. keep_bindings préserve un WATCHDOG_PAT déjà posé
     #    (on le re-pose ensuite de toute façon — l'étape 2 fait foi).
+    #    `observability` (2026-09-29) : les console.log du Worker sont
+    #    conservés (Workers Logs) — c'est ce que lit `ops.py watchdog` pour
+    #    compter les rattrapages partis et ceux retenus sur lecture périmée.
+    #    Sans journal, le 2026-09-29, rien ne permettait de savoir POURQUOI le
+    #    Worker avait dispatché six audits en deux heures.
     metadata = {"main_module": "worker.js",
                 "compatibility_date": "2026-08-01",
-                "keep_bindings": ["secret_text"]}
+                "keep_bindings": ["secret_text"],
+                "observability": {"enabled": True}}
     r = requests.put(
         BASE, headers=HEAD, timeout=30,
         files={
