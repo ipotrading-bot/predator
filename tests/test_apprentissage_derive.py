@@ -45,6 +45,20 @@ class TestDerive:
         etat = _derive_stats([_l(0.5, None), _l(None, 1.9), _l(0.5, "n/a"), _l(0.5, 1.0)])
         assert etat == {"n": 0, "avg_clv": None, "positive_rate": None}
 
+    def test_ignore_une_cloture_oracle(self):
+        """2026-09-29 : un prix de clôture DEMANDÉ à l'ancien LLM n'est pas une
+        observation (règle 14) — il ne pèse pas dans la dérive qui décide des
+        seuils, même quand la ligne porte encore le prix."""
+        from core.constants import CLOSING_SRC_EXCHANGE, CLOSING_SRC_ORACLE
+        etat = _derive_stats([_l(0.5, 1.50, closing_source=CLOSING_SRC_ORACLE),
+                              _l(0.5, 2.00, closing_source=CLOSING_SRC_EXCHANGE)])
+        assert etat["n"] == 1 and abs(etat["avg_clv"]) < 1e-9
+
+    def test_la_source_de_cloture_est_lue(self):
+        """Sans la colonne dans la sélection, le filtre ci-dessus ne voit
+        jamais rien et laisse tout passer."""
+        assert "closing_source" in ll._LEDGER_SELECT
+
     def test_meme_forme_que_le_clv(self):
         """`_decide_threshold` la lit sans changer : mêmes clés, même unité."""
         assert set(_derive_stats([_l(0.5, 1.9)])) == set(ll._clv_stats([{"clv_pct_real": 1.0}]))
