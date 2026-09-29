@@ -16,9 +16,11 @@ côté exchange. Les mélanger rendrait la doctrine de source_adapter illisible.
 Mesuré le 2026-08-20 sur 13 matchs odds-api.io contre 53 marchés Matchbook :
 la clé exacte en appariait 0, le rapprochement flou 8.
 """
+import difflib
 import logging
+from datetime import datetime
 
-from core.paim_engine import strict_team_match
+from core.paim_engine import _normalize_team, strict_team_match
 
 log = logging.getLogger("PREDATOR.exchange")
 
@@ -106,3 +108,89 @@ def lookup_exchange(m: dict, prices: dict) -> dict | None:
     if len(reverse) == 1 and not forward:
         return flip_exchange_prices(reverse[0])
     return None
+
+
+# ── Diagnostic : le match écarté « Échec prix Sharp » avait-il un jumeau ? ──
+# Mesure du 2026-09-29 (INCIDENTS.md, « que peut apporter l'IA ») : ~137
+# matchs du Tier 2 écartés faute de prix sharp sur UN scan standard, loggés
+# en total par sport seulement — impossible de dire combien étaient de vrais
+# marchés sans sharp et combien un nom que `lookup_exchange` n'a pas su
+# apparier (« Köln » / « Cologne »). Ce diagnostic ne pose AUCUN prix : il
+# nomme le candidat le plus proche, pour qu'un humain tranche au log.
+#
+# Critère « nom probable » : un des deux camps ressemble à ≥ NOM_PROCHE_MIN,
+# au même horaire (± FENETRE_NOM_H). Une équipe ne joue qu'un match par jour :
+# un camp identique à la même heure désigne presque sûrement le même match,
+# même si l'autre camp est écrit autrement — c'est exactement le cas qu'un
+# ratio sur les DEUX noms (celui de lookup_exchange) refuse.
+NOM_PROCHE_MIN = 0.90
+FENETRE_NOM_H = 3.0
+
+
+def _instant(valeur):
+    try:
+        return datetime.fromisoformat(str(valeur).replace("Z", "+00:00"))
+    except (TypeError, ValueError):
+        return None
+
+
+def preparer_candidats(prices) -> list[tuple]:
+    """Lignes de prix sharp prêtes pour `candidat_proche` : (libellé, domicile
+    normalisé, extérieur normalisé, coup d'envoi). À faire UNE fois par scan —
+    normaliser à chaque comparaison coûtait le tiers du temps (profil du
+    2026-09-29 : 180 000 appels pour 150 matchs × 600 lignes)."""
+    lignes = []
+    for row in (prices.values() if isinstance(prices, dict) else prices or ()):
+        if not isinstance(row, dict):
+            continue
+        rh, ra = str(row.get("home", "")).strip(), str(row.get("away", "")).strip()
+        if len(rh) < 3 or len(ra) < 3:
+            continue
+        lignes.append((row.get("match") or f"{rh} vs {ra}", _normalize_team(rh),
+                       _normalize_team(ra), _instant(row.get("commence_time"))))
+    return lignes
+
+
+def candidat_proche(m: dict, lignes: list[tuple]) -> tuple[str, float, float] | None:
+    """(libellé, meilleur camp, pire camp) du prix sharp le plus proche par
+    le NOM du match `m`, parmi des lignes de `preparer_candidats`, ou None
+    s'il n'y a aucun candidat comparable. Pur.
+
+    Une ligne dont l'horaire est connu des deux côtés et s'écarte de plus de
+    FENETRE_NOM_H est ignorée ; un horaire manquant ne l'exclut pas (le
+    diagnostic préfère un candidat de trop à un jumeau manqué). Les deux sens
+    (« A vs B » / « B vs A ») sont essayés, comme dans lookup_exchange."""
+    h, a = str(m.get("home", "")).strip(), str(m.get("away", "")).strip()
+    if len(h) < 3 or len(a) < 3:
+        return None
+    # Le nom du match est la séquence INDEXÉE (seq2) : difflib ne construit
+    # son index qu'une fois par match, pas une fois par comparaison.
+    sm_h, sm_a = difflib.SequenceMatcher(None), difflib.SequenceMatcher(None)
+    sm_h.set_seq2(_normalize_team(h))
+    sm_a.set_seq2(_normalize_team(a))
+    t0 = _instant(m.get("commence_time"))
+    meilleur, cle = None, (-1.0, -1.0)
+    for libelle, nrh, nra, t1 in lignes:
+        if t0 and t1 and abs((t0 - t1).total_seconds()) > FENETRE_NOM_H * 3600:
+            continue
+        for x, y in ((nrh, nra), (nra, nrh)):
+            sm_h.set_seq1(x)
+            sm_a.set_seq1(y)
+            # quick_ratio() BORNE ratio() par le haut pour une fraction du
+            # coût : une paire qui ne peut pas battre le meilleur camp déjà vu
+            # n'est pas calculée.
+            if max(sm_h.quick_ratio(), sm_a.quick_ratio()) < cle[0]:
+                continue
+            s1, s2 = sm_h.ratio(), sm_a.ratio()
+            k = (max(s1, s2), min(s1, s2))
+            if k > cle:
+                cle, meilleur = k, libelle
+    if meilleur is None:
+        return None
+    return meilleur, round(cle[0], 2), round(cle[1], 2)
+
+
+def nom_probable(candidat: tuple[str, float, float] | None) -> bool:
+    """Le candidat désigne-t-il probablement le même match ? Voir
+    NOM_PROCHE_MIN."""
+    return bool(candidat) and candidat[1] >= NOM_PROCHE_MIN
