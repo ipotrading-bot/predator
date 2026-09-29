@@ -278,6 +278,69 @@ empirique et tout backtest qui les ignorerait aurait un biais de survie.
 Une source qui « répond » ne porte pas forcément un prix, et une source qui
 échoue ne le fait presque jamais bruyamment.
 
+### Un quart des crédits OddsAPI achetait des ligues sans un match exploitable : l'achat différé (2026-09-29)
+
+**Symptôme.** Point 3 de l'audit du 2026-09-29 : NFL et NCAAF payées à
+OddsAPI à chaque créneau « pour un retour nul ». La mesure a montré plus
+large.
+
+**Mesuré.** Sur les 35 scans standard du 23 au 29/09, crédits planifiés
+moins ligues ayant rendu au moins un match exploitable (lignes « RYTHME |
+… dont N pour ce scan : K ligue(s) » et « <ligue>: N events ») :
+**56 achats de ligue sans un seul match exploitable**, jusqu'à ~168
+crédits sur 643 engagés (≈ 26 %, borne haute : une réponse vide ne coûte
+rien). NFL et NCAAF (OddsAPI n'y cote pas 1xbet), MMA (5/5 sans book
+d'exécution le 29/09), une partie du tennis. Les jours chargés
+(25-26/09 : 66 et 38 crédits refusés au plafond), ces achats prenaient la
+place de ligues en fenêtre favorable.
+
+**Ce qui avait déjà changé le matin même** (29c7a2d) : le Pinnacle de ces
+ligues n'est plus jeté, il sert de référence aux matchs qu'odds-api.io rend
+exécutables. Mais la ligue ENTIÈRE restait achetée pour ces quelques
+matchs, et achetée aussi quand il n'y en avait aucun — alors que Matchbook
+et Smarkets couvraient 6/6 de ces matchs gratuitement (`ops.py chaine
+americanfootball 96`).
+
+**Les trois faits qui rendent la parade possible** (doc OddsAPI v4) :
+`/events` est gratuit (le pré-vol le lit déjà, identifiants compris) ;
+`/odds` accepte `eventIds` ; « if no events are returned, the request will
+not count against the usage quota ».
+
+**Correctif.**
+- chaque achat MESURE sa ligue : `meta.oddsapi_exec_<ligue>` = « k/N|date »,
+  k = matchs EXPLOITABLES (sharp + 1X2 d'un book d'exécution). Pas la
+  présence d'un book : vérifié en direct, 1xbet apparaissait sur
+  Browns–Steelers sans y coter le 1X2 ;
+- une ligue mesurée à k = 0 depuis moins de 7 jours est DIFFÉRÉE : pas
+  d'achat au Tier 1 ; après le Tier 2 gratuit, `acheter_sharp_differe`
+  apparie ses matchs jouables (pré-vol) aux matchs exécutables (les deux
+  équipes, candidat unique, coups d'envoi à moins de 12 h), et n'achète
+  QUE ceux-là (`eventIds`), sous la même politique de dépense. Aucun
+  apparié → 0 crédit, et le log le dit (« DIFFÉRÉ | … 0 crédit ») ;
+- au bout de 7 jours la ligue est rachetée normalement une fois et se
+  re-mesure : si OddsAPI se met à coter 1xbet sur la NFL, elle revient
+  d'elle-même. Aucune liste de ligues écrite nulle part (règle 6) ;
+- le rythme du jour compte le coût RÉEL (`x-requests-last`), plus le tarif
+  supposé ;
+- pré-vol en panne → achat comme avant (une panne n'est jamais « pas de
+  match »).
+
+**Validé en direct le 2026-09-29** (fenêtre 60 h) : NFL et NCAAF différées,
+1 match exécutable chacune chez odds-api.io, achat ciblé accepté, 3 crédits
+réels chacune, Pinnacle gardé avec totals et handicaps.
+
+**PAS fait.** Aucun sport retiré, aucun marché retranché : la NFL reste au
+périmètre (décision opérateur) et garde son Pinnacle quand il sert. Aucun
+seuil touché (règle 10).
+
+⚠️ Ce n'est pas le couplage interdit le 2026-09-02 (« le Tier 2 entier
+sautait dès qu'OddsAPI rendait UN event ») : la source gratuite tourne
+toujours ; c'est l'ACHAT qui attend de savoir s'il servira.
+⚠️ À mesurer : les lignes « DIFFÉRÉ | » et la part des achats sans match
+exploitable, sur une semaine NFL complète (jeudi → lundi).
+
+Gardien : `tests/test_achat_differe.py`.
+
 ### Le cycle OddsAPI glissait de 30 jours, la recharge tombe le 1er du mois (2026-09-29)
 
 **Symptôme.** Aucun encore — trouvé par l'audit du 2026-09-29 avant de
@@ -356,7 +419,9 @@ ne leur demandait pas ce sport.
 `americanfootball_nfl` et `americanfootball_ncaaf` (~3 crédits par créneau
 servi) pour un retour nul : les retirer de `SPORT_KEYS` sortirait le sport
 de `sports_payes()`, donc du périmètre (règle 11). La ligne PAYÉ SANS RETOUR
-chiffre désormais ce coût.
+chiffre désormais ce coût. (Réglé le même jour sans toucher au périmètre : voir
+« Un quart des crédits OddsAPI achetait des ligues sans un match
+exploitable : l'achat différé ».)
 
 **Règle.** Une ligue ajoutée au scan payant se vérifie par `ops.py books`,
 pas seulement par `ops.py ligues` : des matchs à venir ne prouvent pas un

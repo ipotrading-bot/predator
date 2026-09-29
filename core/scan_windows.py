@@ -358,6 +358,41 @@ def intraday_cap(allowance: float, now: datetime,
     return allowance * max(1, k) / n
 
 
+# ── Couverture d'exécution mesurée par ligue (2026-09-29) ─────────────
+# meta `oddsapi_exec_<ligue>` = « k/N|horodatage ISO » : au dernier achat, k
+# des N matchs rendus portaient un book d'exécution. Une ligue à k = 0 est
+# achetée en DIFFÉRÉ (core/odds_api.acheter_sharp_differe). La mesure vaut
+# une semaine : passé ce délai la ligue est rachetée normalement UNE fois et
+# se re-mesure — si OddsAPI se met à coter 1xbet sur la NFL, elle revient
+# d'elle-même, sans liste à tenir (règle n°6).
+EXEC_MESURE_TTL_H = 168.0
+
+
+def valeur_execution(k: int, n: int, now: datetime | None = None) -> str:
+    now = now or datetime.now(timezone.utc)
+    return f"{int(k)}/{int(n)}|{now.isoformat()}"
+
+
+def motif_sans_execution(valeur: str | None, now: datetime | None = None) -> str | None:
+    """Motif lisible (« 0/16 il y a 5 h ») si la mesure dit « aucun book
+    d'exécution » et date de moins de EXEC_MESURE_TTL_H ; None sinon, y
+    compris sur une valeur illisible — dans le doute, on achète."""
+    if not valeur or "|" not in valeur:
+        return None
+    ratio, _, quand = str(valeur).strip('"').partition("|")
+    try:
+        k, n = (int(x) for x in ratio.split("/", 1))
+        ts = datetime.fromisoformat(quand.replace("Z", "+00:00"))
+    except ValueError:
+        return None
+    if ts.tzinfo is None:
+        return None
+    age_h = ((now or datetime.now(timezone.utc)) - ts).total_seconds() / 3600.0
+    if k != 0 or n <= 0 or not (0 <= age_h < EXEC_MESURE_TTL_H):
+        return None
+    return f"{k}/{n} il y a {age_h:.0f} h"
+
+
 class SpendPolicy:
     """Décide, ligue par ligue, si un scan payant est autorisé maintenant.
 
@@ -378,10 +413,20 @@ class SpendPolicy:
                  min_interval_min: int = BACKGROUND_MIN_INTERVAL_MIN,
                  reserve_credits: int = RESERVE_CREDITS, log=None,
                  allowance: float | None = None, spent_today: float = 0.0,
-                 note_spent=None, reglables=None):
+                 note_spent=None, reglables=None,
+                 sans_execution=None, noter_execution=None):
         self._age = last_paid_age_min
         self._note = note_paid
         self._note_spent = note_spent
+        # Couverture d'exécution MESURÉE par ligue (2026-09-29) : combien des
+        # matchs rendus par OddsAPI portaient un book d'exécution au dernier
+        # achat. `sans_execution(ligue)` rend le motif lisible si la ligue a
+        # été mesurée à 0 récemment (son achat est alors DIFFÉRÉ après le
+        # Tier 2, voir core/odds_api.acheter_sharp_differe), None sinon ;
+        # `noter_execution(ligue, k, n)` enregistre la mesure. Fournis par
+        # l'appelant (meta), comme `last_paid_age_min` / `note_paid`.
+        self._sans_exe = sans_execution
+        self._noter_exe = noter_execution
         self.exempt_sports = set(exempt_sports)
         # Sports RÉGLABLES (core/score_sources.sports_reglables) : liste
         # d'autorisation, `None` = pas de contrôle. Un sport hors liste (boxe,
@@ -489,6 +534,25 @@ class SpendPolicy:
                 self._note_spent(float(cost))
             except Exception:
                 pass
+
+    def sharp_seul(self, sport_key: str) -> str | None:
+        """Motif si la ligue est mesurée SANS book d'exécution chez OddsAPI
+        (achat différé), None sinon — et None sur toute panne : dans le
+        doute, la ligue s'achète comme avant."""
+        if self._sans_exe is None:
+            return None
+        try:
+            return self._sans_exe(sport_key) or None
+        except Exception:
+            return None
+
+    def noter_execution(self, sport_key: str, k: int, n: int) -> None:
+        if self._noter_exe is None:
+            return
+        try:
+            self._noter_exe(sport_key, int(k), int(n))
+        except Exception:
+            pass
 
     def _skip(self, sport_key: str, reason: str) -> None:
         self.skipped.append((sport_key, reason))

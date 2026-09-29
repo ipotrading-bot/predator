@@ -492,6 +492,33 @@ def _execution_keys() -> list[str]:
 SHARP_SANS_EXECUTION: dict[str, dict] = {}
 _SHARP_US = ((PINNACLE_KEY, "pinnacle"), (CIRCA_KEY, "circa"), (CRIS_KEY, "bookmaker.eu"))
 
+# ── Achat DIFFÉRÉ des ligues sans book d'exécution (2026-09-29) ────────
+# MESURÉ sur les 35 scans standard du 23 au 29/09 : 56 achats de ligue n'ont
+# rendu AUCUN match exploitable — jusqu'à ~168 crédits sur 643 engagés (≈ 26 %
+# de la dépense), NFL et NCAAF (OddsAPI n'y cote jamais 1xbet), MMA (5/5 sans
+# book d'exécution le 29/09), une partie du tennis. Les jours chargés
+# (25-26/09), ces crédits manquaient : le plafond refusait des ligues en
+# fenêtre favorable.
+# Depuis le matin du 29/09, leur Pinnacle sert de référence aux matchs
+# qu'odds-api.io rend exécutables. Mais la ligue entière était achetée pour
+# les quelques matchs que 1xbet cote ailleurs — et achetée aussi quand il
+# n'y en avait AUCUN (Matchbook et Smarkets couvraient 6/6 de ces matchs
+# gratuitement, `ops.py chaine americanfootball 96`, 29/09).
+# D'où l'achat DIFFÉRÉ, qui tient sur trois faits de la doc OddsAPI v4 :
+# `/events` est gratuit (le pré-vol le lit déjà), `/odds` accepte `eventIds`,
+# et « if no events are returned, the request will not count against the
+# usage quota ». Une ligue MESURÉE sans book d'exécution à son dernier achat
+# (SpendPolicy.sharp_seul — mesure en meta, aucune liste écrite ici) n'est
+# plus achetée au Tier 1 : après le Tier 2 gratuit, `acheter_sharp_differe`
+# l'achète SEULEMENT si un book d'exécution cote un de ses matchs ailleurs,
+# et seulement pour ces matchs-là. Sinon : 0 crédit.
+# Ce n'est pas le couplage de sources interdit le 2026-09-02 (« le Tier 2
+# entier sautait dès qu'OddsAPI rendait UN event ») : la source gratuite
+# tourne toujours ; c'est l'ACHAT qui attend de savoir s'il servira.
+_PREVOL_EVENTS: dict[str, list] = {}     # ligue -> matchs du pré-vol gratuit (dernier fetch_odds)
+DIFFERES: dict[str, str] = {}            # ligue -> sport-type, reportées au dernier fetch_odds
+_FENETRE: dict[str, str] = {}            # commenceTimeFrom/To + borne jouable du dernier fetch_odds
+
 
 def sharp_seul(ev: dict, sport_type: str) -> dict | None:
     """Le prix sharp d'un match sans book d'exécution, au format exchange
@@ -527,16 +554,36 @@ def sharp_sans_execution() -> dict[str, dict]:
     return dict(SHARP_SANS_EXECUTION)
 
 
+def _books(ev: dict) -> set:
+    return {b.get("key") for b in (ev.get("bookmakers") or []) if isinstance(b, dict)}
+
+
+def _sans_execution(recus: list) -> int:
+    """Matchs reçus qu'AUCUN book d'exécution ne cote (diagnostic lisible ;
+    la mesure qui décide du report compte, elle, les matchs EXPLOITABLES)."""
+    exe = set(_execution_keys())
+    return sum(1 for ev in recus if isinstance(ev, dict) and not (_books(ev) & exe))
+
+
+def cout_reel(r, sport_type: str) -> float:
+    """Crédits RÉELLEMENT débités par cet appel : l'en-tête `x-requests-last`
+    (OddsAPI ne facture que les marchés présents dans la réponse, et rien
+    pour une réponse vide), à défaut le coût théorique `league_cost`. Le
+    rythme du jour se tient ainsi sur ce qui est dépensé, pas sur un tarif
+    supposé (2026-09-29)."""
+    try:
+        return float(r.headers.get("x-requests-last"))
+    except (TypeError, ValueError, AttributeError):
+        return float(league_cost(sport_type))
+
+
 def _pourquoi_inexploitable(recus: list) -> str:
     """Ce qui manque aux matchs d'une ligue payée pour passer `_parse_event` :
     le prix sharp (Pinnacle) ou un book d'exécution. Compté sur les books
     présents, pas sur le parsing — c'est la cause qu'on veut lire."""
     exe = set(_execution_keys())
-    sans_pin = sans_exe = 0
-    for ev in recus:
-        cles = {b.get("key") for b in (ev.get("bookmakers") or []) if isinstance(b, dict)}
-        sans_pin += PINNACLE_KEY not in cles
-        sans_exe += not (cles & exe)
+    sans_pin = sum(1 for ev in recus if PINNACLE_KEY not in _books(ev))
+    sans_exe = _sans_execution(recus)
     return (f"sans {PINNACLE_KEY} : {sans_pin}/{len(recus)}, sans book d'exécution "
             f"({'/'.join(sorted(exe)) or 'aucun'}) : {sans_exe}/{len(recus)}")
 
@@ -656,6 +703,8 @@ def _events_in_window(api_key: str, sport_key: str, time_from: str, time_to: str
         if r.status_code != 200:
             return None, None
         events = r.json() or []
+        # Gardés pour l'achat différé (ids + équipes, gratuit) — voir DIFFERES.
+        _PREVOL_EVENTS[sport_key] = [ev for ev in events if isinstance(ev, dict)]
         if not playable_from:
             return len(events), len(events)
         playable = sum(1 for ev in events
@@ -974,6 +1023,8 @@ def fetch_odds(api_key: str | None = None, hours_ahead: int = 24,
     assert api_key is not None  # narrow type after early return
 
     SHARP_SANS_EXECUTION.clear()
+    DIFFERES.clear()
+    _PREVOL_EVENTS.clear()
     keys_to_scan = sport_keys if sport_keys is not None else SPORT_KEYS
     # Tennis : clés éphémères résolues à chaque scan (0 crédit). Fusionnées
     # ICI — et non dans SPORT_KEYS / GOLDEN_SPORT_KEYS — pour couvrir les
@@ -987,6 +1038,8 @@ def fetch_odds(api_key: str | None = None, hours_ahead: int = 24,
     # Même format ISO « Z » que l'API : la comparaison de chaînes est exacte.
     playable_lead = timedelta(minutes=PLAYABLE_MIN_MINUTES + PLAYABLE_MARGIN_MIN)
     playable_from = (now + playable_lead).strftime("%Y-%m-%dT%H:%M:%SZ")
+    _FENETRE.clear()
+    _FENETRE.update({"from": time_from, "to": time_to, "jouable": playable_from})
 
     # Pré-vol gratuit : on ne garde que les ligues qui ont réellement des
     # matchs dans la fenêtre, triées par PRIORITÉ DÉCLARÉE (l'ordre de
@@ -1033,6 +1086,18 @@ def fetch_odds(api_key: str | None = None, hours_ahead: int = 24,
     scan_plan: list = []
     for sport_key, sport_type, n_events in populated:
         if spend_policy is not None:
+            # Ligue mesurée SANS book d'exécution : son sharp ne sert qu'aux
+            # matchs qu'un book d'exécution cote AILLEURS, qu'on ne connaît
+            # qu'après le Tier 2 — achat reporté (acheter_sharp_differe).
+            # Pré-vol en panne (matchs inconnus) : on achète comme avant —
+            # une panne du pré-vol ne vaut jamais « pas de match ».
+            motif = spend_policy.sharp_seul(sport_key)
+            if motif and sport_key in _PREVOL_EVENTS:
+                DIFFERES[sport_key] = sport_type
+                log.info("DIFFÉRÉ | %s : aucun book d'exécution au dernier achat (%s) — "
+                         "acheté après le Tier 2, seulement pour les matchs qu'un book "
+                         "d'exécution cote ailleurs", sport_key, motif)
+                continue
             pool_left = pool_known_remaining()
             allowed, _why = spend_policy.allow(
                 sport_key, sport_type, now,
@@ -1065,82 +1130,193 @@ def fetch_odds(api_key: str | None = None, hours_ahead: int = 24,
 
     all_events = []
     for sport_key, sport_type, _n in scan_plan:
-        markets = _MARKETS_BY_SPORT.get(sport_type, "h2h")
-        url = f"{BASE_URL}/sports/{sport_key}/odds/"
-        params = {
-            "apiKey":           api_key,
-            "regions":          "eu",
-            "markets":          markets,
-            "bookmakers":       ",".join([PINNACLE_KEY, *_execution_keys(), CIRCA_KEY, CRIS_KEY]),
-            "oddsFormat":       "decimal",
-            "commenceTimeFrom": time_from,
-            "commenceTimeTo":   time_to,
-        }
-        try:
-            r = None
-            while True:
-                params["apiKey"] = api_key
-                r = _get_retried(url, params, sport_key)
-                if r.status_code not in (401, 403, 422):
-                    break
-                # Clé à sec (422) ou refusée (401/403 — OddsAPI renvoie aussi
-                # un 401 OUT_OF_USAGE_CREDITS à 0 crédit) : on la marque
-                # morte et on REPREND LA MÊME LIGUE sur la clé suivante du
-                # pool. Le scan ne s'arrête que si le pool entier est mort.
-                mark_dead(api_key, f"HTTP {r.status_code} sur {sport_key}")
-                log.warning("OddsAPI clé #%d (…%s) morte (HTTP %d) — bascule",
-                            key_idx + 1, api_key[-4:], r.status_code)
-                api_key, key_idx = _next_live_key(keys, key_idx + 1)
-                if api_key is None:
-                    log.critical("OddsAPI : pool épuisé (%d clés) après %d ligues — "
-                                 "%d events conservés. Rotation requise : "
-                                 "python scripts/rotate_odds_key.py --add <clé>",
-                                 len(keys), list(keys_to_scan).index(sport_key), len(all_events))
-                    return all_events
-            remaining = r.headers.get("x-requests-remaining", "?")
-            used      = r.headers.get("x-requests-used", "?")
-            _note_remaining(remaining, used)
-            _note_key(api_key, remaining, used)
-            if spend_policy is not None and r.status_code == 200:
-                spend_policy.note_paid(sport_key, league_cost(sport_type))
-
-            if r.status_code == 404:
-                continue  # Not in season
-            if r.status_code != 200:
-                log.warning("%s: HTTP %d", sport_key, r.status_code)
-                continue
-
-            recus = r.json() or []
-            events = []
-            gardes_sharp = 0
-            for brut in recus:
-                ev_ok = _parse_event(brut, sport_type)
-                if ev_ok:
-                    events.append(ev_ok)
-                    continue
-                row = sharp_seul(brut, sport_type)
-                if row:
-                    SHARP_SANS_EXECUTION[f"{row['home'].lower()}_{row['away'].lower()}"] = row
-                    gardes_sharp += 1
-            all_events.extend(events)
-            if gardes_sharp:
-                log.info("PAYÉ POUR LE SHARP | %s : %d match(s) sans book d'exécution — leur "
-                         "prix sharp sert de référence aux matchs d'odds-api.io (%s)",
-                         sport_key, gardes_sharp, _pourquoi_inexploitable(recus))
-            elif recus and not events:
-                # Payé, reçu, tout jeté — et jusqu'au 2026-09-29 sans un mot :
-                # la NFL a été achetée à chaque créneau depuis l'ouverture de
-                # sa saison sans qu'OddsAPI y cote jamais 1xbet (0/16 mesuré
-                # par `ops.py books`). Le crédit part ; que la raison reste.
-                log.warning("PAYÉ SANS RETOUR | %s : %d match(s) reçu(s), 0 exploitable — %s",
-                            sport_key, len(recus), _pourquoi_inexploitable(recus))
-            if events:
-                has_totals  = sum(1 for e in events if "totals_1xbet"  in e)
-                has_spreads = sum(1 for e in events if "spreads_1xbet" in e)
-                log.info("%s: %d events | totals=%d spreads=%d | used=%s remaining=%s",
-                         sport_key, len(events), has_totals, has_spreads, used, remaining)
-
-        except Exception as e:
-            log.error("%s: %s", sport_key, e)
-
+        events, api_key, key_idx, pool_mort = _acheter_ligue(
+            keys, key_idx, api_key, sport_key, sport_type, time_from, time_to, spend_policy)
+        all_events.extend(events)
+        if pool_mort:
+            log.critical("OddsAPI : pool épuisé (%d clés) après %d ligues — "
+                         "%d events conservés. Rotation requise : "
+                         "python scripts/rotate_odds_key.py --add <clé>",
+                         len(keys), list(keys_to_scan).index(sport_key), len(all_events))
+            return all_events
     return all_events
+
+
+def _acheter_ligue(keys: list, key_idx: int, api_key: str, sport_key: str, sport_type: str,
+                   time_from: str, time_to: str, spend_policy=None,
+                   event_ids: list | None = None) -> tuple[list, str | None, int, bool]:
+    """UN appel /odds payant pour une ligue : rotation des clés, compteurs,
+    dépouillement (matchs exploitables, prix sharp sans exécution), mesure de
+    la couverture d'exécution. Partagé par `fetch_odds` et
+    `acheter_sharp_differe` — une seule copie de ces règles.
+
+    `event_ids` : restreint l'achat à ces matchs (paramètre `eventIds`).
+    Rend (matchs exploitables, clé courante, index, pool entièrement mort)."""
+    markets = _MARKETS_BY_SPORT.get(sport_type, "h2h")
+    url = f"{BASE_URL}/sports/{sport_key}/odds/"
+    params = {
+        "apiKey":           api_key,
+        "regions":          "eu",
+        "markets":          markets,
+        "bookmakers":       ",".join([PINNACLE_KEY, *_execution_keys(), CIRCA_KEY, CRIS_KEY]),
+        "oddsFormat":       "decimal",
+        "commenceTimeFrom": time_from,
+        "commenceTimeTo":   time_to,
+    }
+    if event_ids:
+        params["eventIds"] = ",".join(event_ids)
+    events: list = []
+    try:
+        r = None
+        while True:
+            params["apiKey"] = api_key
+            r = _get_retried(url, params, sport_key)
+            if r.status_code not in (401, 403, 422):
+                break
+            # Clé à sec (422) ou refusée (401/403 — OddsAPI renvoie aussi
+            # un 401 OUT_OF_USAGE_CREDITS à 0 crédit) : on la marque
+            # morte et on REPREND LA MÊME LIGUE sur la clé suivante du
+            # pool. Le scan ne s'arrête que si le pool entier est mort.
+            mark_dead(api_key, f"HTTP {r.status_code} sur {sport_key}")
+            log.warning("OddsAPI clé #%d (…%s) morte (HTTP %d) — bascule",
+                        key_idx + 1, api_key[-4:], r.status_code)
+            api_key, key_idx = _next_live_key(keys, key_idx + 1)
+            if api_key is None:
+                return events, None, key_idx, True
+        remaining = r.headers.get("x-requests-remaining", "?")
+        used      = r.headers.get("x-requests-used", "?")
+        _note_remaining(remaining, used)
+        _note_key(api_key, remaining, used)
+        if spend_policy is not None and r.status_code == 200:
+            spend_policy.note_paid(sport_key, cout_reel(r, sport_type))
+
+        if r.status_code == 404:
+            return events, api_key, key_idx, False    # Not in season
+        if r.status_code != 200:
+            log.warning("%s: HTTP %d", sport_key, r.status_code)
+            return events, api_key, key_idx, False
+
+        recus = r.json() or []
+        gardes_sharp = 0
+        for brut in recus:
+            ev_ok = _parse_event(brut, sport_type)
+            if ev_ok:
+                events.append(ev_ok)
+                # Achat ciblé (différé) : on l'a payé pour servir de référence
+                # au match que le Tier 2 rend exécutable — son sharp est gardé
+                # même quand OddsAPI le rend lui-même exploitable.
+                if not event_ids:
+                    continue
+            row = sharp_seul(brut, sport_type)
+            if row:
+                SHARP_SANS_EXECUTION[f"{row['home'].lower()}_{row['away'].lower()}"] = row
+                gardes_sharp += 1
+        # Mesure = matchs EXPLOITABLES (sharp + 1X2 d'un book d'exécution),
+        # pas la simple présence d'un book : le 29/09, 1xbet apparaissait sur
+        # Browns–Steelers chez OddsAPI sans y coter le 1X2.
+        if recus and spend_policy is not None:
+            spend_policy.noter_execution(sport_key, len(events), len(recus))
+        if gardes_sharp:
+            log.info("PAYÉ POUR LE SHARP | %s : %d match(s) sans book d'exécution — leur "
+                     "prix sharp sert de référence aux matchs d'odds-api.io (%s)",
+                     sport_key, gardes_sharp, _pourquoi_inexploitable(recus))
+        elif recus and not events:
+            # Payé, reçu, tout jeté — et jusqu'au 2026-09-29 sans un mot :
+            # la NFL a été achetée à chaque créneau depuis l'ouverture de
+            # sa saison sans qu'OddsAPI y cote jamais 1xbet (0/16 mesuré
+            # par `ops.py books`). Le crédit part ; que la raison reste.
+            log.warning("PAYÉ SANS RETOUR | %s : %d match(s) reçu(s), 0 exploitable — %s",
+                        sport_key, len(recus), _pourquoi_inexploitable(recus))
+        if events:
+            has_totals  = sum(1 for e in events if "totals_1xbet"  in e)
+            has_spreads = sum(1 for e in events if "spreads_1xbet" in e)
+            log.info("%s: %d events | totals=%d spreads=%d | used=%s remaining=%s",
+                     sport_key, len(events), has_totals, has_spreads, used, remaining)
+
+    except Exception as e:
+        log.error("%s: %s", sport_key, e)
+
+    return events, api_key, key_idx, False
+
+
+# Écart maximal entre les coups d'envoi de deux fiches pour les tenir pour le
+# MÊME match : deux équipes NFL/NCAA se rencontrent parfois deux fois dans la
+# saison — les noms seuls ne suffisent pas.
+_MEME_MATCH_H = 12.0
+
+
+def _ecart_h(a: str, b: str) -> float | None:
+    try:
+        ta = datetime.fromisoformat(str(a).replace("Z", "+00:00"))
+        tb = datetime.fromisoformat(str(b).replace("Z", "+00:00"))
+    except ValueError:
+        return None
+    if ta.tzinfo is None or tb.tzinfo is None:
+        return None
+    return abs((ta - tb).total_seconds()) / 3600.0
+
+
+def acheter_sharp_differe(matchs_executables: list, spend_policy=None) -> int:
+    """Achète le sharp des ligues DIFFÉRÉES par le dernier `fetch_odds`, et
+    seulement pour leurs matchs qu'un book d'exécution cote ailleurs
+    (`matchs_executables` : les matchs du Tier 2, odds-api.io en tête).
+
+    Par ligue : les matchs JOUABLES du pré-vol gratuit sont appariés aux
+    matchs exécutables (les deux équipes, candidat unique, coups d'envoi à
+    moins de `_MEME_MATCH_H` h). Aucun apparié → 0 crédit, et la ligne le
+    dit. Sinon UN appel /odds restreint par `eventIds`, soumis à la même
+    politique de dépense qu'au Tier 1 ; les prix sharp rejoignent
+    `SHARP_SANS_EXECUTION`, que le moteur pose ensuite AVANT les exchanges.
+    Rend le nombre de prix sharp gardés. Ne lève jamais."""
+    if not DIFFERES:
+        return 0
+    from core.exchange_match import lookup_exchange     # import tardif : cycle
+    index: dict[str, dict] = {}
+    for m in matchs_executables or []:
+        h, a = str(m.get("home", "")).strip(), str(m.get("away", "")).strip()
+        if h and a:
+            index[f"{h.lower()}_{a.lower()}"] = {"home": h, "away": a,
+                                                  "commence_time": m.get("commence_time", "")}
+    keys = candidate_keys()
+    api_key, key_idx = _next_live_key(keys, 0) if keys else (None, 0)
+    now = datetime.now(timezone.utc)
+    avant = len(SHARP_SANS_EXECUTION)
+    for sport_key, sport_type in list(DIFFERES.items()):
+        jouables = [ev for ev in _PREVOL_EVENTS.get(sport_key, [])
+                    if ev.get("id") and str(ev.get("commence_time", "")) >= _FENETRE.get("jouable", "")]
+        ids = []
+        for ev in jouables:
+            hit = lookup_exchange({"home": str(ev.get("home_team", "")),
+                                   "away": str(ev.get("away_team", ""))}, index)
+            if not hit:
+                continue
+            ecart = _ecart_h(ev.get("commence_time", ""), hit.get("commence_time", ""))
+            if ecart is not None and ecart > _MEME_MATCH_H:
+                continue
+            ids.append(str(ev["id"]))
+        if not ids:
+            log.info("DIFFÉRÉ | %s : aucun de ses %d match(s) jouable(s) n'est coté par un "
+                     "book d'exécution ailleurs — 0 crédit", sport_key, len(jouables))
+            continue
+        if api_key is None:
+            log.warning("DIFFÉRÉ | %s : %d match(s) à couvrir mais aucune clé OddsAPI vivante",
+                        sport_key, len(ids))
+            break
+        if spend_policy is not None:
+            pool_left = pool_known_remaining()
+            allowed, _why = spend_policy.allow(
+                sport_key, sport_type, now,
+                pool_left if pool_left is not None else _last_remaining,
+                cost=league_cost(sport_type))
+            if not allowed:
+                continue                  # motif loggé par la politique (« DÉPENSE | … sauté »)
+        n_avant = len(SHARP_SANS_EXECUTION)
+        _events, api_key, key_idx, pool_mort = _acheter_ligue(
+            keys, key_idx, api_key, sport_key, sport_type,
+            _FENETRE.get("from", ""), _FENETRE.get("to", ""), spend_policy, event_ids=ids)
+        log.info("DIFFÉRÉ | %s : acheté pour %d match(s) coté(s) ailleurs par un book "
+                 "d'exécution (eventIds, sur %d jouable(s)) — %d prix sharp gardé(s)",
+                 sport_key, len(ids), len(jouables), len(SHARP_SANS_EXECUTION) - n_avant)
+        if pool_mort:
+            break
+    return len(SHARP_SANS_EXECUTION) - avant
