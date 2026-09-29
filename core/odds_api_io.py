@@ -68,7 +68,8 @@ payés. La NFL passe avant la NCAA dans la coupe.
 BUDGET (règle 13) : 1 requête de calendrier + ceil(cap/10) de cotes par
 scan standard, cap `ODDS_API_IO_MAX_EVENTS_AMERICANFOOTBALL` = 30 → au plus
 4 req/scan, 32 req/j sur 8 scans ; mesuré le 2026-09-28 : 287/400 en fin
-de journée → ≤ 319/400. Le rythme de dépense (`paced_allowance`) reste
+de journée → ≤ 319/400 (368/400 le dimanche 09-27 → ≤ 400) ; compensé
+par le baseball retiré, qui n'est plus payé ici (~24 req/j rendues). Le rythme de dépense (`paced_allowance`) reste
 le garde-fou.
 CRITÈRE DE RETRAIT (règle 13) — à relever le 2026-10-27 : retirer
 `americanfootball` de `SPORTS` si AUCUN signal `americanfootball` ni
@@ -500,6 +501,14 @@ def fetch_sport(sport: str, api_key: str | None = None, hours_ahead: int = 24,
     ou sur panne — jamais d'exception, toujours une ligne de log."""
     cfg = SPORTS.get(sport)
     if cfg is None:
+        return []
+    # Un sport RETIRÉ par l'opérateur (baseball, 2026-09-17) ne se paie plus
+    # ici non plus : ~3 req/scan, ~24 req/j jetées par le moteur de toute
+    # façon (filtre de périmètre du Tier 2). Elles financent le football
+    # américain sur le même compte de 400 (2026-09-29). Dérivé de SPORT_KEYS.
+    from core.odds_api import sports_au_perimetre
+    if sport not in sports_au_perimetre():
+        log.info("odds-api.io[%s]: sport hors périmètre (retiré du scan) — 0 requête", sport)
         return []
     slug, sport_id, draw = cfg
     keys = candidate_keys(api_key)
