@@ -290,3 +290,15 @@ def test_le_moteur_trie_sur_le_prix_sharp_avant_de_couper():
     t2 = moteur[moteur.index("xbet_matches = fetch_matches()"):]
     assert t2.index("_oddsapi_sharp_sans_execution()") < t2.index("_enrich_from_exchange(xbet_matches, exchange_prices")
     assert t2.index("_enrich_from_exchange(xbet_matches, exchange_prices") < t2.index("_repartir_par_sport(")
+
+
+def test_un_sport_retire_ne_revient_pas_par_le_tier_2():
+    """Baseball retiré « sport entier » le 2026-09-17 : odds-api.io le sert
+    toujours, et seule la coupe à 50 le tenait loin de l'émission. Le filtre
+    de périmètre doit précéder la sélection du Tier 2."""
+    from core.odds_api import sports_au_perimetre
+    assert "baseball" not in sports_au_perimetre()
+    assert {"americanfootball", "college_football", "tennis"} <= sports_au_perimetre()
+    moteur = (RACINE / "run_engine.py").read_text(encoding="utf-8")
+    t2 = moteur[moteur.index("xbet_matches = fetch_matches()"):]
+    assert t2.index("not in perimetre") < t2.index("_repartir_par_sport(")
