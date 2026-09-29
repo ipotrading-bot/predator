@@ -7,6 +7,7 @@ scripts/ops.py — pilotage Supabase + Vercel depuis le terminal, sans CLI.
     python scripts/ops.py sources                     # sonde CHAQUE source de cotes : vivante ? quota ? joignable depuis cette IP ?
     python scripts/ops.py ligues [prefixe] [jours]     # catalogue d'un sport : matchs a venir, jouables, credits/semaine (0 credit)
     python scripts/ops.py books <cle> [slug-io]       # quels books cotent une ligue : 1 CREDIT OddsAPI (+2 req odds-api.io si slug)
+    python scripts/ops.py chaine <sport> [heures]     # chemin Tier 2 de bout en bout, sans écrire (~4 req odds-api.io)
     python scripts/ops.py ai                          # sonde CHAQUE fournisseur IA par une INFÉRENCE réelle (catalogue ≠ utilisable)
     python scripts/ops.py watchdog                    # le chien de garde Cloudflare fait-il son travail ? PAT, cron, invocations 24 h, incident Cloudflare, créneau dû
     python scripts/ops.py secrets-push [--run]        # recopie les clés du .env vers les secrets Actions (403 depuis un Codespace)
@@ -858,6 +859,64 @@ def books(args):
         print(f"  books demandés : {demandes or 'aucun'} — 2 requêtes dépensées")
 
 
+def chaine(args):
+    """Le chemin d'un sport du Tier 2, de bout en bout, SANS rien écrire :
+    odds-api.io (prix exécutables) → Matchbook + Smarkets (prix sharp) →
+    garde « marché vivant » → garde ESPN « réglable ». Coût : ~4 requêtes
+    odds-api.io, 0 crédit OddsAPI (le Pinnacle payé n'est pas rejoué).
+
+    Écrit le 2026-09-29 pour la NFL : aucun match n'entre dans la fenêtre de
+    24 h des scans avant le jeudi — `chaine americanfootball 96` montre dès
+    maintenant ce qu'un scan en ferait.
+
+        ops.py chaine americanfootball [heures]
+    """
+    from core import odds_api_io as io                                     # noqa: E402
+    from core.matchbook import fetch_matchbook_prices                      # noqa: E402
+    from core.smarkets import fetch_smarkets_prices                        # noqa: E402
+    from core.score_sources import fixtures_espn, fixture_connue           # noqa: E402
+    import run_engine as eng                                               # noqa: E402
+
+    sport = args[0] if args else "americanfootball"
+    heures = int(args[1]) if len(args) > 1 else 24
+    matchs = io.fetch_sport(sport, hours_ahead=heures)
+    print(f"── odds-api.io[{sport}] {heures} h : {len(matchs)} match(s) avec prix exécutable ──")
+    sharp: dict = {}
+    sharp.update(fetch_matchbook_prices(sports=[sport], hours_ahead=heures))
+    for k, v in fetch_smarkets_prices(sports=[sport], hours_ahead=heures).items():
+        sharp.setdefault(k, v)
+    print(f"── exchanges : {len(sharp)} prix sharp (Matchbook puis Smarkets) ──")
+
+    class _Muet:
+        def info(self, *a, **k):
+            pass
+        warning = info
+
+    eng._enrich_from_exchange(matchs, sharp, _Muet())
+    dates = sorted(str(m.get("commence_time", ""))[:10] for m in matchs if m.get("commence_time"))
+    fixtures: dict = {}
+    for sp in {m.get("sport") for m in matchs}:
+        fixtures[sp] = fixtures_espn(sp, dates[0], dates[-1]) if dates else None
+    exploitables = 0
+    for m in sorted(matchs, key=lambda x: str(x.get("commence_time", ""))):
+        vivant = eng._marche_vivant(m)
+        reglable = bool(fixtures.get(m.get("sport"))) and fixture_connue(
+            m["match"], fixtures.get(m.get("sport")) or [])
+        ok = vivant and reglable and bool(m.get("odds_pinnacle"))
+        exploitables += ok
+        pin = m.get("odds_pinnacle") or {}
+        soft = m.get("odds_1xbet") or {}
+        print(f"  {'✅' if ok else '❌'} {str(m.get('commence_time', ''))[:16]} {m.get('sport'):17s} "
+              f"{m['match'][:52]:52s} 1xbet {soft.get('1', 0):.2f}/{soft.get('2', 0):.2f} "
+              f"sharp {pin.get('1', 0):.2f}/{pin.get('2', 0):.2f} ({m.get('_exchange') or '—'}) "
+              f"{'' if reglable else 'NON RÉGLABLE'}"
+              f"{' +totals' if m.get('totals_pinnacle') and m.get('totals_1xbet') else ''}"
+              f"{' +spreads' if m.get('spreads_pinnacle') and m.get('spreads_1xbet') else ''}")
+    print(f"\n{exploitables}/{len(matchs)} match(s) exploitables par le moteur "
+          f"(prix exécutable + prix sharp + réglable). Le Pinnacle payé à OddsAPI "
+          f"s'y ajoute au créneau NFL (jeudi/dimanche/lundi soir).")
+
+
 def main(argv):
     if not argv or argv[0] in ("-h", "--help"):
         print(__doc__)
@@ -873,6 +932,8 @@ def main(argv):
         ligues(rest)
     elif cmd == "books":
         books(rest)
+    elif cmd == "chaine":
+        chaine(rest)
     elif cmd == "ai":
         ai()
     elif cmd == "watchdog":

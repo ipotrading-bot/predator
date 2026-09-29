@@ -46,7 +46,8 @@ from core.score_sources import (fixtures_espn as _fixtures_espn, fixture_connue 
 from core.odds_api import (SPORT_KEYS, fetch_odds, pool_status as _odds_pool_status,
                            pool_counters as _odds_pool_counters,
                            pool_totals as _odds_pool_totals,
-                           pool_total_remaining as _odds_pool_total_remaining)
+                           pool_total_remaining as _odds_pool_total_remaining,
+                           sharp_sans_execution as _oddsapi_sharp_sans_execution)
 from core.scan_windows import (SpendPolicy as _SpendPolicy, CYCLE_DAYS as _ODDS_CYCLE_DAYS,
                                daily_allowance as _odds_daily_allowance,
                                weekday_relative as _odds_weekday_relative)
@@ -1072,6 +1073,30 @@ def _enrich_from_exchange(items: list, prices: dict, log) -> int:
     if enriched:
         log.info("💹 Exchange: %d matchs enrichis (prix sharp réel)", enriched)
     return enriched
+
+
+def _repartir_par_sport(items: list, plafond: int) -> list:
+    """Au plus `plafond` matchs, pris À TOUR DE RÔLE dans chaque sport, en
+    gardant l'ordre de chaque sport (celui des sources : priorité de ligue,
+    zone jouable). Sous le plafond, tout passe. Voir la sélection du Tier 2
+    dans `run` : couper la liste brute ne laissait que du foot."""
+    if len(items) <= plafond:
+        return list(items)
+    files: dict[str, list] = {}
+    for m in items:
+        files.setdefault(m.get("sport") or "?", []).append(m)
+    out: list = []
+    rang = 0
+    while len(out) < plafond:
+        pris = False
+        for file in files.values():
+            if rang < len(file) and len(out) < plafond:
+                out.append(file[rang])
+                pris = True
+        if not pris:
+            break
+        rang += 1
+    return out
 
 
 def _heartbeat(sb, scan_time: datetime, matches: int | None, signals: int | None):
@@ -3093,6 +3118,16 @@ def run():
                 raise SystemExit(1)
             return
 
+        # Prix sharp PAYÉS à OddsAPI sans book d'exécution (2026-09-29,
+        # décision opérateur « continue à payer ») : la NFL n'y a pas de
+        # 1xbet, mais son Pinnacle est la meilleure référence qui existe pour
+        # les matchs NFL qu'odds-api.io rend exécutables. Posé AVANT les
+        # exchanges : Pinnacle reste la référence, Matchbook/Smarkets passent
+        # ensuite en contre-expertise (rôle 1 de _enrich_from_exchange).
+        sharp_payes = _oddsapi_sharp_sans_execution() if ODDS_API_ENABLED else {}
+        if xbet_matches and sharp_payes:
+            _enrich_from_exchange(xbet_matches, sharp_payes, log)
+
         # Second passage de l'exchange : les matchs du Tier 2 viennent
         # d'apparaître, ils n'existaient pas lors du premier. Fait AVANT la
         # recherche web pour que chaque match servi ici n'y soit pas envoyé.
@@ -3111,14 +3146,35 @@ def run():
         # web (fetch_pinnacle_prices) et par oracle LLM ont été SUPPRIMÉS le
         # 2026-09-02 avec Groq/Tavily : une cote générée n'est pas une
         # observation, et c'est précisément la fabrique à faux edge d'A6.
-        for m in xbet_matches[:MAX_MATCHES]:
+        # LE PRIX SHARP D'ABORD, LA COUPE ENSUITE (2026-09-29). La boucle
+        # était `for m in xbet_matches[:MAX_MATCHES]` : les 50 PREMIERS matchs
+        # du harvest, qui sert le foot en tête (107 odds-api.io + 30 titan007
+        # au scan de 09:11). Tennis, basket, hockey, MMA et football
+        # américain n'étaient JAMAIS examinés — 289 chargés, 50 regardés,
+        # tous de foot. On garde désormais tout match qui a un prix sharp,
+        # et le plafond se RÉPARTIT entre sports (`_repartir_par_sport`).
+        avec_sharp: list = []
+        sans_sharp: dict[str, int] = {}
+        for m in xbet_matches:
             if m.get("match", "").strip().lower() in seen:
                 continue
             if m.get("odds_pinnacle"):
-                matches.append(m)
+                avec_sharp.append(m)
             else:
-                no_pin_count += 1
-                log.warning("⚠️ %s ignoré : Échec prix Sharp", m["match"])
+                sp = m.get("sport") or "?"
+                sans_sharp[sp] = sans_sharp.get(sp, 0) + 1
+        no_pin_count += sum(sans_sharp.values())
+        if sans_sharp:
+            log.info("TIER 2 | écartés faute de prix sharp (Échec prix Sharp) : %s",
+                     ", ".join(f"{sp}={n}" for sp, n in sorted(sans_sharp.items())))
+        retenus = _repartir_par_sport(avec_sharp, MAX_MATCHES)
+        par_sport: dict[str, int] = {}
+        for m in retenus:
+            par_sport[m.get("sport") or "?"] = par_sport.get(m.get("sport") or "?", 0) + 1
+        log.info("TIER 2 | %d match(s) avec prix sharp, %d retenu(s) (plafond %d réparti "
+                 "par sport) : %s", len(avec_sharp), len(retenus), MAX_MATCHES,
+                 ", ".join(f"{sp}={n}" for sp, n in sorted(par_sport.items())) or "—")
+        matches.extend(retenus)
 
         if matches:
             # Étiquette honnête : avec un Tier 1 vivant, les matchs viennent

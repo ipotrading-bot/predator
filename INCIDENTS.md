@@ -327,6 +327,44 @@ prix exécutable.
 
 Gardiens : `tests/test_football_americain.py`.
 
+### Le Tier 2 ne regardait que ses 50 premiers matchs — tous de foot (2026-09-29)
+
+**Symptôme.** En traçant le chemin d'un match NFL (décision opérateur :
+« il me faut coûte que coûte des matchs exploitables »). Scan 36547501601
+(09:11) : « 289 matchs Tier 2 chargés », puis « Tier 1+2 — 36 matchs avec
+prix Sharp ».
+
+**Cause (prouvée par le code et le log).** `run_engine` : `for m in
+xbet_matches[:MAX_MATCHES]` (50) coupait la liste BRUTE du harvest, AVANT le
+tri sur le prix sharp. Le harvester sert les sports par identifiant, foot en
+tête (107 odds-api.io + 30 titan007) : tennis, basket, hockey, MMA — et la
+NFL fraîchement branchée — étaient chargés, payés sur le budget odds-api.io,
+et JAMAIS examinés.
+
+**Correctif.** Le prix sharp d'abord, la coupe ensuite : tout match qui a un
+prix sharp est candidat, et les 50 places se répartissent à tour de rôle
+entre sports (`_repartir_par_sport`, ordre des sources gardé dans chaque
+sport). Les écartés faute de prix sharp sont comptés par sport en une
+ligne (« TIER 2 | écartés faute de prix sharp »), au lieu d'une par match.
+⚠️ Effet de bord VOULU mais à surveiller : le compteur « sans confirmation
+Pinnacle » du message Telegram compte désormais TOUT le Tier 2 sans prix
+sharp (≈ 250 au lieu de ≈ 20), et tennis/basket/hockey d'odds-api.io
+atteignent enfin l'émission — aucun seuil n'a bougé (règle 10).
+
+Aussi le même jour : le Pinnacle PAYÉ sur une ligue sans book d'exécution
+(la NFL) est gardé (`core.odds_api.sharp_sans_execution`, « PAYÉ POUR LE
+SHARP ») et posé AVANT les exchanges sur les matchs odds-api.io ; le repli
+`odds_api_io.fetch_all` dérive ses sports de `SPORTS` (il avait oublié
+tennis, MMA et football américain). Vérifié en réel par `ops.py chaine
+americanfootball 96` : 6/6 matchs exploitables (prix 1xbet + sharp
+Matchbook/Smarkets + ESPN), dont Browns–Steelers.
+
+**Règle.** Un plafond se pose APRÈS le filtre qui décide, jamais sur une
+liste brute dont l'ordre vient d'une source.
+
+Gardiens : `tests/test_football_americain.py` (répartition, ordre des
+passes, Pinnacle payé → marché vivant), `tests/test_engine_circuit_breaker.py`.
+
 ### Smarkets muet cinq jours : l'API a changé ses paramètres (2026-09-25 → 09-29)
 
 **Symptôme.** Du 2026-09-25 au 2026-09-29, chaque scan standard : six
