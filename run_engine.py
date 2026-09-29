@@ -2912,7 +2912,11 @@ def run():
     exchange_prices: dict = {}
     if not _MATCHBOOK_OFF:
         mb_prices = fetch_matchbook_prices(
-            sports=["soccer", "basketball", "baseball", "hockey", "tennis", "mma"],
+            # americanfootball (2026-09-29) : NFL ET NCAAF, sous le même sport
+            # Matchbook — le prix sharp des matchs que seul odds-api.io rend
+            # exécutables (voir core/odds_api_io, « FOOTBALL AMÉRICAIN »).
+            sports=["soccer", "basketball", "baseball", "hockey", "tennis", "mma",
+                    "americanfootball"],
             hours_ahead=hours_ahead,
         )
         exchange_prices.update(mb_prices)
@@ -2927,7 +2931,8 @@ def run():
     # d'une seconde (débit 429).
     if not _SMARKETS_OFF and not REPRICE:
         sm_prices = fetch_smarkets_prices(
-            sports=["soccer", "tennis", "hockey", "baseball", "mma", "basketball"],
+            sports=["soccer", "tennis", "hockey", "baseball", "mma", "basketball",
+                    "americanfootball"],
             hours_ahead=hours_ahead,
         )
         nouveaux = 0

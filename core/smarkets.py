@@ -16,9 +16,11 @@ matchs de football à 30 h, Saudi Pro League, EFL Trophy, MLS Next Pro…).
 
 CE QUE L'API DONNE (relevé le 2026-09-08, sans authentification)
 ----------------------------------------------------------------
-  GET /v3/events/?state=upcoming&type=football_match&limit=200
-      &end_datetime_max=…&sort=start_datetime,id  → 200 événements/page
-  GET /v3/events/{id,id,…}/markets/?limit=200      → marchés, GROUPÉS par
+  GET /v3/events/?state=upcoming&type=football_match
+      &start_datetime_max=…&sort=start_datetime,id  → 50 événements/page,
+      suite dans `pagination.next_page` (API changée le 2026-09-25, voir
+      plus bas)
+  GET /v3/events/{id,id,…}/markets/                → marchés, GROUPÉS par
       événement ; `market_type.name` : WINNER_3_WAY, OVER_UNDER (param =
       ligne), ASIAN_HANDICAP (param = ligne DOMICILE signée), WINNER_DNB…
       Les sous-marchés (FIRST_HALF_*, HOME_TEAM_*, CORNERS_*) portent leur
@@ -33,6 +35,17 @@ CE QUE L'API DONNE (relevé le 2026-09-08, sans authentification)
   Aucun en-tête de limite de débit ; 15 appels /markets/ en rafale → 200,
   mais des HTTP 429 sur les /quotes/ enchaînés (essai réel 2026-09-08
   17:45) : d'où `_PAUSE_S` entre deux appels et UNE reprise après 429.
+
+L'API A CHANGÉ LE 2026-09-25 — ET LA SOURCE S'EST TUE CINQ JOURS
+------------------------------------------------------------------
+Du 25 au 29/09, chaque scan a pris « HTTP 400 sur events » six fois et
+rendu « 0 marchés sharp » : Smarkets refuse désormais `end_datetime_max`
+et `limit` sur /markets/ et /contracts/ (« Unknown query string
+properties », REQUEST_VALIDATION_ERROR), et plafonne /events/ à 50 par
+page. Le filtre de fenêtre s'écrit `start_datetime_max` (le COUP D'ENVOI,
+ce que le moteur voulait de toute façon) ; les pages suivantes se lisent
+par `pagination.next_page`. Un refus 4xx loggue maintenant le MOTIF rendu
+par l'API : « HTTP 400 » seul a coûté cinq jours.
 
 BUDGET (règle 13)
 -----------------
@@ -68,6 +81,7 @@ import logging
 import os
 import time
 from datetime import datetime, timedelta, timezone
+from urllib.parse import parse_qsl
 
 import requests
 
@@ -263,7 +277,15 @@ def _get(path: str, params: dict | None = None):
     if r.status_code in (401, 403, 451):
         raise _Geoblocked(f"HTTP {r.status_code}")
     if r.status_code != 200:
-        log.warning("Smarkets: HTTP %d sur %s", r.status_code, path.split("/", 3)[1] if "/" in path else path)
+        # Le motif de l'API d'abord : « Unknown query string properties:
+        # end_datetime_max » dit la cause, « HTTP 400 » seul ne dit rien.
+        try:
+            motif = str((r.json() or {}).get("data") or "")[:160]
+        except Exception:
+            motif = ""
+        log.warning("Smarkets: HTTP %d sur %s%s", r.status_code,
+                    path.split("/", 3)[1] if "/" in path else path,
+                    f" — {motif}" if motif else "")
         return None
     try:
         return r.json() or {}
@@ -278,13 +300,23 @@ def _chunks(items: list, n: int):
 
 
 def _events(sport: str, now: datetime, until: datetime) -> list[dict]:
-    body = _get("/events/", {
+    """Les MAX_EVENTS premiers événements par coup d'envoi, page par page
+    (50 par page depuis le 2026-09-25 — voir l'en-tête)."""
+    params: dict | None = {
         "state": "upcoming", "type": EVENT_TYPES[sport],
         "start_datetime_min": now.strftime("%Y-%m-%dT%H:%M:%SZ"),
-        "end_datetime_max": until.strftime("%Y-%m-%dT%H:%M:%SZ"),
-        "sort": "start_datetime,id", "limit": str(min(MAX_EVENTS, 200)),
-    })
-    return list((body or {}).get("events") or [])
+        "start_datetime_max": until.strftime("%Y-%m-%dT%H:%M:%SZ"),
+        "sort": "start_datetime,id",
+    }
+    out: list[dict] = []
+    while params is not None and len(out) < MAX_EVENTS:
+        if daily_quota.spent(QUOTA_BUCKET) >= DAILY_BUDGET:
+            break
+        body = _get("/events/", params) or {}
+        out.extend(body.get("events") or [])
+        suite = (body.get("pagination") or {}).get("next_page")
+        params = dict(parse_qsl(str(suite).lstrip("?"))) if suite else None
+    return out[:MAX_EVENTS]
 
 
 def fetch_smarkets_prices(sports: list | None = None, hours_ahead: int = 24) -> dict:
@@ -322,7 +354,7 @@ def fetch_smarkets_prices(sports: list | None = None, hours_ahead: int = 24) -> 
             for ids in _chunks(list(by_id), EVENTS_PER_MARKETS_CALL):
                 if daily_quota.spent(QUOTA_BUCKET) >= DAILY_BUDGET:
                     break
-                body = _get(f"/events/{','.join(ids)}/markets/", {"limit": "500"})
+                body = _get(f"/events/{','.join(ids)}/markets/")
                 for m in (body or {}).get("markets") or []:
                     mtype = str((m.get("market_type") or {}).get("name", ""))
                     if mtype in _USEFUL and str(m.get("state", "open")) == "open":
@@ -333,7 +365,7 @@ def fetch_smarkets_prices(sports: list | None = None, hours_ahead: int = 24) -> 
             for ids in _chunks(list(markets), MARKETS_PER_CALL):
                 if daily_quota.spent(QUOTA_BUCKET) >= DAILY_BUDGET:
                     break
-                body = _get(f"/markets/{','.join(ids)}/contracts/", {"limit": "1000"})
+                body = _get(f"/markets/{','.join(ids)}/contracts/")
                 for c in (body or {}).get("contracts") or []:
                     contracts.setdefault(str(c.get("market_id")), []).append(c)
                 body = _get(f"/markets/{','.join(ids)}/quotes/")
