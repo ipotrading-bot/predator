@@ -48,11 +48,14 @@ from core.odds_api import (SPORT_KEYS, fetch_odds, pool_status as _odds_pool_sta
                            pool_totals as _odds_pool_totals,
                            pool_total_remaining as _odds_pool_total_remaining,
                            sharp_sans_execution as _oddsapi_sharp_sans_execution,
+                           acheter_sharp_differe as _oddsapi_acheter_sharp_differe,
                            sports_au_perimetre as _sports_au_perimetre)
 from core.scan_windows import (SpendPolicy as _SpendPolicy,
                                days_until_reset as _odds_days_until_reset,
                                daily_allowance as _odds_daily_allowance,
-                               weekday_relative as _odds_weekday_relative)
+                               weekday_relative as _odds_weekday_relative,
+                               motif_sans_execution as _motif_sans_execution,
+                               valeur_execution as _valeur_execution)
 from core.constants import CLOSING_LINE_WINDOW_MIN as _CLOSING_LINE_WINDOW_MIN
 from core.run_contract import terminer as _terminer_run, verdict_de_fin
 from core.learning_layer import load_thresholds as _load_thresholds
@@ -841,11 +844,22 @@ def _build_spend_policy(sb, now):
     log.info("RYTHME | cotes payées pour les sports réglables seulement : %s ; non payés : %s",
              " ".join(sorted(reglables & set(SPORT_KEYS.values()))),
              " ".join(sorted(set(SPORT_KEYS.values()) - reglables)) or "—")
+    # Couverture d'exécution mesurée par ligue (2026-09-29) : une ligue où
+    # OddsAPI ne cote aucun book d'exécution est achetée en DIFFÉRÉ, après
+    # le Tier 2 (core/odds_api.acheter_sharp_differe).
+    def _sans_execution(sport_key: str):
+        return _motif_sans_execution(_meta_get(sb, f"oddsapi_exec_{sport_key}"))
+
+    def _noter_execution(sport_key: str, k: int, n: int):
+        _meta_stamp(sb, f"oddsapi_exec_{sport_key}", _valeur_execution(k, n))
+
     return _SpendPolicy(_age_min, _note,
                         exempt_sports=_sports_with_imminent_signals(sb, now),
                         log=log, allowance=allowance, spent_today=spent,
                         note_spent=lambda cost: _oddsapi_note_spent(sb, now, cost),
-                        reglables=reglables)
+                        reglables=reglables,
+                        sans_execution=_sans_execution,
+                        noter_execution=_noter_execution)
 
 
 _SIGNAL_ALERT_TTL_H = float(os.environ.get("SIGNAL_ALERT_TTL_H", "24"))
@@ -2880,6 +2894,7 @@ def run():
     # automatique — c'est voulu : un pool mort n'est plus une panne, c'est
     # l'état nominal. Sans ça, Telegram recevrait « rotation requise » à
     # chaque scan, pour toujours (même leçon que le mode REPRICE muet).
+    spend_policy = None           # lu plus bas par l'achat différé du sharp
     if ODDS_API_ENABLED and not REPRICE:
         spend_policy = _build_spend_policy(sb, now)
         oddsapi_events = fetch_odds(hours_ahead=hours_ahead, spend_policy=spend_policy)
@@ -3134,6 +3149,17 @@ def run():
         # les matchs NFL qu'odds-api.io rend exécutables. Posé AVANT les
         # exchanges : Pinnacle reste la référence, Matchbook/Smarkets passent
         # ensuite en contre-expertise (rôle 1 de _enrich_from_exchange).
+        # Achat DIFFÉRÉ (2026-09-29) : les ligues où OddsAPI ne cote aucun
+        # book d'exécution (NFL, NCAAF…) ne sont achetées que MAINTENANT, et
+        # seulement pour leurs matchs que le Tier 2 vient de rendre
+        # exécutables — 0 crédit s'il n'y en a aucun. Leur demande entre au
+        # compteur du jour comme celle du Tier 1.
+        if ODDS_API_ENABLED and not REPRICE and xbet_matches and spend_policy is not None:
+            engage0, refuse0 = spend_policy.engaged, spend_policy.refuse_plafond
+            _oddsapi_acheter_sharp_differe(xbet_matches, spend_policy)
+            if spend_policy.engaged != engage0 or spend_policy.refuse_plafond != refuse0:
+                _oddsapi_note_demand(sb, now, spend_policy.engaged - engage0,
+                                     spend_policy.refuse_plafond - refuse0)
         sharp_payes = _oddsapi_sharp_sans_execution() if ODDS_API_ENABLED else {}
         if xbet_matches and sharp_payes:
             _enrich_from_exchange(xbet_matches, sharp_payes, log)
