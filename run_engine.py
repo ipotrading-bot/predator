@@ -28,7 +28,10 @@ from core.matchbook import fetch_matchbook_prices
 from core.smarkets import fetch_smarkets_prices
 # Appariement slate ↔ exchange : déplacé dans core/ le 2026-08-26 pour que
 # core/closing_line.py puisse s'en servir sans importer la racine.
-from core.exchange_match import lookup_exchange as _lookup_exchange
+from core.exchange_match import (candidat_proche as _candidat_proche,
+                                 lookup_exchange as _lookup_exchange,
+                                 nom_probable as _nom_probable,
+                                 preparer_candidats as _preparer_candidats)
 from core.odds_api_io import fetch_all as _odds_api_io_all
 from core.titan007 import fetch_matches as _titan007_fetch
 from core.math_engine import (to_binary, devig_bounds, is_round_number_line, devig as _devig,
@@ -978,6 +981,49 @@ def _poser_lignes_sharp(m: dict, bf: dict, log) -> None:
     if poses:
         log.info("LIGNES  | %s — %s pose %s (seule référence sharp sur ces marchés)",
                  m.get("match", "?"), bf.get("_source", "exchange"), " + ".join(poses))
+
+
+# Échantillon loggé par sport par `_diagnostic_sans_sharp` — un log lisible,
+# pas un inventaire (mesure du 2026-09-29 : ~137 écartés sur un seul scan).
+SANS_SHARP_ECHANTILLON = 10
+
+
+def _diagnostic_sans_sharp(ecartes: list, pools: list, log) -> dict[str, int]:
+    """Nomme, pour les matchs du Tier 2 écartés « Échec prix Sharp », le prix
+    sharp le plus proche par le NOM (`core.exchange_match.candidat_proche`).
+    Ne pose AUCUN prix : c'est une MESURE, pour trancher combien de ces refus
+    sont un nom que `lookup_exchange` n'a pas su apparier (« Köln » /
+    « Cologne ») plutôt qu'un marché sans sharp. Décision pré-enregistrée
+    (mesure du 2026-09-29) : sous 5 % des écartés, rien ne se construit.
+
+    Rend {sport: nombre de « nom probable »}. Ne lève jamais : un diagnostic
+    ne coûte pas un scan."""
+    probables: dict[str, int] = {}
+    try:
+        lignes = _preparer_candidats([row for pool in pools if isinstance(pool, dict)
+                                      for row in pool.values()])
+        par_sport: dict[str, list] = {}
+        for m in ecartes:
+            c = _candidat_proche(m, lignes)
+            sp = m.get("sport") or "?"
+            par_sport.setdefault(sp, []).append((m, c))
+            if _nom_probable(c):
+                probables[sp] = probables.get(sp, 0) + 1
+        for sp, items in sorted(par_sport.items()):
+            # Les noms probables d'abord : ce sont eux que la mesure cherche.
+            items.sort(key=lambda mc: (not _nom_probable(mc[1]), -(mc[1][1] if mc[1] else 0)))
+            for m, c in items[:SANS_SHARP_ECHANTILLON]:
+                proche = (f"proche : {c[0]} ({c[1]:.2f}/{c[2]:.2f})" if c
+                          else "aucun candidat au même horaire")
+                log.info("SANS SHARP | %s | %s (%s) — %s%s", sp, m.get("match", "?"),
+                         m.get("league", "?"), proche,
+                         " — NOM PROBABLE" if _nom_probable(c) else "")
+        log.info("TIER 2 | écartés sans sharp dont le nom est probablement apparié "
+                 "ailleurs : %s", ", ".join(f"{sp}={probables.get(sp, 0)}/{len(it)}"
+                                            for sp, it in sorted(par_sport.items())) or "—")
+    except Exception as e:
+        log.warning("diagnostic sans sharp : %s", e)
+    return probables
 
 
 def _enrich_from_exchange(items: list, prices: dict, log) -> int:
@@ -3197,6 +3243,7 @@ def run():
         hors_perimetre: dict[str, int] = {}
         avec_sharp: list = []
         sans_sharp: dict[str, int] = {}
+        ecartes_sans_sharp: list = []
         for m in xbet_matches:
             if m.get("match", "").strip().lower() in seen:
                 continue
@@ -3209,6 +3256,7 @@ def run():
             else:
                 sp = m.get("sport") or "?"
                 sans_sharp[sp] = sans_sharp.get(sp, 0) + 1
+                ecartes_sans_sharp.append(m)
         no_pin_count += sum(sans_sharp.values())
         if hors_perimetre:
             log.info("TIER 2 | hors périmètre (sport retiré du scan, décision opérateur), "
@@ -3216,6 +3264,7 @@ def run():
         if sans_sharp:
             log.info("TIER 2 | écartés faute de prix sharp (Échec prix Sharp) : %s",
                      ", ".join(f"{sp}={n}" for sp, n in sorted(sans_sharp.items())))
+            _diagnostic_sans_sharp(ecartes_sans_sharp, [exchange_prices, sharp_payes], log)
         retenus = _repartir_par_sport(avec_sharp, MAX_MATCHES)
         par_sport: dict[str, int] = {}
         for m in retenus:
