@@ -32,7 +32,7 @@ import logging
 import os
 from datetime import datetime, timezone
 
-from core.constants import TAX_RATE as _TAX_RATE, net_b, roi_net_of_tax
+from core.constants import CLOSING_SRC_ORACLE, TAX_RATE as _TAX_RATE, net_b, roi_net_of_tax
 from core.stats_utils import (bucket_predictions, brier_reference, brier_score,
                               p_breakeven, wilson_ci)
 
@@ -652,9 +652,19 @@ def _derive_stats(rows: list[dict]) -> dict:
     toujours vrai : la descente accélérée jugeait l'edge par lui-même. Le
     CLV reste AFFICHÉ (verdicts, rapport hebdo) ; il ne DÉCIDE plus rien.
     Une ligne sans clôture capturée ou sans sharp_prob est ignorée, jamais
-    comptée à zéro (règle 14)."""
+    comptée à zéro (règle 14).
+
+    Une clôture `oracle` est ignorée aussi (2026-09-29) : ce prix était
+    DEMANDÉ à l'ancien LLM (core/oracle.py, supprimé le 2026-09-02), pas
+    observé. La migration v10_15 n'avait neutralisé que le CLV de ces lignes
+    et laissé le prix : 49 lignes du ledger nourrissaient encore cette
+    dérive, celle qui DÉCIDE des seuils. Aucune n'entrait dans les mesures
+    appliquées ce jour-là (signaux antérieurs à l'époque) — le filtre tient
+    le jour où l'époque bouge."""
     derives = []
     for r in rows:
+        if r.get("closing_source") == CLOSING_SRC_ORACLE:
+            continue
         p, close = r.get("sharp_prob"), r.get("closing_pinnacle_price")
         try:
             p, close = float(p), float(close)
@@ -1069,7 +1079,8 @@ def _decide_threshold(old_t: float, stats: dict, clv: dict, overconfident: bool,
 
 
 _LEDGER_SELECT = ("signal_id, outcome, kelly_pct, odds, market_type, initial_edge, sharp_prob, "
-                  "clv_pct_real, closing_pinnacle_price, time_to_match_minutes, created_at")
+                  "clv_pct_real, closing_pinnacle_price, closing_source, time_to_match_minutes, "
+                  "created_at")
 _LECTURE_MAX = 5000   # garde-fou de volume de compute_and_save, pas une fenêtre
 
 

@@ -1552,6 +1552,43 @@ endpoint — gardé par `tests/test_odds500.py::TestRobotsTxt`.
 Un règlement manqué ne retarde pas l'apprentissage : il DÉTRUIT
 l'échantillon, parce qu'un signal non réglé finit purgé en `expired`.
 
+### Le CLV oracle était retiré, son PRIX nourrissait encore la dérive (2026-09-29)
+
+Symptôme : aucun à l'écran. Défaut attrapé en analysant le ledger pour la
+question « que peut apporter l'IA ». Une requête de dérive sharp sur
+`closing_pinnacle_price` ramenait trois sources : `exchange`, `oddsapi`… et
+`oracle`.
+
+Cause : la migration v10_15 (2026-09-10) a mis à NULL le CLV des lignes
+`closing_source = 'oracle'`, c'est-à-dire les clôtures DEMANDÉES à l'ancien LLM
+(`core/oracle.py`, supprimé le 2026-09-02). Elle a laissé le prix sur la ligne,
+exprès (« tout est recalculable »). Dix-sept jours plus tard, la couche
+d'apprentissage a cessé de décider sur le CLV pour décider sur la DÉRIVE sharp
+(`_derive_stats`, 2026-09-27). Cette dérive se calcule sur le PRIX, sans
+regarder la source. Le correctif du 10/09 protégeait la colonne qu'on lisait
+alors, pas celle qu'on a lue ensuite.
+
+Mesure : 49 lignes du ledger (02→30/08) et 20 signaux (01→25/08) portaient un
+prix de clôture inventé. **Aucun** n'entrait dans les mesures APPLIQUÉES, puisque
+datés par signal ils sont tous antérieurs à `CALIBRATION_EPOCH`. Le défaut était
+donc latent. Il serait devenu actif au premier recul de l'époque, et il faussait
+déjà toute analyse lisant le prix sans filtrer la source.
+
+Correctif : `_derive_stats` écarte `closing_source = 'oracle'` et
+`_LEDGER_SELECT` lit la source. `sql/migrate_v10_18_cloture_oracle.sql` archive
+les prix dans `meta.closing_oracle_archive_v10_18`, puis met à NULL
+`closing_pinnacle_price` et `closing_captured_at`. La provenance `oracle` reste
+sur la ligne ; `ai_learning_ledger_archive` n'est pas touchée.
+
+Règle : **une donnée neutralisée l'est dans TOUTES ses colonnes dérivables**,
+pas seulement dans celle que le code lit ce jour-là. Le lecteur suivant ne
+connaît pas l'histoire (règle 14 : sans prix postérieur OBSERVÉ, rien).
+
+Gardiens : `tests/test_apprentissage_derive.py::TestDerive::test_ignore_une_cloture_oracle`
+et `::test_la_source_de_cloture_est_lue`, `tests/test_migration_cloture_oracle.py`
+(archive avant effacement, aucune suppression, provenance gardée, plus aucun
+écrivain de la source `oracle`).
+
 ### Le maximum sélectionné n'est pas une preuve (2026-09-21)
 
 Symptôme : aucun — c'est une erreur d'ANALYSE, attrapée avant d'atteindre le
