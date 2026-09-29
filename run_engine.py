@@ -47,7 +47,8 @@ from core.odds_api import (SPORT_KEYS, fetch_odds, pool_status as _odds_pool_sta
                            pool_counters as _odds_pool_counters,
                            pool_totals as _odds_pool_totals,
                            pool_total_remaining as _odds_pool_total_remaining,
-                           sharp_sans_execution as _oddsapi_sharp_sans_execution)
+                           sharp_sans_execution as _oddsapi_sharp_sans_execution,
+                           sports_au_perimetre as _sports_au_perimetre)
 from core.scan_windows import (SpendPolicy as _SpendPolicy, CYCLE_DAYS as _ODDS_CYCLE_DAYS,
                                daily_allowance as _odds_daily_allowance,
                                weekday_relative as _odds_weekday_relative)
@@ -3153,10 +3154,20 @@ def run():
         # américain n'étaient JAMAIS examinés — 289 chargés, 50 regardés,
         # tous de foot. On garde désormais tout match qui a un prix sharp,
         # et le plafond se RÉPARTIT entre sports (`_repartir_par_sport`).
+        # Un sport RETIRÉ par l'opérateur (baseball, 2026-09-17, « sport
+        # entier ») reste servi par odds-api.io : seule la coupe à 50 l'avait
+        # tenu loin de l'émission. Le périmètre se dit ici, explicitement —
+        # `sports_au_perimetre` est dérivé de SPORT_KEYS (règle 6).
+        perimetre = _sports_au_perimetre()
+        hors_perimetre: dict[str, int] = {}
         avec_sharp: list = []
         sans_sharp: dict[str, int] = {}
         for m in xbet_matches:
             if m.get("match", "").strip().lower() in seen:
+                continue
+            if (m.get("sport") or "") not in perimetre:
+                sp = m.get("sport") or "?"
+                hors_perimetre[sp] = hors_perimetre.get(sp, 0) + 1
                 continue
             if m.get("odds_pinnacle"):
                 avec_sharp.append(m)
@@ -3164,6 +3175,9 @@ def run():
                 sp = m.get("sport") or "?"
                 sans_sharp[sp] = sans_sharp.get(sp, 0) + 1
         no_pin_count += sum(sans_sharp.values())
+        if hors_perimetre:
+            log.info("TIER 2 | hors périmètre (sport retiré du scan, décision opérateur), "
+                     "écartés : %s", ", ".join(f"{sp}={n}" for sp, n in sorted(hors_perimetre.items())))
         if sans_sharp:
             log.info("TIER 2 | écartés faute de prix sharp (Échec prix Sharp) : %s",
                      ", ".join(f"{sp}={n}" for sp, n in sorted(sans_sharp.items())))
