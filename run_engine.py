@@ -1859,6 +1859,74 @@ def _famille_et_camp(sig: dict) -> tuple[str, str] | None:
     return None
 
 
+# ── Jumeaux inter-sources (2026-09-30) ──────────────────────────────────
+# Le même match réel arrive par deux sources sous deux match_id : uuid
+# OddsAPI d'un côté, `oai_…` odds-api.io de l'autre. Toutes les gardes
+# d'émission raisonnaient par match_id EXACT : Toronto–Montréal Over 6.5 est
+# sorti recommandé DEUX FOIS le 29/09 (19:15 puis 20:31), deux pertes, la
+# mise Kelly doublée sur un seul pari. Voir INCIDENTS.md, « Le même pari
+# annoncé deux fois ».
+# L'appariement flou avait été REJETÉ le 2026-09-02 (Green Gully U23 apparié
+# aux seniors, Atletico Junior–Once Caldas à Atletico Nacional–Cali). Il
+# revient sur instruction opérateur, borné par ce qui manquait alors :
+#   - `strict_team_match` refuse depuis le 09-04 deux ÉTAGES différents
+#     (jeunes, réserve, féminines) et depuis le 09-13 deux clubs qui ne se
+#     ressemblent que par un mot commun (« Atletico », « Real ») ;
+#   - les DEUX camps doivent concorder, et le coup d'envoi à
+#     JUMEAU_FENETRE_MIN près — une équipe ne joue pas deux matchs en
+#     30 minutes, et un doubleheader est à des heures d'écart.
+# Rejoué le 2026-09-30 sur les 677 signaux en base : voir le test gardien.
+JUMEAU_FENETRE_MIN = 30
+
+
+def _sans_accents(texte: str) -> str:
+    """« Montréal » → « Montreal » : une source accentue, l'autre non."""
+    import unicodedata
+    return "".join(c for c in unicodedata.normalize("NFKD", texte or "")
+                   if not unicodedata.combining(c))
+
+
+def _coup_d_envoi(valeur):
+    """match_time → datetime UTC, None si illisible (on ne devine pas)."""
+    try:
+        t = datetime.fromisoformat(str(valeur).replace("Z", "+00:00"))
+    except (TypeError, ValueError):
+        return None
+    return t if t.tzinfo else t.replace(tzinfo=timezone.utc)
+
+
+def _meme_match_reel(a: dict, b: dict) -> bool:
+    """Deux signaux portent-ils sur le MÊME match réel ? Pur.
+
+    Même match_id → oui. Sinon il faut TOUT : même sport, coups d'envoi
+    connus et à JUMEAU_FENETRE_MIN près, les deux camps appariés par
+    `strict_team_match` (dans un sens ou dans l'autre : une source peut
+    inverser domicile et extérieur sur terrain neutre). Un nom de moins de
+    3 lettres ou un libellé sans « vs » fait refuser : `strict_team_match`
+    rend True sur un nom vide, et un doute ne doit jamais supprimer un
+    vrai signal."""
+    ida, idb = a.get("match_id"), b.get("match_id")
+    if ida and ida == idb:
+        return True
+    if (a.get("sport") or "") != (b.get("sport") or ""):
+        return False
+    ta, tb = _coup_d_envoi(a.get("match_time")), _coup_d_envoi(b.get("match_time"))
+    if ta is None or tb is None or abs((ta - tb).total_seconds()) > JUMEAU_FENETRE_MIN * 60:
+        return False
+    camps = []
+    for sig in (a, b):
+        libelle = _sans_accents(sig.get("match") or "")
+        if " vs " not in libelle:
+            return False
+        h, v = (p.strip() for p in libelle.split(" vs ", 1))
+        if len(h) < 3 or len(v) < 3:
+            return False
+        camps.append((h, v))
+    (ha, va), (hb, vb) = camps
+    return ((strict_team_match(ha, hb) and strict_team_match(va, vb))
+            or (strict_team_match(ha, vb) and strict_team_match(va, hb)))
+
+
 def _sans_contradiction(candidats: list, actifs: list, log) -> list:
     """Un match = UN pari par famille (côté, total), d'un scan à l'autre.
 
@@ -1874,24 +1942,44 @@ def _sans_contradiction(candidats: list, actifs: list, log) -> list:
     le même pari (même match_id, même market_key, même camp) passe toujours
     — c'est le rafraîchissement de `_save`. Un h2h qui changerait de camp
     sous la même clé est refusé : `_save` aurait réécrit le pari annoncé.
-    La clé est le `match_id` EXACT, jamais un appariement flou des noms
-    (INCIDENTS, « Le même match réel pesait DOUBLE »). Pure : les actifs sont
-    lus par `_actifs_des_matchs`."""
-    tenus: dict[tuple[str, str], dict] = {}
+
+    LE MATCH RÉEL, PAS LE match_id (2026-09-30). La clé était le match_id
+    EXACT : un JUMEAU venu d'une autre source (autre match_id, même match
+    réel selon `_meme_match_reel`) passait, et Toronto–Montréal Over 6.5 est
+    sorti deux fois. Un jumeau est désormais refusé dans la famille tenue,
+    MÊME s'il porte le même pari : sous un autre match_id, `_save` ne le
+    rafraîchirait pas, il l'insérerait à côté. Pure : les actifs sont lus
+    par `_actifs_des_matchs`."""
+    matchs: list[dict] = []          # un représentant par match réel
+    tenus: dict[tuple[int, str], dict] = {}
+
+    def _rang(sig: dict) -> int:
+        for i, rep in enumerate(matchs):
+            if _meme_match_reel(rep, sig):
+                return i
+        matchs.append(sig)
+        return len(matchs) - 1
+
     for a in actifs:
         fc = _famille_et_camp(a)
         if fc and a.get("match_id"):
-            tenus.setdefault((a["match_id"], fc[0]), a)
+            tenus.setdefault((_rang(a), fc[0]), a)
     gardes = []
     for s in candidats:
         fc, mid = _famille_et_camp(s), s.get("match_id")
         if not fc or not mid:
             gardes.append(s)
             continue
-        occupant = tenus.get((mid, fc[0]))
+        cle = (_rang(s), fc[0])
+        occupant = tenus.get(cle)
         if occupant is None:
-            tenus[(mid, fc[0])] = s
+            tenus[cle] = s
             gardes.append(s)
+        elif occupant.get("match_id") != mid:
+            log.info("JUMEAU  | %s | %s refusé — même match réel que « %s », "
+                     "déjà tenu par %s", s.get("match", "?"),
+                     s.get("selection_name", "?"), occupant.get("match", "?"),
+                     occupant.get("selection_name", "?"))
         elif (occupant.get("market_key") == s.get("market_key")
               and _famille_et_camp(occupant) == fc):
             gardes.append(s)
@@ -1904,15 +1992,35 @@ def _sans_contradiction(candidats: list, actifs: list, log) -> list:
 
 def _actifs_des_matchs(sb, candidats: list, log) -> list:
     """Signaux ACTIFS des matchs candidats, pour `_sans_contradiction`.
+
+    Deux lectures : par match_id (le même match, même source), et par
+    FENÊTRE de coup d'envoi sur les sports des candidats — sans elle, un
+    jumeau venu d'une autre source, donc d'un autre match_id, n'était jamais
+    lu et ne pouvait rien tenir (Toronto–Montréal, 2026-09-29).
     Erreur réseau → [] + log : la garde inter-scans s'ouvre ce tour (la
     garde intra-scan tient toujours) plutôt que de faire tomber le scan."""
     ids = sorted({s["match_id"] for s in candidats if s.get("match_id")})
     if not sb or not ids:
         return []
+    champs = "id,match_id,market_key,selection_name,match,sport,match_time"
+    instants = [t for t in (_coup_d_envoi(s.get("match_time")) for s in candidats) if t]
+    sports = sorted({s.get("sport") for s in candidats if s.get("sport")})
     try:
-        res = (sb.table("signals").select("match_id,market_key,selection_name,match")
+        vus: dict = {}
+        res = (sb.table("signals").select(champs)
                .eq("status", "active").in_("match_id", ids).execute())
-        return res.data or []
+        for r in res.data or []:
+            vus[r.get("id")] = r
+        if instants and sports:
+            marge = timedelta(minutes=JUMEAU_FENETRE_MIN)
+            res = (sb.table("signals").select(champs).eq("status", "active")
+                   .in_("sport", sports)
+                   .gte("match_time", (min(instants) - marge).isoformat())
+                   .lte("match_time", (max(instants) + marge).isoformat())
+                   .execute())
+            for r in res.data or []:
+                vus.setdefault(r.get("id"), r)
+        return list(vus.values())
     except Exception as e:
         log.warning("CONTRADICTOIRE | lecture des actifs impossible (%s) — "
                     "garde inter-scans ouverte ce tour", str(e)[:100])
