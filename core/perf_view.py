@@ -185,6 +185,26 @@ def rows_of_month(rows: list[dict], mois: str | None) -> list[dict]:
     return [r for r in rows if (r.get("created_at") or "")[:7] == mois]
 
 
+def avec_date_du_match(history: list[dict], coups_d_envoi: dict) -> list[dict]:
+    """L'historique, chaque ligne portant `match_time` (coup d'envoi du
+    signal), trié du plus récent au plus ancien match. Pur.
+
+    La colonne DATE affichait `created_at` du ledger — le jour du RÈGLEMENT.
+    Un match du soir se règle après minuit : Espagne–Croatie, joué le 29/09
+    à 18:45, s'affichait au 30/09 (plainte opérateur du 2026-09-30,
+    « horaires faux »). Le ledger n'a pas de colonne de coup d'envoi ; il se
+    lit sur `signals` par `signal_id` (`coups_d_envoi` : {signal_id: iso}).
+    Sans signal retrouvé, `match_time` reste None et la page retombe sur la
+    date de règlement, en le disant au survol."""
+    out = []
+    for r in history:
+        ligne = dict(r)
+        ligne["match_time"] = coups_d_envoi.get(str(r.get("signal_id"))) or None
+        out.append(ligne)
+    out.sort(key=lambda r: r["match_time"] or r.get("created_at") or "", reverse=True)
+    return out
+
+
 def playable_zone(r: dict) -> str:
     """« zone » (T-2h … T-24h, ce que le système RECOMMANDE), « golden »
     (< T-2h : émis en fantôme, jamais envoyé), « hors » (> T-24h) ou « nc »

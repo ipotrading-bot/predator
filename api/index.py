@@ -36,6 +36,7 @@ from flask import Flask, jsonify, render_template, request, send_from_directory
 # mesures existent toujours — elles vivent dans la base et dans
 # scripts/weekly_report.py — elles ne sont simplement plus rendues ici.
 from core.perf_view import (ALL_MONTHS as _ALL_MONTHS,
+                            avec_date_du_match as _avec_date_du_match,
                             filter_rows as _perf_filter_rows,
                             league_breakdown as _league_breakdown,
                             market_breakdown as _market_breakdown,
@@ -696,6 +697,21 @@ def audit():
 _LEAGUE_MIN_N = 5
 
 
+def _coups_d_envoi(sb, rows: list) -> dict:
+    """{signal_id: match_time} des signaux de ces lignes de ledger, en UNE
+    requête. Panne → {} + log : la page retombe sur la date de règlement
+    plutôt que de tomber (voir core/perf_view.avec_date_du_match)."""
+    ids = sorted({str(r["signal_id"]) for r in rows if r.get("signal_id")})
+    if not sb or not ids:
+        return {}
+    try:
+        res = sb.table("signals").select("id,match_time").in_("id", ids).execute()
+    except Exception as e:
+        log.warning("/performance : coups d'envoi illisibles (%s)", str(e)[:100])
+        return {}
+    return {str(x["id"]): x["match_time"] for x in (res.data or []) if x.get("match_time")}
+
+
 @app.route("/performance")
 def performance():
     rows: list      = []
@@ -766,6 +782,7 @@ def performance():
                 # la fenêtre entière, et le disent (« depuis août 2026 »).
                 scope   = _rows_of_month(reco, mois)
                 history = [r for r in scope if r.get("outcome") in ("WIN", "LOSS")]
+                history = _avec_date_du_match(history, _coups_d_envoi(sb, history))
                 wins    = sum(1 for r in settled if r.get("outcome") == "WIN")
                 losses  = sum(1 for r in settled if r.get("outcome") == "LOSS")
                 pushes  = sum(1 for r in settled if r.get("outcome") == "PUSH")
