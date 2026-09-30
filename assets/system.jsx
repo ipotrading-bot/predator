@@ -276,7 +276,7 @@ function Field({ label, children, title }) {
 }
 const inputStyle = { background: C.panel2, border: `1px solid ${C.border}`, color: C.text, fontFamily: MONO, borderRadius: 6 };
 const inputCls = "text-sm px-2 py-1.5 w-full min-w-0";
-// Chiffre mis en avant (Total, scénarios).
+// Chiffre mis en avant (scénarios).
 function Big({ label, value, sub, color, title }) {
   return (
     <div style={{ background: C.panel2, border: `1px solid ${C.borderSoft}`, borderRadius: 8 }} className="px-3 py-2 min-w-0" title={title}>
@@ -284,21 +284,6 @@ function Big({ label, value, sub, color, title }) {
       <div style={{ color: color || C.text, fontFamily: MONO }} className="text-lg font-bold leading-tight truncate">{value}</div>
       {sub && <div style={{ color: C.muted, fontFamily: MONO }} className="text-[10px] mt-0.5 truncate">{sub}</div>}
     </div>
-  );
-}
-// Interrupteur « Dans le total » : chaque section (simples, combiné,
-// système) entre ou sort de l'addition finale sans perdre ses saisies.
-function Toggle({ on, onChange, label }) {
-  return (
-    <button type="button" role="switch" aria-checked={on} onClick={() => onChange(!on)}
-      style={{ color: on ? C.win : C.muted, border: `1px solid ${on ? "rgba(0,232,127,.35)" : C.border}`,
-               background: on ? "rgba(0,232,127,.07)" : "transparent", fontFamily: SANS, cursor: "pointer", borderRadius: 100 }}
-      className="flex items-center gap-1.5 text-[11px] px-2 py-0.5 transition whitespace-nowrap">
-      <span style={{ width: 20, height: 11, borderRadius: 6, background: on ? C.win : C.border, position: "relative", display: "inline-block" }}>
-        <span style={{ position: "absolute", top: 2, left: on ? 11 : 2, width: 7, height: 7, borderRadius: 4, background: C.bg, transition: "left .15s" }}></span>
-      </span>
-      {label}
-    </button>
   );
 }
 // Sélecteur à deux positions (mode de mise du système).
@@ -439,15 +424,6 @@ function SystemBetCalculator() {
   // effective `stake` est dérivée plus bas, une fois le nombre de lignes connu.
   const [stakeMode, setStakeMode] = useState("line"); // 'line' | 'total'
   const [totalStakeInput, setTotalStakeInput] = useState("");
-  // Sections additionnées dans le total : chacune entre ou sort de l'addition.
-  const [sysOn, setSysOn] = useState(true);
-  const [simplesOn, setSimplesOn] = useState(true);
-  const [comboOn, setComboOn] = useState(true);
-  // Mises individuelles : une mise par défaut commune, surchargée ligne par
-  // ligne (id -> texte brut ; champ vidé = retour à la mise par défaut).
-  const [simpleDefaultInput, setSimpleDefaultInput] = useState("1000");
-  const [simpleStakes, setSimpleStakes] = useState({});
-  const [comboStakeInput, setComboStakeInput] = useState("1000");
   const [openScenario, setOpenScenario] = useState(null);
   const [detailOpen, setDetailOpen] = useState(false);
   // FISCALITÉ — réglée par l'opérateur, jamais écrite en dur (règle 11 : le
@@ -575,66 +551,19 @@ function SystemBetCalculator() {
   const signedN = (v) => `${v >= 0 ? "+" : ""}${fmtN(v)}`;
   const round2 = (v) => Math.round(v * 100) / 100;
 
-  // Mises individuelles : chaque sélection jouée seule. Le retour passe par
-  // comboReturnFactor sur une jambe, donc les statuts (nul, asiatique
-  // partiel) sont traités exactement comme dans le système.
-  const simpleStakeOf = (sel) => {
-    const raw = simpleStakes[sel.id];
-    const v = raw === undefined || raw === "" ? simpleDefaultInput : raw;
-    return Math.max(0, parseFloat(v) || 0);
+  // Mises individuelles, Combiné et Total retirés le 2026-09-30 (demande
+  // opérateur) : la page ne joue plus que le SYSTÈME. Le moteur des
+  // scénarios reste générique ; simples et combiné y sont éteints.
+  const sectionFlags = { sys: n > 0, simples: false, combo: false };
+  const grand = {
+    mise: computed.totalMise, brut: computed.totalRetour, impot: computed.taxAmount, net: computed.totalNet,
+    roi: computed.totalMise > 0 ? (computed.totalNet / computed.totalMise) * 100 : 0,
   };
-  const simples = useMemo(() => {
-    const rows = selections.map((sel, i) => {
-      const st = simpleStakeOf(sel);
-      const R = comboReturnFactor([sel]);
-      const brut = R * st;
-      const impot = taxOfBet(R, st, taxFrac);
-      return { sel, i, stake: st, R, brut, impot, net: brut - st - impot, bucket: bucketOf(R) };
-    });
-    const mise = rows.reduce((s, r) => s + r.stake, 0);
-    const brut = rows.reduce((s, r) => s + r.brut, 0);
-    const impot = rows.reduce((s, r) => s + r.impot, 0);
-    return { rows, mise, brut, impot, net: brut - mise - impot };
-  }, [selections, simpleStakes, simpleDefaultInput, taxFrac]);
 
-  // Combiné N/N : toutes les sélections sur une ligne, cote totale = produit.
-  const comboStake = Math.max(0, parseFloat(comboStakeInput) || 0);
-  const combine = useMemo(() => {
-    const cote = selections.reduce((p, s) => p * (Number(s.odds) || 1.01), 1);
-    const R = comboReturnFactor(selections);
-    const brut = R * comboStake;
-    const impot = taxOfBet(R, comboStake, taxFrac);
-    return { cote, R, stake: comboStake, brut, impot, net: brut - comboStake - impot, bucket: bucketOf(R) };
-  }, [selections, comboStake, taxFrac]);
-
-  // Total : addition des sections ACTIVES. Le combiné n'existe qu'à partir
-  // de 2 sélections (à 1, c'est un simple).
-  const sectionFlags = { sys: sysOn && n > 0, simples: simplesOn && n > 0, combo: comboOn && n >= 2 };
-  const sections = [
-    { key: "simples", label: `${n} simple${n > 1 ? "s" : ""}`, on: sectionFlags.simples, mise: simples.mise, brut: simples.brut, impot: simples.impot },
-    ...(n >= 2 ? [{ key: "combo", label: `Combiné ${n}/${n}`, on: sectionFlags.combo, mise: combine.stake, brut: combine.brut, impot: combine.impot }] : []),
-    { key: "sys", label: `Système ${Math.min(sysM, n)}/${n}`, on: sectionFlags.sys, mise: computed.totalMise, brut: computed.totalRetour, impot: computed.taxAmount },
-  ].map((sec) => ({ ...sec, net: sec.brut - sec.mise - sec.impot }));
-  const grand = (() => {
-    const act = sections.filter((sec) => sec.on);
-    const mise = act.reduce((s, sec) => s + sec.mise, 0);
-    const brut = act.reduce((s, sec) => s + sec.brut, 0);
-    const impot = act.reduce((s, sec) => s + sec.impot, 0);
-    const net = brut - mise - impot;
-    return { mise, brut, impot, net, roi: mise > 0 ? (net / mise) * 100 : 0 };
-  })();
-  // Un système M/N contient déjà le combiné N/N, et à M = 1 les N simples :
-  // les additionner n'est pas faux, mais c'est miser deux fois — on le dit.
-  const inclus = [];
-  if (sectionFlags.sys && sectionFlags.simples && Math.min(sysM, n) === 1) inclus.push(`les ${n} simples`);
-  if (sectionFlags.sys && sectionFlags.combo) inclus.push(`le combiné ${n}/${n}`);
-  const doublon = inclus.length > 0 ? `Le système ${Math.min(sysM, n)}/${n} contient déjà ${inclus.join(" et ")}` : null;
-
-  // Scénarios complets : pire / meilleur cas EXACTS toutes sections actives
-  // confondues — retours conditionnels, jamais des probabilités (règle 7).
+  // Scénarios complets : pire / meilleur cas EXACTS du système — retours conditionnels, jamais des probabilités (règle 7).
   const scenariosTotal = useMemo(() => scenariosComplets(
-    selections, Math.min(sysM, n), stake, simples.rows.map((r) => r.stake), combine.stake, sectionFlags, taxFrac),
-    [selections, sysM, n, stake, simples, combine, sectionFlags.sys, sectionFlags.simples, sectionFlags.combo, taxFrac]);
+    selections, Math.min(sysM, n), stake, [], 0, sectionFlags, taxFrac),
+    [selections, sysM, n, stake, sectionFlags.sys, taxFrac]);
   const pointMortTotal = useMemo(() => breakEvenComplet(scenariosTotal), [scenariosTotal]);
   // Verdicts jugés sur le NET (après impôt) : c'est ce que l'opérateur encaisse.
   const verdictOf = (sc) => {
@@ -665,11 +594,6 @@ function SystemBetCalculator() {
   const removeSelection = (id) => setSelections((s) => s.filter((x) => x.id !== id));
   const clearAll = () => { setSelections([]); setPickerOpen(false); };
   const updateSelection = (id, patch) => setSelections((s) => s.map((x) => (x.id === id ? { ...x, ...patch } : x)));
-  const setSimpleStake = (id, raw) => setSimpleStakes((m) => {
-    const next = { ...m };
-    if (raw === "") delete next[id]; else next[id] = raw;
-    return next;
-  });
   // Bascule par ligne <-> totale en conservant la mise engagée courante, pour
   // que le changement de mode ne change pas le ticket.
   const switchStakeMode = (mode) => {
@@ -708,7 +632,6 @@ function SystemBetCalculator() {
     empty: "aucun signal ≥ 1.80 sous 12 h",
   }[signalsStatus] || `${signalsStatus.split(":")[1]} signaux · 12 h · cote > 1.80`;
 
-  const nActives = sections.filter((s) => s.on).length;
   const netColor = grand.net >= 0 ? C.win : C.loss;
   const numBadge = { color: C.gold, fontFamily: MONO, background: "var(--gold-bg)", border: `1px solid ${C.goldSoft}` };
 
@@ -836,8 +759,7 @@ function SystemBetCalculator() {
 
             {/* Système M/N — deux menus M/N, comme betbuzz ; mise saisie PAR
                 LIGNE ou TOTALE (répartie à parts égales sur les lignes). */}
-            <Panel title="Système" sub={n > 0 ? `${Math.min(sysM, n)}/${n} · ${systemLabelText} · ${totalLignes} ligne${totalLignes > 1 ? "s" : ""}` : null}
-              right={n > 0 ? <Toggle on={sysOn} onChange={setSysOn} label="Dans le total" /> : null}>
+            <Panel title="Système" sub={n > 0 ? `${Math.min(sysM, n)}/${n} · ${systemLabelText} · ${totalLignes} ligne${totalLignes > 1 ? "s" : ""}` : null}>
               {n === 0 ? (
                 <Empty>Aucune sélection.</Empty>
               ) : (
@@ -886,160 +808,17 @@ function SystemBetCalculator() {
               )}
             </Panel>
 
-            {/* Mises individuelles — chaque sélection jouée SEULE. Les lignes
-                renvoient au NUMÉRO de la sélection (listée une seule fois plus
-                haut) : mise par défaut commune, surchargeable ligne par ligne. */}
-            <Panel title="Mises individuelles" sub={n > 0 ? `${n} simple${n > 1 ? "s" : ""}` : null}
-              right={n > 0 ? <Toggle on={simplesOn} onChange={setSimplesOn} label="Dans le total" /> : null}>
-              {n === 0 ? (
-                <Empty>Aucune sélection.</Empty>
-              ) : (
-              <>
-              <div className="flex items-end gap-2 mb-2">
-                <div className="w-28">
-                  <Field label="Mise par défaut" title="Appliquée à chaque simple sans mise propre">
-                    <input type="number" min="0" step="1" value={simpleDefaultInput}
-                      onChange={(e) => setSimpleDefaultInput(e.target.value)}
-                      onBlur={() => setSimpleDefaultInput(String(Math.max(0, parseFloat(simpleDefaultInput) || 0)))}
-                      style={inputStyle} className={inputCls} />
-                  </Field>
-                </div>
-                {Object.keys(simpleStakes).length > 0 && (
-                  <button type="button" onClick={() => setSimpleStakes({})} title="Remettre toutes les mises à la valeur par défaut"
-                    style={{ color: C.muted, border: `1px solid ${C.border}`, cursor: "pointer", borderRadius: 100 }}
-                    className="text-[11px] px-2 py-1">
-                    ↺ défaut
-                  </button>
-                )}
-              </div>
-              <table className="w-full text-xs" style={{ fontFamily: MONO, borderCollapse: "collapse" }}
-                title="Une ligne par sélection (numéro du panneau Sélections). Mise vide = mise par défaut. Brut = retour mise comprise, net après impôt.">
-                <thead>
-                  <tr style={{ color: C.muted, fontFamily: SANS }}>
-                    <th className="text-left py-1 pr-2">#</th>
-                    <th className="text-left py-1 pr-2">Cote</th>
-                    <th className="text-left py-1 pr-2">Mise</th>
-                    <th className="text-right py-1 px-1">Brut</th>
-                    <th className="text-right py-1 pl-1">Net</th>
-                  </tr>
-                </thead>
-                <tbody>
-                  {simples.rows.map((r) => (
-                    <tr key={r.sel.id} style={{ borderTop: `1px solid ${C.borderSoft}` }}>
-                      <td className="py-1 pr-2"><span style={numBadge} className="text-[10px] w-5 h-5 inline-flex items-center justify-center rounded">{r.i + 1}</span></td>
-                      <td className="py-1 pr-2" style={{ color: C.gold }}>{r.sel.odds.toFixed(2)}{r.sel.status !== "won" && <span style={{ color: C.muted }}> · {STATUS_OPTS.find((o) => o.v === r.sel.status)?.label}</span>}</td>
-                      <td className="py-1 pr-2">
-                        <input type="number" min="0" step="1" value={simpleStakes[r.sel.id] ?? ""} placeholder={simpleDefaultInput}
-                          aria-label={`Mise sélection ${r.i + 1}`}
-                          onChange={(e) => setSimpleStake(r.sel.id, e.target.value)}
-                          style={inputStyle} className="w-20 text-xs px-1.5 py-1" />
-                      </td>
-                      <td className="text-right py-1 px-1" style={{ color: bucketColor[r.bucket] }}>{fmtN(r.brut)}</td>
-                      <td className="text-right py-1 pl-1" style={{ color: r.net >= 0 ? C.win : C.loss }}>{signedN(r.net)}</td>
-                    </tr>
-                  ))}
-                </tbody>
-              </table>
-              <Bilan mise={simples.mise} brut={simples.brut} impot={simples.impot} net={simples.net}
-                taxRate={taxRate} fmt={fmt} signed={signed} />
-              </>
-              )}
-            </Panel>
-
-            {/* Combiné — TOUTES les sélections sur une seule ligne N/N, cote
-                totale = produit des cotes (statuts appliqués par le moteur). */}
-            <Panel title="Combiné" sub={n >= 2 ? `${n}/${n}` : null}
-              right={n >= 2 ? <Toggle on={comboOn} onChange={setComboOn} label="Dans le total" /> : null}>
-              {n < 2 ? (
-                <Empty>2 sélections minimum.</Empty>
-              ) : (
-              <>
-              <div className="grid grid-cols-2 gap-2 items-end">
-                <Field label="Mise">
-                  <input type="number" min="0" step="1" value={comboStakeInput}
-                    onChange={(e) => setComboStakeInput(e.target.value)}
-                    onBlur={() => setComboStakeInput(String(comboStake))}
-                    style={inputStyle} className={inputCls} />
-                </Field>
-                <div className="min-w-0 text-right" title={selections.map((s) => s.odds.toFixed(2)).join(" × ")}>
-                  <div style={{ color: C.muted }} className="text-[10px] uppercase tracking-wider">Cote totale</div>
-                  <div style={{ color: C.gold, fontFamily: MONO }} className="text-xl font-bold leading-none">{combine.cote.toFixed(3)}</div>
-                </div>
-              </div>
-              <div style={{ color: C.muted, fontFamily: MONO }} className="text-[11px] mt-1.5 text-right truncate">
-                {selections.map((s) => s.odds.toFixed(2)).join(" × ")}
-                {combine.bucket !== "win" && <span style={{ color: C.partial }} title="Statuts appliqués : nul = cote 1, perdu = 0."> · R {combine.R.toFixed(3)}×</span>}
-              </div>
-              <Bilan mise={combine.stake} brut={combine.brut} impot={combine.impot} net={combine.net}
-                taxRate={taxRate} fmt={fmt} signed={signed} />
-              </>
-              )}
-            </Panel>
           </div>
 
-          {/* COLONNE RÉSULTAT — le total des sections actives, ses scénarios
-              complets, puis le détail du système (replié). */}
+          {/* COLONNE RÉSULTAT — les scénarios complets du système, puis son
+              détail (replié). */}
           <div className="lg:col-span-7 space-y-3">
             {n === 0 ? (
-              <Panel title="Total"><Empty>Aucune sélection.</Empty></Panel>
+              <Panel title="Scénarios complets"><Empty>Aucune sélection.</Empty></Panel>
             ) : (
               <>
-                {/* Total — addition des sections actives (interrupteur « Dans le
-                    total » de chacune). Brut = retour mise comprise, net = brut − mise − impôt. */}
-                <Panel title="Total" sub={`${nActives}/${sections.length} actives · ${curLabel}`}>
-                  {/* Grands chiffres SANS devise (elle est dans le sous-titre) :
-                      « 8 000,00 XOF » se tronquait dans une colonne de 390/3 px. */}
-                  <div className="grid grid-cols-2 md:grid-cols-3 gap-2">
-                    <div className="col-span-2 md:col-span-1 md:order-2 min-w-0">
-                      <Big label="Net" value={signedN(grand.net)} color={netColor} sub={`${fmtN(grand.brut)} brut`} />
-                    </div>
-                    <div className="md:order-1 min-w-0"><Big label="Mise" value={fmtN(grand.mise)} /></div>
-                    <div className="md:order-3 min-w-0"><Big label="ROI" value={`${grand.roi.toFixed(1)} %`} color={netColor} sub="net / mise" /></div>
-                  </div>
-                  <div className="mt-2.5"
-                    title="Brut = retour avant impôt, mise comprise. Net = brut − mise − impôt. Selon les statuts saisis (Gagné par défaut = tout passe).">
-                    <table className="w-full text-xs" style={{ fontFamily: MONO, borderCollapse: "collapse" }}>
-                      <thead>
-                        <tr style={{ color: C.muted, fontFamily: SANS }}>
-                          <th className="text-left py-1 pr-2">Section</th>
-                          <th className="text-right py-1 px-1">Mise</th>
-                          <th className="text-right py-1 px-1">Brut</th>
-                          <th className="text-right py-1 px-1 whitespace-nowrap">{`Impôt ${taxRate} %`}</th>
-                          <th className="text-right py-1 pl-1">Net</th>
-                        </tr>
-                      </thead>
-                      <tbody>
-                        {sections.map((s) => (
-                          <tr key={s.key} style={{ borderTop: `1px solid ${C.borderSoft}`, opacity: s.on ? 1 : 0.45 }}>
-                            <td className="py-1 pr-2 whitespace-nowrap" style={{ color: C.text, fontFamily: SANS }} title={s.on ? "" : "hors total"}>
-                              {s.label}{!s.on && <span style={{ color: C.muted }}> ⊘</span>}
-                            </td>
-                            <td className="text-right py-1 px-1" style={{ color: C.text }}>{fmtN(s.mise)}</td>
-                            <td className="text-right py-1 px-1" style={{ color: C.text }}>{fmtN(s.brut)}</td>
-                            <td className="text-right py-1 px-1" style={{ color: C.partial }}>{s.impot > 0 ? `− ${fmtN(s.impot)}` : "—"}</td>
-                            <td className="text-right py-1 pl-1" style={{ color: s.net >= 0 ? C.win : C.loss }}>{signedN(s.net)}</td>
-                          </tr>
-                        ))}
-                        <tr style={{ borderTop: `1px solid ${C.border}`, color: C.text }} className="font-semibold">
-                          <td className="py-1 pr-2" style={{ fontFamily: SANS }}>Total</td>
-                          <td className="text-right py-1 px-1">{fmtN(grand.mise)}</td>
-                          <td className="text-right py-1 px-1">{fmtN(grand.brut)}</td>
-                          <td className="text-right py-1 px-1" style={{ color: C.partial }}>{grand.impot > 0 ? `− ${fmtN(grand.impot)}` : "—"}</td>
-                          <td className="text-right py-1 pl-1" style={{ color: netColor }}>{signedN(grand.net)}</td>
-                        </tr>
-                      </tbody>
-                    </table>
-                  </div>
-                  {doublon && (
-                    <div style={{ background: "rgba(255,107,53,.08)", border: `1px solid rgba(255,107,53,.35)`, color: C.partial, borderRadius: 6 }}
-                      className="text-[11px] px-2 py-1 mt-2">
-                      ⚠ {doublon} — jouer deux fois.
-                    </div>
-                  )}
-                </Panel>
-
-                {/* Scénarios complets — pire et meilleur cas EXACTS, toutes sections
-                    actives confondues, par nombre de bons. Retours conditionnels,
+                {/* Scénarios complets — pire et meilleur cas EXACTS du système,
+                    par nombre de bons. Retours conditionnels,
                     jamais des probabilités (règle 7). */}
                 <Panel
                   title="Scénarios complets"
@@ -1194,9 +973,9 @@ function SystemBetCalculator() {
             chaque run (run_engine._alert_oddsapi_pool_levels). */}
       </div>
 
-      {/* Barre de résultat (téléphone) : mise, net, ROI des sections actives. */}
+      {/* Barre de résultat (téléphone) : mise, net, ROI du système. */}
       {n > 0 && (
-        <div className="sys-bar" title="Total des sections actives, après impôt">
+        <div className="sys-bar" title="Système, après impôt">
           <div><div className="l">Mise</div><div className="v" style={{ color: C.text }}>{fmtN(grand.mise)}</div></div>
           <div><div className="l">Net</div><div className="v" style={{ color: netColor }}>{signedN(grand.net)}</div></div>
           <div><div className="l">ROI</div><div className="v" style={{ color: netColor }}>{grand.roi.toFixed(1)} %</div></div>

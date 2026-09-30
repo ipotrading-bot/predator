@@ -155,19 +155,20 @@ class TestSectionsAdditionnees:
         # Interdit : rappeler systemReturn par scénario (2^N × 2^N, page gelée à N = 10).
         assert "systemReturn(" not in corps
 
-    def test_les_quatre_sections_et_le_mode_de_mise_sont_rendus(self, jsx):
-        for titre in ("Système", "Mises individuelles", "Combiné", "Total", "Scénarios complets"):
+    def test_le_systeme_seul_et_le_mode_de_mise_sont_rendus(self, jsx):
+        """2026-09-30 (demande opérateur) : Mises individuelles, Combiné et
+        Total sont retirés, la page ne joue plus que le système. Retirés du
+        CALCUL aussi : une section cachée mais comptée gonflerait la barre
+        et les scénarios de mises invisibles."""
+        for titre in ("Système", "Scénarios complets"):
             assert f'title="{titre}"' in jsx, titre
+        for titre in ("Mises individuelles", "Combiné", "Total"):
+            assert f'title="{titre}"' not in jsx, titre
+        assert "Dans le total" not in jsx
+        assert "const sectionFlags = { sys: n > 0, simples: false, combo: false };" in jsx
         assert 'label: "Mise par ligne"' in jsx and 'label: "Mise totale"' in jsx
         assert "switchStakeMode" in jsx and "totalStakeWanted / totalLignes" in jsx
-        # Chaque section entre ou sort du total sans perdre ses saisies.
-        assert jsx.count('label="Dans le total"') == 3
         assert "scenariosComplets(" in jsx and "breakEvenComplet(scenariosTotal)" in jsx
-
-    def test_le_doublon_systeme_simples_combine_est_signale(self, jsx):
-        # Un système M/N contient le combiné N/N, et à M = 1 les N simples :
-        # additionner les deux est jouer deux fois — la page le dit.
-        assert "contient déjà" in jsx and "jouer deux fois" in jsx
 
     def test_les_tables_tiennent_dans_un_telephone(self, html):
         # predator.css impose min-width: 760px aux tables (grilles de signaux) ;
@@ -196,21 +197,17 @@ class TestFiscaliteAppliqueePartout:
         # Un pari perdu (R < 1) ou remboursé (R = 1) n'est jamais taxé : c'est
         # le max(0, …) qui le garantit, pas une condition posée ailleurs.
         assert "Math.max(0, R * stake - stake) * rate" in corps
-        # POINT UNIQUE : système, simples, combiné et scénarios passent par lui.
-        assert jsx.count("taxOfBet(") >= 6
+        # POINT UNIQUE : le système et les scénarios passent par lui.
+        assert jsx.count("taxOfBet(") >= 5
 
     def test_chaque_section_affiche_brut_impot_net(self, jsx):
-        # Système, simples, combiné : chacune montre son bilan mise / brut /
-        # impôt / net par le MÊME composant `Bilan` (libellé court, page
-        # sobre) ; le Total le montre dans son tableau. Le panneau « Système —
-        # résumé », copie du bilan Système, est parti le 2026-09-09.
-        assert jsx.count("<Bilan ") >= 3
+        # Le système montre son bilan mise / brut / impôt / net par le
+        # composant `Bilan` (libellé court, page sobre). Simples, combiné et
+        # Total sont partis le 2026-09-30 ; le panneau « Système — résumé »,
+        # copie du bilan Système, le 2026-09-09.
+        assert jsx.count("<Bilan ") >= 1
         bilan = jsx[jsx.index("function Bilan("):jsx.index("// Détail d'un cas")]
         assert 'label="Brut"' in bilan and 'label="Net"' in bilan and "Impôt ${taxRate} %" in bilan
-        assert jsx.count("Impôt ${taxRate} %") >= 2      # Bilan + en-tête du tableau Total
-        # Les définitions ne sont plus des phrases dans la page : elles vivent
-        # en title=, survolables, sans peser sur la lecture des chiffres.
-        assert 'title="Brut = retour avant impôt, mise comprise. Net = brut − mise − impôt.' in jsx
 
     def test_les_scenarios_et_le_point_mort_sont_juges_apres_impot(self, jsx):
         # Le pire/meilleur cas se choisit sur le NET, et le point mort aussi :
