@@ -84,6 +84,7 @@ C'est le tableau à consulter avant de toucher à quoi que ce soit.
 | Un audit à vide relance quand même les expirés | `…::test_un_audit_a_vide_relance_quand_meme` |
 | Sans score sûr, la ligne RESTE expirée — jamais un WIN/LOSS deviné | `…::TestElleNeDevinePas` |
 | Un match réel = UNE ligne de ledger : le jumeau inter-sources est refusé ou promu, jamais inséré (stock nettoyé par `sql/migrate_v10_10`) | `tests/test_ledger_jumeaux.py` |
+| Un match réel = UN pari par famille à l'émission : le jumeau d'une autre source (autre match_id) est refusé, `JUMEAU  |` au log | `tests/test_jumeaux_inter_sources.py` |
 | Un match (match_id) = UN pari par famille côté/total, d'un scan à l'autre ; le premier annoncé tient | `tests/test_incident_2026_09_15.py::TestParisOpposes` |
 | Un seuil appris ne bouge pas deux fois sur le même échantillon (`meta.learning_bases`) ; un plafond exige une bande sous son point mort et n ≥ 10 | `tests/test_incident_2026_09_15.py::TestCliquet`, `::TestPlafondEtBandes` |
 | Le Tier 2 tourne à CHAQUE tick — jamais conditionné au succès du Tier 1 (seul REPRICE exempte) ; les gates décisifs (LOWPROB) et la purge loggent ce qu'ils jettent ; tout DELETE de `signals` dans la purge est scopé `status='active'`, table de règles comprise | `tests/test_tier2_toujours.py` |

@@ -2029,8 +2029,53 @@ n'attrape que la forme majoritaire (47/54). Et les signaux jumeaux restent
 l'émission a été écartée SCIEMMENT — un faux appariement y supprimerait un
 vrai signal, et les doubleheaders MLB rendent la clé (équipes, jour)
 ambiguë.
+⚠️ RÉVISÉ LE 2026-09-30, sur instruction opérateur : la dédup à l'émission
+existe désormais, avec un appariement flou BORNÉ (deux camps, étage, restes,
+coup d'envoi à 30 min). Le LEDGER garde sa clé exacte. Voir « Le même pari
+annoncé deux fois » juste en dessous.
 Invariant ajouté à AUDIT.md §2 : un match réel = UNE ligne de ledger.
 Gardien : `tests/test_ledger_jumeaux.py` (10 tests).
+
+### Le même pari annoncé deux fois : deux sources, deux match_id (2026-09-30)
+
+Symptôme : Toronto–Montréal NHL Over 6.5 est parti recommandé DEUX FOIS sur
+Telegram le 29/09, à 19:15 puis à 20:31. Deux pertes, la mise Kelly doublée
+sur un seul pari : 1,7 point de bankroll sur les 3,8 perdus ce jour-là.
+L'opérateur s'en est plaint le lendemain (« les doublons »).
+
+Cause : la limite assumée de l'incident du 2026-09-02, juste au-dessus. Le
+premier signal venait d'OddsAPI (« Montréal », 23:10, uuid), le second
+d'odds-api.io (« Montreal », 23:00, `oai_72886404`). Trois gardes, trois clés
+propres à la source :
+  1. l'index unique (match_id, market_key) de `_save` ;
+  2. `_sans_contradiction`, qui ne lisait les actifs QUE par match_id — le
+     jumeau n'était même pas lu ;
+  3. l'empreinte Telegram, par match_id aussi.
+Et le tri intra-scan compare le nom exact en minuscules : l'accent suffit.
+
+MESURÉ le 2026-09-30 en rejouant l'appariement sur les 677 signaux en base :
+18 paires de jumeaux inter-sources depuis le 21/08, TOUTES le même match réel
+(même heure, et issues identiques quand le pari est le même). 14 étaient le
+même pari compté deux fois. Aucun faux positif.
+
+Correctif : `run_engine._meme_match_reel` (même match_id, OU même sport + les
+deux camps appariés par `strict_team_match` dans un sens ou l'autre + coup
+d'envoi à `JUMEAU_FENETRE_MIN` près). `_sans_contradiction` raisonne par
+match RÉEL et refuse un jumeau dans une famille déjà tenue, même sur le même
+pari : sous un autre match_id, `_save` l'insérerait à côté au lieu de le
+rafraîchir. `_actifs_des_matchs` lit en plus les actifs par FENÊTRE de coup
+d'envoi sur les sports des candidats. Le refus se lit au log : `JUMEAU  |`.
+
+Pourquoi le flou est acceptable maintenant alors qu'il avait été rejeté le
+09-02 : les faux positifs d'alors sont refusés par des règles postérieures
+(étage le 09-04, « restes » le 09-13), et l'exigence d'un coup d'envoi à
+30 min écarte les doubleheaders. Les quatre cas sont rejoués dans le
+gardien.
+
+⚠️ Limites : le stock n'est pas touché (Toronto reste deux fois au ledger,
+libellés différents : `_ledger_jumeau_reel` est exacte). Un jumeau dont une
+source décale le coup d'envoi de plus de 30 min passe encore.
+Gardien : `tests/test_jumeaux_inter_sources.py`.
 
 ### Closing line : `capture_from_scan` est morte avec OddsAPI (2026-08-26)
 
