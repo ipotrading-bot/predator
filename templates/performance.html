@@ -318,7 +318,9 @@ details[open] > summary.sec-hdr::before { content: '▾'; }
             <td class="lbl"><div class="h-match">{{ sport_emoji.get(r.sport or '', '🎯') }} {{ r.match or '—' }}</div>
               <div class="h-sub"><b>{{ r.selection or '—' }}</b>{% if r.market_type or r.market %} &middot; {{ r.market_type or r.market }}{% endif %}{% if r.league %} &middot; {{ r.league }}{% endif %}</div></td>
             <td class="num" style="color:var(--t1);font-weight:700">{{ "%.2f"|format(r.odds) if r.odds else '—' }}</td>
-            <td class="num ts">{{ r.created_at[8:10] ~ '/' ~ r.created_at[5:7] if r.created_at else '—' }}</td>
+            {# Jour du MATCH (coup d'envoi, UTC), pas du règlement — 2026-09-30. #}
+            {% if r.match_time %}<td class="num ts" title="coup d'envoi {{ r.match_time[11:16] }} UTC">{{ r.match_time[8:10] ~ '/' ~ r.match_time[5:7] }}</td>
+            {% else %}<td class="num ts" title="date du règlement (coup d'envoi inconnu)">{{ r.created_at[8:10] ~ '/' ~ r.created_at[5:7] if r.created_at else '—' }}</td>{% endif %}
           </tr>
           {% endfor %}
         </tbody>
