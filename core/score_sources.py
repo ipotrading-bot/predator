@@ -705,6 +705,31 @@ def fixture_connue(match_name: str, events: list, min_sides: int = 1) -> bool:
     return False
 
 
+# Type de saison ESPN (`event.season.type`) : 1 présaison, 2 saison
+# régulière, 3 séries. Décision opérateur du 2026-09-30 : « NHL seulement
+# saison régulière » (run_engine._nhl_hors_saison).
+ESPN_PRESAISON = 1
+
+
+def saison_espn(match_name: str, events: list) -> int | None:
+    """Type de saison ESPN du match (voir ESPN_PRESAISON), None s'il n'est pas
+    trouvé ou que le champ manque. Les DEUX noms appariés strictement
+    (`_espn_paire`) : un seul nom pourrait prêter au match la saison d'un
+    autre. Pur."""
+    parts = _split(match_name)
+    if not parts:
+        return None
+    home, away = parts
+    for ev in events or []:
+        for comp in _espn_competitions(ev):
+            if _espn_paire(comp, home, away) is not None:
+                try:
+                    return int((ev.get("season") or {}).get("type"))
+                except (TypeError, ValueError):
+                    return None
+    return None
+
+
 def _espn_cle(ev: dict, home: str, away: str, path: str) -> str:
     for comp in _espn_competitions(ev):
         if comp.get("id") and _espn_paire(comp, home, away) is not None:

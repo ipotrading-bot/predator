@@ -10,6 +10,7 @@ import json
 import logging
 import os
 import random
+import re
 import time
 import signal
 from datetime import datetime, timedelta, timezone
@@ -44,6 +45,7 @@ from core.paim_engine import section_jeunes as _section_jeunes, ligne_en_quart a
 from core.source_adapter import ligue_exclue as _ligue_exclue
 from core.score_sources import livescore_connait as _livescore_connait
 from core.score_sources import SPORTS_SANS_ESPN as _SPORTS_SANS_ESPN
+from core.score_sources import saison_espn as _saison_espn, ESPN_PRESAISON as _ESPN_PRESAISON
 from core.score_sources import (fixtures_espn as _fixtures_espn, fixture_connue as _fixture_connue,
                                 sports_reglables as _sports_reglables)
 from core.odds_api import (SPORT_KEYS, fetch_odds, pool_status as _odds_pool_status,
@@ -2359,6 +2361,29 @@ def _reglable(m: dict, fixtures_par_sport: dict) -> bool:
     return _fixture_connue(m.get("match") or "", events)
 
 
+# NHL : saison régulière seulement (décision opérateur, 2026-09-30).
+# OddsAPI sert présaison et saison sous la MÊME clé `icehockey_nhl`, et
+# odds-api.io sous le même libellé « USA - NHL » : seul le scoreboard ESPN,
+# déjà lu par `_reglable`, dit de quelle saison est le match. Les séries
+# (type 3) passent : la consigne visait les matchs amicaux de septembre.
+# Saison INCONNUE (ESPN ne trouve pas le match) → refus : la consigne est
+# « seulement », il faut la preuve.
+_NHL = re.compile(r"\bnhl\b", re.I)
+
+
+def _nhl_hors_saison(m: dict, fixtures_par_sport: dict) -> str | None:
+    """Raison d'écarter un match NHL hors saison régulière, None s'il passe
+    (ou s'il n'est pas un match NHL). Pur."""
+    if (m.get("sport") or "").lower() != "hockey" or not _NHL.search(m.get("league") or ""):
+        return None
+    saison = _saison_espn(m.get("match") or "", fixtures_par_sport.get("hockey") or [])
+    if saison is None:
+        return "saison NHL non confirmée par ESPN"
+    if saison == _ESPN_PRESAISON:
+        return "présaison NHL"
+    return None
+
+
 # Clé meta lue une fois par run : motifs de libellés de ligue exclus par
 # l'opérateur (règle 11 — périmètre = décision opérateur), séparés par « ; »
 # ou un retour à la ligne. Posée le 2026-09-08 avec la Primera División
@@ -2530,6 +2555,19 @@ def _filtrer_perimetre(matches: list, log, ligues_exclues: tuple = (), sb=None) 
     ls_connus = 0          # écartés QUAND MÊME, que LiveScore connaît
     ls_admis = 0           # admis GRÂCE à LiveScore (élargissement du 21/09)
     elargi = _perimetre_livescore_actif(sb)
+    # Écartés AVANT le décompte : un match hors saison n'est ni « vivant non
+    # réglable » ni une panne de source, il ne doit pas peser dans
+    # `_alerte_perimetre`.
+    en_saison = []
+    for m in vivants:
+        hors_saison = _nhl_hors_saison(m, fixtures_par_sport)
+        if hors_saison:
+            log.info("HORS PÉRIMÈTRE | %s (%s) — %s : NHL en saison régulière "
+                     "seulement (décision opérateur du 2026-09-30), écarté",
+                     m.get("match", "?"), m.get("league", "?"), hors_saison)
+        else:
+            en_saison.append(m)
+    vivants = en_saison
     for m in vivants:
         if _reglable(m, fixtures_par_sport):
             gardes.append(m)
