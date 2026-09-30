@@ -318,10 +318,10 @@ def _season_open(sport_key: str, now: datetime) -> bool:
 #
 # On résout donc les clés au DÉBUT de chaque fetch_odds, via GET /v4/sports —
 # endpoint GRATUIT, déjà utilisé par le pool pour sonder les clés — filtrées
-# sur une liste blanche de tournois : les quatre Grands Chelems et les
-# Masters / WTA 1000. Ce sont les seuls où Pinnacle est liquide ET où les
-# premiers tours mettent le favori à 1,10–1,40 — la tranche rentable.
-# Un Challenger ou un ATP 250 n'a ni la liquidité ni le lag : exclu.
+# sur une liste blanche de tournois : les quatre Grands Chelems, les
+# Masters / WTA 1000 et, depuis le 2026-09-30, les ATP / WTA 500 (décision
+# opérateur, voir la liste). Un Challenger ou un ATP 250 n'a ni la
+# liquidité ni le lag : exclu.
 #
 # Pourquoi le tennis, et pourquoi maintenant : toute l'infrastructure existe
 # depuis des mois (marchés h2h+totals ci-dessous, Matchbook id 9 demandé en
@@ -336,14 +336,44 @@ TENNIS_TOURNAMENTS: tuple = (
     # Masters 1000 / WTA 1000
     "indian_wells", "miami", "monte_carlo", "madrid", "italian_open", "rome",
     "canadian", "canada", "cincinnati", "shanghai", "paris_masters",
-    "china_open", "wuhan",
+    "china_open", "wuhan", "dubai", "qatar", "doha",
+    # Masters de fin de saison
+    "finals",
+    # ── ATP 500 / WTA 500 — ÉLARGISSEMENT, décision opérateur du 2026-09-30 ──
+    # (« tennis élargir ») : du 11 au 28/09, AUCUN signal tennis, faute de
+    # tournoi 1000 entre l'US Open et Pékin ; OddsAPI servait pourtant l'ATP
+    # de Tokyo. Budget : ~21 crédits/semaine par tournoi ouvert
+    # (`ops.py ligues tennis`), soit ~40-60/semaine les semaines de 500, sous
+    # le plafond par créneau de SpendPolicy (le tennis passe en DERNIER).
+    # Revue le 2026-11-16 : si les recommandés réglés de ces tournois restent
+    # sous n=10, ou que le digest les montre sous le point mort, les retirer
+    # d'ici — décision opérateur.
+    # Noms ATP 500
+    "rotterdam", "abn_amro", "dallas", "rio", "rio_open", "acapulco",
+    "mexican", "mexican_open", "barcelona", "munich", "halle", "queens",
+    "queen_s", "hamburg", "washington", "citi_open", "japan_open", "tokyo",
+    "basel", "swiss_indoors", "vienna", "erste_bank",
+    # Noms WTA 500
+    "brisbane", "adelaide", "abu_dhabi", "linz", "charleston", "stuttgart",
+    "berlin", "eastbourne", "bad_homburg", "monterrey", "seoul", "korea",
+    "pan_pacific", "ningbo", "merida", "san_diego",
 )
 _TENNIS_PREFIXES = ("tennis_atp_", "tennis_wta_")
 TENNIS_SPORT = "tennis"       # sport-type des clés dynamiques, nommé une fois
 
 
+def _tournoi_retenu(slug: str) -> bool:
+    """Le slug désigne-t-il un tournoi de TENNIS_TOURNAMENTS ? Par MOTS
+    entiers (séparés par « _ ») et non par sous-chaîne : depuis
+    l'élargissement du 2026-09-30, des noms courts comme « rio » ou « linz »
+    capteraient n'importe quel slug qui les contient."""
+    bornes = f"_{slug}_"
+    return any(f"_{t}_" in bornes for t in TENNIS_TOURNAMENTS)
+
+
 def discover_tennis_keys(api_key: str, catalogue: list | None = None) -> dict[str, str]:
-    """Clés tennis ACTIVES du catalogue, restreintes aux tournois majeurs.
+    """Clés tennis ACTIVES du catalogue, restreintes à TENNIS_TOURNAMENTS
+    (Chelems, 1000, 500).
 
     0 crédit. `catalogue` est la réponse de GET /sports si l'appelant l'a
     déjà — fetch_odds passe celle que probe_key vient de télécharger pour
@@ -374,10 +404,10 @@ def discover_tennis_keys(api_key: str, catalogue: list | None = None) -> dict[st
         if not s.get("active") or s.get("has_outrights"):
             continue
         slug = key.split("_", 2)[-1]          # "tennis_atp_us_open" → "us_open"
-        if any(t in slug for t in TENNIS_TOURNAMENTS):
+        if _tournoi_retenu(slug):
             found[key] = "tennis"
     if found:
-        log.info("Tennis : %d tournoi(s) majeur(s) au catalogue — %s",
+        log.info("Tennis : %d tournoi(s) retenu(s) au catalogue — %s",
                  len(found), ", ".join(sorted(found)))
     return found
 

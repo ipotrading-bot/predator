@@ -5,7 +5,7 @@ OddsAPI ne sert pas le tennis comme un sport permanent : une clé par tournoi,
 qui apparaît quelques jours avant et disparaît après. Une entrée statique dans
 SPORT_KEYS serait morte onze mois sur douze. Les clés sont donc résolues à
 chaque fetch_odds via le catalogue /sports — GRATUIT — filtrées sur les
-Grands Chelems et Masters 1000, et fusionnées dans `keys_to_scan`.
+Grands Chelems, Masters 1000 et, depuis le 2026-09-30, les 500, et fusionnées dans `keys_to_scan`.
 
 Ce que ces tests verrouillent : le filtre (un ATP 250 ne passe pas), les
 outrights exclus, la panne qui rend {} sans exception, le coupe-circuit, la
@@ -47,6 +47,26 @@ class _Resp:
 def catalogue(monkeypatch):
     monkeypatch.delenv("TENNIS_DYNAMIC", raising=False)
     monkeypatch.setattr(odds_api.requests, "get", lambda *a, **k: _Resp(200, CATALOGUE))
+
+
+class TestElargissement500:
+    """Décision opérateur du 2026-09-30 : ATP et WTA 500 admis, 250 toujours
+    refusés. Le 30/09, OddsAPI servait l'ATP de Tokyo que la liste écartait."""
+
+    @pytest.mark.parametrize("cle", ["tennis_atp_japan_open", "tennis_atp_dubai",
+                                     "tennis_wta_qatar_open", "tennis_atp_rotterdam",
+                                     "tennis_wta_seoul", "tennis_atp_finals"])
+    def test_les_500_passent(self, cle):
+        cat = [{"key": cle, "active": True, "has_outrights": False}]
+        assert odds_api.discover_tennis_keys("k", catalogue=cat) == {cle: "tennis"}
+
+    @pytest.mark.parametrize("cle", ["tennis_atp_winston_salem", "tennis_atp_ontario",
+                                     "tennis_wta_berlinetta", "tennis_atp_marrakech"])
+    def test_un_nom_court_ne_capte_pas_une_autre_cle(self, cle):
+        """Par mots entiers : « rio » n'est pas dans « ontario », « berlin »
+        n'est pas « berlinetta »."""
+        cat = [{"key": cle, "active": True, "has_outrights": False}]
+        assert odds_api.discover_tennis_keys("k", catalogue=cat) == {}
 
 
 class TestFiltre:
