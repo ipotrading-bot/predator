@@ -75,8 +75,13 @@ _WINDOWS: dict[str, list[tuple]] = {
     "soccer_france_ligue_one":           [((5, 6), 9, 13), (_ALL, 13, 17)],
     "soccer_uefa_champs_league":         [(_ALL, 13, 17)],
     "soccer_uefa_europa_league":         [(_ALL, 13, 17)],
-    # Euroleague : jeudi/vendredi 16:45–19:00 UTC → 13:03 et 16:03
-    "basketball_euroleague":             [((3, 4), 13, 17)],
+    # Euroleague : du MARDI au VENDREDI, 16:00–20:00 UTC → 13:03 et 16:03.
+    # Relevé le 2026-10-01 sur le calendrier officiel 2026-27 (380 matchs,
+    # api-live.euroleague.net) : mardi 89, mercredi 52, jeudi 128, vendredi
+    # 111 ; coups d'envoi 16 h ×25, 17 h ×65, 18 h ×106, 19 h ×177, 20 h ×7.
+    # La fenêtre ne couvrait que jeudi/vendredi : 141 matchs (37 %) tombaient
+    # en scan de fond.
+    "basketball_euroleague":             [((1, 2, 3, 4), 13, 17)],
     # Amérique du Sud : 21:30–02:30 UTC → 19:03, 21:03, 23:03
     "soccer_brazil_campeonato":          [(_ALL, 19, 24)],
     "soccer_conmebol_copa_libertadores": [(_ALL, 19, 24)],

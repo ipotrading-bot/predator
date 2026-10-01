@@ -424,11 +424,72 @@ def _markets(entries: list, draw: bool) -> dict:
             if ech:
                 out["spreads"] = {**ech[0], "away_point": -ech[0]["point"],
                                   "ladder": [{**r, "away_point": -r["point"]} for r in ech]}
-        elif name == "totals":
+        elif name in ("totals", _TOTAUX_TENNIS):
+            # Tennis : le total du MATCH s'appelle « Totals (Games) » (mesuré
+            # le 2026-10-01 : 11 lignes chez 1xbet sur chaque simple ATP).
+            # Jusque-là seul « totals » était lu : aucun total de tennis
+            # n'entrait par cette source. Les totaux d'aces, de doubles
+            # fautes, de set ou de joueur portent d'autres noms et restent
+            # dehors ; le handicap de jeux aussi (OddsAPI ne le sert pas au
+            # tennis, `_MARKETS_BY_SPORT` : h2h,totals).
             ech = echelle(rows, "over", "under")
             if ech:
                 out["totals"] = {**ech[0], "ladder": ech}
     return out
+
+
+_TOTAUX_TENNIS = "totals (games)"
+
+
+def nom_tennis(nom: str) -> str:
+    """« Munar, Jaume » → « Jaume Munar ». odds-api.io écrit les joueurs du
+    circuit principal et des Challengers NOM D'ABORD, virgule, prénom ; OddsAPI,
+    Matchbook, Smarkets et ESPN écrivent prénom puis nom. Sans ce retournement
+    aucun rapprochement ne tient (mesuré le 2026-10-01 : « Chidekh, Clement »
+    contre « Clement Chidekh », similarité 0,64 — refusé).
+
+    Une paire de double (« Galloway R / Goransson A ») ou un nom sans virgule
+    (ITF : « Max Sheldon ») ne bouge pas ; plus d'une virgule non plus — on
+    ne devine pas. Pur."""
+    brut = (nom or "").strip()
+    if "/" in brut or brut.count(",") != 1:
+        return brut
+    famille, prenom = (p.strip() for p in brut.split(","))
+    return f"{prenom} {famille}" if famille and prenom else brut
+
+
+def _tennis_au_perimetre(a_venir: list) -> tuple[list, int] | None:
+    """(matchs de tennis des tournois RETENUS, nombre d'écartés), ou None si
+    le pré-vol d'OddsAPI n'a vu aucun tournoi retenu (l'appelant lit alors le
+    calendrier comme avant).
+
+    POURQUOI (2026-10-01). Le calendrier tennis d'odds-api.io fait ~225
+    matchs sur 30 h, à 90 % des ITF, UTR et Challengers ; on en payait les 60
+    PREMIERS PAR HEURE. Mesuré : 46 matchs rendus, 0 exploitable, et les 7
+    simples ATP de Tokyo et Pékin — que 1xbet y cote, totaux de jeux compris,
+    et qu'OddsAPI vend SANS book d'exécution — jamais lus, parce qu'ils se
+    jouaient 13 h plus tard. Six à sept requêtes par scan pour rien.
+
+    Un match est gardé s'il s'apparie (les deux joueurs, candidat unique,
+    coups d'envoi à moins de 12 h) à un match du pré-vol gratuit d'un tournoi
+    retenu : le périmètre « 500 et plus » de l'opérateur est donc appliqué
+    ici comme au Tier 1, sans liste de villes à tenir."""
+    from core.odds_api import matchs_prevol_tennis, _ecart_h, _MEME_MATCH_H
+    from core.exchange_match import lookup_exchange
+    index = matchs_prevol_tennis()
+    if index is None:
+        return None
+    gardes = []
+    for e in a_venir:
+        hit = lookup_exchange({"home": nom_tennis(str(e.get("home", ""))),
+                               "away": nom_tennis(str(e.get("away", "")))}, index)
+        if not hit:
+            continue
+        ecart = _ecart_h(str(e.get("date", "")), hit.get("commence_time", ""))
+        if ecart is not None and ecart > _MEME_MATCH_H:
+            continue
+        gardes.append(e)
+    return gardes, len(a_venir) - len(gardes)
 
 
 def _to_match(ev: dict, sport: str, sport_id: int, draw: bool) -> dict | None:
@@ -436,6 +497,8 @@ def _to_match(ev: dict, sport: str, sport_id: int, draw: bool) -> dict | None:
     away = str(ev.get("away", "")).strip()
     if not home or not away:
         return None
+    if sport == "tennis":
+        home, away = nom_tennis(home), nom_tennis(away)
     par_book: dict = {}          # book d'exécution canonique → marchés parsés
     sharp: dict = {}
     for book, entries in (ev.get("bookmakers") or {}).items():
@@ -560,6 +623,18 @@ def fetch_sport(sport: str, api_key: str | None = None, hours_ahead: int = 24,
         log.info("odds-api.io[%s]: %d match(s) hors périmètre écarté(s) avant paiement (%s)",
                  sport, len(hors), ", ".join(sorted({str((e.get("league") or {}).get("name", "?"))
                                                      for e in hors})))
+    # Tennis : seuls les matchs des tournois retenus se paient — voir
+    # `_tennis_au_perimetre`.
+    if sport == "tennis":
+        tri = _tennis_au_perimetre(a_venir)
+        if tri is None:
+            log.info("odds-api.io[tennis]: pré-vol OddsAPI sans tournoi retenu — calendrier "
+                     "lu comme avant (%d à venir, les %d premiers par heure)",
+                     len(a_venir), cap)
+        else:
+            a_venir, ecartes = tri
+            log.info("odds-api.io[tennis]: %d match(s) des tournois retenus, %d écarté(s) "
+                     "avant paiement (ITF, Challenger, 250, doubles…)", len(a_venir), ecartes)
     # ── ZONE JOUABLE D'ABORD (2026-09-09) ─────────────────────────────
     # Le tri était (ligue, heure) et la coupe à `cap` prenait donc, dans les
     # ligues bien classées, les coups d'envoi les PLUS PROCHES — exactement

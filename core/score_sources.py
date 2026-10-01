@@ -100,10 +100,20 @@ TSDB_DAILY_BUDGET = int(os.environ.get("THESPORTSDB_DAILY_BUDGET", "150"))
 # audit en consomme donc au plus 3 par sport — la fenêtre `_jours`. Borne
 # large, elle ne peut pas être atteinte par un fonctionnement normal.
 LIVESCORE_DAILY_BUDGET = int(os.environ.get("LIVESCORE_DAILY_BUDGET", "120"))
+# API officielle de l'EuroLeague : la saison ENTIÈRE (380 matchs) en UNE requête,
+# mise en cache pour le run. Un scan standard et un audit la lisent une fois
+# chacun → ~16 requêtes/jour à cadence nominale (8 + 8) ; borne à 60 pour
+# couvrir les rattrapages du chien de garde sans laisser tourner une boucle.
+EUROLEAGUE_DAILY_BUDGET = int(os.environ.get("EUROLEAGUE_DAILY_BUDGET", "60"))
 _MLB_BUCKET = "mlb_results"
 _ESPN_BUCKET = "espn_results"
 _TSDB_BUCKET = "tsdb_results"
 _LS_BUCKET = "livescore_results"
+_EL_BUCKET = "euroleague_results"
+
+# Pseudo-chemin de l'Euroleague : pas un scoreboard ESPN, l'API officielle de
+# la ligue rendue sous la même forme (`_euroleague_jour`, « 1ter » plus bas).
+EUROLEAGUE_PATH = "euroleague/E"
 
 # Sport interne → chemins de scoreboard ESPN à interroger, dans l'ordre.
 # `soccer/all` couvre toutes les ligues de football en une requête ; les
@@ -114,7 +124,11 @@ _LS_BUCKET = "livescore_results"
 _ESPN_PATHS = {
     "soccer":                ["soccer/all"],
     "basketball":            ["basketball/nba", "basketball/wnba"],
-    "euroleague_basketball": ["basketball/euroleague"],
+    # PAS le scoreboard ESPN : `basketball/euroleague` y répond 200 avec ZÉRO
+    # événement, y compris sur une date de la saison passée (mesuré le
+    # 2026-10-01 sur 5 dates). Pseudo-chemin servi par l'API officielle de la
+    # ligue — voir « 1ter. EuroLeague » plus bas.
+    "euroleague_basketball": [EUROLEAGUE_PATH],
     "hockey":                ["hockey/nhl"],
     "baseball":              ["baseball/mlb"],
     "americanfootball":      ["football/nfl"],
@@ -183,6 +197,7 @@ _CACHE_ESPN: dict[tuple[str, str], list] = {}
 _CACHE_TSDB_TEAMS: dict[str, list] = {}
 _CACHE_TSDB_EVENTS: dict[str, list] = {}
 _CACHE_LS: dict[tuple[str, str], list] = {}
+_CACHE_EL: dict[str, list] = {}
 
 
 def reset_cache() -> None:
@@ -192,6 +207,7 @@ def reset_cache() -> None:
     _CACHE_TSDB_TEAMS.clear()
     _CACHE_TSDB_EVENTS.clear()
     _CACHE_LS.clear()
+    _CACHE_EL.clear()
 
 
 def _get_json(url: str, bucket: str, budget: int, source: str | None = None) -> dict | None:
@@ -330,12 +346,166 @@ def _espn_jour(path: str, jour: str) -> list:
     Cache par JOUR et non par fenêtre : l'audit ouvre une fenêtre autour de
     chaque date de match et deux fenêtres voisines partagent leurs jours —
     une requête par jour et par chemin pour tout le run."""
+    if path == EUROLEAGUE_PATH:
+        return _euroleague_jour(jour)
     cle = (path, jour)
     if cle not in _CACHE_ESPN:
         url = f"{ESPN_BASE}/{path}/scoreboard?dates={jour}&limit=1000"
         data = _get_json(url, _ESPN_BUCKET, ESPN_DAILY_BUDGET, source="espn") or {}
         _CACHE_ESPN[cle] = list(data.get("events") or [])
     return _CACHE_ESPN[cle]
+
+
+# ── 1ter. EuroLeague — API officielle de la ligue (2026-10-01) ────────
+#
+# POURQUOI. L'Euroleague était ACHETÉE à OddsAPI (3 crédits par achat, 1xbet
+# et Pinnacle y cotent h2h, totaux et handicaps) et chacun de ses matchs
+# sortait « NON RÉGLABLE — ESPN muet sur ce sport » : le scoreboard ESPN
+# `basketball/euroleague` existe mais ne liste rien. Saison 2026-27 ouverte le
+# 2026-09-24, 380 matchs jusqu'au 2027-04-16, du MARDI au VENDREDI : deux
+# journées entières payées pour rien avant la mesure du 2026-10-01.
+#
+# LA SOURCE. `api-live.euroleague.net`, l'API publique de la ligue, sans clé
+# ni compte : `/v2/competitions/E/seasons/E<année>/games` rend la saison
+# entière, chaque match avec `utcDate`, `played`, et `local`/`road`
+# (`club.name`, `score`). Mesuré le 2026-10-01 : 380 matchs, 20 joués, scores
+# des journées 1 et 2 présents.
+#
+# COMMENT ELLE ENTRE. Chaque match est rendu sous la FORME d'un événement
+# ESPN (`competitions[].competitors[]`, `status.type`), servi par
+# `_espn_jour` sous le pseudo-chemin `EUROLEAGUE_PATH`. Tout l'étage ESPN
+# s'applique donc tel quel : les DEUX noms appariés strictement, candidat
+# UNIQUE, statut terminé seul, couverture au périmètre (`fixtures_espn`).
+# Aucune seconde copie de ces règles.
+#
+# LES NOMS. Les clubs portent un sponsor qui change (« Armani Olimpia Milan »
+# chez la ligue, « Pallacanestro Olimpia Milano » chez OddsAPI) : le nom long
+# ne suffit pas, le nom court de l'API (« Milan ») est nécessaire. Mais deux
+# noms courts d'un mot peuvent se ressembler assez pour s'apparier — mesuré :
+# « Žalgiris » ≈ « Paris » et « Partizan » ≈ « Paris » (ratio 0,62). La règle
+# est DÉRIVÉE du calendrier lu, aucune liste à la main : quand les noms
+# courts de deux clubs s'apparient, le plus COURT des deux n'est pas exposé
+# (`_euroleague_noms_courts`) — « Paris » sort, « Paris Basketball » reste.
+# Rejeu du 2026-10-01 sur les 20 noms d'OddsAPI × 20 clubs : chaque nom
+# désigne UN club (tests/test_euroleague_scores.py porte ce tableau). Et le
+# contrat de l'étage tient le reste : les DEUX camps sur un candidat unique.
+#
+# RÈGLE 13. Budget : EUROLEAGUE_DAILY_BUDGET (1 requête par run, ~16/jour).
+# RETRAIT si, à la revue du 2026-11-15, moins de 8 signaux Euroleague sur 10
+# émis depuis le 2026-10-01 ont été réglés par cette voie, ou si l'API refuse
+# les runners (HTTP ≠ 200 sur trois audits de suite) : remettre alors le
+# chemin à vide et sortir la ligue de l'achat (modèle de la boxe,
+# `core.odds_api.LIGUES_RETIREES`). Gardien : tests/test_euroleague_scores.py.
+EUROLEAGUE_BASE = "https://api-live.euroleague.net/v2/competitions/E/seasons"
+# La saison change de code à l'été : un match d'octobre 2026 comme un match
+# d'avril 2027 appartiennent à « E2026 ».
+_EL_MOIS_DE_BASCULE = 8
+
+
+def _euroleague_saison(jour: str) -> str:
+    """Code de saison (« E2026 ») du jour AAAAMMJJ. Pur."""
+    annee, mois = int(jour[:4]), int(jour[4:6])
+    return f"E{annee if mois >= _EL_MOIS_DE_BASCULE else annee - 1}"
+
+
+def _euroleague_noms_courts(matchs: list) -> dict[str, list[str]]:
+    """{code du club: noms courts SÛRS à exposer}, dérivé des matchs lus —
+    voir « LES NOMS » ci-dessus. Pur."""
+    longs: dict[str, str] = {}
+    courts: dict[str, list[str]] = {}
+    for match in matchs:
+        for cle in ("local", "road"):
+            club = (match.get(cle) or {}).get("club") or {}
+            code = str(club.get("code") or club.get("name") or "")
+            if not code or code in longs:
+                continue
+            longs[code] = (club.get("name") or "").strip()
+            vus: list[str] = []
+            for n in (club.get("abbreviatedName"), club.get("editorialName")):
+                n = (n or "").strip()
+                if n and n != longs[code] and n not in vus:
+                    vus.append(n)
+            courts[code] = vus
+    paires = [(code, n) for code, noms in courts.items() for n in noms]
+    retires: set[tuple[str, str]] = set()
+    for i, (c1, a) in enumerate(paires):
+        for c2, b in paires[i + 1:]:
+            if c1 == c2 or not (_apparie(a, b) or _apparie(b, a)):
+                continue
+            if len(a) <= len(b):
+                retires.add((c1, a))
+            if len(b) <= len(a):
+                retires.add((c2, b))
+    return {code: [n for n in noms if (code, n) not in retires]
+            for code, noms in courts.items()}
+
+
+def _euroleague_evenement(match: dict, courts: dict | None = None) -> dict | None:
+    """Un match de l'API EuroLeague sous la forme d'un événement ESPN. None
+    s'il manque un camp ou la date. Un match n'est TERMINÉ que si l'API le dit
+    (`played`) ET que les deux scores sont posés : jamais un score en cours.
+    `courts` : noms courts sûrs par club (`_euroleague_noms_courts`)."""
+    date = match.get("utcDate") or ""
+    camps = []
+    for cle, cote in (("local", "home"), ("road", "away")):
+        camp = match.get(cle) or {}
+        club = camp.get("club") or {}
+        nom = (club.get("name") or "").strip()
+        if not nom:
+            return None
+        surs = list((courts or {}).get(str(club.get("code") or nom)) or [])
+        camps.append({"homeAway": cote, "score": camp.get("score"),
+                      "team": {"displayName": nom,
+                               "shortDisplayName": surs[0] if surs else None,
+                               "name": surs[1] if len(surs) > 1 else None}})
+    if not date:
+        return None
+    try:
+        scores = [int(c["score"]) for c in camps]
+    except (TypeError, ValueError):
+        scores = [0, 0]
+    termine = bool(match.get("played")) and min(scores) > 0
+    for c, sc in zip(camps, scores):
+        c["score"] = str(sc) if termine else None
+    ident = str(match.get("identifier") or match.get("id") or date)
+    phase = ((match.get("phaseType") or {}).get("name") or "").lower()
+    return {"id": ident, "date": date,
+            "season": {"type": 2 if "regular" in phase else 3},
+            "competitions": [{
+                "id": ident, "date": date, "competitors": camps,
+                "status": {"type": {"completed": termine,
+                                    "state": "post" if termine else "pre",
+                                    "name": "STATUS_FINAL" if termine else "STATUS_SCHEDULED"}}}]}
+
+
+def _euroleague_matchs(saison: str) -> list:
+    """Tous les matchs de la saison, en cache pour le run. [] sur panne."""
+    if saison not in _CACHE_EL:
+        data = _get_json(f"{EUROLEAGUE_BASE}/{saison}/games?limit=500",
+                         _EL_BUCKET, EUROLEAGUE_DAILY_BUDGET) or {}
+        matchs = data.get("data") if isinstance(data, dict) else None
+        _CACHE_EL[saison] = list(matchs or [])
+        log.info("score_sources[euroleague]: %d match(s) lus pour %s (%d joués) | "
+                 "%d/%d req aujourd'hui", len(_CACHE_EL[saison]), saison,
+                 sum(1 for m in _CACHE_EL[saison] if m.get("played")),
+                 daily_quota.spent(_EL_BUCKET), EUROLEAGUE_DAILY_BUDGET)
+    return _CACHE_EL[saison]
+
+
+def _euroleague_jour(jour: str) -> list:
+    """Les matchs d'Euroleague du jour UTC `AAAAMMJJ`, en événements de forme
+    ESPN. La saison est lue une fois par run, le tri par jour est local."""
+    cible = f"{jour[:4]}-{jour[4:6]}-{jour[6:8]}"
+    out = []
+    matchs = _euroleague_matchs(_euroleague_saison(jour))
+    courts = _euroleague_noms_courts(matchs)
+    for match in matchs:
+        if str(match.get("utcDate") or "")[:10] != cible:
+            continue
+        ev = _euroleague_evenement(match, courts)
+        if ev:
+            out.append(ev)
+    return out
 
 
 def _jours_de_fenetre(fenetre: str, plafond: int = 10) -> list[str]:
@@ -750,6 +920,7 @@ def result_from_espn(match_name: str, sport: str, match_date: str) -> dict | Non
     if not chemins or not fenetre:
         return None
     vus: dict[str, tuple[int, int, tuple | None]] = {}
+    source = "espn"
     for path in chemins:
         for ev in _espn_events(path, fenetre):
             score = _espn_candidat(ev, home, away)
@@ -757,11 +928,14 @@ def result_from_espn(match_name: str, sport: str, match_date: str) -> dict | Non
                 # Clé = id de la competition appariée quand elle en a un (tennis :
                 # atp et wta rendent le même tournoi), sinon celui de l'événement.
                 vus[_espn_cle(ev, home, away, path)] = score
+                # Le résultat dit QUI l'a fourni : l'étage est commun, la
+                # source ne l'est pas (retrait de la voie Euroleague, règle 13).
+                source = "euroleague" if path == EUROLEAGUE_PATH else "espn"
     if len(vus) == 1:
         hs, as_, decompte = next(iter(vus.values()))
-        log.info("SETTLE espn | %s | %d-%d%s (0 appel IA)", match_name, hs, as_,
+        log.info("SETTLE %s | %s | %d-%d%s (0 appel IA)", source, match_name, hs, as_,
                  f" | décompte {decompte[0]}-{decompte[1]}" if decompte else "")
-        out = {"home_score": hs, "away_score": as_, "completed": True, "source": "espn"}
+        out = {"home_score": hs, "away_score": as_, "completed": True, "source": source}
         if decompte:
             # Total/handicap : c'est ce décompte qui compte, pas le drapeau —
             # voir SPORTS_SCORE_DRAPEAU et settlement._paire_comptable.
