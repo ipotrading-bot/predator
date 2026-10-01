@@ -119,6 +119,32 @@ class TestElleNeDevinePas:
         assert faits["ledger"] == 1
         assert ("ai_learning_ledger", {"outcome": "WIN"}) in db.updates
 
+    @pytest.mark.parametrize("decompte, attendu", [((6, 12), "LOSS"), ((13, 11), "WIN")])
+    def test_un_total_de_tennis_se_regle_sur_le_decompte_des_jeux(self, decompte, attendu):
+        """Signal 10547 (2026-10-01) : la relance trouvait le score — 0-1 en
+        SETS — et rendait « marché indécidable » à chaque audit, parce
+        qu'elle ne transmettait pas le décompte des JEUX que `settle_signal`
+        transmet. 6-3 6-3 = 18 jeux : Over 21.5 perdu."""
+        ligne = {"id": "t1", "match": "Lanlana Tararudee vs Maria Camila Osorio Serrano",
+                 "sport": "tennis", "market_type": "totals_over", "selection": "Over 21.5"}
+        db = FakeDB(ledger=[ligne])
+        with patch.object(relance_expires, "fetch_match_result",
+                          return_value={"home_score": 0, "away_score": 1, "completed": True,
+                                        "source": "espn", "decompte": decompte}):
+            faits = relance_expires.relancer(db)
+        assert faits["ledger"] == 1 and faits["indecidable"] == 0
+        assert ("ai_learning_ledger", {"outcome": attendu}) in db.updates
+
+    def test_un_total_de_tennis_sans_decompte_reste_expire(self):
+        """Les sets ne sont pas des jeux : sans décompte, on ne devine pas."""
+        ligne = {"id": "t2", "match": "A vs B", "sport": "tennis",
+                 "market_type": "totals_over", "selection": "Over 21.5"}
+        db = FakeDB(ledger=[ligne])
+        with patch.object(relance_expires, "fetch_match_result",
+                          return_value={"home_score": 0, "away_score": 1, "completed": True}):
+            faits = relance_expires.relancer(db)
+        assert faits["indecidable"] == 1 and db.updates == []
+
     def test_la_relance_ne_depend_plus_daucune_ia(self):
         """2026-09-02 : la relance lit les mêmes sources structurées que le
         settlement — plus de garde « fournisseur IA disponible »."""

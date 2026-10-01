@@ -125,13 +125,21 @@ def _curseur_ecrire(sb, valeur: int) -> None:
 
 
 def _issue(match: str, sport: str, market_key: str, selection: str,
-           home_score: int, away_score: int) -> str | None:
-    """L'issue selon le moteur. None si le marché n'est pas décidable."""
+           home_score: int, away_score: int, decompte: tuple | None = None) -> str | None:
+    """L'issue selon le moteur. None si le marché n'est pas décidable.
+
+    `decompte` : le compte réel des deux camps quand le score n'en est pas un
+    (les JEUX du tennis, `core.settlement._paire_comptable`). Jusqu'au
+    2026-10-01 la relance ne le transmettait pas, alors que `settle_signal`
+    le fait : un total de tennis expiré trouvait son score (0-1 en sets) et
+    sortait « marché indécidable » à chaque audit, pour toujours. Vécu sur le
+    signal 10547 (Over 21.5, décompte 6-12), run 36867889783."""
     if not match or " vs " not in match:
         return None
     home, away = (p.strip() for p in match.split(" vs ", 1))
     out = determine_outcome(sport or "soccer", market_key or "h2h",
-                            selection or "", home, away, home_score, away_score)
+                            selection or "", home, away, home_score, away_score,
+                            decompte)
     return None if out == "UNKNOWN" else out
 
 
@@ -223,7 +231,8 @@ def relancer(sb, budget: int | None = None) -> dict:
                     continue
                 out = _issue(row.get("match", ""), row.get("sport"),
                              row.get("market_type"), row.get("selection"),
-                             int(res["home_score"]), int(res["away_score"]))
+                             int(res["home_score"]), int(res["away_score"]),
+                             res.get("decompte"))
                 if out is None:
                     faits["indecidable"] += 1
                     continue

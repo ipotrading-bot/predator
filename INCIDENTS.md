@@ -1684,11 +1684,18 @@ exactement les mêmes lignes (`in_("id", …)`, toujours scopé
 un log dit combien de signaux anciens sont GARDÉS.
 Pas fait : la ligne 10547 n'a pas été réécrite à la main — `expired`
 n'est pas terminal, `core/relance_expires.py` la règle.
+Second défaut, vu en vérifiant ce dernier point : l'audit de rattrapage
+(run 36867889783) a bien trouvé le score — « SETTLE espn | … | 0-1 |
+décompte 6-12 » — puis rendu « 1 marché indécidable ». `relance_expires
+._issue` ne transmettait pas le décompte des JEUX à `determine_outcome`,
+que `settle_signal` transmet : un total de tennis expiré restait expiré à
+chaque audit, pour toujours. Corrigé (le décompte suit le score).
 
 ⚠️ Ne pas remettre de règle de purge sur `created_at` seul « pour le
 ménage » : un signal daté appartient à l'audit jusqu'à son terme.
 Gardien : `tests/test_purge_horloge.py` (le cas 10547, la famine, et
-`TestLaRegleDAgeNEstPasRevenue`).
+`TestLaRegleDAgeNEstPasRevenue`) ; `tests/test_relance_expires.py
+::test_un_total_de_tennis_se_regle_sur_le_decompte_des_jeux`.
 
 ### Le CLV oracle était retiré, son PRIX nourrissait encore la dérive (2026-09-29)
 
