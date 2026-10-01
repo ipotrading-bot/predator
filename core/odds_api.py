@@ -28,6 +28,7 @@ from datetime import datetime, timedelta, timezone
 
 from core.constants import EXECUTION_BOOKS
 from core.execution_books import fusionner_lignes, ordre
+from core.math_engine import nul_cote
 from core.secret_store import get_secret
 # Borne T-2h du fantôme (core/learning_layer, règle n°6 : une seule copie).
 from core.learning_layer import _PLAYABLE_MIN_MINUTES as PLAYABLE_MIN_MINUTES
@@ -632,7 +633,15 @@ def _parse_event(ev: dict, sport_type: str) -> dict | None:
     for book in EXECUTION_BOOKS:
         key = ODDS_API_BOOK_KEYS.get(book)
         h = _extract_h2h(bookmakers, key, home, away) if key else None
-        if h:
+        # Hors football, un bloc qui cote le nul est un 1X2 de TEMPS
+        # RÉGLEMENTAIRE (1xbet sur la NHL, 2026-10-01), pas la moneyline que
+        # cote Pinnacle : ce book n'est pas un book d'exécution pour ce match,
+        # et ses totaux/handicaps (même famille de marchés) ne sont pas lus
+        # non plus. La mesure d'exécution (`noter_execution`) voit ainsi la
+        # vérité, et la ligue passe en achat DIFFÉRÉ au lieu d'être payée
+        # pour rien — son Pinnacle sert alors de référence aux matchs
+        # qu'odds-api.io rend exécutables (`sharp_seul`).
+        if h and not (sport_type != "soccer" and nul_cote(h)):
             h2h_par_book[book] = h
     pin_h2h   = _extract_h2h(bookmakers, PINNACLE_KEY, home, away)
     if not h2h_par_book or not pin_h2h:

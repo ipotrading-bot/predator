@@ -167,6 +167,87 @@ def prix_reference(bloc: dict, cote: str) -> tuple[str, float]:
     return reference, prix_du_book(bloc, cote, reference)
 
 
+# ── Temps réglementaire (2026-10-01) ─────────────────────────────────────
+# Un book qui règle un sport sur le TEMPS RÉGLEMENTAIRE ne vend pas le pari
+# que le sharp cote : Pinnacle, Matchbook et Bet365 comptent la prolongation
+# et les tirs au but sur la NHL. Règlement de 1xbet : « bets are settled on
+# regular time », le marché prolongation comprise étant libellé à part
+# (« Including Overtime »). Mesuré le 2026-10-01 :
+#   · 1X2 — bloc à trois issues, écarté par `math_engine.nul_cote` ;
+#   · totaux — un 3-3 à la 60e est Under 6.5 chez 1xbet, Over chez le sharp
+#     (le but de prolongation compte). Les 4 signaux NHL totals émis du 29/09
+#     au 01/10 étaient des Over 1xbet à +7,6..+12 %, les Under sortaient à
+#     −12..−15 % quand Bet365, à la même ligne, sortait à −3,9 % ;
+#   · handicaps — équivalents à partir de ±1,5 seulement : une prolongation
+#     se gagne d'un but, donc un écart de deux buts ou plus est acquis à la
+#     60e dans les deux lectures ; à 0 et ±1 le nul réglementaire les sépare.
+# Écarter ces prix n'est pas un choix de périmètre : c'est le refus de
+# comparer deux paris différents, la règle de `run_engine._meme_ligne`.
+# INCIDENTS.md « 1xbet cote le hockey en temps réglementaire ».
+TEMPS_REGLEMENTAIRE: dict[str, frozenset] = {"1xbet": frozenset({"hockey"})}
+HANDICAP_EQUIVALENT_MIN = 1.5
+
+
+def books_temps_reglementaire(sport: str) -> frozenset:
+    """Books d'exécution qui règlent ce sport sur le temps réglementaire."""
+    s = (sport or "").lower()
+    return frozenset(b for b, sports in TEMPS_REGLEMENTAIRE.items() if s in sports)
+
+
+def retirer_temps_reglementaire(bloc: dict | None, marche: str,
+                                sport: str) -> tuple[dict | None, list[str]]:
+    """Le marché à ligne fusionné, SANS les prix qu'un book règle sur le temps
+    réglementaire quand le sharp compte la prolongation.
+
+    Rend (bloc, books retirés). Bloc inchangé si le sport n'est pas concerné
+    ou si aucun prix ne vient d'un tel book ; None s'il ne reste aucun barreau
+    à deux côtés. Un barreau sans attribution (`books` absent : slate d'avant
+    le 2026-09-08, repli sharp) est laissé tel quel — on ne retire pas ce
+    qu'on ne sait pas attribuer. Pur."""
+    exclus = books_temps_reglementaire(sport)
+    if not bloc or not exclus:
+        return bloc, []
+    a, b = _cotes(marche)
+    retires: set[str] = set()
+    ladder = []
+    for row in _barreaux(bloc):
+        try:
+            point = float(row.get("point"))
+        except (TypeError, ValueError):
+            continue
+        if marche == "spreads" and abs(point) >= HANDICAP_EQUIVALENT_MIN:
+            ladder.append(row)
+            continue
+        neuf = {**row, "books": dict(row.get("books") or {})}
+        prix_books = row.get("prix_books")
+        if prix_books is not None:
+            neuf["prix_books"] = {a: {}, b: {}}
+        for cote in (a, b):
+            if prix_books is not None:
+                tous = prix_books.get(cote) or {}
+                retires.update(set(tous) & exclus)
+                gardes = {bk: float(p) for bk, p in tous.items() if bk not in exclus}
+                neuf["prix_books"][cote] = gardes
+                # Meilleur prix, premier de EXECUTION_BOOKS à égalité — la
+                # règle de `fusionner_lignes`.
+                bk = min(gardes, key=lambda k: (-gardes[k], ordre(k))) if gardes else None
+                neuf[cote] = gardes[bk] if bk else 0.0
+                neuf["books"].pop(cote, None)
+                if bk:
+                    neuf["books"][cote] = bk
+            elif neuf["books"].get(cote) in exclus:
+                retires.add(neuf["books"].pop(cote))
+                neuf[cote] = 0.0
+        if float(neuf.get(a) or 0) > 1.01 and float(neuf.get(b) or 0) > 1.01:
+            ladder.append(neuf)
+    if not retires:
+        return bloc, []
+    if not ladder:
+        return None, sorted(retires, key=ordre)
+    ladder.sort(key=lambda r: abs(float(r[a]) - float(r[b])))
+    return {**ladder[0], "ladder": ladder}, sorted(retires, key=ordre)
+
+
 def avertissement_hors_reference(book: str | None) -> str | None:
     """« ⚠️ bet365 seulement — absent ou insuffisant chez 1xbet » pour un
     signal émis chez un autre book que celui de référence ; None sinon (ou

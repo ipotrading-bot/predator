@@ -37,7 +37,8 @@ from core.odds_api_io import fetch_all as _odds_api_io_all
 from core.titan007 import fetch_matches as _titan007_fetch
 from core.math_engine import (to_binary, devig_bounds, is_round_number_line, devig as _devig,
                               dnb_leg_split as _dnb_leg_split,
-                              executable_price as _prix_executable)
+                              executable_price as _prix_executable,
+                              nul_cote as _nul_cote)
 from core.tax_engine import optimal_stake_fraction as _optimal_stake_fraction
 from core.learning_layer import (_PLAYABLE_MIN_MINUTES, _PLAYABLE_MAX_MINUTES,
                                  dans_bande_cote)
@@ -198,7 +199,8 @@ from core.constants import GLOBAL_TIMEOUT, SCAN_TIMEOUTS
 # Second book d'exécution (2026-09-08) : le bloc 1X2 d'UN book, le book de
 # chaque côté d'un barreau — voir core/execution_books.py.
 from core.execution_books import (book_du_cote, choisir_bloc_h2h, prix_reference,
-                                  avertissement_hors_reference)
+                                  avertissement_hors_reference,
+                                  retirer_temps_reglementaire)
 
 _budget_arme = GLOBAL_TIMEOUT      # renseigné par _arm_global_timeout, pour le message
 
@@ -1080,6 +1082,21 @@ def _enrich_from_exchange(items: list, prices: dict, log) -> int:
         if not (bf and bf.get("1", 0) > 1.01 and bf.get("2", 0) > 1.01):
             continue
 
+        # Hors football, un exchange qui cote le NUL publie un 1X2 de TEMPS
+        # RÉGLEMENTAIRE (Smarkets `WINNER_3_WAY` sur le hockey européen), pas
+        # la moneyline prolongation comprise que cote le book soft. Le poser
+        # en prix sharp faisait déviguer deux issues sur trois : 1,70 / 4,80
+        # donnait 73,9 % au favori au lieu de ~70 (signal 10604, 2026-09-30).
+        # Ni bouche-trou ni contre-expertise : ses totaux et handicaps sont
+        # de la même famille de marchés. Sport inconnu → règle muette.
+        sport = (m.get("sport") or "").lower()
+        if sport and sport != "soccer" and _nul_cote(bf):
+            log.info("1X2 RÉGL. | %s — %s cote le nul (@ %.2f) hors football : prix de "
+                     "temps réglementaire, pas une moneyline — exchange ignoré",
+                     m.get("match", "?"), bf.get("_source", "exchange"),
+                     float(bf.get("X") or 0))
+            continue
+
         pin = m.get("odds_pinnacle") or {}
         a_un_sharp = (pin.get("1", 0) > 1.01 and pin.get("2", 0) > 1.01
                       and not m.get("_estimated"))
@@ -1244,20 +1261,39 @@ def _settlement_affame(sb) -> bool:
         log.debug("lecture settlement_starved_at: %s", e)
         return False
 
+# Âge au-delà duquel un signal actif SANS coup d'envoi lisible est purgé.
+_PURGE_AGE_SANS_DATE_H = 48
+
+
+def _perime(sig: dict, now: datetime, heures_match: int) -> bool:
+    """Ce signal ACTIF doit-il être archivé (`expired`) puis purgé ? Pur.
+
+    UNE horloge par signal, jamais deux :
+      · coup d'envoi lisible → `heures_match` après LUI (48 h, 96 h en
+        famine de settlement) ;
+      · sinon → `_PURGE_AGE_SANS_DATE_H` après l'émission.
+
+    Jusqu'au 2026-10-01 la purge appliquait les DEUX à tout signal, et la
+    règle d'âge (« >48h old », comptée depuis l'émission) gagnait toujours
+    sur un signal émis tôt. Depuis que la zone jouable va jusqu'à T-24 h
+    (2026-09-22), elle coupait le règlement ~24 h après le coup d'envoi —
+    sous les 36 h de `audit_engine.EXPIRE_AFTER_H` — et ignorait la famine,
+    qui ne doublait que la fenêtre du coup d'envoi. Vécu : signal 10547
+    (WTA Pékin, émis le 29/09 à 11:21, match reporté au 01/10), expiré à
+    12:31 alors qu'ESPN publiait le score depuis 11:00 et que l'audit
+    suivant l'aurait réglé. Voir INCIDENTS.md « La purge d'âge expirait un
+    signal que l'audit allait régler »."""
+    coup = _coup_d_envoi(sig.get("match_time")) if sig.get("match_time") else None
+    if coup is not None:
+        return now - coup > timedelta(hours=heures_match)
+    emis = _coup_d_envoi(sig.get("created_at")) if sig.get("created_at") else None
+    return emis is not None and now - emis > timedelta(hours=_PURGE_AGE_SANS_DATE_H)
+
+
 def _purge_old_signals(sb):
     """Delete stale signals. IMPROVED: batched operations + better logging."""
-    cutoff_48h = (datetime.now(timezone.utc) - timedelta(hours=48)).isoformat()
-
-    # ── Archive active signals >48h before purging (preserve ledger history) ──
-    try:
-        stale = (sb.table("signals")
-                 .select("*")
-                 .eq("status", "active")
-                 .lt("created_at", cutoff_48h)
-                 .execute())
-        _archive_before_purge(sb, stale.data or [])
-    except Exception as e:
-        log.debug("fetch stale for archive: %s", e)
+    maintenant = datetime.now(timezone.utc)
+    cutoff_48h = (maintenant - timedelta(hours=_PURGE_AGE_SANS_DATE_H)).isoformat()
 
     # ── Past-match purge — scoped to status=active AND a real grace window ──
     # BUGFIX #1 (earlier): this used to be `.lt("match_time", now_iso)` with
@@ -1295,16 +1331,41 @@ def _purge_old_signals(sb):
     # n'est plus retrouvable de toute façon et laisser gonfler la table
     # créerait une seconde panne pour en éviter une première.
     _heures_purge = 96 if _settlement_affame(sb) else 48
-    purge_match_cutoff = (datetime.now(timezone.utc) - timedelta(hours=_heures_purge)).isoformat()
+    # Candidats : actifs émis depuis plus de 48 h. C'est un sur-ensemble de
+    # tout ce que `_perime` peut retenir — un coup d'envoi vieux de 48 h ou
+    # plus appartient à un signal émis avant lui (garde « MATCH PASSÉ » de
+    # `_emit`). Le tri se fait en Python, par signal, puis on archive et on
+    # supprime EXACTEMENT les mêmes lignes : avant le 2026-10-01 l'archivage
+    # et les deux suppressions suivaient trois filtres différents.
     try:
-        res = sb.table("signals").delete().eq("status", "active") \
-                .lt("match_time", purge_match_cutoff).execute()
-        n = len(res.data or []) if res is not None else 0
-        if n:
-            log.info("PURGE | %d signal(s) actifs retirés — coup d'envoi > %dh",
-                     n, _heures_purge)
+        candidats = (sb.table("signals")
+                     .select("*")
+                     .eq("status", "active")
+                     .lt("created_at", cutoff_48h)
+                     .execute()).data or []
     except Exception as e:
-        log.debug("Supabase purge (past matches, active only): %s", str(e)[:60])
+        log.debug("fetch stale for archive: %s", e)
+        candidats = []
+    perimes = [s for s in candidats if _perime(s, maintenant, _heures_purge)]
+    if perimes:
+        _archive_before_purge(sb, perimes)
+        try:
+            res = (sb.table("signals").delete().eq("status", "active")
+                   .in_("id", [s["id"] for s in perimes]).execute())
+            n = len(res.data or []) if res is not None else 0
+            if n:
+                dates = sum(1 for s in perimes
+                            if s.get("match_time") and _coup_d_envoi(s.get("match_time")))
+                log.info("PURGE | %d signal(s) actifs retirés — %d coup d'envoi > %dh, "
+                         "%d sans date émis > %dh", n, dates, _heures_purge,
+                         len(perimes) - dates, _PURGE_AGE_SANS_DATE_H)
+        except Exception as e:
+            log.debug("Supabase purge (périmés, active only): %s", str(e)[:60])
+    gardes = len(candidats) - len(perimes)
+    if gardes:
+        log.info("PURGE | %d signal(s) émis depuis plus de %dh GARDÉS actifs — coup d'envoi "
+                 "à moins de %dh, l'audit peut encore les régler",
+                 gardes, _PURGE_AGE_SANS_DATE_H, _heures_purge)
 
     # ── Purge Rules (more efficient than 13 individual calls) ──────────
     # active_only=True: these are data-quality gates meant to discard bad
@@ -1317,9 +1378,10 @@ def _purge_old_signals(sb):
     # (La règle `status=pending` a été retirée le 2026-09-02 : rien dans le
     # dépôt n'écrit jamais ce statut — seul un état d'API externe porte ce
     # nom, core/odds_api_io.py. Règle morte depuis sa création.)
+    # (La règle d'âge « >48h old » a été retirée le 2026-10-01 : elle vit
+    # dans `_perime`, une horloge par signal — voir sa docstring.)
     purge_rules = [
-        ("lt",  "created_at", cutoff_48h, ">48h old",                           True),
-        ("gt",  "edge_pct", 15.0,                                        "edge > 15% (hard cap)",           True),
+        ("gt",  "edge_pct", 15.0,                                       "edge > 15% (hard cap)",           True),
         ("lte", "edge_pct", _PURGE_EDGE_FLOOR,                          f"edge <= {_PURGE_EDGE_FLOOR}% (bruit)", True),
         ("lte", "sharp_prob", 0.0,                                       "sharp_prob <= 0",                 True),
         ("is_", "market", "null",                                        "null market",                      True),
@@ -1677,6 +1739,22 @@ def _process_h2h(m, name, sport, league, home, away, emoji, signals, sb, now, lo
     # dont le prix FINAL exécutable est le meilleur — jamais un maximum par
     # issue, un DNB synthétique engage deux jambes chez le même book.
     par_book = m.get("h2h_par_book") or {}
+    if sport != "soccer":
+        # Un nul coté hors football = 1X2 de temps réglementaire, un AUTRE
+        # pari que la moneyline (core.math_engine.nul_cote). Côté soft le bloc
+        # ne donne aucun prix exécutable ; côté sharp la probabilité serait
+        # déviguée sur deux issues de trois. Loggé : un refus muet est la
+        # panne n°1 du dépôt.
+        regl = sorted(b for b, bloc in (par_book or {"book ?": m.get("odds_1xbet")}).items()
+                      if _nul_cote(bloc))
+        if regl:
+            log.info("1X2 RÉGL. | %s %s h2h — %s cote le nul : 1X2 de temps réglementaire, "
+                     "pas une moneyline — bloc écarté", emoji, name, "/".join(regl))
+        if _nul_cote(m.get("odds_pinnacle")):
+            log.info("1X2 RÉGL. | %s %s h2h — prix sharp à trois issues (temps "
+                     "réglementaire) : non comparable à une moneyline, pari non émis",
+                     emoji, name)
+            return
     if par_book:
         soft_book, bloc_h2h, executable_price, soft_fav = choisir_bloc_h2h(par_book, sport, home, away)
         if not bloc_h2h:
@@ -1739,6 +1817,8 @@ def _process_h2h(m, name, sport, league, home, away, emoji, signals, sb, now, lo
         for src_key, src_name in (("odds_circa", "circa"), ("odds_cris", "cris"),
                                   ("odds_exchange", "exchange")):
             so = m.get(src_key) or {}
+            if _nul_cote(so):
+                continue                 # 1X2 réglementaire : hors consensus
             sp_f = float(so.get(fav_key, 0) or 0)
             sp_o = float(so.get(opp_key, 0) or 0)
             if sp_f > 1.01:
@@ -2155,11 +2235,27 @@ def _meme_ligne(soft: dict, sharp: dict, marche: str, nom: str, emoji: str,
     return ligne_sharp
 
 
+def _sans_temps_reglementaire(bloc: dict, marche: str, sport: str, name: str, emoji: str, log):
+    """Le marché soft sans les prix qu'un book règle sur le TEMPS RÉGLEMENTAIRE
+    quand le sharp compte la prolongation (core.execution_books, 2026-10-01).
+    None s'il ne reste rien de comparable. Le moteur ne nomme aucun book : la
+    table vit dans execution_books. Chaque retrait est loggé."""
+    filtre, retires = retirer_temps_reglementaire(bloc, marche, sport)
+    if retires:
+        log.info("TEMPS RÉGL. | %s %s %s — %s règle ce sport sur le temps réglementaire, "
+                 "le sharp compte la prolongation : deux paris différents, %s",
+                 emoji, name, marche, "/".join(retires),
+                 "ses prix sont écartés" if filtre else "plus aucun prix comparable")
+    return filtre
+
+
 def _process_totals(m, name, sport, league, emoji, signals, sb, now, log, min_edge=None):
     """Over/Under market for all sports."""
     prob_min = SHARP_PROB_BY_MARKET["totals"]
-    xt = m["totals_1xbet"]
+    xt = _sans_temps_reglementaire(m["totals_1xbet"], "totals", sport, name, emoji, log)
     pt = m["totals_pinnacle"]
+    if not xt:
+        return
 
     # Les deux books doivent coter LE MÊME total — voir `_meme_ligne`. On
     # cherche d'abord la ligne commune dans leurs échelles respectives.
@@ -2243,8 +2339,10 @@ def _process_totals(m, name, sport, league, emoji, signals, sb, now, log, min_ed
 def _process_spreads(m, name, sport, league, home, away, emoji, signals, sb, now, log, min_edge=None):
     """Spread/Handicap market for NBA + Soccer."""
     prob_min = SHARP_PROB_BY_MARKET["spreads"]
-    xs = m["spreads_1xbet"]
+    xs = _sans_temps_reglementaire(m["spreads_1xbet"], "spreads", sport, name, emoji, log)
     ps = m["spreads_pinnacle"]
+    if not xs:
+        return
 
     # Les deux books doivent coter LE MÊME handicap, SIGNE COMPRIS — voir
     # `_meme_ligne`. Le libellé du signal reprend cette ligne unique : quand
@@ -2358,7 +2456,16 @@ def _reglable(m: dict, fixtures_par_sport: dict) -> bool:
     events = fixtures_par_sport.get(sport)
     if not events:                       # None (pas de source) ou [] (ESPN muet)
         return False
-    return _fixture_connue(m.get("match") or "", events)
+    # Football : UN camp suffit (ESPN écrit « FC Cologne », LiveScore règle ce
+    # qu'ESPN nomme autrement). Hors football, ESPN est la voie de règlement
+    # et son scoreboard ne liste qu'UNE ligue par sport : un seul camp
+    # apparié y est un HOMONYME, pas une couverture. Mesuré le 2026-10-01 :
+    # « HC Slavia Prague vs HC Havirov Panthers » (2e division tchèque) admis
+    # grâce aux Florida Panthers, « Mora IK vs Nybro Vikings IF » de même —
+    # signaux jamais réglables, audit stérile. Rejeu sur le slate du jour :
+    # hockey 8/8, NFL/NCAAF 3/3 conservés avec les deux camps exigés.
+    return _fixture_connue(m.get("match") or "", events,
+                           min_sides=1 if sport == "soccer" else 2)
 
 
 # NHL : saison régulière seulement (décision opérateur, 2026-09-30).

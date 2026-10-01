@@ -278,6 +278,97 @@ empirique et tout backtest qui les ignorerait aurait un biais de survie.
 Une source qui « répond » ne porte pas forcément un prix, et une source qui
 échoue ne le fait presque jamais bruyamment.
 
+### 1xbet cote le hockey en temps réglementaire (2026-10-01)
+
+**Symptôme.** Rien à l'écran : des signaux de hockey sortaient, bien formés,
+avec des edges de +5 à +12 %. Trouvé en relisant un log de scan pendant un
+bilan de santé : CHAQUE match NHL portait une ligne « OUTSIDER … EV +25 % »
+et une moneyline « DISCARD — EV 23 % ». Un edge identique sur huit matchs
+n'est pas un marché, c'est une erreur de comparaison.
+
+**Cause.** Trois organes comparaient un pari de 60 minutes à un pari
+prolongation comprise, chacun en silence.
+
+1. *Moneyline soft.* OddsAPI rend pour 1xbet, sur la NHL, un 1X2 de temps
+   réglementaire sous la clé `h2h`. `core/math_engine.to_binary` et
+   `executable_price` lisaient « 1 » et « 2 » hors football sans regarder le
+   nul. Pinnacle, lui, cote la moneyline à deux issues.
+2. *Totaux soft.* Chez 1xbet un pari de hockey se règle sur les 60 minutes,
+   sauf marché libellé « Including Overtime » (règlement du book). Le total
+   n'a aucun marqueur dans le flux : un « Over 6.5 » 1xbet perd sur un 3-3
+   que Pinnacle compte 4-3. `run_engine._process_totals` les comparait à
+   ligne égale, comme si c'était le même pari.
+3. *Prix sharp.* Smarkets publie `WINNER_3_WAY` sur le hockey européen.
+   `_enrich_from_exchange` le posait en `odds_pinnacle`, et la branche hors
+   football de `_process_h2h` déviguait « 1 » et « 2 » en ignorant « X ».
+
+Et un quatrième, qui a laissé passer le match : `run_engine._reglable`
+appelait `fixture_connue` avec UN camp suffisant. Hors football le
+scoreboard ESPN ne liste qu'une ligue par sport ; un seul nom apparié y est
+un homonyme.
+
+MESURÉ le 2026-10-01 :
+- `meta.cache_soft_slate` (scan de 11:11, run 36853765904) : 1xbet sur
+  Columbus–Buffalo = `{"1": 2.51, "X": 4.26, "2": 2.52}`, Pinnacle
+  `{"1": 1.93, "X": 0.0, "2": 1.95}`. Les 8 matchs NHL du slate portaient un
+  nul côté 1xbet ; aucun autre sport hors football n'en portait.
+- Totaux : les 4 signaux NHL totals émis du 29/09 au 01/10 (10534, 10565,
+  10571, 10632) étaient TOUS des Over 1xbet, à +7,6 / +8,0 / +9,1 / +12,0 %.
+  Au scan de 09:11 (run 36841055830), Nashville–Minnesota Under 6.5 sortait
+  à −14,9 % chez 1xbet et −3,9 % chez Bet365, à la même ligne.
+- Sharp : signal 10604, HC Slavia Prague vs HC Havirov Panthers, « 💹
+  smarkets enrichi (1.70 / 4.80) » (run 36676953328) → proba 73,9 %, edge
+  +4,87 % sur Bet365 à 1,42. 0,588 / (0,588 + 0,208) = 0,739 : le nul a
+  disparu du dénominateur. `ops.py chaine hockey` le même jour : Smarkets à
+  2,03 / 2,01 sur Ambri–Langnau, somme des deux probabilités 0,99.
+- Réglable : `fixture_connue("HC Slavia Prague vs HC Havirov Panthers")`
+  rendait True à un camp (« Florida Panthers »), False à deux. Même chose
+  pour « Mora IK vs Nybro Vikings IF » (signal 10567, 29/09). Rejeu sur le
+  slate du jour avec deux camps exigés hors football : hockey 8/8, NFL et
+  NCAAF 3/3 conservés, 1 tennis sur 16 perdu (« Yue Yuan vs Mirra
+  Andreeva », nom écrit dans l'autre ordre chez ESPN — non réglable de
+  toute façon).
+
+**Correctif.**
+- `core/math_engine.nul_cote` : hors football, un bloc qui cote le nul ne
+  donne aucun prix exécutable. `choisir_bloc_h2h` passe donc au book
+  suivant ; le refus est loggé `1X2 RÉGL.` ;
+- `core/odds_api._parse_event` ne compte plus ce bloc comme book
+  d'exécution : la mesure `noter_execution` tombe à 0 et la ligue passe
+  d'elle-même en achat différé (entrée ci-dessous), son Pinnacle servant
+  de référence aux matchs qu'odds-api.io rend exécutables ;
+- `_enrich_from_exchange` ignore un exchange à trois issues hors football
+  (ni bouche-trou, ni contre-expertise, ni ses totaux) ; `_process_h2h`
+  refuse un `odds_pinnacle` à trois issues et le sort du consensus ;
+- `core/execution_books.TEMPS_REGLEMENTAIRE` = `{"1xbet": {"hockey"}}` :
+  `retirer_temps_reglementaire` ôte ces prix des totaux et des handicaps
+  avant toute comparaison, loggé `TEMPS RÉGL.`. Les handicaps à |ligne| ≥
+  1,5 restent : une prolongation se gagne d'un but, l'écart final tombe du
+  même côté de la ligne que le nul réglementaire ;
+- `_reglable` : deux camps exigés hors football, un seul en football.
+
+**Ce qui n'a PAS été fait.** Les lignes déjà réglées (10534, 10565, 10567)
+restent au ledger : leur ISSUE est juste dans les deux lectures
+(Edmonton–Vancouver 5-5 à la 60e, Toronto–Montréal sans prolongation).
+C'est leur edge d'entrée qui est faux — à écarter de toute analyse d'edge
+du hockey. Les deux signaux encore ACTIFS (10632, 10604) sont archivés par
+`sql/migrate_v10_20_signaux_temps_reglementaire.sql`. Aucune conversion
+« 60 minutes → prolongation comprise » n'a été tentée : elle demanderait
+la probabilité du nul réglementaire, que personne ne nous vend.
+
+⚠️ Ce n'est pas un choix de périmètre : c'est le refus de comparer deux
+paris différents, la règle de `_meme_ligne`. Ne pas « rouvrir » 1xbet sur
+le hockey parce que le volume baisse — Bet365 continue de servir la NHL.
+⚠️ Une entrée de `TEMPS_REGLEMENTAIRE` s'ajoute sur preuve (règle du book
+ET mesure) et se retire le jour où la source rend le marché « prolongation
+comprise » de ce book. Le basket et le football américain de 1xbet ne
+portaient aucun nul au slate du jour et leurs EV restent ordinaires : ils
+n'y sont pas, faute de preuve.
+⛔ Un edge identique sur tous les matchs d'une ligue se lit comme une
+erreur de marché avant de se lire comme une opportunité.
+Gardien : `tests/test_temps_reglementaire.py` (dont la contre-épreuve
+`test_sans_la_regle_ce_meme_bloc_sortait`).
+
 ### Un quart des crédits OddsAPI achetait des ligues sans un match exploitable : l'achat différé (2026-09-29)
 
 **Symptôme.** Point 3 de l'audit du 2026-09-29 : NFL et NCAAF payées à
@@ -1551,6 +1642,47 @@ endpoint — gardé par `tests/test_odds500.py::TestRobotsTxt`.
 
 Un règlement manqué ne retarde pas l'apprentissage : il DÉTRUIT
 l'échantillon, parce qu'un signal non réglé finit purgé en `expired`.
+
+### La purge d'âge expirait un signal que l'audit allait régler (2026-10-01)
+
+Symptôme : un audit en échec « RUN STÉRILE — 2 règlement(s) éligible(s),
+AUCUN abouti » (run 36849193517, 10:26 UTC), puis, deux heures plus tard,
+l'un des deux signaux disparu de `signals` et posé au ledger en `expired`
+— alors que son score était publié.
+
+Cause : `run_engine._purge_old_signals` appliquait DEUX délais à tout
+signal actif. Le coup d'envoi (48 h, 96 h quand `settlement_starved_at` est
+frais) et, dans la table `purge_rules`, l'âge depuis l'ÉMISSION (« >48h
+old », sur `created_at`). Le second gagnait toujours sur un signal émis
+tôt, et il ignorait la famine : seule la fenêtre du coup d'envoi était
+doublée. Depuis que la zone jouable va jusqu'à T-24 h (2026-09-22), un
+signal émis à T-24 h était donc expiré ~24 h après son coup d'envoi, sous
+les 36 h de `audit_engine.EXPIRE_AFTER_H` — la purge coupait la fenêtre de
+relance de l'audit sans que rien ne le dise. L'archivage, lui, suivait un
+troisième filtre.
+
+MESURÉ le 2026-10-01 : signal 10547 (WTA Pékin, Tararudee–Osorio, Over
+21.5), émis le 29/09 à 11:21 pour un match annoncé le 30/09 à 02:00 et
+joué le 01/10 (ESPN : `STATUS_FINAL`, 6-3 6-3, daté 10:50Z). Reprice de
+12:31 : « PURGE | famine de settlement signalée le 2026-10-01T10:27 —
+fenêtre portée à 96 h pour ne pas détruire d'échantillon », suivi, deux
+lignes plus bas, de « PURGE | 1 signal(s) actifs retirés — >48h old ».
+`score_sources.result_from_espn` rejoué à la main sur ce signal le règle
+(0-1, décompte 6-12).
+
+Fait : `run_engine._perime` — UNE horloge par signal. Coup d'envoi lisible
+→ 48 h / 96 h après lui ; sinon 48 h après l'émission. La purge lit les
+actifs émis depuis plus de 48 h, trie en Python, archive et supprime
+exactement les mêmes lignes (`in_("id", …)`, toujours scopé
+`status='active'`). La règle `created_at` est sortie de `purge_rules`, et
+un log dit combien de signaux anciens sont GARDÉS.
+Pas fait : la ligne 10547 n'a pas été réécrite à la main — `expired`
+n'est pas terminal, `core/relance_expires.py` la règle.
+
+⚠️ Ne pas remettre de règle de purge sur `created_at` seul « pour le
+ménage » : un signal daté appartient à l'audit jusqu'à son terme.
+Gardien : `tests/test_purge_horloge.py` (le cas 10547, la famine, et
+`TestLaRegleDAgeNEstPasRevenue`).
 
 ### Le CLV oracle était retiré, son PRIX nourrissait encore la dérive (2026-09-29)
 
