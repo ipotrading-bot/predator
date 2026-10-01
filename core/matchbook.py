@@ -236,7 +236,13 @@ def _sans_prive(row: dict) -> dict:
 # « Home Team Total Goals », « Away Team Total Goals » — et les runners
 # s'appellent tous « OVER 2.5 » / « UNDER 2.5 ».
 _SOUS_MARCHE = ("half", "1st", "2nd", "team", "quarter", "period",
-                "corner", "card", "booking")
+                "corner", "card", "booking",
+                # Paris de JOUEURS du football américain (2026-10-01).
+                "yards", "passing", "rushing", "receiving")
+# Un marché propre à UN participant s'écrit « <joueur> - <statistique> ». Le
+# séparateur est structurel : il attrape les statistiques qu'aucune liste de
+# mots n'a encore vues (touchdowns, réceptions, rebonds…).
+_SEPARATEUR_DE_PARTICIPANT = " - "
 
 
 def _est_sous_marche(market: dict) -> bool:
@@ -252,9 +258,21 @@ def _est_sous_marche(market: dict) -> bool:
     mi-temps chez l'exchange. Un edge à 80 % sur une ligne « alignée » —
     exactement l'artefact d'A6 (deux paris différents comparés), par une
     autre porte.
+
+    Même artefact le 2026-10-01 16:16, par les paris de JOUEURS : « Cleveland
+    Browns vs Pittsburgh Steelers | NFL Under 28.5 — EV 125.00 % » (refusé
+    par MAX_EDGE). Le match NFL portait 17 marchés de type « total » nommés
+    « Freiermuth, Pat - Total Receiving Yards » (28,5), « Watson, Deshaun -
+    Total Rushing Yards » (29,5), « Rodgers, Aaron - Total Passing Yards »
+    (211,5)… Aucun des qualificatifs relevés en août n'y figurait : l'échelle
+    du total de POINTS contenait des yards, et le barreau le plus équilibré —
+    donc la « ligne principale » — était un pari de joueur. Le vrai total
+    (37,5) n'était plus comparé. Relevé du même jour sur cinq sports : le
+    marché du match entier s'appelle exactement « Total » / « Handicap » ;
+    seuls les marchés à séparateur « <joueur> - … » passaient à travers.
     """
     name = str(market.get("name", "")).lower()
-    return any(q in name for q in _SOUS_MARCHE)
+    return _SEPARATEUR_DE_PARTICIPANT in name or any(q in name for q in _SOUS_MARCHE)
 
 
 def _totals_odds(event: dict) -> dict | None:

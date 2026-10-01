@@ -395,3 +395,49 @@ class TestLesSousMarchesNeSontPasLeMatchEntier:
     @pytest.mark.parametrize("nom", ["Total", "Handicap", "Total Goals", "Total Points"])
     def test_le_marche_du_match_entier_ne_lest_pas(self, nom):
         assert not mb._est_sous_marche({"name": nom})
+
+
+class TestLesParisDeJoueursNeSontPasLeTotalDuMatch:
+    """« Cleveland Browns vs Pittsburgh Steelers | NFL Under 28.5 — EV
+    125.00 % » (scan du 2026-10-01 16:16, refusé par MAX_EDGE) : Matchbook
+    range les paris de joueurs sous le type « total ». Noms RELEVÉS sur l'API
+    ce jour-là — 17 marchés sur ce seul match."""
+
+    PARIS = ["Freiermuth, Pat - Total Receiving Yards", "Watson, Deshaun - Total Rushing Yards",
+             "Rodgers, Aaron - Total Passing Yards", "Harold Fannin Jr. - Total Receiving Yards",
+             "Quinshon Judkins - Total Rushing Yards", "Pittman Jr., M - Total Receiving Yards"]
+
+    @pytest.mark.parametrize("nom", PARIS)
+    def test_un_pari_de_joueur_est_un_sous_marche(self, nom):
+        assert mb._est_sous_marche({"name": nom})
+
+    @pytest.mark.parametrize("nom", ["Mahomes, Patrick - Total Touchdowns",
+                                     "Jokic, Nikola - Total Rebounds", "Total Rushing Yards"])
+    def test_une_statistique_jamais_vue_est_ecartee_aussi(self, nom):
+        """Le séparateur « <joueur> - » est structurel ; « yards » couvre le
+        marché d'équipe sans joueur."""
+        assert mb._est_sous_marche({"name": nom})
+
+    def _event(self):
+        return _rich_event("Pittsburgh Steelers at Cleveland Browns", [
+            _ML,
+            _named("total", "Total", [("OVER 37.5", 1.95, 1.99), ("UNDER 37.5", 2.02, 2.06)]),
+            _named("total", "Freiermuth, Pat - Total Receiving Yards",
+                   [("OVER 28.5", 2.00, 2.03), ("UNDER 28.5", 1.99, 2.01)]),
+            _named("total", "Watson, Deshaun - Total Rushing Yards",
+                   [("OVER 29.5", 1.98, 2.02), ("UNDER 29.5", 1.98, 2.02)]),
+            _named("total", "Rodgers, Aaron - Total Passing Yards",
+                   [("OVER 211.5", 1.9, 1.95), ("UNDER 211.5", 2.05, 2.1)]),
+        ])
+
+    def test_l_echelle_ne_garde_que_le_total_de_points(self):
+        tot = mb._totals_odds(self._event())
+        assert [r["point"] for r in tot["ladder"]] == [37.5]
+        assert tot["point"] == 37.5, "la ligne principale n'est plus un pari de joueur"
+
+    def test_sans_le_filtre_le_pari_de_joueur_devenait_la_ligne_principale(self, monkeypatch):
+        """Contre-épreuve : c'est bien ce filtre qui protège."""
+        monkeypatch.setattr(mb, "_est_sous_marche", lambda m: False)
+        tot = mb._totals_odds(self._event())
+        assert tot["point"] in (28.5, 29.5)
+        assert len(tot["ladder"]) == 4

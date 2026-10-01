@@ -278,6 +278,40 @@ empirique et tout backtest qui les ignorerait aurait un biais de survie.
 Une source qui « répond » ne porte pas forcément un prix, et une source qui
 échoue ne le fait presque jamais bruyamment.
 
+### Le total de points de la NFL était comparé à des yards de réception (2026-10-01)
+
+**Symptôme.** Scan de 16:11 (run 36890056145) : « ALIGNE | Cleveland Browns
+vs Pittsburgh Steelers totals — soft +38.50 / sharp +28.50 », puis « NFL
+Over 28.5 — EV −41.50 % » et « NFL Under 28.5 — EV 125.00 % ». Un total
+sharp à 28,5 sur un match dont la ligne est à 38.
+
+**Cause.** `core/matchbook._est_sous_marche` écarte les sous-marchés par des
+mots relevés sur le football en août (« half », « team », « corner »…).
+Matchbook range aussi les paris de JOUEURS sous le type « total », et leur
+nom ne porte aucun de ces mots.
+
+MESURÉ le 2026-10-01 sur l'API : le match NFL portait 17 marchés de type
+« total » nommés « Freiermuth, Pat - Total Receiving Yards » (28,5),
+« Watson, Deshaun - Total Rushing Yards » (29,5), « Rodgers, Aaron - Total
+Passing Yards » (211,5)… Ils entraient dans l'échelle du total de points,
+et le plus équilibré devenait la ligne principale. Relevé sur cinq sports
+(football américain, basket, hockey, tennis, football) : le marché du match
+entier s'appelle exactement « Total » / « Handicap » ; seuls ces paris de
+joueurs passaient à travers, et seulement au football américain.
+
+Fait : un nom à séparateur « <participant> - … » est un sous-marché, et
+« yards », « passing », « rushing », « receiving » rejoignent les
+qualificatifs. Vérifié en direct : total principal 37,5, échelle 36,5 à
+41,5. Aucun signal faux n'est sorti (0 signal NFL ou NCAAF en base) :
+MAX_EDGE a refusé les deux côtés. Mais le vrai total n'était pas évalué,
+et un pari de joueur dont la ligne tombe près du total du match (un
+receveur à 37,5 yards) aurait donné un edge de quelques points, sous le
+plafond.
+⚠️ Ne s'observe que lorsque Matchbook est la référence du total : le
+Pinnacle acheté à OddsAPI passe avant lui, et ce jour-là son achat différé
+avait été refusé par le plafond du scan de fond.
+Gardien : `tests/test_matchbook.py::TestLesParisDeJoueursNeSontPasLeTotalDuMatch`.
+
 ### Le pool n'était pas la contrainte : sept ligues en essai, et ce que le rejeu a montré (2026-10-01)
 
 **Question de l'opérateur.** « Pourquoi une utilisation d'OddsAPI si
