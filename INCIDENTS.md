@@ -278,6 +278,58 @@ empirique et tout backtest qui les ignorerait aurait un biais de survie.
 Une source qui « répond » ne porte pas forcément un prix, et une source qui
 échoue ne le fait presque jamais bruyamment.
 
+### Le pool n'était pas la contrainte : sept ligues en essai, et ce que le rejeu a montré (2026-10-01)
+
+**Question de l'opérateur.** « Pourquoi une utilisation d'OddsAPI si
+faible ? Ces ligues peuvent-elles tenir dans le quota quotidien sans
+dépassement ? Si oui, ajoute-les. »
+
+MESURÉ le 2026-10-01 :
+- `meta.oddsapi_demande_<jour>` (engagés / refusés au plafond), du 22 au
+  30/09 : 23/0, 51/0, 88/18, 112/66, 155/38, 132/3, 75/0, 88/2, 78/0 —
+  environ 90 crédits engagés par jour pour ~145 d'allocation (9 clés, 4 500
+  par mois). Un tiers du pool part à la recharge sans avoir servi ;
+- `ops.py ligues soccer 14` (0 crédit) : 25 ligues hors scan avec matchs,
+  ~82 crédits/jour pour toutes ; `ops.py books` (1 crédit chacune) sur les
+  huit principales : Pinnacle ET 1xbet sur Championship 12/12, Serie B
+  10/10, Eredivisie, Belgique, 2. Bundesliga, Ligue 2 9/9, Turquie 8/9 ;
+  Portugal 0/9 (pas de 1xbet) ;
+- rejeu de la VRAIE politique (`SpendPolicy`, plafond par créneau, poids par
+  jour, ordre des familles) sur les coups d'envoi réels du 2 au 15/10 :
+
+  | | sans les sept | avec les sept |
+  |---|---|---|
+  | crédits engagés sur 14 jours | 1 012 | 1 132 |
+  | dont ligues déjà scannées, en fenêtre favorable | 566 | 566 |
+  | dont ligues déjà scannées, en scan de fond | 446 | 407 |
+  | dont les sept | — | 159 |
+  | pire jour, part de l'allocation engagée | 63 % | 82 % |
+
+**Ce que ça dit.** Le quota du jour n'est jamais atteint, et il ne peut pas
+être dépassé (allocation = pool ÷ jours restants). Ce qui refuse des achats
+bien avant lui, c'est le plafond du SCAN DE FOND : `BACKGROUND_SHARE` (0,5)
+se compare à la dépense TOTALE du jour, donc dès que les fenêtres
+favorables ont engagé la moitié du plafond horaire, plus aucun achat de
+fond ne passe (366 crédits refusés sur 14 jours dans le rejeu, 24 le 01/10
+à 13:16 pour 50 engagés). C'est pour cela que les sept ligues coûtent 39
+crédits de fond aux anciennes : pas par manque de pool.
+
+**Fait.** Les sept ligues entrent en essai (`LIGUES_EN_ESSAI`, dernière
+famille, fenêtres dérivées des coups d'envoi relevés, ~22,7 crédits/jour
+les semaines de matchs, retrait le 2026-11-15). Aucun achat en fenêtre
+favorable d'une ligue déjà scannée n'est perdu dans le rejeu.
+**Pas fait.** `BACKGROUND_SHARE` n'a pas bougé. Le rejeu à 0,75 puis 1,0
+rend 13 puis 20 crédits/jour de plus, mais à 1,0 des achats EN FENÊTRE des
+ligues mesurées commencent à être refusés (3 crédits sans les sept, 24
+avec) : le réglage est un arbitrage, donc une décision opérateur (créneaux
+du 2026-09-11).
+⚠️ Le rejeu a retiré les ligues en achat différé (NFL, NCAAF, MMA, ATP,
+NHL) et ignore l'exemption « closing line imminente » : il sous-estime un
+peu la dépense des ligues déjà scannées. À recaler sur
+`oddsapi_demande_<jour>` après la journée du 9 au 12/10.
+Gardien : `tests/test_ordre_de_depense.py::TestSecondLotDu1erOctobre` et
+`::TestLiguesEnEssai`.
+
 ### Le tennis du circuit principal n'était jamais lu chez odds-api.io (2026-10-01)
 
 **Symptôme.** Depuis l'élargissement aux 500 (2026-09-30), l'ATP de Tokyo et

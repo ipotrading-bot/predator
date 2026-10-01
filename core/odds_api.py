@@ -159,6 +159,20 @@ SPORT_KEYS = {
     "soccer_england_league2":                "soccer",      # D4 anglaise — samedi 14h UTC
     "soccer_spain_segunda_division":         "soccer",      # D2 espagnole — ven-lun
     "soccer_brazil_serie_b":                 "soccer",      # D2 brésilienne — soirées 19-23h UTC
+    # ── Second élargissement (2026-10-01, décision opérateur) ────────
+    # Même famille, même rang : dernières servies. MESURÉ ce jour-là : la
+    # demande réelle d'OddsAPI (`meta.oddsapi_demande_<jour>`) tournait à ~90
+    # crédits/jour pour ~145 d'allocation, soit un tiers du pool perdu à la
+    # recharge. `ops.py books` (1 crédit par ligue) : Pinnacle ET 1xbet sur
+    # 12/12, 9/9, 9/9, 8/9, 9/9, 9/9 et 10/10 de leurs matchs — le Portugal,
+    # sondé en même temps, n'a pas 1xbet (0/9) et n'entre pas.
+    "soccer_efl_champ":                      "soccer",      # D2 anglaise — sam 11h30/14h, soirs 18h45
+    "soccer_netherlands_eredivisie":         "soccer",      # Pays-Bas — ven soir, sam 14-19h, dim 10-15h
+    "soccer_belgium_first_div":              "soccer",      # Belgique — ven soir, sam 14-19h, dim 11-17h
+    "soccer_turkey_super_league":            "soccer",      # Turquie — 10h30, 13h, 16h, 17h UTC
+    "soccer_germany_bundesliga2":            "soccer",      # D2 allemande — ven 16h30, sam/dim 11h, sam 18h30
+    "soccer_france_ligue_two":               "soccer",      # D2 française — ven 18h, sam 12h, lun 18h45
+    "soccer_italy_serie_b":                  "soccer",      # D2 italienne — sam/dim 13-17h, ven 18h30
     # (boxing_boxing retirée le 2026-09-17 : aucune source de scores n'existe,
     #  donc la politique de dépense ne pouvait PAS la payer — voir le bloc
     #  RETIRÉES ci-dessous. Elle ne coûtait que des pré-vols gratuits, mais
@@ -228,6 +242,41 @@ LIGUES_EN_ESSAI: dict[str, str] = {
         "avec prix sharp, ou sous le point mort sur 30 réglés",
     "soccer_brazil_serie_b":
         "2026-09-22, ~6.9 créd/j — retrait le 2026-10-20 si < 20 % des matchs "
+        "avec prix sharp, ou sous le point mort sur 30 réglés",
+    # ── Second lot, 2026-10-01 ────────────────────────────────────────
+    # Budget MESURÉ par le rejeu de la VRAIE politique de dépense
+    # (`scan_windows.SpendPolicy`, plafond par créneau, poids par jour, ordre
+    # des familles) sur les coups d'envoi réels du 2 au 15 octobre (flux
+    # `events`, 0 crédit) : **156 crédits la semaine de matchs pour les sept,
+    # soit ~22,7/jour**. Semaine du 9 au 15/10, tout compris : 636 crédits
+    # engagés sur 1 286 alloués ; pire jour à 82 % de son allocation. Le
+    # quota ne peut pas être dépassé (allocation = pool ÷ jours restants).
+    # CE QUE ÇA COÛTE AUX AUTRES, mesuré dans le même rejeu : aucun achat en
+    # fenêtre favorable d'une ligue déjà scannée n'est perdu (566 crédits sur
+    # 566) ; leurs achats DE FOND reculent de 39 crédits sur 14 jours (−9 %),
+    # parce que le plafond du fond se compare à la dépense TOTALE du jour.
+    # Couverture de règlement : 6/6 sur les prochains matchs de chacune
+    # (`ops.py ligues soccer 14` — ESPN `soccer/all`, LiveScore en repli).
+    "soccer_efl_champ":
+        "2026-10-01, ~3.0 créd/j — retrait le 2026-11-15 si < 20 % des matchs "
+        "avec prix sharp, ou sous le point mort sur 30 réglés",
+    "soccer_netherlands_eredivisie":
+        "2026-10-01, ~3.9 créd/j — retrait le 2026-11-15 si < 20 % des matchs "
+        "avec prix sharp, ou sous le point mort sur 30 réglés",
+    "soccer_belgium_first_div":
+        "2026-10-01, ~4.3 créd/j — retrait le 2026-11-15 si < 20 % des matchs "
+        "avec prix sharp, ou sous le point mort sur 30 réglés",
+    "soccer_turkey_super_league":
+        "2026-10-01, ~4.7 créd/j — retrait le 2026-11-15 si < 20 % des matchs "
+        "avec prix sharp, ou sous le point mort sur 30 réglés",
+    "soccer_germany_bundesliga2":
+        "2026-10-01, ~2.1 créd/j — retrait le 2026-11-15 si < 20 % des matchs "
+        "avec prix sharp, ou sous le point mort sur 30 réglés",
+    "soccer_france_ligue_two":
+        "2026-10-01, ~1.7 créd/j — retrait le 2026-11-15 si < 20 % des matchs "
+        "avec prix sharp, ou sous le point mort sur 30 réglés",
+    "soccer_italy_serie_b":
+        "2026-10-01, ~3.0 créd/j — retrait le 2026-11-15 si < 20 % des matchs "
         "avec prix sharp, ou sous le point mort sur 30 réglés",
 }
 
