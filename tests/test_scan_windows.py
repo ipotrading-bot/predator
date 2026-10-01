@@ -54,10 +54,17 @@ class TestWindowsMap:
         assert is_favorable("americanfootball_nfl", _utc(2026, 9, 14, 21))   # lundi 21:03 (MNF)
         assert not is_favorable("americanfootball_nfl", _utc(2026, 9, 15, 18))  # mardi
 
-    def test_euroleague_thursday_friday_only(self):
+    def test_euroleague_du_mardi_au_vendredi(self):
+        """Calendrier officiel 2026-27 : 141 matchs sur 380 se jouent mardi ou
+        mercredi. La fenêtre ne couvrait que jeudi/vendredi (2026-10-01)."""
+        for jour in (29, 30):                                                 # mardi, mercredi
+            assert is_favorable("basketball_euroleague", _utc(2026, 9, jour, 13))
+            assert is_favorable("basketball_euroleague", _utc(2026, 9, jour, 16))
         assert is_favorable("basketball_euroleague", _utc(2026, 10, 1, 13))   # jeudi 13:03
+        assert is_favorable("basketball_euroleague", _utc(2026, 10, 2, 16))   # vendredi 16:03
         assert not is_favorable("basketball_euroleague", _utc(2026, 10, 1, 19))
         assert not is_favorable("basketball_euroleague", _utc(2026, 9, 28, 13))  # lundi
+        assert not is_favorable("basketball_euroleague", _utc(2026, 10, 3, 13))  # samedi
 
     def test_combat_sports_weekend(self):
         assert is_favorable("mma_mixed_martial_arts", _utc(2026, 8, 22, 21))   # samedi 21:03

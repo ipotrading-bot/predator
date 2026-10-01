@@ -1295,6 +1295,35 @@ def _ecart_h(a: str, b: str) -> float | None:
     return abs((ta - tb).total_seconds()) / 3600.0
 
 
+def matchs_prevol_tennis() -> dict[str, dict] | None:
+    """Les matchs de tennis des tournois RETENUS (`TENNIS_TOURNAMENTS` :
+    Chelems, 1000, 500) vus au pré-vol gratuit du dernier `fetch_odds`, au
+    format des exchanges ({« home_away » en minuscules: {home, away,
+    commence_time}}) — celui que `core.exchange_match.lookup_exchange` lit.
+
+    C'est la seule liste qui dise, sans rien écrire à la main (règle n°6),
+    QUELS matchs de tennis sont au périmètre : odds-api.io nomme ses tournois
+    par ville (« ATP - Tokyo, Japan »), OddsAPI par slug
+    (`tennis_atp_japan_open`), et seul le second est filtré par la décision
+    opérateur du 2026-09-30 (« 500 et plus, 250 exclus »).
+
+    None si aucun tournoi retenu n'a été pré-volé — Tier 1 éteint, pool mort,
+    semaine sans tournoi retenu : l'appelant garde son comportement d'avant.
+    Un dict VIDE veut dire « des tournois retenus, aucun match dans la
+    fenêtre »."""
+    cles = [k for k in _PREVOL_EVENTS if k.startswith(_TENNIS_PREFIXES)]
+    if not cles:
+        return None
+    index: dict[str, dict] = {}
+    for cle in cles:
+        for ev in _PREVOL_EVENTS[cle]:
+            h, a = str(ev.get("home_team", "")).strip(), str(ev.get("away_team", "")).strip()
+            if h and a:
+                index[f"{h.lower()}_{a.lower()}"] = {
+                    "home": h, "away": a, "commence_time": ev.get("commence_time", "")}
+    return index
+
+
 def acheter_sharp_differe(matchs_executables: list, spend_policy=None) -> int:
     """Achète le sharp des ligues DIFFÉRÉES par le dernier `fetch_odds`, et
     seulement pour leurs matchs qu'un book d'exécution cote ailleurs

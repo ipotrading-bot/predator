@@ -294,7 +294,11 @@ class TestESPN:
             ss.result_from_espn("A vs B", sport, "2026-09-05")
             ss.result_from_espn("A vs B", sport, "")           # fenêtre sans date
         assert appels
-        for url in appels:
+        # L'Euroleague ne passe pas par le scoreboard ESPN (2026-10-01) : son
+        # API officielle rend la saison entière, sans paramètre de date.
+        espn = [u for u in appels if not u.startswith(ss.EUROLEAGUE_BASE)]
+        assert espn and all("dates=" not in u for u in appels if u not in espn)
+        for url in espn:
             dates = url.split("dates=")[1].split("&")[0]
             assert dates.isdigit() and len(dates) == 8, url
 

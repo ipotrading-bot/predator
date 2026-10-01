@@ -278,6 +278,57 @@ empirique et tout backtest qui les ignorerait aurait un biais de survie.
 Une source qui « répond » ne porte pas forcément un prix, et une source qui
 échoue ne le fait presque jamais bruyamment.
 
+### Le tennis du circuit principal n'était jamais lu chez odds-api.io (2026-10-01)
+
+**Symptôme.** Depuis l'élargissement aux 500 (2026-09-30), l'ATP de Tokyo et
+de Pékin apparaît à chaque scan sur la même ligne : « DIFFÉRÉ |
+tennis_atp_japan_open : aucun de ses 4 match(s) jouable(s) n'est coté par un
+book d'exécution ailleurs — 0 crédit ». Aucun signal ATP, et aucun signal de
+tennis ne venait de cette source : les 6 de l'historique sortent tous
+d'OddsAPI (US Open, WTA de Pékin).
+
+**Cause.** OddsAPI vend ces tournois SANS book d'exécution (0/9 et 0/5
+mesurés) ; odds-api.io, lui, y porte 1xbet et Bet365. Trois défauts empilés
+dans `core/odds_api_io.py` l'empêchaient de servir :
+1. `fetch_sport` coupait le calendrier aux 60 premiers matchs PAR HEURE. Le
+   football est trié par ligue (`league_rank`) ; le tennis n'a pas de rang,
+   donc la coupe était purement chronologique ;
+2. les joueurs y sont écrits « Munar, Jaume ». `lookup_exchange` et
+   `strict_team_match` ne rapprochent pas cette forme de « Jaume Munar » ;
+3. `_markets` ne lisait que le marché nommé « Totals ». Au tennis le total
+   du match s'appelle « Totals (Games) ».
+
+MESURÉ le 2026-10-01 (`ops.py chaine tennis 30`, 13:22 UTC) : 225 matchs à
+venir, 60 lus, 46 rendus — ITF, UTR et Challengers des dix heures
+suivantes —, **0 exploitable**, pour 7 requêtes. Les 7 simples ATP (4 à
+Tokyo, 3 à Pékin) se jouaient 13 h plus tard. Lus à la main : 1xbet y cote
+la moneyline, 11 lignes de total de jeux et 10 de handicap sur chacun.
+« Chidekh, Clement vs Blanchet, Ugo » contre « Clement Chidekh vs Ugo
+Blanchet » : similarité 0,64, refusé.
+
+**Correctif.**
+- `_tennis_au_perimetre` : seuls se paient les matchs appariés (les deux
+  joueurs, candidat unique, coups d'envoi à moins de 12 h) à un match du
+  pré-vol GRATUIT d'OddsAPI pour un tournoi retenu
+  (`core.odds_api.matchs_prevol_tennis`). Le périmètre « 500 et plus, 250
+  exclus » s'applique donc au Tier 2 comme au Tier 1, sans liste de villes ;
+- `nom_tennis` remet le prénom d'abord (une seule virgule, pas de double) ;
+- « Totals (Games) » entre comme total. Ni les aces, ni le premier set, ni
+  le handicap de jeux (OddsAPI ne le sert pas au tennis).
+
+**Validé en direct le 2026-10-01** (13:34 UTC, sans écriture) : 23 matchs
+des tournois retenus pour 5 requêtes (16 WTA Pékin, 4 ATP Tokyo, 3 ATP
+Pékin), 169 écartés avant paiement ; 23 avec totaux, 22 avec un prix
+d'exchange, 21 réglables. Le moteur y aligne 11 totaux sur la ligne du
+sharp et sort deux moneylines ATP (Fils–Tiafoe, Vacherot–Tsitsipas).
+
+**Ce qui n'a PAS été fait.** Le handicap de jeux reste dehors. Sans pré-vol
+(Tier 1 éteint, pool mort), la source lit le calendrier comme avant : une
+panne n'est jamais « pas de match ».
+⚠️ Ne pas trier le tennis par libellé (« ATP - … ») : les 250 portent le
+même, et l'opérateur les a exclus. C'est le pré-vol qui dit le périmètre.
+Gardien : `tests/test_tennis_odds_api_io.py`.
+
 ### 1xbet cote le hockey en temps réglementaire (2026-10-01)
 
 **Symptôme.** Rien à l'écran : des signaux de hockey sortaient, bien formés,
@@ -1648,6 +1699,53 @@ endpoint — gardé par `tests/test_odds500.py::TestRobotsTxt`.
 
 Un règlement manqué ne retarde pas l'apprentissage : il DÉTRUIT
 l'échantillon, parce qu'un signal non réglé finit purgé en `expired`.
+
+### L'Euroleague était payée et jamais réglable : ESPN ne la liste pas (2026-10-01)
+
+Symptôme : à chaque scan qui l'achète, quatre lignes « NON RÉGLABLE | …
+(Basketball Euroleague, euroleague_basketball) — ESPN muet sur ce sport
+(panne ?), écarté ». Le log disait « panne » ; ce n'en était pas une.
+
+Cause : `score_sources._ESPN_PATHS` donnait `basketball/euroleague` à la
+ligue, et `sports_reglables()` la tenait donc pour réglable — la politique
+de dépense la payait (3 crédits par achat). Le scoreboard ESPN existe à
+cette adresse mais ne liste rien. Et la fenêtre de `scan_windows` ne
+couvrait que jeudi et vendredi.
+
+MESURÉ le 2026-10-01 : `basketball/euroleague` → HTTP 200, 0 événement sur
+cinq dates, dont le 2026-04-10 (saison passée). Calendrier officiel
+2026-27 (`api-live.euroleague.net`) : ouverture le 2026-09-24, 380 matchs
+jusqu'au 2027-04-16 ; mardi 89, mercredi 52, jeudi 128, vendredi 111 ;
+coups d'envoi de 16 h à 20 h UTC. Deux journées jouées avant la mesure,
+achetées le 30/09 à 06:11 et le 01/10 à 09:11 et 13:11 pour un retour nul.
+Vérifié aussi, parce que le hockey venait de le montrer : au basket 1xbet
+cote une moneyline à DEUX issues, à un centième de Pinnacle (1,26 / 1,27) —
+pas de piège du temps réglementaire ici.
+
+Fait : l'API officielle de la ligue règle l'Euroleague
+(`score_sources._euroleague_jour`). Elle rend la saison entière en une
+requête ; chaque match est remis sous la forme d'un événement ESPN et servi
+par `_espn_jour` sous un pseudo-chemin, pour que tout l'étage s'applique
+sans copie (deux noms stricts, candidat unique, terminé seulement). Un
+match ne règle que si l'API le dit `played` ET que les deux scores sont
+posés. Fenêtre de scan étendue du mardi au vendredi. Règle 13 : budget 60
+requêtes/jour (1 par run), retrait à la revue du 2026-11-15 si moins de 8
+signaux sur 10 sont réglés par cette voie ou si l'API refuse les runners.
+Validé en direct : 20 matchs à venir d'OddsAPI sur 20 reconnus réglables,
+trois matchs de la journée 1 réglés au bon score (84-86, 78-77, 77-83).
+Pas fait : l'Euroleague d'odds-api.io (libellé « International -
+Euroleague », sport `basketball`) reste hors périmètre — OddsAPI la sert
+déjà avec 1xbet.
+
+⚠️ Les noms : le sponsor change le nom long (« Armani Olimpia Milan » /
+« Pallacanestro Olimpia Milano »), le nom court est donc nécessaire ; mais
+« Žalgiris » s'apparie à « Paris » (ratio 0,62). `_euroleague_noms_courts`
+retire le plus court de deux noms courts qui se ressemblent, dérivé du
+calendrier lu — ne pas le remplacer par une liste de clubs.
+⚠️ Joignabilité depuis les runners GitHub NON vérifiée (mesure faite depuis
+le Codespace) : lire « score_sources[euroleague]: N match(s) lus » au
+premier audit.
+Gardien : `tests/test_euroleague_scores.py`.
 
 ### La purge d'âge expirait un signal que l'audit allait régler (2026-10-01)
 
