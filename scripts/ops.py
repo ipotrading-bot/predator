@@ -904,7 +904,7 @@ def chaine(args):
     from core import odds_api_io as io                                     # noqa: E402
     from core.matchbook import fetch_matchbook_prices                      # noqa: E402
     from core.smarkets import fetch_smarkets_prices                        # noqa: E402
-    from core.score_sources import fixtures_espn, fixture_connue           # noqa: E402
+    from core.score_sources import fixtures_espn                           # noqa: E402
     import run_engine as eng                                               # noqa: E402
 
     sport = args[0] if args else "americanfootball"
@@ -930,8 +930,9 @@ def chaine(args):
     exploitables = 0
     for m in sorted(matchs, key=lambda x: str(x.get("commence_time", ""))):
         vivant = eng._marche_vivant(m)
-        reglable = bool(fixtures.get(m.get("sport"))) and fixture_connue(
-            m["match"], fixtures.get(m.get("sport")) or [])
+        # La porte du moteur elle-même, pas une copie (règle 6) : deux camps
+        # exigés hors football depuis le 2026-10-01.
+        reglable = eng._reglable(m, fixtures)
         ok = vivant and reglable and bool(m.get("odds_pinnacle"))
         exploitables += ok
         pin = m.get("odds_pinnacle") or {}

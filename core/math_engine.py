@@ -248,13 +248,33 @@ def dnb_leg_split(draw_odd: float) -> tuple[float, float]:
     return round(part_nul, 4), round(1.0 - part_nul, 4)
 
 
+def nul_cote(odds: dict | None) -> bool:
+    """Le bloc porte-t-il un prix de NUL ? Pur.
+
+    Hors football, c'est la signature d'un 1X2 de TEMPS RÉGLEMENTAIRE, pas
+    d'une moneyline : au hockey, « 1 » y perd dès que le match va en
+    prolongation, là où la moneyline du sharp la compte. Mesuré le
+    2026-10-01 : 1xbet rendu par OddsAPI sur la NHL = {"1": 2.51, "X": 4.26,
+    "2": 2.52} face à un Pinnacle à deux issues (1.93 / 1.95) — EV affichée
+    +23 à +28 % sur chaque match. Même piège côté sharp : Smarkets
+    `WINNER_3_WAY` sur le hockey européen, dévigué sur deux issues, donnait
+    73,9 % à un favori qui en vaut ~70 (signal 10604). Voir INCIDENTS.md
+    « 1xbet cote le hockey en temps réglementaire »."""
+    try:
+        return float((odds or {}).get("X") or 0) > 1.01
+    except (TypeError, ValueError):
+        return False
+
+
 def executable_price(odds: dict, sport: str, side: str) -> float:
     """
     Prix SOFT EXÉCUTABLE d'un côté donné (`side` = "1" pour le domicile,
     "2" pour l'extérieur), à partir des cotes brutes d'UN book.
 
     Football : AH 0.0 brut si la source l'expose (`ah0_1`/`ah0_2`), sinon DNB
-    synthétique sur le 1X2 de ce book. Hors football : la cote brute du côté.
+    synthétique sur le 1X2 de ce book. Hors football : la cote brute du côté,
+    SAUF si le bloc cote un nul — c'est alors un 1X2 de temps réglementaire,
+    un autre pari que la moneyline du sharp (`nul_cote`) : 0.0.
     Rend 0.0 quand rien n'est jouable — jamais de repli sur une autre cote.
 
     Point unique de la règle : `to_binary` (prix d'entrée) et le repricing de
@@ -269,7 +289,7 @@ def executable_price(odds: dict, sport: str, side: str) -> float:
     if own <= 1.01:
         return 0.0
     if sport != "soccer":
-        return round(own, 4)
+        return 0.0 if nul_cote(odds) else round(own, 4)
     ah0 = float(odds.get("ah0_1" if side == "1" else "ah0_2") or 0)
     if ah0 > 1.01:
         return round(ah0, 4)
@@ -339,6 +359,10 @@ def to_binary(odds: dict, sport: str, home: str = "", away: str = "") -> tuple[f
         return price, "AH 0.0" if une_jambe else "AH 0.0 (2 jambes)", fav_name
 
     # Tennis / Basketball / MMA — no draw market, the raw price is executable.
+    # Un nul coté hors football = 1X2 de temps réglementaire : refus, comme
+    # le football sans prix de nul (jamais une moneyline devinée).
+    if nul_cote(odds):
+        return 0.0, None, ""
     if o1 > 1.01 and (o2 <= 1.01 or o1 <= o2):
         return round(o1, 4), "Moneyline", home
     elif o2 > 1.01:
