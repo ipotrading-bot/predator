@@ -129,6 +129,30 @@ _WINDOWS: dict[str, list[tuple]] = {
     "soccer_spain_segunda_division":     [((5, 6), 9, 13), (_ALL, 13, 17)],
     # Série B brésilienne : 19:00→00:00 UTC → 16:03, 19:03, 21:03, 23:03.
     "soccer_brazil_serie_b":             [(_ALL, 16, 24)],
+    # ── Second élargissement (2026-10-01, décision opérateur) ─────────
+    # Fenêtres DÉRIVÉES des coups d'envoi réels de la journée du 9 au 12/10
+    # (flux `events` d'OddsAPI, 0 crédit), au plus serré : un créneau n'entre
+    # que s'il tombe entre T-2h30 et ~T-6h d'un coup d'envoi relevé. La partie
+    # « soirs de semaine » (13:03, 16:03) vient des journées de milieu de
+    # semaine habituelles et ne coûte rien sans match (pré-vol gratuit).
+    # Budget et critère de retrait : core.odds_api.LIGUES_EN_ESSAI.
+    # Championship : sam 11h30 ×3 et 14h ×7, dim 11h30 → 06:03 à 11:03.
+    "soccer_efl_champ":                  [((5, 6), 6, 12), (_ALL, 13, 17)],
+    # Eredivisie : sam 14h30→19h, dim 10h15→14h45 → 06:03 à 11:03, puis 13/16.
+    "soccer_netherlands_eredivisie":     [((5, 6), 6, 13), (_ALL, 13, 17)],
+    # Belgique : sam 14h→18h45, dim 11h30→17h15 → idem.
+    "soccer_belgium_first_div":          [((5, 6), 6, 13), (_ALL, 13, 17)],
+    # Turquie : 10h30, 13h, 16h le week-end → 06:03 à 13:03 ; 17h en semaine
+    # → 11:03 et 13:03 (16:03 serait sous T-2h).
+    "soccer_turkey_super_league":        [((5, 6), 6, 14), (_ALL, 11, 14)],
+    # 2. Bundesliga : sam/dim 11h → 06:03 seul (09:03 est sous T-2h30) ;
+    # sam 18h30 → 13:03 ; ven 16h30 → 11:03 et 13:03.
+    "soccer_germany_bundesliga2":        [((5, 6), 6, 9), ((5,), 13, 14), ((4,), 11, 14)],
+    # Ligue 2 : sam 12h → 06:03 et 09:03 ; ven 18h ×5, sam 18h, lun 18h45 →
+    # 13:03 et 16:03.
+    "soccer_france_ligue_two":           [((5,), 6, 10), (_ALL, 13, 17)],
+    # Serie B : sam/dim 13h, 15h, 17h15 → 09:03 à 13:03 ; soirs 18h30.
+    "soccer_italy_serie_b":              [((5, 6), 9, 14), (_ALL, 13, 17)],
 }
 
 # Fenêtres par PRÉFIXE de clé — pour les ligues dont la clé exacte n'existe

@@ -175,9 +175,10 @@ class TestWnbaRetiree:
 
 class TestLiguesEnEssai:
     """Règle 13 (AUDIT.md §3bis) : une ligue n'entre qu'avec un budget chiffré,
-    un critère de retrait DATÉ et un gardien. Ces cinq-là sont entrées le
+    un critère de retrait DATÉ et un gardien. Cinq sont entrées le
     2026-09-22, le jour où la mesure a montré que 10 des 11 ligues de foot
-    scannées n'avaient aucun match de la semaine (trêve internationale)."""
+    scannées n'avaient aucun match de la semaine (trêve internationale) ;
+    sept le 2026-10-01 (voir TestSecondLotDu1erOctobre)."""
 
     def test_chaque_ligue_en_essai_est_reellement_achetee(self):
         """Un registre d'essai qui nomme une ligue qu'on n'achète pas est un
@@ -208,3 +209,62 @@ class TestLiguesEnEssai:
         for cle in LIGUES_EN_ESSAI:
             assert rangs[cle] == dernier, cle
         assert rangs["soccer_epl"] < dernier
+
+
+class TestSecondLotDu1erOctobre:
+    """Sept ligues ajoutées le 2026-10-01 (décision opérateur : « si elles
+    tiennent dans le quota, ajoute-les »). MESURÉ avant l'ajout : la demande
+    réelle tournait à ~90 crédits/jour pour ~145 d'allocation ; rejeu de la
+    vraie politique de dépense sur les coups d'envoi réels du 2 au 15/10 →
+    156 crédits la semaine de matchs pour les sept, pire jour à 82 % de son
+    allocation, AUCUN achat en fenêtre favorable perdu par une ligue déjà
+    scannée (INCIDENTS.md, « Le pool n'était pas la contrainte »)."""
+
+    LOT = ("soccer_efl_champ", "soccer_netherlands_eredivisie", "soccer_belgium_first_div",
+           "soccer_turkey_super_league", "soccer_germany_bundesliga2",
+           "soccer_france_ligue_two", "soccer_italy_serie_b")
+
+    def test_les_sept_sont_achetees_en_essai_et_datees(self):
+        for cle in self.LOT:
+            assert SPORT_KEYS[cle] == "soccer", cle
+            assert LIGUES_EN_ESSAI[cle].startswith("2026-10-01"), cle
+            assert "retrait le 2026-11-15" in LIGUES_EN_ESSAI[cle], cle
+
+    def test_le_budget_annonce_est_celui_du_rejeu(self):
+        """Somme des « ~N créd/j » du lot : 22,7, le chiffre du rejeu. Le
+        gonfler ou l'oublier ferait mentir le registre (règle 13)."""
+        import re
+        total = sum(float(re.search(r"~([0-9.]+) créd/j", LIGUES_EN_ESSAI[c]).group(1))
+                    for c in self.LOT)
+        assert abs(total - 22.7) < 0.05, total
+
+    def test_le_portugal_n_entre_pas_sans_book_d_execution(self):
+        """`ops.py books soccer_portugal_primeira_liga` le 2026-10-01 : 0/9
+        match avec 1xbet. Une ligue sans book d'exécution ne s'achète pas."""
+        assert "soccer_portugal_primeira_liga" not in SPORT_KEYS
+
+    def test_les_fenetres_suivent_les_coups_d_envoi_releves(self):
+        from datetime import datetime, timezone
+        fav = scan_windows.is_favorable
+
+        def t(jour, heure):                      # octobre 2026 : le 9 est un vendredi
+            return datetime(2026, 10, jour, heure, 3, tzinfo=timezone.utc)
+        # Championship : samedi 11h30 → le créneau de 06:03 est le seul avant T-2h30.
+        assert fav("soccer_efl_champ", t(10, 6)) and fav("soccer_efl_champ", t(10, 11))
+        assert not fav("soccer_efl_champ", t(10, 19))
+        # 2. Bundesliga : samedi 11h → 06:03 ; 09:03 serait sous T-2h30.
+        assert fav("soccer_germany_bundesliga2", t(10, 6))
+        assert not fav("soccer_germany_bundesliga2", t(10, 9))
+        assert fav("soccer_germany_bundesliga2", t(9, 11))        # vendredi 16h30
+        # Ligue 2 : cinq matchs le vendredi à 18h → 13:03.
+        assert fav("soccer_france_ligue_two", t(9, 13))
+        assert not fav("soccer_france_ligue_two", t(11, 9))       # rien le dimanche
+        # Turquie : 17h en semaine → 11:03 et 13:03, pas 16:03 (sous T-2h).
+        assert fav("soccer_turkey_super_league", t(12, 11))
+        assert not fav("soccer_turkey_super_league", t(12, 16))
+
+    def test_le_lot_reste_derriere_toutes_les_familles_mesurees(self):
+        rangs = odds_api.rangs_par_famille()
+        for cle in self.LOT:
+            assert rangs[cle] == max(rangs.values()), cle
+            assert rangs[cle] > rangs["soccer_brazil_campeonato"] > rangs["soccer_epl"]
