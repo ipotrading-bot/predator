@@ -9,7 +9,7 @@ EV +23 à +28 % sur CHAQUE match, écartée par le seul plafond SUSPECT. Les
 totaux du même book (réglés eux aussi sur 60 minutes) passaient, eux : 4
 signaux NHL sur 4 étaient des Over 1xbet à +7,6..+12 %.
 
-Même piège côté SHARP : Smarkets `WINNER_3_WAY` sur le hockey européen,
+Même piège côté SHARP : Smarkets `WINNER_3_WAY` (2e division tchèque),
 dévigué sur deux issues de trois — 1,70 / 4,80 donnait 73,9 % au favori
 (signal 10604, Slavia Prague, edge affiché +4,87 %).
 
@@ -415,3 +415,44 @@ class TestReglableExigeLesDeuxCampsHorsFootball:
         LiveScore règle ce qu'ESPN nomme autrement (mesure du 2026-09-03)."""
         fx = {"soccer": [_ev("VfB Stuttgart", "FC Cologne")]}
         assert eng._reglable(_m("VfB Stuttgart vs 1. FC Köln", "soccer"), fx) is True
+
+
+# ── 7. Le marqueur est fiable : un 1X2 ne peut pas passer SANS son nul ────
+
+def _carnet(cote):
+    """Carnet Smarkets serré autour de `cote` (prix en centièmes de %)."""
+    return {"offers": [{"price": round(10000 / (cote - 0.01))}],
+            "bids": [{"price": round(10000 / (cote + 0.01))}]}
+
+
+class TestLeNulCoteEstUnMarqueurFiable:
+    """La règle repose sur le nul COTÉ, jamais sur la ligue ni sur le nom de
+    l'exchange : le 2026-10-01 Smarkets cotait la SHL à deux issues
+    (2,02 / 2,01, somme des probabilités 0,99) et la 2e division tchèque à
+    trois (1,70 / 4,80, somme 0,80). `MIN_OVERROUND` garantit qu'un marché
+    à trois issues dont le nul n'a pas de carnet est REFUSÉ à la lecture —
+    il ne peut donc pas arriver au moteur déguisé en moneyline."""
+    CAMPS = [{"id": 1, "name": "HC Slavia Prague"}, {"id": 2, "name": "HC Havirov Panthers"}]
+    NOMS = ("HC Slavia Prague", "HC Havirov Panthers")
+
+    def test_trois_issues_sans_carnet_sur_le_nul_refuse_a_la_lecture(self):
+        from core import smarkets
+        cotes = {"1": _carnet(1.70), "2": _carnet(4.80)}
+        assert smarkets.winner_odds(self.CAMPS, cotes, *self.NOMS) is None
+
+    def test_trois_issues_avec_son_nul_porte_le_marqueur(self):
+        from core import smarkets
+        contrats = self.CAMPS + [{"id": 3, "name": "Draw"}]
+        cotes = {"1": _carnet(1.70), "2": _carnet(4.80), "3": _carnet(4.90)}
+        bloc = smarkets.winner_odds(contrats, cotes, *self.NOMS)
+        assert bloc and nul_cote(bloc)
+
+    def test_une_moneyline_a_deux_issues_passe_sans_marqueur(self):
+        from core import smarkets
+        cotes = {"1": _carnet(2.02), "2": _carnet(2.01)}
+        bloc = smarkets.winner_odds(self.CAMPS, cotes, *self.NOMS)
+        assert bloc and not nul_cote(bloc)
+        m = _match_exchange("hockey")
+        pool = {"hc slavia prague_hc havirov panthers": {
+            "home": self.NOMS[0], "away": self.NOMS[1], **bloc, "_source": "smarkets"}}
+        assert eng._enrich_from_exchange([m], pool, log) == 1

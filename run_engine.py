@@ -1083,7 +1083,7 @@ def _enrich_from_exchange(items: list, prices: dict, log) -> int:
             continue
 
         # Hors football, un exchange qui cote le NUL publie un 1X2 de TEMPS
-        # RÉGLEMENTAIRE (Smarkets `WINNER_3_WAY` sur le hockey européen), pas
+        # RÉGLEMENTAIRE (Smarkets `WINNER_3_WAY`, 2e division tchèque), pas
         # la moneyline prolongation comprise que cote le book soft. Le poser
         # en prix sharp faisait déviguer deux issues sur trois : 1,70 / 4,80
         # donnait 73,9 % au favori au lieu de ~70 (signal 10604, 2026-09-30).

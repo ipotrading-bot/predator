@@ -298,7 +298,8 @@ prolongation comprise, chacun en silence.
    n'a aucun marqueur dans le flux : un « Over 6.5 » 1xbet perd sur un 3-3
    que Pinnacle compte 4-3. `run_engine._process_totals` les comparait à
    ligne égale, comme si c'était le même pari.
-3. *Prix sharp.* Smarkets publie `WINNER_3_WAY` sur le hockey européen.
+3. *Prix sharp.* Smarkets publie `WINNER_3_WAY` sur CERTAINES ligues de
+   hockey (2e division tchèque) — pas sur toutes, voir la mesure.
    `_enrich_from_exchange` le posait en `odds_pinnacle`, et la branche hors
    football de `_process_h2h` déviguait « 1 » et « 2 » en ignorant « X ».
 
@@ -319,8 +320,13 @@ MESURÉ le 2026-10-01 :
 - Sharp : signal 10604, HC Slavia Prague vs HC Havirov Panthers, « 💹
   smarkets enrichi (1.70 / 4.80) » (run 36676953328) → proba 73,9 %, edge
   +4,87 % sur Bet365 à 1,42. 0,588 / (0,588 + 0,208) = 0,739 : le nul a
-  disparu du dénominateur. `ops.py chaine hockey` le même jour : Smarkets à
-  2,03 / 2,01 sur Ambri–Langnau, somme des deux probabilités 0,99.
+  disparu du dénominateur : 1/1,70 + 1/4,80 = 0,80, il manque 20 % — le
+  nul. ⚠️ Ce n'est PAS tout le hockey européen : au scan de 13:11 (run
+  36866840215, premier sur le correctif) Smarkets cotait 6 matchs de SHL
+  et Ambri–Langnau à DEUX issues (2,02 / 2,01, somme 0,99 : une vraie
+  moneyline) et les a posés normalement. J'avais d'abord lu ce 0,99 comme
+  un marché à trois issues — c'est l'inverse. Le critère est le nul COTÉ,
+  jamais la ligue ni le nom de l'exchange.
 - Réglable : `fixture_connue("HC Slavia Prague vs HC Havirov Panthers")`
   rendait True à un camp (« Florida Panthers »), False à deux. Même chose
   pour « Mora IK vs Nybro Vikings IF » (signal 10567, 29/09). Rejeu sur le

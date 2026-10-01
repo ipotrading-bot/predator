@@ -257,7 +257,7 @@ def nul_cote(odds: dict | None) -> bool:
     2026-10-01 : 1xbet rendu par OddsAPI sur la NHL = {"1": 2.51, "X": 4.26,
     "2": 2.52} face à un Pinnacle à deux issues (1.93 / 1.95) — EV affichée
     +23 à +28 % sur chaque match. Même piège côté sharp : Smarkets
-    `WINNER_3_WAY` sur le hockey européen, dévigué sur deux issues, donnait
+    `WINNER_3_WAY` (2e division tchèque), dévigué sur deux issues, donnait
     73,9 % à un favori qui en vaut ~70 (signal 10604). Voir INCIDENTS.md
     « 1xbet cote le hockey en temps réglementaire »."""
     try:
