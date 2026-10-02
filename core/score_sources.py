@@ -650,8 +650,41 @@ _EXONYMES: dict[str, str] = {
 _EXONYMES_BIDIR = {**_EXONYMES, **{v: k for k, v in _EXONYMES.items()}}
 
 
+# ── Alias de clubs : le même club, deux NOMS ─────────────────────────
+#
+# Le 2026-10-02, « CD Inca vs Municipal Limeno » (Primera salvadorienne,
+# bet365) n'a pas pu être réglé alors que LiveScore publiait le match, terminé
+# 2-1, sous « Inca Aruba vs Municipal Limeno » — même ligue, même coup d'envoi.
+# Le club porte son nom de sponsor chez la source de scores : aucun
+# rapprochement textuel ne franchit « CD Inca » → « Inca Aruba », la sonde
+# `_journal_alias` s'est tue (5 événements à un seul camp reconnu) et l'audit
+# est sorti STÉRILE. Même jour, même mécanisme : « Reilac Shiga FC » (1xbet)
+# est « MIO Biwako Shiga », son ancien nom, chez LiveScore.
+#
+# Comme les exonymes, ce n'est PAS un pont d'alias appris (INCIDENTS.md « Le
+# pont d'alias ») : c'est une table FIXE, chaque ligne promue À LA MAIN après
+# avoir vu les DEUX écritures sur la même affiche (ligue, adversaire, heure) —
+# la « décision humaine » que `_journal_alias` réserve. Elle n'assouplit rien :
+# elle ajoute une VARIANTE au nom servi par la source, jugée ensuite par
+# `strict_team_match` comme avant, et le règlement exige toujours les DEUX
+# camps sur un candidat UNIQUE.
+#
+# Le nom est remplacé ENTIER (« inca aruba » oui, « inca aruba ii » non), dans
+# les deux sens, et les deux écritures comptent au moins deux mots : un mot nu
+# s'apparierait par containment à n'importe quel voisin.
+# ⛔ N'y entre qu'un alias VU sur une affiche réelle, jamais un alias déduit.
+# Gardien : tests/test_alias_clubs.py.
+_ALIAS_CLUBS: dict[str, str] = {
+    # nom chez le book        : nom chez la source de scores
+    "cd inca":         "inca aruba",          # Salvador, vu le 2026-10-02
+    "reilac shiga fc": "mio biwako shiga",    # Japon J3, vu le 2026-10-02
+}
+_ALIAS_CLUBS_BIDIR = {**_ALIAS_CLUBS, **{v: k for k, v in _ALIAS_CLUBS.items()}}
+
+
 def _variantes(nom: str) -> list[str]:
-    """`nom` plié, plus ses traductions d'exonyme quand il en contient une.
+    """`nom` plié, plus son alias de club (nom ENTIER, voir `_ALIAS_CLUBS`) et
+    ses traductions d'exonyme quand il en contient une.
 
     Un seul mot est traduit à la fois (aucun nom réel n'en porte deux) et
     seulement en MOT ENTIER : « FC Cologne » devient « FC Koln », « Colognes »
@@ -667,6 +700,9 @@ def _variantes(nom: str) -> list[str]:
     plie = _fold(nom)
     mots = plie.split()
     sorties = [plie]
+    alias = _ALIAS_CLUBS_BIDIR.get(" ".join(mots))
+    if alias:
+        sorties.append(alias)
     if len(mots) < 2:
         return sorties
     for i, mot in enumerate(mots):
