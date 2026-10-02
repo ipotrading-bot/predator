@@ -37,9 +37,11 @@ from flask import Flask, jsonify, render_template, request, send_from_directory
 # scripts/weekly_report.py — elles ne sont simplement plus rendues ici.
 from core.perf_view import (ALL_MONTHS as _ALL_MONTHS,
                             avec_date_du_match as _avec_date_du_match,
+                            depuis_label as _depuis_label,
                             filter_rows as _perf_filter_rows,
                             league_breakdown as _league_breakdown,
                             market_breakdown as _market_breakdown,
+                            mois_de as _mois_de,
                             month_label as _month_label,
                             monthly_summary as _monthly_summary,
                             phantom_rows as _phantom_rows,
@@ -697,19 +699,29 @@ def audit():
 _LEAGUE_MIN_N = 5
 
 
+# Identifiants par requête : la liste voyage dans l'URL (`id=in.(…)`), et la
+# page date désormais TOUTES ses lignes — jusqu'à 1 000, pas les 14 d'un mois.
+_COUPS_D_ENVOI_LOT = 200
+
+
 def _coups_d_envoi(sb, rows: list) -> dict:
-    """{signal_id: match_time} des signaux de ces lignes de ledger, en UNE
-    requête. Panne → {} + log : la page retombe sur la date de règlement
-    plutôt que de tomber (voir core/perf_view.avec_date_du_match)."""
+    """{signal_id: match_time} des signaux de ces lignes de ledger, par lots
+    de `_COUPS_D_ENVOI_LOT`. Panne → ce qui a été lu + log : les lignes sans
+    coup d'envoi retombent sur la date de règlement plutôt que de faire tomber
+    la page (voir core/perf_view.avec_date_du_match)."""
     ids = sorted({str(r["signal_id"]) for r in rows if r.get("signal_id")})
     if not sb or not ids:
         return {}
+    out: dict = {}
     try:
-        res = sb.table("signals").select("id,match_time").in_("id", ids).execute()
+        for i in range(0, len(ids), _COUPS_D_ENVOI_LOT):
+            res = (sb.table("signals").select("id,match_time")
+                   .in_("id", ids[i:i + _COUPS_D_ENVOI_LOT]).execute())
+            out.update({str(x["id"]): x["match_time"]
+                        for x in (res.data or []) if x.get("match_time")})
     except Exception as e:
         log.warning("/performance : coups d'envoi illisibles (%s)", str(e)[:100])
-        return {}
-    return {str(x["id"]): x["match_time"] for x in (res.data or []) if x.get("match_time")}
+    return out
 
 
 @app.route("/performance")
@@ -741,7 +753,15 @@ def performance():
             # Mission 2 (2026-08-22) : sports retirés et mois archivés
             # n'apparaissent plus — filtre d'AFFICHAGE (core/perf_view.py),
             # rien n'est supprimé du ledger.
-            rows = _perf_filter_rows(res.data or [])
+            # Chaque ligne reçoit le coup d'envoi de son signal AVANT tout
+            # découpage : la fenêtre, les cartes, le mois choisi et
+            # l'historique datent au MATCH, pas au règlement (2026-10-02 —
+            # trois paris du 30/09 comptaient en octobre). La borne SQL
+            # ci-dessus reste sur `created_at` : un match se règle toujours
+            # APRÈS son coup d'envoi, elle ne peut donc écarter aucune ligne
+            # d'un mois affiché.
+            data = res.data or []
+            rows = _perf_filter_rows(_avec_date_du_match(data, _coups_d_envoi(sb, data)))
 
             if rows:
                 # (Retiré le 2026-08-22 — simplification demandée par
@@ -779,10 +799,9 @@ def performance():
                 # HISTORIQUE et PAR LIGUE se limitent au mois sélectionné
                 # (2026-09-03, demande opérateur : août « archivé », accessible
                 # par le menu) ; le bandeau du haut et PAR SPORT restent sur
-                # la fenêtre entière, et le disent (« depuis août 2026 »).
+                # la fenêtre entière, et le disent (`depuis_label`).
                 scope   = _rows_of_month(reco, mois)
                 history = [r for r in scope if r.get("outcome") in ("WIN", "LOSS")]
-                history = _avec_date_du_match(history, _coups_d_envoi(sb, history))
                 wins    = sum(1 for r in settled if r.get("outcome") == "WIN")
                 losses  = sum(1 for r in settled if r.get("outcome") == "LOSS")
                 pushes  = sum(1 for r in settled if r.get("outcome") == "PUSH")
@@ -868,7 +887,7 @@ def performance():
                 monthly = _monthly_summary(reco, _TAX_RATE)
                 # Fantômes du mois, à part sur la carte (jamais dans son taux).
                 for m in monthly:
-                    gm = [r for r in ghosts if (r.get("created_at") or "")[:7] == m["month"]]
+                    gm = [r for r in ghosts if _mois_de(r) == m["month"]]
                     m["phantoms"] = {"wins": sum(1 for r in gm if r["outcome"] == "WIN"),
                                      "losses": sum(1 for r in gm if r["outcome"] == "LOSS")}
                 global_s["pnl_units"] = round(sum(m["pnl_units"] for m in monthly), 2)
@@ -900,7 +919,8 @@ def performance():
                            league_min_n=_LEAGUE_MIN_N,
                            months=[(m, _month_label(m)) for m in months],
                            mois=mois, all_months=_ALL_MONTHS,
-                           mois_label=("depuis août 2026" if mois == _ALL_MONTHS
+                           depuis=_depuis_label(months),
+                           mois_label=(_depuis_label(months) if mois == _ALL_MONTHS
                                        else _month_label(mois or "")),
                            sport_emoji=_SPORT_EMOJI, sport_label=_SPORT_LABEL)
 

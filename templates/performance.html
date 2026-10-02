@@ -131,7 +131,7 @@ details[open] > summary.sec-hdr::before { content: '▾'; }
   <div class="page-hdr">
     <div>
       <div class="page-title">&#9660; PERFORMANCE</div>
-      <div class="page-sub">depuis <b>août 2026</b> &middot; paris recommandés</div>
+      <div class="page-sub">depuis <b>{{ depuis.removeprefix('depuis ') }}</b> &middot; paris recommandés</div>
     </div>
     {% if global_s %}
     <select class="mois-sel" id="mois-select" aria-label="Mois affiché" onchange="location.search='?mois='+encodeURIComponent(this.value)">
@@ -332,13 +332,13 @@ details[open] > summary.sec-hdr::before { content: '▾'; }
   {% else %}
   <div class="perf-empty">
     <div class="perf-empty-icon">&#9634;</div>
-    <div>Aucun pari réglé depuis août 2026.</div>
+    <div>Aucun pari réglé {{ depuis }}.</div>
   </div>
   {% endif %}
 
 </div>
 
-<footer>PREDATOR PERFORMANCE v{{ version }} &nbsp;&middot;&nbsp; résultats réels depuis août 2026</footer>
+<footer>PREDATOR PERFORMANCE v{{ version }} &nbsp;&middot;&nbsp; résultats réels {{ depuis }}</footer>
 
 <nav class="bnav">
   <a href="/" aria-label="Accueil">

@@ -42,7 +42,9 @@ class TestDateDuMatch:
 class TestBranchement:
     def test_la_route_lit_les_coups_d_envoi(self):
         src = (_RACINE / "api" / "index.py").read_text(encoding="utf-8")
-        assert "history = _avec_date_du_match(history, _coups_d_envoi(sb, history))" in src
+        # Depuis le 2026-10-02 TOUTES les lignes sont datées, avant le filtre
+        # de fenêtre — voir tests/test_perf_mois_au_match.py.
+        assert "_perf_filter_rows(_avec_date_du_match(data, _coups_d_envoi(sb, data)))" in src
 
     def test_le_template_affiche_le_coup_d_envoi(self):
         tpl = (_RACINE / "templates" / "performance.html").read_text(encoding="utf-8")
