@@ -245,24 +245,28 @@ details[open] > summary.sec-hdr::before { content: '▾'; }
 
   {# ── Par sport — réussite décroissante (demande opérateur 2026-09-09 ;
      perf_view.sport_breakdown garde son ordre « perdant d'abord » pour le
-     rapport hebdomadaire). ── #}
+     rapport hebdomadaire). Section DÉROULANTE, repliée comme PAR LIGUE et
+     PAR MARCHÉ (demande opérateur 2026-10-02) ; elle porte sur la fenêtre
+     entière, d'où `depuis` et non le mois choisi. ── #}
   {% if global_s.by_sport %}
-  <div class="sec-hdr">&#9632; PAR SPORT</div>
-  <div class="tbl-outer">
-    <table class="perf-table">
-      {{ th_row('Sport') }}
-      <tbody>
-        {% for sp in global_s.by_sport|sort(attribute='win_rate', reverse=true) %}
-        <tr>
-          {{ cell_rate(sp) }}
-          <td class="lbl">{{ sport_emoji.get(sp.sport, '🎯') }} {{ sport_label.get(sp.sport, sp.sport) }}</td>
-          <td class="num {{ 'pos' if sp.pnl_units >= 0 else 'neg' }}">{{ "%+.1f"|format(sp.pnl_units) }}</td>
-          {{ cell_gp(sp) }}
-        </tr>
-        {% endfor %}
-      </tbody>
-    </table>
-  </div>
+  <details>
+    <summary class="sec-hdr">&#9632; PAR SPORT <em>{{ depuis }} &middot; {{ global_s.by_sport|length }}</em></summary>
+    <div class="tbl-outer">
+      <table class="perf-table">
+        {{ th_row('Sport') }}
+        <tbody>
+          {% for sp in global_s.by_sport|sort(attribute='win_rate', reverse=true) %}
+          <tr>
+            {{ cell_rate(sp) }}
+            <td class="lbl">{{ sport_emoji.get(sp.sport, '🎯') }} {{ sport_label.get(sp.sport, sp.sport) }}</td>
+            <td class="num {{ 'pos' if sp.pnl_units >= 0 else 'neg' }}">{{ "%+.1f"|format(sp.pnl_units) }}</td>
+            {{ cell_gp(sp) }}
+          </tr>
+          {% endfor %}
+        </tbody>
+      </table>
+    </div>
+  </details>
   {% endif %}
 
   {# ── Détail : ligues, marchés (repliés), historique (ouvert) ───────

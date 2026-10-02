@@ -183,6 +183,16 @@ class TestBranchement:
         # Fantômes T-2h à part sur les cartes et dans les tuiles, jamais dans un taux
         assert "m.phantoms" in g and "global_s.phantoms" in g
 
+    def test_par_sport_est_une_section_deroulante(self):
+        """Demande opérateur du 2026-10-02 : PAR SPORT se replie comme PAR
+        LIGUE et PAR MARCHÉ. Elle couvre la fenêtre entière : son en-tête
+        porte `depuis`, pas le mois choisi."""
+        g = (RACINE / "templates" / "performance.html").read_text(encoding="utf-8")
+        assert '<div class="sec-hdr">&#9632; PAR SPORT</div>' not in g
+        assert ('<summary class="sec-hdr">&#9632; PAR SPORT <em>{{ depuis }} &middot; '
+                '{{ global_s.by_sport|length }}</em></summary>') in g
+        assert g.count("<details") == g.count("</details>") == 4
+
     def test_le_menu_ne_propose_que_la_fenetre(self):
         """Les options du menu sont `months` (= shown_months) + « tout » :
         aucune liste de mois écrite à la main dans le gabarit."""
