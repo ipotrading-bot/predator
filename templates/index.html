@@ -135,6 +135,11 @@
           {% if g.legs|length > 1 %}
           <span class="mcard-n">{{ g.legs|length }} marchés</span>
           {% endif %}
+          {# Sources en désaccord sur l'heure (tennis : ordre de jeu, pas de
+             coup d'envoi) : la carte montre la plus tôt et le dit. #}
+          {% if g.match_times|length > 1 %}
+          <span class="mcard-n" title="Heures annoncées (UTC) : {% for t in g.match_times %}{{ t[11:16] }}{% if not loop.last %} / {% endif %}{% endfor %} — la plus tôt est affichée">heure ≈</span>
+          {% endif %}
           {% if g.match_time %}
             <span class="sig-date tloc" data-iso="{{ g.match_time }}" data-fmt="dhm" title="Coup d'envoi, heure locale">{{ mdate }} {{ mhour }} UTC</span>
             <span class="sig-cd" data-ts="{{ g.match_time }}"></span>

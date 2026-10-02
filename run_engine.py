@@ -43,6 +43,9 @@ from core.tax_engine import optimal_stake_fraction as _optimal_stake_fraction
 from core.learning_layer import (_PLAYABLE_MIN_MINUTES, _PLAYABLE_MAX_MINUTES,
                                  dans_bande_cote)
 from core.paim_engine import section_jeunes as _section_jeunes, ligne_en_quart as _ligne_en_quart
+from core.match_reel import (coup_d_envoi as _coup_d_envoi,
+                             fenetre_jumeau_min as _fenetre_jumeau_min,
+                             meme_match_reel as _meme_match_reel)
 from core.source_adapter import ligue_exclue as _ligue_exclue
 from core.score_sources import livescore_connait as _livescore_connait
 from core.score_sources import SPORTS_SANS_ESPN as _SPORTS_SANS_ESPN
@@ -1955,58 +1958,14 @@ def _famille_et_camp(sig: dict) -> tuple[str, str] | None:
 #     (jeunes, réserve, féminines) et depuis le 09-13 deux clubs qui ne se
 #     ressemblent que par un mot commun (« Atletico », « Real ») ;
 #   - les DEUX camps doivent concorder, et le coup d'envoi à
-#     JUMEAU_FENETRE_MIN près — une équipe ne joue pas deux matchs en
+#     `fenetre_jumeau_min(sport)` près — une équipe ne joue pas deux matchs en
 #     30 minutes, et un doubleheader est à des heures d'écart.
 # Rejoué le 2026-09-30 sur les 677 signaux en base : voir le test gardien.
-JUMEAU_FENETRE_MIN = 30
-
-
-def _sans_accents(texte: str) -> str:
-    """« Montréal » → « Montreal » : une source accentue, l'autre non."""
-    import unicodedata
-    return "".join(c for c in unicodedata.normalize("NFKD", texte or "")
-                   if not unicodedata.combining(c))
-
-
-def _coup_d_envoi(valeur):
-    """match_time → datetime UTC, None si illisible (on ne devine pas)."""
-    try:
-        t = datetime.fromisoformat(str(valeur).replace("Z", "+00:00"))
-    except (TypeError, ValueError):
-        return None
-    return t if t.tzinfo else t.replace(tzinfo=timezone.utc)
-
-
-def _meme_match_reel(a: dict, b: dict) -> bool:
-    """Deux signaux portent-ils sur le MÊME match réel ? Pur.
-
-    Même match_id → oui. Sinon il faut TOUT : même sport, coups d'envoi
-    connus et à JUMEAU_FENETRE_MIN près, les deux camps appariés par
-    `strict_team_match` (dans un sens ou dans l'autre : une source peut
-    inverser domicile et extérieur sur terrain neutre). Un nom de moins de
-    3 lettres ou un libellé sans « vs » fait refuser : `strict_team_match`
-    rend True sur un nom vide, et un doute ne doit jamais supprimer un
-    vrai signal."""
-    ida, idb = a.get("match_id"), b.get("match_id")
-    if ida and ida == idb:
-        return True
-    if (a.get("sport") or "") != (b.get("sport") or ""):
-        return False
-    ta, tb = _coup_d_envoi(a.get("match_time")), _coup_d_envoi(b.get("match_time"))
-    if ta is None or tb is None or abs((ta - tb).total_seconds()) > JUMEAU_FENETRE_MIN * 60:
-        return False
-    camps = []
-    for sig in (a, b):
-        libelle = _sans_accents(sig.get("match") or "")
-        if " vs " not in libelle:
-            return False
-        h, v = (p.strip() for p in libelle.split(" vs ", 1))
-        if len(h) < 3 or len(v) < 3:
-            return False
-        camps.append((h, v))
-    (ha, va), (hb, vb) = camps
-    return ((strict_team_match(ha, hb) and strict_team_match(va, vb))
-            or (strict_team_match(ha, vb) and strict_team_match(va, hb)))
+# La définition vit dans core/match_reel.py depuis le 2026-10-02 : le
+# dashboard regroupe ses cartes avec la MÊME fonction (règle n°6), et le
+# tennis y a sa fenêtre (ordre de jeu, pas de coup d'envoi) et sa lecture des
+# noms (« Xinran Sun » / « Sun Xinran »). Les noms privés restent pour les
+# appelants et les tests de ce module (import en tête de fichier).
 
 
 def _sans_contradiction(candidats: list, actifs: list, log) -> list:
@@ -2094,7 +2053,10 @@ def _actifs_des_matchs(sb, candidats: list, log) -> list:
         for r in res.data or []:
             vus[r.get("id")] = r
         if instants and sports:
-            marge = timedelta(minutes=JUMEAU_FENETRE_MIN)
+            # La plus large des fenêtres des sports candidats : celle du
+            # tennis est de 12 h (ordre de jeu), 30 min ne liraient pas son
+            # jumeau.
+            marge = timedelta(minutes=max(_fenetre_jumeau_min(sp) for sp in sports))
             res = (sb.table("signals").select(champs).eq("status", "active")
                    .in_("sport", sports)
                    .gte("match_time", (min(instants) - marge).isoformat())

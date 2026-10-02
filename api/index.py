@@ -52,6 +52,7 @@ from core.perf_view import (ALL_MONTHS as _ALL_MONTHS,
                             shown_months as _perf_shown_months,
                             sport_breakdown as _sport_breakdown)
 from core.constants import TAX_RATE as _TAX_RATE
+from core.match_reel import meme_match_reel as _meme_match_reel
 from core.db import get_db as _get_db_client
 from core.stats_utils import p_breakeven, wilson_ci
 from scripts.ci_scan_mode import CRON_MODES as _CRON_MODES
@@ -279,13 +280,9 @@ _QUALITY_RANK = {"HIGH_VALUE": 0, "VALUE": 1}
 
 
 def _group_key(s: dict) -> tuple:
-    """Clé de regroupement visuel d'un signal vers sa carte-match.
-
-    On ne se fie pas au seul match_id : le même match réel peut arriver par
-    The Odds API (uuid) et par la recherche web (id dérivé des noms d'équipes),
-    donc avec deux ids différents. Le nom normalisé + la date de match est ce
-    que l'opérateur perçoit comme "le même match".
-    """
+    """Clé EXACTE de regroupement d'un signal vers sa carte-match : sport, nom
+    normalisé, jour. Le chemin court ; `_group_by_match` rattrape ensuite les
+    libellés qui diffèrent d'une source à l'autre."""
     return (s.get("sport") or "",
             (s.get("match") or "").lower().strip(),
             (s.get("match_time") or "")[:10])
@@ -298,23 +295,43 @@ def _group_by_match(signals: list) -> list:
     plat, ils se lisent comme des doublons puisque la liste n'affiche que le
     nom du match. Chaque groupe garde l'index plat de ses signaux : le JS
     indexe dans SIGNALS via openModal(idx), cet index doit rester valide.
+
+    LE MATCH RÉEL, PAS LE LIBELLÉ (2026-10-02). On ne se fie ni au match_id
+    (deux sources, deux ids) ni au nom exact : « Xinran Sun vs Cristina
+    Bucsa » (odds-api.io, 03:00) et « Sun Xinran vs Cristina Bucsa »
+    (OddsAPI, 07:30) faisaient deux cartes et « 5 matchs » pour 4. Après la
+    clé exacte, la carte se cherche par `core.match_reel.meme_match_reel` —
+    la fonction de la garde d'émission, sans son raccourci par match_id.
+
+    Quand les jambes n'annoncent pas la même heure, la carte montre la PLUS
+    TÔT (un pari se pose avant le premier coup d'envoi possible) et garde
+    toutes les heures dans `match_times` : le gabarit le signale.
     """
     groups: dict = {}
     for idx, s in enumerate(signals):
-        g = groups.get(_group_key(s))
+        cle = _group_key(s)
+        g = groups.get(cle)
+        if g is None:
+            g = next((x for x in groups.values()
+                      if _meme_match_reel(x["legs"][0]["sig"], s, par_identifiant=False)), None)
         if g is None:
             g = {
                 "match":        s.get("match") or "",
                 "league":       s.get("league") or "",
                 "sport":        s.get("sport") or "soccer",
                 "match_time":   s.get("match_time") or "",
+                "match_times":  [],
                 "legs":         [],
                 "best_edge":    0.0,
                 "best_quality": 3,
                 "best_flag":    s.get("risk_flag") or "LOW_VALUE",
             }
-            groups[_group_key(s)] = g
+            groups[cle] = g
         g["legs"].append({"idx": idx, "sig": s})
+        mt = s.get("match_time") or ""
+        if mt and mt not in g["match_times"]:
+            g["match_times"] = sorted(g["match_times"] + [mt])
+            g["match_time"] = g["match_times"][0]
         g["best_edge"] = max(g["best_edge"], s.get("edge_pct") or 0.0)
         rank = _QUALITY_RANK.get(s.get("risk_flag"), 2)
         if rank < g["best_quality"]:

@@ -206,6 +206,7 @@ C'est le tableau à consulter avant de toucher à quoi que ce soit.
 | Un audit à 0 réglé sur N éligibles sort rouge | `…::TestLauditSterileSortEnEchec` |
 | Un scan qui n'a rien persisté sort rouge | `…::TestLeScanQuiNePersisteRienSortEnEchec` |
 | /performance affiche le taux de résolution (biais de survie) | `tests/test_mission2_dashboard_quota.py::TestTauxDeResolution` |
+| « Le même match réel » a UNE définition (`core/match_reel.meme_match_reel`), partagée par la garde d'émission et le regroupement des cartes du dashboard ; au tennis la fenêtre est de 12 h et l'ordre des mots d'un nom de joueur ne compte pas | `tests/test_match_reel.py`, `tests/test_dashboard_groups.py::TestLeMatchReelPasLeLibelle` |
 | `closed` (clos sur sa seule clôture, score introuvable) est un score manqué : compté au dénominateur du taux de résolution et repris par la relance comme `expired`, signaux sur la moitié du lot au plus | `tests/test_relance_expires.py::TestClosedEstReprisCommeExpired`, `tests/test_mission2_dashboard_quota.py::TestTauxDeResolution` |
 | /performance lit le ledger par pages (aucun plafond de 1 000 lignes sur la fenêtre de trois mois) | `tests/test_perf_mois_au_match.py::TestLectureParPages` |
 | /performance range chaque ligne dans le mois de son MATCH (`mois_de`, repli sur le règlement) — fenêtre, cartes, mois choisi, historique — et dérive « depuis … » du plus ancien mois affiché | `tests/test_perf_mois_au_match.py` |

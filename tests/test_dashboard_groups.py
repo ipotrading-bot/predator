@@ -113,3 +113,45 @@ class TestCardHeadline:
         ]
         assert [g["match"] for g in _group_by_match(signals)] == \
                ["Bayern vs Dortmund", "Arsenal vs Chelsea"]
+
+
+class TestLeMatchReelPasLeLibelle:
+    """2026-10-02 : « Xinran Sun vs Cristina Bucsa » (odds-api.io, 03:00) et
+    « Sun Xinran vs Cristina Bucsa » (OddsAPI, 07:30) faisaient deux cartes et
+    « 5 matchs » pour 4."""
+
+    def _paire(self):
+        return [
+            _sig("Xinran Sun vs Cristina Bucsa", "h2h", 5.5, "HIGH_VALUE", "tennis",
+                 "2026-10-03T03:00:00+00:00", "oai_75051548"),
+            _sig("Sun Xinran vs Cristina Bucsa", "totals_under", 2.2, "LOW_VALUE", "tennis",
+                 "2026-10-03T07:30:00+00:00", "c666871f"),
+        ]
+
+    def test_une_seule_carte_deux_jambes(self):
+        groups = _group_by_match(self._paire())
+        assert len(groups) == 1 and len(groups[0]["legs"]) == 2
+
+    def test_la_carte_montre_l_heure_la_plus_tot_et_garde_les_deux(self):
+        for signaux in (self._paire(), self._paire()[::-1]):
+            g = _group_by_match(signaux)[0]
+            assert g["match_time"] == "2026-10-03T03:00:00+00:00"
+            assert g["match_times"] == ["2026-10-03T03:00:00+00:00",
+                                        "2026-10-03T07:30:00+00:00"]
+
+    def test_une_carte_ordinaire_n_a_qu_une_heure(self):
+        g = _group_by_match([_sig("Arsenal vs Chelsea", "h2h", 3.2),
+                             _sig("Arsenal vs Chelsea", "totals_over", 2.7)])[0]
+        assert g["match_times"] == ["2026-07-22T19:00:00+00:00"]
+
+    def test_le_meme_identifiant_un_autre_jour_reste_une_autre_carte(self):
+        # Le regroupement ne se fie pas au match_id : c'est l'heure qui parle.
+        signaux = [_sig("Xinran Sun vs Cristina Bucsa", "h2h", 5.5, sport="tennis",
+                        match_time="2026-10-03T03:00:00+00:00", match_id="m"),
+                   _sig("Sun Xinran vs Cristina Bucsa", "h2h", 5.5, sport="tennis",
+                        match_time="2026-10-05T03:00:00+00:00", match_id="m")]
+        assert len(_group_by_match(signaux)) == 2
+
+    def test_le_gabarit_signale_le_desaccord_d_heure(self):
+        tpl = (Path(__file__).resolve().parent.parent / "templates" / "index.html").read_text(encoding="utf-8")
+        assert "g.match_times|length > 1" in tpl
