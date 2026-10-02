@@ -101,6 +101,7 @@ C'est le tableau à consulter avant de toucher à quoi que ce soit.
 | La mesure LiveScore au périmètre COMPTE sans rien laisser passer de plus | `tests/test_perimetre.py::TestMesureLiveScore` |
 | Un match fini en prolongation / aux tirs au but ne se règle que sur le score à 90 min (LiveScore `Tr1OR`/`Tr2OR`), sinon refus | `tests/test_score_sources.py::TestLiveScore` |
 | Un club nommé autrement par la source de scores (sponsor, ancien nom) se règle par une table FIXE d'alias (`_ALIAS_CLUBS`) : nom ENTIER, deux mots au moins, deux sens ; le contrat (deux camps, candidat unique, terminé) ne bouge pas | `tests/test_alias_clubs.py` |
+| Un pays écrit autrement par la source de scores ou en français (« Czech Republic » / « Czechia » / « République tchèque ») se règle par une table FIXE de groupes (`_ALIAS_PAYS`) : nom ENTIER, étage reporté ; `ops.py noms` vérifie les signaux actifs | `tests/test_alias_pays.py` |
 | Le recours web ne règle qu'un recommandé ≥ 12 h, en championnat (jamais à élimination), sur 2 domaines concordants lus au titre, sans LLM | `tests/test_score_sources.py::TestRechercheWeb`, `tests/test_settlement.py::TestPorteWebAudit` |
 | Verdicts et classement par sport : mise plate À CÔTÉ du ROI Kelly, et lignes postérieures à `CALIBRATION_EPOCH` seulement | `tests/test_learning_layer.py::TestMisePlateEtEpoque` |
 | Aucun pool ne transmet de clé IA (plus rien n'en consomme) | `tests/test_ci_env.py::test_aucun_pool_ne_transmet_de_cle_ia` |

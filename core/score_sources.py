@@ -682,9 +682,81 @@ _ALIAS_CLUBS: dict[str, str] = {
 _ALIAS_CLUBS_BIDIR = {**_ALIAS_CLUBS, **{v: k for k, v in _ALIAS_CLUBS.items()}}
 
 
+# ── Noms de PAYS : anglais, local, français ──────────────────────────
+#
+# Les books écrivent « Czech Republic », « USA », « United Arab Emirates » ;
+# ESPN et LiveScore écrivent « Czechia », ESPN « United States », LiveScore
+# « UAE ». Aucun rapprochement textuel ne franchit ces écarts, et un titre de
+# page lu par l'étage web peut être en français (« Allemagne », « Pays-Bas »).
+#
+# MESURÉ le 2026-10-02 sur les journées réelles du 01 au 06/10 (trêve
+# internationale, 150 sélections chez ESPN, 157 chez LiveScore) contre les
+# noms de sélections relevés en base côté book : NON appariés — « Czech
+# Republic » / « Czechia » (les deux sources), « USA » / « United States »
+# (ESPN), « United Arab Emirates » / « UAE » (LiveScore), « Kyrgyzstan »
+# (LiveScore) / « Kyrgyz Republic » (ESPN). Appariés sans aide : « Turkey » /
+# « Türkiye », « China PR » / « China », « Congo DR » / « DR Congo », les
+# « St. » / « Saint ». En français, `strict_team_match` laisse passer 28 noms
+# sur 39 essayés ; les 11 refusés sont ci-dessous.
+#
+# Même statut que les exonymes de villes : une table FIXE, vérifiable mot à
+# mot dans un dictionnaire, sans apprentissage. Chaque ligne est un GROUPE
+# d'écritures du même pays ; la première est celle des books. Le nom est
+# reconnu ENTIER (« Czechia » oui, « Czechia Praha » non), son étage éventuel
+# (« U21 », « W ») est reporté tel quel, et le règlement exige toujours les
+# DEUX camps sur un candidat UNIQUE.
+# ⚠️ Cette table ne RESSERRE rien : `strict_team_match` rapproche toujours
+# « Australia » et « Austria », « Slovenia » et « Slovakia », « Iraq » et
+# « Israel » sur un seul camp. Rejoué le 2026-10-02 : sur 129 matchs de
+# sélections A, aucun n'avait un autre événement apparié sur les deux camps —
+# c'est le contrat qui protège, pas la finesse du nom.
+# Gardien : tests/test_alias_pays.py.
+_ALIAS_PAYS: tuple[tuple[str, ...], ...] = (
+    ("czech republic", "czechia", "republique tcheque", "tchequie"),
+    ("usa", "united states", "united states of america", "etats unis"),
+    ("united arab emirates", "uae", "emirats arabes unis"),
+    ("kyrgyzstan", "kyrgyz republic", "kirghizistan"),
+    ("south korea", "republic of korea", "korea republic", "coree du sud"),
+    ("ivory coast", "cote d'ivoire"),
+    ("turkey", "turkiye", "turquie"),
+    ("germany", "allemagne"),
+    ("england", "angleterre"),
+    ("netherlands", "holland", "pays bas"),
+    ("switzerland", "suisse"),
+    ("norway", "norvege"),
+    ("wales", "pays de galles"),
+    ("scotland", "ecosse"),
+    ("hungary", "hongrie"),
+)
+_PAYS_GROUPE = {ecriture: groupe for groupe in _ALIAS_PAYS for ecriture in groupe}
+# Étage porté en fin de nom par une sélection (« Czechia U21 », « England W ») :
+# reconnu pour être reporté sur la variante, jamais pour être deviné.
+_PAYS_ETAGE = re.compile(r"^(?P<pays>.+?)(?P<etage>(?:\s+(?:u\d{2}|w|women|femmes))+)$")
+
+
+def _cle_pays(plie: str) -> str:
+    """Forme de recherche d'un nom de pays déjà plié : tirets et points
+    deviennent des espaces (« Pays-Bas », « États-Unis », « U.S.A »)."""
+    return " ".join(plie.replace("-", " ").replace(".", " ").replace("’", "'").split())
+
+
+def _variantes_pays(plie: str) -> list[str]:
+    """Les autres écritures du pays que désigne `plie` (nom ENTIER, étage
+    éventuel reporté), [] si ce n'est pas un pays de la table."""
+    cle = _cle_pays(plie)
+    etage = ""
+    if cle not in _PAYS_GROUPE:
+        m = _PAYS_ETAGE.match(cle)
+        if not m or m.group("pays") not in _PAYS_GROUPE:
+            return []
+        cle, etage = m.group("pays"), m.group("etage")
+    return [autre + etage for autre in _PAYS_GROUPE[cle] if autre != cle]
+
+
 def _variantes(nom: str) -> list[str]:
-    """`nom` plié, plus son alias de club (nom ENTIER, voir `_ALIAS_CLUBS`) et
-    ses traductions d'exonyme quand il en contient une.
+    """`nom` plié, plus son alias de club (nom ENTIER, voir `_ALIAS_CLUBS`),
+    les autres écritures de son pays (`_ALIAS_PAYS`) et ses traductions
+    d'exonyme quand il en contient une.
 
     Un seul mot est traduit à la fois (aucun nom réel n'en porte deux) et
     seulement en MOT ENTIER : « FC Cologne » devient « FC Koln », « Colognes »
@@ -703,6 +775,7 @@ def _variantes(nom: str) -> list[str]:
     alias = _ALIAS_CLUBS_BIDIR.get(" ".join(mots))
     if alias:
         sorties.append(alias)
+    sorties.extend(_variantes_pays(plie))
     if len(mots) < 2:
         return sorties
     for i, mot in enumerate(mots):
@@ -909,6 +982,53 @@ def fixture_connue(match_name: str, events: list, min_sides: int = 1) -> bool:
             if cotes and cotes[0] >= max(1, min_sides):
                 return True
     return False
+
+
+def diagnostic_noms(match_name: str, events_espn: list | None,
+                     lignes_livescore: list | None) -> dict:
+    """Ce match se réglera-t-il PAR SON NOM ? Pur — aucune requête.
+
+    Compte, dans des événements ESPN et une journée LiveScore DÉJÀ lus, les
+    candidats appariés sur les DEUX camps (le contrat du règlement) et nomme
+    ceux qui n'en reconnaissent qu'UN : c'est là que se voient un nom de
+    sponsor (« CD Inca » / « Inca Aruba »), un ordre de mots, une autre langue
+    (« Czech Republic » / « Czechia »). Règle opérateur du 2026-10-02 :
+    toujours vérifier les noms entre sources — `scripts/ops.py noms` l'appelle
+    sur les signaux actifs.
+
+    Rend {"espn": n, "livescore": n, "proches": [libellés à un seul camp]} ;
+    une source non lue (None) compte 0. Un et un seul candidat = réglable."""
+    parts = _split(match_name)
+    out = {"espn": 0, "livescore": 0, "proches": []}
+    if not parts:
+        return out
+    home, away = parts
+    vus: set = set()
+    for ev in events_espn or []:
+        for comp in _espn_competitions(ev):
+            cotes = _espn_cotes(comp, home, away)
+            if not cotes:
+                continue
+            ident = str(comp.get("id") or id(comp))
+            if cotes[0] == 2 and ident not in vus:
+                vus.add(ident)
+                out["espn"] += 1
+            elif cotes[0] == 1:
+                noms = [(_espn_noms(c) or ["?"])[0] for c in cotes[1:]]
+                out["proches"].append(f"espn : {noms[0]} vs {noms[1]}")
+    vus_ls: set = set()
+    for ev in lignes_livescore or []:
+        dom, ext = _ls_camp(ev["home"], home), _ls_camp(ev["away"], away)
+        libelle = (f"{' / '.join(n for n in ev['home'] if n)} vs "
+                   f"{' / '.join(n for n in ev['away'] if n)}")
+        if dom and ext:
+            if (ev.get("id") or libelle) not in vus_ls:
+                vus_ls.add(ev.get("id") or libelle)
+                out["livescore"] += 1
+        elif dom != ext:
+            out["proches"].append(f"livescore : {libelle}")
+    out["proches"] = sorted(set(out["proches"]))
+    return out
 
 
 # Type de saison ESPN (`event.season.type`) : 1 présaison, 2 saison

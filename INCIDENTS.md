@@ -1786,6 +1786,54 @@ endpoint — gardé par `tests/test_odds500.py::TestRobotsTxt`.
 Un règlement manqué ne retarde pas l'apprentissage : il DÉTRUIT
 l'échantillon, parce qu'un signal non réglé finit purgé en `expired`.
 
+### Un pays porte trois noms selon la source : « Czech Republic », « Czechia », « République tchèque » (2026-10-02)
+
+Règle opérateur du 2026-10-02 : « toujours vérifier cet aspect des noms, ainsi
+que leur orthographe anglaise et française selon les sources ». Vérification
+faite le jour même, sur les journées réelles du 01 au 06/10 (trêve
+internationale) : 150 sélections chez ESPN, 157 chez LiveScore, comparées aux
+noms relevés en base côté book.
+
+MESURÉ :
+- NON appariés par `strict_team_match` : « Czech Republic » (book) / « Czechia »
+  (ESPN et LiveScore), « USA » / « United States » (ESPN), « United Arab
+  Emirates » / « UAE » (LiveScore), « Kyrgyzstan » / « Kyrgyz Republic »
+  (ESPN). Espagne–Tchéquie (03/10), Angleterre–Tchéquie (06/10), EAU–Oman,
+  USA–Mexique ne se seraient pas réglés.
+- Appariés sans aide : « Turkey » / « Türkiye », « China PR » / « China »,
+  « Congo DR » / « DR Congo », « St. » / « Saint », « Bosnia and Herzegovina »
+  / « Bosnia-Herzegovina ».
+- En français (titres de pages de l'étage web) : 28 noms de pays sur 39
+  essayés passent ; 11 refusés (Allemagne, Angleterre, Pays-Bas, Suisse,
+  Norvège, Pays de Galles, Écosse, Hongrie, République tchèque, Côte d'Ivoire,
+  États-Unis). Aucune source de COTES du pipeline n'écrit en français.
+- Tennis : ESPN écrit « Xinran Sun » mais « Bu Yunchaokete » — l'ordre du nom
+  n'est pas constant chez une même source. Les trois signaux tennis actifs
+  s'apparient ; ESPN date Sun–Bucsa à 07:30 UTC, comme OddsAPI.
+- Faux rapprochements sur UN camp : « Australia »/« Austria », « Slovenia »/
+  « Slovakia », « Iraq »/« Israel », « England »/« Ireland »… Rejoué sur 129
+  matchs de sélections A : AUCUN n'a un autre événement apparié sur les deux
+  camps. Le contrat protège, la finesse du nom non.
+
+Correctif : `_ALIAS_PAYS` (`core/score_sources.py`), groupes d'écritures d'un
+même pays — nom ENTIER, étage reporté (« U21 », « W »), lue par `_variantes`.
+Rejoué avec les noms du book : 129 matchs LiveScore et les 9 affiches ESPN
+concernées trouvent chacun UN candidat. Et `python scripts/ops.py noms` :
+pour chaque signal actif, combien de candidats à deux camps chez ESPN et
+LiveScore, et quels libellés n'en reconnaissent qu'un — lecture seule, hors
+budget (`score_sources.diagnostic_noms`, pur).
+
+Ce qui n'a PAS été fait : l'appariement des PRIX (book ↔ sharp) et la garde
+des jumeaux comparent toujours par `strict_team_match` seul ; un book qui
+écrirait « Czechia » face à un sharp « Czech Republic » perdrait son prix
+sharp (signal non émis, jamais faux) — non mesuré, à lire sur les lignes
+« SANS SHARP » des scans du 03 et du 06/10.
+
+⛔ Devant tout « introuvable », « non réglable », « sans sharp » ou doublon :
+comparer les libellés RÉELS de chaque source avant de conclure à une absence
+de couverture (`ops.py noms`).
+Gardien : `tests/test_alias_pays.py`.
+
 ### `closed` était un score manqué que personne ne comptait ni ne relançait (2026-10-02)
 
 Symptôme : /performance affichait « 100 % résolus ». Le taux de résolution
