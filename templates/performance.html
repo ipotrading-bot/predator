@@ -163,7 +163,7 @@ details[open] > summary.sec-hdr::before { content: '▾'; }
   </div>
 
   {# ── Indicateurs ──────────────────────────────────────────────────
-     Quatre tuiles, aucune phrase. La résolution (réglés / réglés+expirés)
+     Quatre tuiles, aucune phrase. La résolution (réglés / réglés+sans score)
      reste visible : sans elle la page ne décrit que les paris qu'on a su
      suivre — biais de survie, voir perf_view.resolution_rate. Les fantômes
      golden hour (< T-2h, jamais envoyés) restent hors de tous les chiffres ;
@@ -191,7 +191,7 @@ details[open] > summary.sec-hdr::before { content: '▾'; }
       <div class="pk-l">CLV</div>
       {% endif %}
     </div>
-    <div class="pk" title="{{ r.settled }} réglés sur {{ r.denom }} suivis ; {{ r.expired }} expirés sans score, absents de tous les chiffres">
+    <div class="pk" title="{{ r.settled }} réglés sur {{ r.denom }} suivis ; {{ r.sans_score }} sans score (expirés ou clos sur leur seule clôture), absents de tous les chiffres">
       {% if r and r.rate_pct is not none %}
       {% set res_color = 'var(--green)' if r.rate_pct >= 80 else ('var(--yellow)' if r.rate_pct >= 50 else 'var(--red)') %}
       <div class="pk-v" style="color:{{ res_color }}">{{ "%.0f"|format(r.rate_pct) }}%</div>

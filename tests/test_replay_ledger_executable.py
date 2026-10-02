@@ -212,9 +212,16 @@ class TestTauxDeResolution:
         assert d["settled"] == 1 and d["denom"] == 2 and d["rate_pct"] == 50.0
 
     def test_un_signal_encore_vivant_nabaisse_pas_le_taux(self):
-        rows = [{"status": "settled"}, {"status": "active"}, {"status": "closed"}]
+        rows = [{"status": "settled"}, {"status": "active"}]
         d = resolution_rate(rows, field="status")
         assert d["denom"] == 1 and d["rate_pct"] == 100.0
+
+    def test_un_signal_clos_sans_score_abaisse_le_taux(self):
+        # `closed` n'est pas « vivant » : c'est un score manqué, comme
+        # `expired` (2026-10-02, voir perf_view.resolution_rate).
+        rows = [{"status": "settled"}, {"status": "closed"}]
+        d = resolution_rate(rows, field="status")
+        assert d["denom"] == 2 and d["rate_pct"] == 50.0
 
     def test_aucune_ligne_ne_rend_none_et_pas_une_division_par_zero(self):
         assert resolution_rate([])["rate_pct"] is None

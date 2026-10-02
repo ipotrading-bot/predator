@@ -141,3 +141,66 @@ class TestBranchement:
             src = inspect.getsource(f)
             assert "mois_de(r)" in src, f.__name__
             assert '(r.get("created_at") or "")[:7]' not in src, f.__name__
+
+
+class _FauxLedger:
+    """Double de `sb.table("ai_learning_ledger")` : `n` lignes, servies par
+    tranches ; compte les constructeurs créés et les bornes demandées."""
+
+    def __init__(self, n):
+        self.n, self.tables, self.bornes, self.filtres = n, 0, [], []
+
+    def table(self, _nom):
+        self.tables += 1
+        return _FauxRequete(self)
+
+
+class _FauxRequete:
+    def __init__(self, base):
+        self.base, self._r = base, None
+
+    def select(self, _cols):
+        return self
+
+    def gte(self, col, val):
+        self.base.filtres.append((col, val))
+        return self
+
+    def order(self, *_a, **_k):
+        return self
+
+    def range(self, a, b):
+        assert self._r is None, "un constructeur réutilisé empilerait ses bornes"
+        self._r = (a, b)
+        self.base.bornes.append((a, b))
+        return self
+
+    def execute(self):
+        a, b = self._r
+        return type("R", (), {"data": [{"id": i} for i in range(a, min(b + 1, self.base.n))]})()
+
+
+class TestLectureParPages:
+    """Août 586 + septembre 416 + octobre 16 = 1 018 lignes le 2026-10-02 :
+    un `limit(1000)` unique perdait les 18 plus anciennes sans le dire."""
+
+    def test_la_fenetre_de_trois_mois_est_lue_en_entier(self):
+        import api.index as dash
+        base = _FauxLedger(1018)
+        lignes = dash._ledger_par_pages(base, "2026-08-01")
+        assert len(lignes) == 1018 and len({r["id"] for r in lignes}) == 1018
+        assert base.bornes == [(0, 999), (1000, 1999)]
+        assert base.tables == 2, "une requête NEUVE par page"
+        assert base.filtres == [("created_at", "2026-08-01")] * 2
+
+    def test_une_page_incomplete_arrete_la_lecture(self):
+        import api.index as dash
+        base = _FauxLedger(16)
+        assert len(dash._ledger_par_pages(base, None)) == 16
+        assert base.bornes == [(0, 999)] and base.filtres == []
+
+    def test_la_lecture_est_bornee(self):
+        import api.index as dash
+        base = _FauxLedger(10 ** 6)
+        lignes = dash._ledger_par_pages(base, None)
+        assert len(lignes) == dash._LEDGER_PAGE * dash._LEDGER_PAGES_MAX

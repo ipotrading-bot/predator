@@ -1786,6 +1786,42 @@ endpoint — gardé par `tests/test_odds500.py::TestRobotsTxt`.
 Un règlement manqué ne retarde pas l'apprentissage : il DÉTRUIT
 l'échantillon, parce qu'un signal non réglé finit purgé en `expired`.
 
+### `closed` était un score manqué que personne ne comptait ni ne relançait (2026-10-02)
+
+Symptôme : /performance affichait « 100 % résolus ». Le taux de résolution
+existe pour montrer le biais de survie ; il ne montrait plus rien.
+
+Cause : `audit_engine.audit_one`, une fois le match vieux de plus
+d'`EXPIRE_AFTER_H` et le score introuvable, écrit `closed` quand une clôture
+avait été capturée et `expired` sinon. Même fait, deux mots. Or
+`perf_view.resolution_rate` rangeait `closed` parmi les « états
+intermédiaires » (hors dénominateur) et `core/relance_expires.py` ne lisait
+qu'`expired`. Tant que la capture de clôture était rare, presque tout
+finissait `expired` ; depuis que l'exchange la sert à chaque tick, les scores
+manqués finissent `closed` — comptés nulle part, relancés jamais.
+
+MESURÉ le 2026-10-02 en base : ledger `closed` 41 lignes (août 27, septembre
+14, dont 10 recommandées), `expired` 1 ; `signals` `closed` 24 (du 07/08 au
+19/09, 5 recommandés), `expired` 0. Sur la fenêtre de trois mois : 976 réglés
+sur 1 018 suivis, soit 96 % et non 100 %.
+
+Correctif : `resolution_rate` compte `closed` comme un score manqué (clé
+`sans_score` = expirés + clos) ; `relance_expires` reprend les deux états
+(`ETATS_SANS_SCORE`) sur `signals` et sur le ledger. Le lot par run ne grossit
+PAS : les signaux en prennent la moitié au plus, sous leur propre curseur
+(`relance_signaux_cursor`). `db._ledger_deja_ecrit` promouvait déjà une ligne
+sans résultat vers un WIN/LOSS : rien à y changer.
+
+Ce qui n'a PAS été fait : aucune ligne `closed` n'a été réglée à la main ; ce
+que la relance en récupère reste à mesurer sur les prochains audits.
+
+⚠️ Sans le plafond de moitié et le curseur, les mêmes signaux les plus récents
+mangeraient le lot entier à chaque audit et le ledger ne serait plus servi.
+⛔ Un état écrit seulement quand le score est introuvable n'est pas
+« intermédiaire » : il entre au dénominateur.
+Gardiens : `tests/test_relance_expires.py::TestClosedEstReprisCommeExpired`,
+`tests/test_mission2_dashboard_quota.py::TestTauxDeResolution`.
+
 ### Le club portait un autre NOM chez la source de scores : l'audit stérile nommait le match sans le régler (2026-10-02)
 
 Symptôme : quatre audits en ÉCHEC en 24 h (runs 36849193517, 36907783913,
@@ -4242,12 +4278,16 @@ choisi, fantômes par carte). La route date TOUTES les lignes avant de filtrer
 (`_coups_d_envoi` par lots de 200 identifiants) ; `depuis_label()` dérive le
 libellé du plus ancien mois affiché.
 
-Ce qui n'a PAS été fait : le « 100 % résolus » ne compte pas les lignes
-`closed` du ledger (14 depuis le 01/09, dont 6 recommandées) — closes sur leur
-CLV sans score, jamais relancées (`relance_expires` ne vise que `expired`).
-Le gardien `test_active_et_closed_nentrent_nulle_part` tient ce choix :
-laissé à l'opérateur. Ramener août dans la fenêtre (`PERF_MONTHS_SHOWN`)
-aussi.
+Suite du même jour, sur instruction de l'opérateur (« règle tout ça ») :
+- la fenêtre passe de 2 à 3 mois (`PERF_MONTHS_SHOWN`), août revient au menu.
+  Elle porte alors 1 018 lignes (août 586, septembre 416, octobre 16) : le
+  `limit(1000)` de la route aurait tronqué les 18 plus anciennes sans le dire
+  — remplacé par une lecture paginée (`_ledger_par_pages`, une requête NEUVE
+  par page, tri secondaire sur `id`) ;
+- le « 100 % résolus » ignorait les lignes `closed` : voir « `closed` était un
+  score manqué que personne ne comptait ni ne relançait », section Règlement.
+Rendu local sur les données réelles : août 113–73, +4,7 u, IC 54–68 ; bandeau
+229–153, +11,2 u ; résolus 976 sur 1 018 (96 %).
 
 ⚠️ La borne SQL de la route reste sur `created_at` : un match se règle après
 son coup d'envoi, elle n'écarte donc aucune ligne d'un mois affiché.

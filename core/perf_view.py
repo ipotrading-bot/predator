@@ -22,11 +22,14 @@ TROIS RÈGLES, et elles ne servent pas la même chose :
 2. `RETIRED_SPORTS` (core/constants.py) — disparaît de TOUTES les vues :
    tableau par sport, historique, agrégats globaux, mois.
 
-3. `PERF_MONTHS_SHOWN` (défaut 2) — fenêtre glissante des N derniers mois
+3. `PERF_MONTHS_SHOWN` (défaut 3) — fenêtre glissante des N derniers mois
    calendaires. C'est un confort de lecture, pas une règle de validité ;
-   elle se combine avec la borne (1) par intersection.
+   elle se combine avec la borne (1) par intersection. Passée de 2 à 3 le
+   2026-10-02 (décision opérateur) : au 1er octobre août était sorti du menu,
+   qui est sa seule porte.
 
-4. `resolution_rate()` — le TAUX DE RÉSOLUTION, réglés / (réglés + expired).
+4. `resolution_rate()` — le TAUX DE RÉSOLUTION, réglés / (réglés + expired
+   + closed).
    Ce n'est pas un filtre mais une MESURE, et elle vit ici parce que c'est la
    page /performance qui la doit à son lecteur. Voir sa docstring : sans elle,
    la page souffre d'un biais de survie.
@@ -43,7 +46,7 @@ from datetime import datetime, timezone
 
 from core.constants import RETIRED_SPORTS
 
-PERF_MONTHS_SHOWN = int(os.environ.get("PERF_MONTHS_SHOWN", "2"))
+PERF_MONTHS_SHOWN = int(os.environ.get("PERF_MONTHS_SHOWN", "3"))
 
 # Époque zéro. Format « YYYY-MM » — comparable directement en chaîne, ce qui
 # est exact tant que le format est à largeur fixe (« 2026-09 » > « 2026-08 »).
@@ -123,7 +126,8 @@ _RESOLU = frozenset({"WIN", "LOSS", "PUSH", "settled"})
 
 def resolution_rate(rows: list[dict], field: str = "outcome") -> dict:
     """
-    réglés / (réglés + expired) — la part des signaux dont on a SU le résultat.
+    réglés / (réglés + expired + closed) — la part des signaux dont on a SU
+    le résultat.
 
     POURQUOI CETTE MESURE MANQUAIT, ET CE QU'ELLE CORRIGE
     -----------------------------------------------------
@@ -144,17 +148,28 @@ def resolution_rate(rows: list[dict], field: str = "outcome") -> dict:
     et la page n'en disait rien.
 
     `field` vaut `outcome` sur le ledger et `status` sur `signals`.
-    `active`/`closed` n'entrent NULLE PART : ni résultat, ni abandon — des
-    états intermédiaires, et les compter au dénominateur ferait passer un run
-    récent pour une panne de règlement.
+    `active` n'entre NULLE PART : ni résultat, ni abandon — un état
+    intermédiaire, et le compter au dénominateur ferait passer un run récent
+    pour une panne de règlement.
+
+    `closed` EST un abandon (corrigé le 2026-10-02). `audit_engine.audit_one`
+    ne l'écrit qu'une fois le match vieux de plus d'EXPIRE_AFTER_H et le score
+    introuvable : `closed` quand une clôture avait été capturée, `expired`
+    sinon. Même fait — pas de résultat —, deux mots. Tant que la capture de
+    clôture était rare, presque tout finissait `expired` ; depuis qu'un
+    exchange la sert à chaque tick, les scores manqués finissent `closed` et
+    sortaient du dénominateur : la page affichait « 100 % résolus » avec 14
+    lignes sans résultat depuis le 1er septembre (dont 6 recommandées).
 
     Rend `rate_pct=None` quand rien n'est mesurable — jamais 0.0, qui se
     lirait « aucun signal résolu ».
     """
     settled = sum(1 for r in rows if str(r.get(field)) in _RESOLU)
     expired = sum(1 for r in rows if str(r.get(field)) == "expired")
-    denom = settled + expired
-    return {"settled": settled, "expired": expired, "denom": denom,
+    closed = sum(1 for r in rows if str(r.get(field)) == "closed")
+    denom = settled + expired + closed
+    return {"settled": settled, "expired": expired, "closed": closed,
+            "sans_score": expired + closed, "denom": denom,
             "rate_pct": round(settled / denom * 100, 1) if denom else None}
 
 
