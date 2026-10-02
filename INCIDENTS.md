@@ -4211,6 +4211,49 @@ une valeur périmée dans la table gagne quand même.
 
 ## Dashboard et base
 
+### /performance découpait ses mois au jour du RÈGLEMENT, et annonçait « depuis août » sans août (2026-10-02)
+
+Symptôme (capture opérateur du 2026-10-02, 12:10) : carte « Octobre 2026 »
+à 7 gagnés – 7 perdus, −2,1 u, et un historique d'octobre de 14 lignes dont
+trois datées « 30/09 ». En haut de page, « depuis août 2026 » au-dessus de
+117–80, qui n'était que septembre + octobre.
+
+Cause 1 : `core/perf_view.py` lisait `created_at` — le jour du RÈGLEMENT —
+dans `filter_rows`, `rows_of_month` et `monthly_summary`. Le correctif du
+30/09 (« horaires faux ») n'avait daté au match que la COLONNE de
+l'historique (`avec_date_du_match`) : la page affichait la date du match dans
+une liste découpée par date de règlement. Un match du soir se règle après
+minuit, donc chaque fin de mois déverse ses derniers paris dans le suivant.
+Cause 2 : « depuis août 2026 » était écrit en dur à quatre endroits
+(`templates/performance.html` ×3, `api/index.py`), alors que la fenêtre
+glissante `PERF_MONTHS_SHOWN` (2 mois) a quitté août le 1er octobre.
+
+MESURÉ le 2026-10-02 en base (ledger joint à `signals`) : réglés en octobre
+mais joués en septembre, 2 WIN + 1 LOSS recommandés (New York RB–St. Louis,
+Cienciano–Los Chankas, Independiente CG–Nacional) ; réglés en septembre mais
+joués en août, 1 WIN + 1 PUSH recommandés et 7 fantômes. Page rendue en local
+sur les données réelles après correctif : octobre 5–6, −2,6 u, IC 21–72 ;
+septembre 111–74, +9,1 u ; bandeau 116–80 ; aucun « 30/09 » dans l'historique
+d'octobre (11 lignes), aucun mois étranger dans celui de septembre (185).
+
+Correctif : `mois_de(r)` — le mois du MATCH, repli sur le règlement quand le
+signal n'est plus là — est la SEULE lecture du mois (fenêtre, cartes, mois
+choisi, fantômes par carte). La route date TOUTES les lignes avant de filtrer
+(`_coups_d_envoi` par lots de 200 identifiants) ; `depuis_label()` dérive le
+libellé du plus ancien mois affiché.
+
+Ce qui n'a PAS été fait : le « 100 % résolus » ne compte pas les lignes
+`closed` du ledger (14 depuis le 01/09, dont 6 recommandées) — closes sur leur
+CLV sans score, jamais relancées (`relance_expires` ne vise que `expired`).
+Le gardien `test_active_et_closed_nentrent_nulle_part` tient ce choix :
+laissé à l'opérateur. Ramener août dans la fenêtre (`PERF_MONTHS_SHOWN`)
+aussi.
+
+⚠️ La borne SQL de la route reste sur `created_at` : un match se règle après
+son coup d'envoi, elle n'écarte donc aucune ligne d'un mois affiché.
+⛔ Plus aucun `created_at[:7]` pour ranger une ligne dans un mois : `mois_de`.
+Gardien : `tests/test_perf_mois_au_match.py`.
+
 ### Deux DELETE de la purge n'étaient pas scopés `status='active'` (2026-09-29)
 
 Trouvé en lisant `run_engine._purge_old_signals` pendant l'audit du

@@ -74,9 +74,35 @@ def shown_months(now: datetime | None = None, n: int | None = None) -> list[str]
     return out
 
 
+def mois_de(r: dict) -> str:
+    """Le mois ('YYYY-MM', UTC) auquel une ligne APPARTIENT : celui du MATCH
+    (`match_time`, posé par `avec_date_du_match`), à défaut celui du règlement
+    (`created_at`) quand le signal n'a pas été retrouvé.
+
+    Jusqu'au 2026-10-02, chaque découpage par mois lisait `created_at` — le
+    jour du RÈGLEMENT. Un match du soir se règle après minuit : trois paris
+    joués le 30/09 (New York RB–St. Louis, Independiente CG–Nacional,
+    Cienciano–Los Chankas) comptaient dans la carte d'OCTOBRE (7–7 affiché
+    pour 5–6 réel) et figuraient dans son historique, datés « 30/09 » par la
+    colonne voisine. UNE seule lecture pour la fenêtre, les cartes, le mois
+    choisi et l'historique (règle n°6) : la page ne peut plus se contredire."""
+    return (r.get("match_time") or r.get("created_at") or "")[:7]
+
+
+def depuis_label(months: list[str]) -> str:
+    """« depuis septembre 2026 » — le plus ANCIEN mois de la fenêtre affichée.
+
+    Le libellé était écrit en dur (« depuis août 2026 ») à quatre endroits ;
+    le 2026-10-01 la fenêtre glissante (`PERF_MONTHS_SHOWN`) a quitté août et
+    le bandeau annonçait trois mois en n'en comptant que deux. Dérivé de
+    `shown_months()`, il ne peut plus mentir (règle n°6)."""
+    return f"depuis {month_label(months[-1])}" if months else ""
+
+
 def filter_rows(rows: list[dict], now: datetime | None = None,
                 months_shown: int | None = None) -> list[dict]:
     """Lignes visibles : sport non retiré, mois affiché, et pas avant l'époque.
+    Le mois est celui du MATCH (`mois_de`).
 
     La condition sur `PERF_START_MONTH` est redondante avec `shown_months()`
     tant que la fenêtre est courte — elle est écrite explicitement quand
@@ -86,8 +112,8 @@ def filter_rows(rows: list[dict], now: datetime | None = None,
     months = set(shown_months(now, months_shown))
     return [r for r in rows
             if (r.get("sport") or "") not in RETIRED_SPORTS
-            and (r.get("created_at") or "")[:7] in months
-            and (r.get("created_at") or "")[:7] >= PERF_START_MONTH]
+            and mois_de(r) in months
+            and mois_de(r) >= PERF_START_MONTH]
 
 
 # Un signal a REÇU un résultat. Le ledger l'exprime par `outcome`, la table
@@ -182,12 +208,14 @@ def rows_of_month(rows: list[dict], mois: str | None) -> list[dict]:
     """Sous-ensemble d'un mois ('YYYY-MM') ; `ALL_MONTHS`/None rend tout."""
     if mois in (None, ALL_MONTHS):
         return list(rows)
-    return [r for r in rows if (r.get("created_at") or "")[:7] == mois]
+    return [r for r in rows if mois_de(r) == mois]
 
 
 def avec_date_du_match(history: list[dict], coups_d_envoi: dict) -> list[dict]:
-    """L'historique, chaque ligne portant `match_time` (coup d'envoi du
-    signal), trié du plus récent au plus ancien match. Pur.
+    """Les lignes du ledger, chacune portant `match_time` (coup d'envoi du
+    signal), triées du plus récent au plus ancien match. Pur. Appliqué à
+    TOUTES les lignes chargées depuis le 2026-10-02, avant tout découpage par
+    mois (`mois_de`) — plus seulement à l'historique.
 
     La colonne DATE affichait `created_at` du ledger — le jour du RÈGLEMENT.
     Un match du soir se règle après minuit : Espagne–Croatie, joué le 29/09
@@ -280,7 +308,7 @@ def monthly_summary(rows: list[dict], tax_rate: float) -> list[dict]:
     et les deux ne sont JAMAIS moyennés ensemble."""
     par_mois: dict[str, list[dict]] = {}
     for r in rows:
-        mo = (r.get("created_at") or "")[:7]
+        mo = mois_de(r)
         if mo:
             par_mois.setdefault(mo, []).append(r)
     out = []
