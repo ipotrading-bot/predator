@@ -8,6 +8,7 @@ scripts/ops.py — pilotage Supabase + Vercel depuis le terminal, sans CLI.
     python scripts/ops.py ligues [prefixe] [jours]     # catalogue d'un sport : matchs a venir, jouables, credits/semaine (0 credit)
     python scripts/ops.py books <cle> [slug-io]       # quels books cotent une ligue : 1 CREDIT OddsAPI (+2 req odds-api.io si slug)
     python scripts/ops.py chaine <sport> [heures]     # chemin Tier 2 de bout en bout, sans écrire (~4 req odds-api.io)
+    python scripts/ops.py noms                        # les signaux ACTIFS se régleront-ils par leur NOM ? (ESPN + LiveScore, hors budget, lecture seule)
     python scripts/ops.py ai                          # sonde CHAQUE fournisseur IA par une INFÉRENCE réelle (catalogue ≠ utilisable)
     python scripts/ops.py watchdog                    # le chien de garde Cloudflare fait-il son travail ? PAT, cron, invocations 24 h, incident Cloudflare, créneau dû
     python scripts/ops.py secrets-push [--run]        # recopie les clés du .env vers les secrets Actions (403 depuis un Codespace)
@@ -948,6 +949,74 @@ def chaine(args):
           f"s'y ajoute au créneau NFL (jeudi/dimanche/lundi soir).")
 
 
+def noms():
+    """Les signaux ACTIFS se régleront-ils PAR LEUR NOM ?
+
+    Règle opérateur du 2026-10-02 : toujours vérifier les noms entre sources
+    (ordre des mots, sponsor, anglais / français / langue locale). Trois
+    défauts du même jour venaient tous d'un nom : « CD Inca » / « Inca
+    Aruba », « Xinran Sun » / « Sun Xinran », « Czech Republic » / « Czechia ».
+
+    Pour chaque match actif : lit ESPN (jour du match et veille — ESPN date
+    les sports américains à l'heure locale) et, au football, la journée
+    LiveScore, puis demande à `score_sources.diagnostic_noms` combien de
+    candidats sont appariés sur les DEUX camps. Un seul = réglable ; zéro avec
+    des « proches » = un nom à vérifier, AVANT que l'audit ne sorte stérile.
+
+    LECTURE SEULE et HORS BUDGET : les requêtes ne passent pas par les
+    compteurs `daily_quota` (une par sport et par jour de match, quelques
+    unités par appel) et rien n'est écrit en base."""
+    import urllib.request                                          # noqa: E402
+    from core import score_sources as ss                           # noqa: E402
+
+    def _lecture_directe(url, _bucket, _budget, source=None):
+        entetes = dict(ss._SOURCE_HEADERS.get(source or "", {"User-Agent": "Mozilla/5.0"}))
+        try:
+            with urllib.request.urlopen(urllib.request.Request(url, headers=entetes),
+                                        timeout=40) as resp:
+                return json.loads(resp.read().decode("utf-8", errors="replace"))
+        except Exception as e:                                     # noqa: BLE001
+            print(f"  (source muette : {url.split('?')[0]} — {e})")
+            return None
+
+    ss._get_json = _lecture_directe
+    lignes = _rest("GET", "signals", params={
+        "select": "match,sport,league,match_time,is_shadow", "status": "eq.active",
+        "order": "match_time.asc"}) or []
+    matchs: dict = {}
+    for r in lignes:
+        matchs.setdefault((r.get("match") or "", r.get("sport") or ""), r)
+    print(f"── Noms : {len(matchs)} match(s) actif(s) ──")
+    a_verifier = 0
+    for (match, sport), r in matchs.items():
+        jour = str(r.get("match_time") or "")[:10]
+        if len(jour) != 10:
+            print(f"  ?  {match} — sans heure de match, non vérifié")
+            continue
+        veille = (datetime.fromisoformat(jour) - timedelta(days=1)).date().isoformat()
+        espn = ss.fixtures_espn(sport, veille, jour)
+        segment = ss._LS_SPORTS.get(sport)
+        ls = ss._livescore_du_jour(segment, jour) if segment else None
+        d = ss.diagnostic_noms(match, espn, ls)
+        total = d["espn"] + d["livescore"]
+        if espn is None and ls is None:
+            print(f"  –  {match} ({sport}) — aucune source de scores à lire pour ce sport")
+        elif total and max(d["espn"], d["livescore"]) == 1:
+            ou = " + ".join(n for n in ("espn", "livescore") if d[n])
+            print(f"  ✓  {match} ({sport}, {jour}) — {ou}")
+        elif total:
+            a_verifier += 1
+            print(f"  ⚠  {match} ({sport}, {jour}) — PLUSIEURS candidats "
+                  f"(espn {d['espn']}, livescore {d['livescore']}) : le règlement refusera")
+        else:
+            a_verifier += 1
+            print(f"  ⚠  {match} ({sport}, {jour}) — AUCUN candidat à deux camps"
+                  + (" ; un seul camp reconnu chez :" if d["proches"] else " ; aucun nom proche (ligue absente ?)"))
+            for p_ in d["proches"][:5]:
+                print(f"       {p_}")
+    print(f"{a_verifier} match(s) à vérifier" if a_verifier else "Tous les noms s'apparient.")
+
+
 def main(argv):
     if not argv or argv[0] in ("-h", "--help"):
         print(__doc__)
@@ -965,6 +1034,8 @@ def main(argv):
         books(rest)
     elif cmd == "chaine":
         chaine(rest)
+    elif cmd == "noms":
+        noms()
     elif cmd == "ai":
         ai()
     elif cmd == "watchdog":

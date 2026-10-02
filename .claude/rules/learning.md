@@ -24,6 +24,14 @@ paths:
   refus ; score en direct → refus ; introuvable → la ligne RESTE
   expirée et sera relancée (`core/relance_expires.py`). Un WIN/LOSS faux
   est DÉFINITIF, l'attente ne l'est pas.
+- **Toujours vérifier les NOMS entre sources** (règle opérateur du
+  2026-10-02) : ordre des mots d'un joueur, nom de sponsor, anglais /
+  français / langue locale (« Czech Republic » / « Czechia »). Devant tout
+  « introuvable », « non réglable », « sans sharp » ou doublon, comparer les
+  libellés RÉELS avant de conclure à une absence de couverture :
+  `python scripts/ops.py noms` (signaux actifs, lecture seule). Un correctif
+  de nom = table FIXE vérifiée sur affiche réelle (`_ALIAS_CLUBS`,
+  `_ALIAS_PAYS`, `_EXONYMES`) + test gardien ; jamais de pont d'alias appris.
 - Le settlement ne s'ÉTALE pas (leçon 2026-08-28) : les budgets journaliers
   du règlement n'ont ni rythme horaire ni dépendance à l'heure ; seuls les
   SCANS sont étalés (`core/daily_quota.py`, formule UNIQUE).
