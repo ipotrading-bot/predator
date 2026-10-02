@@ -4247,6 +4247,53 @@ une valeur périmée dans la table gagne quand même.
 
 ## Dashboard et base
 
+### Le même match de tennis en deux cartes : deux sources, deux heures, deux ordres de nom (2026-10-02)
+
+Symptôme (capture opérateur du 2026-10-02, 12:48) : « 5 matchs » en bandeau
+pour 4 réels. « Xinran Sun vs Cristina Bucsa · WTA - Beijing, China », 03/10
+03:00, et « Sun Xinran vs Cristina Bucsa · WTA China Open », 03/10 07:30, sur
+deux cartes séparées.
+
+Cause : le même match du China Open arrive par odds-api.io (signal 10654,
+bet365, vainqueur Bucsa) et par OddsAPI (10666, 1xbet, Under 20.5).
+1. `api/index._group_key` regroupait sur le libellé EXACT : l'ordre des mots
+   du nom de la joueuse suffisait à faire deux cartes.
+2. `run_engine._meme_match_reel`, la garde d'émission des jumeaux, exigeait
+   les coups d'envoi à 30 minutes près. Un tournoi de tennis publie un ordre
+   de jeu : une source donne l'ouverture de la session (03:00 UTC = 11:00 à
+   Pékin), l'autre une estimation. Elle ne voyait donc pas ce jumeau — ici
+   sans dégât, les deux paris étant de familles différentes (côté, total),
+   mais le MÊME pari venu des deux sources serait sorti deux fois.
+
+MESURÉ le 2026-10-02 : écart de 4 h 30 entre les deux sources ; Sofascore
+annonçait 06:30 UTC pour ce match, aucune des deux heures n'est donc sûre.
+`strict_team_match` : « Xinran Sun »/« Sun Xinran » passe de justesse, mais
+« Qinwen Zheng »/« Zheng Qinwen », « Xinyu Gao »/« Gao Xinyu », « Yafan
+Wang »/« Wang Yafan » sont refusés. Rejeu sur les 11 matchs de tennis de
+`signals` : une seule paire appariée, celle-ci.
+
+Correctif : la fonction vit dans `core/match_reel.py`, partagée par le moteur
+et le dashboard. Pour le tennis seulement : fenêtre de 12 heures
+(`JUMEAU_FENETRE_MIN_PAR_SPORT`) et noms comparés sans tenir compte de
+l'ordre des mots ; les DEUX camps restent exigés. `_group_by_match` cherche
+la carte par le match réel après la clé exacte ; quand les jambes
+n'annoncent pas la même heure, la carte montre la plus tôt et une puce
+« heure ≈ » porte les heures en infobulle. `_actifs_des_matchs` lit les
+actifs sur la plus large fenêtre des sports candidats.
+
+Ce qui n'a PAS été fait : aucune des deux heures n'est corrigée en base, et
+la question « quelle source dit vrai sur l'heure du tennis » reste ouverte
+(remesure prévue vers le 2026-10-20). Le règlement du tennis compare encore
+les noms avec `strict_team_match` seul : un joueur écrit nom de famille en
+premier par la source de cotes peut ne pas s'apparier à ESPN — non mesuré.
+`strict_team_match` rapproche aussi « Xinyu Wang » et « Xiyu Wang », deux
+joueuses distinctes ; seul le contrat des deux camps l'empêche de nuire.
+
+⚠️ Élargir une fenêtre fait REFUSER des signaux : toute entrée de
+`JUMEAU_FENETRE_MIN_PAR_SPORT` se justifie par une mesure et un test.
+Gardiens : `tests/test_match_reel.py`,
+`tests/test_dashboard_groups.py::TestLeMatchReelPasLeLibelle`.
+
 ### /performance découpait ses mois au jour du RÈGLEMENT, et annonçait « depuis août » sans août (2026-10-02)
 
 Symptôme (capture opérateur du 2026-10-02, 12:10) : carte « Octobre 2026 »
