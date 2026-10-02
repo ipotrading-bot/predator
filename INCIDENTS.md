@@ -1786,6 +1786,54 @@ endpoint — gardé par `tests/test_odds500.py::TestRobotsTxt`.
 Un règlement manqué ne retarde pas l'apprentissage : il DÉTRUIT
 l'échantillon, parce qu'un signal non réglé finit purgé en `expired`.
 
+### Le club portait un autre NOM chez la source de scores : l'audit stérile nommait le match sans le régler (2026-10-02)
+
+Symptôme : quatre audits en ÉCHEC en 24 h (runs 36849193517, 36907783913,
+36937778613, 36990182193), « AUDIT STÉRILE — 0 réglé sur N éligibles ». Le
+dernier portait sur deux signaux bet365 : « Dubai United FC vs Hatta SC »
+(10636) et « CD Inca vs Municipal Limeno » (10641).
+
+Cause, pour le second : LiveScore AVAIT le match, terminé, sous « Inca Aruba
+vs Municipal Limeno » (2-1, `FT`, même ligue, même coup d'envoi). Le club
+porte son nom de sponsor chez la source de scores ; `strict_team_match`
+refuse « CD Inca » / « Inca Aruba », à raison. La sonde `_journal_alias`
+n'a rien proposé : « CD Inca » s'apparie aussi à « China » et « Municipal
+Limeno » à « CSD Municipal », donc 5 événements à un seul camp reconnu →
+« ALIAS AMBIGU … rien proposé ». Le bon match figurait dans la liste des
+trois cités, que personne ne lisait.
+
+MESURÉ le 2026-10-02 (journées LiveScore des 01 et 02/10 relues à la main) :
+- « Inca Aruba vs Municipal Limeno » 2-1 `FT` ; rejoué sur cette journée
+  réelle avec l'alias, `result_from_livescore` rend 2-1, source `livescore`.
+- « Reilac Shiga FC vs Roasso Kumamoto » (1xbet, fantôme, J3) est chez
+  LiveScore « MIO Biwako Shiga vs Roasso Kumamoto » — l'ancien nom du club.
+  Même mécanisme, pris avant son premier audit.
+- « Dubai United FC vs Hatta SC » n'est PAS un problème de nom : la coupe de
+  la ligue des Émirats est absente de LiveScore (65 événements le 01/10,
+  aucun des Émirats). Sur cette journée la sonde proposait « Dubai United FC
+  pourrait être Dominican Republic » : un candidat UNIQUE et FAUX — la raison
+  pour laquelle elle ne règle jamais rien. Score lu sur le web : United FC
+  3-2 Hatta (FotMob et Flashscore, buts aux 39e, 67e, 82e, 84e, 86e).
+
+Correctif : `_ALIAS_CLUBS` (`core/score_sources.py`), table FIXE lue par
+`_variantes` — « CD Inca » ⇔ « Inca Aruba », « Reilac Shiga FC » ⇔ « MIO
+Biwako Shiga ». Comme les exonymes, elle AJOUTE une variante au nom servi par
+la source ; `strict_team_match` juge comme avant et le règlement exige
+toujours les deux camps sur un candidat unique, terminé.
+
+Ce qui n'a PAS été fait : le signal 10636 n'a pas été réglé à la main (aucune
+source de la chaîne ne porte le match ; l'écriture directe en base a été
+refusée dans la session) — il reste à l'opérateur, ou expire à 36 h. Pourquoi
+l'émission a admis une coupe que rien ne règle (le football n'exige qu'UN
+camp chez ESPN, `_reglable`) n'a pas été mesuré.
+
+⚠️ L'alias porte sur le nom ENTIER et compte au moins deux mots : un mot nu
+(« Inca ») s'apparierait par containment à tout voisin.
+⛔ N'entre dans la table qu'un alias VU sur une affiche réelle (ligue,
+adversaire, heure) dans les deux écritures — jamais un alias déduit, jamais
+un candidat de la sonde promu sans lecture (« Le pont d'alias »).
+Gardien : `tests/test_alias_clubs.py`.
+
 ### L'Euroleague était payée et jamais réglable : ESPN ne la liste pas (2026-10-01)
 
 Symptôme : à chaque scan qui l'achète, quatre lignes « NON RÉGLABLE | …
