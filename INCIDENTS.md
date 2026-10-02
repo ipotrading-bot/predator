@@ -1821,11 +1821,14 @@ Biwako Shiga ». Comme les exonymes, elle AJOUTE une variante au nom servi par
 la source ; `strict_team_match` juge comme avant et le règlement exige
 toujours les deux camps sur un candidat unique, terminé.
 
-Ce qui n'a PAS été fait : le signal 10636 n'a pas été réglé à la main (aucune
-source de la chaîne ne porte le match ; l'écriture directe en base a été
-refusée dans la session) — il reste à l'opérateur, ou expire à 36 h. Pourquoi
-l'émission a admis une coupe que rien ne règle (le football n'exige qu'UN
-camp chez ESPN, `_reglable`) n'a pas été mesuré.
+Le signal 10636, qu'aucune source de la chaîne ne porte, a été réglé À LA
+MAIN le 2026-10-02 à 12:04 UTC sur instruction de l'opérateur : `settle_signal`
+appelé avec le score 3-2 lu sur le web, donc LOSS (Hatta +0.5), une ligne au
+ledger — le même code que l'audit, seul le score est injecté.
+
+Ce qui n'a PAS été fait : pourquoi l'émission a admis une coupe que rien ne
+règle (le football n'exige qu'UN camp chez ESPN, `_reglable`) n'a pas été
+mesuré.
 
 ⚠️ L'alias porte sur le nom ENTIER et compte au moins deux mots : un mot nu
 (« Inca ») s'apparierait par containment à tout voisin.
