@@ -84,8 +84,10 @@ class TestPerfView:
         # La borne de code doit être citée : SQL et code se complètent
         assert "PERF_START_MONTH" in sql
 
-    def test_default_is_two_months_and_env_driven(self):
-        assert perf_view.PERF_MONTHS_SHOWN == 2
+    def test_default_is_three_months_and_env_driven(self):
+        # 2 → 3 le 2026-10-02 (décision opérateur) : au 1er octobre août était
+        # sorti du menu, sa seule porte.
+        assert perf_view.PERF_MONTHS_SHOWN == 3
 
     def test_performance_route_goes_through_the_filter(self):
         import api.index as dash
@@ -174,7 +176,8 @@ class TestTauxDeResolution:
         rows = [{"outcome": "WIN"}, {"outcome": "LOSS"}, {"outcome": "PUSH"},
                 {"outcome": "expired"}]
         d = resolution_rate(rows)
-        assert d == {"settled": 3, "expired": 1, "denom": 4, "rate_pct": 75.0}
+        assert d == {"settled": 3, "expired": 1, "closed": 0, "sans_score": 1,
+                     "denom": 4, "rate_pct": 75.0}
 
     def test_un_push_compte_comme_resolu(self):
         """Un remboursement EST un résultat connu : le match a eu lieu et on
@@ -183,14 +186,26 @@ class TestTauxDeResolution:
         from core.perf_view import resolution_rate
         assert resolution_rate([{"outcome": "PUSH"}])["rate_pct"] == 100.0
 
-    def test_active_et_closed_nentrent_nulle_part(self):
-        """Ni résultat, ni abandon — des états intermédiaires. Les compter au
+    def test_active_nentre_nulle_part(self):
+        """Ni résultat, ni abandon — un état intermédiaire. Le compter au
         dénominateur ferait passer un run récent pour une panne de
         règlement."""
         from core.perf_view import resolution_rate
-        d = resolution_rate([{"outcome": "WIN"}, {"outcome": "active"},
-                             {"outcome": "closed"}])
+        d = resolution_rate([{"outcome": "WIN"}, {"outcome": "active"}])
         assert d["denom"] == 1 and d["rate_pct"] == 100.0
+
+    def test_closed_est_un_score_manque(self):
+        """`closed` = clos sur sa seule clôture, score jamais trouvé
+        (audit_one, passé EXPIRE_AFTER_H). Le laisser hors du dénominateur
+        affichait « 100 % résolus » avec 14 lignes sans résultat depuis le
+        1er septembre (mesuré le 2026-10-02)."""
+        from core.perf_view import resolution_rate
+        d = resolution_rate([{"outcome": "WIN"}, {"outcome": "closed"},
+                             {"outcome": "expired"}, {"outcome": "active"}])
+        assert (d["closed"], d["expired"], d["sans_score"], d["denom"]) == (1, 1, 2, 3)
+        assert d["rate_pct"] == 33.3
+        s = resolution_rate([{"status": "settled"}, {"status": "closed"}], field="status")
+        assert s["rate_pct"] == 50.0
 
     def test_les_signals_parlent_status_le_ledger_outcome(self):
         from core.perf_view import resolution_rate
@@ -219,7 +234,8 @@ class TestTauxDeResolution:
         gabarit = (pathlib.Path(__file__).resolve().parent.parent
                    / "templates" / "performance.html").read_text(encoding="utf-8")
         assert "global_s.resolution" in gabarit
-        assert "r.expired" in gabarit and "r.settled" in gabarit
+        # `sans_score` = expirés + clos sur leur seule clôture (2026-10-02).
+        assert "r.sans_score" in gabarit and "r.settled" in gabarit
 
     def test_la_formule_nest_pas_recopiee_ailleurs(self):
         """Elle vivait en double : ici et dans

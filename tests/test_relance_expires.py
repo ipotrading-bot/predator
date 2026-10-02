@@ -43,6 +43,11 @@ class FakeTable:
         self._filtres[col] = val
         return self
 
+    def in_(self, col, vals):
+        self._filtres[col] = tuple(vals)
+        self.base.filtres.append((self.nom, col, tuple(vals)))
+        return self
+
     def order(self, *a, **k):
         return self
 
@@ -79,7 +84,7 @@ class FakeTable:
 class FakeDB:
     def __init__(self, signaux=(), ledger=(), curseur=0):
         self.signaux, self.ledger, self.curseur = list(signaux), list(ledger), curseur
-        self.updates, self.upserts = [], []
+        self.updates, self.upserts, self.filtres = [], [], []
 
     def table(self, nom):
         return FakeTable(nom, self)
@@ -179,6 +184,54 @@ class TestLeBudgetEtLeCurseur:
     def test_un_budget_nul_ne_fait_rien(self):
         db = FakeDB(ledger=[dict(LIGNE)])
         assert relance_expires.relancer(db, budget=0)["ledger"] == 0
+
+
+class TestClosedEstReprisCommeExpired:
+    """`closed` = clos sur sa seule clôture, score jamais trouvé : le même
+    fait qu'`expired`. La relance ne lisait qu'`expired` — 41 lignes du ledger
+    et 24 signaux sans résultat pour toujours (mesuré le 2026-10-02)."""
+
+    SIGNAL = {"id": 7, "match": "Alpha FC vs Beta FC", "sport": "soccer",
+              "status": "closed", "market_key": "h2h", "selection_name": "Alpha FC"}
+
+    def test_les_deux_etats_sont_lus_sur_les_deux_tables(self):
+        db = FakeDB(ledger=[dict(LIGNE)])
+        with              patch.object(relance_expires, "fetch_match_result", return_value=None):
+            relance_expires.relancer(db, budget=4)
+        assert ("signals", "status", ("expired", "closed")) in db.filtres
+        assert ("ai_learning_ledger", "outcome", ("expired", "closed")) in db.filtres
+
+    def test_un_signal_clos_repasse_par_le_vrai_reglement(self):
+        db = FakeDB(signaux=[dict(self.SIGNAL)])
+        with              patch.object(relance_expires, "settle_signal", return_value=True) as regle, \
+             patch.object(relance_expires, "_tsdb_ok", return_value=False):
+            faits = relance_expires.relancer(db, budget=4)
+        assert faits["signaux"] == 1 and regle.call_count == 1
+
+    def test_les_signaux_ne_prennent_que_la_moitie_du_lot(self):
+        """Sans ce plafond, les mêmes signaux les plus récents mangeraient le
+        lot entier à chaque audit et le ledger ne serait plus jamais servi."""
+        db = FakeDB(signaux=[dict(self.SIGNAL, id=i) for i in range(20)],
+                    ledger=[dict(LIGNE, id=f"l{i}") for i in range(20)])
+        with              patch.object(relance_expires, "settle_signal", return_value=False) as regle, \
+             patch.object(relance_expires, "_tsdb_ok", return_value=False), \
+             patch.object(relance_expires, "fetch_match_result", return_value=None) as cherche:
+            relance_expires.relancer(db, budget=6)
+        assert regle.call_count == 3 and cherche.call_count == 3
+
+    def test_le_curseur_des_signaux_tourne(self):
+        db = FakeDB(signaux=[dict(self.SIGNAL, id=i) for i in range(3)], curseur=4)
+        with              patch.object(relance_expires, "settle_signal", return_value=False), \
+             patch.object(relance_expires, "_tsdb_ok", return_value=False):
+            relance_expires.relancer(db, budget=6)
+        ecrits = {p["key"]: p["value"] for (t, p) in db.upserts if t == "meta"}
+        assert ecrits[relance_expires.CURSEUR_SIGNAUX_KEY] == "7"
+
+    def test_le_curseur_des_signaux_revient_au_debut(self):
+        db = FakeDB(signaux=[], curseur=9)
+        relance_expires.relancer(db, budget=6)
+        ecrits = {p["key"]: p["value"] for (t, p) in db.upserts if t == "meta"}
+        assert ecrits[relance_expires.CURSEUR_SIGNAUX_KEY] == "0"
 
 
 class TestLaPlaceDansLaudit:

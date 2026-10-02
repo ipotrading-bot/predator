@@ -699,9 +699,39 @@ def audit():
 _LEAGUE_MIN_N = 5
 
 
-# Identifiants par requête : la liste voyage dans l'URL (`id=in.(…)`), et la
-# page date désormais TOUTES ses lignes — jusqu'à 1 000, pas les 14 d'un mois.
-_COUPS_D_ENVOI_LOT = 200
+# Identifiants par requête : la liste voyage dans l'URL (`id=in.(…)`, ~3 ko à
+# 400), et la page date désormais TOUTES ses lignes, pas les 14 d'un mois.
+_COUPS_D_ENVOI_LOT = 400
+
+
+# Lecture du ledger par pages. Un `limit(1000)` unique tronquait sans le dire
+# dès que la fenêtre dépassait mille lignes — et PostgREST plafonne de toute
+# façon une réponse à 1 000. Mesuré le 2026-10-02 : août 586 + septembre 416 +
+# octobre 16 = 1 018 lignes pour la fenêtre de trois mois, donc les 18 plus
+# anciennes d'août sortaient de leur propre carte. Borne dure : cinq pages.
+_LEDGER_PAGE = 1000
+_LEDGER_PAGES_MAX = 5
+
+
+def _ledger_par_pages(sb, depuis: str | None) -> list:
+    """Les lignes du ledger réglées depuis `depuis` ('YYYY-MM-DD', None = tout),
+    de la plus récente à la plus ancienne, page après page. S'arrête à la
+    première page incomplète. Une requête NEUVE par page : un constructeur
+    PostgREST réutilisé empile ses bornes au lieu de les remplacer. Le tri
+    secondaire sur `id` rend les pages disjointes quand deux lignes partagent
+    leur horodatage. Une panne remonte à l'appelant (état vide + log)."""
+    lignes: list = []
+    for page in range(_LEDGER_PAGES_MAX):
+        q = sb.table("ai_learning_ledger").select("*")
+        if depuis:
+            q = q.gte("created_at", depuis)
+        debut = page * _LEDGER_PAGE
+        lot = (q.order("created_at", desc=True).order("id")
+               .range(debut, debut + _LEDGER_PAGE - 1).execute().data or [])
+        lignes.extend(lot)
+        if len(lot) < _LEDGER_PAGE:
+            break
+    return lignes
 
 
 def _coups_d_envoi(sb, rows: list) -> dict:
@@ -742,14 +772,10 @@ def performance():
     try:
         sb = _db()
         if sb:
-            q = sb.table("ai_learning_ledger").select("*")
-            if months:
-                # Borne SQL sur le plus ancien mois affiché. Le `limit(500)`
-                # d'origine, sans borne, tronquait août (≈400 lignes) dès que
-                # septembre s'y ajoutait : les lignes les plus anciennes du
-                # mois archivé sortaient de leur propre carte sans le dire.
-                q = q.gte("created_at", f"{months[-1]}-01")
-            res = q.order("created_at", desc=True).limit(1000).execute()
+            # Borne SQL sur le plus ancien mois affiché, lecture par pages :
+            # le `limit(500)` d'origine, puis le `limit(1000)`, tronquaient
+            # les lignes les plus anciennes de la fenêtre sans le dire.
+            data = _ledger_par_pages(sb, f"{months[-1]}-01" if months else None)
             # Mission 2 (2026-08-22) : sports retirés et mois archivés
             # n'apparaissent plus — filtre d'AFFICHAGE (core/perf_view.py),
             # rien n'est supprimé du ledger.
@@ -760,7 +786,6 @@ def performance():
             # ci-dessus reste sur `created_at` : un match se règle toujours
             # APRÈS son coup d'envoi, elle ne peut donc écarter aucune ligne
             # d'un mois affiché.
-            data = res.data or []
             rows = _perf_filter_rows(_avec_date_du_match(data, _coups_d_envoi(sb, data)))
 
             if rows:

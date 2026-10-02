@@ -51,6 +51,17 @@ TROIS GARDES QUI NE SE DISCUTENT PAS.
    recommandés de la vague du soir. La classe exacte de l'incident du 04/09,
    un étage plus bas.
 
+5. **`closed` est repris comme `expired` (2026-10-02).** `audit_one` écrit
+   `closed` au lieu d'`expired` quand une clôture avait été capturée : même
+   fait — le score n'a pas été trouvé —, autre mot. Depuis que l'exchange
+   capture la clôture à chaque tick, les scores manqués finissent `closed`,
+   et ce module, qui ne lisait qu'`expired`, ne les reprenait JAMAIS : 41
+   lignes du ledger et 24 signaux sans résultat, pour toujours (mesuré le
+   2026-10-02 ; 0 signal `expired` ce jour-là). Le lot par run ne grossit
+   pas : les signaux en prennent au plus la MOITIÉ, sous leur propre curseur
+   tournant — sans quoi les mêmes signaux les plus récents repasseraient à
+   chaque audit et les lignes du ledger ne seraient plus jamais servies.
+
 Ce qu'il ne fait PAS : deviner. `determine_outcome` rend `UNKNOWN` sur un
 marché indécidable, `fetch_match_result` rend `None` quand le score n'est pas
 trouvé — dans les deux cas la ligne reste `expired` et repassera. Un WIN/LOSS
@@ -91,6 +102,11 @@ RELANCE_BUDGET = int(os.environ.get("RELANCE_EXPIRES_BUDGET")
 RELANCE_TSDB_RESERVE = 0.5
 
 CURSEUR_KEY = "relance_expires_cursor"
+CURSEUR_SIGNAUX_KEY = "relance_signaux_cursor"
+
+# Les deux mots d'un score MANQUÉ : `expired` (aucune clôture capturée) et
+# `closed` (clos sur sa seule clôture). Voir la garde n°5 du module.
+ETATS_SANS_SCORE = ("expired", "closed")
 
 
 def _tsdb_ok(fantome: bool) -> bool:
@@ -106,22 +122,22 @@ def _tsdb_ok(fantome: bool) -> bool:
     return score_sources.tsdb_budget_restant() > reserve
 
 
-def _curseur_lire(sb) -> int:
+def _curseur_lire(sb, cle: str = CURSEUR_KEY) -> int:
     try:
-        r = sb.table("meta").select("value").eq("key", CURSEUR_KEY).execute()
+        r = sb.table("meta").select("value").eq("key", cle).execute()
         return int((r.data or [{}])[0].get("value", 0))
     except Exception:                                            # noqa: BLE001
         return 0
 
 
-def _curseur_ecrire(sb, valeur: int) -> None:
+def _curseur_ecrire(sb, valeur: int, cle: str = CURSEUR_KEY) -> None:
     try:
         sb.table("meta").upsert(
-            {"key": CURSEUR_KEY, "value": str(valeur),
+            {"key": cle, "value": str(valeur),
              "updated_at": datetime.now(timezone.utc).isoformat()},
             on_conflict="key").execute()
     except Exception as e:                                       # noqa: BLE001
-        log.debug("curseur %s: %s", CURSEUR_KEY, e)
+        log.debug("curseur %s: %s", cle, e)
 
 
 def _issue(match: str, sport: str, market_key: str, selection: str,
@@ -162,16 +178,24 @@ def relancer(sb, budget: int | None = None) -> dict:
     restant = [budget]
     now_iso = datetime.now(timezone.utc).isoformat()
 
-    # ── 1. Signaux expirés : ils ont gardé leur match_time, donc la
-    #       recherche web est mieux ancrée. On les sert en premier.
+    # ── 1. Signaux sans score (`expired`, `closed`) : ils ont gardé leur
+    #       match_time, donc la recherche est ancrée sur le bon jour. Servis en
+    #       premier, sur la MOITIÉ du lot au plus et sous leur propre curseur.
+    part_signaux = math.ceil(budget / 2)
+    depart_s = _curseur_lire(sb, CURSEUR_SIGNAUX_KEY)
     try:
         sigs = (sb.table("signals").select("*")
-                .eq("status", "expired")
+                .in_("status", list(ETATS_SANS_SCORE))
                 .order("match_time", desc=True)
-                .limit(budget).execute()).data or []
+                .range(depart_s, depart_s + part_signaux - 1).execute()).data or []
     except Exception as e:                                       # noqa: BLE001
-        log.warning("RELANCE — lecture des signaux expirés : %s", e)
+        log.warning("RELANCE — lecture des signaux sans score : %s", e)
         sigs = []
+    sigs = sigs[:part_signaux]
+    if sigs:
+        _curseur_ecrire(sb, depart_s + len(sigs), CURSEUR_SIGNAUX_KEY)
+    elif depart_s > 0:
+        _curseur_ecrire(sb, 0, CURSEUR_SIGNAUX_KEY)
 
     for sig in sigs:
         if restant[0] <= 0:
@@ -193,8 +217,8 @@ def relancer(sb, budget: int | None = None) -> dict:
         depart = _curseur_lire(sb)
         try:
             lignes = (sb.table("ai_learning_ledger")
-                      .select("id,match,sport,market_type,selection,is_shadow")
-                      .eq("outcome", "expired")
+                      .select("id,match,sport,league,market_type,selection,is_shadow")
+                      .in_("outcome", list(ETATS_SANS_SCORE))
                       .order("created_at", desc=False)
                       .range(depart, depart + restant[0] - 1).execute()).data or []
         except Exception as e:                                   # noqa: BLE001

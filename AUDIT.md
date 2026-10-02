@@ -206,6 +206,8 @@ C'est le tableau à consulter avant de toucher à quoi que ce soit.
 | Un audit à 0 réglé sur N éligibles sort rouge | `…::TestLauditSterileSortEnEchec` |
 | Un scan qui n'a rien persisté sort rouge | `…::TestLeScanQuiNePersisteRienSortEnEchec` |
 | /performance affiche le taux de résolution (biais de survie) | `tests/test_mission2_dashboard_quota.py::TestTauxDeResolution` |
+| `closed` (clos sur sa seule clôture, score introuvable) est un score manqué : compté au dénominateur du taux de résolution et repris par la relance comme `expired`, signaux sur la moitié du lot au plus | `tests/test_relance_expires.py::TestClosedEstReprisCommeExpired`, `tests/test_mission2_dashboard_quota.py::TestTauxDeResolution` |
+| /performance lit le ledger par pages (aucun plafond de 1 000 lignes sur la fenêtre de trois mois) | `tests/test_perf_mois_au_match.py::TestLectureParPages` |
 | /performance range chaque ligne dans le mois de son MATCH (`mois_de`, repli sur le règlement) — fenêtre, cartes, mois choisi, historique — et dérive « depuis … » du plus ancien mois affiché | `tests/test_perf_mois_au_match.py` |
 | Un PUSH compte comme RÉSOLU, `active`/`closed` ne comptent nulle part | `…::test_un_push_compte_comme_resolu`, `…::test_active_et_closed_nentrent_nulle_part` |
 | La formule du taux de résolution n'existe qu'une fois (AST) | `…::test_la_formule_nest_pas_recopiee_ailleurs` |

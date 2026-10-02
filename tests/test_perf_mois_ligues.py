@@ -167,8 +167,11 @@ class TestBranchement:
         src = inspect.getsource(dash.performance)
         for attendu in ("_monthly_summary(", "_league_breakdown(", "_pick_month(",
                         "_rows_of_month(", 'request.args.get("mois")',
-                        "_perf_filter_rows(", ".gte(\"created_at\""):
+                        "_perf_filter_rows(", "_ledger_par_pages("):
             assert attendu in src, attendu
+        # La borne SQL sur le plus ancien mois affiché vit dans la lecture
+        # paginée (2026-10-02).
+        assert ".gte(\"created_at\"" in inspect.getsource(dash._ledger_par_pages)
 
     def test_le_gabarit_porte_menu_cartes_et_ligues(self):
         g = (RACINE / "templates" / "performance.html").read_text(encoding="utf-8")
