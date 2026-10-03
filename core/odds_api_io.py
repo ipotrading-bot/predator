@@ -193,6 +193,45 @@ MAX_EVENTS_PAR_SPORT = {
 def cap_pour(sport: str) -> int:
     """Nombre maximal de matchs dont on PAIE les cotes pour ce sport."""
     return MAX_EVENTS_PAR_SPORT.get(sport, MAX_EVENTS)
+
+
+# ── CALENDRIER PAGINÉ, PRIX D'EXCHANGE D'ABORD (2026-10-03) ───────────
+# `/events` rend les 240 matchs les PLUS PROCHES, pas le calendrier : un
+# samedi le football en compte ~940 sur 24 h, et le seul créneau de 14:00 UTC
+# plus de 240. Mesuré le samedi 2026-10-03 : aux scans de 11:10 et 13:10 les
+# 120 matchs payés étaient TOUS sous T-150 min (97/120 à 09:10), 0 signal ;
+# 78 matchs jouables portant un prix sharp chez Matchbook/Smarkets n'ont
+# jamais été lus (Eerste Divisie, J2, USL, Primera B, amicaux…). Le tri
+# « zone jouable d'abord » du 09-09 ne peut rien quand les 240 rendus sont
+# tous imminents : il ne trie que ce qu'on lui donne.
+#   1. Le calendrier se lit en plusieurs pages (le serveur honore `from`,
+#      vérifié le même jour) : la suivante repart de la dernière date rendue
+#      + 1 s, tant que la page est pleine. Football seul — les autres sports
+#      tiennent dans une page utile.
+#   2. Les matchs qui ont un prix d'exchange (`declarer_prix_exchange`, posé
+#      par le moteur avant le Tier 2) se paient en premier : odds-api.io ne
+#      sert aucun book sharp, un match sans prix sharp ne produit pas d'edge.
+# Budget (règle 13) : au plus EVENTS_PAGES − 1 = 4 requêtes de plus par scan
+# standard, 8 scans → ≤ +32 req/j le samedi (~+8 en semaine, où le calendrier
+# tient en deux pages), soit ≤ ~340/400. Critère de retrait, à relever le
+# samedi 2026-10-17 : revenir à une page si la ligne de bilan dépasse 360/400
+# deux jours de suite, ou si « dont N avec prix d'exchange » reste à 0 sur
+# les scans de 09 h à 13 h des deux samedis.
+# Limite connue : un créneau de plus de 240 matchs à la MÊME seconde perd
+# son surplus (la page suivante repart une seconde plus tard).
+EVENTS_PAGES = {
+    "soccer": int(os.environ.get("ODDS_API_IO_EVENTS_PAGES_SOCCER", "5")),
+}
+_prix_exchange: dict = {}
+
+
+def declarer_prix_exchange(prices: dict | None) -> None:
+    """Le moteur pose ici les prix d'exchange du scan (format de
+    `core.exchange_match.lookup_exchange`) AVANT le Tier 2 ; `fetch_sport`
+    paie alors en premier les matchs qui en portent un. Vide ou None :
+    le tri redevient celui d'avant."""
+    _prix_exchange.clear()
+    _prix_exchange.update(prices or {})
 TIMEOUT      = int(os.environ.get("ODDS_API_IO_TIMEOUT", "25"))
 
 SHARP_NAMES = ("pinnacle", "betfair exchange", "smarkets", "matchbook")
@@ -325,6 +364,7 @@ def reset_cache() -> None:
     """Oublie les books mémorisés et les comptes écartés (tests, rotation)."""
     _selected_cache.clear()
     _dead_keys.clear()
+    _prix_exchange.clear()
 
 
 def _request(path: str, params_for, keys: list[str], sport: str) -> tuple[int, object, str | None]:
@@ -596,21 +636,44 @@ def fetch_sport(sport: str, api_key: str | None = None, hours_ahead: int = 24,
     now   = datetime.now(timezone.utc)
     until = now + timedelta(hours=hours_ahead)
     cap   = max_events or cap_pour(sport)
-    def _params_events(k: str):
-        # Vérifié AVANT le calendrier : un compte sans bookmaker ne peut rien
-        # demander, autant ne pas lui payer la requête /events.
-        if not usable_bookmakers(k):
-            return None
-        return {
-            "sport": slug,
-            "from": now.strftime("%Y-%m-%dT%H:%M:%SZ"),
-            "to":   until.strftime("%Y-%m-%dT%H:%M:%SZ"),
-            "limit": str(max(cap, EVENTS_LIMIT)),
-        }
+    limite = max(cap, EVENTS_LIMIT)
+    fin = until.strftime("%Y-%m-%dT%H:%M:%SZ")
+    depuis = now.strftime("%Y-%m-%dT%H:%M:%SZ")
+    body: list = []
+    vus: set = set()
+    n_pages = 0
+    # Voir « CALENDRIER PAGINÉ » en tête : une page = 1 requête.
+    for _ in range(max(1, EVENTS_PAGES.get(sport, 1))):
+        if n_pages and daily_quota.spent(QUOTA_BUCKET) >= budget_total:
+            break
 
-    status, body, _ = _request("events", _params_events, keys, sport)
-    if status != 200 or not isinstance(body, list):
-        return []
+        def _params_events(k: str, depuis: str = depuis):
+            # Vérifié AVANT le calendrier : un compte sans bookmaker ne peut
+            # rien demander, autant ne pas lui payer la requête /events.
+            if not usable_bookmakers(k):
+                return None
+            return {"sport": slug, "from": depuis, "to": fin, "limit": str(limite)}
+
+        status, page, _ = _request("events", _params_events, keys, sport)
+        if status != 200 or not isinstance(page, list):
+            if not n_pages:
+                return []
+            break               # une page suivante en panne ne jette pas les autres
+        n_pages += 1
+        for e in page:
+            if e.get("id") not in vus:
+                vus.add(e.get("id"))
+                body.append(e)
+        dates = sorted(d for d in (str(e.get("date", "")) for e in page) if len(d) >= 19)
+        if len(page) < limite or not dates:
+            break
+        try:
+            depuis = (datetime.strptime(dates[-1][:19], "%Y-%m-%dT%H:%M:%S")
+                      + timedelta(seconds=1)).strftime("%Y-%m-%dT%H:%M:%SZ")
+        except ValueError:
+            break
+        if depuis >= fin:
+            break
 
     # `pending` = à venir. Les statuts live/settled/cancelled n'ont rien à
     # faire dans un scan pré-match.
@@ -654,12 +717,27 @@ def fetch_sport(sport: str, api_key: str | None = None, hours_ahead: int = 24,
         d = str(e.get("date", ""))
         return 1 if len(d) >= 19 and d < seuil else 0
 
+    # Prix d'exchange d'abord (2026-10-03, voir « CALENDRIER PAGINÉ ») :
+    # dans la zone jouable comme en fin de file, un match qui a déjà son
+    # prix sharp passe devant ceux qui n'en auront pas.
+    from core.exchange_match import lookup_exchange
+    avec_prix: set = set()
+    if _prix_exchange:
+        for e in a_venir:
+            h, a = str(e.get("home", "")), str(e.get("away", ""))
+            if sport == "tennis":
+                h, a = nom_tennis(h), nom_tennis(a)
+            if lookup_exchange({"home": h, "away": a}, _prix_exchange):
+                avec_prix.add(e.get("id"))
+
     a_venir.sort(key=lambda e: (_fantome(e),
+                                0 if e.get("id") in avec_prix else 1,
                                 _route(sport, str((e.get("league") or {}).get("name", "")))[0],
                                 league_rank(str((e.get("league") or {}).get("name", ""))),
                                 str(e.get("date", ""))))
     events = a_venir[:cap]
     n_fantomes = sum(_fantome(e) for e in events)
+    n_exchange = sum(1 for e in events if e.get("id") in avec_prix)
     if not events:
         log.info("odds-api.io[%s]: 0 match à venir dans les %dh", sport, hours_ahead)
         return []
@@ -688,11 +766,11 @@ def fetch_sport(sport: str, api_key: str | None = None, hours_ahead: int = 24,
                 matches.append(m)
 
     n_sharp = sum(1 for m in matches if m.get("odds_pinnacle"))
-    log.info("odds-api.io[%s]: %d matchs (%d avec prix sharp) / %d à venir (%d lus, "
-             "dont %d sous T-%dmin) | books=%s | comptes=%d/%d | "
-             "%d/%d req au total aujourd'hui",
-             sport, len(matches), n_sharp, len(a_venir), len(events), n_fantomes,
-             PLAYABLE_MIN_MINUTES + PLAYABLE_MARGIN_MIN, book_param,
+    log.info("odds-api.io[%s]: %d matchs (%d avec prix sharp) / %d à venir en %d page(s) "
+             "(%d lus, dont %d sous T-%dmin, dont %d avec prix d'exchange) | books=%s | "
+             "comptes=%d/%d | %d/%d req au total aujourd'hui",
+             sport, len(matches), n_sharp, len(a_venir), n_pages, len(events), n_fantomes,
+             PLAYABLE_MIN_MINUTES + PLAYABLE_MARGIN_MIN, n_exchange, book_param,
              len(live_keys(keys)), len(keys),
              daily_quota.spent(QUOTA_BUCKET), budget_total)
     return matches

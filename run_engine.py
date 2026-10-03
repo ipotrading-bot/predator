@@ -33,7 +33,8 @@ from core.exchange_match import (candidat_proche as _candidat_proche,
                                  lookup_exchange as _lookup_exchange,
                                  nom_probable as _nom_probable,
                                  preparer_candidats as _preparer_candidats)
-from core.odds_api_io import fetch_all as _odds_api_io_all
+from core.odds_api_io import (declarer_prix_exchange as _declarer_prix_exchange,
+                              fetch_all as _odds_api_io_all)
 from core.titan007 import fetch_matches as _titan007_fetch
 from core.math_engine import (to_binary, devig_bounds, is_round_number_line, devig as _devig,
                               dnb_leg_split as _dnb_leg_split,
@@ -3259,6 +3260,10 @@ def run():
             log.info("💹 Smarkets OK — %d marchés sharp (+%d nouveaux hors Matchbook, "
                      "total exchange %d)", len(sm_prices), nouveaux, len(exchange_prices))
 
+    # odds-api.io paie d'abord les matchs qui ont un prix sharp ici (voir
+    # core/odds_api_io, « CALENDRIER PAGINÉ ») — posé AVANT le Tier 2, et
+    # vidé quand les exchanges n'ont rien rendu.
+    _declarer_prix_exchange(exchange_prices)
     if exchange_prices:
         if _enrich_from_exchange(matches, exchange_prices, log) and \
                 sharp_source in ("AI/Estimateur", "Aucune"):

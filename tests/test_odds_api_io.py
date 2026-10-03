@@ -291,6 +291,113 @@ def test_une_date_illisible_nest_pas_releguee(monkeypatch):
     assert calls["multi"] == [["1"]], "date illisible = rang de ligue normal"
 
 
+def _wire_pages(monkeypatch, pages):
+    """`pages` : une liste d'événements par appel /events, dans l'ordre."""
+    calls = {"from": [], "multi": []}
+    reste = list(pages)
+
+    def fake_get(url, timeout=None, params=None):
+        if url.endswith("/bookmakers/selected"):
+            return _Resp({"bookmakers": ["1xbet"], "count": 1})
+        if url.endswith("/events"):
+            calls["from"].append(params["from"])
+            return _Resp(reste.pop(0) if reste else [])
+        if url.endswith("/odds/multi"):
+            calls["multi"].append(params["eventIds"].split(","))
+            return _Resp([])
+        raise AssertionError(f"URL inattendue : {url}")
+
+    monkeypatch.setattr(oai.requests, "get", fake_get)
+    oai.reset_cache()
+    return calls
+
+
+def test_le_calendrier_du_foot_se_lit_en_pages_2026_10_03(monkeypatch):
+    """Samedi 2026-10-03 : ~940 matchs de foot sur 24 h, `/events` n'en rend
+    que les 240 plus proches — aux scans de 11:10 et 13:10 les 120 payés
+    étaient tous sous T-150 min. Une page PLEINE appelle la suivante, qui
+    repart de la dernière date rendue + 1 s ; une page courte arrête."""
+    monkeypatch.setattr(oai, "EVENTS_LIMIT", 2)
+    p1 = [_event(1, "A", "B", date="2030-01-01T14:00:00Z"),
+          _event(2, "C", "D", date="2030-01-01T14:00:00Z")]
+    p2 = [_event(3, "E", "F", date="2030-01-01T16:00:00Z"),
+          _event(4, "G", "H", date="2030-01-01T18:45:00Z")]
+    p3 = [_event(5, "I", "J", date="2030-01-01T20:00:00Z")]
+    calls = _wire_pages(monkeypatch, [p1, p2, p3, [_event(6, "K", "L")]])
+    oai.fetch_sport("soccer", api_key="k", hours_ahead=24 * 3650, max_events=2)
+    assert len(calls["from"]) == 3, "la page courte (p3) arrête la lecture"
+    assert calls["from"][1:] == ["2030-01-01T14:00:01Z", "2030-01-01T18:45:01Z"]
+
+
+def test_la_pagination_est_bornee_et_reservee_au_foot(monkeypatch):
+    """Budget chiffré (règle 13) : au plus 4 requêtes de plus par scan, et
+    pour le football seul. Monter ce nombre ou paginer un autre sport, c'est
+    rouvrir le budget de 400 req/j — pas un réglage silencieux."""
+    assert oai.EVENTS_PAGES == {"soccer": 5}
+    monkeypatch.setattr(oai, "EVENTS_LIMIT", 2)
+    monkeypatch.setitem(oai.MAX_EVENTS_PAR_SPORT, "soccer", 2)
+
+    def pleine(i):
+        return [_event(10 * i + 1, f"A{i}", f"B{i}", date=f"2030-01-01T1{i}:00:00Z"),
+                _event(10 * i + 2, f"C{i}", f"D{i}", date=f"2030-01-01T1{i}:30:00Z")]
+
+    calls = _wire_pages(monkeypatch, [pleine(i) for i in range(9)])
+    oai.fetch_sport("soccer", api_key="k", hours_ahead=24 * 3650)
+    assert len(calls["from"]) == 5
+    calls = _wire_pages(monkeypatch, [pleine(i) for i in range(9)])
+    oai.fetch_sport("basketball", api_key="k", hours_ahead=24 * 3650, max_events=2)
+    assert len(calls["from"]) == 1
+
+
+def test_une_page_suivante_en_panne_garde_les_precedentes(monkeypatch):
+    monkeypatch.setattr(oai, "EVENTS_LIMIT", 2)
+    p1 = [_event(1, "A", "B", date="2030-01-01T14:00:00Z"),
+          _event(2, "C", "D", date="2030-01-01T15:00:00Z")]
+    calls = _wire_pages(monkeypatch, [p1, {"error": "x"}])
+    oai.fetch_sport("soccer", api_key="k", hours_ahead=24 * 3650, max_events=2)
+    assert calls["multi"] == [["1", "2"]]
+
+
+def test_un_match_a_prix_d_exchange_se_paie_d_abord(monkeypatch):
+    """odds-api.io ne sert aucun book sharp : un match sans prix sharp ne
+    produit pas d'edge. Le 2026-10-03, 78 matchs jouables cotés par
+    Matchbook/Smarkets restaient dehors pendant qu'on payait autre chose.
+    Dans la zone jouable, celui qui a son prix d'exchange passe devant une
+    ligue mieux classée qui n'en a pas — mais jamais devant la zone jouable
+    s'il est imminent."""
+    from datetime import datetime, timedelta, timezone
+    now = datetime.now(timezone.utc)
+    imminent = (now + timedelta(minutes=30)).strftime("%Y-%m-%dT%H:%M:%SZ")
+    jouable  = (now + timedelta(hours=6)).strftime("%Y-%m-%dT%H:%M:%SZ")
+    evs = [_event(1, "Inter", "Milan", date=jouable),
+           _event(2, "Telstar", "Dordrecht", date=jouable),
+           _event(3, "Brooklyn", "Rhode Island", date=imminent)]
+    evs[0]["league"] = {"name": "Italy - Serie A"}
+    evs[1]["league"] = {"name": "Netherlands - Eerste Divisie"}
+    evs[2]["league"] = {"name": "USA - USL, Championship"}
+    prix = {"telstar_dordrecht": {"home": "Telstar", "away": "Dordrecht", "1": 2.1, "2": 3.4},
+            "brooklyn_rhode island": {"home": "Brooklyn", "away": "Rhode Island",
+                                      "1": 2.0, "2": 3.5}}
+    calls = _wire(monkeypatch, evs, [[]])
+    oai.declarer_prix_exchange(prix)
+    oai.fetch_sport("soccer", api_key="k", max_events=3)
+    assert calls["multi"] == [["2", "1", "3"]]
+    # Sans prix déclaré, le tri d'avant : la ligue classée d'abord.
+    calls = _wire(monkeypatch, evs, [[]])
+    oai.fetch_sport("soccer", api_key="k", max_events=3)
+    assert calls["multi"] == [["1", "2", "3"]]
+
+
+def test_le_moteur_declare_les_prix_d_exchange_avant_le_tier_2():
+    """Le tri ne vaut que si le moteur pose les prix AVANT d'appeler
+    odds-api.io : déplacer l'appel après le harvest le rendrait muet."""
+    import pathlib
+    src = (pathlib.Path(__file__).resolve().parent.parent / "run_engine.py").read_text("utf-8")
+    pose = src.index("_declarer_prix_exchange(exchange_prices)")
+    assert pose < src.index("xbet_matches = fetch_matches()")
+    assert pose < src.index("xbet_matches = (_odds_api_io_all(")
+
+
 def test_le_cap_du_foot_est_120_les_autres_60():
     assert oai.cap_pour("soccer") == 120
     assert oai.cap_pour("tennis") == oai.cap_pour("basketball") == 60
