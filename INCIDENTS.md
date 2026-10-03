@@ -415,6 +415,42 @@ panne n'est jamais « pas de match ».
 même, et l'opérateur les a exclus. C'est le pré-vol qui dit le périmètre.
 Gardien : `tests/test_tennis_odds_api_io.py`.
 
+### Le samedi, odds-api.io ne lisait que des matchs déjà injouables (2026-10-03)
+
+Trois scans standard de suite (09:10, 11:10, 13:10 UTC) à 0 signal un samedi,
+jour le plus chargé de la semaine. Le log disait pourtant « 120 lus » sur le
+football — suivi de « dont 120 sous T-150min ».
+Cause : `/events` rend les 240 matchs les PLUS PROCHES, pas le calendrier de
+24 h. Le tri « zone jouable d'abord » du 09-09 (`core/odds_api_io.fetch_sport`)
+ne trie que ce que la requête rend : quand les 240 sont tous imminents, il n'a
+rien à faire passer devant.
+MESURÉ le 2026-10-03 (runs 37112155310, 37118813291, 37125286069) : 97/120
+payés sous T-150 min à 09:16, 120/120 à 11:16 et à 13:16. Calendrier relu en
+cinq pages à 13:40 : ~940 matchs à venir sur 24 h, plus de 240 sur le seul
+créneau de 14:00 UTC. Apparié aux exchanges par `lookup_exchange` : 78 matchs
+à plus de T-150 min portaient un prix sharp (77 Matchbook, 1 Smarkets) et
+n'ont jamais été lus — dont ~60 hors du Tier 1 payant (Eerste Divisie, J2,
+USL, Primera B, amicaux internationaux). Le serveur honore `from`.
+NON MESURÉ : combien de ces 78 sont cotés par 1xbet/Bet365 et combien
+auraient passé le seuil — les cotes n'ont pas été payées. C'est un plafond
+de matchs évaluables, pas un nombre de signaux perdus. Un seul samedi, en
+trêve internationale.
+Fait : le calendrier du football se lit en pages (`EVENTS_PAGES`, 5 au plus,
+la suivante repart de la dernière date + 1 s tant que la page est pleine), et
+les matchs qui ont un prix d'exchange (`declarer_prix_exchange`, posé par le
+moteur avant le Tier 2) se paient en premier dans chaque zone. Budget : ≤ +4
+req/scan, ≤ +32 req/j le samedi, ≤ ~340/400. Pas fait : paginer les autres
+sports (une page utile leur suffit), ni partir de la borne jouable — les
+imminents restent lus s'il reste de la place (règle n°9).
+⚠️ Limite connue : un créneau de plus de 240 matchs à la même seconde perd
+son surplus. À relever le samedi 2026-10-17 : la ligne de bilan (retour à une
+page au-delà de 360/400 deux jours de suite) et « dont N avec prix
+d'exchange » sur les scans de 09 h à 13 h.
+Gardiens : `tests/test_odds_api_io.py::test_le_calendrier_du_foot_se_lit_en_pages_2026_10_03`,
+`::test_la_pagination_est_bornee_et_reservee_au_foot`,
+`::test_un_match_a_prix_d_exchange_se_paie_d_abord`,
+`::test_le_moteur_declare_les_prix_d_exchange_avant_le_tier_2`.
+
 ### 1xbet cote le hockey en temps réglementaire (2026-10-01)
 
 **Symptôme.** Rien à l'écran : des signaux de hockey sortaient, bien formés,
