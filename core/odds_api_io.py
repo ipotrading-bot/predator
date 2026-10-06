@@ -126,15 +126,17 @@ SPORTS: dict[str, tuple[str, int, bool]] = {
 # Sports dont le slug odds-api.io mélange plusieurs championnats : chaque
 # match est rendu au sport-type du moteur par un motif de son libellé de
 # ligue, DANS CET ORDRE (qui est aussi l'ordre de priorité dans la coupe).
-# Un libellé qui ne matche aucun motif est hors périmètre. La présaison est
-# refusée avant tout (instruction opérateur, voir SEASON_OPENS d'OddsAPI).
+# Un libellé qui ne matche aucun motif est hors périmètre. La présaison NFL
+# était refusée avant tout jusqu'au 2026-10-06 ; DÉCISION OPÉRATEUR de ce
+# jour (règle 11, « NFL présaison accepté ») : `_HORS_SAISON` est vide, et
+# « USA - NFL Preseason » suit le motif « nfl » comme la saison régulière.
 ROUTAGE_PAR_LIGUE: dict[str, tuple[tuple[str, str], ...]] = {
     # NCAA (« USA - College », « USA - NCAA ») RETIRÉE le 2026-10-06, décision
     # opérateur (règle 11, core.odds_api.LIGUES_RETIREES) : sans motif, ses
     # matchs sont hors périmètre comme la CFL — ni listés, ni payés.
     "americanfootball": (("nfl", "americanfootball"),),
 }
-_HORS_SAISON = ("preseason", "pre-season")
+_HORS_SAISON: tuple[str, ...] = ()
 
 
 def _route(sport: str, league: str) -> tuple[int, str | None]:
@@ -153,7 +155,7 @@ def _route(sport: str, league: str) -> tuple[int, str | None]:
 
 def sport_de_ligue(sport: str, league: str) -> str | None:
     """Sport-type du moteur pour ce libellé de ligue, ou None s'il est hors
-    périmètre (« Canada - CFL », présaison NFL)."""
+    périmètre (« Canada - CFL », NCAA)."""
     return _route(sport, league)[1]
 
 # Plan gratuit : 500 requêtes/jour. On garde une marge : le settlement et
