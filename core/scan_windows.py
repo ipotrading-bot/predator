@@ -109,7 +109,9 @@ _WINDOWS: dict[str, list[tuple]] = {
     # fenêtre gardée telle quelle pour une réouverture.
     "boxing_boxing":                     [((4, 5, 6), 19, 24)],
     # NCAAF : jeudi/vendredi 23:00–03:00 UTC → 19:03+ ; samedi 16:00–04:00
-    # → 13:03 jusqu'à 23:03
+    # → 13:03 jusqu'à 23:03. RETIRÉE du scan payant le 2026-10-06
+    # (LIGUES_RETIREES, décision opérateur) : fenêtre conservée pour une
+    # réouverture, plus consultée.
     "americanfootball_ncaaf":            [((3, 4), 19, 24), ((5,), 13, 24)],
     # ── Élargissement du foot (2026-09-22, décision opérateur) ────────
     # Fenêtres DÉRIVÉES des coups d'envoi réels des 10 jours suivants, relevés

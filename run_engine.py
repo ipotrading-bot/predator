@@ -3224,7 +3224,8 @@ def run():
     exchange_prices: dict = {}
     if not _MATCHBOOK_OFF:
         mb_prices = fetch_matchbook_prices(
-            # americanfootball (2026-09-29) : NFL ET NCAAF, sous le même sport
+            # americanfootball (2026-09-29) : NFL (NCAAF retirée le 2026-10-06,
+            # ses prix reviennent encore mais plus aucun soft ne les croise), sous le même sport
             # Matchbook — le prix sharp des matchs que seul odds-api.io rend
             # exécutables (voir core/odds_api_io, « FOOTBALL AMÉRICAIN »).
             sports=["soccer", "basketball", "baseball", "hockey", "tennis", "mma",

@@ -61,10 +61,14 @@ et Totals. Le prix sharp vient des exchanges, déjà branchés et gratuits :
 Matchbook (sport 1) et Smarkets (`american_football_match`) cotent NFL et
 NCAAF — le moteur ne le leur demandait simplement pas.
 Un seul slug, trois championnats : chaque match est ROUTÉ par son libellé
-de ligue (`sport_de_ligue`) — NFL → `americanfootball`, NCAA →
-`college_football` (règlement ESPN et Kelly différents) ; CFL, présaison et
+de ligue (`sport_de_ligue`) — NFL → `americanfootball` ; CFL, présaison et
 tout le reste sont HORS PÉRIMÈTRE et écartés AVANT la coupe, donc jamais
-payés. La NFL passe avant la NCAA dans la coupe.
+payés.
+NCAA RETIRÉE le 2026-10-06 (décision opérateur, règle 11 : « Supprimer
+ncaa, garde nfl ») : elle était routée vers `college_football` et passait
+après la NFL dans la coupe ; son motif est sorti de `ROUTAGE_PAR_LIGUE`,
+elle est donc hors périmètre comme la CFL. Le budget ci-dessous devient un
+majorant (la NFL seule remplit rarement le cap de 30).
 BUDGET (règle 13) : 1 requête de calendrier + ceil(cap/10) de cotes par
 scan standard, cap `ODDS_API_IO_MAX_EVENTS_AMERICANFOOTBALL` = 30 → au plus
 4 req/scan, 32 req/j sur 8 scans ; mesuré le 2026-09-28 : 287/400 en fin
@@ -125,9 +129,10 @@ SPORTS: dict[str, tuple[str, int, bool]] = {
 # Un libellé qui ne matche aucun motif est hors périmètre. La présaison est
 # refusée avant tout (instruction opérateur, voir SEASON_OPENS d'OddsAPI).
 ROUTAGE_PAR_LIGUE: dict[str, tuple[tuple[str, str], ...]] = {
-    "americanfootball": (("nfl", "americanfootball"),
-                         ("college", "college_football"),
-                         ("ncaa", "college_football")),
+    # NCAA (« USA - College », « USA - NCAA ») RETIRÉE le 2026-10-06, décision
+    # opérateur (règle 11, core.odds_api.LIGUES_RETIREES) : sans motif, ses
+    # matchs sont hors périmètre comme la CFL — ni listés, ni payés.
+    "americanfootball": (("nfl", "americanfootball"),),
 }
 _HORS_SAISON = ("preseason", "pre-season")
 
