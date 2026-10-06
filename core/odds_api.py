@@ -123,17 +123,8 @@ SPORT_KEYS = {
     # NFL : gardée en plus par SEASON_OPENS (pas de présaison — lignes
     # molles, rotations imprévisibles).
     "americanfootball_nfl":                  "americanfootball",       # NFL — saison régulière uniquement
-    # Football universitaire US : 50+ matchs par week-end dès fin août, marché
-    # très liquide, lag soft-books documenté, et — ce qui a décidé l'ajout —
-    # les « cupcake games » de septembre mettent le favori à 1,05–1,30 : la
-    # seule tranche de cote où le ledger est rentable (81 % de réussite sous
-    # 1,50, contre 44–48 % entre 1,50 et 2,20 — mesuré sur 254 paris).
-    # Sport-type `college_football` et non `americanfootball` : lignes moins
-    # sharp que la NFL (Kelly 0.10 tant que non validé), et le contexte de
-    # settlement « NFL american football » biaiserait la recherche du score.
-    # Pas de SEASON_OPENS : pas de présaison universitaire, le pré-vol gratuit
-    # suffit — 0 crédit tant qu'aucun match n'est dans la fenêtre.
-    "americanfootball_ncaaf":                "college_football",
+    # Football universitaire (NCAAF) : RETIRÉ le 2026-10-06, décision
+    # opérateur — voir LIGUES_RETIREES. La NFL reste achetée.
 
     # ── PRIORITÉ 7 — Euroleague basket ───────────────────────────────
     "basketball_euroleague":                 "euroleague_basketball",  # mécaniques basketball, Kelly dédiée
@@ -312,6 +303,15 @@ LIGUES_RETIREES: dict[str, str] = {
     # retrait de la clé coupe la dépense OddsAPI ; le motif « wnba » de
     # `meta.perimetre_ligues_exclues` écarte les libellés des autres sources.
     "basketball_wnba": "2026-09-24 — décision opérateur : 22-21, −2,26 u sur 43 réglés en zone jouable",
+    # DÉCISION OPÉRATEUR du 2026-10-06 (« Supprimer ncaa, garde nfl »), règle
+    # 11 : une décision de périmètre, PAS une preuve de perte (règle 7 — sept
+    # lignes réglées en base ce jour-là, rien de mesurable). Le retrait de la
+    # clé coupe le pré-vol et l'achat différé OddsAPI ; le vrai chemin
+    # d'émission était odds-api.io (OddsAPI n'y cote pas 1xbet), fermé le même
+    # jour dans `core.odds_api_io.ROUTAGE_PAR_LIGUE`. Le sport-type
+    # `college_football` reste partout ailleurs (Kelly, seuil, affichage,
+    # ESPN) : les lignes passées se lisent et se règlent toujours (règle 9).
+    "americanfootball_ncaaf": "2026-10-06 — décision opérateur : NCAA retirée, NFL conservée",
     "boxing_boxing": "2026-09-17 — aucune source de scores (ESPN 400), jamais payable, 0 signal émis",
 }
 

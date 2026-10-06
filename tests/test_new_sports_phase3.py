@@ -24,7 +24,11 @@ from core.paim_engine import _SPORT_PFX
 
 class TestNCAAF:
     def test_cle_et_sport_type_dedie(self):
-        assert SPORT_KEYS["americanfootball_ncaaf"] == "college_football"
+        # NCAA RETIRÉE du scan le 2026-10-06 (décision opérateur) : la clé est
+        # dans LIGUES_RETIREES, le sport-type dédié reste pour les lignes
+        # passées (Kelly, règlement, affichage — tests ci-dessous).
+        assert "americanfootball_ncaaf" not in SPORT_KEYS
+        assert "americanfootball_ncaaf" in odds_api.LIGUES_RETIREES
         # Le sport-type NFL reste intact, on n'a rien fusionné.
         assert SPORT_KEYS["americanfootball_nfl"] == "americanfootball"
 

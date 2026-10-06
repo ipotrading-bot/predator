@@ -8,8 +8,8 @@ ne le disait. Ces gardiens tiennent les trois morceaux du correctif :
 
 1. un crédit payé sans retour se DIT, avec sa cause (`PAYÉ SANS RETOUR`) ;
 2. odds-api.io apporte le côté exécutable (1xbet/Bet365), routé par ligue :
-   NFL → americanfootball, NCAA → college_football, CFL et présaison hors
-   périmètre, écartées AVANT d'être payées ;
+   NFL → americanfootball ; NCAA (retirée le 2026-10-06, décision
+   opérateur), CFL et présaison hors périmètre, écartées AVANT d'être payées ;
 3. Matchbook et Smarkets sont interrogés sur le football américain — le
    prix sharp sans lequel un match odds-api.io est un « MARCHÉ MORT ».
 
@@ -131,8 +131,9 @@ def test_une_ligue_payee_qui_rend_ses_matchs_ne_crie_pas(monkeypatch, caplog, _s
 
 @pytest.mark.parametrize("ligue, attendu", [
     ("USA - NFL", "americanfootball"),
-    ("USA - College", "college_football"),
-    ("USA - NCAA Division I FBS", "college_football"),
+    # NCAA retirée le 2026-10-06 (décision opérateur, LIGUES_RETIREES).
+    ("USA - College", None),
+    ("USA - NCAA Division I FBS", None),
     ("Canada - CFL", None),
     ("USA - NFL Preseason", None),
     ("USA - UFL", None),
@@ -192,7 +193,7 @@ def _cabler_io(monkeypatch, events, cotes):
     return calls
 
 
-def test_la_cfl_nest_jamais_payee_et_la_nfl_passe_avant_la_ncaa(monkeypatch, _io):
+def test_ni_la_cfl_ni_la_ncaa_ne_sont_payees(monkeypatch, _io):
     evs = [_ev(1, "Ottawa Redblacks", "Hamilton Tiger-Cats", "Canada - CFL", "2030-01-01T17:00:00Z"),
            _ev(2, "Tulsa", "North Texas", "USA - College", "2030-01-01T17:30:00Z"),
            _ev(3, "Cleveland Browns", "Pittsburgh Steelers", "USA - NFL", "2030-01-01T20:00:00Z")]
@@ -200,18 +201,39 @@ def test_la_cfl_nest_jamais_payee_et_la_nfl_passe_avant_la_ncaa(monkeypatch, _io
     calls = _cabler_io(monkeypatch, evs, cotes)
     out = oai.fetch_sport("americanfootball", api_key="k", max_events=1)
     assert calls["sport"] == "american-football"
-    assert calls["multi"] == [["3"]], "NFL d'abord ; la CFL n'entre même pas dans la file"
+    assert calls["multi"] == [["3"]], "NFL seule ; CFL et NCAA n'entrent même pas dans la file"
     (m,) = out
     assert m["sport"] == "americanfootball" and m["odds_1xbet"]["X"] == 0.0
 
 
-def test_un_match_ncaa_part_en_college_football(monkeypatch, _io):
-    evs = [_ev(2, "Tulsa", "North Texas", "USA - College")]
-    cotes = [{**evs[0], "bookmakers": {"Bet365": [_ml(2.0, 1.8)], "1xbet": [_ml(2.02, 1.79)]}}]
-    _cabler_io(monkeypatch, evs, cotes)
-    (m,) = oai.fetch_sport("americanfootball", api_key="k")
-    assert m["sport"] == "college_football"
-    assert set(m["h2h_par_book"]) == {"1xbet", "bet365"}
+def test_un_match_ncaa_nest_plus_emis_ni_paye(monkeypatch, _io):
+    """Décision opérateur du 2026-10-06 (« Supprimer ncaa, garde nfl ») :
+    odds-api.io était le SEUL chemin d'émission de la NCAA (OddsAPI n'y cote
+    pas 1xbet). Un calendrier 100 % universitaire ne coûte plus une requête
+    de cotes et ne rend aucun match."""
+    evs = [_ev(2, "Tulsa", "North Texas", "USA - College"),
+           _ev(4, "Ohio State", "Michigan", "USA - NCAA Division I FBS")]
+    cotes = [{**e, "bookmakers": {"Bet365": [_ml(2.0, 1.8)], "1xbet": [_ml(2.02, 1.79)]}}
+             for e in evs]
+    calls = _cabler_io(monkeypatch, evs, cotes)
+    assert oai.fetch_sport("americanfootball", api_key="k") == []
+    assert calls["multi"] == []
+
+
+def test_la_ncaa_est_retiree_et_la_nfl_gardee():
+    from core.odds_api import LIGUES_RETIREES, SPORT_KEYS, sports_au_perimetre
+    assert "americanfootball_ncaaf" not in SPORT_KEYS
+    assert "americanfootball_ncaaf" in LIGUES_RETIREES
+    assert SPORT_KEYS["americanfootball_nfl"] == "americanfootball"
+    assert "college_football" not in sports_au_perimetre()
+    assert "americanfootball" in sports_au_perimetre()
+    assert "college_football" not in {c for r in oai.ROUTAGE_PAR_LIGUE.values() for _, c in r}
+
+
+def test_les_lignes_ncaa_passees_restent_reglables():
+    """Règle 9 : rien n'est effacé, le règlement ESPN du sport-type reste."""
+    from core.score_sources import sports_reglables
+    assert "college_football" in sports_reglables()
 
 
 def test_budget_et_critere_de_retrait_sont_ecrits():
@@ -298,7 +320,8 @@ def test_un_sport_retire_ne_revient_pas_par_le_tier_2():
     de périmètre doit précéder la sélection du Tier 2."""
     from core.odds_api import sports_au_perimetre
     assert "baseball" not in sports_au_perimetre()
-    assert {"americanfootball", "college_football", "tennis"} <= sports_au_perimetre()
+    assert {"americanfootball", "tennis"} <= sports_au_perimetre()
+    assert "college_football" not in sports_au_perimetre()   # retirée le 2026-10-06
     moteur = (RACINE / "run_engine.py").read_text(encoding="utf-8")
     t2 = moteur[moteur.index("xbet_matches = fetch_matches()"):]
     assert t2.index("not in perimetre") < t2.index("_repartir_par_sport(")
