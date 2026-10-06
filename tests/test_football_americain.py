@@ -9,7 +9,7 @@ ne le disait. Ces gardiens tiennent les trois morceaux du correctif :
 1. un crédit payé sans retour se DIT, avec sa cause (`PAYÉ SANS RETOUR`) ;
 2. odds-api.io apporte le côté exécutable (1xbet/Bet365), routé par ligue :
    NFL → americanfootball ; NCAA (retirée le 2026-10-06, décision
-   opérateur), CFL et présaison hors périmètre, écartées AVANT d'être payées ;
+   opérateur) et CFL hors périmètre, écartées AVANT d'être payées ;
 3. Matchbook et Smarkets sont interrogés sur le football américain — le
    prix sharp sans lequel un match odds-api.io est un « MARCHÉ MORT ».
 
@@ -135,7 +135,8 @@ def test_une_ligue_payee_qui_rend_ses_matchs_ne_crie_pas(monkeypatch, caplog, _s
     ("USA - College", None),
     ("USA - NCAA Division I FBS", None),
     ("Canada - CFL", None),
-    ("USA - NFL Preseason", None),
+    # Présaison NFL acceptée le 2026-10-06 (décision opérateur).
+    ("USA - NFL Preseason", "americanfootball"),
     ("USA - UFL", None),
     ("", None),
 ])

@@ -1,11 +1,11 @@
 """
 tests/test_new_sports_phase2.py — Phase 2 du recentrage sports (2026-08-22).
 
-NFL (saison régulière seulement), Ligue des Champions, Europa League et
+NFL (présaison acceptée depuis le 2026-10-06), Ligue des Champions, Europa League et
 Euroleague entrent dans SPORT_KEYS AVANT leur saison : le pré-vol gratuit
 rend 0 tant qu'il n'y a rien à scanner, donc l'ajout ne coûte rien. La NFL
-porte en plus un garde de date (SEASON_OPENS) : la présaison d'août est
-exactement ce qu'on ne veut pas, et le pré-vol ne la distingue pas.
+garde un garde de date (SEASON_OPENS), désormais vide par défaut : il ne
+ferme la présaison d'août que si NFL_SEASON_START est posé.
 """
 from datetime import datetime, timezone
 
@@ -57,11 +57,22 @@ class TestWiring:
 
 
 class TestSeasonGate:
-    def test_nfl_closed_before_opening_open_after(self):
+    def test_nfl_closed_before_opening_open_after(self, monkeypatch):
+        # Le garde reste disponible par NFL_SEASON_START (ici posé à la main).
+        monkeypatch.setitem(odds_api.SEASON_OPENS, "americanfootball_nfl", "2026-09-10")
         before = datetime(2026, 8, 25, tzinfo=timezone.utc)
         after  = datetime(2026, 9, 12, tzinfo=timezone.utc)
         assert _season_open("americanfootball_nfl", before) is False
         assert _season_open("americanfootball_nfl", after) is True
+
+    def test_la_presaison_nfl_est_acceptee_par_defaut(self, monkeypatch):
+        """Décision opérateur du 2026-10-06 : sans NFL_SEASON_START, aucun
+        garde — un match NFL d'août est acheté comme un autre."""
+        import inspect
+        assert 'os.environ.get("NFL_SEASON_START", "")' in inspect.getsource(odds_api)
+        monkeypatch.setitem(odds_api.SEASON_OPENS, "americanfootball_nfl", "")
+        assert _season_open("americanfootball_nfl",
+                            datetime(2027, 8, 15, tzinfo=timezone.utc)) is True
 
     def test_leagues_without_a_date_are_always_open(self):
         assert _season_open("soccer_epl", datetime(2000, 1, 1, tzinfo=timezone.utc)) is True

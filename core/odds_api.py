@@ -120,8 +120,8 @@ SPORT_KEYS = {
     "rugbyleague_nrl":                       "rugbyleague", # NRL — ~8 matchs/semaine, Pinnacle ✓
 
     # ── PRIORITÉ 6 — football US (saison régulière seulement) ────────
-    # NFL : gardée en plus par SEASON_OPENS (pas de présaison — lignes
-    # molles, rotations imprévisibles).
+    # NFL : présaison ACCEPTÉE depuis le 2026-10-06 (décision opérateur,
+    # voir SEASON_OPENS).
     "americanfootball_nfl":                  "americanfootball",       # NFL — saison régulière uniquement
     # Football universitaire (NCAAF) : RETIRÉ le 2026-10-06, décision
     # opérateur — voir LIGUES_RETIREES. La NFL reste achetée.
@@ -339,11 +339,14 @@ def sports_au_perimetre() -> frozenset:
 
 # ── Ouverture de saison : une ligue n'est pas scannée avant cette date ───
 # Le pré-vol ne distingue pas présaison et saison régulière : un match NFL
-# d'août est un match. Or la présaison est exactement ce qu'on ne veut pas
-# (lignes molles, rotations imprévisibles — instruction opérateur). Surcharge
-# par env (NFL_SEASON_START=YYYY-MM-DD) ; aucune date = pas de garde.
+# d'août est un match. La présaison NFL était refusée jusqu'au 2026-10-06
+# (lignes molles, rotations imprévisibles — instruction opérateur d'alors).
+# DÉCISION OPÉRATEUR du 2026-10-06, règle 11 (« NFL présaison accepté ») : plus
+# de date par défaut, donc plus de garde. Le mécanisme reste : poser
+# NFL_SEASON_START=YYYY-MM-DD dans l'environnement referme la porte sans
+# toucher au code ; aucune date = pas de garde.
 SEASON_OPENS: dict[str, str] = {
-    "americanfootball_nfl": os.environ.get("NFL_SEASON_START", "2026-09-10"),
+    "americanfootball_nfl": os.environ.get("NFL_SEASON_START", ""),
 }
 
 
