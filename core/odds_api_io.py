@@ -505,6 +505,14 @@ def nom_tennis(nom: str) -> str:
     return f"{prenom} {famille}" if famille and prenom else brut
 
 
+# Sports INDIVIDUELS qu'odds-api.io écrit « Nom, Prénom ». Le MMA y est depuis
+# le 2026-10-08 : mesuré ce jour-là sur la carte UFC du 10/10, 33 combats
+# rendus avec un prix 1xbet, 12 cotés par Matchbook, 0 apparié (« Kareckaite,
+# Ernesta » contre « Ernesta Kareckaite ») et 32 « non réglables » chez ESPN
+# pour la même raison — un seul signal MMA émis depuis le 1er septembre.
+SPORTS_NOM_VIRGULE = frozenset({"tennis", "mma"})
+
+
 def _tennis_au_perimetre(a_venir: list) -> tuple[list, int] | None:
     """(matchs de tennis des tournois RETENUS, nombre d'écartés), ou None si
     le pré-vol d'OddsAPI n'a vu aucun tournoi retenu (l'appelant lit alors le
@@ -544,7 +552,7 @@ def _to_match(ev: dict, sport: str, sport_id: int, draw: bool) -> dict | None:
     away = str(ev.get("away", "")).strip()
     if not home or not away:
         return None
-    if sport == "tennis":
+    if sport in SPORTS_NOM_VIRGULE:
         home, away = nom_tennis(home), nom_tennis(away)
     par_book: dict = {}          # book d'exécution canonique → marchés parsés
     sharp: dict = {}
@@ -732,7 +740,7 @@ def fetch_sport(sport: str, api_key: str | None = None, hours_ahead: int = 24,
     if _prix_exchange:
         for e in a_venir:
             h, a = str(e.get("home", "")), str(e.get("away", ""))
-            if sport == "tennis":
+            if sport in SPORTS_NOM_VIRGULE:
                 h, a = nom_tennis(h), nom_tennis(a)
             if lookup_exchange({"home": h, "away": a}, _prix_exchange):
                 avec_prix.add(e.get("id"))

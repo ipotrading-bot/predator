@@ -122,6 +122,13 @@ class TestLePrenomDAbord:
         assert m["match"] == "Valentin Vacherot vs Stefanos Tsitsipas"
         assert (m["home"], m["away"]) == ("Valentin Vacherot", "Stefanos Tsitsipas")
 
+    def test_le_mma_porte_aussi_les_noms_retournes(self):
+        """Carte UFC du 2026-10-10 : 33 combats à prix 1xbet, 12 cotés par
+        Matchbook, 0 apparié tant que le MMA gardait « Nom, Prénom »."""
+        m = oai._to_match(dict(_event(1, "Kareckaite, Ernesta", "Gatto, Melissa", "UFC"),
+                               bookmakers=_books()), "mma", 5, False)
+        assert m["match"] == "Ernesta Kareckaite vs Melissa Gatto"
+
     def test_les_autres_sports_gardent_leurs_noms(self):
         """Une virgule dans un nom d'équipe n'est pas un prénom."""
         m = oai._to_match(dict(_event(1, "Juventud, Las Piedras", "Racing", "L"),
