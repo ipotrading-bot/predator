@@ -914,8 +914,8 @@ def chaine(args):
     print(f"── odds-api.io[{sport}] {heures} h : {len(matchs)} match(s) avec prix exécutable ──")
     sharp: dict = {}
     sharp.update(fetch_matchbook_prices(sports=[sport], hours_ahead=heures))
-    for k, v in fetch_smarkets_prices(sports=[sport], hours_ahead=heures).items():
-        sharp.setdefault(k, v)
+    # Le comblement du moteur lui-même, pas une copie (règle 6).
+    eng._combler_exchange(sharp, fetch_smarkets_prices(sports=[sport], hours_ahead=heures))
     print(f"── exchanges : {len(sharp)} prix sharp (Matchbook puis Smarkets) ──")
 
     class _Muet:
