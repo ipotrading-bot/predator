@@ -330,10 +330,12 @@ def test_le_calendrier_du_foot_se_lit_en_pages_2026_10_03(monkeypatch):
 
 
 def test_la_pagination_est_bornee_et_reservee_au_foot(monkeypatch):
-    """Budget chiffré (règle 13) : au plus 4 requêtes de plus par scan, et
-    pour le football seul. Monter ce nombre ou paginer un autre sport, c'est
-    rouvrir le budget de 400 req/j — pas un réglage silencieux."""
-    assert oai.EVENTS_PAGES == {"soccer": 5}
+    """Budget chiffré (règle 13) : au plus 4 requêtes de plus par scan pour
+    le football, 1 pour le football américain (2026-10-08 : la NCAA retirée
+    reste rendue par `/events` et peut sortir la NFL de la page). Monter ces
+    nombres ou paginer un autre sport, c'est rouvrir le budget de 400 req/j
+    — pas un réglage silencieux."""
+    assert oai.EVENTS_PAGES == {"soccer": 5, "americanfootball": 2}
     monkeypatch.setattr(oai, "EVENTS_LIMIT", 2)
     monkeypatch.setitem(oai.MAX_EVENTS_PAR_SPORT, "soccer", 2)
 
@@ -347,6 +349,9 @@ def test_la_pagination_est_bornee_et_reservee_au_foot(monkeypatch):
     calls = _wire_pages(monkeypatch, [pleine(i) for i in range(9)])
     oai.fetch_sport("basketball", api_key="k", hours_ahead=24 * 3650, max_events=2)
     assert len(calls["from"]) == 1
+    calls = _wire_pages(monkeypatch, [pleine(i) for i in range(9)])
+    oai.fetch_sport("americanfootball", api_key="k", hours_ahead=24 * 3650, max_events=2)
+    assert len(calls["from"]) == 2, "football américain : une seconde page, pas plus"
 
 
 def test_une_page_suivante_en_panne_garde_les_precedentes(monkeypatch):
