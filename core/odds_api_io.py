@@ -213,8 +213,8 @@ def cap_pour(sport: str) -> int:
 # tous imminents : il ne trie que ce qu'on lui donne.
 #   1. Le calendrier se lit en plusieurs pages (le serveur honore `from`,
 #      vérifié le même jour) : la suivante repart de la dernière date rendue
-#      + 1 s, tant que la page est pleine. Football seul — les autres sports
-#      tiennent dans une page utile.
+#      + 1 s, tant que la page est pleine. Football, puis football
+#      américain (voir plus bas) — les autres sports tiennent dans une page.
 #   2. Les matchs qui ont un prix d'exchange (`declarer_prix_exchange`, posé
 #      par le moteur avant le Tier 2) se paient en premier : odds-api.io ne
 #      sert aucun book sharp, un match sans prix sharp ne produit pas d'edge.
@@ -226,8 +226,21 @@ def cap_pour(sport: str) -> int:
 # les scans de 09 h à 13 h des deux samedis.
 # Limite connue : un créneau de plus de 240 matchs à la MÊME seconde perd
 # son surplus (la page suivante repart une seconde plus tard).
+# FOOTBALL AMÉRICAIN, 2 pages (2026-10-08, décision opérateur « ajouter
+# maintenant »). La NCAA est hors périmètre depuis le 10-06 mais toujours
+# RENDUE par `/events` : relevé le 10-08 sur 7 jours, 235 matchs College/CFL
+# pour 1 seul match NFL dans la page de 240. Le samedi, les matchs
+# universitaires du jour peuvent donc sortir ceux de la NFL du dimanche de
+# la page, à l'entrée de la zone des 24 h. NON MESURÉ sur un scan réel : la
+# seconde page ne coûte que si la première est pleine.
+# Budget (règle 13) : au plus +1 req par scan standard, le samedi seulement
+# (une page non pleine arrête la lecture) → ≤ +8 req/j. Critère de retrait,
+# à relever le samedi 2026-10-24 : revenir à une page si la ligne de bilan
+# « en N page(s) » du football américain n'affiche jamais 2 les samedis 10,
+# 17 et 24/10, ou si la seconde page n'y ajoute aucun match NFL.
 EVENTS_PAGES = {
     "soccer": int(os.environ.get("ODDS_API_IO_EVENTS_PAGES_SOCCER", "5")),
+    "americanfootball": int(os.environ.get("ODDS_API_IO_EVENTS_PAGES_AMERICANFOOTBALL", "2")),
 }
 _prix_exchange: dict = {}
 
