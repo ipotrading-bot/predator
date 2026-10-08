@@ -31,6 +31,7 @@ from core.smarkets import fetch_smarkets_prices
 # core/closing_line.py puisse s'en servir sans importer la racine.
 from core.exchange_match import (candidat_proche as _candidat_proche,
                                  lookup_exchange as _lookup_exchange,
+                                 combler as _combler_exchange,
                                  nom_probable as _nom_probable,
                                  preparer_candidats as _preparer_candidats)
 from core.odds_api_io import (declarer_prix_exchange as _declarer_prix_exchange,
@@ -3248,15 +3249,11 @@ def run():
                     "americanfootball"],
             hours_ahead=hours_ahead,
         )
-        nouveaux = 0
-        for _k, _v in sm_prices.items():
-            if _k in exchange_prices:
-                continue
-            # « Nouveau » au sens du rapprochement flou (Sheff Utd = Sheffield
-            # United) : la mesure du critère de retrait, pas une clé brute.
-            if _lookup_exchange({"home": _v["home"], "away": _v["away"]}, exchange_prices) is None:
-                nouveaux += 1
-            exchange_prices[_k] = _v
+        # « Nouveau » au sens du rapprochement flou (Sheff Utd = Sheffield
+        # United) : la mesure du critère de retrait, pas une clé brute — et
+        # un match déjà coté n'est PAS ajouté une seconde fois (voir
+        # core/exchange_match.combler).
+        nouveaux = _combler_exchange(exchange_prices, sm_prices)
         if sm_prices:
             log.info("💹 Smarkets OK — %d marchés sharp (+%d nouveaux hors Matchbook, "
                      "total exchange %d)", len(sm_prices), nouveaux, len(exchange_prices))

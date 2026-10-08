@@ -25,6 +25,19 @@ _ABBREVS = [
     # mot commun retiré, « praha »/« prague » ne se ressemblent pas.
     (r'\bprague\b',                    'praha'),
     (r'\bhegelmann\s+litauen\b',       'hegelmann kaunas'),
+    # Écritures d'odds-api.io (1xbet) que ni Matchbook ni Smarkets n'écrivent
+    # ainsi — VUES le 2026-10-08 sur les mêmes affiches, même coup d'envoi,
+    # et refusées par le rapprochement : « Racing Club De Lens vs Olympique
+    # Lyon » / « RC Lens vs Olympique Lyonnais », « Nancy-Lorraine vs EA
+    # Guingamp » / « AS Nancy vs En Avant Guingamp », « CA Paranaense PR vs
+    # Atletico Mineiro MG » / « Athlético Paranaense vs Atlético Mineiro »,
+    # « Al-Fateh SC vs Al Ahli Saudi FC » / « Al-Fateh Al-Hasa vs Al Ahli
+    # Jeddah ». Nom ENTIER, jamais déduit (règle opérateur du 2026-10-02).
+    (r'\bracing\s+club\s+de\s+lens\b', 'rc lens'),
+    (r'\bnancy-lorraine\b',             'as nancy'),
+    (r'\bca\s+paranaense(\s+pr)?\b',    'athletico paranaense'),
+    (r'\bathl[ée]tico\s+paranaense\b',  'athletico paranaense'),
+    (r'\bal\s+ahli\s+saudi\b',          'al ahli jeddah'),
 ]
 _STRIP_TAGS = re.compile(r'\s*\b(fc|cf|sc|ac|gfc|afc|fk|sk|bk|rfc|sfc)\b\s*', re.I)
 

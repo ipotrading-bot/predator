@@ -20,6 +20,7 @@ import difflib
 import logging
 from datetime import datetime
 
+from core.math_engine import nul_cote
 from core.paim_engine import _normalize_team, strict_team_match
 
 log = logging.getLogger("PREDATOR.exchange")
@@ -107,7 +108,85 @@ def lookup_exchange(m: dict, prices: dict) -> dict | None:
         return forward[0]
     if len(reverse) == 1 and not forward:
         return flip_exchange_prices(reverse[0])
+    # Plusieurs candidats : UN match écrit de plusieurs façons (deux exchanges,
+    # voir « Comblement » plus bas) n'est pas une ambiguïté. Deux matchs
+    # différents en restent une.
+    if forward and not reverse and _meme_match(forward):
+        return _prefere(forward)
+    if reverse and not forward and _meme_match(reverse):
+        return flip_exchange_prices(_prefere(reverse))
     return None
+
+
+# ── Comblement : un second exchange derrière le premier ───────────────────
+# Deux lignes pour UN match rendaient ce match introuvable. `lookup_exchange`
+# n'acceptait en flou qu'un candidat UNIQUE ; or le comblement ajoute toute
+# ligne dont la CLÉ exacte manque, y compris le même match écrit autrement
+# (« santos fc_flamengo » chez Matchbook, « santos_flamengo » chez Smarkets).
+# Mesuré le 2026-10-08 sur un slate de 62 matchs de foot d'odds-api.io :
+# Santos–Flamengo, Fluminense–Coritiba, Heidenheim–Kaiserslautern,
+# Moreirense–Gil Vicente et Montpellier–Grenoble sans prix sharp alors que
+# les DEUX exchanges les cotaient — les matchs les plus liquides d'abord.
+# Les deux orthographes sont GARDÉES (les retirer perdait Palmeiras–Bahia,
+# que seule celle de Smarkets appariait) : c'est `lookup_exchange` qui
+# reconnaît que ses candidats sont le même match, et prend le premier.
+# Et à clé égale la première ligne gagnait toujours, même quand elle cotait
+# le NUL hors football (1X2 de temps réglementaire, que le moteur ignore) et
+# que la seconde portait la vraie moneyline : Islanders–Blackhawks et
+# Flames–Avalanche sans prix sharp le même soir.
+_MEME_AFFICHE_H = 12.0      # au-delà, même affiche = autre match (série MLB)
+
+
+def _meme_match(rows: list) -> bool:
+    """Ces lignes, toutes appariées au même match du slate, désignent-elles
+    UN seul match ? Une ligne par exchange, camps appariés deux à deux avec
+    la première, et coups d'envoi à moins de _MEME_AFFICHE_H quand ils sont
+    connus."""
+    # Un exchange ne liste pas deux fois le même match : deux lignes de la
+    # MÊME source (ou de source inconnue) sont deux matchs, donc un doute.
+    sources = [r.get("_source") for r in rows]
+    if None in sources or len(set(sources)) != len(sources):
+        return False
+    ref = rows[0]
+    t0 = _instant(ref.get("commence_time"))
+    for r in rows[1:]:
+        if not (strict_team_match(str(ref.get("home", "")), str(r.get("home", "")))
+                and strict_team_match(str(ref.get("away", "")), str(r.get("away", "")))):
+            return False
+        t1 = _instant(r.get("commence_time"))
+        if t0 and t1 and abs((t0 - t1).total_seconds()) > _MEME_AFFICHE_H * 3600:
+            return False
+    return True
+
+
+def _prefere(rows: list) -> dict:
+    """La première ligne (l'ordre d'insertion = l'ordre des exchanges), sauf
+    si elle cote le nul et qu'une autre ne le cote pas : hors football c'est
+    la moneyline, que le moteur sait lire. Au football toutes cotent le nul."""
+    if nul_cote(rows[0]):
+        for r in rows[1:]:
+            if not nul_cote(r):
+                return r
+    return rows[0]
+
+
+def combler(prices: dict, comblement: dict) -> int:
+    """Ajoute à `prices` (modifié en place) les lignes de `comblement` et rend
+    le nombre de matchs NOUVEAUX (qu'aucune ligne déjà là ne désignait, au
+    sens du rapprochement flou). À clé égale la ligne en place reste, sauf si
+    elle cote le nul et que le comblement porte la moneyline à deux issues."""
+    nouveaux = 0
+    for k, v in comblement.items():
+        if not isinstance(v, dict):
+            continue
+        if k in prices:
+            if nul_cote(prices[k]) and not nul_cote(v):
+                prices[k] = v
+            continue
+        if lookup_exchange({"home": v.get("home", ""), "away": v.get("away", "")}, prices) is None:
+            nouveaux += 1
+        prices[k] = v
+    return nouveaux
 
 
 # ── Diagnostic : le match écarté « Échec prix Sharp » avait-il un jumeau ? ──
