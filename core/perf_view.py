@@ -440,13 +440,28 @@ def market_breakdown(rows: list[dict], tax_rate: float, min_n: int = 5) -> list[
     return out
 
 
-def sport_breakdown(rows: list[dict], tax_rate: float) -> list[dict]:
+def sport_breakdown(rows: list[dict], tax_rate: float,
+                    perimetre: frozenset | None = None) -> list[dict]:
     """Réussite par sport, même bloc que les mois et les ligues (Wilson, point
     mort, unités à mise plate), trié par unités croissantes. Remplace le calcul
-    qui vivait en ligne dans api/index.py : une seule formule pour toute la page."""
+    qui vivait en ligne dans api/index.py : une seule formule pour toute la page.
+
+    Les sports que le moteur n'émet PLUS n'ont pas de ligne ici (demande
+    opérateur du 2026-10-08, « masquer les sports retirés » : MLB retirée le
+    09-17 et NCAA le 10-06 restaient au tableau). `perimetre` vaut par défaut
+    `core.odds_api.sports_au_perimetre()` — dérivé des clés achetées, aucune
+    liste écrite ici (règle 6) : un sport rouvert revient de lui-même.
+    ⚠️ Ce tableau SEUL les masque. Leurs lignes restent dans les mois, les
+    ligues et l'historique : c'étaient des paris recommandés, les sortir des
+    totaux embellirait le résultat (biais de survie, règle 9) — à la
+    différence de `RETIRED_SPORTS`, pricés par recherche web, qui sortent de
+    toutes les vues."""
+    if perimetre is None:
+        from core.odds_api import sports_au_perimetre
+        perimetre = sports_au_perimetre()
     groupes: dict[str, list[dict]] = {}
     for r in rows:
-        if r.get("outcome") in _DECISIF and r.get("sport"):
+        if r.get("outcome") in _DECISIF and r.get("sport") in perimetre:
             groupes.setdefault(r["sport"], []).append(r)
     out = []
     for sport, decisifs in groupes.items():
