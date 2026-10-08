@@ -281,6 +281,26 @@ class TestParSport:
         assert tab[0]["pnl_units"] == -3.0 and tab[1]["p_breakeven"] is not None
         assert "win_rate_lo" in tab[1] and "wilson_ci(" not in inspect.getsource(perf_view.sport_breakdown)
 
+    def test_un_sport_que_le_moteur_n_emet_plus_n_a_pas_de_ligne(self):
+        """Demande opérateur du 2026-10-08 : MLB (retirée le 09-17) et NCAA
+        (10-06) restaient au tableau. La liste est DÉRIVÉE du périmètre du
+        moteur ; le tennis, aux clés dynamiques, y reste."""
+        from core.odds_api import sports_au_perimetre
+        assert {"baseball", "college_football"}.isdisjoint(sports_au_perimetre())
+        rows = ([_r("2026-09", "WIN", 1.6, sport="soccer")] * 2
+                + [_r("2026-09", "WIN", 1.8, sport="tennis")]
+                + [_r("2026-09", "LOSS", 1.9, sport="baseball")] * 3
+                + [_r("2026-10", "LOSS", 1.9, sport="college_football")] * 4)
+        assert {d["sport"] for d in perf_view.sport_breakdown(rows, 0.0)} == {"soccer", "tennis"}
+
+    def test_les_totaux_gardent_les_paris_des_sports_retires(self):
+        """Le tableau par sport SEUL les masque : les sortir des mois
+        embellirait le résultat (règle 9)."""
+        rows = ([_r("2026-09", "WIN", 2.0, sport="soccer")]
+                + [_r("2026-09", "LOSS", 1.9, sport="baseball")] * 3)
+        mois = perf_view.monthly_summary(rows, 0.0)[0]
+        assert (mois["wins"], mois["losses"]) == (1, 3)
+
     def test_la_route_ne_recalcule_plus_par_sport_en_ligne(self):
         import api.index as dash
         src = inspect.getsource(dash.performance)
