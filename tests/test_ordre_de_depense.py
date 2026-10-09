@@ -173,6 +173,21 @@ class TestWnbaRetiree:
         assert "basketball" in sports_reglables()
 
 
+class TestArgentineRetiree:
+    """Décision opérateur du 2026-10-09 : la Primera División argentine,
+    exclue du périmètre depuis le 2026-09-08, n'est plus achetée non plus."""
+
+    def test_argentine_nest_plus_achetee(self):
+        assert "soccer_argentina_primera_division" not in SPORT_KEYS
+        assert "soccer_argentina_primera_division" in LIGUES_RETIREES
+        # Le reste de l'Amérique du Sud, lui, reste acheté.
+        assert "soccer_brazil_campeonato" in SPORT_KEYS
+
+    def test_les_lignes_argentines_restent_reglables(self):
+        """Règle 9 : les lignes passées se lisent et se règlent toujours."""
+        assert "soccer" in sports_reglables()
+
+
 class TestLiguesEnEssai:
     """Règle 13 (AUDIT.md §3bis) : une ligue n'entre qu'avec un budget chiffré,
     un critère de retrait DATÉ et un gardien. Cinq sont entrées le

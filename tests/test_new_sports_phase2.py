@@ -40,8 +40,10 @@ class TestWiring:
         # baseball_mlb/kbo/npb retirés le 2026-09-17 (décision opérateur,
         # core.odds_api.LIGUES_RETIREES) — gardés par
         # tests/test_ordre_de_depense.py::TestBaseballRetire.
+        # soccer_argentina_primera_division retirée le 2026-10-09 (idem) —
+        # gardée par tests/test_ordre_de_depense.py::TestArgentineRetiree.
         for key in ("soccer_brazil_campeonato", "soccer_usa_mls",
-                    "soccer_argentina_primera_division", "soccer_mexico_ligamx",
+                    "soccer_mexico_ligamx",
                     "soccer_conmebol_copa_libertadores", "aussierules_afl",
                     "rugbyleague_nrl", "soccer_epl",
                     "soccer_spain_la_liga", "soccer_germany_bundesliga",
