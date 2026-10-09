@@ -85,6 +85,8 @@ _WINDOWS: dict[str, list[tuple]] = {
     # Amérique du Sud : 21:30–02:30 UTC → 19:03, 21:03, 23:03
     "soccer_brazil_campeonato":          [(_ALL, 19, 24)],
     "soccer_conmebol_copa_libertadores": [(_ALL, 19, 24)],
+    # Argentine retirée du scan payant le 2026-10-09 (LIGUES_RETIREES) :
+    # fenêtre conservée pour une réouverture.
     "soccer_argentina_primera_division": [(_ALL, 19, 24)],
     "soccer_mexico_ligamx":              [(_ALL, 19, 24)],
     "soccer_usa_mls":                    [(_ALL, 19, 24)],

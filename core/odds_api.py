@@ -112,7 +112,7 @@ SPORT_KEYS = {
     "soccer_conmebol_copa_libertadores":     "soccer",      # R16/QF — lag SA maximal documenté
     "soccer_brazil_campeonato":              "soccer",      # Série A Brésil — marché sharp actif
     "soccer_usa_mls":                        "soccer",      # MLS — volumes élevés, 1XBet actif
-    "soccer_argentina_primera_division":     "soccer",      # Liga Argentina — marché SA sharp
+    # (soccer_argentina_primera_division retirée le 2026-10-09, voir le bloc RETIRÉS plus bas)
     "soccer_mexico_ligamx":                  "soccer",      # Liga MX — actif été
 
     # ── PRIORITÉ 5 — Australie (marchés Pinnacle très sharps) ────────
@@ -303,6 +303,15 @@ LIGUES_RETIREES: dict[str, str] = {
     # retrait de la clé coupe la dépense OddsAPI ; le motif « wnba » de
     # `meta.perimetre_ligues_exclues` écarte les libellés des autres sources.
     "basketball_wnba": "2026-09-24 — décision opérateur : 22-21, −2,26 u sur 43 réglés en zone jouable",
+    # DÉCISION OPÉRATEUR du 2026-10-09 (règle 11). La Primera División
+    # argentine est exclue du périmètre depuis le 2026-09-08 par
+    # `meta.perimetre_ligues_exclues` (INCIDENTS.md), mais sa clé restait
+    # ACHETÉE : chaque match payé était écarté à l'émission. Mesuré le
+    # 2026-10-09 : `meta.scan_paid_soccer_argentina_primera_division` posé au
+    # scan de 09:11 UTC, 4 crédits, 0 signal possible. Le retrait de la clé
+    # coupe la dépense ; les motifs de la clé meta restent, ils écartent les
+    # libellés des autres sources.
+    "soccer_argentina_primera_division": "2026-10-09 — décision opérateur : exclue du périmètre depuis le 2026-09-08, payée pour rien",
     # DÉCISION OPÉRATEUR du 2026-10-06 (« Supprimer ncaa, garde nfl »), règle
     # 11 : une décision de périmètre, PAS une preuve de perte (règle 7 — sept
     # lignes réglées en base ce jour-là, rien de mesurable). Le retrait de la
