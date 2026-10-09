@@ -2455,6 +2455,35 @@ def _nhl_hors_saison(m: dict, fixtures_par_sport: dict) -> str | None:
     return None
 
 
+# NBA : saison régulière seulement (décision opérateur, 2026-10-09). Mesuré ce
+# jour-là, zone jouable, hors shadow, mise plate : basket 6-13, −6,94 u,
+# réussite 31,6 % [IC95 15–54] pour un point mort à 53,1 %, CLV réel −1,57 %
+# — le seul sport dont le marché part CONTRE nos sélections ; les 20 lignes
+# sont toutes « USA - NBA Preseason » (odds-api.io). Règle 7 : l'intervalle
+# touche encore le point mort, c'est une décision de périmètre (règle 11),
+# pas une preuve. Le libellé suffit quand il dit « preseason » ; sinon le
+# scoreboard ESPN tranche, comme pour la NHL (saison inconnue → refus). La
+# garde se lève seule à l'ouverture de la saison : rien à retirer.
+_NBA = re.compile(r"\bnba\b", re.I)
+_LIBELLE_PRESAISON = re.compile(r"pre-?\s?season", re.I)
+
+
+def _nba_hors_saison(m: dict, fixtures_par_sport: dict) -> str | None:
+    """Raison d'écarter un match NBA hors saison régulière, None s'il passe
+    (ou s'il n'est pas un match NBA — « WNBA » n'est pas le mot « NBA »). Pur."""
+    league = m.get("league") or ""
+    if (m.get("sport") or "").lower() != "basketball" or not _NBA.search(league):
+        return None
+    if _LIBELLE_PRESAISON.search(league):
+        return "présaison NBA"
+    saison = _saison_espn(m.get("match") or "", fixtures_par_sport.get("basketball") or [])
+    if saison is None:
+        return "saison NBA non confirmée par ESPN"
+    if saison == _ESPN_PRESAISON:
+        return "présaison NBA"
+    return None
+
+
 # Clé meta lue une fois par run : motifs de libellés de ligue exclus par
 # l'opérateur (règle 11 — périmètre = décision opérateur), séparés par « ; »
 # ou un retour à la ligne. Posée le 2026-09-08 avec la Primera División
@@ -2631,10 +2660,11 @@ def _filtrer_perimetre(matches: list, log, ligues_exclues: tuple = (), sb=None) 
     # `_alerte_perimetre`.
     en_saison = []
     for m in vivants:
-        hors_saison = _nhl_hors_saison(m, fixtures_par_sport)
+        hors_saison = (_nhl_hors_saison(m, fixtures_par_sport)
+                       or _nba_hors_saison(m, fixtures_par_sport))
         if hors_saison:
-            log.info("HORS PÉRIMÈTRE | %s (%s) — %s : NHL en saison régulière "
-                     "seulement (décision opérateur du 2026-09-30), écarté",
+            log.info("HORS PÉRIMÈTRE | %s (%s) — %s : saison régulière "
+                     "seulement (décision opérateur), écarté",
                      m.get("match", "?"), m.get("league", "?"), hors_saison)
         else:
             en_saison.append(m)
