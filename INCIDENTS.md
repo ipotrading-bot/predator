@@ -342,9 +342,17 @@ Smarkets — aucun des deux ne rejoue l'achat différé.
   cherche les deux sens lui-même, sur des lignes aux prix neutres, et rend
   la ligne d'ORIGINE de l'index, avec son coup d'envoi ; ne lève jamais.
 
-Suite : 2500 tests verts. À RELEVER, pas encore observé à la rédaction :
-le premier scan standard d'après correctif (créneau 11:03 UTC du
-2026-10-10).
+Suite : 2500 tests verts.
+
+MESURÉ après correctif — run 38047476170 (2026-10-10 11:10 UTC, dispatch
+du Worker) : succès, créneau 11:03 marqué servi (`ops.py watchdog` :
+SERVI), log « DIFFÉRÉ | icehockey_nhl : aucun de ses 14 match(s)
+jouable(s) n'est coté par un book d'exécution ailleurs — 0 crédit », slate
+photographié (76 matchs), heartbeat « 76 matchs, 0 signaux ».
+⚠️ Ce run ne prouve PAS le chemin inversé en production : odds-api.io y
+était absent (entrée suivante), donc aucun match de hockey à apparier.
+Seuls les deux tests gardiens couvrent le match écrit dans l'autre sens.
+À RELEVER au premier scan standard où odds-api.io sert le hockey.
 
 **PAS fait.**
 - `flip_exchange_prices` reste strict : une ligne d'exchange sans prix y
@@ -365,6 +373,62 @@ clé anon.
 Gardien : `tests/test_achat_differe.py::TestLAchatCible::test_match_ecrit_dans_l_autre_sens_achete_sans_lever`,
 `tests/test_achat_differe.py::TestLAchatCible::test_match_inverse_autre_date_ce_n_est_pas_le_meme_match` ;
 `tests/test_scan_crash.py` (dont `test_trace_caviardee`).
+
+### Un 502 sur `bookmakers/selected` lu comme « aucun bookmaker » : un scan vert sans odds-api.io (2026-10-10)
+
+**Symptôme.** Run 38047476170 (2026-10-10 11:10 UTC), scan standard VERT,
+créneau du samedi 11:03 (Big 5) servi : 0 match d'odds-api.io, Tier 2 =
+26 matchs (titan007 seul, soccer), 76 matchs au total, 0 signal. La source
+qui porte le côté soft hors football manquait, et rien ne le disait hors
+du log :
+- 11:16:50 — « odds-api.io bookmakers/selected: HTTP 502
+  {"status":"error","code":502,"message":"Application failed to
+  respond"…} », puis « odds-api.io[soccer]: compte #1 : aucun bookmaker
+  sélectionné — écarté » ;
+- 11:18:39–40 — pour tennis, basketball, mma, hockey, americanfootball :
+  « budget journalier atteint (136/400, 1 compte(s)) — cycle ignoré ».
+
+**Cause.** `core/odds_api_io.selected_bookmakers` ignorait le statut rendu
+par `_get` et mémorisait la liste vide dans `_selected_cache`. `_request`
+voyait alors `params_for(key) is None` et faisait
+`mark_dead(key, "aucun bookmaker sélectionné")` : le seul compte
+(odds-api.io ne délivre plus de clé gratuite) était mort pour tout le
+processus, sur UNE réponse illisible. Et `fetch_sport` loggait « budget
+journalier atteint » dès que `not live_keys(keys)`, même à 136/400 : le
+message masquait la cause.
+
+**Fait** (fusion d9d74ba) :
+- la lecture de `bookmakers/selected` est retentée (`_SELECTED_ESSAIS` = 3,
+  pause `_SELECTED_PAUSE_S` = 2 s) et un échec n'est PAS mémorisé ;
+- `books_lus(key)` dit si les books du compte ont réellement été lus ;
+  quand ils ne l'ont pas été, `_request` abandonne la requête SANS écarter
+  le compte ;
+- un compte dont les books ont été LUS vides reste écarté, comme avant ;
+- log distinct quand aucun compte ne vit : « aucun compte vivant
+  (#1 <motif>) ».
+
+Suite : 2504 tests verts.
+
+**PAS fait.**
+- le créneau 11:03 n'a pas été rejoué : il paie des crédits OddsAPI,
+  décision opérateur ;
+- aucune alerte Telegram sur « odds-api.io absent d'un scan vert » ;
+- le contrat de fin (`core/run_contract.py`) ne voit pas ce cas : des
+  matchs sortent, par titan007.
+
+Note : les sondes de diagnostic du matin (`ops.py chaine` × 6, 51 requêtes
+entre 10:11 et 10:15) ont précédé ce 502 d'une heure. Aucun lien établi.
+HYPOTHÈSE, non vérifiée : le corps de la réponse désigne une erreur
+d'application côté fournisseur.
+
+⚠️ Ne jamais mémoriser une réponse illisible comme une réponse vide.
+⚠️ « budget journalier atteint » ne doit se dire que quand le compteur
+l'atteint.
+
+Gardien : `tests/test_odds_api_io.py::test_selected_502_passager_est_retente`,
+`::test_selected_en_panne_n_est_pas_memorise`,
+`::test_panne_de_selected_ne_tue_pas_le_compte`,
+`::test_compte_reellement_sans_book_reste_ecarte`.
 
 ### Le total de points de la NFL était comparé à des yards de réception (2026-10-01)
 
