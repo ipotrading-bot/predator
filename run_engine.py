@@ -3767,13 +3767,35 @@ CRASH_META_KEY = "scan_crash"
 _CRASH_MAX = 3000          # la FIN de la trace : c'est là qu'est la ligne fautive
 
 
+# `meta` se lit avec la clé anon : une trace n'y entre que CAVIARDÉE. Un
+# message `requests` cite l'URL complète — `apiKey=` d'OddsAPI, jeton du bot
+# dans le chemin Telegram. Paramètres sensibles, jeton de bot, en-têtes
+# d'autorisation, JWT, puis toute chaîne de requête restante.
+_SECRETS_TRACE = (
+    (re.compile(r"(?i)\b(api_?key|apikey|access_?token|token|key|secret|password|passwd|authorization)"
+                r"(['\"]?\s*[=:]\s*['\"]?)(?:bearer\s+)?[^\s&'\",)}]+"), r"\1\2***"),
+    (re.compile(r"(?i)/bot\d+:[\w-]+"), "/bot***"),
+    (re.compile(r"(?i)\bbearer\s+[\w.~+/=-]+"), "Bearer ***"),
+    (re.compile(r"\beyJ[\w-]+\.[\w-]+\.[\w-]+"), "***"),
+    (re.compile(r"(https?://[^\s?'\"]+)\?[^\s'\"]*"), r"\1?***"),
+)
+
+
+def _caviarder(texte: str) -> str:
+    """Retire d'une trace tout ce qui ressemble à un secret. Pur."""
+    for motif, remplacement in _SECRETS_TRACE:
+        texte = motif.sub(remplacement, texte)
+    return texte
+
+
 def _motif_de_sortie(exc: BaseException) -> str | None:
     """Ce qu'il faut consigner pour cette sortie, None si elle est normale
     (retour simple ou SystemExit(0)). Pur."""
     if isinstance(exc, SystemExit) and exc.code in (0, None):
         return None
     trace = "".join(traceback.format_exception(type(exc), exc, exc.__traceback__))
-    return f"{datetime.now(timezone.utc).isoformat()} | {_mode_courant()} | {trace[-_CRASH_MAX:]}"
+    return (f"{datetime.now(timezone.utc).isoformat()} | {_mode_courant()} | "
+            f"{_caviarder(trace)[-_CRASH_MAX:]}")
 
 
 def _consigner_plantage(exc: BaseException) -> None:
