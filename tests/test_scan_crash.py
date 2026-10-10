@@ -45,3 +45,18 @@ def test_consigner_ecrit_la_cle(monkeypatch):
     monkeypatch.setattr(eng, "_meta_stamp", lambda sb, k, v: ecrit.update({k: v}))
     eng._consigner_plantage(_lever(KeyError("k")))
     assert "KeyError" in ecrit[eng.CRASH_META_KEY]
+
+
+def test_trace_caviardee():
+    """meta se lit avec la clé anon : aucun secret ne doit y entrer."""
+    brut = ("HTTPSConnectionPool: Max retries exceeded with url: "
+            "/v4/sports/x/odds/?apiKey=abcdef0123456789&regions=eu "
+            "https://api.telegram.org/bot123456:AAH-secret_tok/sendMessage "
+            "https://x.supabase.co/rest/v1/meta?key=eq.scan&select=value "
+            "Authorization: Bearer eyJhbGciOi.eyJpc3MiOi.c2lnbmF0dXJl "
+            "{'apikey': 'sb_secret_zzz'} password=hunter2")
+    motif = eng._motif_de_sortie(_lever(RuntimeError(brut)))
+    for secret in ("abcdef0123456789", "AAH-secret_tok", "eyJhbGciOi", "c2lnbmF0dXJl",
+                   "sb_secret_zzz", "hunter2", "eq.scan"):
+        assert secret not in motif, secret
+    assert "RuntimeError" in motif and "api.telegram.org/bot***" in motif
