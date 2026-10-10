@@ -160,6 +160,24 @@ class TestLAchatCible:
               "commence_time": "2030-01-20T00:15:00+00:00"}], pol) == 0
         assert api["odds"] == []
 
+    def test_match_ecrit_dans_l_autre_sens_achete_sans_lever(self, api):
+        """2026-10-09 : odds-api.io écrit l'extérieur d'abord (NHL), l'index
+        sans prix faisait lever KeyError('2') — trois scans standard tombés."""
+        pol = self._differer(api)
+        gardes = odds_api.acheter_sharp_differe(
+            [{"home": "Pittsburgh Steelers", "away": "Cleveland Browns",
+              "commence_time": "2030-01-01T00:15:00+00:00"}], pol)
+        assert gardes == 1
+        assert len(api["odds"]) == 1 and api["odds"][0]["eventIds"] == "evt-browns"
+
+    def test_match_inverse_autre_date_ce_n_est_pas_le_meme_match(self, api):
+        """Le retournement ne doit pas perdre le coup d'envoi."""
+        pol = self._differer(api)
+        assert odds_api.acheter_sharp_differe(
+            [{"home": "Pittsburgh Steelers", "away": "Cleveland Browns",
+              "commence_time": "2030-01-20T00:15:00+00:00"}], pol) == 0
+        assert api["odds"] == []
+
     def test_sans_report_rien_ne_part(self, api):
         odds_api.DIFFERES.clear()
         assert odds_api.acheter_sharp_differe(
