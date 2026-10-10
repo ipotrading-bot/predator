@@ -1392,10 +1392,10 @@ def _apparie(ev: dict, index: dict, lookup) -> dict | None:
     L'index ne porte AUCUN prix (équipes + coup d'envoi) : seul l'appariement
     compte. Or `lookup_exchange`, quand il trouve le match écrit « B vs A »,
     RETOURNE les prix de la ligne — `row["2"]` sur une ligne sans prix levait
-    KeyError, hors de tout try. Le 2026-10-09 23:04, premier soir où un match
-    NHL du pré-vol (domicile OddsAPI) croisait odds-api.io (qui l'écrit
-    extérieur d'abord) : trois scans standard de suite tombés en code 1,
-    crédits du Tier 1 payés, rien d'écrit. On cherche donc les deux sens
+    KeyError, hors de tout try. Le 2026-10-09 23:04, premier soir où la NHL
+    est entrée dans l'achat différé : trois scans standard de suite tombés en
+    code 1, crédits du Tier 1 payés, rien d'écrit (hypothèse NON vérifiée
+    ligne à ligne : odds-api.io y écrit l'extérieur d'abord). On cherche donc les deux sens
     NOUS-MÊMES, sur des lignes aux prix neutres, et on rend la ligne
     d'origine — avec son coup d'envoi, que le retournement perdait."""
     neutre = {k: {**v, "1": 0.0, "2": 0.0} for k, v in index.items()}
