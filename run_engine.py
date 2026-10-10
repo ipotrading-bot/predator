@@ -13,6 +13,7 @@ import random
 import re
 import time
 import signal
+import traceback
 from datetime import datetime, timedelta, timezone
 
 import requests
@@ -3757,5 +3758,38 @@ def run():
         raise SystemExit(1)
 
 
+# ── Motif d'un run tombé, lisible HORS des logs (2026-10-10) ───────────
+# Trois scans standard de suite (09/10 23:04, 10/10 06:10 et 09:10) sont
+# sortis en code 1 : crédits payés, rien d'écrit, et pour toute trace
+# « Process completed with exit code 1 ». Les logs Actions exigent un jeton
+# que la session de diagnostic n'avait pas ; `meta`, elle, se lit toujours.
+CRASH_META_KEY = "scan_crash"
+_CRASH_MAX = 3000          # la FIN de la trace : c'est là qu'est la ligne fautive
+
+
+def _motif_de_sortie(exc: BaseException) -> str | None:
+    """Ce qu'il faut consigner pour cette sortie, None si elle est normale
+    (retour simple ou SystemExit(0)). Pur."""
+    if isinstance(exc, SystemExit) and exc.code in (0, None):
+        return None
+    trace = "".join(traceback.format_exception(type(exc), exc, exc.__traceback__))
+    return f"{datetime.now(timezone.utc).isoformat()} | {_mode_courant()} | {trace[-_CRASH_MAX:]}"
+
+
+def _consigner_plantage(exc: BaseException) -> None:
+    """Écrit le motif dans meta.scan_crash. Ne lève jamais : consigner une
+    panne ne doit pas en masquer la cause, qui est relancée par l'appelant."""
+    try:
+        motif = _motif_de_sortie(exc)
+        if motif:
+            _meta_stamp(get_db(write=True), CRASH_META_KEY, motif)
+    except BaseException as e:                                    # noqa: BLE001
+        log.warning("scan_crash non consigné : %s", e)
+
+
 if __name__ == "__main__":
-    run()
+    try:
+        run()
+    except BaseException as _exc:   # SystemExit du contrat de fin et EngineTimeout compris
+        _consigner_plantage(_exc)
+        raise
