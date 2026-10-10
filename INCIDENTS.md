@@ -278,6 +278,94 @@ empirique et tout backtest qui les ignorerait aurait un biais de survie.
 Une source qui « répond » ne porte pas forcément un prix, et une source qui
 échoue ne le fait presque jamais bruyamment.
 
+### L'achat différé retournait des prix qu'il n'avait pas : trois scans standard tombés, crédits payés (2026-10-10)
+
+**Symptôme.** Trois scans standard de suite sortis en code 1 après ~9 min :
+run 38002575169 (2026-10-09 23:04 UTC, cron), 38030017606 (2026-10-10
+06:10, dispatch du Worker), 38040452996 (2026-10-10 09:10, dispatch du
+Worker). Dernier standard réussi : run 37991801458 (2026-10-09 21:10). Le
+Tier 1 OddsAPI était payé à chaque fois (54 crédits engagés le 10/10 à
+09:11), mais rien n'était écrit : `cache_soft_slate` resté à 2026-10-09
+21:19:30, pas de `last_scan`, pas de signaux. Le reprice horaire a
+travaillé toute la matinée d'un samedi sur le slate de la veille.
+`meta.scan_standard_slot` resté à 2026-10-09T21:03 ; `ops.py watchdog`
+affichait « créneau 09:03 NON SERVI ». Tout le reste (audit, closing line,
+reports, reprice) était vert.
+
+**Cause.** `core/odds_api.acheter_sharp_differe` (écrit le 2026-09-29 pour
+la NFL) apparie les matchs du pré-vol gratuit OddsAPI aux matchs
+exécutables du Tier 2 en appelant `lookup_exchange` sur un index qui ne
+porte QUE {home, away, commence_time} — aucun prix. Quand `lookup_exchange`
+trouve le match écrit dans l'autre sens (« B vs A »), il rend les PRIX de
+la ligne retournés par `flip_exchange_prices`, qui lit `row["2"]` :
+KeyError, hors de tout try, alors que la docstring disait « Ne lève
+jamais ». Le chemin n'avait jamais été pris tant que les deux sources
+écrivaient le match dans le même sens.
+
+Second défaut du même geste : le retournement perdait `commence_time`.
+La garde « mêmes équipes, autre date » (`_MEME_MATCH_H`) était donc muette
+pour un match inversé.
+
+MESURÉ le 2026-10-10, trace du run 38040452996 (09:19:54) :
+`run_engine.py:3453` `_oddsapi_acheter_sharp_differe(xbet_matches,
+spend_policy)` → `core/odds_api.py:1418` `lookup_exchange({...}, index)` →
+`core/exchange_match.py:90` `return flip_exchange_prices(hit)` → ligne 38
+`out = {"1": row["2"], ...}` → `KeyError: '2'`. Ligne de log juste avant :
+« DÉPENSE | icehockey_nhl sauté — scan de fond : rythme : 54 engagés
+aujourd'hui + 3 > plafond 25 ». Premier croisement inversé : 2026-10-09
+23:04, sur `icehockey_nhl` (`meta.scan_paid_icehockey_nhl` et
+`oddsapi_exec_icehockey_nhl` = « 0/4 » posés à 23:13:59–23:14:00, sortie
+du step à 23:14:00).
+
+HYPOTHÈSE, non vérifiée ligne à ligne : odds-api.io écrit l'extérieur
+d'abord sur la NHL là où OddsAPI donne `home_team` en premier. La docstring
+de `_apparie` le dit dans les mêmes termes : une hypothèse.
+
+**Pourquoi le diagnostic a pris ~1 h.** Les logs Actions étaient illisibles
+depuis la session : `GH_TOKEN` de l'environnement invalide (HTTP 401),
+l'API publique refuse les logs (403), le hook interdit `.env`. `gh`
+fonctionnait pourtant avec `env -u GH_TOKEN gh …` (GITHUB_TOKEN du
+Codespace). Et les deux reproductions ne plantaient PAS : `ops.py chaine`
+(6 sports, 51 requêtes odds-api.io) puis un rejeu titan007 + Matchbook +
+Smarkets — aucun des deux ne rejoue l'achat différé.
+
+**Fait** (trois correctifs fusionnés sur main le 2026-10-10) :
+- fusion 8078616 — `run_engine.py` : toute sortie anormale du moteur
+  (exception, SystemExit non nul du contrat de fin, EngineTimeout) écrit
+  la FIN de sa trace (3000 car.) dans `meta.scan_crash` avant d'être
+  relancée (`_motif_de_sortie`, `_consigner_plantage`, `CRASH_META_KEY`) ;
+- aad1de3 (fusion 1b4db74) — la trace est CAVIARDÉE avant écriture
+  (`_caviarder`, `_SECRETS_TRACE`) : `meta` se lit avec la clé anon, et un
+  message `requests` cite l'URL complète (apiKey OddsAPI, jeton du bot
+  Telegram dans le chemin) ;
+- 8ba8a38 (fusion ccee17f) — `core/odds_api._apparie` : l'achat différé
+  cherche les deux sens lui-même, sur des lignes aux prix neutres, et rend
+  la ligne d'ORIGINE de l'index, avec son coup d'envoi ; ne lève jamais.
+
+Suite : 2500 tests verts. À RELEVER, pas encore observé à la rédaction :
+le premier scan standard d'après correctif (créneau 11:03 UTC du
+2026-10-10).
+
+**PAS fait.**
+- `flip_exchange_prices` reste strict : une ligne d'exchange sans prix y
+  est une vraie anomalie, elle doit continuer de lever ;
+- l'appel du moteur n'a pas été enveloppé d'un try ;
+- `meta.scan_crash` n'est affiché nulle part (ni dashboard, ni
+  `ops.py status`, ni Telegram) : il se lit par
+  `ops.py supabase meta scan_crash` ;
+- les créneaux 23:03, 06:03 et 09:03 n'ont pas été rejoués : ils paient.
+
+⚠️ Ne pas repasser l'index sans prix à `lookup_exchange` directement :
+c'est `_apparie` qui porte les deux sens et le coup d'envoi.
+⚠️ Ne jamais écrire une trace brute en `meta` : la table se lit avec la
+clé anon.
+⚠️ Avant de conclure « logs illisibles », essayer
+`env -u GH_TOKEN gh run view <id> --log-failed`.
+
+Gardien : `tests/test_achat_differe.py::TestLAchatCible::test_match_ecrit_dans_l_autre_sens_achete_sans_lever`,
+`tests/test_achat_differe.py::TestLAchatCible::test_match_inverse_autre_date_ce_n_est_pas_le_meme_match` ;
+`tests/test_scan_crash.py` (dont `test_trace_caviardee`).
+
 ### Le total de points de la NFL était comparé à des yards de réception (2026-10-01)
 
 **Symptôme.** Scan de 16:11 (run 36890056145) : « ALIGNE | Cleveland Browns

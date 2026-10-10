@@ -161,8 +161,8 @@ class TestLAchatCible:
         assert api["odds"] == []
 
     def test_match_ecrit_dans_l_autre_sens_achete_sans_lever(self, api):
-        """2026-10-09 : odds-api.io écrit l'extérieur d'abord (NHL), l'index
-        sans prix faisait lever KeyError('2') — trois scans standard tombés."""
+        """2026-10-09 : un match trouvé dans l'autre sens faisait lever
+        KeyError('2') sur l'index sans prix — trois scans standard tombés."""
         pol = self._differer(api)
         gardes = odds_api.acheter_sharp_differe(
             [{"home": "Pittsburgh Steelers", "away": "Cleveland Browns",
