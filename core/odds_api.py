@@ -1385,6 +1385,38 @@ def matchs_prevol_tennis() -> dict[str, dict] | None:
     return index
 
 
+def _apparie(ev: dict, index: dict, lookup) -> dict | None:
+    """La ligne de `index` qui désigne le match `ev` du pré-vol, dans un sens
+    ou dans l'autre, ou None. Ne lève jamais.
+
+    L'index ne porte AUCUN prix (équipes + coup d'envoi) : seul l'appariement
+    compte. Or `lookup_exchange`, quand il trouve le match écrit « B vs A »,
+    RETOURNE les prix de la ligne — `row["2"]` sur une ligne sans prix levait
+    KeyError, hors de tout try. Le 2026-10-09 23:04, premier soir où un match
+    NHL du pré-vol (domicile OddsAPI) croisait odds-api.io (qui l'écrit
+    extérieur d'abord) : trois scans standard de suite tombés en code 1,
+    crédits du Tier 1 payés, rien d'écrit. On cherche donc les deux sens
+    NOUS-MÊMES, sur des lignes aux prix neutres, et on rend la ligne
+    d'origine — avec son coup d'envoi, que le retournement perdait."""
+    neutre = {k: {**v, "1": 0.0, "2": 0.0} for k, v in index.items()}
+    home, away = str(ev.get("home_team", "")), str(ev.get("away_team", ""))
+    for h, a in ((home, away), (away, home)):
+        try:
+            if lookup({"home": h, "away": a}, neutre) is None:
+                continue
+        except Exception as e:                                    # noqa: BLE001
+            log.warning("DIFFÉRÉ | appariement %s vs %s : %s", home, away, e)
+            return None
+        # La clé exacte d'abord ; sinon l'unique ligne que le flou désigne.
+        cle = f"{h.strip().lower()}_{a.strip().lower()}"
+        if cle in index:
+            return index[cle]
+        for k, v in index.items():
+            if lookup({"home": h, "away": a}, {k: neutre[k]}) is not None:
+                return v
+    return None
+
+
 def acheter_sharp_differe(matchs_executables: list, spend_policy=None) -> int:
     """Achète le sharp des ligues DIFFÉRÉES par le dernier `fetch_odds`, et
     seulement pour leurs matchs qu'un book d'exécution cote ailleurs
@@ -1415,8 +1447,7 @@ def acheter_sharp_differe(matchs_executables: list, spend_policy=None) -> int:
                     if ev.get("id") and str(ev.get("commence_time", "")) >= _FENETRE.get("jouable", "")]
         ids = []
         for ev in jouables:
-            hit = lookup_exchange({"home": str(ev.get("home_team", "")),
-                                   "away": str(ev.get("away_team", ""))}, index)
+            hit = _apparie(ev, index, lookup_exchange)
             if not hit:
                 continue
             ecart = _ecart_h(ev.get("commence_time", ""), hit.get("commence_time", ""))
