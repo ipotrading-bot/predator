@@ -93,6 +93,7 @@ def _wire(monkeypatch, events, odds_by_batch, *, books=("1xbet",),
 def _clean(monkeypatch):
     monkeypatch.delenv("ODDS_API_IO_BOOKMAKERS", raising=False)
     monkeypatch.setattr(oai, "get_secret", lambda name, **kw: None)
+    monkeypatch.setattr(oai, "_SELECTED_PAUSE_S", 0)
     oai.reset_cache()
     yield
     oai.reset_cache()
@@ -593,3 +594,55 @@ def test_probe_rend_un_etat_par_compte(monkeypatch):
     _wire_pool(monkeypatch, [], [], books_by_key={"k1": ["1xbet", "Bet365"], "k2": []})
     ok, detail = oai.probe("k1,k2")
     assert ok and "2 compte(s)" in detail and "#1: books=['1xbet', 'Bet365']" in detail
+
+
+# ── Une panne de `bookmakers/selected` n'est pas « aucun book » (2026-10-10) ──
+# Scan de 11:10 : UN HTTP 502 → liste vide mémorisée → seul compte écarté pour
+# tout le run → 0 match d'odds-api.io, scan vert, « budget atteint (136/400) ».
+
+def _selected_en_panne(monkeypatch, pannes: int):
+    """`bookmakers/selected` rend 502 `pannes` fois, puis 1xbet."""
+    vus = {"selected": 0}
+
+    def fake_get(url, timeout=None, params=None):
+        assert url.endswith("/bookmakers/selected"), url
+        vus["selected"] += 1
+        if vus["selected"] <= pannes:
+            return _Resp(None, status=502)
+        return _Resp({"bookmakers": ["1xbet"]})
+
+    monkeypatch.setattr(oai.requests, "get", fake_get)
+    oai.reset_cache()
+    return vus
+
+
+def test_selected_502_passager_est_retente(monkeypatch):
+    vus = _selected_en_panne(monkeypatch, pannes=1)
+    assert oai.selected_bookmakers("k1") == ["1xbet"]
+    assert vus["selected"] == 2 and oai.books_lus("k1")
+
+
+def test_selected_en_panne_n_est_pas_memorise(monkeypatch):
+    vus = _selected_en_panne(monkeypatch, pannes=oai._SELECTED_ESSAIS)
+    assert oai.selected_bookmakers("k1") == [] and not oai.books_lus("k1")
+    # La question est reposée : la panne est finie, les books reviennent.
+    assert oai.selected_bookmakers("k1") == ["1xbet"]
+    assert vus["selected"] == oai._SELECTED_ESSAIS + 1
+
+
+def test_panne_de_selected_ne_tue_pas_le_compte(monkeypatch):
+    _selected_en_panne(monkeypatch, pannes=99)
+    status, body, key = oai._request(
+        "events", lambda k: {"x": 1} if oai.usable_bookmakers(k) else None, ["k1"], "soccer")
+    assert (status, body, key) == (0, None, None)
+    assert oai.live_keys(["k1"]) == ["k1"]
+
+
+def test_compte_reellement_sans_book_reste_ecarte(monkeypatch):
+    def fake_get(url, timeout=None, params=None):
+        return _Resp({"bookmakers": []})
+    monkeypatch.setattr(oai.requests, "get", fake_get)
+    oai.reset_cache()
+    assert oai._request("events", lambda k: None if not oai.usable_bookmakers(k) else {},
+                        ["k1"], "soccer") == (0, None, None)
+    assert oai.live_keys(["k1"]) == []

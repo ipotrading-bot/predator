@@ -89,6 +89,7 @@ import hashlib
 import logging
 import os
 import re
+import time
 from datetime import datetime, timedelta, timezone
 
 import requests
@@ -342,6 +343,10 @@ def _get(path: str, key: str, params: dict) -> tuple[int, object]:
         return 200, None
 
 
+_SELECTED_ESSAIS = 3
+_SELECTED_PAUSE_S = 2.0
+
+
 def selected_bookmakers(key: str, *, force: bool = False) -> list[str]:
     """Books actifs sur CE compte. `ODDS_API_IO_BOOKMAKERS` court-circuite
     l'appel réseau (pour tous les comptes) ; sinon le résultat est mémorisé
@@ -351,7 +356,24 @@ def selected_bookmakers(key: str, *, force: bool = False) -> list[str]:
         return [b.strip() for b in forced.split(",") if b.strip()]
     if key in _selected_cache and not force:
         return _selected_cache[key]
-    _, body = _get("bookmakers/selected", key, {})
+    # Une réponse ILLISIBLE n'est pas « aucun book » (2026-10-10). Le scan de
+    # 11:10 a reçu UN HTTP 502 ici (« Application failed to respond ») : la
+    # liste vide était mémorisée, le seul compte écarté pour tout le run, et
+    # les cinq autres sports loggés « budget journalier atteint (136/400) ».
+    # Scan vert, 0 match d'odds-api.io, 0 signal. On retente, et un échec
+    # n'est PAS mémorisé : la requête suivante reposera la question.
+    body = None
+    for essai in range(_SELECTED_ESSAIS):
+        status, body = _get("bookmakers/selected", key, {})
+        if status == 200 and body is not None:
+            break
+        if status in _REFUS:
+            return []                 # compte refusé : `_request` le dira sur sa requête
+        body = None
+        if essai + 1 < _SELECTED_ESSAIS:
+            time.sleep(_SELECTED_PAUSE_S)
+    if body is None:
+        return []
     books: list[str] = []
     if isinstance(body, dict):
         books = [str(b) for b in (body.get("bookmakers") or [])]
@@ -359,6 +381,12 @@ def selected_bookmakers(key: str, *, force: bool = False) -> list[str]:
         books = [str(b) for b in body]
     _selected_cache[key] = books
     return books
+
+
+def books_lus(key: str) -> bool:
+    """Les books de ce compte ont-ils été réellement LUS (ou forcés) ? Faux
+    après une panne de `bookmakers/selected` : rien n'est alors connu."""
+    return bool(os.environ.get("ODDS_API_IO_BOOKMAKERS", "").strip()) or key in _selected_cache
 
 
 def usable_bookmakers(key: str) -> list[str]:
@@ -399,6 +427,12 @@ def _request(path: str, params_for, keys: list[str], sport: str) -> tuple[int, o
         key = vivants[0]
         num = keys.index(key) + 1
         params = params_for(key)
+        if params is None and not books_lus(key):
+            # Panne de lecture, pas un compte vide : on ne l'écarte pas, le
+            # sport suivant reposera la question.
+            log.warning("odds-api.io[%s]: compte #%d : books illisibles (panne passagère de "
+                        "bookmakers/selected) — requête abandonnée, compte gardé", sport, num)
+            return 0, None, None
         if params is None:
             mark_dead(key, "aucun bookmaker sélectionné")
             log.warning("odds-api.io[%s]: compte #%d : aucun bookmaker sélectionné — écarté "
@@ -649,7 +683,13 @@ def fetch_sport(sport: str, api_key: str | None = None, hours_ahead: int = 24,
 
     budget_total = DAILY_BUDGET * len(keys)
     used_before = daily_quota.spent(QUOTA_BUCKET)
-    if used_before >= budget_total or not live_keys(keys):
+    if used_before < budget_total and not live_keys(keys):
+        # Dire la vraie cause : « budget atteint (136/400) » a masqué le 10/10
+        # un compte écarté sur une panne.
+        log.warning("odds-api.io[%s]: aucun compte vivant (%s) — cycle ignoré", sport,
+                    " ; ".join(f"#{keys.index(k) + 1} {_dead_keys.get(k, '?')}" for k in keys))
+        return []
+    if used_before >= budget_total:
         log.warning("odds-api.io[%s]: budget journalier atteint (%d/%d, %d compte(s)) "
                     "— cycle ignoré", sport, used_before, budget_total, len(keys))
         return []
