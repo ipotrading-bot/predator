@@ -34,11 +34,16 @@ Trois ticks reprice par jour sont muets par construction, à **03:25**,
 **04:25** et **05:25** : le cache du dernier standard (23:03) a plus de 4 h.
 C'est normal, ils rafraîchissent le heartbeat et s'arrêtent.
 
-Les heures ci-dessus sont les heures PLANIFIÉES. GitHub ne les livre pas
-toutes (mesuré : parfois la moitié). Un chien de garde Cloudflare vérifie
-toutes les 10 minutes et rattrape :
+Les heures ci-dessus sont les heures PLANIFIÉES. GitHub n'en livre qu'une
+fraction (mesuré du 6 au 11 octobre 2026 : ~6 reprice sur 24 et 5 ticks de
+clôture sur 72 par jour). C'est le chien de garde Cloudflare, qui passe
+toutes les 10 minutes, qui tient l'horloge :
 
-- un tick **reprice** si plus rien n'a tourné depuis 75 min ;
+- un tick **reprice** dès que plus rien n'a tourné depuis une heure, et une
+  capture de **clôture** dès 20 minutes de silence. Jusqu'au 11 octobre il
+  attendait 75 et 25 minutes : le reprice tournait en réalité toutes les
+  80 min et la clôture toutes les 30. Les minutes réelles ne sont donc pas
+  H+25 ni H+14/34/54 mais celles du passage du Worker (H+10, H+30, H+50) ;
 - un scan **standard** si son créneau est passé depuis plus de 5 min sans
   qu'un standard ait démarré — donc à H+7 au plus tard (le tick du Worker
   suivant l'heure due). Depuis le 5 septembre 2026 c'est le Worker qui sert

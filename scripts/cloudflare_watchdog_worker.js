@@ -17,10 +17,11 @@
 //
 // INVARIANTS (gardés par tests/test_watchdog_worker.py) :
 //  - chaque fichier surveillé existe et porte `workflow_dispatch:` ;
-//  - chaque seuil est STRICTEMENT au-dessus de la cadence nominale du cron
-//    le plus fréquent du workflow — le chien de garde ne peut donc jamais
-//    tirer plus vite que le schedule qu'il supplée (closing_line garde son
-//    invariant CLOSING_LINE_REFRESH_MIN) ;
+//  - la PÉRIODE RÉELLE d'un seuil — le premier passage du Worker (toutes les
+//    10 min) où l'âge le dépasse — n'est jamais inférieure à la cadence
+//    nominale du cron le plus fréquent du workflow : le chien de garde ne
+//    tire donc jamais plus vite que le schedule qu'il supplée. Pour scan.yml
+//    et closing_line.yml elle lui est ÉGALE (voir WATCH) ;
 //  - la FRAÎCHEUR ne rattrape scan.yml qu'en `reprice` (gratuit : aucune clé
 //    payante dans son pool) ; le scan payant `standard` passe par CRENEAUX,
 //    dont les heures doivent être exactement celles du cron `standard` de
@@ -36,12 +37,26 @@
 const REPO = "ipotrading-bot/predator";
 
 // FRAÎCHEUR — « plus rien depuis N minutes ». Valable seulement pour une
-// cadence RÉGULIÈRE. stale_min = cadence nominale du cron + marge ; le Worker
-// passe toutes les 10 min, donc le retard maximal de détection est
-// stale_min + 10.
+// cadence RÉGULIÈRE. Le Worker passe toutes les 10 min : un workflow est
+// redispatché au premier passage où son âge dépasse stale_min, donc tous les
+// (multiple de 10 immédiatement au-dessus de stale_min) — c'est sa PÉRIODE
+// RÉELLE dès que GitHub ne livre plus le cron, ce qui est le cas ordinaire.
+//
+// scan.yml et closing_line.yml : seuil placé JUSTE SOUS la cadence nominale
+// (2026-10-11). Mesuré du 6 au 11/10 : GitHub livrait ~6 reprice sur 24 et
+// 5 ticks de clôture sur 72 par jour ; avec des seuils à cadence + marge
+// (75 et 25), le reprice tournait toutes les 80 min au lieu de 60 et la
+// clôture toutes les 30 min au lieu de 20 (dernier prix capté 14 min avant
+// le coup d'envoi en médiane, 29 min au p90), alors qu'au moins 64 des 152
+// recommandés du 27/09 au 11/10 naissaient d'un reprice. À 55 et 15, la
+// période réelle EST la cadence prévue. Les deux sont gratuits (aucune clé
+// payante dans leur pool) et un cron GitHub qui arrive quand même derrière
+// n'est qu'un tick de plus, sérialisé par `concurrency`.
+// audit.yml et reports.yml gardent cadence + marge : rien de mesuré ne
+// demande de les serrer.
 const WATCH = [
-  { file: "scan.yml",         stale_min: 75,  inputs: { mode: "reprice" } },
-  { file: "closing_line.yml", stale_min: 25,  inputs: {} },
+  { file: "scan.yml",         stale_min: 55,  inputs: { mode: "reprice" } },
+  { file: "closing_line.yml", stale_min: 15,  inputs: {} },
   { file: "audit.yml",        stale_min: 190, inputs: {} },   // cadence 3 h (45 */3) depuis le 2026-09-05
   { file: "reports.yml",      stale_min: 130, inputs: { report: "rapport" } },
 ];
@@ -56,7 +71,7 @@ const WATCH = [
 // c'est là que se jouait l'angle mort du 2026-09-04. La surveillance par
 // FICHIER voyait scan.yml éternellement frais — les ticks reprice horaires, y
 // compris ceux que ce Worker dispatche lui-même, ne le laissent jamais
-// vieillir de 75 min. Un cron `standard` perdu n'était donc pas seulement
+// vieillir jusqu'au seuil. Un cron `standard` perdu n'était donc pas seulement
 // « non rattrapé » : il était invisible. Mesuré sur les 4 créneaux dus après
 // le recalage : 19:03 livré +40 min, 21:03 jamais livré, 23:03 livré +1 h 47,
 // 06:03 jamais livré — pendant que ~10 reprice/jour partaient, tous « sains ».
@@ -125,9 +140,10 @@ function dernierCreneauDu(hours, minute, now) {
   return null;
 }
 
+/** true si un rattrapage vient d'être dispatché (HTTP 204) pour ce créneau. */
 async function creneau(env, w, now) {
   const du = dernierCreneauDu(w.hours, w.minute, now);
-  if (du === null) return;
+  if (du === null) return false;
   const retard = (now - du) / 60000;
   const quand = new Date(du).toISOString().slice(11, 16);
   // Délai de grâce : 5 min depuis le 2026-09-05 (25 avant). Le Worker est
@@ -141,12 +157,12 @@ async function creneau(env, w, now) {
   // déjà servi) et le groupe `concurrency` sérialise le cas limite.
   if (retard < w.grace_min) {
     console.log(`${w.file} ${w.run_name}: créneau ${quand} dû il y a ${retard.toFixed(0)} min — dans le délai de grâce`);
-    return;
+    return false;
   }
   const r = await gh(env, `/repos/${REPO}/actions/workflows/${w.file}/runs?per_page=50&branch=main`);
   if (!r.ok) {
     console.log(`${w.file}: liste des runs HTTP ${r.status}`);
-    return;
+    return false;
   }
   const data = await r.json();
   // Un rattrapage déjà dispatché porte le MÊME run-name : il honore le
@@ -156,7 +172,7 @@ async function creneau(env, w, now) {
              && Date.parse(run.created_at) >= du);
   if (honore(data.workflow_runs || [])) {
     console.log(`${w.file} ${w.run_name}: créneau ${quand} honoré`);
-    return;
+    return false;
   }
   // Relecture impossible : on dispatche comme avant (un créneau manqué coûte
   // plus cher qu'un doublon, que scripts/ci_scan_mode.py dégrade en reprice).
@@ -164,18 +180,25 @@ async function creneau(env, w, now) {
   if (relue !== null && honore(relue)) {
     console.log(`${w.file} ${w.run_name}: créneau ${quand} — LECTURE PÉRIMÉE ` +
                 `(la relecture le voit servi), pas de dispatch`);
-    return;
+    return false;
   }
   const d = await gh(env, `/repos/${REPO}/actions/workflows/${w.file}/dispatches`,
                      { method: "POST", body: JSON.stringify({ ref: "main", inputs: w.inputs }) });
   console.log(`${w.file} ${w.run_name}: créneau ${quand} manqué de ${retard.toFixed(0)} min -> dispatch HTTP ${d.status}`);
+  return d.status === 204;
 }
 
 async function tick(env) {
   const now = Date.now();
+  // Fichiers dont un créneau vient d'être dispatché DANS CE PASSAGE. Avec un
+  // reprice toutes les 60 min, le passage qui sert un créneau `standard`
+  // trouve aussi scan.yml « vieux de 60 min » : la liste GitHub ne montre
+  // pas encore le run dispatché une seconde plus tôt, et un reprice partirait
+  // derrière chaque scan standard, pour rien. Ce run-là EST le tick du passage.
+  const servis = new Set();
   for (const w of CRENEAUX) {
     try {
-      await creneau(env, w, now);
+      if (await creneau(env, w, now)) servis.add(w.file);
     } catch (e) {
       console.log(`${w.file} ${w.run_name}: ${e}`);
     }
@@ -183,6 +206,10 @@ async function tick(env) {
 
   for (const w of WATCH) {
     try {
+      if (servis.has(w.file)) {
+        console.log(`${w.file}: créneau dispatché à ce passage — fraîcheur non évaluée`);
+        continue;
+      }
       const r = await gh(
         env,
         `/repos/${REPO}/actions/workflows/${w.file}/runs?per_page=1&branch=main`,

@@ -74,15 +74,58 @@ def test_chaque_workflow_surveille_existe_et_se_dispatche():
             f"{w['file']} ne porte pas workflow_dispatch : le rattrapage rendrait 422")
 
 
-def test_les_seuils_restent_au_dessus_de_la_cadence_des_crons():
+def _passage_worker_min() -> int:
+    """Période du cron Cloudflare du Worker, LUE dans le script de
+    déploiement (règle n°6) — sans l'importer : il charge des credentials."""
+    src = (ROOT / "scripts" / "deploy_watchdog_worker.py").read_text(encoding="utf-8")
+    m = re.search(r'^CRON\s*=\s*"\*/(\d+) \* \* \* \*"', src, re.M)
+    assert m, "cron du Worker introuvable ou d'une forme nouvelle — étendre ce parseur"
+    return int(m.group(1))
+
+
+def _periode_reelle_min(stale_min: int) -> int:
+    """Écart réel entre deux dispatchs quand GitHub ne livre rien : le premier
+    passage du Worker où l'âge du dernier run dépasse le seuil."""
+    pas = _passage_worker_min()
+    return (stale_min // pas + 1) * pas
+
+
+def _cadence_nominale(fichier: str) -> int:
+    crons = _crons((WORKFLOWS / fichier).read_text(encoding="utf-8"))
+    assert crons, f"{fichier} n'a plus de cron — le surveiller n'a plus de sens"
+    return min(_nominal_interval_min(c) for c in crons)
+
+
+def test_le_worker_ne_tire_jamais_plus_vite_que_le_cron():
     for w in _watch_table():
-        yml = (WORKFLOWS / w["file"]).read_text(encoding="utf-8")
-        crons = _crons(yml)
-        assert crons, f"{w['file']} n'a plus de cron — le surveiller n'a plus de sens"
-        cadence = min(_nominal_interval_min(c) for c in crons)
-        assert w["stale_min"] > cadence, (
-            f"{w['file']} : seuil {w['stale_min']} min ≤ cadence nominale {cadence} min — "
-            "le chien de garde tirerait plus vite que le schedule qu'il supplée")
+        cadence = _cadence_nominale(w["file"])
+        assert _periode_reelle_min(w["stale_min"]) >= cadence, (
+            f"{w['file']} : seuil {w['stale_min']} min = un dispatch toutes les "
+            f"{_periode_reelle_min(w['stale_min'])} min, plus vite que la cadence "
+            f"nominale {cadence} min du schedule qu'il supplée")
+
+
+def test_reprice_et_cloture_tournent_a_leur_cadence_prevue():
+    """2026-10-11 : avec des seuils à cadence + marge, le Worker — qui sert
+    presque tous les ticks, GitHub n'en livrant qu'une fraction — donnait un
+    reprice toutes les 80 min et une clôture toutes les 30. Leur période
+    réelle doit ÊTRE la cadence du cron, ni plus lente ni plus rapide."""
+    table = {w["file"]: w for w in _watch_table()}
+    for fichier in ("scan.yml", "closing_line.yml"):
+        assert _periode_reelle_min(table[fichier]["stale_min"]) == _cadence_nominale(fichier), (
+            f"{fichier} : période réelle {_periode_reelle_min(table[fichier]['stale_min'])} min "
+            f"≠ cadence prévue {_cadence_nominale(fichier)} min")
+
+
+def test_un_creneau_dispatche_tient_lieu_de_tick_de_fraicheur():
+    """À 60 min de période, le passage qui sert un créneau `standard` voit
+    aussi scan.yml vieux de 60 min : sans cette garde un reprice partirait
+    derrière chaque scan standard."""
+    corps = WORKER.split("async function tick(", 1)[1]
+    assert "if (await creneau(env, w, now)) servis.add(w.file);" in corps
+    garde, dispatch = corps.index("servis.has(w.file)"), corps.index("/dispatches`")
+    assert garde < dispatch
+    assert "return d.status === 204;" in WORKER.split("async function creneau(", 1)[1].split("\nasync function tick", 1)[0]
 
 
 def test_la_fraicheur_ne_rattrape_scan_quen_reprice():
@@ -94,7 +137,7 @@ def test_la_fraicheur_ne_rattrape_scan_quen_reprice():
     scan = next(w for w in _watch_table() if w["file"] == "scan.yml")
     assert scan["inputs"] == {"mode": "reprice"}, (
         "la voie fraîcheur de scan.yml doit rester `reprice` : elle tire dès "
-        "75 min de silence, ce qui pour un scan payant serait une dépense non "
+        "une heure de silence, ce qui pour un scan payant serait une dépense non "
         "bornée. Le rattrapage payant passe par CRENEAUX.")
     import importlib
     ci_scan_mode = importlib.import_module("scripts.ci_scan_mode")
