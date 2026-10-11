@@ -15,6 +15,8 @@ edge faux. D'où les garde-fous verrouillés ci-dessous :
 - le handicap asiatique porte la ligne DOMICILE signée dans `param` ;
 - budget journalier tenu par core/daily_quota, 429 rejoué UNE fois,
   401/403/451 → {} en le disant ;
+- lots sous les plafonds MESURÉS de l'API (un lot trop gros = 404 sur tout
+  le lot), budget de temps qui arrête la lecture en nommant ce qui manque ;
 - règle 13 : critère de retrait daté dans la docstring, source au registre,
   appelée par le moteur hors REPRICE, sondée par ops.py.
 """
@@ -185,6 +187,79 @@ def test_le_budget_journalier_arrete_la_source(monkeypatch, _sans_reseau_ni_paus
         assert sm.fetch_smarkets_prices(sports=["soccer"], hours_ahead=24) == {}
     assert appels["n"] == 0
     assert any("budget" in r.getMessage() for r in caplog.records)
+
+
+def _cabler_gros_slate(monkeypatch, n_events: int, lignes: int):
+    """n_events matchs, chacun un 1X2 et `lignes` totaux — pour compter les lots."""
+    from datetime import datetime, timedelta, timezone
+    start = (datetime.now(timezone.utc) + timedelta(hours=5)).strftime("%Y-%m-%dT%H:%M:%SZ")
+    appels = {"contracts": [], "quotes": [], "ordre": []}
+
+    def fake_get(url, params=None, headers=None, timeout=None):
+        if url.endswith("/events/"):
+            return _Resp({"events": [{"id": str(i), "name": f"Home{i} vs Away{i}", "start_datetime": start}
+                                     for i in range(n_events)]})
+        ids = url.rsplit("/", 3)[-3].split(",")
+        if url.endswith("/markets/"):
+            return _Resp({"markets": [m for e in ids for m in (
+                [{"id": f"w{e}", "event_id": e, "state": "open", "market_type": {"name": "WINNER_3_WAY"}}]
+                + [{"id": f"t{e}x{k}", "event_id": e, "state": "open",
+                    "market_type": {"name": "OVER_UNDER", "param": k + 0.5}} for k in range(lignes)])]})
+        sorte = "contracts" if url.endswith("/contracts/") else "quotes"
+        appels[sorte].append(ids)
+        appels["ordre"].append(sorte)
+        if sorte == "contracts":
+            return _Resp({"contracts": [c for m in ids if m.startswith("w")
+                                        for c in _contracts(m, f"Home{m[1:]}", "Draw", f"Away{m[1:]}")]})
+        return _Resp({f"{m}-{k}": _q([3200], [3300]) for m in ids if m.startswith("w") for k in range(3)})
+
+    monkeypatch.setattr(sm.requests, "get", fake_get)
+    return appels
+
+
+def test_les_lots_restent_sous_les_plafonds_mesures_de_l_api():
+    """Sondé le 2026-10-11 : /contracts/ rend 404 à 110 marchés, /quotes/ à
+    220 — pour TOUT le lot, donc un prix sharp de moins sur chaque match du
+    lot. Le lot de cotes couvre un nombre entier de lots de contrats."""
+    assert sm.MARKETS_PER_CONTRACTS_CALL <= 100
+    assert sm.MARKETS_PER_QUOTES_CALL <= 200
+    assert sm.MARKETS_PER_QUOTES_CALL % sm.MARKETS_PER_CONTRACTS_CALL == 0
+
+
+def test_les_cotes_sont_groupees_et_chaque_marche_cote_a_ses_contrats(monkeypatch):
+    """Le temps de Smarkets est le nombre d'appels × la pause (370 s un samedi
+    à 60 marchés par appel) : les cotes partent par lots de 160, les contrats
+    par 80, et aucun prix n'est perdu en route."""
+    appels = _cabler_gros_slate(monkeypatch, n_events=25, lignes=7)   # 200 marchés utiles
+    out = sm.fetch_smarkets_prices(sports=["soccer"], hours_ahead=24)
+    assert len(out) == 25
+    assert [len(l) for l in appels["quotes"]] == [160, 40]
+    assert [len(l) for l in appels["contracts"]] == [80, 80, 40]
+    assert appels["ordre"] == ["contracts", "contracts", "quotes", "contracts", "quotes"]
+    assert sum(appels["contracts"], []) == sum(appels["quotes"], [])
+
+
+def test_le_budget_de_temps_arrete_la_lecture_en_nommant_ce_qui_manque(monkeypatch, caplog):
+    """Sans borne propre, seule la coupure du moteur arrêtait Smarkets — en
+    faisant échouer le scan payant entier. À l'échéance la source rend ce
+    qu'elle a lu et dit quels sports manquent."""
+    appels = _cabler(monkeypatch)
+    horloge = {"t": 0.0}
+    monkeypatch.setattr(sm.time, "monotonic", lambda: horloge["t"])
+    vrai_get = sm.requests.get
+
+    def get_lent(url, **kw):
+        horloge["t"] += 40.0            # 4 appels par sport → échéance franchie au 2e sport
+        return vrai_get(url, **kw)
+
+    monkeypatch.setattr(sm.requests, "get", get_lent)
+    monkeypatch.setattr(sm, "TIME_BUDGET_S", 300.0)
+    with caplog.at_level(logging.WARNING, logger="PREDATOR.smarkets"):
+        out = sm.fetch_smarkets_prices(sports=["soccer", "tennis", "hockey", "mma"], hours_ahead=24)
+    assert set(out) == {"texans_raiders", "a_b"}, "ce qui a été lu est rendu"
+    assert appels["n"] == 8, "deux sports lus, les deux suivants jamais appelés"
+    msg = " ".join(r.getMessage() for r in caplog.records)
+    assert "budget de temps atteint (300 s)" in msg and "hockey, mma" in msg
 
 
 def test_un_sport_inconnu_ne_coute_rien(monkeypatch):

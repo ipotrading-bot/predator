@@ -278,6 +278,70 @@ empirique et tout backtest qui les ignorerait aurait un biais de survie.
 Une source qui « répond » ne porte pas forcément un prix, et une source qui
 échoue ne le fait presque jamais bruyamment.
 
+### Smarkets prenait la moitié du scan standard : 60 marchés par appel quand l'API en accepte 200 (2026-10-11)
+
+Symptôme : aucun. Les runs sont verts ; seule la DURÉE du `Scan standard`
+montait — médiane 3,4 min le 27/09, 5,5 min le 07/10, 9,5 min le samedi
+10/10, maximum 11,9 min (run 38054705065) pour une coupure moteur à 15 min
+(`SCAN_TIMEOUTS["standard"]`).
+
+Cause : `core/smarkets.py` lit en série, une seconde de pause avant CHAQUE
+appel, et découpait les marchés par 60 (`MARKETS_PER_CALL`), deux appels par
+lot (contrats, cotes). Le temps de la source est donc le nombre d'appels,
+qui suit le nombre de matchs. L'estimation de l'en-tête (« ≈ 100-130 appels,
+85 s ») datait d'un slate de 137 marchés ; et du 25 au 29/09 la source en
+panne (HTTP 400) ne coûtait que 5 s, ce qui a masqué la pente.
+
+MESURÉ le 2026-10-11 sur les scans de 13:10 (écart entre « Matchbook OK » et
+la ligne « Smarkets: … ») : 28/09 ≈ 5 s (en panne) ; 07/10 114 s pour 196
+événements (run 37626433816) ; 10/10 **370 s pour 416 événements** — la
+moitié d'un scan de 11,8 min. Aucun 429 dans ces deux logs. Compteur du
+jour : 472 à 1 077 req en semaine, 1 487 le samedi 03/10, **2 000/2 000 au
+scan de 23:03 du 10/10** (écourté ; ce jour-là portait un scan payant en
+trop, à 11:30). Aucune borne de temps propre : seule la coupure du moteur
+aurait arrêté Smarkets, en faisant échouer le scan payant entier.
+
+SONDÉ le même jour depuis le Codespace (IP Azure), en `requests` NU — pas
+`core.smarkets`, qui aurait écrit dans `meta.quota_smarkets_<jour>` (leçon
+LiveScore du 2026-09-05) :
+- /quotes/ est la voie limitée : 20 appels espacés de 2 s puis 20 de 1,5 s
+  passent ; à 1 s, 9 refus 429 d'affilée. Contrats et cotes du même lot
+  tirés EN PARALLÈLE, un lot par seconde : 25 refus /quotes/ sur 40, 0 sur
+  /contracts/. La production (un /quotes/ toutes les ~2,2 s) était déjà à la
+  limite : **aucun parallélisme ne rend du temps**.
+- la taille des lots, elle, était loin du plafond : /contracts/ accepte 100
+  marchés (110 → HTTP 404 « Nothing matches the given URI »), /quotes/ 200
+  (220 → 404) ; 20 appels /quotes/ de 200 marchés espacés de 2 s : 20 × 200.
+
+Fait :
+- `MARKETS_PER_CONTRACTS_CALL = 80`, `MARKETS_PER_QUOTES_CALL = 160` : même
+  pause, 3 appels pour 160 marchés au lieu de 5,3 — ~45 % d'appels et de
+  temps en moins attendus, /quotes/ plus espacés qu'avant ;
+- `SMARKETS_TIME_BUDGET_S = 300` : à l'échéance la source rend ce qu'elle a
+  lu et loggue « budget de temps atteint … non lus : <sports> ». Le budget
+  journalier épuisé EN COURS de lecture est désormais loggué de même (il ne
+  l'était qu'à l'entrée).
+
+NON fait, avec la raison : lire Smarkets en parallèle d'odds-api.io et de
+titan007. `_declarer_prix_exchange` passe les prix d'exchange — Smarkets
+compris — à odds-api.io AVANT le Tier 2 pour qu'il paie d'abord les matchs
+qui ont un prix sharp (« CALENDRIER PAGINÉ », 2026-10-03) : un Smarkets en
+retard changerait ce qui est acheté.
+
+⚠️ Un lot au-dessus du plafond rend un 404 pour TOUT le lot, loggué « HTTP
+404 sur markets » et rien d'autre : ne pas monter ces deux nombres sans
+resonder. ⚠️ L'ordre des sports décide de ce que la borne de temps coupe :
+`americanfootball` est lu en dernier.
+À RELEVER le samedi 2026-10-17 : la durée Smarkets du scan de 13:10 (attendu
+≈ 200 s contre 370), le compteur du soir (attendu < 1 200), l'absence de
+« HTTP 404 » et de « budget de temps atteint », et le nombre de marchés
+sharp rendus (262 le 10/10 à 13:10) — s'il baisse à slate égal, un lot est
+refusé. À verser à la revue Smarkets du 2026-10-22.
+
+Gardiens : `tests/test_smarkets.py::test_les_lots_restent_sous_les_plafonds_mesures_de_l_api`,
+`::test_les_cotes_sont_groupees_et_chaque_marche_cote_a_ses_contrats`,
+`::test_le_budget_de_temps_arrete_la_lecture_en_nommant_ce_qui_manque`.
+
 ### L'achat différé retournait des prix qu'il n'avait pas : trois scans standard tombés, crédits payés (2026-10-10)
 
 **Symptôme.** Trois scans standard de suite sortis en code 1 après ~9 min :
@@ -3694,6 +3758,61 @@ TestFetchMatchResult::test_no_ai_layer_involved`,
 
 Cinq workflows sur six ont tourné à vide pendant une journée sans produire
 un seul log. C'est le mode de panne le plus coûteux du dépôt.
+
+### Le reprice « horaire » tournait toutes les 80 min, la clôture toutes les 30 : le Worker est l'horloge, ses seuils étaient ceux d'un filet (2026-10-11)
+
+Symptôme : aucun. Tout est vert, et la doc opérateur annonçait 24 reprice et
+72 captures de clôture par jour.
+
+Cause : les seuils de fraîcheur du chien de garde étaient « cadence nominale
++ marge » (75 min pour scan.yml, 25 pour closing_line.yml) — le réglage d'un
+FILET derrière un cron qui tire. Or GitHub ne livre plus qu'une fraction des
+crons : c'est le Worker qui sert presque tous les ticks, et un workflow n'est
+redispatché qu'au premier passage (toutes les 10 min) où son âge dépasse le
+seuil. Période réelle = 80 min et 30 min.
+
+MESURÉ du 2026-10-06 au 10-11 (`gh run list`, événement et heure de création) :
+- `scan.yml` : 25 à 28 runs/jour, écart maximal entre deux ticks 80-85 min
+  chaque jour ; ~6 reprice/jour venus du cron GitHub, le reste du Worker ;
+- `closing_line.yml` : 49 à 51 runs/jour, écart médian 30 min, dont 4 à 5
+  par le cron GitHub sur 72 demandés ;
+- les 8 créneaux `standard` servis à H+10 par le Worker, tous les jours
+  (voie CRENEAUX, non concernée).
+En base, signaux créés depuis le 27/09 : au moins 64 des 152 recommandés
+sont nés à une heure SANS créneau standard, donc d'un reprice ; dernier prix
+de clôture capté 14 min avant le coup d'envoi en médiane, 29 min au p90
+(133 recommandés couverts sur 141).
+
+Fait : `stale_min` 75 → **55** (scan.yml, reprice) et 25 → **15**
+(closing_line.yml). La période réelle devient la cadence prévue, 60 et
+20 min. Les deux workflows sont gratuits (aucune clé payante dans leur
+pool) ; un cron GitHub qui arrive quand même n'est qu'un tick de plus.
+`tick()` saute la fraîcheur d'un fichier dont un CRÉNEAU vient d'être
+dispatché au même passage : à 60 min de période, le passage qui sert un
+`standard` voyait aussi scan.yml « vieux de 60 min » (la liste GitHub ne
+montre pas encore le run dispatché une seconde plus tôt) et un reprice serait
+parti derrière chaque scan standard. Simulé sous Node, 8 h de passages sans
+aucun cron GitHub : reprice 07:10 08:10 10:10 12:10 entre les standards de
+06:10 09:10 11:10 13:10, clôture toutes les 20 min.
+
+NON fait : `audit.yml` (190 → période réelle 200 min pour 180 nominales) et
+`reports.yml` (130 → 140 pour 120) gardent leur marge — rien de mesuré ne
+demande de les serrer (règlement à KO + 5,2 h en médiane, dont 4 h de grâce).
+
+⚠️ L'invariant du gardien a changé de forme : ce n'est plus « seuil >
+cadence » mais « période réelle ≥ cadence », la période se calculant avec le
+pas du cron Cloudflare (lu dans `scripts/deploy_watchdog_worker.py`).
+Changer ce pas change toutes les périodes.
+⚠️ `CLOSING_LINE_REFRESH_MIN` et `CLOSING_LINE_TIGHTEN_MIN` ne sont lus par
+AUCUN code depuis la mort de la voie oracle : l'en-tête de closing_line.yml
+qui promet « un tick plus fréquent que 20 min est un no-op » décrit un garde
+qui n'existe plus. Rien ne saute un tick sur deux.
+À RELEVER après 3 jours : ~24 ticks scan hors standard, ~72 runs de clôture
+par jour, et le délai clôture → coup d'envoi (attendu ≈ 10 min en médiane).
+
+Gardiens : `tests/test_watchdog_worker.py::test_reprice_et_cloture_tournent_a_leur_cadence_prevue`,
+`::test_le_worker_ne_tire_jamais_plus_vite_que_le_cron`,
+`::test_un_creneau_dispatche_tient_lieu_de_tick_de_fraicheur`.
 
 ### Le chien de garde dispatchait des rattrapages déjà servis : liste de runs périmée (2026-09-28/29)
 

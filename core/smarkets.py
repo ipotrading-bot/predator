@@ -51,12 +51,35 @@ BUDGET (règle 13)
 -----------------
 `SMARKETS_DAILY_BUDGET` = 2 000 requêtes/jour, tenu par core/daily_quota
 (bucket « smarkets »), affiché à chaque scan : « N/2000 req aujourd'hui ».
-Un scan coûte ~1 appel par sport + 1 par 25 événements + 2 par 60 marchés
-utiles ≈ 100-130 appels (essai réel : 109 req, 137 marchés, 85 s avec les
-reprises 429). Smarkets ne tourne QUE sur les scans standard (8/jour ≈
-1 000 req), jamais en REPRICE : ce mode a 300 s de budget et Matchbook y
-suffit. À budget atteint la source rend {} en le disant — jamais une
-exception.
+Un scan coûte ~1 appel par 50 événements + 1 par 25 événements + 3 par
+160 marchés utiles (2 lots de contrats, 1 lot de cotes — voir « LOTS »).
+Smarkets ne tourne QUE sur les scans standard (8/jour), jamais en REPRICE :
+ce mode a 300 s de budget et Matchbook y suffit. À budget atteint la source
+rend ce qu'elle a déjà lu en le disant — jamais une exception.
+
+LOTS ET BUDGET DE TEMPS (2026-10-11)
+------------------------------------
+L'estimation d'origine (« ≈ 100-130 appels, 85 s ») datait d'un slate de
+137 marchés. Mesuré depuis la réparation du 29/09 : 114 s un mercredi
+(196 événements), 370 s le samedi 10/10 (416 événements, ~380 appels) —
+la MOITIÉ d'un scan standard de 11,8 min, à 3 min de la coupure moteur
+(SCAN_TIMEOUTS), et 2 000/2 000 requêtes au dernier scan du jour. Le temps
+est le nombre d'appels × la pause : rien d'autre.
+Sondé le 2026-10-11 depuis une IP Azure, sans le code du dépôt :
+  · /quotes/ est la voie limitée : un appel toutes les 2 s ou 1,5 s passe,
+    toutes les 1 s rend des 429 par rafales — la production (un /quotes/
+    toutes les ~2,2 s) tournait donc déjà à la limite, et tirer contrats et
+    cotes en parallèle rend 25 refus sur 40. Aucun parallélisme possible ;
+  · mais un appel accepte bien plus de marchés qu'on ne lui en donnait :
+    /contracts/ 100 (110 → HTTP 404), /quotes/ 200 (220 → HTTP 404), et
+    20 appels /quotes/ de 200 marchés espacés de 2 s passent tous.
+D'où 80 marchés par appel /contracts/ et 160 par appel /quotes/ (marge sous
+les plafonds mesurés) : même pause, ~45 % d'appels et de temps en moins, et
+les /quotes/ plus espacés qu'avant. ⚠️ Un lot au-dessus du plafond rend un
+404 pour TOUT le lot : ne pas monter ces deux nombres sans resonder.
+`SMARKETS_TIME_BUDGET_S` = 300 s : au-delà la lecture s'arrête, rend ce
+qu'elle a et nomme les sports non lus. Sans cette borne, seule la coupure
+du moteur arrêtait Smarkets — en faisant échouer tout le scan payant.
 
 CRITÈRE DE RETRAIT (règle 13) — à relever le 2026-09-22
 --------------------------------------------------------
@@ -101,6 +124,8 @@ DAILY_BUDGET = int(os.environ.get("SMARKETS_DAILY_BUDGET", "2000"))
 # Débit : pause entre deux appels, et une reprise après un 429 (mesuré le
 # 2026-09-08 : les /quotes/ groupés enchaînés sans pause prennent des 429).
 _PAUSE_S = float(os.environ.get("SMARKETS_PAUSE_S", "1.0"))
+# Temps total accordé à la source dans un scan (voir « LOTS ET BUDGET DE TEMPS »).
+TIME_BUDGET_S = float(os.environ.get("SMARKETS_TIME_BUDGET_S", "300"))
 _RETRY_429_S = float(os.environ.get("SMARKETS_RETRY_429_S", "3.0"))
 
 # Types d'événement Smarkets par sport du moteur (relevé le 2026-09-08 :
@@ -118,7 +143,11 @@ EVENT_TYPES = {
 # nombre d'appels marchés/contrats/cotes, donc le budget.
 MAX_EVENTS = int(os.environ.get("SMARKETS_MAX_EVENTS", "150"))
 EVENTS_PER_MARKETS_CALL = 25
-MARKETS_PER_CALL = 60
+# Plafonds de l'API mesurés le 2026-10-11 : 100 marchés par /contracts/, 200
+# par /quotes/. Le lot de cotes est un multiple du lot de contrats : chaque
+# marché coté a ses contrats lus dans le même tour.
+MARKETS_PER_CONTRACTS_CALL = 80
+MARKETS_PER_QUOTES_CALL = 160
 
 _WINNER_TYPES = ("WINNER_3_WAY", "WINNER_2_WAY", "WINNER", "MONEY_LINE", "MATCH_ODDS")
 _TOTALS_TYPES = ("OVER_UNDER",)
@@ -299,7 +328,16 @@ def _chunks(items: list, n: int):
         yield items[i:i + n]
 
 
-def _events(sport: str, now: datetime, until: datetime) -> list[dict]:
+def _a_court(echeance: float) -> str | None:
+    """Le budget épuisé (« journalier » ou « de temps »), ou None."""
+    if daily_quota.spent(QUOTA_BUCKET) >= DAILY_BUDGET:
+        return f"budget journalier atteint ({DAILY_BUDGET} req)"
+    if time.monotonic() >= echeance:
+        return f"budget de temps atteint ({TIME_BUDGET_S:.0f} s)"
+    return None
+
+
+def _events(sport: str, now: datetime, until: datetime, echeance: float = float("inf")) -> list[dict]:
     """Les MAX_EVENTS premiers événements par coup d'envoi, page par page
     (50 par page depuis le 2026-09-25 — voir l'en-tête)."""
     params: dict | None = {
@@ -310,7 +348,7 @@ def _events(sport: str, now: datetime, until: datetime) -> list[dict]:
     }
     out: list[dict] = []
     while params is not None and len(out) < MAX_EVENTS:
-        if daily_quota.spent(QUOTA_BUCKET) >= DAILY_BUDGET:
+        if _a_court(echeance):
             break
         body = _get("/events/", params) or {}
         out.extend(body.get("events") or [])
@@ -330,11 +368,16 @@ def fetch_smarkets_prices(sports: list | None = None, hours_ahead: int = 24) -> 
         return {}
     now = datetime.now(timezone.utc)
     until = now + timedelta(hours=hours_ahead)
+    echeance = time.monotonic() + TIME_BUDGET_S
     out: dict = {}
     n_events = n_totals = n_spreads = skipped_thin = 0
+    non_lus: list[str] = []
     try:
-        for sport in wanted:
-            events = _events(sport, now, until)
+        for i, sport in enumerate(wanted):
+            if _a_court(echeance):
+                non_lus = wanted[i:]
+                break
+            events = _events(sport, now, until, echeance)
             by_id: dict[str, dict] = {}
             for ev in events:
                 teams = _split_teams(str(ev.get("name", "")))
@@ -352,7 +395,7 @@ def fetch_smarkets_prices(sports: list | None = None, hours_ahead: int = 24) -> 
             # Marchés utiles, groupés par événement
             markets: dict[str, dict] = {}
             for ids in _chunks(list(by_id), EVENTS_PER_MARKETS_CALL):
-                if daily_quota.spent(QUOTA_BUCKET) >= DAILY_BUDGET:
+                if _a_court(echeance):
                     break
                 body = _get(f"/events/{','.join(ids)}/markets/")
                 for m in (body or {}).get("markets") or []:
@@ -362,12 +405,13 @@ def fetch_smarkets_prices(sports: list | None = None, hours_ahead: int = 24) -> 
             # Contrats et cotes, groupés par marché
             contracts: dict[str, list] = {}
             quotes: dict[str, dict] = {}
-            for ids in _chunks(list(markets), MARKETS_PER_CALL):
-                if daily_quota.spent(QUOTA_BUCKET) >= DAILY_BUDGET:
+            for ids in _chunks(list(markets), MARKETS_PER_QUOTES_CALL):
+                if _a_court(echeance):
                     break
-                body = _get(f"/markets/{','.join(ids)}/contracts/")
-                for c in (body or {}).get("contracts") or []:
-                    contracts.setdefault(str(c.get("market_id")), []).append(c)
+                for lot in _chunks(ids, MARKETS_PER_CONTRACTS_CALL):
+                    body = _get(f"/markets/{','.join(lot)}/contracts/")
+                    for c in (body or {}).get("contracts") or []:
+                        contracts.setdefault(str(c.get("market_id")), []).append(c)
                 body = _get(f"/markets/{','.join(ids)}/quotes/")
                 for cid, q in (body or {}).items():
                     if isinstance(q, dict):
@@ -416,6 +460,12 @@ def fetch_smarkets_prices(sports: list | None = None, hours_ahead: int = 24) -> 
         log.warning("Smarkets: %s — probable géoblocage depuis cette IP (runners GitHub "
                     "en zone US) ; critère de retrait règle 13 : 3 scans consécutifs", e)
         return {}
+    motif = _a_court(echeance)
+    if motif:
+        # Jamais en silence : un sport non lu retombe en « MARCHÉ MORT » plus
+        # bas dans le scan, sans rien qui le relie à ici.
+        log.warning("Smarkets: %s — lecture écourtée (non lus : %s ; le dernier "
+                    "sport entamé peut être incomplet)", motif, ", ".join(non_lus) or "aucun")
     log.info("Smarkets: %d marchés sharp — dont %d totals, %d handicaps "
              "(%d événements | %d trop peu liquides) | %d/%d req aujourd'hui",
              len(out), n_totals, n_spreads, n_events, skipped_thin,
