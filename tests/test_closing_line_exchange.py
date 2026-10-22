@@ -321,3 +321,67 @@ class TestCouvertureAuRapportHebdo:
         texte = w.format_report({}, {}, (0, 0), datetime(2026, 8, 26, tzinfo=timezone.utc),
                                 [], w.closing_coverage([], 99))
         assert "Couverture closing line" in texte and "99" in texte
+
+
+# ── Le tennis se clôture à l'heure de l'EXCHANGE (2026-10-22) ────────
+#
+# Remesuré le 2026-10-22 : 5 matchs de tennis sur 27 partis 2 h 20 à 3 h 30
+# après l'heure affichée, dont la clôture était relevée 2 à 3,5 h trop tôt —
+# la capture s'arrêtait à l'heure AFFICHÉE. Matchbook tient l'heure à jour
+# (vrai début des matchs en cours, estimation à la minute des autres).
+
+def _tennis(affichee_min: int, exchange_min: int | None):
+    """Signal, pseudo-match et prix d'un match de tennis : heure affichée et
+    heure de l'exchange en minutes depuis NOW (None = ligne sans heure)."""
+    sig = _signal(match="Maria Sakkari vs Marta Kostyuk", sport="tennis",
+                  selection_name="Marta Kostyuk", xbet_odd=1.90)
+    m = _match(home="Maria Sakkari", away="Marta Kostyuk", sport="tennis",
+               commence_time=(NOW + timedelta(minutes=affichee_min)).isoformat())
+    row = {"home": "Maria Sakkari", "away": "Marta Kostyuk",
+           "1": 2.20, "X": 0.0, "2": 1.75, "_source": "matchbook"}
+    if exchange_min is not None:
+        row["commence_time"] = (NOW + timedelta(minutes=exchange_min)).strftime("%Y-%m-%dT%H:%M:%SZ")
+    return sig, m, {"maria sakkari_marta kostyuk": row}
+
+
+def test_tennis_en_retard_se_cloture_encore_a_lheure_de_lexchange(_update_capture):
+    """Sakkari–Kostyuk, Wuhan 13/10 : affiché 06:00, joué 08:35. Une heure
+    après l'heure affichée, l'exchange le cote encore en pré-match (début
+    dans 90 min) : c'est une clôture valable, plus un refus."""
+    sig, m, prix = _tennis(affichee_min=-60, exchange_min=90)
+    assert cl.capture_from_exchange(_SB([sig]), [m], prix, NOW) == 1
+    assert _update_capture[1]["closing_pinnacle_price"] == pytest.approx(1.75)
+
+
+def test_tennis_exchange_plus_tard_que_la_fenetre_attend(_update_capture):
+    """Le cas qui relevait la clôture trop tôt : l'heure affichée est dans la
+    fenêtre, mais l'exchange annonce le début au-delà de l'horizon. On
+    attend un passage plus proche du vrai début."""
+    sig, m, prix = _tennis(affichee_min=30, exchange_min=30 + cl.CLOSING_LINE_WINDOW_MIN)
+    assert cl.capture_from_exchange(_SB([sig]), [m], prix, NOW) == 0
+    assert not _update_capture
+
+
+def test_tennis_sans_heure_dexchange_garde_lheure_affichee(_update_capture):
+    """Aucune preuve que le match n'a pas commencé : heure passée, refus."""
+    sig, m, prix = _tennis(affichee_min=-60, exchange_min=None)
+    assert cl.capture_from_exchange(_SB([sig]), [m], prix, NOW) == 0
+
+
+def test_tennis_heure_dexchange_hors_fenetre_de_jumeau_ignoree(_update_capture):
+    """Au-delà de la fenêtre de jumeau du tennis (core/match_reel, 12 h), la
+    ligne appariée par les noms ne peut pas être le même match : les deux
+    mêmes joueuses dans un autre tournoi. L'heure affichée reste la règle."""
+    from core.match_reel import fenetre_jumeau_min
+    fen = fenetre_jumeau_min("tennis")
+    sig, m, prix = _tennis(affichee_min=-60, exchange_min=fen + 30)
+    assert cl.capture_from_exchange(_SB([sig]), [m], prix, NOW) == 0
+
+
+def test_seul_le_tennis_suit_lheure_de_lexchange(_update_capture):
+    """Le football garde l'heure affichée : un coup d'envoi passé est un
+    match commencé, quoi que dise la ligne d'exchange."""
+    m = _match(commence_time=(NOW - timedelta(minutes=10)).isoformat())
+    prix = _prix(commence_time=(NOW + timedelta(minutes=60)).strftime("%Y-%m-%dT%H:%M:%SZ"))
+    assert cl.capture_from_exchange(_SB([_signal()]), [m], prix, NOW) == 0
+    assert not _update_capture

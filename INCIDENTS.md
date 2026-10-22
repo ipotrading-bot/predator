@@ -2038,6 +2038,59 @@ endpoint — gardé par `tests/test_odds500.py::TestRobotsTxt`.
 Un règlement manqué ne retarde pas l'apprentissage : il DÉTRUIT
 l'échantillon, parce qu'un signal non réglé finit purgé en `expired`.
 
+### La clôture du tennis était relevée à l'heure AFFICHÉE, jusqu'à 3 h 30 avant le vrai début (2026-10-22)
+
+Symptôme : aucun échec, aucune alerte. Un CLV de tennis mesuré trop tôt sur
+environ un match sur cinq.
+
+Cause : l'heure d'un match de tennis chez les fournisseurs de cotes est un
+« pas avant » : le match suit le précédent sur le court. Or la capture
+s'arrêtait à l'heure affichée (`kickoff >= now` dans
+`capture_from_exchange`, `match_time >= now` dans
+`fetch_closing_line_candidates`). Le dernier prix enregistré datait donc
+d'avant l'heure affichée, et non d'avant le vrai début.
+
+MESURÉ le 2026-10-22 : 27 matchs de tennis (`signals`, 30/09-17/10) contre le
+scoreboard ESPN, un jour par requête. Écart médian +15 min, aucun report au
+lendemain, mais 5 matchs partis 2 h 20 à 3 h 30 après l'heure affichée
+(Sakkari–Kostyuk +155, Li–Osorio +210, Ostapenko–Pegula +140,
+Pohankova–Sakkari +205, Sun–Bucsa +165 ; une seconde source annonçait
+Sun–Bucsa à +7 h 15 et n'a eu aucune clôture). Pohankova–Sakkari : clôture
+relevée à 02:41, match commencé à 06:25. Matchbook sondé le même jour à
+10:27 : les matchs en cours portaient leur VRAI début (08:50, 09:11,
+09:16…) avec `in-running-flag`, les matchs à venir une estimation à la minute.
+
+Correctif, tennis seul : le coup d'envoi de la capture est l'heure de la
+ligne d'exchange appariée (`core/closing_line._kickoff_de_cloture`), retenue
+seulement à moins de la fenêtre de jumeau du tennis de l'heure affichée
+(`core/match_reel.fenetre_jumeau_min`, 12 h, importée et non recopiée).
+Une seconde requête de candidats garde les signaux de tennis actifs jusqu'à
+12 h après l'heure affichée, à part de la `limit(100)` des matchs à venir.
+Le contrat ne change pas : prix pré-match seulement (Matchbook écarte
+déjà les matchs `in-running` et ceux dont le début est passé), et
+`now <= kickoff <= horizon`. Une ligne d'exchange sans heure garde l'heure
+affichée. La ligne de log `CLOSE HEURE | … — heure exchange HH:MM,
+affichée HH:MM` signale chaque recalage.
+
+Ce qui n'est PAS fait : `signals.match_time` reste l'heure affichée (aucune
+écriture en base). La purge, le règlement et le dashboard n'ont pas été
+touchés : 27 matchs sur 27 étaient réglés. L'appariement Matchbook du tennis
+reste `strict_team_match`, sensible à l'ordre des mots (« Wu Yibing » /
+« Yibing Wu ») : non mesuré ici. Aucun seuil ne bouge (règle 10).
+
+⚠️ Ne pas étendre `_SPORTS_HEURE_EXCHANGE` à un sport à horaire fixe : un
+coup d'envoi de foot passé est un match commencé, quoi que dise la ligne
+d'exchange.
+
+Gardiens : `tests/test_closing_line_exchange.py::test_tennis_en_retard_se_cloture_encore_a_lheure_de_lexchange`,
+`::test_tennis_exchange_plus_tard_que_la_fenetre_attend`,
+`::test_tennis_sans_heure_dexchange_garde_lheure_affichee`,
+`::test_tennis_heure_dexchange_hors_fenetre_de_jumeau_ignoree`,
+`::test_seul_le_tennis_suit_lheure_de_lexchange`,
+`tests/test_closing_line.py::TestCaptureClosingLines::test_le_tennis_passe_lheure_affichee_reste_candidat`.
+À relever : les lignes `CLOSE HEURE` et le délai entre clôture et vrai début
+(ESPN) sur les matchs de tennis réglés d'ici le 2026-11-16 (revue ATP/WTA 500).
+
 ### Un pays porte trois noms selon la source : « Czech Republic », « Czechia », « République tchèque » (2026-10-02)
 
 Règle opérateur du 2026-10-02 : « toujours vérifier cet aspect des noms, ainsi
