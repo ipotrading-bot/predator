@@ -135,6 +135,43 @@ class TestCaptureClosingLines:
         monkeypatch.setattr(matchbook, "fetch_matchbook_prices", lambda **k: {})
         assert audit_engine.capture_closing_lines(_FakeSupabase([sig])) == 0
 
+    def test_le_tennis_passe_lheure_affichee_reste_candidat(self):
+        """2026-10-22 : l'heure affichée du tennis est un « pas avant ». Une
+        seconde requête garde candidats les signaux de tennis jusqu'à la
+        fenêtre de jumeau APRÈS l'heure affichée, sans toucher aux autres
+        sports ni à la limite des matchs à venir."""
+        from core.match_reel import fenetre_jumeau_min
+        filtres = []
+
+        class _Rec(_FakeTable):
+            def eq(self, col, val):
+                filtres[-1].append(("eq", col, val))
+                return self
+
+            def gte(self, col, val):
+                filtres[-1].append(("gte", col, val))
+                return self
+
+            def lt(self, col, val):
+                filtres[-1].append(("lt", col, val))
+                return self
+
+        class _SB:
+            def table(self, name):
+                filtres.append([])
+                return _Rec([{"id": 1}], [])
+
+        avant = datetime.now(timezone.utc)
+        rows = audit_engine.fetch_closing_line_candidates(_SB())
+        assert [r["id"] for r in rows] == [1], "les deux requêtes rendent la même ligne : une seule fois"
+        assert len(filtres) == 2
+        principale, tennis = filtres
+        assert ("eq", "sport", "tennis") not in principale
+        assert ("eq", "sport", "tennis") in tennis
+        (borne,) = [v for op, c, v in tennis if op == "gte" and c == "match_time"]
+        retard = avant - datetime.fromisoformat(borne)
+        assert abs(retard - timedelta(minutes=fenetre_jumeau_min("tennis"))) < timedelta(seconds=5)
+
     def test_no_candidates_returns_zero(self):
         assert audit_engine.capture_closing_lines(_FakeSupabase([])) == 0
 

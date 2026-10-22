@@ -354,7 +354,15 @@ def fetch_closing_line_candidates(sb) -> list[dict]:
 
     `match_time >= now` is load-bearing: once the match has started the
     oracle would return a live/in-play price, which is not a closing line.
+
+    Sauf au tennis (2026-10-22) : son heure affichée est un « pas avant », et
+    un signal reste candidat jusqu'à la fenêtre de jumeau du tennis APRÈS
+    elle. Requête à part, pour que ces lignes ne prennent pas la place des
+    matchs à venir sous `limit(100)`. C'est `capture_from_exchange` qui
+    décide, sur l'heure de l'exchange, si le match est encore pré-match
+    (voir core/closing_line._kickoff_de_cloture).
     """
+    from core.match_reel import fenetre_jumeau_min
     now = datetime.now(timezone.utc)
     window_end = now + timedelta(minutes=CLOSING_LINE_WINDOW_MIN)
     try:
@@ -365,10 +373,25 @@ def fetch_closing_line_candidates(sb) -> list[dict]:
                .lte("match_time", window_end.isoformat())
                .limit(100)
                .execute())
-        return res.data or []
+        rows = list(res.data or [])
     except Exception as e:
         log.error("fetch_closing_line_candidates: %s", e)
         return []
+    try:
+        retard = timedelta(minutes=fenetre_jumeau_min("tennis"))
+        res = (sb.table("signals")
+               .select("*")
+               .eq("status", "active")
+               .eq("sport", "tennis")
+               .gte("match_time", (now - retard).isoformat())
+               .lt("match_time", now.isoformat())
+               .limit(100)
+               .execute())
+        vus = {r.get("id") for r in rows}
+        rows += [r for r in (res.data or []) if r.get("id") not in vus]
+    except Exception as e:
+        log.warning("fetch_closing_line_candidates (tennis en retard): %s", e)
+    return rows
 
 
 def _matches_from_signals(signals: list[dict]) -> list[dict]:

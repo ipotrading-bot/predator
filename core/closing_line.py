@@ -51,6 +51,7 @@ from core.constants import (CLOSING_LINE_COLS, CLOSING_LINE_WINDOW_MIN,
                             CLOSING_SRC_EXCHANGE, CLOSING_SRC_ODDSAPI)
 from core.exchange_match import lookup_exchange
 from core.db import update_signal_fields
+from core.match_reel import fenetre_jumeau_min
 from core.math_engine import calc_dnb
 from core.paim_engine import calculate_consensus_price, resolve_selection_side
 
@@ -179,6 +180,44 @@ def _parse_time(value) -> datetime | None:
     return dt if dt.tzinfo else dt.replace(tzinfo=timezone.utc)
 
 
+# ── Le tennis se clôture à l'heure de l'EXCHANGE (2026-10-22) ──────────
+#
+# L'heure d'un match de tennis chez les fournisseurs de cotes est un « pas
+# avant » : le match suit le précédent sur le court. Remesuré le 2026-10-22
+# sur 27 matchs (30/09-17/10) contre ESPN : médiane +15 min, mais 5 matchs
+# partis 2 h 20 à 3 h 30 après l'heure affichée (Wuhan surtout), et une source
+# à +7 h 15 (Sun–Bucsa, 03/10). La capture s'arrêtant à l'heure AFFICHÉE
+# (`kickoff >= now`), la clôture de ces matchs était relevée 2 à 3,5 h trop
+# tôt : un CLV mesuré loin de la vraie clôture.
+#
+# Matchbook, lui, tient l'heure à jour : sondé le 2026-10-22 à 10:27, les
+# matchs en cours portaient leur vrai début (08:50, 09:11, 09:16…) avec
+# `in-running-flag`, que core/matchbook.py écarte déjà, et les matchs à venir
+# une estimation à la minute. Pour le tennis seul, le coup d'envoi de la
+# capture est donc celui de la ligne d'exchange appariée, borné à la fenêtre
+# de jumeau du tennis (core/match_reel, 12 h) : au-delà, la ligne appariée ne
+# peut pas être le même match et l'heure affichée reste la règle. Le reste du
+# contrat ne bouge pas : prix pré-match seulement, `now <= kickoff <= horizon`.
+_SPORTS_HEURE_EXCHANGE = frozenset({"tennis"})
+
+
+def _sport_a_heure_exchange(m: dict) -> bool:
+    return (m.get("sport") or "").lower() in _SPORTS_HEURE_EXCHANGE
+
+
+def _kickoff_de_cloture(m: dict, row: dict | None, annonce: datetime | None) -> datetime | None:
+    """Coup d'envoi qui borne la capture : l'heure de l'exchange pour le
+    tennis quand elle est plausible pour CE match, l'heure affichée sinon."""
+    if not annonce or not _sport_a_heure_exchange(m):
+        return annonce
+    exch = _parse_time((row or {}).get("commence_time"))
+    if not exch:
+        return annonce
+    if abs((exch - annonce).total_seconds()) > fenetre_jumeau_min(m.get("sport")) * 60:
+        return annonce
+    return exch
+
+
 def _selection_point(selection_name: str) -> float | None:
     """The line embedded in a selection: "Over 2.5" → 2.5, "PSG -1.5" → -1.5.
 
@@ -264,18 +303,29 @@ def capture_from_exchange(sb, matches: list[dict], exchange_prices: dict,
     horizon = now + timedelta(minutes=window_min)
 
     # `kickoff >= now` is load-bearing, same as capture_from_scan: once the
-    # match has started the exchange quotes an in-play price.
+    # match has started the exchange quotes an in-play price. Au tennis, ce
+    # kickoff est celui de l'exchange (voir _kickoff_de_cloture) : l'heure
+    # affichée peut être passée alors que le match n'a pas commencé.
     in_window: dict[str, tuple] = {}
     sans_cote = 0
     for m in matches:
-        kickoff = _parse_time(m.get("commence_time"))
-        if not kickoff or not (now <= kickoff <= horizon):
+        annonce = _parse_time(m.get("commence_time"))
+        if not annonce:
             continue
+        en_fenetre = now <= annonce <= horizon
+        if not en_fenetre and not _sport_a_heure_exchange(m):
+            continue
+        if not en_fenetre:
+            marge = timedelta(minutes=fenetre_jumeau_min(m.get("sport")))
+            if not (now - marge <= annonce <= horizon + marge):
+                continue
         mid = str(m.get("id") or "")
         if not mid:
             continue
         row = lookup_exchange(m, exchange_prices)
         if not (row and float(row.get("1") or 0) > 1.01 and float(row.get("2") or 0) > 1.01):
+            if not en_fenetre:
+                continue      # hors fenêtre affichée : rien à compter
             # Branche muette jusqu'au 2026-09-02 : un signal MLB à T-20 min
             # a perdu sa clôture ici sans une ligne de log, alors que le
             # scan venait d'apparier le même match sur Matchbook. Un compte
@@ -283,6 +333,13 @@ def capture_from_exchange(sb, matches: list[dict], exchange_prices: dict,
             # (l'exchange ne cote pas tout, c'est l'état normal).
             sans_cote += 1
             continue
+        kickoff = _kickoff_de_cloture(m, row, annonce)
+        if not (now <= kickoff <= horizon):
+            continue
+        if kickoff != annonce:
+            log.info("CLOSE HEURE | %s — heure exchange %s, affichée %s",
+                     m.get("match") or mid, kickoff.strftime("%H:%M"),
+                     annonce.strftime("%H:%M"))
         in_window[mid] = (m, row, kickoff)
     if sans_cote:
         note_cause("sans_cote_exchange", sans_cote)
