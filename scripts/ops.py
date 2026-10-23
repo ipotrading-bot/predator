@@ -7,6 +7,7 @@ scripts/ops.py — pilotage Supabase + Vercel depuis le terminal, sans CLI.
     python scripts/ops.py sources                     # sonde CHAQUE source de cotes : vivante ? quota ? joignable depuis cette IP ?
     python scripts/ops.py ligues [prefixe] [jours]     # catalogue d'un sport : matchs a venir, jouables, credits/semaine (0 credit)
     python scripts/ops.py books <cle> [slug-io]       # quels books cotent une ligue : 1 CREDIT OddsAPI (+2 req odds-api.io si slug)
+    python scripts/ops.py candidats [jours]           # books candidats : DNB foot qui passeraient la porte, par book (mesure seule, 0 crédit)
     python scripts/ops.py chaine <sport> [heures]     # chemin Tier 2 de bout en bout, sans écrire (~4 req odds-api.io)
     python scripts/ops.py noms                        # les signaux ACTIFS se régleront-ils par leur NOM ? (ESPN + LiveScore, hors budget, lecture seule)
     python scripts/ops.py ai                          # sonde CHAQUE fournisseur IA par une INFÉRENCE réelle (catalogue ≠ utilisable)
@@ -890,6 +891,54 @@ def books(args):
         print(f"  books demandés : {demandes or 'aucun'} — 2 requêtes dépensées")
 
 
+def candidats(args):
+    """Classement des books CANDIDATS (core/mesure_books) : combien de DNB de
+    football passeraient la porte d'émission chez chacun, sur les N derniers
+    jours de `meta.mesure_books_AAAAMMJJ`. Lecture seule, 0 crédit.
+
+        ops.py candidats [jours]      # défaut 7
+    """
+    from core import mesure_books as mb                                    # noqa: E402
+    from core.constants import (AH0_VALUE_THRESHOLD, EV_EDGE_FLOOR,          # noqa: E402
+                                SUSPECT_EDGE)
+    from core.paim_engine import SHARP_PROB_BY_MARKET                       # noqa: E402
+
+    jours = int(args[0]) if args else 7
+    rows = _rest("GET", "meta", params={"select": "key,value",
+                                        "key": f"like.{mb.META_PREFIX}%",
+                                        "order": "key.desc", "limit": str(jours)})
+    blobs, cles = [], []
+    for r in rows or []:
+        try:
+            blobs.append(json.loads(r.get("value") or "{}"))
+            cles.append(r["key"][len(mb.META_PREFIX):])
+        except ValueError:
+            continue
+    if not blobs:
+        die("aucune mesure en base (meta.mesure_books_*) — elle s'écrit aux scans standard")
+    seuil = _rest("GET", "meta", params={"select": "value", "key": "eq.threshold_soccer"})
+    seuil_foot = float((seuil or [{}])[0].get("value") or 4.0)
+    prob_min = SHARP_PROB_BY_MARKET["h2h_soccer"]
+
+    def porte(mesure):
+        return mb.passe(mesure, seuil_foot, EV_EDGE_FLOOR, AH0_VALUE_THRESHOLD,
+                        SUSPECT_EDGE, prob_min)
+
+    n_matchs = sum(len(b.get("matchs") or {}) for b in blobs)
+    print(f"── Books candidats — DNB foot, zone jouable, {len(blobs)} jour(s) "
+          f"({min(cles)} → {max(cles)}), {n_matchs} matchs mesurés ──")
+    print(f"   porte : EV ≥ {max(0.8, EV_EDGE_FLOOR)} % (cote > {AH0_VALUE_THRESHOLD}) "
+          f"ou ≥ {max(seuil_foot, EV_EDGE_FLOOR)} %, ≤ {SUSPECT_EDGE} %, "
+          f"prob ≥ {prob_min:.0%}, EV pire devig > 0 — plafonds appris non rejoués")
+    print(f"   {'book':14s} {'famille':12s} {'cotés':>6s} {'passent':>8s} {'/jour':>6s} "
+          f"{'majeures':>9s} {'apport':>7s} {'EV moy':>7s}")
+    for r in mb.classement(blobs, porte):
+        ev = f"{r['ev_moy']:+.2f}" if r["ev_moy"] is not None else "—"
+        print(f"   {r['book']:14s} {r['famille']:12s} {r['cotes']:6d} {r['passent']:8d} "
+              f"{r['passent'] / len(blobs):6.1f} {r['majeures']:9d} {r['apport']:7d} {ev:>7s}")
+    print("   apport = passe chez ce book et chez AUCUN book de la famille 1xbet")
+
+
 def chaine(args):
     """Le chemin d'un sport du Tier 2, de bout en bout, SANS rien écrire :
     odds-api.io (prix exécutables) → Matchbook + Smarkets (prix sharp) →
@@ -1030,6 +1079,8 @@ def main(argv):
         sources()
     elif cmd == "ligues":
         ligues(rest)
+    elif cmd == "candidats":
+        candidats(rest)
     elif cmd == "books":
         books(rest)
     elif cmd == "chaine":
