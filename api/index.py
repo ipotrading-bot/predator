@@ -417,6 +417,12 @@ def dashboard():
     except Exception as e:
         log.error("Dashboard: %s", e)
 
+    # Badge ⚠ : la même règle que Telegram et le digest (règle n°6) — sur les
+    # totaux, Bet365 sort au meilleur prix (décision du 2026-10-23), pas
+    # « faute de 1xbet ».
+    from core.execution_books import avertissement_hors_reference
+    for s in signals:
+        s["hors_ref"] = avertissement_hors_reference(s.get("soft_book"), s.get("market_key"))
     groups = _group_by_match(signals)
 
     from core.constants import (EXECUTION_BOOK,

@@ -225,7 +225,8 @@ from core.constants import GLOBAL_TIMEOUT, SCAN_TIMEOUTS
 # chaque côté d'un barreau — voir core/execution_books.py.
 from core.execution_books import (book_du_cote, choisir_bloc_h2h, prix_reference,
                                   avertissement_hors_reference,
-                                  retirer_temps_reglementaire)
+                                  retirer_temps_reglementaire, MEILLEUR_PRIX_MARCHES,
+                                  famille_de_marche, reference_cote_le_match)
 
 _budget_arme = GLOBAL_TIMEOUT      # renseigné par _arm_global_timeout, pour le message
 
@@ -1982,10 +1983,17 @@ def _process_h2h(m, name, sport, league, home, away, emoji, signals, sb, now, lo
 
 def _emit_book_prefere(bloc: dict, side: str, meilleur_prix: float, sides: list,
                        sb, now, log, name, sport, league, mkt_key, mkt_label,
-                       pin_odd, sharp_prob, emoji, **kw) -> None:
+                       pin_odd, sharp_prob, emoji, ref_cote_le_match: bool = True,
+                       **kw) -> None:
     """Marchés à ligne : le book de RÉFÉRENCE d'abord, le meilleur prix ensuite
     (2026-09-27, demande opérateur : « je ne joue que 1xbet, sans couper
     Bet365 »).
+
+    TOTAUX (MEILLEUR_PRIX_MARCHES, décision opérateur du 2026-10-23) : le
+    meilleur prix à ligne égale, quel que soit le book — mais seulement si le
+    book de référence cote le MATCH (`ref_cote_le_match`, calculé par
+    l'appelant avec `reference_cote_le_match`) : « l'essentiel c'est que le
+    match existe dans 1xbet ». Sinon, aucun signal.
 
     La fusion garde le meilleur prix par côté : Bet365 à 1,95 contre 1xbet à
     1,90 sur la MÊME ligne envoyait le signal chez Bet365, 48 recommandés sur
@@ -2001,6 +2009,15 @@ def _emit_book_prefere(bloc: dict, side: str, meilleur_prix: float, sides: list,
     différentes (+0.5 ≠ +0.25/+0.75, A6)."""
     meilleur_book = book_du_cote(bloc, side)
     reference, prix_ref = prix_reference(bloc, side)
+    if famille_de_marche(mkt_key) in MEILLEUR_PRIX_MARCHES:
+        if not ref_cote_le_match:
+            log.info("BOOK    | %s %s | %s — match absent chez %s : pas de signal "
+                     "au meilleur prix (%s)", emoji, name, mkt_label, reference,
+                     meilleur_book or "book ?")
+            return
+        _emit(sides, sb, now, log, name, sport, league, mkt_key, mkt_label,
+              meilleur_prix, pin_odd, sharp_prob, emoji, soft_book=meilleur_book, **kw)
+        return
     if meilleur_book and meilleur_book != reference and prix_ref > 1.01:
         avant = len(sides)
         _emit(sides, sb, now, log, name, sport, league, mkt_key, mkt_label,
@@ -2398,6 +2415,8 @@ def _process_totals(m, name, sport, league, emoji, signals, sb, now, log, min_ed
         _emit_book_prefere(xt, side, x_odd,
               sides, sb, now, log, name, sport, league,
               f"totals_{side}", lbl, p_odd, sharp_prob, emoji,
+              ref_cote_le_match=reference_cote_le_match(
+                  m.get("h2h_par_book"), xt, m.get("totals_1xbet"), m.get("spreads_1xbet")),
               sharp_prob_cons=sharp_cons,
               selection_name=sel, min_edge=min_edge,
               match_time=m.get("commence_time", ""), match_id=m.get("id", ""),
@@ -3040,7 +3059,7 @@ def _signal_block(s: dict, now) -> str:
         lines.append("   🎯 tranche 1,50-1,75\n")
     # Book autre que celui de référence (2026-09-27) : l'opérateur ne joue
     # que celui-là, il doit voir d'un coup d'œil ce qu'il ne peut pas prendre.
-    hors_ref = avertissement_hors_reference(book)
+    hors_ref = avertissement_hors_reference(book, s.get("market_key"))
     if hors_ref:
         lines.append(f"   {hors_ref}\n")
     return "".join(lines)

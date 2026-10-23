@@ -248,7 +248,48 @@ def retirer_temps_reglementaire(bloc: dict | None, marche: str,
     return {**ladder[0], "ladder": ladder}, sorted(retires, key=ordre)
 
 
-def avertissement_hors_reference(book: str | None) -> str | None:
+# ── Meilleur prix sur les TOTAUX (décision opérateur du 2026-10-23) ──────
+# « Le book sur lequel je joue n'est pas important, l'essentiel c'est que le
+# match existe dans 1xbet. » Sur les totaux, la règle « 1xbet d'abord » du
+# 2026-09-27 cède au MEILLEUR prix entre books d'exécution, à ligne égale,
+# pourvu que le book de référence cote le match (`reference_cote_le_match`).
+# Mesuré avant la décision (recommandés réglés, mise plate, hors taxe) :
+# totaux Bet365 08/09→23/10 = 26–17, +5,51 u, CLV +4,2 % (+6,8 % sur les
+# Over depuis le 27/09) — le meilleur CLV du système. Les handicaps gardent
+# la référence d'abord : Bet365 hors totaux = 24–23, −3,80 u.
+# CRITÈRE DE RETRAIT, daté : au 2026-12-15, ou dès 30 totaux Bet365 réglés
+# émis APRÈS le 2026-10-23, un CLV moyen négatif sur ces lignes ramène les
+# totaux à la référence d'abord (retirer "totals" de cet ensemble).
+# Gardien : tests/test_book_prefere.py.
+MEILLEUR_PRIX_MARCHES = frozenset({"totals"})
+
+
+def famille_de_marche(market_key: str | None) -> str:
+    """« totals_over » → « totals », « spreads_home » → « spreads »."""
+    return (market_key or "").split("_", 1)[0]
+
+
+def reference_cote_le_match(par_book_h2h: dict | None, *blocs: dict | None) -> bool:
+    """Le book de référence (premier de EXECUTION_BOOKS) cote-t-il ce match ?
+    Oui s'il a un bloc 1X2, ou un prix sur n'importe quel barreau d'un marché
+    à ligne fusionné. Pur. Sans attribution du tout (`prix_books` absent :
+    source non fusionnée, slate ancien), on ne sait pas : True, comme avant."""
+    reference = EXECUTION_BOOKS[0]
+    if reference in (par_book_h2h or {}):
+        return True
+    attribue = False
+    for bloc in blocs:
+        for row in _barreaux(bloc or {}):
+            pb = row.get("prix_books")
+            if pb is None:
+                continue
+            attribue = True
+            if any(reference in (prix or {}) for prix in pb.values()):
+                return True
+    return not attribue
+
+
+def avertissement_hors_reference(book: str | None, market_key: str | None = None) -> str | None:
     """« ⚠️ bet365 seulement — absent ou insuffisant chez 1xbet » pour un
     signal émis chez un autre book que celui de référence ; None sinon (ou
     book inconnu : on n'avertit pas sur ce qu'on ne sait pas).
@@ -256,8 +297,13 @@ def avertissement_hors_reference(book: str | None) -> str | None:
     Depuis `run_engine._emit_book_prefere` (2026-09-27), un signal ne sort
     chez un second book QUE si le book de référence ne cote pas cette ligne
     ou n'y passe pas les barrières : l'avertissement dit exactement cela.
+    Sur un marché de MEILLEUR_PRIX_MARCHES (totaux, 2026-10-23), ce n'est
+    plus vrai — Bet365 y sort parce qu'il paie mieux : aucun avertissement,
+    le « chez … » de la ligne suffit.
     Pas de `*` ni de `_` : il s'insère dans du Markdown Telegram."""
     canon = book_canonique(book or "")
     if canon is None or canon == EXECUTION_BOOKS[0]:
+        return None
+    if famille_de_marche(market_key) in MEILLEUR_PRIX_MARCHES:
         return None
     return f"⚠️ {canon} seulement — absent ou insuffisant chez {EXECUTION_BOOKS[0]}"
