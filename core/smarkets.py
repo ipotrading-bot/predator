@@ -447,12 +447,14 @@ def fetch_smarkets_prices(sports: list | None = None, hours_ahead: int = 24) -> 
                     "commence_time": ev["when"].strftime("%Y-%m-%dT%H:%M:%SZ"),
                     "_source": "smarkets",
                 }
-                if slot["totals"]:
-                    ech = [_sans_prive(c) for c in _echelle(slot["totals"])]
+                # `_echelle` refuse les points cotés deux fois : l'échelle
+                # peut sortir VIDE, et alors le marché n'existe pas.
+                ech = [_sans_prive(c) for c in _echelle(slot["totals"])]
+                if ech:
                     row["totals"] = {**ech[0], "ladder": ech}
                     n_totals += 1
-                if slot["spreads"]:
-                    ech = [_sans_prive(c) for c in _echelle(slot["spreads"])]
+                ech = [_sans_prive(c) for c in _echelle(slot["spreads"])]
+                if ech:
                     row["spreads"] = {**ech[0], "ladder": ech}
                     n_spreads += 1
                 out[norm_key(ev["home"], ev["away"])] = row

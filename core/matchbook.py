@@ -194,12 +194,24 @@ def _line_point(market: dict, runner_name: str) -> float | None:
     On le lit sur le RUNNER et non sur le champ `handicap` du marché, qui
     est non signé : sans le signe, un handicap +1.5 et un -1.5 deviendraient
     indistinguables et le moteur comparerait deux lignes opposées.
+
+    Seul le DERNIER mot est la ligne. Le 2026-10-23, « 1. FC Heidenheim vs
+    Energie Cottbus | SOC PS -1.0 — EV 301.65 % » (refusé par MAX_EDGE) :
+    le runner « 1. FC Heidenheim (-1.0/1.5) » — un quart de ligne — ne
+    finit pas par un nombre, et l'ancienne lecture remontait les mots
+    jusqu'au « 1. » du NOM du club : +1.0. Quatre quarts de ligne devenaient
+    autant de faux « +1.0 » (Mainz 05, Schalke 04, Hannover 96… pareil).
+    Un quart de ligne « (a/b) » n'est pas une ligne simple : None.
     """
-    for token in reversed(str(runner_name).replace("−", "-").split()):
+    tokens = str(runner_name).replace("−", "-").split()
+    if tokens:
+        dernier = tokens[-1]
+        if "/" in dernier:
+            return None                     # quart de ligne : pas un point simple
         try:
-            return float(token.replace("+", ""))
+            return float(dernier.replace("+", ""))
         except ValueError:
-            continue
+            pass
     try:
         return float(market.get("handicap"))
     except (TypeError, ValueError):
@@ -221,8 +233,11 @@ def _echelle(candidates: list) -> list[dict]:
     cotée chez le soft aussi, on venait de la jeter. On garde donc l'échelle
     entière, et `run_engine._aligner_sur_meme_ligne` y retrouve la ligne
     commune. La ligne principale reste `_echelle(...)[0]`, inchangée.
+
+    Un point coté deux fois est refusé ici (`_points_uniques`), pour les
+    DEUX exchanges qui partagent cette fonction (Matchbook, Smarkets).
     """
-    return sorted(candidates, key=lambda c: abs(c["_a"] - c["_b"]))
+    return sorted(_points_uniques(candidates), key=lambda c: abs(c["_a"] - c["_b"]))
 
 
 def _sans_prive(row: dict) -> dict:
@@ -245,7 +260,7 @@ _SOUS_MARCHE = ("half", "1st", "2nd", "team", "quarter", "period",
 _SEPARATEUR_DE_PARTICIPANT = " - "
 
 
-def _est_sous_marche(market: dict) -> bool:
+def _est_sous_marche(market: dict, equipes: tuple = ()) -> bool:
     """Un marché de mi-temps, par équipe, de corners… n'est PAS le marché
     du match entier, même si son type et ses runners sont identiques.
 
@@ -270,12 +285,40 @@ def _est_sous_marche(market: dict) -> bool:
     (37,5) n'était plus comparé. Relevé du même jour sur cinq sports : le
     marché du match entier s'appelle exactement « Total » / « Handicap » ;
     seuls les marchés à séparateur « <joueur> - … » passaient à travers.
+
+    Troisième porte le 2026-10-23 : « Ipswich Town vs Nottingham Forest |
+    SOC Under 2.5 — EV 84.19 % » (refusé par MAX_EDGE). Sur la Premier League
+    et le Championship, Matchbook nomme désormais les totaux d'équipe par le
+    CLUB — « Nottingham Forest Goals Over / Under » — sans le mot « team ».
+    Le point 2.5 figurait trois fois dans l'échelle, et l'alignement retenait
+    un total d'équipe (Over 2.5 à 14 %). Un marché qui porte le nom d'une des
+    deux équipes est propre à cette équipe : c'est un sous-marché.
     """
     name = str(market.get("name", "")).lower()
+    if any(len(e) >= 3 and e in name for e in (str(x).lower().strip() for x in equipes)):
+        return True
     return _SEPARATEUR_DE_PARTICIPANT in name or any(q in name for q in _SOUS_MARCHE)
 
 
-def _totals_odds(event: dict) -> dict | None:
+def _points_uniques(cands: list, cle: str = "point") -> list:
+    """Écarte tout point coté plus d'une fois dans l'échelle.
+
+    Deux barreaux au même point viennent de deux marchés différents (mi-temps,
+    équipe, joueur…) qu'aucun filtre de nom n'a reconnus. Lequel est le match
+    entier ? Rien ne le dit, et l'alignement par point garderait le dernier
+    au hasard. Dans le doute on refuse ce point plutôt que de comparer deux
+    paris différents (A6). Les autres points restent.
+    """
+    vus: dict = {}
+    for c in cands:
+        vus[c[cle]] = vus.get(c[cle], 0) + 1
+    doubles = sorted(p for p, n in vus.items() if n > 1)
+    if doubles:
+        log.info("Exchange: point(s) %s cotés par plusieurs marchés — écartés (ambigus)", doubles)
+    return [c for c in cands if vus[c[cle]] == 1]
+
+
+def _totals_odds(event: dict, home: str = "", away: str = "") -> dict | None:
     """{"over","under","point"} — forme attendue par run_engine._process_totals.
     Seul le total du MATCH ENTIER : voir `_est_sous_marche`."""
     cands = []
@@ -284,7 +327,7 @@ def _totals_odds(event: dict) -> dict | None:
             continue
         if str(market.get("status", "")).lower() not in ("open", ""):
             continue
-        if _est_sous_marche(market):
+        if _est_sous_marche(market, (home, away)):
             continue
         over = under = None
         point = None
@@ -312,7 +355,7 @@ def _handicap_odds(event: dict, home: str, away: str) -> dict | None:
             continue
         if str(market.get("status", "")).lower() not in ("open", ""):
             continue
-        if _est_sous_marche(market):
+        if _est_sous_marche(market, (home, away)):
             continue                  # même garde que les totals, même raison
         row: dict = {}
         for runner in market.get("runners") or []:
@@ -433,7 +476,7 @@ def fetch_matchbook_prices(sports: list | None = None, hours_ahead: int = 24) ->
             # le 2026-08-20). Les ignorer laissait l'essentiel de la source
             # inexploité, alors que le moteur sait traiter ces marchés dès
             # qu'il a les deux côtés.
-            tot = _totals_odds(ev)
+            tot = _totals_odds(ev, home, away)
             if tot:
                 row["totals"] = tot
                 n_totals += 1

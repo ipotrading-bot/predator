@@ -116,7 +116,7 @@ class _Resp:
         return self._payload
 
 
-def _cabler(monkeypatch, *, events_status=200, quotes_429_first=False):
+def _cabler(monkeypatch, *, events_status=200, quotes_429_first=False, total_double=False):
     from datetime import datetime, timedelta, timezone
     start = (datetime.now(timezone.utc) + timedelta(hours=5)).strftime("%Y-%m-%dT%H:%M:%SZ")
     appels = {"n": 0, "quotes": 0, "urls": []}
@@ -134,17 +134,20 @@ def _cabler(monkeypatch, *, events_status=200, quotes_429_first=False):
                 {"id": "w2", "event_id": "2", "state": "open", "market_type": {"name": "WINNER_3_WAY"}},
                 {"id": "t2", "event_id": "2", "state": "open", "market_type": {"name": "OVER_UNDER", "param": 2.5}},
                 {"id": "x2", "event_id": "2", "state": "open", "market_type": {"name": "FIRST_HALF_OVER_UNDER", "param": 0.5}},
-            ]})
+            ] + ([{"id": "t3", "event_id": "2", "state": "open",
+                   "market_type": {"name": "OVER_UNDER", "param": 2.5}}] if total_double else [])})
         if url.endswith("/contracts/"):
             return _Resp({"contracts": _contracts("w1", "Raiders", "Texans")
-                          + _contracts("w2", "A", "Draw", "B") + _contracts("t2", "Over 2.5 goals", "Under 2.5 goals")})
+                          + _contracts("w2", "A", "Draw", "B") + _contracts("t2", "Over 2.5 goals", "Under 2.5 goals")
+                          + _contracts("t3", "Over 2.5 goals", "Under 2.5 goals")})
         if url.endswith("/quotes/"):
             appels["quotes"] += 1
             if quotes_429_first and appels["quotes"] == 1:
                 return _Resp({}, status=429)
             return _Resp({"w1-0": _q([6600], [6700]), "w1-1": _q([3300], [3400]),
                           "w2-0": _q([4854], [4902]), "w2-1": _q([2500], [2564]), "w2-2": _q([2564], [2632]),
-                          "t2-0": _q([5000], [5100]), "t2-1": _q([4900], [5000])})
+                          "t2-0": _q([5000], [5100]), "t2-1": _q([4900], [5000]),
+                          "t3-0": _q([7000], [7100]), "t3-1": _q([2900], [3000])})
         raise AssertionError(url)
 
     monkeypatch.setattr(sm.requests, "get", fake_get)
@@ -336,3 +339,13 @@ def test_un_refus_de_l_api_loggue_son_motif(monkeypatch, caplog):
     with caplog.at_level(logging.WARNING, logger="PREDATOR.smarkets"):
         assert sm.fetch_smarkets_prices(sports=["soccer"], hours_ahead=24) == {}
     assert any("Unknown query string properties" in r.getMessage() for r in caplog.records)
+
+
+def test_un_point_cote_deux_fois_est_refuse_sans_casser_la_source(monkeypatch):
+    """`_echelle` (partagée avec Matchbook) refuse un point coté par deux
+    marchés — 2026-10-23, totaux d'équipe de Premier League chez Matchbook.
+    L'échelle peut alors sortir VIDE : le marché disparaît, le match reste."""
+    _cabler(monkeypatch, total_double=True)
+    out = sm.fetch_smarkets_prices(sports=["soccer"], hours_ahead=24)
+    assert set(out) == {"texans_raiders", "a_b"}
+    assert "totals" not in out["a_b"]
