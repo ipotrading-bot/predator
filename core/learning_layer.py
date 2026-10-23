@@ -242,8 +242,12 @@ def _lecture_bande(wins: int, n: int, be: float | None) -> str:
 
 def _save_sport_verdicts(sb, stats_by_sport: dict[str, dict],
                          clv_by_sport: dict[str, dict], now: str,
-                         perimetre: frozenset | set | None = None) -> list[str]:
+                         perimetre: frozenset | set | None = None,
+                         calib_by_sport: dict[str, dict] | None = None) -> list[str]:
     """Persiste un verdict par sport dans meta et rend les lignes de résumé.
+
+    `calib_by_sport` (calibration_par_tranche) est joint au verdict sous
+    `calibration` : le rapport hebdo le lit, rien ne l'applique.
 
     Le verdict de CHAQUE sport est persisté — le rapport hebdo et le dashboard
     les lisent tous, et c'est par là qu'un sport retiré redevient un jour
@@ -255,6 +259,8 @@ def _save_sport_verdicts(sb, stats_by_sport: dict[str, dict],
     for sport, stats in stats_by_sport.items():
         v = sport_verdict(stats, clv_by_sport.get(sport))
         v["computed_at"] = now
+        if calib_by_sport and sport in calib_by_sport:
+            v["calibration"] = calib_by_sport[sport]
         try:
             sb.table("meta").upsert({
                 "key":        f"{_VERDICT_KEY_PREFIX}{sport}",
@@ -311,6 +317,10 @@ def load_sport_verdicts(sb) -> dict[str, dict]:
 # fenêtre de scan (24h) : si celle-ci bouge, bouger l'autre.
 _PLAYABLE_MIN_MINUTES = 120     # T-2h — en deçà, c'est la golden hour, en fantôme
 _PLAYABLE_MAX_MINUTES = 1440    # T-24h — au-delà, le scan ne va plus chercher
+# Frontière des deux tranches de la zone (2026-10-23) : 2-6h / 6-24h. Lue par
+# calibration_par_tranche et IMPORTÉE par run_engine (BASKET_AVANT_EFFECTIFS_MIN) :
+# la règle et sa mesure coupent au même endroit.
+_TRANCHE_COURTE_MAX_MINUTES = 360
 
 # ── Expérience PRÉ-ENREGISTRÉE sur la borne basse (2026-09-21) ─────────
 # La borne basse vaut 120 min, mais sa justification d'origine ne porte PAS sur
@@ -926,6 +936,65 @@ def _calibration_flag(rows: list[dict]) -> bool:
     return (stated - realised) > _CALIBRATION_MAX_GAP
 
 
+def _depuis_ouverture(r: dict) -> dict:
+    """La ligne vue à son PREMIER prix (sql/migrate_v10_21) : `sharp_prob` du
+    ledger est celui du dernier rafraîchissement, qui réécrit le prix d'un
+    fantôme basket promu à T-4h. Sans ouverture stockée (ligne d'avant la
+    migration), la ligne garde son sharp_prob."""
+    p = r.get("ouverture_sharp_prob")
+    return {**r, "sharp_prob": p} if p is not None else r
+
+
+def calibration_stats(rows: list[dict]) -> dict:
+    """Le moteur annonçait-il juste ? Gagnés réels contre Σ sharp_prob, et
+    dérive du sharp entre l'ouverture et la clôture (2026-10-23).
+
+        z = (gagnés − attendus) / √Σ p(1−p)
+
+    z < 0 : le sharp_prob d'entrée surestimait nos chances. La dérive
+    réutilise _derive_stats (clôture oracle et clôture absente ignorées,
+    règle 14), en % du prix, négative quand le marché est parti CONTRE la
+    sélection. Plus rapide qu'un Wilson contre le point mort : le basket 6-24h
+    sortait à z −2,68 sur 19 paris, quand son Wilson touchait encore le point
+    mort. CONSULTATIF — rien ne lit ce résultat pour décider."""
+    lignes = [_depuis_ouverture(r) for r in rows
+              if r.get("outcome") in _DECISIVE_OUTCOMES]
+    preds = []
+    for r in lignes:
+        try:
+            p = float(r.get("sharp_prob"))
+        except (TypeError, ValueError):
+            continue
+        if 0 < p < 1:
+            preds.append((p, 1 if r["outcome"] == "WIN" else 0))
+    derive = _derive_stats(lignes)
+    n = len(preds)
+    gagnes = sum(o for _, o in preds)
+    attendus = sum(p for p, _ in preds)
+    var = sum(p * (1 - p) for p, _ in preds)
+    return {"n": n, "gagnes": gagnes, "attendus": round(attendus, 1),
+            "z": round((gagnes - attendus) / var ** 0.5, 2) if var > 0 else None,
+            "derive_moy": None if derive["avg_clv"] is None else round(derive["avg_clv"], 2),
+            "derive_n": derive["n"]}
+
+
+def calibration_par_tranche(rows: list[dict]) -> dict[str, dict]:
+    """calibration_stats par tranche de la zone jouable : « 2-6h », « 6-24h ».
+    Coupe à _TRANCHE_COURTE_MAX_MINUTES, la borne de run_engine
+    BASKET_AVANT_EFFECTIFS_MIN. Une ligne sans délai connu n'entre nulle part."""
+    tranches: dict[str, list[dict]] = {"2-6h": [], "6-24h": []}
+    for r in rows:
+        try:
+            t = float(r.get("time_to_match_minutes"))
+        except (TypeError, ValueError):
+            continue
+        if _PLAYABLE_MIN_MINUTES <= t < _TRANCHE_COURTE_MAX_MINUTES:
+            tranches["2-6h"].append(r)
+        elif _TRANCHE_COURTE_MAX_MINUTES <= t <= _PLAYABLE_MAX_MINUTES:
+            tranches["6-24h"].append(r)
+    return {k: calibration_stats(v) for k, v in tranches.items()}
+
+
 def _decide_threshold(old_t: float, stats: dict, clv: dict, overconfident: bool,
                       top_band_fake: bool = False,
                       best_band_lo: float | None = None) -> tuple[float | None, str]:
@@ -1081,6 +1150,9 @@ def _decide_threshold(old_t: float, stats: dict, clv: dict, overconfident: bool,
 _LEDGER_SELECT = ("signal_id, outcome, kelly_pct, odds, market_type, initial_edge, sharp_prob, "
                   "clv_pct_real, closing_pinnacle_price, closing_source, time_to_match_minutes, "
                   "created_at")
+# Prix d'ouverture (sql/migrate_v10_21) : lu en plus quand la colonne existe ;
+# sans elle, la lecture retombe sur _LEDGER_SELECT au lieu de casser l'audit.
+_LEDGER_SELECT_OUVERTURE = _LEDGER_SELECT + ", ouverture_sharp_prob"
 _LECTURE_MAX = 5000   # garde-fou de volume de compute_and_save, pas une fenêtre
 
 
@@ -1290,6 +1362,7 @@ def compute_and_save(sb) -> dict[str, float]:
     perimetre = sports_au_perimetre()
     ranking_stats: dict[str, dict] = {}   # sport -> stats, pour _save_sport_ranking
     clv_by_sport: dict[str, dict] = {}    # sport -> _clv_stats, pour les verdicts
+    calib_by_sport: dict[str, dict] = {}  # sport -> calibration_par_tranche, consultatif
     all_preds: list[tuple[float, int]] = []   # calibration, tous sports confondus
 
     for sport in SPORT_DEFAULTS:
@@ -1305,13 +1378,20 @@ def compute_and_save(sb) -> dict[str, float]:
             # date de RÈGLEMENT, sur-ensemble de la date de signal :
             # post_correction_rows refiltre ensuite par signal. La borne
             # _LECTURE_MAX n'est qu'un garde-fou de volume.
-            res = (sb.table("ai_learning_ledger")
-                   .select(_LEDGER_SELECT)
-                   .eq("sport", sport)
-                   .gte("created_at", CALIBRATION_EPOCH)
-                   .order("created_at", desc=True)
-                   .limit(_LECTURE_MAX)
-                   .execute())
+            def _lire(colonnes: str):
+                return (sb.table("ai_learning_ledger")
+                        .select(colonnes)
+                        .eq("sport", sport)
+                        .gte("created_at", CALIBRATION_EPOCH)
+                        .order("created_at", desc=True)
+                        .limit(_LECTURE_MAX)
+                        .execute())
+            try:
+                res = _lire(_LEDGER_SELECT_OUVERTURE)
+            except Exception as e:
+                log.warning("[%s] ledger sans prix d'ouverture (migration v10_21 ?) : %s",
+                            sport, str(e)[:80])
+                res = _lire(_LEDGER_SELECT)
             raw_rows = _dater_par_signal(sb, res.data or [])
             rows = playable_rows(raw_rows)
             if len(raw_rows) != len(rows):
@@ -1333,6 +1413,7 @@ def compute_and_save(sb) -> dict[str, float]:
             stats = _sport_stats(appliquables)
             ranking_stats[sport] = stats
             clv_by_sport[sport] = _clv_stats(appliquables)
+            calib_by_sport[sport] = calibration_par_tranche(appliquables)
             all_preds.extend(
                 (r["sharp_prob"], 1 if r["outcome"] == "WIN" else 0)
                 for r in rows
@@ -1494,7 +1575,8 @@ def compute_and_save(sb) -> dict[str, float]:
     # Verdicts promotion/rétrogradation (Phase 4) — loggés, jamais appliqués.
     try:
         summary_lines.extend(_save_sport_verdicts(sb, ranking_stats, clv_by_sport, now,
-                                                  perimetre=perimetre))
+                                                  perimetre=perimetre,
+                                                  calib_by_sport=calib_by_sport))
     except Exception as e:
         log.warning("sport verdicts: %s", e)
 

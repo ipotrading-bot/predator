@@ -310,7 +310,12 @@ CLOSING_SRC_EXCHANGE = "exchange"   # prix d'exchange réel (Matchbook/Betfair),
 # sous le point mort partout) — la décision est celle de l'opérateur, pas
 # celle du critère, et elle est consignée (INCIDENTS.md).
 KELLY_FRACTION = {
-    "basketball":  0.30,   # NBA — marché le plus sharp au monde, confiance max
+    # NBA — 0.30 jusqu'au 2026-10-23 (« confiance max », une intuition) :
+    # c'était la plus grosse mise du pipeline pour le sport qui perdait le
+    # plus (zone 2-24h 12-22, −10,2 u, sharp_prob à z −2,35). Mise probatoire
+    # au niveau des sports non validés ; restauration quand sport_verdict
+    # rend `promotion_eligible` (≥ 30 réglés, Wilson bas > point mort).
+    "basketball":  0.20,
     "hockey":      0.26,   # NHL — sharp, liquid, peu de bruit
     "soccer":      0.24,   # FIFA WC + Copa Lib + MLS + Brasileirão — relevé légèrement
     "baseball":    0.24,   # MLB + KBO + NPB — volume élevé + lag timezone documenté
@@ -332,8 +337,9 @@ KELLY_FRACTION = {
     # cran sous la NBA le temps que le ledger confirme sur ce sport.
     "americanfootball":      0.28,
     # Euroleague : mécaniques basketball mais marché nettement moins sharp
-    # que la NBA — ne PAS hériter de la NBA ; niveau soccer/baseball.
-    "euroleague_basketball": 0.24,
+    # que la NBA — ne PAS hériter de la NBA ; toujours SOUS elle. 0.24 →
+    # 0.16 le 2026-10-23 avec la mise probatoire du basket (2-5 en zone).
+    "euroleague_basketball": 0.16,
     # ── Phase 3 (2026-08-22) — NCAAF + tennis Grand Chelem ────────────
     # Deux sports choisis pour la même raison : le favori COURT y est la
     # norme, et c'est la seule tranche que le ledger valide (81 % sous 1,50).

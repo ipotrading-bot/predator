@@ -44,7 +44,7 @@ from core.math_engine import (to_binary, devig_bounds, is_round_number_line, dev
                               nul_cote as _nul_cote)
 from core.tax_engine import optimal_stake_fraction as _optimal_stake_fraction
 from core.learning_layer import (_PLAYABLE_MIN_MINUTES, _PLAYABLE_MAX_MINUTES,
-                                 dans_bande_cote)
+                                 _TRANCHE_COURTE_MAX_MINUTES, dans_bande_cote)
 from core.paim_engine import section_jeunes as _section_jeunes, ligne_en_quart as _ligne_en_quart
 from core.match_reel import (coup_d_envoi as _coup_d_envoi,
                              fenetre_jumeau_min as _fenetre_jumeau_min,
@@ -192,6 +192,25 @@ SHADOW_GOLDEN_HOUR = True
 # INCIDENTS.md « 60 % n'est pas un plafond »). Ne s'applique ni à
 # SHADOW_SPORTS ni au-delà de T-24h. Retrait : instruction opérateur.
 BANDE_COTE_PROPOSEE = True
+
+# Basket : parier APRÈS les annonces d'effectif (2026-10-23, plan approuvé par
+# l'opérateur). Un signal basket à plus de BASKET_AVANT_EFFECTIFS_MIN du coup
+# d'envoi est fantôme `basket_avant_effectifs` : persisté, réglé, mesuré, pas
+# envoyé. Un scan ultérieur à T-2..6h qui le revoit avec un edge le PROMEUT
+# recommandé (_save) — seule raison de fantôme réversible.
+# Mesure (zone 2-24h, époque A6, mise plate, hors taxe) : basket 6-24h, 5
+# gagnés pour 10,8 annoncés par sharp_prob (z −2,68, n=19), dérive sharp
+# −3,9 pts contre nous ; basket 2-6h, 7 pour 8,0 (z −0,54), dérive +0,4 ; foot
+# 6-24h, 89 pour 88,7. Au basket, blessés et repos s'annoncent dans les
+# dernières heures : un Pinnacle à T-10h ne les contient pas. La preuve forte
+# vient de la présaison (coupée le 10-09) ; saison régulière 6-24h n=7, non
+# démontrée — d'où le fantôme plutôt que le retrait.
+# Réouverture, fixée d'avance : 30 fantômes de saison régulière réglés à
+# 6-24h, dérive moyenne ≥ 0 et z ≥ −1 depuis le prix d'OUVERTURE
+# (sql/migrate_v10_21, lu par learning_layer.calibration_stats). Instruction
+# opérateur requise pour lever.
+BASKET_AVANT_EFFECTIFS_MIN = _TRANCHE_COURTE_MAX_MINUTES   # 360 — la mesure coupe au même endroit
+BASKET_SPORTS_EFFECTIFS = frozenset({"basketball", "euroleague_basketball"})
 
 # ── Global Timeout Handler (Safety Net) ──────────────────────────────
 # Prevents Engine from hanging GitHub Actions (5+ min on Tier 2/3 fallback)
@@ -386,15 +405,25 @@ _OPTIONAL_COLS = {"selection_name", "kelly_pct", "advice", "sharp_sources", "con
                   "is_shadow", "shadow_reason",
                   # sql/migrate_v10_13_soft_book.sql — le book qui fournit le prix
                   # (core/execution_books) ; rafraîchi AVEC le prix, jamais figé
-                  "soft_book"}
+                  "soft_book",
+                  # sql/migrate_v10_21_prix_ouverture.sql — prix de la PREMIÈRE vue
+                  "ouverture_sharp_prob", "ouverture_cote"}
+
+# Le prix de la PREMIÈRE insertion (2026-10-23) : posé par _save à l'INSERT,
+# jamais réécrit. Sans lui, un fantôme `basket_avant_effectifs` promu à T-4h
+# perdait son prix de T-10h, et la mesure de la règle de réouverture ne
+# gardait que les fantômes dont l'edge s'était évanoui.
+_OUVERTURE = frozenset({"ouverture_sharp_prob", "ouverture_cote"})
 
 # Le drapeau FANTÔME est figé à la PREMIÈRE insertion : un rafraîchissement
-# (même match/marché revu par un tick ultérieur, typiquement golden à T-1h)
-# ne doit jamais transformer une recommandation déjà envoyée en fantôme — le
-# dashboard la cacherait alors que l'opérateur l'a peut-être déjà jouée. Le
-# cas inverse (fantôme qui redeviendrait recommandé) n'existe pas : un tick
-# ultérieur est toujours plus proche du coup d'envoi.
-_FIGES_AU_RAFRAICHISSEMENT = frozenset({"is_shadow", "shadow_reason"})
+# (même match/marché revu par un tick ultérieur, typiquement à T-1h) ne doit
+# jamais transformer une recommandation déjà envoyée en fantôme — le
+# dashboard la cacherait alors que l'opérateur l'a peut-être déjà jouée.
+# Le cas inverse n'existe que pour UNE raison, `basket_avant_effectifs`
+# (2026-10-23) : _save la promeut par un UPDATE distinct, filtré en base sur
+# cette raison — aucune autre ligne fantôme ne peut basculer.
+_FIGES_AU_RAFRAICHISSEMENT = frozenset({"is_shadow", "shadow_reason"}) | _OUVERTURE
+_RAISON_PROMOUVABLE = "basket_avant_effectifs"
 
 
 def _save(sb, signal) -> bool:
@@ -445,6 +474,10 @@ def _save(sb, signal) -> bool:
     # cohabiter dans le moteur — c'est précisément la confusion qu'on retire.
     if "executable_odd" in payload:
         payload["xbet_odd"] = payload.pop("executable_odd")
+    # Prix d'ouverture : n'atteint la base qu'à l'INSERT (figé au
+    # rafraîchissement, _FIGES_AU_RAFRAICHISSEMENT).
+    payload.setdefault("ouverture_sharp_prob", payload.get("sharp_prob"))
+    payload.setdefault("ouverture_cote", payload.get("xbet_odd"))
 
     mid  = payload.get("match_id", "")
     mkey = payload.get("market_key", "")
@@ -471,10 +504,30 @@ def _save(sb, signal) -> bool:
             return False
         if not (res.data or []):
             return None
+        if payload.get("is_shadow") is False:
+            _promouvoir()
         if DEBUG_MODE:
             log.debug("✓ Signal refreshed: %s [edge=%.2f%%]",
                       sig_label, payload.get("edge_pct", 0))
         return True
+
+    def _promouvoir() -> None:
+        """Fantôme `basket_avant_effectifs` revu SANS raison de fantôme → recommandé.
+        Le filtre sur shadow_reason est en BASE : une ligne `t_minus_2h` ou
+        `shadow_sport` ne matche pas, une recommandée non plus. Un échec
+        laisse la ligne fantôme — le pari n'est pas envoyé deux fois, il est
+        perdu une fois, logué."""
+        try:
+            res = (sb.table("signals")
+                   .update({"is_shadow": False, "shadow_reason": None})
+                   .eq("status", "active").eq("match_id", mid)
+                   .eq("market_key", mkey)
+                   .eq("shadow_reason", _RAISON_PROMOUVABLE).execute())
+        except Exception as e:
+            log.error("Supabase promotion (signal %s): %s", sig_label, str(e)[:100])
+            return
+        if res.data:
+            log.info("PROMU | %s — basket revu après les effectifs, recommandé", sig_label)
 
     def _rafraichir_sans_contrainte() -> bool:
         """Chemin des lignes SANS identifiant, que l'index ne protège pas : on
@@ -491,7 +544,8 @@ def _save(sb, signal) -> bool:
             return False
         if not rows:
             return False
-        return update_signal_fields(sb, rows[0]["id"], payload,
+        champs = {k: v for k, v in payload.items() if k not in _OUVERTURE}
+        return update_signal_fields(sb, rows[0]["id"], champs,
                                     optional_cols=frozenset(_OPTIONAL_COLS))
 
     for attempt in range(1, MAX_DB_RETRIES + 1):
@@ -2739,7 +2793,7 @@ def _minutes_avant_coup_denvoi(s: dict) -> float | None:
 def _shadow_reason(s: dict) -> str | None:
     """Pourquoi ce signal est fantôme — None s'il est à recommander.
 
-    Trois raisons, dans l'ordre, et TOUTES par SIGNAL (aucune ne dépend
+    Quatre raisons, dans l'ordre, et TOUTES par SIGNAL (aucune ne dépend
     du mode du run) :
       · `shadow_sport`  — sport listé dans SHADOW_SPORTS (décision opérateur) ;
       · `t_minus_2h`    — le signal est à moins de
@@ -2767,6 +2821,9 @@ def _shadow_reason(s: dict) -> str | None:
         tout le ledger post-A6 — c'est un filet posé avant d'en avoir besoin,
         pour qu'élargir la fenêtre un jour ne recrée pas le bug à l'autre bout
         de l'échelle.
+      · `basket_avant_effectifs` — basket à plus de BASKET_AVANT_EFFECTIFS_MIN
+        du coup d'envoi, dans la zone (2026-10-23) : la seule raison qu'un
+        rafraîchissement plus proche du match lève (_save, promotion).
     Exception à `t_minus_2h` (BANDE_COTE_PROPOSEE, décision opérateur du
     2026-09-27) : une cote exécutable dans la bande 1,50-1,75 reste
     recommandée sous T-2h.
@@ -2783,6 +2840,9 @@ def _shadow_reason(s: dict) -> str | None:
         return "t_minus_2h"
     if minutes is not None and minutes > _PLAYABLE_MAX_MINUTES:
         return "hors_zone_haute"
+    if (s.get("sport") in BASKET_SPORTS_EFFECTIFS and minutes is not None
+            and minutes > BASKET_AVANT_EFFECTIFS_MIN):
+        return _RAISON_PROMOUVABLE
     return None
 
 
@@ -2898,7 +2958,8 @@ def _ecartes(shadowed: list) -> str:
     ne se lisent pas pareil."""
     if not shadowed:
         return ""
-    libelle = {"t_minus_2h": "< 2 h", "shadow_sport": "sport en observation"}
+    libelle = {"t_minus_2h": "< 2 h", "shadow_sport": "sport en observation",
+               _RAISON_PROMOUVABLE: "basket > 6 h"}
     par_raison: dict[str, int] = {}
     for s in shadowed:
         r = libelle.get(s.get("shadow_reason") or "", "fantôme")
