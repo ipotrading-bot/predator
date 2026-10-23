@@ -214,7 +214,7 @@ def _signal_line(s: dict, now: datetime) -> str | None:
     book = s.get("soft_book")
     chez = f" · chez *{book}*" if book else ""
     line += f"   {risk_icon} {sel}{tag} `@ {xbet_odd:.2f}` · valeur `+{edge:.1f}%`{chez}\n"
-    hors_ref = avertissement_hors_reference(book)
+    hors_ref = avertissement_hors_reference(book, s.get("market_key"))
     if hors_ref:
         line += f"   {hors_ref}\n"
     return line
