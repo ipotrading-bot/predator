@@ -411,6 +411,11 @@ def log_to_ledger(sb, sig: dict, clv: float | None, outcome: str) -> None:
         # Book d'exécution qui a fourni le prix (sql/migrate_v10_13) : une
         # analyse par book (CLV, réussite) sans deviner depuis l'époque.
         "soft_book":              sig.get("soft_book"),
+        # Prix de la PREMIÈRE vue (sql/migrate_v10_21) : sharp_prob/xbet_odd
+        # sont ceux du DERNIER rafraîchissement ; la calibration depuis
+        # l'ouverture (learning_layer.calibration_stats) lit ceux-ci.
+        "ouverture_sharp_prob":   sig.get("ouverture_sharp_prob"),
+        "ouverture_cote":         sig.get("ouverture_cote"),
     }
     payload = {
         "signal_id":             sig.get("id"),

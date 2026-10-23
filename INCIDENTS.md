@@ -5746,6 +5746,60 @@ première issue contredite, ou sous 50 % de tentatives réglées (« SETTLE web
 Gardiens : `tests/test_score_sources.py::TestRechercheWeb`,
 `tests/test_settlement.py::TestPorteWebAudit`.
 
+### Le basket se pariait avant les annonces d'effectif (2026-10-23)
+
+Symptôme : « le basket perd trop » (opérateur). Zone 2-24 h, époque A6,
+mise plate, hors taxe : 12-22, −10,20 u, Wilson [21-52 %] pour un point mort
+à 52,3 %. Et c'était le sport à la plus grosse mise Kelly du pipeline (0,30,
+« confiance max », une intuition jamais validée).
+
+Ce qui a été mesuré, et ce qui a été écarté :
+- **La calibration se casse sur UNE tranche.** Gagnés réels contre
+  Σ sharp_prob : basket 6-24 h, 5 pour 10,8 (z −2,68, n=19), dérive sharp
+  −6,4 % du prix (≈ −3,9 points de proba) ; basket 2-6 h, 7 pour 8,0
+  (z −0,54), dérive +0,7 %. Le foot est juste dans les deux tranches (6-24 h :
+  89 pour 88,7), le tennis aussi.
+- La preuve forte vient de la **présaison** NBA (6-24 h : dérive −6,4 pts,
+  z −2,39), déjà coupée le 10-09. En saison régulière, 6-24 h n=7 : la règle
+  est cohérente, PAS démontrée.
+- **Écartée : « un seul sharp ».** Tout le basket repose sur Pinnacle seul,
+  mais le foot mono-sharp gagne (173-106, +25,6 u).
+- Le CLV moyen positif (+1,6 %) n'acquittait rien : il vaut ≈ l'edge
+  d'entrée (voir *Le CLV du dashboard…*), seule la dérive mesure le marché.
+
+Cause retenue : au basket, blessés, repos et « game-time decisions »
+s'annoncent dans les dernières heures. Un Pinnacle à T-10 h ne les contient
+pas : l'edge contre 1xbet y est du bruit. Au foot, c'est l'inverse.
+
+Fait (plan approuvé par l'opérateur) :
+- `run_engine._shadow_reason` : basket (NBA, Euroleague) à plus de
+  `BASKET_AVANT_EFFECTIFS_MIN` (= `learning_layer._TRANCHE_COURTE_MAX_MINUTES`,
+  360) → fantôme `basket_avant_effectifs`. `_save` le PROMEUT quand un scan à
+  T-2..6 h le revoit avec un edge, par un UPDATE filtré EN BASE sur cette
+  raison : aucune autre ligne fantôme ne peut basculer, une recommandée ne
+  redevient jamais fantôme. C'est la seule raison réversible.
+- ⛔ **Piège évité : la promotion RÉÉCRIT le prix.** Sans copie, le prix de
+  T-10 h disparaît, et les seuls fantômes restants sont ceux dont l'edge s'est
+  évanoui : la mesure de réouverture aurait été biaisée CONTRE la réouverture
+  par construction. `sql/migrate_v10_21_prix_ouverture.sql` ajoute
+  `ouverture_sharp_prob` / `ouverture_cote` (signals + ledger + archives),
+  posées à l'INSERT, figées au rafraîchissement, recopiées au ledger.
+  ⚠️ Migration à appliquer AVANT le déploiement : le repli de schéma de
+  `_save` retire TOUTES les colonnes optionnelles, `is_shadow` compris.
+- `learning_layer.calibration_stats` / `calibration_par_tranche` (z, dérive
+  depuis l'ouverture, réutilise `_derive_stats`), joint au verdict
+  `sport_verdict_<sport>` et affiché par le rapport hebdo. CONSULTATIF.
+- Kelly : NBA 0,30 → 0,20, Euroleague 0,24 → 0,16 (mise probatoire,
+  instruction opérateur du même jour).
+- Migration v10_21 appliquée le 2026-10-23 AVANT le déploiement (8 colonnes
+  vérifiées en base).
+
+Réouverture fixée d'avance : 30 fantômes de saison régulière réglés à
+6-24 h, dérive moyenne ≥ 0 et z ≥ −1 depuis l'ouverture → proposer la
+réouverture (instruction opérateur). Kelly restauré sur
+`promotion_eligible`.
+Gardien : `tests/test_basket_apres_effectifs.py`.
+
 
 ## La règle transverse
 

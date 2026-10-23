@@ -524,6 +524,24 @@ def format_ai_health(rows: list[dict]) -> list[str]:
     return lines
 
 
+def format_calibration(calib: dict | None) -> str:
+    """« calibration 2-6h 7/8.0 z -0.54 dérive +0.4% · 6-24h … » — gagnés réels
+    sur gagnés annoncés par tranche (learning_layer.calibration_par_tranche,
+    joint au verdict). ⚠️ sous z −2 : le moteur surestime nettement cette
+    tranche. Consultatif. Vide sans tranche mesurée. Pure."""
+    morceaux = []
+    for tranche, c in (calib or {}).items():
+        if not c or not c.get("n"):
+            continue
+        z, d = c.get("z"), c.get("derive_moy")
+        alerte = "⚠️ " if z is not None and z < -2 else ""
+        morceaux.append(
+            f"{alerte}{tranche} {c['gagnes']}/{c['attendus']:.1f} "
+            f"z {f'{z:+.2f}' if z is not None else '—'} "
+            f"dérive {f'{d:+.1f}%' if d is not None else '—'}")
+    return ("   calibration " + " · ".join(morceaux)) if morceaux else ""
+
+
 def format_report(metrics_by_sport: dict[str, dict], verdicts: dict[str, dict],
                   suspect: tuple[int, int], now: datetime,
                   ai_health: list[dict] | None = None,
@@ -560,6 +578,9 @@ def format_report(metrics_by_sport: dict[str, dict], verdicts: dict[str, dict],
             f"ROI Kelly {_pct(s.get('roi'), True)} · mise plate "
             f"{f'{pnl:+.2f} u' if pnl is not None else '—'}\n"
             f"   {brier}")
+        calib = format_calibration(v.get("calibration"))
+        if calib:
+            lines.append(calib)
         if v.get("status") == "promotion_eligible":
             lines.append(f"   → éligible à la restauration progressive de sa fraction Kelly ({v.get('reason')})")
         elif v.get("retrait_propose"):

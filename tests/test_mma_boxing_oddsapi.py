@@ -34,7 +34,10 @@ class TestWiring:
         assert KELLY_FRACTION["mma"] == 0.20       # 0.08 (prix web) → 0.10 (Pinnacle) → ×2 le 2026-09-09 (décision opérateur)
         assert KELLY_FRACTION["boxing"] == 0.16    # marché mince, non validé ; ×2 le 2026-09-09
         # ...mais toujours SOUS les sports majeurs tant que le ledger n'a pas tranché.
-        assert KELLY_FRACTION["mma"] < KELLY_FRACTION["basketball"]
+        # Le basket est en mise probatoire depuis le 2026-10-23 (0.20) : à
+        # égalité avec le MMA, pas au-dessus.
+        assert KELLY_FRACTION["mma"] < KELLY_FRACTION["soccer"]
+        assert KELLY_FRACTION["mma"] <= KELLY_FRACTION["basketball"]
 
     def test_learning_layer_knows_both(self):
         assert "mma" in SPORT_DEFAULTS and "boxing" in SPORT_DEFAULTS
