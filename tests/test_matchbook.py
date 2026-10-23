@@ -437,7 +437,83 @@ class TestLesParisDeJoueursNeSontPasLeTotalDuMatch:
 
     def test_sans_le_filtre_le_pari_de_joueur_devenait_la_ligne_principale(self, monkeypatch):
         """Contre-épreuve : c'est bien ce filtre qui protège."""
-        monkeypatch.setattr(mb, "_est_sous_marche", lambda m: False)
+        monkeypatch.setattr(mb, "_est_sous_marche", lambda m, equipes=(): False)
         tot = mb._totals_odds(self._event())
         assert tot["point"] in (28.5, 29.5)
         assert len(tot["ladder"]) == 4
+
+
+# ── Totaux d'équipe nommés par le club, quarts de ligne (2026-10-23) ────
+
+class TestLesTotauxDEquipeNommesParLeClub:
+    """« Ipswich Town vs Nottingham Forest | SOC Under 2.5 — EV 84.19 % »
+    (scans du 2026-10-23, refusé par MAX_EDGE) : Matchbook nomme les totaux
+    d'équipe de Premier League par le CLUB, sans le mot « team ». Noms
+    RELEVÉS sur l'API ce jour-là ; prix du même relevé."""
+
+    def _event(self):
+        return _rich_event("Ipswich Town vs Nottingham Forest", [
+            _market("one_x_two", None, [("Ipswich Town", 2.90, 2.96), ("Draw", 3.40, 3.50),
+                                        ("Nottingham Forest", 2.60, 2.66)]),
+            _named("total", "Total", [("OVER 2.5", 1.89, 1.93), ("UNDER 2.5", 2.08, 2.12)]),
+            _named("total", "Total", [("OVER 1.5", 1.28, 1.30), ("UNDER 1.5", 4.3, 4.5)]),
+            _named("total", "Ipswich Town Goals Over / Under",
+                   [("OVER 1.5", 2.15, 2.19), ("UNDER 1.5", 1.83, 1.87)]),
+            _named("total", "Nottingham Forest Goals Over / Under",
+                   [("OVER 2.5", 7.2, 7.6), ("UNDER 2.5", 1.15, 1.17)]),
+        ])
+
+    def test_le_total_d_equipe_est_un_sous_marche(self):
+        m = {"name": "Nottingham Forest Goals Over / Under"}
+        assert mb._est_sous_marche(m, ("Ipswich Town", "Nottingham Forest"))
+
+    def test_le_total_du_match_n_en_est_pas_un(self):
+        assert not mb._est_sous_marche({"name": "Total"}, ("Ipswich Town", "Nottingham Forest"))
+
+    def test_l_echelle_ne_garde_que_le_total_du_match(self):
+        tot = mb._totals_odds(self._event(), "Ipswich Town", "Nottingham Forest")
+        assert sorted(r["point"] for r in tot["ladder"]) == [1.5, 2.5]
+        (r25,) = [r for r in tot["ladder"] if r["point"] == 2.5]
+        assert r25["over"] == pytest.approx(1.91), "c'est l'Over du match, pas celui de Forest"
+        assert tot["point"] == 2.5, "la ligne principale n'est plus un total d'équipe"
+
+    def test_sans_les_noms_le_point_double_est_refuse_quand_meme(self):
+        """Deuxième garde : un point coté par deux marchés est ambigu, on le
+        refuse au lieu d'en garder un au hasard."""
+        assert mb._totals_odds(self._event()) is None
+
+    def test_bout_en_bout_le_total_publie_est_celui_du_match(self, monkeypatch):
+        _wire(monkeypatch, [self._event()])
+        (row,) = mb.fetch_matchbook_prices(sports=["soccer"]).values()
+        assert row["totals"]["point"] == 2.5
+        assert row["totals"]["over"] == pytest.approx(1.91)
+
+
+class TestUnQuartDeLigneNEstPasUneLigne:
+    """« 1. FC Heidenheim vs Energie Cottbus | SOC PS -1.0 — EV 301.65 % »
+    (scan du 2026-10-23 16:11) : le runner « 1. FC Heidenheim (-1.0/1.5) »
+    était lu +1.0 — le « 1. » du nom du club."""
+
+    @pytest.mark.parametrize("runner", ["1. FC Heidenheim (-1.0/1.5)", "Energie Cottbus (+1.0/1.5)",
+                                        "1. FSV Mainz 05 (-0.5/1.0)", "FC Schalke 04 (+0.0/0.5)"])
+    def test_le_quart_de_ligne_n_a_pas_de_point(self, runner):
+        assert mb._line_point({"handicap": None}, runner) is None
+
+    @pytest.mark.parametrize("runner,point", [("1. FC Heidenheim -1.0", -1.0), ("FC Schalke 04 +0.5", 0.5),
+                                              ("1. FSV Mainz 05 -1.5", -1.5), ("OVER 2.5", 2.5)])
+    def test_la_ligne_simple_est_le_dernier_mot(self, runner, point):
+        assert mb._line_point({"handicap": None}, runner) == point
+
+    def test_l_echelle_de_handicap_reste_coherente(self):
+        ev = _rich_event("1. FC Heidenheim vs Energie Cottbus", [
+            _ML,
+            _named("handicap", "Handicap", [("1. FC Heidenheim -1.0", 2.30, 2.36),
+                                            ("Energie Cottbus +1.0", 1.74, 1.78)]),
+            _named("handicap", "Handicap", [("1. FC Heidenheim (-1.0/1.5)", 2.60, 2.64),
+                                            ("Energie Cottbus (+1.0/1.5)", 1.61, 1.65)]),
+            _named("handicap", "Handicap", [("1. FC Heidenheim (-0.5/1.0)", 2.00, 2.04),
+                                            ("Energie Cottbus (+0.5/1.0)", 1.98, 2.02)]),
+        ])
+        hcp = mb._handicap_odds(ev, "1. FC Heidenheim", "Energie Cottbus")
+        assert [(r["point"], r["away_point"]) for r in hcp["ladder"]] == [(-1.0, 1.0)]
+        assert hcp["home"] == pytest.approx(2.33)

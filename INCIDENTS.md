@@ -1383,6 +1383,81 @@ confusion si sa ligne existait en mi-temps. À garder en tête pour la
 recalibration A6.
 Gardien : `tests/test_matchbook.py::TestLesSousMarchesNeSontPasLeMatchEntier`.
 
+### Matchbook : des totaux d'équipe nommés par le club et des quarts de ligne lus dans le nom du club (2026-10-23)
+
+Journée du 2026-10-23 à 5 signaux, 0 en foot. Dans les logs des scans
+standard, trois EV absurdes refusées par `MAX_EDGE` (plafond d'edge appris
+soccer ≤ 6 %) :
+- « Ipswich Town vs Nottingham Forest | SOC Under 2.5 — EV 84.55 % » (scan
+  11:18 UTC, run 39944330928), puis 84.19 % (scan 17:45, run 39997662713) ;
+- « Coventry City vs Fulham | SOC Under 2.5 — EV 71.38 % » (17:45) ;
+- « 1. FC Heidenheim vs Energie Cottbus | SOC PS -1.0 — EV 301.65 % /
+  316.98 % » (scan 16:11, run 39984636330).
+Le log ALIGNE montrait « soft +2.50 / sharp +1.50 » et un Over 2.5 sharp à
+14 %. La même signature que l'entrée précédente, revenue par deux autres
+portes.
+
+Cause 1, les totaux. `core/matchbook.py::_est_sous_marche` ne reconnaissait
+un total d'équipe qu'au mot « team » (« Home Team Total Goals », relevé du
+2026-08-28). Sur Premier League et Championship, Matchbook les nomme
+désormais par le CLUB : « Nottingham Forest Goals Over / Under », « Ipswich
+Town Goals Over / Under ». Le point 2.5 figurait 3 fois dans l'échelle ;
+`run_engine._aligner_sur_meme_ligne` indexe l'échelle par point, le dernier
+gagne → un total d'équipe (7.4 / 1.16) comparé au total du match chez 1xbet.
+La ligne principale sharp devenait parfois un total d'équipe à 1.5.
+Cause 2, les handicaps. `_line_point` remontait les mots du runner jusqu'au
+premier nombre ; sur un quart de ligne « 1. FC Heidenheim (-1.0/1.5) », il
+lisait le « 1. » du NOM DU CLUB → +1.0. Quatre quarts de ligne devenaient de
+faux « +1.0 » avec `away_point` None, d'où Cottbus -1.0 coté ~2.0 par le
+« sharp ». Tout club à nombre dans le nom est exposé (1. FC Köln, Mainz 05,
+Schalke 04, Hannover 96…).
+MESURÉ le 2026-10-23 sur l'API Matchbook réelle (sans clé) : 387 matchs de
+foot, 10 avec des totaux d'équipe non filtrés (tous Premier League /
+Championship), barreau 2.5 faussé sur les 10, ligne principale sharp faussée
+sur 6 ; 16 matchs de clubs à nombre, 8 échelles de handicap avec de fausses
+lignes. Noms de marchés relevés sur 6 sports (foot, basket, NFL, hockey,
+tennis, MMA) : le match entier s'appelle exactement « Total » / « Handicap »
+partout.
+Dégâts : AUCUN signal émis sur une ligne faussée. Ledger vérifié : 0 signal
+de totaux foot via exchange en Premier League / Championship sur 60 jours,
+0 handicap ±1.0 sur un club à nombre sur 90 jours — les erreurs étaient
+toujours énormes, donc bloquées par `MAX_EDGE`. L'effet réel est inverse :
+des totaux EPL/Championship dont Matchbook était la seule référence sharp
+étaient comparés à un total d'équipe, donc rejetés — des paris CACHÉS, pas
+inventés. Ce n'est PAS la cause de la journée creuse : meilleur EV foot
+légitime du jour +2,49 %, sous le seuil de 4 %, sur 7 scans.
+
+Fait :
+- `_est_sous_marche(market, equipes)` : un marché qui porte le nom d'une des
+  deux équipes (≥ 3 caractères) est un sous-marché ; `_totals_odds(event,
+  home, away)` lui passe les équipes.
+- `_points_uniques` appelé DANS `_echelle` (partagée par Matchbook et
+  Smarkets) : un point coté par deux marchés est refusé comme ambigu — A6 :
+  refuser plutôt que comparer deux paris différents. L'échelle peut alors
+  sortir vide : `core/smarkets.py` ne publie plus de `totals`/`spreads` vides
+  (sinon `ech[0]` levait `IndexError`).
+- `_line_point` ne lit plus que le DERNIER mot du runner ; un quart de ligne
+  « (a/b) » rend None.
+Rejoué sur les données réelles des 6 sports après correctif : 449 échelles de
+totaux identiques à celles du seul marché « Total », 0 marché perdu,
+0 handicap incohérent. Le garde des doublons n'a rien écarté sur ce relevé :
+le filtre par nom suffit, le garde est un filet.
+Smarkets n'a aucun des deux défauts : ligne lue dans `market_type.param`
+typé, sous-marchés à type propre (`FIRST_HALF_*`, `HOME_TEAM_*`).
+Pas fait : les quarts de ligne Matchbook restent ignorés, comme ils l'étaient
+déjà pour les clubs sans nombre — pas de support des lignes asiatiques à
+quart. Aucun seuil touché.
+⚠️ Ne pas « simplifier » en n'acceptant que le nom exact « Total » :
+`test_un_marche_sans_nom_reste_accepte` protège la seule source de totaux
+sharp si l'API cessait de nommer ses marchés, et un renommage (« Total
+Goals ») couperait la source en silence.
+⛔ Ne jamais relire la ligne d'un runner ailleurs que dans son DERNIER mot :
+le nom du club précède la ligne, et il peut contenir un nombre.
+Gardien : `tests/test_matchbook.py::TestLesTotauxDEquipeNommesParLeClub`,
+`tests/test_matchbook.py::TestUnQuartDeLigneNEstPasUneLigne`,
+`tests/test_smarkets.py::test_un_point_cote_deux_fois_est_refuse_sans_casser_la_source`
+(8 des nouveaux tests échouent sur l'ancien code ; le test Smarkets aussi).
+
 ### Étaler le SETTLEMENT était une faute — corrigé le 2026-08-28
 
 Le rythme de dépense posé la veille avait été appliqué sans distinction. Il
