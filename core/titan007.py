@@ -83,6 +83,7 @@ from datetime import datetime, timedelta, timezone
 
 from core import daily_quota
 from core.execution_books import book_canonique, ordre
+from core.mesure_books import blocs_candidats
 from core.source_adapter import league_rank
 
 log = logging.getLogger("PREDATOR.titan007")
@@ -309,13 +310,11 @@ def _soft_price(books: dict) -> dict | None:
     return par_book[min(par_book, key=ordre)]
 
 
-def _soft_prices(books: dict) -> dict[str, dict]:
-    """Un bloc 1X2 par book d'EXÉCUTION présent dans le feed (2026-09-08 :
-    plusieurs books, `core.constants.EXECUTION_BOOKS`), chacun borné par la
-    médiane des books soft — le plafond anti-book-figé s'applique book par
-    book, et un book figé est simplement absent du résultat. Jamais un
-    maximum par issue entre books : le moteur départage bloc contre bloc,
-    sur le prix final (core/execution_books.choisir_bloc_h2h)."""
+def _medianes_soft(books: dict) -> dict:
+    """{"1","X","2": médiane des books soft (None si aucune cote)} — ou {}
+    si moins de trois books soft cotent : sans médiane fiable, aucun prix
+    soft n'est crédible. Une seule médiane pour le prix d'exécution
+    (`_soft_prices`) et pour la mesure des books candidats."""
     quotes = [odds for book, odds in books.items()
               if any(n in book.lower() for n in SOFT_BOOKS)]
     if len(quotes) < 3:
@@ -324,6 +323,19 @@ def _soft_prices(books: dict) -> dict[str, dict]:
     for k in ("1", "X", "2"):
         vals = [q[k] for q in quotes if q.get(k, 0) > 1.01]
         medianes[k] = _median(vals) if vals else None
+    return medianes
+
+
+def _soft_prices(books: dict) -> dict[str, dict]:
+    """Un bloc 1X2 par book d'EXÉCUTION présent dans le feed (2026-09-08 :
+    plusieurs books, `core.constants.EXECUTION_BOOKS`), chacun borné par la
+    médiane des books soft — le plafond anti-book-figé s'applique book par
+    book, et un book figé est simplement absent du résultat. Jamais un
+    maximum par issue entre books : le moteur départage bloc contre bloc,
+    sur le prix final (core/execution_books.choisir_bloc_h2h)."""
+    medianes = _medianes_soft(books)
+    if not medianes:
+        return {}
     par_book: dict[str, dict] = {}
     for book, execution in books.items():
         canon = book_canonique(book)
@@ -429,6 +441,13 @@ def fetch_matches(hours_ahead: int = 24, max_matches: int | None = None) -> list
         if sharp:
             m["odds_pinnacle"] = sharp
             n_sharp += 1
+            # MESURE SEULE (core/mesure_books) : le 1X2 de chaque book
+            # candidat, sous le même plafond anti-book-figé. Jamais lu par
+            # l'émission ; sa propre référence sharp voyage avec lui, la
+            # fusion de sources pouvant remplacer `odds_pinnacle`.
+            candidats = blocs_candidats(books, _medianes_soft(books), MAX_SOFT_OUTLIER)
+            if candidats:
+                m["_mesure_books"] = {"blocs": candidats, "sharp": sharp}
         matches.append(m)
 
     # Les deux compteurs du critère de retrait sont sur CETTE ligne, pour que

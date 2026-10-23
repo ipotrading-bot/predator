@@ -1787,6 +1787,58 @@ def _mesurer_outsider(par_book: dict, sport: str, name: str, emoji: str,
     return ev
 
 
+def _mesurer_books_candidats(sb, xbet_matches: list, now, log) -> int:
+    """MESURE SEULE, jamais une émission (2026-10-23) : le DNB du favori
+    chez chaque book candidat (core/mesure_books), cumulé par jour dans
+    `meta.mesure_books_AAAAMMJJ`. Zone jouable et périmètre seulement (ni
+    jeunes, ni ligue exclue par l'opérateur). Rend le nombre de matchs
+    mesurés. Best-effort : une panne se logge, le scan continue."""
+    from core import mesure_books as mb
+    from core.source_adapter import LEAGUE_PRIORITY, league_rank
+    if not sb:
+        return 0
+    try:
+        motifs = _ligues_exclues(sb)
+        retenus = []
+        for m in xbet_matches:
+            mesure = m.get("_mesure_books")
+            if not mesure or (m.get("sport") or "") != "soccer":
+                continue
+            league = m.get("league") or ""
+            if _section_jeunes(league) or _ligue_exclue(league, motifs):
+                continue
+            try:
+                ko = datetime.fromisoformat(str(m.get("commence_time")).replace("Z", "+00:00"))
+            except ValueError:
+                continue
+            minutes = (ko - now).total_seconds() / 60
+            if not _PLAYABLE_MIN_MINUTES <= minutes <= _PLAYABLE_MAX_MINUTES:
+                continue
+            evs = mb.ev_par_book(mesure.get("blocs"), mesure.get("sharp"),
+                                 m.get("home") or "", m.get("away") or "")
+            if evs:
+                retenus.append((m, league, evs))
+        if not retenus:
+            return 0
+        cle = mb.cle_du_jour(now)
+        raw = _meta_get(sb, cle)
+        try:
+            blob = json.loads(raw) if raw else {}
+        except ValueError:
+            blob = {}
+        for m, league, evs in retenus:
+            blob = mb.accumuler(blob, str(m.get("id") or m.get("match")), m.get("match") or "",
+                                league, m.get("commence_time") or "",
+                                league_rank(league) < len(LEAGUE_PRIORITY), evs)
+        _meta_stamp(sb, cle, json.dumps(blob, separators=(",", ":")))
+        log.info("BOOKS CANDIDATS | %d match(s) de foot mesurés (DNB par book, jamais émis) — "
+                 "%d au cumul du jour (%s)", len(retenus), len(blob.get("matchs") or {}), cle)
+        return len(retenus)
+    except Exception as e:
+        log.warning("BOOKS CANDIDATS | mesure ignorée ce cycle : %s", e)
+        return 0
+
+
 def _process_h2h(m, name, sport, league, home, away, emoji, signals, sb, now, log, min_edge=None):
     """H2H market: DNB for soccer, Moneyline for NBA/Tennis + Prob.Sharp filter."""
     prob_min    = SHARP_PROB_BY_MARKET.get("h2h_soccer" if sport == "soccer" else "h2h", 0.52)
@@ -3528,6 +3580,9 @@ def run():
 
         if xbet_matches:
             log.info("%d matchs Tier 2 chargés — tri sharp réel...", len(xbet_matches))
+            # MESURE SEULE (core/mesure_books) — avant tout dé-doublonnage :
+            # une grande ligue déjà servie par le Tier 1 n'en est pas exclue.
+            _mesurer_books_candidats(sb, xbet_matches, now, log)
         # Melbet expose le MMA (sport_id=5) et OddsAPI (mma_mixed_martial_arts)
         # livre la même carte : les deux sources peuvent rendre le même
         # événement. Le doublon compterait deux fois dans le quota par sport

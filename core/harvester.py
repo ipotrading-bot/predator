@@ -178,9 +178,12 @@ def _fetch_multi_book(sport_id: int) -> list:
             # sources, et l'ancienne fusion ne recopiait que les prix soft —
             # un match trouvé d'abord sur le LineFeed perdait donc le prix
             # Pinnacle qu'une autre source apportait, c'est-à-dire le signal.
+            # `_mesure_books` (core/mesure_books) : la mesure des books
+            # candidats n'existe que chez titan007 — un match vu d'abord
+            # par odds-api.io la perdrait, et avec elle les grandes ligues.
             for extra in ("odds_pinnacle", "commence_time", "league",
                           "spreads_1xbet", "totals_1xbet",
-                          "spreads_pinnacle", "totals_pinnacle"):
+                          "spreads_pinnacle", "totals_pinnacle", "_mesure_books"):
                 if cand.get(extra) and not existing.get(extra):
                     existing[extra] = cand[extra]
             improved = _fusionner_h2h(existing, cand)
