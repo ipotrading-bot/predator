@@ -718,6 +718,10 @@ def run():
     except Exception as e:
         log.error("Learning layer: %s", e)
 
+    # Rétention de `meta` (2026-10-29) : clés datées de plus de 60 jours.
+    from core.meta_retention import purger as _purger_meta
+    _purger_meta(sb)
+
     log.info("━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━")
 
     # CONTRAT DE FIN (B5). La troisième condition du contrat — « settlement
