@@ -196,11 +196,12 @@ verrouillés par `tests/test_reprice_mode.py` :
 - Dédup Telegram : `_dedup_systems_for_telegram` (clé meta
   `alert_system_<hash du contenu>`, TTL 6h) — le même combo ne repart pas à
   chaque tick ; un tick REPRICE sans rien de neuf se tait.
-- Le CLV réel est désormais un critère de PREMIER rang de la couche
-  d'apprentissage (`_decide_threshold` : montée si avg_clv < −1% sur ≥15
-  lignes, descente accélérée si > +1% avec majorité positive) et
-  `_archive_before_purge` passe par `log_to_ledger` (les expirés portent
-  enfin `clv_pct_real`/`kelly_pct`/`sharp_prob`).
+- Le CLV réel ne DÉCIDE plus aucun seuil (il contient l'edge d'entrée,
+  2026-09-27) ; la dérive sharp ne compte que par son EXCÉDENT sur la
+  référence commune, et seulement pour freiner un abaissement
+  (`learning_layer._verdict_seuil`, 2026-10-29 — seuil = fonction de la
+  preuve, réalisé contre annoncé). `_archive_before_purge` passe par
+  `log_to_ledger` (les expirés portent `clv_pct_real`/`kelly_pct`/`sharp_prob`).
 - Limite assumée : le prix soft peut avoir jusqu'à 4h — le mouvement détecté
   est côté sharp ; l'advice donne la cote à vérifier au book.
 

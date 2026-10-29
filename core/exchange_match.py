@@ -34,9 +34,26 @@ def flip_exchange_prices(row: dict) -> dict:
     l'équipe qui le concède, donc il s'inverse aussi. Un handicap laissé tel
     quel donnerait un edge calculé contre la mauvaise ligne — faux, et
     silencieux. Les totals, eux, sont symétriques et se recopient.
+
+    TOUTE LA LIGNE EST GARDÉE, ET RIEN NE LÈVE (2026-10-29). La version
+    précédente reconstruisait un dict neuf de quatre clés :
+      · `row["2"]` sur une ligne sans moneyline (Smarkets n'ayant que des
+        totaux) levait KeyError hors de tout try — trois scans standard
+        PAYÉS tombés le 2026-10-09, un quatrième le 2026-10-13 (meta
+        scan_crash) ; seul un appelant avait été protégé (odds_api._apparie) ;
+      · `commence_time` disparaissait : au tennis, où l'ordre des joueurs
+        diffère souvent d'une source à l'autre, la clôture retombait sur
+        l'heure « pas avant » (closing_line._kickoff_de_cloture) et le
+        contrôle « même match à 12 h » d'odds_api_io était sauté.
+    Prix absent → 0.0, que tous les appelants refusent (> 1.01 exigé).
     """
-    out = {"1": row["2"], "X": row.get("X", 0.0), "2": row["1"],
-           "_source": row.get("_source", "exchange")}
+    out = {k: v for k, v in row.items()
+           if k not in ("1", "2", "X", "home", "away", "match", "totals", "spreads")}
+    out.update({"1": row.get("2", 0.0), "X": row.get("X", 0.0), "2": row.get("1", 0.0),
+                "_source": row.get("_source", "exchange")})
+    if row.get("home") or row.get("away"):
+        out["home"], out["away"] = row.get("away", ""), row.get("home", "")
+        out["match"] = f"{out['home']} vs {out['away']}"
     if row.get("totals"):
         out["totals"] = row["totals"]
     sp = row.get("spreads")

@@ -22,7 +22,7 @@ from dotenv import load_dotenv
 from core.db import (get_db, MissingCredentialsError,
                      log_to_ledger as _log_to_ledger,
                      is_unique_violation as _is_unique_violation)
-from core.harvester import fetch_matches
+from core.harvester import echecs_recolte, fetch_matches
 from core.closing_line import (capture_from_exchange, capture_from_scan,
                                reset_causes as _reset_causes_closing,
                                persister_causes as _persister_causes_closing)
@@ -3579,6 +3579,7 @@ def run():
             _terminer_run(verdict_de_fin(
                 sources_joignables=bool(exchange_prices),
                 matches_vus=0), contexte="scan")
+            _echouer_si_recolte_partielle()
             if credentials_failed:
                 raise SystemExit(1)
             return
@@ -3687,6 +3688,7 @@ def run():
         _telegram(msg)
         if sb:
             _heartbeat(sb, now, 0, 0)
+        _echouer_si_recolte_partielle()
         if credentials_failed:
             raise SystemExit(1)
         return
@@ -3699,6 +3701,7 @@ def run():
         log.warning("PÉRIMÈTRE | aucun match ne passe les gardes (marché vivant + réglable)")
         if sb:
             _heartbeat(sb, now, 0, 0)
+        _echouer_si_recolte_partielle()
         if credentials_failed:
             raise SystemExit(1)
         return
@@ -3900,10 +3903,22 @@ def run():
                                  signaux_persistes=saved_count),
                   contexte="scan")
 
+    _echouer_si_recolte_partielle()
+
     if credentials_failed:
         # Telegram already sent above — now fail the job so GitHub Actions
         # shows red instead of a silent green run that persisted nothing.
         raise SystemExit(1)
+
+
+def _echouer_si_recolte_partielle() -> None:
+    """Récolte partielle : un sport a levé dans fetch_matches, les autres ont
+    été traités. Le run sort en ÉCHEC — motif consigné par _consigner_plantage
+    (meta.scan_crash) : isoler un sport ne doit jamais rendre sa panne muette.
+    Appelée à CHAQUE sortie d'un scan standard, anticipées comprises (un sport
+    en panne peut justement laisser zéro match)."""
+    if not REPRICE and echecs_recolte():
+        raise RuntimeError("récolte partielle — " + " | ".join(echecs_recolte()))
 
 
 # ── Motif d'un run tombé, lisible HORS des logs (2026-10-10) ───────────

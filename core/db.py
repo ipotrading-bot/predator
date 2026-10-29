@@ -259,7 +259,45 @@ def _ledger_deja_ecrit(sb, signal_id, outcome: str) -> bool:
     return True
 
 
-def _ledger_jumeau_reel(sb, payload: dict) -> bool:
+def _au_meme_coup_d_envoi(sb, rows: list[dict], match_time, sport) -> list[dict]:
+    """Les lignes candidates dont le signal a le MÊME coup d'envoi que le
+    nôtre, à `fenetre_jumeau_min(sport)` près. Heures lues dans `signals`
+    puis `signals_archive`. Toute incertitude (heure absente, illisible,
+    lecture en panne) écarte la candidate : sans preuve du même match, on
+    écrit (voir _ledger_jumeau_reel)."""
+    from core.match_reel import coup_d_envoi, fenetre_jumeau_min
+    notre = coup_d_envoi(match_time) if match_time else None
+    if notre is None:
+        log.info("Ledger : jumeau possible pour %s mais coup d'envoi inconnu — "
+                 "on écrit plutôt que de jeter un résultat", rows[0].get("signal_id"))
+        return []
+    ids = [r["signal_id"] for r in rows if r.get("signal_id") is not None]
+    heures: dict = {}
+    try:
+        for table in ("signals", "signals_archive"):
+            manquants = [i for i in ids if i not in heures]
+            if not manquants:
+                break
+            res = sb.table(table).select("id,match_time").in_("id", manquants).execute()
+            for r in res.data or []:
+                if r.get("match_time"):
+                    heures[r["id"]] = r["match_time"]
+    except Exception as e:
+        log.warning("Ledger : heures des jumeaux illisibles (%s) — on écrit", str(e)[:80])
+        return []
+    fenetre_s = fenetre_jumeau_min(sport) * 60
+    gardees = []
+    for r in rows:
+        la_leur = coup_d_envoi(heures.get(r.get("signal_id")))
+        if la_leur is not None and abs((la_leur - notre).total_seconds()) <= fenetre_s:
+            gardees.append(r)
+    if len(gardees) != len(rows):
+        log.info("Ledger : %d homonyme(s) écarté(s) — autre coup d'envoi, autre match réel",
+                 len(rows) - len(gardees))
+    return gardees
+
+
+def _ledger_jumeau_reel(sb, payload: dict, match_time=None) -> bool:
     """Le MÊME MATCH RÉEL est-il déjà au ledger sous un AUTRE signal_id ?
 
     JUMEAUX INTER-SOURCES (mesuré le 2026-09-02) : un même match arrivant par
@@ -275,6 +313,17 @@ def _ledger_jumeau_reel(sb, payload: dict) -> bool:
     contre « Atletico Nacional ») — supprimer une vraie ligne de résultat est
     pire qu'un doublon, qui reste rattrapable par archivage. Les jumeaux à
     libellés différents relèvent du pont d'alias, pas d'ici.
+
+    LE COUP D'ENVOI EST DANS LA CLÉ (2026-10-29). Jusque-là, la clé ignorait
+    la date du match : deux matchs DIFFÉRENTS entre les mêmes équipes, à moins
+    de 6 jours de règlement d'écart, passaient pour un même match réel, et le
+    second résultat était jeté sans trace. Mesuré : Giants–Padres du 12/09 au
+    soir (10184, Over 7.5, WIN) avalé par le match de la veille (10162) — une
+    série MLB ; Dortmund–Villarreal senior (10072, WIN) avalé par le match U19
+    du matin (10064). Les deux lignes doivent désormais avoir des coups
+    d'envoi connus et à `match_reel.fenetre_jumeau_min(sport)` près — la
+    fenêtre de l'émission (run_engine, `meme_match_reel`), une seule règle.
+    Coup d'envoi inconnu d'un côté → pas un jumeau : on écrit.
 
     Même règle que `_ledger_deja_ecrit` : le DÉCISIF gagne. Ligne stockée
     décisive (ou entrant non décisif) → on n'écrit pas ; entrant décisif sur
@@ -301,6 +350,8 @@ def _ledger_jumeau_reel(sb, payload: dict) -> bool:
         log.warning("Ledger : recherche de jumeau impossible pour %s (%s) — "
                     "on laisse l'écriture se faire", match, str(e)[:80])
         return False
+    if rows:
+        rows = _au_meme_coup_d_envoi(sb, rows, match_time, payload.get("sport"))
     if not rows:
         return False
     stocke = str(rows[0].get("outcome") or "")
@@ -439,7 +490,7 @@ def log_to_ledger(sb, sig: dict, clv: float | None, outcome: str) -> None:
     }
     # Jumeau inter-sources : même match réel déjà réglé sous un autre
     # signal_id → pas de seconde ligne (voir _ledger_jumeau_reel).
-    if _ledger_jumeau_reel(sb, payload):
+    if _ledger_jumeau_reel(sb, payload, match_time):
         return
     try:
         sb.table("ai_learning_ledger").insert(payload).execute()

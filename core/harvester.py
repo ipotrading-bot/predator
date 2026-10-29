@@ -221,13 +221,35 @@ def fetch_matches():
     un LLM d'inventer le slate et ses cotes » a été supprimé le 2026-09-02
     avec Groq/Tavily. Rien trouvé veut dire rien, pas « demande à un modèle »."""
     all_matches = []
+    _ECHECS_RECOLTE.clear()
     # L'union des sports que les sources soft savent servir — dérivée de
     # leurs propres tables, jamais recopiée ici. Le foot (titan007) est
     # dans les deux premières de toute façon.
     ids = set(_ODDS_API_IO_BY_ID) | {_T7_SPORT_ID}
     for sport_id in sorted(ids):
-        all_matches.extend(_fetch_multi_book(sport_id))
+        # UN SPORT NE FAIT PLUS TOMBER LE SCAN (2026-10-29). Une donnée de
+        # source inattendue (KeyError de flip_exchange_prices, 09/10 et
+        # 13/10) levait d'ici jusqu'au processus : scan standard PAYÉ, rien
+        # d'écrit pour AUCUN sport. Le sport fautif est sauté, les autres
+        # vont au bout — et le run sort quand même en ÉCHEC à la fin
+        # (run_engine, echecs_recolte) : isoler n'est pas taire.
+        try:
+            all_matches.extend(_fetch_multi_book(sport_id))
+        except Exception as e:                                   # noqa: BLE001
+            nom = _ODDS_API_IO_BY_ID.get(sport_id) or f"sport {sport_id}"
+            log.exception("RÉCOLTE | %s en échec — sauté, les autres sports continuent", nom)
+            _ECHECS_RECOLTE.append(f"{nom}: {type(e).__name__}: {e}")
     return all_matches
+
+
+# Échecs de la DERNIÈRE récolte (fetch_matches) : lus par run_engine en fin de
+# run pour sortir en échec après avoir écrit ce qui a pu l'être.
+_ECHECS_RECOLTE: list[str] = []
+
+
+def echecs_recolte() -> list[str]:
+    """Les sports dont la dernière récolte a levé, avec le motif."""
+    return list(_ECHECS_RECOLTE)
 
 # Betfair (Tier 1.5 historique) RETIRÉ le 2026-09-09 — décision opérateur,
 # règle 13 : 0 marché chargé depuis le 2026-07-09, compte banni, nouveau

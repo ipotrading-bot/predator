@@ -124,6 +124,11 @@ def determine_outcome(sport: str, market_key: str, selection_name: str,
         is_home = resolve_selection_side(selection_name, home, away)
         if is_home is None:
             return "UNKNOWN"
+        # Moneyline à DEUX issues (NFL, MMA, tennis…) : un nul rend la mise —
+        # il n'y avait pas de nul à parier. Il sortait LOSS jusqu'au
+        # 2026-10-29 (audit général).
+        if home_score == away_score:
+            return "PUSH"
         won = (is_home and home_score > away_score) or (not is_home and away_score > home_score)
         return "WIN" if won else "LOSS"
 
@@ -141,7 +146,14 @@ def determine_outcome(sport: str, market_key: str, selection_name: str,
             return "UNKNOWN"
         if total == line:
             return "PUSH"
-        return "WIN" if ("over" in sel and total > line) or ("under" in sel and total < line) else "LOSS"
+        # Le CÔTÉ vient du marché (`totals_over` / `totals_under`), le libellé
+        # ne sert qu'en repli. Un libellé sans « over » ni « under » sortait
+        # LOSS d'office jusqu'au 2026-10-29 : sans côté connu, UNKNOWN.
+        cote_over = (market_key == "totals_over" or (market_key == "totals" and "over" in sel))
+        cote_under = (market_key == "totals_under" or (market_key == "totals" and "under" in sel))
+        if cote_over == cote_under:
+            return "UNKNOWN"
+        return "WIN" if (cote_over and total > line) or (cote_under and total < line) else "LOSS"
 
     if "spreads" in market_key:
         point = _ligne_du_libelle(sel)

@@ -3664,6 +3664,80 @@ même façon pour tous les segments ne dit rien d'un segment** : la lire contre
 sa moyenne commune. Gardiens : `tests/test_seuils_sans_cliquet.py`,
 `tests/test_ecart_sharp.py`, `tests/test_incident_2026_09_15.py::TestCliquet`.
 
+### Audit général du 2026-10-29 : jumeaux sans date, retournement d'exchange, nul NFL, droits publics, taxe
+
+Demande opérateur : « auditer le code, les principes, les mécanismes, les
+procédures ». Méthode : contrôles de cohérence en base, re-règlement d'un
+échantillon, contre-vérification entre deux sources, calculs vérifiés à la
+main, conseillers Supabase, test de fumée du dashboard, relecture ciblée des
+chemins qui décident d'un WIN/LOSS ou d'une émission.
+
+**Ce qui tient** (mesuré, pas supposé) :
+- Règlement reproductible : 247 sur 247 paris des 21 derniers jours re-réglés
+  à l'identique (2 introuvables aujourd'hui).
+- Scores ESPN et LiveScore concordants sur 150 matchs couverts par les deux.
+- Dévig (3 méthodes), DNB, EV, Wilson, point mort et Kelly justes contre des
+  valeurs calculées à la main.
+- En base : aucun doublon actif, aucune cote ou probabilité aberrante, aucun
+  edge au-dessus de MAX_EDGE, aucun CLV sans prix de clôture (règle 14),
+  aucun signal actif oublié.
+- Dashboard : toutes les routes, aucune fuite de gabarit, menus identiques.
+
+**Défauts corrigés** :
+1. **Jumeaux de ledger sans date** (`db._ledger_jumeau_reel`). La clé
+   (match, sélection, marché) sur 6 jours de RÈGLEMENT confondait deux matchs
+   différents entre les mêmes équipes, et le second résultat disparaissait.
+   Deux cas mesurés : 10184 (Giants–Padres, 12/09 au soir, Over 7.5, WIN),
+   avalé par 10162, le match de la veille ; 10072 (Dortmund–Villarreal senior,
+   WIN), avalé par 10064, le U19 du matin. Correctif : coups d'envoi lus dans
+   `signals`/`signals_archive`, fenêtre `match_reel.fenetre_jumeau_min`
+   (celle de l'émission) ; heure inconnue → on écrit.
+2. **`flip_exchange_prices`.** `row["2"]` levait sur une ligne d'exchange sans
+   moneyline. Trois scans standard PAYÉS sont tombés le 09/10, un quatrième
+   le 13/10 (`meta.scan_crash`). Le correctif du 10/10 n'avait protégé qu'un
+   appelant (`odds_api._apparie`). La fonction perdait aussi `commence_time`,
+   ce qui neutralisait, pour tout match tennis retourné, la clôture sur
+   l'heure réelle et le contrôle « même match à 12 h ».
+3. **Un sport faisait tomber le scan** (`harvester.fetch_matches`). Chaque
+   sport est désormais isolé, et le run sort quand même en ÉCHEC à chacune de
+   ses sorties (`run_engine._echouer_si_recolte_partielle`, motif dans
+   `meta.scan_crash`).
+4. **Nul en moneyline à deux issues réglé LOSS.** Le re-règlement l'a
+   trouvé : 10963, Commanders–Giants 27-27, RECOMMANDÉ, 1xbet 1,72, au
+   ledger en LOSS, alors qu'un nul rend la mise. Le côté d'un total se lit
+   désormais dans `market_key`, et un libellé illisible donne UNKNOWN au lieu
+   de LOSS.
+
+**Défauts relevés, NON corrigés ici** (écriture en base ou décision opérateur) :
+- Ligne de ledger 10963 à repasser en PUSH ; lignes 10072 et 10184 à
+  réinsérer ; `is_shadow` faux au ledger pour 9812, 9829, 9832 (true pour des
+  paris à T-2h51..4h15) et 9824 (false pour un fantôme). Une écriture
+  directe exige une instruction qui nomme le signal.
+- `sql/migrate_v10_24_durcissement_droits.sql`, écrite et NON appliquée
+  (application refusée par le garde de permissions de la session). `anon`
+  et `authenticated` gardent INSERT, UPDATE, DELETE et TRUNCATE sur sept
+  tables, plus les séquences. Seule la RLS les arrête, et TRUNCATE n'y est
+  pas soumis. S'y ajoutent trois vues SECURITY DEFINER inutilisées et deux
+  fonctions héritées exécutables par anon.
+- `meta` n'est jamais purgée : clés `quota_*` et `oddsapi_demande_*`
+  quotidiennes, `mesure_books_*` à 20-80 Ko par jour, clés de sources
+  retirées (`sevenm_*`, `source_scorecard_odds500`).
+
+**Principe — le constat qui pèse le plus** : sur les 436 recommandés
+post-époque, l'EV annoncée vaut +3,9 % hors taxe et −5,2 % après la retenue
+de 20 % sur les gains. Seuls 18 paris sur 436 avaient une espérance positive
+pour l'opérateur, et le réalisé fait +18,9 u hors taxe contre −20,9 u après
+taxe. Le plancher d'émission (`EV_EDGE_FLOOR` 1,5 %) est exprimé hors taxe,
+alors qu'à cote 1,85 il faut environ +10 % d'EV hors taxe pour être neutre
+après taxe. `TAX_RATE` reste une décision opérateur (règle 11) : rien n'a été
+changé, le constat lui est remis.
+
+À retenir : **une clé de dédoublonnage qui ignore le moment de l'événement
+confond les événements répétés** ; **une correction posée chez UN appelant
+laisse la cause vivante chez les autres** ; et **re-régler un échantillon
+contre la chaîne de production** est le contrôle qui a trouvé le nul NFL.
+Gardiens : `tests/test_ledger_jumeaux.py`, `tests/test_audit_general_2026_10_29.py`.
+
 ## Couche IA
 
 Le paysage des paliers gratuits change tous les mois. Rien de ce qui suit
