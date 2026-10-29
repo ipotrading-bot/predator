@@ -23,6 +23,8 @@ from core.db import (get_db, MissingCredentialsError,
                      log_to_ledger as _log_to_ledger,
                      is_unique_violation as _is_unique_violation)
 from core.harvester import echecs_recolte, fetch_matches
+from core.telegram_bilan import (lire_encore_jouables as _lire_encore_jouables,
+                                 section_encore_jouables)
 from core.closing_line import (capture_from_exchange, capture_from_scan,
                                reset_causes as _reset_causes_closing,
                                persister_causes as _persister_causes_closing)
@@ -749,8 +751,11 @@ def _note_harvest_result(sb, found: list) -> None:
 
 
 def _journaliser_alerte(key: str, text: str) -> None:
-    """Une alerte d'exploitation : au LOG, jamais sur Telegram (2026-10-29)."""
+    """Une alerte de PROBLÈME TECHNIQUE : au journal ET sur Telegram
+    (décision opérateur du 2026-10-29 : « garde les alertes de problèmes
+    techniques »)."""
     log.warning("ALERTE [%s] %s", key, text.replace("\n", " | "))
+    _telegram(text)
 
 
 def _alert_once(sb, key: str, text: str, ttl_h: float = _ALERT_TTL_H) -> bool:
@@ -761,8 +766,6 @@ def _alert_once(sb, key: str, text: str, ttl_h: float = _ALERT_TTL_H) -> bool:
         if age is not None and age < ttl_h:
             log.info("Alerte [%s] déjà envoyée il y a %.1fh — silence", key, age)
             return False
-    # Plus sur Telegram depuis le 2026-10-29 (décision opérateur : paris,
-    # résultats, bilan — rien d'autre). L'alerte reste au log et horodatée.
     _journaliser_alerte(key, text)
     if sb:
         _meta_stamp(sb, key, datetime.now(timezone.utc).isoformat())
@@ -3035,7 +3038,7 @@ def _signal_block(s: dict, now) -> str:
 
 
 def _telegram_signals(signals: list, now, matches: int, no_pin_count: int,
-                      shadowed: list | None = None):
+                      shadowed: list | None = None, encore: list | None = None):
     """Envoie CHAQUE pari recommandé, en simple — décision opérateur du
     2026-09-03 : « oublie les combinés, affiche ce qui est disponible ».
     Jusqu'ici Telegram ne recevait qu'un combiné viable après taxe par
@@ -3047,15 +3050,21 @@ def _telegram_signals(signals: list, now, matches: int, no_pin_count: int,
     compréhensible ») : événement, favori, sélection, cote, heure, valeur —
     aucune mise ni bankroll. Sans libellé de session (jargon).
     """
-    # TELEGRAM = TROIS MESSAGES (décision opérateur du 2026-10-29) : les paris
-    # à jouer (ici), les résultats après chaque audit et le bilan de la veille
-    # (core/telegram_bilan). Rien à jouer : SILENCE — plus de « Aucun pari ·
-    # N matchs analysés · écartés ».
+    # TELEGRAM SIMPLE (décisions opérateur du 2026-10-29) : les paris à jouer,
+    # puis TOUJOURS les paris encore jouables (`encore`, déjà annoncés,
+    # coup d'envoi devant nous). Plus de « N matchs analysés · écartés ».
+    # Rien de neuf ni d'encore jouable : SILENCE.
+    jouables = section_encore_jouables(encore or [], now, markdown=True)
+    if not signals and not jouables:
+        log.info("Telegram : rien à jouer — silence (%d matchs analysés)", matches)
+        return
     if not signals:
-        log.info("Telegram : aucun pari à jouer — silence (%d matchs analysés)", matches)
+        _telegram(f"📡 *PREDATOR* · {now.strftime('%H:%M')} UTC — aucun nouveau pari\n\n{jouables}")
         return
     header = f"📡 *PREDATOR* · {now.strftime('%H:%M')} UTC — {len(signals)} pari(s) à jouer\n"
     blocks = ["\n" + _signal_block(s, now) for s in sorted(signals, key=lambda s: _urgency_sort(s, now))]
+    if jouables:
+        blocks.append("\n" + jouables + "\n")
 
     # Telegram : 4096 caractères par message — on coupe entre deux paris,
     # jamais au milieu d'une entité Markdown.
@@ -3574,7 +3583,7 @@ def run():
     # l'oracle : le moteur ne compare plus jamais un prix soft réel à un prix
     # sharp inventé.
     if not matches:
-        log.warning("0 signal — toutes sources épuisées")
+        _journaliser_alerte("sources_epuisees", "⚠️ PREDATOR : 0 match — toutes les sources de cotes sont épuisées.")
         if sb:
             _heartbeat(sb, now, 0, 0)
         _echouer_si_recolte_partielle()
@@ -3710,6 +3719,11 @@ def run():
     # running as normal — only the outward Telegram recommendation stops.
     if sb and _risk_manager.check_circuit_breaker(sb):
         log.critical("Circuit breaker active — system emission paused, manual resume required")
+        _journaliser_alerte("disjoncteur",
+            f"🔴 PREDATOR : PAUSE AUTOMATIQUE — drawdown roulant > "
+            f"{_risk_manager.DRAWDOWN_LIMIT_PCT*100:.0f}% sur les "
+            f"{_risk_manager.DRAWDOWN_WINDOW_N} derniers paris réglés. "
+            f"Plus aucun pari annoncé — reprise manuelle uniquement.")
     else:
         # Per-sport circuit breaker: a sport in its own genuine bad streak
         # (core.risk_manager.check_circuit_breaker_by_sport) stops
@@ -3725,6 +3739,10 @@ def run():
                 emit_signals = [s for s in recommandes if s.get("sport") not in paused_sports]
                 log.warning("Sport circuit breaker active for %s — excluded from Telegram",
                            ", ".join(sorted(paused_sports)))
+                _journaliser_alerte("disjoncteur_sport",
+                    f"🟠 PREDATOR : PAUSE de {', '.join(sorted(paused_sports))} — drawdown "
+                    f"roulant > {_risk_manager.DRAWDOWN_LIMIT_PCT*100:.0f}%. Autres sports "
+                    f"non affectés — reprise manuelle uniquement.")
         # (La partition fantôme a eu lieu AVANT la persistance, section B :
         # `emit_signals` ne contient déjà que des recommandés.) Chaque pari
         # part en SIMPLE, une fois (dédup 24 h) — plus de combiné.
@@ -3742,7 +3760,10 @@ def run():
             # « 13 matchs analysés · 1 écarté (< 2 h) » est le bilan honnête
             # du run — jusqu'au 2026-09-03 il se taisait, et l'opérateur ne
             # savait pas si le scan avait tourné.
-            _telegram_signals(a_annoncer, now, len(matches), no_pin_count, shadowed)
+            deja = {(s.get("match"), s.get("market_key"), s.get("selection_name"))
+                    for s in a_annoncer}
+            _telegram_signals(a_annoncer, now, len(matches), no_pin_count, shadowed,
+                              encore=_lire_encore_jouables(sb, now, deja))
 
     # Le résumé quotidien de la couche d'apprentissage ne part plus sur
     # Telegram (décision opérateur du 2026-10-29) : il reste dans

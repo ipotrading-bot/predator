@@ -3742,43 +3742,42 @@ laisse la cause vivante chez les autres** ; et **re-régler un échantillon
 contre la chaîne de production** est le contrôle qui a trouvé le nul NFL.
 Gardiens : `tests/test_ledger_jumeaux.py`, `tests/test_audit_general_2026_10_29.py`.
 
-### Telegram réduit à trois messages simples (2026-10-29, décision opérateur)
+### Telegram simplifié : paris + encore jouables, résultats, bilan, alertes techniques, lundi (2026-10-29, décisions opérateur)
 
-Demande : « mon Telegram est surchargé de données qui me servent à rien,
-j'aspire à plus de simplicité » ; puis « Telegram : les signaux à jouer,
+Demandes du jour, dans l'ordre : « mon Telegram est surchargé de données qui
+me servent à rien, j'aspire à plus de simplicité » ; « les signaux à jouer,
 les résultats après chaque audit, les gains/pertes du jour précédent, par
-exemple 22/11 4 gagnés 1 perdu taux 80 %. Simple, lisible. »
-
-Ce qui partait jusque-là : chaque scan standard même vide (« Aucun pari ·
-N matchs analysés · écartés »), le digest toutes les 2 h (rappel des paris
-🆕/⏳, anomalies, créneau manqué, moteur muet), le résumé d'apprentissage
-quotidien, les alertes (pool OddsAPI, périmètre, zéro match, disjoncteurs,
-audit stérile) et le rapport hebdo du lundi.
+exemple 22/11 4 gagnés 1 perdu taux 80 %. Simple, lisible » ; puis « garde
+les alertes de problèmes techniques et le rapport du lundi, mentionne
+toujours les paris encore jouables ».
 
 Ce qui part désormais :
 1. **paris à jouer** (`run_engine._telegram_signals`) : match, heure,
-   sélection @ cote, book, et l'avertissement « hors 1xbet » ; plus de valeur,
-   de favori ni de tranche ; silence quand il n'y a rien à jouer ;
-2. **résultats** de chaque audit (`core/telegram_bilan.annoncer_resultats`) :
-   recommandés entrés au ledger pendant le passage, ✅ ❌ ↩️ ;
-3. **bilan de la veille** (`annoncer_bilan_veille`) : au premier audit à
-   partir de 06:00 UTC, une seule fois par jour (`meta.bilan_veille`, envoi
-   raté = retenté). Il est placé dans l'AUDIT et non dans `reports.yml`, dont
-   les déclenchements sont irréguliers et parfois doublés (01:31 et 01:33 le
-   28/10) et qui n'a qu'une clé en lecture.
+   sélection @ cote, book, et l'avertissement « hors 1xbet » — plus de valeur,
+   de favori ni de tranche ;
+2. **paris encore jouables**, TOUJOURS, en fin du message des paris et du
+   message des résultats (`core/telegram_bilan.section_encore_jouables`).
+   Un scan standard sans nouveau pari les rappelle ; s'il n'y a ni l'un ni
+   l'autre, rien ne part ;
+3. **résultats** de chaque audit (`annoncer_resultats`), ✅ ❌ ↩️ ;
+4. **bilan de la veille** (`annoncer_bilan_veille`), au premier audit à partir
+   de 06:00 UTC, une seule fois par jour (`meta.bilan_veille`, envoi raté =
+   retenté). Il est placé dans l'AUDIT et non dans `reports.yml`, dont les
+   déclenchements sont irréguliers et parfois doublés (01:31 et 01:33 le
+   28/10) et qui n'a qu'une clé en lecture ;
+5. **alertes techniques** (`run_engine._journaliser_alerte` : journal ET
+   Telegram ; audit stérile ; `run_rapport` réduit à moteur muet, créneau
+   standard non servi et base injoignable) ;
+6. **rapport du lundi** (inchangé).
+
+Ne partent plus : le digest 🆕/⏳ toutes les 2 h (il doublait le scan), le
+résumé d'apprentissage quotidien, « N matchs analysés · écartés ».
 
 Le « taux » nu du bilan est une exception VOULUE à la règle 7, pour ce seul
 message : l'opérateur l'a demandé tel quel. Les analyses gardent Wilson.
 
-Ce qu'on perd et où le retrouver : les alertes ne passent plus que par les
-journaux (`_journaliser_alerte`) et `meta`. Un créneau standard non servi
-ne se signale plus de lui-même, `python scripts/ops.py watchdog` le dit à la
-demande. Le job `rapport` reste planifié mais muet, car le chien de garde
-Cloudflare surveille la fraîcheur de reports.yml. L'hebdo est imprimé, et
-envoyé seulement sur `--telegram`.
-
-Gardiens : `tests/test_telegram_format.py` (les trois messages et le silence
-du reste), `tests/test_engine_circuit_breaker.py::test_une_alerte_ne_part_jamais_sur_telegram`.
+Gardiens : `tests/test_telegram_format.py`, `tests/test_rapport_alertes.py`,
+`tests/test_engine_circuit_breaker.py::test_une_alerte_technique_part_sur_telegram`.
 
 ## Couche IA
 

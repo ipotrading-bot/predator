@@ -90,12 +90,12 @@ class TestPushMuet:
         assert wr.main(["--no-telegram"]) == 0
         assert envois == [], "un push ne doit RIEN envoyer sur Telegram"
 
-    def test_sans_drapeau_le_rapport_reste_muet(self, monkeypatch):
-        """Décision opérateur du 2026-10-29 : l'hebdo quitte Telegram ; il
-        n'y part plus que sur `--telegram`."""
+    def test_sans_drapeau_le_rapport_part(self, monkeypatch):
+        """Le rapport du lundi reste sur Telegram (décision opérateur du
+        2026-10-29)."""
         wr, envois = self._sans_base(monkeypatch)
-        assert wr.main([]) == 0 and envois == []
-        assert wr.main(["--telegram"]) == 0 and len(envois) == 1
+        assert wr.main([]) == 0
+        assert len(envois) == 1
 
     def test_le_workflow_passe_le_drapeau_sur_un_push(self):
         yml = open(".github/workflows/reports.yml", encoding="utf-8").read()

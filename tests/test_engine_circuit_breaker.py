@@ -72,10 +72,13 @@ def test_alert_once_dedupes_within_ttl(monkeypatch):
     assert len(sent) == 2
 
 
-def test_une_alerte_ne_part_jamais_sur_telegram(monkeypatch):
-    """Décision opérateur du 2026-10-29 : Telegram = paris, résultats, bilan."""
-    monkeypatch.setattr(eng, "_telegram", lambda t: (_ for _ in ()).throw(AssertionError(t)))
+def test_une_alerte_technique_part_sur_telegram(monkeypatch):
+    """Décision opérateur du 2026-10-29 : « garde les alertes de problèmes
+    techniques » — journal ET Telegram."""
+    sent = []
+    monkeypatch.setattr(eng, "_telegram", sent.append)
     assert eng._alert_once(FakeSB(), "alert_x", "hello") is True
+    assert sent == ["hello"]
 
 
 def test_alert_once_without_db_always_sends(monkeypatch):

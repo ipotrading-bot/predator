@@ -561,10 +561,12 @@ def _signaler_audit_sterile(sb, counts: dict, total: int) -> None:
            "Les chemins de score sont probablement indisponibles : api-sports "
            "(clé/budget), MLB statsapi, TheSportsDB. Chercher « score_sources » "
            "et « budget journalier atteint » dans le log du job.")
-    # Plus sur Telegram depuis le 2026-10-29 (décision opérateur : paris,
-    # résultats, bilan) — le log et le marqueur en base restent.
+    # Alerte de problème technique : journal ET Telegram (décision opérateur
+    # du 2026-10-29), texte brut.
     log.error("AUDIT STÉRILE — 0 réglé sur %d éligibles ; les signaux restent "
               "actifs et la purge est repoussée | %s", total, msg.replace("\n", " "))
+    from core.telegram_bilan import envoyer
+    envoyer(msg.replace("*", ""))
     try:
         sb.table("meta").upsert(
             {"key": SETTLEMENT_STARVED_KEY,
