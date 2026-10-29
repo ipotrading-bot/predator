@@ -3776,8 +3776,16 @@ résumé d'apprentissage quotidien, « N matchs analysés · écartés ».
 Le « taux » nu du bilan est une exception VOULUE à la règle 7, pour ce seul
 message : l'opérateur l'a demandé tel quel. Les analyses gardent Wilson.
 
+Défaut trouvé en vérifiant le scan de 13:10 : l'alerte « pool OddsAPI sous
+20 % » partait en Markdown, et le « _ » de `core/scan_windows` ouvrait un
+italique jamais fermé. Telegram l'a refusée (HTTP 400 « can't parse
+entities ») le 28/10 puis le 29/10 : elle n'a JAMAIS été reçue, alors que
+l'horodatage de déduplication était posé. `run_engine._telegram` renvoie
+désormais tout refus de mise en forme en texte brut.
+
 Gardiens : `tests/test_telegram_format.py`, `tests/test_rapport_alertes.py`,
 `tests/test_engine_circuit_breaker.py::test_une_alerte_technique_part_sur_telegram`.
+`tests/test_telegram_format.py::TestMarkdownRefuse`.
 
 ## Couche IA
 

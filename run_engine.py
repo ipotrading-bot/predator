@@ -390,15 +390,29 @@ def _telegram(text):
     if not TELEGRAM_TOKEN or not TELEGRAM_CHAT:
         log.warning("Telegram non configuré — message non envoyé")
         return
-    try:
-        url = f"https://api.telegram.org/bot{TELEGRAM_TOKEN}/sendMessage"
-        r = requests.post(url, json={"chat_id": TELEGRAM_CHAT, "text": text, "parse_mode": "Markdown"}, timeout=10)
-        if r.status_code != 200:
-            log.error("Telegram HTTP %d: %s", r.status_code, r.text[:300])
-        else:
-            log.info("Telegram envoyé (%d chars)", len(text))
-    except Exception as e:
-        log.error("Telegram: %s", e)
+    # MARKDOWN REFUSÉ → TEXTE BRUT (2026-10-29). Un « _ » hors entité ouvre un
+    # italique jamais fermé : l'alerte « pool OddsAPI sous 20 % » (qui cite
+    # core/scan_windows) a été refusée en HTTP 400 « can't parse entities » le
+    # 28/10 et le 29/10 — JAMAIS reçue, et son horodatage de dédup posé quand
+    # même. Même parade que scripts/weekly_report._send : le contenu compte
+    # plus que le gras.
+    url = f"https://api.telegram.org/bot{TELEGRAM_TOKEN}/sendMessage"
+    for brut in (False, True):
+        corps = {"chat_id": TELEGRAM_CHAT,
+                 "text": text.replace("*", "").replace("`", "") if brut else text}
+        if not brut:
+            corps["parse_mode"] = "Markdown"
+        try:
+            r = requests.post(url, json=corps, timeout=10)
+        except Exception as e:
+            log.error("Telegram: %s", e)
+            return
+        if r.status_code == 200:
+            log.info("Telegram envoyé (%d chars)%s", len(text), " en texte brut" if brut else "")
+            return
+        log.error("Telegram HTTP %d: %s", r.status_code, r.text[:300])
+        if not (r.status_code == 400 and "parse entities" in r.text):
+            return
 
 
 # Columns optional at DB level — strip only as last-resort fallback
