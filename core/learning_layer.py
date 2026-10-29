@@ -9,17 +9,15 @@ re-dérivation de l'edge d'entrée à partir des mêmes prix de scan que
 edge_pct : il est ~toujours >= 0 puisque MIN_EDGE a déjà rejeté les edges
 négatifs avant émission, donc positif que le pari ait gagné ou perdu.
 
-Le critère d'ajustement est la RENTABILITÉ mesurée du sport (p_breakeven :
-cote moyenne + TAX_RATE), pas un taux absolu. Les bornes fixes 60%/82% qui
-servaient jusqu'au 2026-08-06 formaient un cliquet à sens unique — la montée
-se déclenchait toujours, la descente jamais — qui a envoyé les planchers au
-plafond dur puis réduit l'émission à ~1 signal/jour. Voir _decide_threshold.
+Depuis le 2026-10-29, un seuil est une FONCTION de la preuve, sans mémoire
+(_verdict_seuil → _cible_seuil) : défaut du sport, sauf perte PROUVÉE
+(réalisé sous l'annoncé, z ≤ −1,96, ou Wilson haut sous le point mort) ou
+gain PROUVÉ — et seulement si les fantômes ne contredisent pas. Il ne bouge
+qu'après _LIGNES_NEUVES_MIN réglés neufs. Les règles d'avant avançaient par
+pas (+0,4 sans preuve, −0,2 avec) rejoués à chaque ligne neuve : un cliquet
+qui envoyait au plafond des sports gagnants (tennis 2,0 → 6,0 à 70 %).
 
-Beyond the per-sport win-rate, this module also cross-checks every
-raise/lower decision against two independent signals already sitting
-unused in ai_learning_ledger (_decide_threshold): the real closing-line CLV
-(_clv_stats, from clv_pct_real) and stated-confidence calibration
-(_calibration_flag, Brier score via core/stats_utils.py), and layers a
+The module also layers a
 finer (sport, market-family) threshold on top of the sport-wide one
 (load_segment_thresholds/_market_family) — a sport's h2h and totals markets
 don't necessarily share the same reliability. _edge_band_diagnostic() logs
@@ -33,8 +31,7 @@ import os
 from datetime import datetime, timezone
 
 from core.constants import CLOSING_SRC_ORACLE, TAX_RATE as _TAX_RATE, net_b, roi_net_of_tax
-from core.stats_utils import (bucket_predictions, brier_reference, brier_score,
-                              p_breakeven, wilson_ci)
+from core.stats_utils import brier_reference, brier_score, p_breakeven, wilson_ci
 
 log = logging.getLogger("LEARN")
 
@@ -132,9 +129,20 @@ SPORT_DEFAULTS: dict[str, float] = {
     "tennis":                2.0,
 }
 _THRESHOLD_MIN = 1.0   # Floor soccer — permet de capter amicaux et WC avec petit edge
-_THRESHOLD_MAX = 6.0   # Hard cap — relevé de 5.0 pour permettre ajustement sur sports bruyants
-_STEP_UP       = 0.4   # Pénalisation plus forte si CLV hit-rate < 60% (relevé 0.3→0.4)
-_STEP_DOWN     = 0.2   # Récompense inchangée — prudence sur la baisse de seuil
+_THRESHOLD_MAX = 6.0   # Hard cap — et seuil posé sur une PERTE PROUVÉE (voir _cible_seuil)
+
+# ── Décision de seuil SANS MÉMOIRE (2026-10-29) ─────────────────────────
+# Jusqu'au 2026-10-29, un seuil avançait par pas : +0,4 dès que la réussite
+# cumulée passait sous le point mort, rejoué à CHAQUE ligne neuve ; −0,2
+# seulement sur preuve à 95 %. Simulé : un sport à +5 % d'edge réel finit
+# au plafond 6,0 dans 51 % des cas en 60 paris. Constaté : tennis 2,0 → 6,0
+# à 70 % de réussite (z +1,45 contre l'annoncé). Le seuil est désormais une
+# FONCTION de la preuve, pas une marche aléatoire — voir _cible_seuil.
+_Z_PREUVE          = 1.96   # réalisé contre annoncé : preuve à 95 %, bilatérale
+_DETENTE           = 0.5    # abaissement sous le défaut du sport, sur gain prouvé
+_LIGNES_NEUVES_MIN = 20     # paris réglés neufs exigés entre deux mouvements d'un seuil
+_FANTOMES_MIN      = 10     # sous ce nombre, les fantômes ne contredisent rien
+_DERIVE_T_FREIN    = -2.0   # dérive EXCÉDENTAIRE (t) qui bloque un abaissement
 _MIN_SAMPLES   = 20    # Minimum closed signals before any adjustment. Ramené de 30 à 20 le
                        # 2026-08-06 en même temps que le filtre de zone jouable ci-dessous :
                        # celui-ci retire ~55% des lignes, et à 30 il ne restait plus AUCUN
@@ -142,19 +150,9 @@ _MIN_SAMPLES   = 20    # Minimum closed signals before any adjustment. Ramené d
                        # mécanisme se serait tu au lieu de se corriger. L'échantillon
                        # filtré est en outre homogène (même régime de jeu), donc 20 lignes
                        # y valent mieux que 30 lignes mélangeant trois régimes.
-_TARGET_LO     = 0.60  # Conservé pour la seule garde de surconfiance (_calibration_flag).
-                       # N'est PLUS le critère de montée du seuil — voir _decide_threshold.
-_TARGET_HI     = 0.82  # Idem : conservé pour compatibilité, plus utilisé comme critère.
-
-# ── Le CLV réel comme critère de PREMIER rang (2026-08-22) ───────────────
-# L'incertitude du CLV à n donné est ~4,2 points contre ~7,1 pour le
-# win-rate : il converge ~3x plus vite vers le verdict. D'où une barre
-# d'échantillon PLUS BASSE que _SEGMENT_MIN_SAMPLES (20) — c'est voulu, pas
-# une incohérence à « harmoniser » : le garde existant sur positive_rate
-# (descente bloquée) garde sa barre à 20, ces deux règles-ci jugent
-# l'AMPLITUDE (avg_clv), statistiquement plus riche qu'un simple taux.
+# Dérive sharp : nombre minimum de clôtures pour qu'elle freine quoi que ce
+# soit (voir _derive_excedent). Elle ne DÉCIDE plus d'aucune montée.
 _CLV_MIN_SAMPLES = 15
-_CLV_STRONG      = 1.0   # % — au-delà de ±1, le marché a tranché
 
 # ── Promotion / rétrogradation d'un sport (Phase 4 du recentrage, 2026-08-22) ──
 # Critères CHIFFRÉS, loggés dans meta (`sport_verdict_<sport>`), jamais
@@ -426,10 +424,6 @@ def dans_bande_cote(cote) -> bool:
         return False
     return BANDE_COTE_MIN <= c < BANDE_COTE_MAX
 
-# Écart de calibration toléré (probabilité annoncée − taux réalisé), en points.
-# Voir _calibration_flag pour la mesure qui a fixé cette valeur.
-_CALIBRATION_MAX_GAP = 0.10
-
 # ── Market-family segmentation (win/loss error analysis) ─────────────
 # ai_learning_ledger.market_type stores the raw market_key emitted by
 # run_engine.py's _emit() — an exact "h2h", but "totals_over"/"totals_under"
@@ -577,13 +571,13 @@ def _sport_stats(rows: list[dict]) -> dict:
     hit_rate = wins / n
     # La borne HAUTE sert autant que la basse depuis le 2026-08-06 : elle est ce
     # qui prouve une perte (borne haute sous la rentabilité), là où la basse
-    # prouve un gain. Voir _decide_threshold.
+    # prouve un gain. Voir _verdict_seuil.
     wilson_lower, wilson_upper = wilson_ci(wins, n)
 
     odds_vals = [r["odds"] for r in decisive if r.get("odds")]
     avg_odds = sum(odds_vals) / len(odds_vals) if odds_vals else None
     # Explicit constants.TAX_RATE, never p_breakeven's own bare default —
-    # this breakeven gates _decide_threshold's lowering decision (below),
+    # this breakeven gates _verdict_seuil's gain/loss decision (below),
     # and a caller relying on the default silently re-introduces the exact
     # bug this fixed: TAX_RATE=0.0 (operator-zeroed) vs the default's 0.20
     # froze every lowering behind a ~25%-harder breakeven than the account's
@@ -646,7 +640,7 @@ def _clv_stats(rows: list[dict]) -> dict:
 def _derive_stats(rows: list[dict]) -> dict:
     """Dérive du prix SHARP entre l'émission et la clôture, en % du prix —
     la même forme et la même unité que `_clv_stats` (`n`, `avg_clv`,
-    `positive_rate`), pour que `_decide_threshold` la lise sans changer.
+    `positive_rate`), lue par _derive_excedent (frein) et par calibration_stats.
 
         dérive = (1 / sharp_prob) / closing_pinnacle_price − 1
 
@@ -671,6 +665,16 @@ def _derive_stats(rows: list[dict]) -> dict:
     dérive, celle qui DÉCIDE des seuils. Aucune n'entrait dans les mesures
     appliquées ce jour-là (signaux antérieurs à l'époque) — le filtre tient
     le jour où l'époque bouge."""
+    derives = _derive_valeurs(rows)
+    n = len(derives)
+    if n == 0:
+        return {"n": 0, "avg_clv": None, "positive_rate": None}
+    return {"n": n, "avg_clv": sum(derives) / n,
+            "positive_rate": sum(1 for d in derives if d > 0) / n}
+
+
+def _derive_valeurs(rows: list[dict]) -> list[float]:
+    """Une dérive par ligne qui en porte une (voir _derive_stats), en %."""
     derives = []
     for r in rows:
         if r.get("closing_source") == CLOSING_SRC_ORACLE:
@@ -683,11 +687,34 @@ def _derive_stats(rows: list[dict]) -> dict:
         if p <= 0 or close <= 1.0:
             continue
         derives.append(((1 / p) / close - 1) * 100)
-    n = len(derives)
-    if n == 0:
-        return {"n": 0, "avg_clv": None, "positive_rate": None}
-    return {"n": n, "avg_clv": sum(derives) / n,
-            "positive_rate": sum(1 for d in derives if d > 0) / n}
+    return derives
+
+
+def _derive_excedent(rows: list[dict], reference: float | None) -> dict:
+    """Dérive du segment MOINS la dérive moyenne de tout le ledger, avec son t.
+
+    Pourquoi un excédent (2026-10-29) : la dérive brute est BIAISÉE. Mesurée
+    sur 617 clôtures post-époque, elle vaut −0,64 % en moyenne (t −2,70)
+    alors que les résultats collent au prix d'ENTRÉE — 329 gagnés pour 329,4
+    annoncés à l'entrée, 327,3 à la clôture. La clôture est le milieu
+    ARITHMÉTIQUE back/lay d'un exchange, non dévigé, comparé à un prix
+    d'entrée venu d'une autre source : une part de la « dérive » est la
+    fourchette, pas le marché. Elle pèse plus là où la fourchette est large :
+    tennis −1,45 %, et la règle « < −1 % → ↑ » a poussé le tennis de 2,0 à
+    6,0 pendant qu'il gagnait 70 %. Seul l'écart à la référence commune peut
+    porter une information propre au segment.
+
+    Renvoie {"n", "excedent", "t"} ; t vaut None sous _CLV_MIN_SAMPLES
+    clôtures, sans référence, ou sur un échantillon sans dispersion."""
+    vals = _derive_valeurs(rows)
+    n = len(vals)
+    if reference is None or n < _CLV_MIN_SAMPLES:
+        return {"n": n, "excedent": None, "t": None}
+    ecarts = [v - reference for v in vals]
+    moy = sum(ecarts) / n
+    var = sum((e - moy) ** 2 for e in ecarts) / (n - 1)
+    t = moy / (var / n) ** 0.5 if var > 0 else None
+    return {"n": n, "excedent": moy, "t": t}
 
 
 _EDGE_BUCKETS = [(0.0, 2.0), (2.0, 4.0), (4.0, 8.0), (8.0, 100.0)]
@@ -710,7 +737,7 @@ def _top_band_verdict(rows: list[dict]) -> tuple[bool, float | None, int, float 
 
     Renvoie (sous_performe, plafond, n, plancher_de_la_meilleure_bande).
 
-    C'est la mesure qui manquait à _decide_threshold. Celui-ci n'a qu'un
+    C'est la mesure qui manquait à l'ancienne règle de seuil (avant le 2026-10-29), qui n'avait qu'un
     levier — le PLANCHER d'edge — et le monte quand un sport perd. Or si ce
     sont justement les gros edges qui perdent, monter le plancher pousse
     toute l'émission dans la bande perdante et aggrave le résultat, qui fait
@@ -843,7 +870,7 @@ def _edge_band_diagnostic(sport: str, rows: list[dict]) -> str | None:
     more likely to be real, not noise) is otherwise never checked against
     actual outcomes. Diagnostic only, never a gate: per-bucket samples are
     too small to safely auto-act on (same reasoning as the Wilson-CI gate
-    in _decide_threshold). This exists to surface a systematic pattern —
+    of the threshold verdict, _verdict_seuil). This exists to surface a systematic pattern —
     e.g. the top bucket, nearest SUSPECT_EDGE (core/constants.py), losing
     MORE than lower buckets, a classic sign of a data/team-matching error
     inflating the apparent edge rather than a real market inefficiency.
@@ -891,51 +918,6 @@ def _edge_band_diagnostic(sport: str, rows: list[dict]) -> str | None:
     return None
 
 
-def _calibration_flag(rows: list[dict]) -> bool:
-    """
-    True if the segment's stated confidence (sharp_prob) is systematically
-    overconfident — reuses core/stats_utils.py's bucket_predictions(),
-    already computed for the /performance dashboard but never fed back into
-    a threshold decision. Catches a blind spot raw win-rate can't: a sport
-    can sit inside the healthy 60-82% win-rate band while its highest-
-    confidence bucket (80%+ stated) quietly wins far less than 80% of the
-    time — real decay in the model's OWN probability estimate, not just in
-    whether bets happen to land.
-    """
-    preds = [(r["sharp_prob"], 1 if r["outcome"] == "WIN" else 0)
-             for r in rows if r.get("outcome") in _DECISIVE_OUTCOMES and r.get("sharp_prob") is not None]
-    if len(preds) < _SEGMENT_MIN_SAMPLES:
-        return False
-    buckets = bucket_predictions(preds)
-    top = buckets.get("80-100%")
-    if top and top["n"] >= 10 and top["win_rate"] is not None and top["win_rate"] < 0.65:
-        return True
-    # La surconfiance se mesure par l'ÉCART DE CALIBRATION — probabilité
-    # moyenne annoncée moins taux de réussite réel — et non par un Brier
-    # comparé à une constante.
-    #
-    # Le seuil dur `brier > 0.23` utilisé jusqu'au 2026-08-06 était
-    # inatteignable : le Brier a un plancher irréductible de p(1-p) (0,2500 à
-    # p=0,50 ; 0,2475 à 0,55 ; voir stats_utils.brier_reference), donc un
-    # portefeuille de quasi pile-ou-face le dépasse toujours, même parfaitement
-    # calibré. Mesuré ce jour-là : le drapeau se levait sur TOUS les sports, y
-    # compris football (0,2319 pour une référence de 0,2365) et basket (0,2304
-    # pour 0,2463) qui battaient pourtant leur propre référence. Comme il force
-    # une hausse de plancher dans _decide_threshold, il formait un second
-    # cliquet, indépendant de celui des 60%/82%, montant les seuils de 0,4 à
-    # chaque audit.
-    #
-    # L'écart de calibration n'a pas ce défaut : il est directement lisible en
-    # points de pourcentage et ne dépend pas de la difficulté des paris. Marge
-    # à 10 points — au-delà du bruit d'échantillonnage sur quelques dizaines de
-    # paris, et cohérent avec les mesures du 2026-08-06 : zone jouable -7,3
-    # (sous-confiant, sain), football -7,4, basket -20,9, contre baseball +15,2
-    # sur son historique complet, le seul réellement surconfiant.
-    stated   = sum(p for p, _ in preds) / len(preds)
-    realised = sum(o for _, o in preds) / len(preds)
-    return (stated - realised) > _CALIBRATION_MAX_GAP
-
-
 def _depuis_ouverture(r: dict) -> dict:
     """La ligne vue à son PREMIER prix (sql/migrate_v10_21) : `sharp_prob` du
     ledger est celui du dernier rafraîchissement, qui réécrit le prix d'un
@@ -956,7 +938,9 @@ def calibration_stats(rows: list[dict]) -> dict:
     règle 14), en % du prix, négative quand le marché est parti CONTRE la
     sélection. Plus rapide qu'un Wilson contre le point mort : le basket 6-24h
     sortait à z −2,68 sur 19 paris, quand son Wilson touchait encore le point
-    mort. CONSULTATIF — rien ne lit ce résultat pour décider."""
+    mort. Lu par _verdict_seuil depuis le 2026-10-29 (critère de premier
+    rang des seuils) ; la découpe par tranche (calibration_par_tranche) reste
+    CONSULTATIVE."""
     lignes = [_depuis_ouverture(r) for r in rows
               if r.get("outcome") in _DECISIVE_OUTCOMES]
     preds = []
@@ -995,156 +979,111 @@ def calibration_par_tranche(rows: list[dict]) -> dict[str, dict]:
     return {k: calibration_stats(v) for k, v in tranches.items()}
 
 
-def _decide_threshold(old_t: float, stats: dict, clv: dict, overconfident: bool,
-                      top_band_fake: bool = False,
-                      best_band_lo: float | None = None) -> tuple[float | None, str]:
-    """
-    Shared raise/lower/hold decision, used for both the per-sport threshold
-    and each (sport, market-family) segment. Same core rule as before
-    (raising is always safe; lowering needs the Wilson-CI significance
-    gate), plus two corrections that use signals the raw win-rate can't see:
+def _lecture_calibration(zone: dict, fantomes: dict) -> str:
+    """« · annoncé 59% z +1.45 · fantômes z −0.40 (n=12) » : le réalisé lu
+    CONTRE la probabilité annoncée (règle 7 : jamais un taux nu)."""
+    txt = ""
+    if zone.get("z") is not None and zone.get("n"):
+        txt += f" · annoncé {zone['attendus'] / zone['n'] * 100:.0f}% z {zone['z']:+.2f}"
+    if fantomes.get("z") is not None and fantomes.get("n"):
+        txt += f" · fantômes z {fantomes['z']:+.2f} (n={fantomes['n']})"
+    return txt
 
-      - systematic overconfidence (_calibration_flag) forces a raise even
-        inside the healthy win-rate band, or blocks what would otherwise be
-        a lowering — a sport can look fine on win-rate alone while its own
-        stated probabilities are quietly wrong.
-      - a real-CLV disagreement (_clv_stats) blocks a would-be lowering: a
-        high win-rate the market itself never confirmed (CLV net negative)
-        is the classic signature of a lucky streak, not a real edge.
-        Conversely, a real-CLV net POSITIVE alongside a low win-rate still
-        raises the threshold (raising stays always-safe) but is tagged as
-        likely variance rather than genuine edge decay, so the operator can
-        tell the two apart in the rapport.
 
-    Depuis le 2026-08-22, le CLV réel est aussi un critère de PREMIER rang
-    (l'amplitude, plus seulement le taux) — il converge ~3x plus vite que le
-    win-rate :
-      - avg_clv < −_CLV_STRONG sur ≥ _CLV_MIN_SAMPLES lignes → ↑ sans
-        attendre que le win-rate décroche (sauf top_band_fake) ;
-      - avg_clv > +_CLV_STRONG, majorité de captures positives, hit_rate à
-        la rentabilité et pas de surconfiance → ↓ sans attendre la borne de
-        Wilson (jamais sous _THRESHOLD_MIN ; EV_EDGE_FLOOR reste le filet).
+def _verdict_seuil(zone: list[dict], fantomes: list[dict],
+                   derive_ref: float | None) -> tuple[str, str]:
+    """« perte », « gain » ou « neutre » pour un sport ou un segment, et la
+    raison lisible. SANS MÉMOIRE : la même preuve donne toujours le même
+    verdict, quel que soit le seuil en place (2026-10-29).
 
-    Returns (new_threshold_or_None, reason). None means "no change".
-    """
-    hit_rate = stats["hit_rate"]
+    Le critère est le RÉALISÉ CONTRE L'ANNONCÉ (`calibration_stats`, z) : un
+    moteur calibré gagne ce qu'il annonce, et c'est ce qu'il fait — 436
+    recommandés post-époque, 58,7 % réalisés pour 58,4 % annoncés (z +0,14).
+    Un segment ne mérite un autre seuil que s'il s'en écarte de façon PROUVÉE.
+    La borne de Wilson contre le point mort reste une seconde preuve, la
+    seule possible sur une ligne sans `sharp_prob`.
 
-    # Monter le plancher n'a de sens que si les gros edges valent mieux que les
-    # petits. Quand la bande haute sous-performe, c'est l'inverse : le relèvement
-    # concentre l'émission là où le sport perd le plus, ce qui dégrade le
-    # résultat et fait remonter le plancher au tour suivant — boucle jusqu'au
-    # plafond dur, puis silence total.
-    #
-    # Le plancher est donc ramené AU BAS DE LA MEILLEURE BANDE MESURÉE, d'un
-    # coup et non par pas de _STEP_DOWN : un plancher prouvé à l'intérieur de la
-    # bande perdante n'a aucune raison d'y être maintenu 22 audits de plus (à
-    # 0,2 par cycle, soccer aurait mis 5 jours à sortir de 6,0%). Le plafond
-    # d'edge coupe l'autre extrémité dans le même mouvement.
-    if top_band_fake and (hit_rate < _TARGET_LO or overconfident):
-        if best_band_lo is not None:
-            new_t = max(_THRESHOLD_MIN, min(_THRESHOLD_MAX, round(best_band_lo, 2)))
-            if new_t != old_t:
-                return new_t, (f"{_lecture_stats(stats)} faible mais la bande HAUTE "
-                               f"sous-performe — plancher ramené sur la meilleure bande "
-                               f"mesurée ({new_t:.1f}%), plafond d'edge appliqué")
-        return None, (f"{_lecture_stats(stats)} faible mais la bande d'edge HAUTE "
-                      f"sous-performe — relever le plancher pousserait l'émission "
-                      f"dans la bande perdante ; plancher tenu, plafond d'edge appliqué")
+    Les FANTÔMES (même sport, hors zone jouable) servent de contre-épreuve :
+    mesuré le 2026-10-29, presque tous les « motifs » de segment
+    s'inversaient entre la zone et les fantômes (football sous 4 % d'edge :
+    +21,8 u en zone, −22,7 u en fantômes). Un motif que les fantômes
+    contredisent n'est pas retenu ; s'ils vont dans le même sens, ils
+    s'ajoutent à la preuve.
 
-    if overconfident and not (hit_rate < _TARGET_LO):
-        new_t = min(_THRESHOLD_MAX, round(old_t + _STEP_UP, 2))
-        return new_t, f"{_lecture_stats(stats)} ok but overconfident on 80%+ picks → ↑"
+    La dérive sharp ne décide plus d'aucune montée : biaisée de −0,64 %
+    (voir _derive_excedent), elle a poussé le tennis de 2,0 à 6,0 pendant
+    qu'il battait son annonce. Seul son EXCÉDENT significatif freine un
+    abaissement."""
+    stats = _sport_stats(zone)
+    cz, cf = calibration_stats(zone), calibration_stats(fantomes)
+    z_pool = calibration_stats(list(zone) + list(fantomes))["z"]
+    be, lo, hi = stats["p_breakeven"], stats["wilson_lower"], stats["wilson_upper"]
+    lecture = _lecture_stats(stats) + _lecture_calibration(cz, cf)
 
-    # ── Montée sur CLV réel nettement négatif — sans attendre le win-rate ──
-    # Un CLV moyen sous −1% sur ≥15 lignes dit que le marché n'a JAMAIS
-    # confirmé ces prix : le win-rate peut encore avoir l'air correct par
-    # variance, le verdict CLV arrive ~3x plus vite. Le garde top_band_fake
-    # garde la priorité (monter le plancher pousserait l'émission dans la
-    # bande mesurée perdante — même logique que le bloc au-dessus).
-    if (not top_band_fake and clv.get("avg_clv") is not None
-            and clv["n"] >= _CLV_MIN_SAMPLES and clv["avg_clv"] < -_CLV_STRONG):
-        new_t = min(_THRESHOLD_MAX, round(old_t + _STEP_UP, 2))
-        if new_t != old_t:
-            return new_t, (f"dérive sharp moyenne {clv['avg_clv']:+.2f}% sur {clv['n']} "
-                           f"lignes — le marché s'est éloigné de nos sélections → ↑ "
-                           f"(sans attendre le win-rate)")
+    # Sens du segment : z s'il existe, sinon réussite contre point mort.
+    if cz["z"] is not None:
+        sens = cz["z"]
+    elif be is not None and stats["hit_rate"] is not None:
+        sens = stats["hit_rate"] - be
+    else:
+        return "neutre", f"{lecture} — ni probabilité annoncée ni cote : hold"
+    contre = (cf["z"] if cf["n"] >= _FANTOMES_MIN and cf["z"] is not None else None)
 
-    # ── Le critère est la RENTABILITÉ mesurée, plus un taux absolu ───────
-    #
-    # Jusqu'au 2026-08-06 : monter si hit_rate < 60%, descendre si > 82%.
-    # Ces deux bornes fixes formaient un cliquet à sens unique. Un pari à cote
-    # 1,85 est rentable dès 54,1% de réussite ; exiger 60% condamnait donc des
-    # sports profitables à voir leur plancher monter de 0,4 par audit, tandis
-    # que la descente attendait 82% — un taux qu'aucun paris sportif tenable ne
-    # produit (le meilleur segment mesuré du ledger plafonne à 65%). Résultat
-    # constaté en base le 2026-08-06 : threshold_basketball = 6,0% = le plafond
-    # dur, pour un sport qui gagne 61,5% dans sa zone jouable là où 54,7%
-    # suffisent — et 0 signal basketball émis depuis le 29 juillet. Idem pour
-    # threshold_seg_soccer_totals et les deux segments baseball, tous à 6,0.
-    #
-    # La règle compare désormais le résultat au seuil de rentabilité réel du
-    # sport (p_breakeven, qui tient déjà compte de la cote moyenne ET de
-    # TAX_RATE), et reste délibérément ASYMÉTRIQUE :
-    #   - taux observé SOUS la rentabilité       → ↑   (pas de preuve exigée)
-    #   - borne basse de Wilson AU-DESSUS        → ↓   (preuve exigée)
-    #   - sinon                                  → hold
-    # L'asymétrie est le point : monter le plancher est réversible et ne fait
-    # que filtrer davantage, tandis que le baisser expose du capital sur un
-    # edge non prouvé. Exiger une preuve des deux côtés laisserait tourner un
-    # sport perdant pendant des dizaines d'audits, le temps que l'intervalle se
-    # resserre. Ce qui change vraiment par rapport aux 60%/82% fixes, c'est la
-    # RÉFÉRENCE : elle suit maintenant la cote du sport au lieu d'un taux
-    # absolu qu'un livre à cote basse ne peut pas atteindre.
-    be = stats["p_breakeven"]
-    lo = stats["wilson_lower"]
+    if sens < 0:
+        if contre is not None and contre > 0:
+            return "neutre", (f"{lecture} : les fantômes contredisent — motif "
+                              f"non retenu, seuil par défaut")
+        if ((z_pool is not None and z_pool <= -_Z_PREUVE)
+                or (hi is not None and be is not None and hi < be)):
+            return "perte", f"{lecture} : perte prouvée → seuil relevé"
+    elif sens > 0:
+        if contre is not None and contre < 0:
+            return "neutre", (f"{lecture} : les fantômes contredisent — motif "
+                              f"non retenu, seuil par défaut")
+        if ((z_pool is not None and z_pool >= _Z_PREUVE)
+                or (lo is not None and be is not None and lo > be)):
+            dx = _derive_excedent(zone, derive_ref)
+            if dx["t"] is not None and dx["t"] <= _DERIVE_T_FREIN:
+                return "neutre", (f"{lecture} : gain prouvé mais dérive excédentaire "
+                                  f"{dx['excedent']:+.2f}% (t {dx['t']:+.1f}, n={dx['n']}) "
+                                  f"— le marché ne confirme pas, seuil par défaut")
+            return "gain", f"{lecture} : gain prouvé → seuil abaissé"
+    return "neutre", f"{lecture} : ni perte ni gain prouvés — seuil par défaut"
 
-    if be is None or lo is None:
-        # Pas de cote exploitable (ledger d'avant la migration v9.4) : on
-        # retombe sur l'ancien critère absolu plutôt que de ne rien faire.
-        if hit_rate < _TARGET_LO:
-            return (min(_THRESHOLD_MAX, round(old_t + _STEP_UP, 2)),
-                    f"{_lecture_stats(stats)} < {_TARGET_LO*100:.0f}% → ↑ "
-                    f"(pas de cote au ledger, critère absolu de repli)")
-        return None, f"{_lecture_stats(stats)} — pas de cote au ledger, hold"
 
-    if hit_rate < be:
-        new_t = min(_THRESHOLD_MAX, round(old_t + _STEP_UP, 2))
-        tag = ""
-        if clv["positive_rate"] is not None and clv["positive_rate"] > 0.5:
-            tag = " (dérive sharp majoritairement positive — probable variance, à surveiller)"
-        return new_t, f"{_lecture_stats(stats)} : sous le point mort → ↑{tag}"
+def _cible_seuil(verdict: str, defaut: float) -> float | None:
+    """La valeur que le verdict IMPOSE ; None = rien de posé, le défaut vaut.
 
-    if lo > be:
-        if (clv["positive_rate"] is not None and clv["n"] >= _SEGMENT_MIN_SAMPLES
-                and clv["positive_rate"] < 0.5):
-            return None, (f"gain établi ({lo*100:.0f}% > {be*100:.0f}%) mais dérive sharp "
-                          f"défavorable ({clv['positive_rate']*100:.0f}% positive sur "
-                          f"{clv['n']} lignes) — le marché ne confirme pas, hold")
-        new_t = max(_THRESHOLD_MIN, round(old_t - _STEP_DOWN, 2))
-        return new_t, (f"gain établi : borne basse {lo*100:.0f}% > rentabilité "
-                       f"{be*100:.0f}% (n={stats['n']}) → ↓")
+    Une perte prouvée pose le plafond dur : le relèvement par pas ne servait
+    à rien, l'edge ne prédisant pas le résultat au-delà de la probabilité
+    annoncée (2026-10-29 : z ≈ 0 dans toutes les bandes d'edge). Un gain
+    prouvé abaisse d'un cran sous le défaut — EV_EDGE_FLOOR reste le filet au
+    chargement (run_engine._segment_min_edge)."""
+    if verdict == "perte":
+        return _THRESHOLD_MAX
+    if verdict == "gain":
+        return max(_THRESHOLD_MIN, round(defaut - _DETENTE, 2))
+    return None
 
-    # ── Descente accélérée sur CLV réel nettement positif ────────────────
-    # La borne de Wilson exige des dizaines de paris réglés ; un CLV moyen
-    # au-dessus de +1% sur ≥15 lignes, avec une majorité de captures
-    # positives, est la preuve que le marché confirme — plus rapide et plus
-    # robuste au tirage. Jamais sous _THRESHOLD_MIN, et run_engine clampe de
-    # toute façon à EV_EDGE_FLOOR (1,5%) au chargement : le filet tient même
-    # si cette règle se trompe. Bloquée par la surconfiance (cohérence avec
-    # le bloc du haut) et par un hit_rate sous la rentabilité (la montée a
-    # déjà primé, la garde rend l'invariant explicite si l'ordre bougeait).
-    if (hit_rate >= be and not overconfident
-            and clv.get("avg_clv") is not None and clv["n"] >= _CLV_MIN_SAMPLES
-            and clv["avg_clv"] > _CLV_STRONG
-            and clv.get("positive_rate") is not None and clv["positive_rate"] >= 0.5):
-        new_t = max(_THRESHOLD_MIN, round(old_t - _STEP_DOWN, 2))
-        if new_t != old_t:
-            return new_t, (f"dérive sharp moyenne {clv['avg_clv']:+.2f}% ({clv['n']} lignes, "
-                           f"{clv['positive_rate']*100:.0f}% positives) — le marché "
-                           f"confirme → ↓ sans attendre la borne de Wilson")
 
-    return None, (f"{_lecture_stats(stats)} : l'intervalle chevauche le point mort "
-                  f"— ne tranche pas, hold")
+def _mouvement_permis(bases: dict, cle: str, n: int) -> bool:
+    """Un seuil ne bouge qu'après _LIGNES_NEUVES_MIN paris réglés neufs.
+
+    Le cliquet du 2026-09-15 (même échantillon rejoué à chaque audit) est un
+    cas particulier : zéro ligne neuve. Celui du 2026-10-29 venait de l'autre
+    bout — une ligne neuve suffisait à rejouer +0,4. Une clé sans base connue
+    (jamais bougée par cette règle, ou posée par l'ancienne) se décide tout
+    de suite : c'est ce qui réévalue les seuils hérités du cliquet. Un
+    échantillon qui RÉTRÉCIT (archivage) n'est plus le même : décision
+    permise."""
+    base = bases.get(cle)
+    if base is None:
+        return True
+    try:
+        n0 = int(str(base).split(":", 1)[0])
+    except ValueError:
+        return True
+    return n < n0 or n - n0 >= _LIGNES_NEUVES_MIN
 
 
 _LEDGER_SELECT = ("signal_id, outcome, kelly_pct, odds, market_type, initial_edge, sharp_prob, "
@@ -1294,7 +1233,11 @@ def _drop_stale_ceiling(sb, key: str, sport: str, ancienne, summary_lines: list[
                     sport, key, e)
 
 
-_BASES_KEY = "learning_bases"
+# v2 depuis le 2026-10-29 : les bases de l'ancienne règle (`learning_bases`,
+# une empreinte par pas de +0,4) ne disent rien de la nouvelle. Une clé
+# absente d'ici se décide tout de suite (_mouvement_permis), ce qui réévalue
+# en un audit chaque seuil hérité du cliquet.
+_BASES_KEY = "learning_bases_v2"
 
 
 def _empreinte(rows: list[dict]) -> str:
@@ -1318,10 +1261,45 @@ def _charger_bases(sb) -> dict[str, str]:
     return {}
 
 
+def _decisives(rows: list[dict]) -> list[dict]:
+    return [r for r in rows if r.get("outcome") in _DECISIVE_OUTCOMES]
+
+
+def _poser_ou_retirer(sb, cle: str, sport: str, posee: float | None,
+                      cible: float | None, n: int, empreinte: str, bases: dict,
+                      raison: str, libelle: str, defaut: float,
+                      lignes: list[str], now: str) -> float | None:
+    """Applique la cible d'un seuil (None = aucune clé, le défaut vaut).
+    Renvoie la valeur en vigueur APRÈS l'appel — l'ancienne si le mouvement
+    est refusé (_mouvement_permis) ou si l'écriture échoue."""
+    if cible == posee:
+        return posee
+    if not _mouvement_permis(bases, cle, n):
+        log.info("[%s] %s tenu à %s : %s, mais moins de %d réglés neufs depuis le "
+                 "dernier mouvement (%s)", sport, cle, posee, raison,
+                 _LIGNES_NEUVES_MIN, bases.get(cle))
+        return posee
+    avant = posee if posee is not None else defaut
+    try:
+        if cible is None:
+            sb.table("meta").delete().eq("key", cle).execute()
+            lignes.append(f"{libelle}: seuil {avant:.2f}% → défaut {defaut:.2f}% ({raison})")
+        else:
+            sb.table("meta").upsert({"key": cle, "value": str(cible),
+                                     "updated_at": now}).execute()
+            lignes.append(f"{libelle}: seuil {avant:.2f}% → {cible:.2f}% ({raison})")
+    except Exception as e:
+        log.warning("[%s] %s non écrit (%s) — l'ancien reste en vigueur", sport, cle, e)
+        return posee
+    log.info("[%s] %s : %s → %s | %s", sport, cle, posee, cible, raison)
+    bases[cle] = empreinte
+    return cible
+
+
 def compute_and_save(sb) -> dict[str, float]:
     """
-    Re-compute thresholds from real WIN/LOSS history (plus real CLV and
-    calibration, see _decide_threshold) and persist them to `meta`. Returns
+    Re-compute thresholds from real WIN/LOSS history against the announced
+    probability (see _verdict_seuil) and persist them to `meta`. Returns
     the updated PER-SPORT threshold dict unchanged in shape/keys from
     before (callers/tests keying off plain sport names keep working as-is).
 
@@ -1346,11 +1324,11 @@ def compute_and_save(sb) -> dict[str, float]:
         seuils_poses = {r["key"] for r in (res_poses.data or [])}
     except Exception as e:
         log.warning("lecture des seuils posés : %s — aucun retrait ce tour", e)
-    # LE CLIQUET (2026-09-15). Chaque audit (toutes les 3 h) rejouait la
-    # décision sur les MÊMES lignes, en partant du seuil qu'il venait de
-    # bouger : `threshold_seg_baseball_totals` a pris +0,4 à chaque passage
-    # sur n=20 inchangé, jusqu'à 4,6 — et plus un MLB total jouable le 14/09.
-    # Un seuil ne bouge plus deux fois sur le même échantillon (règle 10).
+    # LES CLIQUETS. 2026-09-15 : chaque audit rejouait la décision sur les
+    # MÊMES lignes (`threshold_seg_baseball_totals` +0,4 par passage, jusqu'à
+    # 4,6). 2026-10-29 : une seule ligne neuve suffisait à rejouer +0,4. Un
+    # seuil ne bouge plus qu'après _LIGNES_NEUVES_MIN réglés neufs
+    # (_mouvement_permis), et sa valeur ne dépend plus de la précédente.
     bases = _charger_bases(sb)
     bases_avant = dict(bases)
     now     = datetime.now(timezone.utc).isoformat()
@@ -1365,10 +1343,11 @@ def compute_and_save(sb) -> dict[str, float]:
     calib_by_sport: dict[str, dict] = {}  # sport -> calibration_par_tranche, consultatif
     all_preds: list[tuple[float, int]] = []   # calibration, tous sports confondus
 
+    # Lecture de TOUS les sports avant toute décision (2026-10-29) : la dérive
+    # sharp ne se lit plus que contre sa moyenne commune (_derive_excedent),
+    # qui exige le ledger entier.
+    lus: dict[str, list[dict]] = {}
     for sport in SPORT_DEFAULTS:
-        # Tampon par sport : ce qui est DIT à l'opérateur passe par le filtre
-        # du périmètre en fin d'itération, ce qui est MESURÉ ne l'est jamais.
-        lignes_sport: list[str] = []
         try:
             # TOUTE l'époque, plus une fenêtre des N dernières lignes
             # (2026-09-27). La fenêtre de 120 comptait les FANTÔMES : le
@@ -1392,7 +1371,25 @@ def compute_and_save(sb) -> dict[str, float]:
                 log.warning("[%s] ledger sans prix d'ouverture (migration v10_21 ?) : %s",
                             sport, str(e)[:80])
                 res = _lire(_LEDGER_SELECT)
-            raw_rows = _dater_par_signal(sb, res.data or [])
+            lus[sport] = _dater_par_signal(sb, res.data or [])
+        except Exception as e:
+            log.error("learning_layer [%s] lecture : %s", sport, e)
+    toutes = [r for lignes in lus.values() for r in post_correction_rows(lignes)]
+    derives_communes = _derive_valeurs(toutes)
+    derive_ref = (sum(derives_communes) / len(derives_communes)
+                  if len(derives_communes) >= _CLV_MIN_SAMPLES else None)
+    if derive_ref is not None:
+        log.info("dérive sharp de référence %+.2f%% sur %d clôtures (biais commun, "
+                 "retranché de chaque segment)", derive_ref, len(derives_communes))
+
+    for sport in SPORT_DEFAULTS:
+        # Tampon par sport : ce qui est DIT à l'opérateur passe par le filtre
+        # du périmètre en fin d'itération, ce qui est MESURÉ ne l'est jamais.
+        lignes_sport: list[str] = []
+        if sport not in lus:
+            continue
+        try:
+            raw_rows = lus[sport]
             rows = playable_rows(raw_rows)
             if len(raw_rows) != len(rows):
                 log.info("[%s] apprentissage sur %d/%d lignes (zone jouable %d-%dmin)",
@@ -1436,7 +1433,7 @@ def compute_and_save(sb) -> dict[str, float]:
             # le 2026-09-10 les verdicts et le classement aussi (ci-dessus) ;
             # seuls les diagnostics de bandes et la calibration lisent encore
             # le ledger entier.
-            top_fake, ceiling, band_n, best_band_lo = _top_band_verdict(appliquables)
+            top_fake, ceiling, band_n, _meilleure = _top_band_verdict(appliquables)
             if top_fake and ceiling is not None:
                 log.warning("[%s] Plafond d'edge %.1f%% — la bande haute perd plus "
                             "que les basses sur %d résultats", sport, ceiling, band_n)
@@ -1471,43 +1468,30 @@ def compute_and_save(sb) -> dict[str, float]:
             # lignes post-époque, et un seuil posé que ces lignes ne portent
             # plus est RETIRÉ (retour à SPORT_DEFAULTS) — même mécanique que
             # les plafonds, même incident d'origine (f30b317).
-            stats_appl = stats                      # déjà post-correction
-            if stats_appl["n"] < _MIN_SAMPLES:
-                if f"threshold_{sport}" in seuils_poses:
-                    _drop_stale_ceiling(sb, f"threshold_{sport}", sport,
+            cle_seuil = f"threshold_{sport}"
+            # Contre-épreuve : les FANTÔMES du même sport (post-époque, hors
+            # zone jouable) — voir _verdict_seuil.
+            en_zone = {id(r) for r in rows}
+            fantomes = post_correction_rows([r for r in raw_rows if id(r) not in en_zone])
+            if stats["n"] < _MIN_SAMPLES:
+                if cle_seuil in seuils_poses:
+                    _drop_stale_ceiling(sb, cle_seuil, sport,
                                         current[sport], lignes_sport,
                                         nature="plancher appris")
                     updated[sport] = SPORT_DEFAULTS[sport]
                 log.info("[%s] %d réglés post-%s < %d — seuil par défaut (%.1f%%)",
-                         sport, stats_appl["n"], CALIBRATION_EPOCH, _MIN_SAMPLES,
+                         sport, stats["n"], CALIBRATION_EPOCH, _MIN_SAMPLES,
                          SPORT_DEFAULTS[sport])
             else:
-                old_t = current[sport]
-                cle_seuil = f"threshold_{sport}"
-                empreinte = _empreinte(appliquables)
-                clv = _derive_stats(appliquables)   # pas le CLV : voir _derive_stats
-                overconfident = _calibration_flag(appliquables)
-                if bases.get(cle_seuil) == empreinte:
-                    new_t, reason = None, (f"même échantillon qu'au dernier mouvement "
-                                           f"({empreinte}) — rien de neuf, hold")
-                else:
-                    new_t, reason = _decide_threshold(old_t, stats_appl, clv, overconfident,
-                                                      top_band_fake=top_fake,
-                                                      best_band_lo=best_band_lo)
-                if new_t is not None:
-                    bases[cle_seuil] = empreinte
-                    updated[sport] = new_t
-                    roi_str = f"{stats_appl['roi']*100:+.1f}%" if stats_appl["roi"] is not None else "n/a"
-                    log.info("[%s] Threshold %.2f%% → %.2f%% | %s | n=%d | ROI %s",
-                             sport, old_t, new_t, reason, stats_appl["n"], roi_str)
-                    sb.table("meta").upsert({
-                        "key":        f"threshold_{sport}",
-                        "value":      str(new_t),
-                        "updated_at": now,
-                    }).execute()
-                    lignes_sport.append(f"{sport}: seuil {old_t:.2f}% → {new_t:.2f}% ({reason})")
-                else:
-                    log.info("[%s] %s (%.1f%%)", sport, reason, old_t)
+                verdict, raison = _verdict_seuil(appliquables, fantomes, derive_ref)
+                log.info("[%s] verdict de seuil : %s — %s", sport, verdict, raison)
+                en_vigueur = _poser_ou_retirer(
+                    sb, cle_seuil, sport,
+                    current[sport] if cle_seuil in seuils_poses else None,
+                    _cible_seuil(verdict, SPORT_DEFAULTS[sport]),
+                    stats["n"], _empreinte(_decisives(appliquables)), bases, raison,
+                    sport, SPORT_DEFAULTS[sport], lignes_sport, now)
+                updated[sport] = en_vigueur if en_vigueur is not None else SPORT_DEFAULTS[sport]
 
             edge_warning = _edge_band_diagnostic(sport, rows)
             if edge_warning:
@@ -1538,25 +1522,16 @@ def compute_and_save(sb) -> dict[str, float]:
                                             segment_current[dict_key], lignes_sport,
                                             nature="plancher appris")
                     continue
-                seg_old = segment_current.get(dict_key, updated[sport])
-                fam_clv = _derive_stats(fam_rows)   # pas le CLV : voir _derive_stats
-                fam_overconfident = _calibration_flag(fam_rows)
-                fam_empreinte = _empreinte(fam_rows)
-                if bases.get(meta_key) == fam_empreinte:
-                    log.info("[%s/%s] seuil %.2f%% tenu — même échantillon qu'au "
-                             "dernier mouvement (%s)", sport, fam, seg_old, fam_empreinte)
-                    continue
-                seg_new, seg_reason = _decide_threshold(seg_old, fam_stats, fam_clv, fam_overconfident)
-                if seg_new is not None:
-                    bases[meta_key] = fam_empreinte
-                    log.info("[%s/%s] Segment threshold %.2f%% → %.2f%% | %s | n=%d",
-                             sport, fam, seg_old, seg_new, seg_reason, fam_stats["n"])
-                    sb.table("meta").upsert({
-                        "key":        meta_key,
-                        "value":      str(seg_new),
-                        "updated_at": now,
-                    }).execute()
-                    lignes_sport.append(f"{sport}/{fam}: seuil {seg_old:.2f}% → {seg_new:.2f}% ({seg_reason})")
+                fam_fantomes = [r for r in fantomes
+                                if _market_family(r.get("market_type")) == fam]
+                seg_verdict, seg_raison = _verdict_seuil(fam_rows, fam_fantomes, derive_ref)
+                log.info("[%s/%s] verdict de seuil : %s — %s", sport, fam, seg_verdict, seg_raison)
+                # Un segment NEUTRE ne pose rien : il hérite du seuil du sport.
+                _poser_ou_retirer(
+                    sb, meta_key, sport, segment_current.get(dict_key),
+                    _cible_seuil(seg_verdict, SPORT_DEFAULTS[sport]),
+                    fam_stats["n"], _empreinte(_decisives(fam_rows)), bases, seg_raison,
+                    f"{sport}/{fam}", updated[sport], lignes_sport, now)
 
             if sport in perimetre:
                 summary_lines.extend(lignes_sport)

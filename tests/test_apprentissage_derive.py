@@ -17,7 +17,7 @@ lui-même, sur la moitié des preuves, avec des étiquettes encore faillibles
 import inspect
 
 import core.learning_layer as ll
-from core.learning_layer import _decide_threshold, _derive_stats
+from core.learning_layer import _derive_stats, _verdict_seuil
 from core.score_sources import _espn_candidat
 from core.settlement import determine_outcome
 
@@ -60,28 +60,24 @@ class TestDerive:
         assert "closing_source" in ll._LEDGER_SELECT
 
     def test_meme_forme_que_le_clv(self):
-        """`_decide_threshold` la lit sans changer : mêmes clés, même unité."""
+        """Mêmes clés, même unité que le CLV affiché."""
         assert set(_derive_stats([_l(0.5, 1.9)])) == set(ll._clv_stats([{"clv_pct_real": 1.0}]))
 
 
 class TestDecisionSansCirculariteDuClv:
-    _stats = {"hit_rate": 0.65, "n": 40, "wilson_lower": 0.50, "p_breakeven": 0.55, "roi": None}
+    def test_un_clv_eleve_ne_prouve_rien(self):
+        """Avant le 2026-09-27 : CLV +5 % sur 20 lignes → « le marché
+        confirme → ↓ ». Le CLV contient l'edge d'entrée : il ne décide rien."""
+        lignes = ([_l(0.5, 2.0, clv_pct_real=5.0, outcome="WIN", odds=2.0)] * 11
+                  + [_l(0.5, 2.0, clv_pct_real=5.0, outcome="LOSS", odds=2.0)] * 9)
+        verdict, raison = _verdict_seuil(lignes, [], None)
+        assert verdict == "neutre" and "ni perte ni gain" in raison
 
-    def test_un_clv_eleve_a_derive_nulle_ne_descend_plus(self):
-        """Avant : CLV +5 % sur 20 lignes → « le marché confirme → ↓ ». La
-        dérive, nulle, ne confirme rien : hold."""
-        lignes = [_l(0.5, 2.0, clv_pct_real=5.0)] * 20
-        new_t, raison = _decide_threshold(2.0, self._stats, _derive_stats(lignes), False)
-        assert new_t is None and "hold" in raison
-        # Le même échantillon lu par l'ancien critère descendait :
-        ancien, _ = _decide_threshold(2.0, self._stats, ll._clv_stats(lignes), False)
-        assert ancien is not None and ancien < 2.0
-
-    def test_compute_and_save_decide_sur_la_derive(self):
-        src = inspect.getsource(ll.compute_and_save)
-        assert src.count("_derive_stats(") == 2          # sport et segments
-        assert "clv = _clv_stats" not in src and "fam_clv = _clv_stats" not in src
-        assert "clv_by_sport[sport] = _clv_stats(" in src   # l'AFFICHAGE garde le CLV
+    def test_la_decision_ne_lit_ni_le_clv_ni_la_derive_brute(self):
+        src = inspect.getsource(ll._verdict_seuil)
+        assert "_clv_stats" not in src and "_derive_stats" not in src
+        assert "_derive_excedent(" in src
+        assert "clv_by_sport[sport] = _clv_stats(" in inspect.getsource(ll.compute_and_save)
 
     def test_la_cloture_est_lue(self):
         assert "closing_pinnacle_price" in ll._LEDGER_SELECT

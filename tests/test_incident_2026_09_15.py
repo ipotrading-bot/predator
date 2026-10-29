@@ -258,15 +258,34 @@ class TestCliquet:
         assert store["threshold_soccer"] == sport
         assert store["threshold_seg_soccer_totals"] == segment
 
-    def test_une_ligne_neuve_rouvre_la_decision(self):
+    def test_une_ligne_neuve_ne_rouvre_plus_la_decision(self):
+        """Second cliquet (2026-10-29) : une SEULE ligne neuve rejouait +0,4.
+        Le seuil ne bouge plus qu'après ll._LIGNES_NEUVES_MIN réglés neufs, et
+        sa valeur ne dépend plus de la précédente."""
         rows = [_row("LOSS") for _ in range(ll._MIN_SAMPLES)]
         store: dict = {}
         sb = _SB({"soccer": rows}, store)
         ll.compute_and_save(sb)
-        premier = float(store["threshold_soccer"])
-        rows.append(_row("LOSS"))
+        premier = store["threshold_soccer"]
+        for _ in range(5):
+            rows.append(_row("LOSS"))
+            ll.compute_and_save(sb)
+        assert store["threshold_soccer"] == premier
+
+    def test_assez_de_lignes_neuves_rouvrent_la_decision(self):
+        """La perte s'efface : après _LIGNES_NEUVES_MIN gagnés, le seuil
+        revient au défaut — la clé est RETIRÉE, pas réécrite."""
+        rows = [_row("LOSS") for _ in range(ll._MIN_SAMPLES)]
+        store: dict = {}
+        sb = _SB({"soccer": rows}, store)
         ll.compute_and_save(sb)
-        assert float(store["threshold_soccer"]) > premier
+        assert "threshold_soccer" in store
+        rows.extend(_row("WIN") for _ in range(ll._LIGNES_NEUVES_MIN - 1))
+        ll.compute_and_save(sb)
+        assert "threshold_soccer" in store, "moins de lignes neuves que la barre"
+        rows.extend([_row("WIN")] * 6)          # 25/45 : plus rien de prouvé
+        ll.compute_and_save(sb)
+        assert "threshold_soccer" not in store
 
 
 def _bandes(gagnes_bas, n_bas, gagnes_haut, n_haut):
@@ -291,8 +310,7 @@ class TestPlafondEtBandes:
 
 class TestJamaisUnTauxNu:
     def test_les_raisons_de_seuil(self):
-        stats = ll._sport_stats([_row("WIN")] * 10 + [_row("LOSS")] * 10)
-        _t, raison = ll._decide_threshold(3.0, stats, ll._clv_stats([]), False)
+        _v, raison = ll._verdict_seuil([_row("WIN")] * 10 + [_row("LOSS")] * 10, [], None)
         assert "IC95" in raison and "point mort" in raison
         assert "win rate" not in raison
 

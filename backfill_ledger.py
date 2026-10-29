@@ -100,7 +100,6 @@ def run():
             "soft_book":             sig.get("soft_book"),
             "time_to_match_minutes": _ttm(sig.get("match_time"), sig.get("scanned_at")),
             "initial_edge":          sig.get("edge_pct"),
-            "sharp_divergence_std":  None,
             "clv_final":             clv,
             # Même formule que core/db.py::log_to_ledger (clv > 0) : un CLV
             # exactement nul n'est pas « positif ». Divergeait en >= depuis

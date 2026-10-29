@@ -22,9 +22,9 @@ from core.learning_layer import (
     SPORT_DEFAULTS,
     _MIN_SAMPLES,
     _SEGMENT_MIN_SAMPLES,
-    _calibration_flag,
+    _cible_seuil,
     _clv_stats,
-    _decide_threshold,
+    _verdict_seuil,
     _edge_band_diagnostic,
     _market_family,
     _sport_stats,
@@ -305,8 +305,9 @@ class TestBreakevenUsesOperatorTaxRate:
         assert stats["hit_rate"] > 0.82   # sanity : au-dessus de _TARGET_HI
         assert stats["wilson_lower"] > stats["p_breakeven"]
 
-        new_t, reason = _decide_threshold(2.0, stats, _clv_stats(rows), overconfident=False)
-        assert new_t == 1.8, f"abaissement bloqué : {reason}"
+        verdict, reason = _verdict_seuil(rows, [], None)
+        assert verdict == "gain", f"abaissement bloqué : {reason}"
+        assert _cible_seuil(verdict, 2.0) == 1.5
 
 
 class TestMarketFamily:
@@ -355,26 +356,6 @@ class TestClvStats:
         assert stats["positive_rate"] == 1.0
 
 
-class TestCalibrationFlag:
-    def test_well_calibrated_high_confidence_not_flagged(self):
-        # 80%+ stated confidence, ~80% real win rate — no overconfidence.
-        rows = ([_row("WIN", sharp_prob=0.85) for _ in range(16)]
-                + [_row("LOSS", sharp_prob=0.85) for _ in range(4)])
-        assert _calibration_flag(rows) is False
-
-    def test_overconfident_high_bucket_is_flagged(self):
-        # Stated 85% confidence but only winning half the time — the sport
-        # can still sit inside the healthy 60-82% overall win-rate band
-        # while this bucket alone is badly miscalibrated.
-        rows = ([_row("WIN", sharp_prob=0.85) for _ in range(10)]
-                + [_row("LOSS", sharp_prob=0.85) for _ in range(10)])
-        assert _calibration_flag(rows) is True
-
-    def test_too_few_samples_not_flagged(self):
-        rows = [_row("LOSS", sharp_prob=0.85) for _ in range(5)]
-        assert _calibration_flag(rows) is False
-
-
 class TestEdgeBandDiagnostic:
     def test_too_few_samples_returns_none(self):
         rows = [_row("WIN", initial_edge=5.0) for _ in range(5)]
@@ -400,113 +381,6 @@ class TestEdgeBandDiagnostic:
         warning = _edge_band_diagnostic("soccer", rows)
         assert warning is not None
         assert "soccer" in warning
-
-
-class TestDecideThreshold:
-    def _stats(self, hit_rate, n=40, wilson_lower=0.9, p_breakeven=0.5):
-        return {"hit_rate": hit_rate, "n": n, "wilson_lower": wilson_lower,
-                "p_breakeven": p_breakeven, "roi": None}
-
-    _no_clv = {"n": 0, "avg_clv": None, "positive_rate": None}
-
-    def test_overconfident_forces_raise_inside_healthy_band(self):
-        stats = self._stats(hit_rate=0.70)   # inside the healthy 60-82% band
-        new_t, reason = _decide_threshold(2.0, stats, self._no_clv, overconfident=True)
-        assert new_t is not None and new_t > 2.0
-        assert "overconfident" in reason
-
-    def test_negative_real_clv_blocks_a_would_be_lowering(self):
-        stats = self._stats(hit_rate=0.90)   # would otherwise lower
-        clv = {"n": 30, "avg_clv": -1.0, "positive_rate": 0.2}
-        new_t, reason = _decide_threshold(2.0, stats, clv, overconfident=False)
-        assert new_t is None
-        assert "dérive sharp" in reason
-
-    def test_positive_real_clv_does_not_block_lowering(self):
-        stats = self._stats(hit_rate=0.90)
-        clv = {"n": 30, "avg_clv": 1.0, "positive_rate": 0.8}
-        new_t, reason = _decide_threshold(2.0, stats, clv, overconfident=False)
-        assert new_t is not None and new_t < 2.0
-
-    def test_low_hit_rate_still_raises_even_with_positive_clv(self):
-        # Raising stays always-safe regardless of CLV — CLV only tags the
-        # reason (probable variance) so the operator can tell it apart from
-        # genuine edge decay, it never blocks a raise.
-        stats = self._stats(hit_rate=0.40)
-        clv = {"n": 30, "avg_clv": 1.0, "positive_rate": 0.8}
-        new_t, reason = _decide_threshold(2.0, stats, clv, overconfident=False)
-        assert new_t is not None and new_t > 2.0
-        assert "variance" in reason
-
-
-class TestClvFirstRankRules:
-    """Les deux règles du 2026-08-22 : l'AMPLITUDE du CLV réel (avg_clv)
-    devient un critère de premier rang — il converge ~3x plus vite que le
-    win-rate, c'est l'échantillon le plus précieux du ledger."""
-
-    def _stats(self, hit_rate, n=40, wilson_lower=0.50, p_breakeven=0.55):
-        # lo < be : la règle Wilson classique rend "hold" — c'est exprès,
-        # pour isoler ce que les règles CLV changent.
-        return {"hit_rate": hit_rate, "n": n, "wilson_lower": wilson_lower,
-                "p_breakeven": p_breakeven, "roi": None}
-
-    def test_strong_negative_clv_raises_despite_healthy_hit_rate(self):
-        stats = self._stats(hit_rate=0.65)   # au-dessus de la rentabilité
-        clv = {"n": 20, "avg_clv": -2.5, "positive_rate": 0.3}
-        new_t, reason = _decide_threshold(2.0, stats, clv, overconfident=False)
-        assert new_t is not None and new_t > 2.0
-        assert "dérive sharp" in reason and "↑" in reason
-
-    def test_negative_clv_below_sample_bar_does_not_raise(self):
-        stats = self._stats(hit_rate=0.65)
-        clv = {"n": 14, "avg_clv": -2.5, "positive_rate": 0.3}
-        new_t, _ = _decide_threshold(2.0, stats, clv, overconfident=False)
-        assert new_t is None
-
-    def test_top_band_fake_blocks_the_clv_raise(self):
-        # Monter le plancher pousserait l'émission dans la bande mesurée
-        # perdante — même logique que le garde du bloc win-rate.
-        stats = self._stats(hit_rate=0.65)
-        clv = {"n": 20, "avg_clv": -2.5, "positive_rate": 0.3}
-        new_t, _ = _decide_threshold(2.0, stats, clv, overconfident=False,
-                                     top_band_fake=True)
-        assert new_t is None or new_t <= 2.0
-
-    def test_strong_positive_clv_lowers_without_wilson(self):
-        stats = self._stats(hit_rate=0.65)   # Wilson ne tranche pas (lo < be)
-        clv = {"n": 20, "avg_clv": 2.0, "positive_rate": 0.6}
-        new_t, reason = _decide_threshold(2.0, stats, clv, overconfident=False)
-        assert new_t is not None and new_t < 2.0
-        assert "dérive sharp" in reason and "↓" in reason
-
-    def test_positive_clv_with_minority_positive_rate_holds(self):
-        # Une moyenne tirée par quelques grosses captures ne suffit pas :
-        # la majorité des lignes doit confirmer.
-        stats = self._stats(hit_rate=0.65)
-        clv = {"n": 20, "avg_clv": 2.0, "positive_rate": 0.4}
-        new_t, _ = _decide_threshold(2.0, stats, clv, overconfident=False)
-        assert new_t is None
-
-    def test_clv_lowering_never_goes_below_threshold_min(self):
-        from core.learning_layer import _THRESHOLD_MIN
-        stats = self._stats(hit_rate=0.65)
-        clv = {"n": 20, "avg_clv": 2.0, "positive_rate": 0.6}
-        new_t, _ = _decide_threshold(_THRESHOLD_MIN, stats, clv, overconfident=False)
-        assert new_t is None or new_t >= _THRESHOLD_MIN
-
-    def test_overconfidence_blocks_the_clv_lowering(self):
-        stats = self._stats(hit_rate=0.65)
-        clv = {"n": 20, "avg_clv": 2.0, "positive_rate": 0.6}
-        new_t, _ = _decide_threshold(2.0, stats, clv, overconfident=True)
-        # La surconfiance prime : soit montée, soit hold — jamais de descente.
-        assert new_t is None or new_t > 2.0
-
-    def test_hit_rate_below_breakeven_still_raises_first(self):
-        # La montée win-rate garde la priorité sur la descente CLV.
-        stats = self._stats(hit_rate=0.50, p_breakeven=0.55)
-        clv = {"n": 20, "avg_clv": 2.0, "positive_rate": 0.6}
-        new_t, _ = _decide_threshold(2.0, stats, clv, overconfident=False)
-        assert new_t is not None and new_t > 2.0
 
 
 class TestSegmentThresholds:
@@ -673,7 +547,7 @@ class TestSportRanking:
 
 
 class TestEdgeCeiling:
-    """La boucle de rétroaction que _decide_threshold créait tout seul.
+    """La boucle de rétroaction que l'ancienne règle de seuil créait toute seule.
 
     Il n'a qu'un levier — le PLANCHER d'edge — et le monte quand un sport perd.
     Si ce sont les GROS edges qui perdent, le relèvement pousse toute l'émission
@@ -709,36 +583,15 @@ class TestEdgeCeiling:
         assert fake is False
         assert ceiling is None
 
-    def test_threshold_is_not_raised_when_the_top_band_is_the_problem(self):
-        # Mauvais taux de réussite : la règle normale relèverait le plancher.
-        stats = _sport_stats([_row("LOSS") for _ in range(_MIN_SAMPLES)])
-        clv = _clv_stats([])
-
-        raised, _ = _decide_threshold(2.0, stats, clv, False, top_band_fake=False)
-        assert raised is not None and raised > 2.0, "prémisse : sans le garde, ça monte"
-
-        held, reason = _decide_threshold(2.0, stats, clv, False, top_band_fake=True)
-        assert held is None
-        assert "plancher tenu" in reason
-
-    def test_floor_drops_to_the_best_measured_band_in_one_move(self):
-        # Le cas soccer : plancher coincé à 6,0% (le plafond dur) alors que la
-        # bande gagnante est à 1,5%. Descendre par pas de _STEP_DOWN aurait pris
-        # 22 audits, soit plus de 5 jours de silence.
-        stats = _sport_stats([_row("LOSS") for _ in range(_MIN_SAMPLES)])
-        clv = _clv_stats([])
-        new_t, reason = _decide_threshold(6.0, stats, clv, False,
-                                          top_band_fake=True, best_band_lo=1.5)
-        assert new_t == 1.5
-        assert "meilleure bande" in reason
-
-    def test_overconfidence_alone_still_raises(self):
-        # Le garde ne doit neutraliser le relèvement QUE si la bande haute est
-        # en cause — sinon il désarmerait la correction de surconfiance.
-        stats = _sport_stats([_row("WIN") for _ in range(_MIN_SAMPLES)])
-        clv = _clv_stats([])
-        new_t, _ = _decide_threshold(2.0, stats, clv, True, top_band_fake=False)
-        assert new_t is not None and new_t > 2.0
+    def test_le_plafond_et_le_seuil_sont_independants(self):
+        """Depuis le 2026-10-29 le seuil ne se règle plus par pas : la boucle
+        « relever le plancher pousse l'émission dans la bande perdante » n'a
+        plus de moteur. Le plafond coupe la bande haute ; le seuil suit sa
+        propre preuve, sur tout l'échantillon."""
+        rows = self._rows(low_band_wr=0.75, top_band_wr=0.25)
+        assert _top_band_verdict(rows)[0] is True
+        verdict, _ = _verdict_seuil(rows, [], None)
+        assert verdict == "neutre"          # 12/24 à cote 2,0 : rien de prouvé
 
     def test_ceiling_is_persisted_to_meta(self):
         rows = self._rows(low_band_wr=0.75, top_band_wr=0.20, n_each=15)
@@ -925,36 +778,30 @@ class TestOddsCeiling:
         assert load_odds_ceilings(_SB()) == {"soccer": 1.8}
 
 
-class TestCalibrationGapNotBrierConstant:
-    """Second cliquet, corrigé le 2026-08-06.
-
-    _calibration_flag levait un drapeau `overconfident` dès que le Brier
-    dépassait 0,23 — un seuil inatteignable, puisque le Brier a un plancher de
-    p(1-p) (0,2500 à p=0,50). Il se levait donc sur tous les sports, y compris
-    ceux qui battaient leur propre référence, et forçait via _decide_threshold
-    une hausse de plancher de 0,4 à chaque audit.
-    """
+class TestRealiseContreAnnonce:
+    """Le critère de premier rang depuis le 2026-10-29 : le réalisé contre
+    la probabilité ANNONCÉE (z), pas un Brier comparé à une constante — le
+    second cliquet du 2026-08-06 venait d'un Brier > 0,23, inatteignable
+    puisque son plancher vaut p(1−p)."""
 
     @staticmethod
-    def _rows(p, n_win, n_loss):
-        return ([_row("WIN", sharp_prob=p) for _ in range(n_win)]
-                + [_row("LOSS", sharp_prob=p) for _ in range(n_loss)])
+    def _rows(p, n_win, n_loss, odds=2.0):
+        return ([_row("WIN", sharp_prob=p, odds=odds) for _ in range(n_win)]
+                + [_row("LOSS", sharp_prob=p, odds=odds) for _ in range(n_loss)])
 
-    def test_coin_flip_book_is_not_flagged_despite_brier_above_023(self):
-        # 25 paris annoncés à 52%, réalisés à 60% : le Brier vaut ~0,24 —
-        # au-dessus de l'ancien 0,23 — mais le modèle est SOUS-confiant.
+    def test_un_livre_a_pile_ou_face_sous_confiant_n_est_pas_puni(self):
         rows = self._rows(0.52, 15, 10)
         assert brier_score([(r["sharp_prob"], 1 if r["outcome"] == "WIN" else 0)
                             for r in rows]) > 0.23
-        assert _calibration_flag(rows) is False
+        assert _verdict_seuil(rows, [], None)[0] != "perte"
 
-    def test_genuine_overconfidence_is_still_flagged(self):
-        # Annoncé 62%, réalisé 40% — 22 points d'écart, bien au-delà du bruit.
-        assert _calibration_flag(self._rows(0.62, 10, 15)) is True
+    def test_une_vraie_surconfiance_est_une_perte(self):
+        # Annoncé 62 %, réalisé 40 % sur 25 : z ≈ −2,2.
+        verdict, raison = _verdict_seuil(self._rows(0.62, 10, 15), [], None)
+        assert verdict == "perte" and "z" in raison
 
-    def test_small_gap_is_tolerated(self):
-        # 5 points d'écart sur 20 paris : indistinguable du bruit.
-        assert _calibration_flag(self._rows(0.85, 16, 4)) is False
+    def test_un_petit_ecart_est_du_bruit(self):
+        assert _verdict_seuil(self._rows(0.85, 16, 4, odds=1.3), [], None)[0] == "neutre"
 
 
 class TestPlayableZone:
@@ -993,52 +840,47 @@ class TestPlayableZone:
 
 
 class TestBreakevenAnchoredThreshold:
-    """Le critère est la rentabilité mesurée, plus un taux absolu.
+    """Le point mort reste la référence de Wilson — mais une réussite SOUS
+    le point mort ne relève plus rien tant qu'elle n'est pas PROUVÉE.
 
-    Régression du cliquet constaté en base le 2026-08-06 : monter à <60% et
-    ne descendre qu'à >82% envoyait tout sport au plafond de 6,0% puis au
-    silence, alors qu'un pari à cote 1,85 est rentable dès 54,1%.
+    Régressions : le cliquet 60 %/82 % (2026-08-06), puis le pas de +0,4 dès
+    que la réussite cumulée passait sous le point mort (2026-10-29), rejoué
+    à chaque ligne neuve — tennis 2,0 → 6,0 à 70 % de réussite.
     """
 
-    _no_clv = {"n": 0, "avg_clv": None, "positive_rate": None}
-
     @staticmethod
-    def _stats(hit_rate, n=40, wilson_lower=0.0, p_breakeven=0.54):
-        return {"hit_rate": hit_rate, "n": n, "wilson_lower": wilson_lower,
-                "wilson_upper": 1.0, "p_breakeven": p_breakeven, "roi": None}
+    def _rows(wins, losses, odds):
+        return ([_row("WIN", odds=odds) for _ in range(wins)]
+                + [_row("LOSS", odds=odds) for _ in range(losses)])
 
-    def test_profitable_sport_below_60pct_no_longer_raises(self):
-        # 57% de réussite à 1,85 = rentable. L'ancienne règle montait quand
-        # même (57 < 60) — c'est ce qui a collé basketball au plafond.
-        stats = self._stats(hit_rate=0.57, p_breakeven=0.54)
-        new_t, reason = _decide_threshold(3.0, stats, self._no_clv, overconfident=False)
-        assert new_t is None
-        assert "ne tranche pas" in reason
+    def test_un_sport_rentable_sous_60pct_ne_monte_pas(self):
+        # 23/40 = 57 % à 1,85 (point mort 54 %) : rien à corriger.
+        assert _verdict_seuil(self._rows(23, 17, 1.85), [], None)[0] == "neutre"
 
-    def test_below_breakeven_still_raises(self):
-        stats = self._stats(hit_rate=0.50, p_breakeven=0.58)
-        new_t, _ = _decide_threshold(3.0, stats, self._no_clv, overconfident=False)
-        assert new_t is not None and new_t > 3.0
+    def test_sous_le_point_mort_sans_preuve_ne_monte_plus(self):
+        # 20/40 = 50 % pour 54 % requis : l'intervalle [35–65] couvre le point
+        # mort. L'ancienne règle relevait de +0,4 — ici, rien n'est prouvé.
+        verdict, raison = _verdict_seuil(self._rows(20, 20, 1.85), [], None)
+        assert verdict == "neutre" and "ni perte ni gain" in raison
 
-    def test_lowering_no_longer_needs_82pct(self):
-        # 65% prouvés au-dessus d'une rentabilité de 54% suffisent désormais :
-        # aucun segment du ledger n'a jamais atteint les 82% exigés avant.
-        stats = self._stats(hit_rate=0.65, wilson_lower=0.58, p_breakeven=0.54)
-        new_t, _ = _decide_threshold(3.0, stats, self._no_clv, overconfident=False)
-        assert new_t is not None and new_t < 3.0
+    def test_une_perte_prouvee_monte_au_plafond(self):
+        from core.learning_layer import _THRESHOLD_MAX
+        verdict, _ = _verdict_seuil(self._rows(10, 30, 1.85), [], None)
+        assert verdict == "perte" and _cible_seuil(verdict, 2.0) == _THRESHOLD_MAX
 
-    def test_high_odds_sport_is_judged_on_its_own_breakeven(self):
-        # Cote ~3,0 → rentable dès 34%. 45% de réussite ne doit pas être
-        # traité comme un échec sous prétexte que c'est loin de 60%.
-        stats = self._stats(hit_rate=0.45, p_breakeven=0.34)
-        new_t, _ = _decide_threshold(3.0, stats, self._no_clv, overconfident=False)
-        assert new_t is None
+    def test_l_abaissement_ne_demande_plus_82pct(self):
+        # 26/40 = 65 % à 2,2 (point mort 45 %) : borne basse ~50 % > 45 %.
+        verdict, _ = _verdict_seuil(self._rows(26, 14, 2.2), [], None)
+        assert verdict == "gain" and _cible_seuil(verdict, 3.0) < 3.0
 
-    def test_falls_back_to_absolute_rule_without_odds(self):
-        stats = self._stats(hit_rate=0.40, p_breakeven=None)
-        new_t, reason = _decide_threshold(3.0, stats, self._no_clv, overconfident=False)
-        assert new_t is not None and new_t > 3.0
-        assert "repli" in reason
+    def test_un_sport_a_grosse_cote_est_juge_sur_son_point_mort(self):
+        # Cote 3,0 → rentable dès 33 %. 45 % n'est pas un échec.
+        assert _verdict_seuil(self._rows(18, 22, 3.0), [], None)[0] != "perte"
+
+    def test_sans_cote_ni_probabilite_rien_ne_bouge(self):
+        rows = [{"outcome": "LOSS", "odds": None, "kelly_pct": 1.0}] * 25
+        verdict, raison = _verdict_seuil(rows, [], None)
+        assert verdict == "neutre" and "hold" in raison
 
 
 # ── Règle 10 côté PLANCHERS (2026-08-28) ─────────────────────────────────
