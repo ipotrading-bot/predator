@@ -234,3 +234,37 @@ class TestCeQuiPartEncore:
         src = inspect.getsource(run_engine.run)
         assert not re.search(r"(?<![\w])_telegram\(", src), \
             "le scan ne parle que par _telegram_signals et _journaliser_alerte"
+
+
+class TestMarkdownRefuse:
+    """2026-10-29 : l'alerte « pool OddsAPI sous 20 % » (« core/scan_windows ») a
+    été refusée en HTTP 400 « can't parse entities » — jamais reçue."""
+
+    class _R:
+        def __init__(self, code, txt=""):
+            self.status_code, self.text = code, txt
+
+    def test_un_refus_de_mise_en_forme_repart_en_texte_brut(self, monkeypatch):
+        envois = []
+        reponses = [self._R(400, "Bad Request: can't parse entities: ..."), self._R(200)]
+
+        def post(url, json, timeout):
+            envois.append(json)
+            return reponses.pop(0)
+        monkeypatch.setattr(run_engine, "TELEGRAM_TOKEN", "t")
+        monkeypatch.setattr(run_engine, "TELEGRAM_CHAT", "c")
+        monkeypatch.setattr(run_engine.requests, "post", post)
+        run_engine._telegram("🟠 *OddsAPI : pool sous 20%* — voir core/scan_windows `x`")
+        assert len(envois) == 2
+        assert envois[0]["parse_mode"] == "Markdown"
+        assert "parse_mode" not in envois[1] and "*" not in envois[1]["text"]
+        assert "core/scan_windows" in envois[1]["text"]
+
+    def test_une_autre_erreur_ne_reessaie_pas(self, monkeypatch):
+        envois = []
+        monkeypatch.setattr(run_engine, "TELEGRAM_TOKEN", "t")
+        monkeypatch.setattr(run_engine, "TELEGRAM_CHAT", "c")
+        monkeypatch.setattr(run_engine.requests, "post",
+                            lambda url, json, timeout: envois.append(json) or self._R(403, "Forbidden"))
+        run_engine._telegram("x")
+        assert len(envois) == 1
