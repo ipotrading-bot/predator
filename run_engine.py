@@ -75,7 +75,6 @@ from core.learning_layer import load_segment_thresholds as _load_segment_thresho
 from core.learning_layer import load_sport_ranking as _load_sport_ranking
 from core.learning_layer import load_edge_ceilings as _load_edge_ceilings
 from core.learning_layer import load_odds_ceilings as _load_odds_ceilings
-from core.learning_layer import load_learning_summary as _load_learning_summary
 from core.paim_engine import (
     compute_alpha, MIN_EDGE, strict_team_match,
     market_label, SHARP_PROB_BY_MARKET, calculate_consensus_price,
@@ -749,6 +748,11 @@ def _note_harvest_result(sb, found: list) -> None:
                 None if found else datetime.now(timezone.utc).isoformat())
 
 
+def _journaliser_alerte(key: str, text: str) -> None:
+    """Une alerte d'exploitation : au LOG, jamais sur Telegram (2026-10-29)."""
+    log.warning("ALERTE [%s] %s", key, text.replace("\n", " | "))
+
+
 def _alert_once(sb, key: str, text: str, ttl_h: float = _ALERT_TTL_H) -> bool:
     """Telegram `text` au plus une fois par `ttl_h` (horodatage dans meta).
     Sans Supabase : envoie (mieux vaut un doublon qu'un silence)."""
@@ -757,7 +761,9 @@ def _alert_once(sb, key: str, text: str, ttl_h: float = _ALERT_TTL_H) -> bool:
         if age is not None and age < ttl_h:
             log.info("Alerte [%s] déjà envoyée il y a %.1fh — silence", key, age)
             return False
-    _telegram(text)
+    # Plus sur Telegram depuis le 2026-10-29 (décision opérateur : paris,
+    # résultats, bilan — rien d'autre). L'alerte reste au log et horodatée.
+    _journaliser_alerte(key, text)
     if sb:
         _meta_stamp(sb, key, datetime.now(timezone.utc).isoformat())
     return True
@@ -3009,67 +3015,17 @@ def _kickoff(leg: dict, now) -> str:
     return f" · {mt.strftime('%H:%M') if same_day else mt.strftime('%d/%m %H:%M')} UTC"
 
 
-def _favourite(leg: dict) -> str:
-    """Team the sharp price makes favourite, or '' when it isn't derivable.
-
-    Only h2h carries a favourite we actually hold data for: sharp_prob is the
-    probability of THIS selection, so >= 50% means the pick is the favourite
-    and < 50% means the opponent is. Totals/spreads signals price a line, not
-    a side — we never store the two teams' moneyline prices for them, so
-    there is nothing to name and this returns ''. Guessing one from the home
-    team would be inventing information the operator would read as fact.
-    """
-    if leg.get("market_key") != "h2h":
-        return ""
-    prob  = leg.get("sharp_prob") or 0.0
-    match = leg.get("match") or ""
-    sel   = leg.get("selection_name") or ""
-    if not prob or " vs " not in match:
-        return ""
-    home, away = (p.strip() for p in match.split(" vs ", 1))
-    if prob >= 0.5:
-        return sel or home
-    is_home = resolve_selection_side(sel, home, away)
-    if is_home is None:
-        return ""
-    return away if is_home else home
-
-
-def _ecartes(shadowed: list) -> str:
-    """' · 2 écarté(s) (< 2 h)' — les fantômes du run, comptés par raison.
-    Vide sans fantôme. Le nombre explique la pauvreté d'un scan au lieu de
-    la cacher : « 13 matchs, aucun pari » et « 13 matchs, 1 écarté (< 2 h) »
-    ne se lisent pas pareil."""
-    if not shadowed:
-        return ""
-    libelle = {"t_minus_2h": "< 2 h", "shadow_sport": "sport en observation",
-               _RAISON_PROMOUVABLE: "basket > 6 h"}
-    par_raison: dict[str, int] = {}
-    for s in shadowed:
-        r = libelle.get(s.get("shadow_reason") or "", "fantôme")
-        par_raison[r] = par_raison.get(r, 0) + 1
-    return "".join(f" · {n} écarté(s) ({r})" for r, n in sorted(par_raison.items()))
-
-
 def _signal_block(s: dict, now) -> str:
     """Un pari, format opérateur (2026-07-21) : événement, favori, sélection,
     cote, coup d'envoi, valeur — rien d'autre, aucune mise."""
     emoji = SPORT_EMOJI.get(s.get("sport", "?"), "🎯")
     sel   = s.get("selection_name") or s.get("match", "?")
-    fav   = _favourite(s)
     lines = [f"{emoji} *{s.get('match', '?')}*{_kickoff(s, now)}\n"]
-    if fav and fav != sel:
-        lines.append(f"   Favori : {fav}\n")
-    tag = " (favori)" if fav and fav == sel else ""
-    # Le book qui cote ce prix (2026-09-08, second book d'exécution) : sans
-    # lui, « @ 1.85 » ne dit plus chez qui poser le pari.
+    # SIMPLE ET LISIBLE (décision opérateur du 2026-10-29) : le pari, la cote,
+    # le book — plus de favori, de valeur ni de tranche.
     book = s.get("soft_book")
-    chez = f" · chez *{book}*" if book else ""
-    lines.append(f"   → {sel}{tag} `@ {s.get('executable_odd', 0):.2f}` · valeur `+{s.get('edge_pct', 0):.1f}%`{chez}\n")
-    # Bande 1,50-1,75 (décision opérateur du 2026-09-27) : l'opérateur la
-    # reconnaît d'un coup d'œil, qu'elle vienne de la zone ou de sous T-2h.
-    if _dans_bande(s):
-        lines.append("   🎯 tranche 1,50-1,75\n")
+    chez = f" · {book}" if book else ""
+    lines.append(f"   → {sel} @ {s.get('executable_odd', 0):.2f}{chez}\n")
     # Book autre que celui de référence (2026-09-27) : l'opérateur ne joue
     # que celui-là, il doit voir d'un coup d'œil ce qu'il ne peut pas prendre.
     hors_ref = avertissement_hors_reference(book, s.get("market_key"))
@@ -3091,19 +3047,14 @@ def _telegram_signals(signals: list, now, matches: int, no_pin_count: int,
     compréhensible ») : événement, favori, sélection, cote, heure, valeur —
     aucune mise ni bankroll. Sans libellé de session (jargon).
     """
-    ecartes = _ecartes(shadowed or [])
+    # TELEGRAM = TROIS MESSAGES (décision opérateur du 2026-10-29) : les paris
+    # à jouer (ici), les résultats après chaque audit et le bilan de la veille
+    # (core/telegram_bilan). Rien à jouer : SILENCE — plus de « Aucun pari ·
+    # N matchs analysés · écartés ».
     if not signals:
-        _telegram(
-            f"⚫ PREDATOR · {now.strftime('%H:%M')} UTC\n"
-            f"Aucun pari recommandé · {matches} matchs analysés{ecartes}"
-        )
+        log.info("Telegram : aucun pari à jouer — silence (%d matchs analysés)", matches)
         return
-
-    no_pin = f"\n⚠️ {no_pin_count} sans confirmation Pinnacle" if no_pin_count > 0 else ""
-    header = (
-        f"📡 *PREDATOR* · {now.strftime('%H:%M')} UTC\n"
-        f"{len(signals)} pari(s) recommandé(s) · {matches} matchs analysés{ecartes}{no_pin}\n"
-    )
+    header = f"📡 *PREDATOR* · {now.strftime('%H:%M')} UTC — {len(signals)} pari(s) à jouer\n"
     blocks = ["\n" + _signal_block(s, now) for s in sorted(signals, key=lambda s: _urgency_sort(s, now))]
 
     # Telegram : 4096 caractères par message — on coupe entre deux paris,
@@ -3122,66 +3073,6 @@ def _telegram_signals(signals: list, now, matches: int, no_pin_count: int,
             chunk += part
     if chunk.strip():
         _telegram(chunk)
-
-
-def _creneau_standard_du_jour(now) -> bool:
-    """Ce scan sert-il un créneau `standard` de la journée EN COURS ?
-
-    Le créneau DÛ, jamais l'heure du run (règle dure n°12) : un 06:03 livré
-    en retard par GitHub, ou rattrapé par le chien de garde, sert toujours le
-    créneau du matin. Avant le premier créneau du jour, `due_slot` rend le
-    dernier d'hier — un dispatch manuel de 02:00 n'est donc pas « le matin »
-    et ne déclenche pas le message. Les heures viennent de
-    scripts/ci_scan_mode.py, jamais réécrites ici (règle n°6).
-    """
-    from scripts.ci_scan_mode import due_slot
-
-    return due_slot(now)[:10] == now.strftime("%Y-%m-%d")
-
-
-def _learning_ttl_h() -> float:
-    """Fenêtre de dédup du message quotidien, DÉRIVÉE du cron `standard` :
-    plus large que l'amplitude des créneaux (06:03 → 23:03 = 17 h), pour
-    qu'aucun autre scan du jour ne le répète, et sous les 24 h, pour que le
-    lendemain matin le dise à nouveau."""
-    from scripts.ci_scan_mode import standard_slots
-
-    _minute, heures = standard_slots()
-    return (heures[-1] - heures[0]) + 2
-
-
-def _message_learning_du_jour(sb, now):
-    """Le résumé de la couche d'apprentissage, UNE fois par jour (2026-09-18).
-
-    Demande opérateur : « je ne veux pas tout le temps ce message ; learning
-    une fois par jour, avec le message du scan de 6 h ». Il partait jusqu'ici
-    en pied de CHAQUE digest de 2 h — douze pavés par jour, dans lesquels les
-    deux lignes qui comptaient se noyaient. Les ANOMALIES, elles, n'attendent
-    pas ce rendez-vous : le digest les annonce dès le cycle d'audit qui les
-    produit (run_rapport.py::_anomalies_fraiches).
-
-    Le dédup passe par `_alert_once` (meta) et non par « c'est le créneau de
-    6 h » : un scan du matin qui meurt sur zéro match sort AVANT ce point, et
-    le rendez-vous du jour serait perdu en silence. Ici, le premier scan
-    `standard` du jour qui arrive jusqu'au bout parle, les suivants se
-    taisent.
-
-    Jamais bloquant : ce n'est qu'un message, un scan ne meurt pas dessus.
-    """
-    if REPRICE or not _creneau_standard_du_jour(now):
-        return
-    try:
-        lignes = _load_learning_summary(sb) if sb else []
-    except Exception as e:                                    # noqa: BLE001
-        log.warning("Learning summary: %s", e)
-        return
-    if not lignes:
-        log.info("🧠 Learning — rien à dire au dernier cycle")
-        return
-    _alert_once(sb, "learning_digest_quotidien",
-                f"🧠 *PREDATOR Learning* · {now.strftime('%d/%m')} (dernier cycle)\n"
-                + "".join(f"   • {l}\n" for l in lignes[:10]),
-                ttl_h=_learning_ttl_h())
 
 
 def _segment_min_edge(dyn_thresholds: dict, dyn_segment_thresholds: dict,
@@ -3683,9 +3574,7 @@ def run():
     # l'oracle : le moteur ne compare plus jamais un prix soft réel à un prix
     # sharp inventé.
     if not matches:
-        msg = "📡 PREDATOR v8.8: 0 signaux — toutes sources épuisées."
-        log.warning(msg)
-        _telegram(msg)
+        log.warning("0 signal — toutes sources épuisées")
         if sb:
             _heartbeat(sb, now, 0, 0)
         _echouer_si_recolte_partielle()
@@ -3821,12 +3710,6 @@ def run():
     # running as normal — only the outward Telegram recommendation stops.
     if sb and _risk_manager.check_circuit_breaker(sb):
         log.critical("Circuit breaker active — system emission paused, manual resume required")
-        _telegram(
-            f"🔴 *PAUSE AUTOMATIQUE* · {now.strftime('%H:%M')} UTC\n"
-            f"Drawdown roulant > {_risk_manager.DRAWDOWN_LIMIT_PCT*100:.0f}% sur les "
-            f"{_risk_manager.DRAWDOWN_WINDOW_N} derniers signaux réglés.\n"
-            f"Émission de nouveaux systèmes suspendue — reprise manuelle uniquement."
-        )
     else:
         # Per-sport circuit breaker: a sport in its own genuine bad streak
         # (core.risk_manager.check_circuit_breaker_by_sport) stops
@@ -3840,14 +3723,8 @@ def run():
                              if s and _risk_manager.check_circuit_breaker_by_sport(sb, s)}
             if paused_sports:
                 emit_signals = [s for s in recommandes if s.get("sport") not in paused_sports]
-                log.warning("Sport circuit breaker active for %s — excluded from Telegram systems",
+                log.warning("Sport circuit breaker active for %s — excluded from Telegram",
                            ", ".join(sorted(paused_sports)))
-                _telegram(
-                    f"🟠 *PAUSE PARTIELLE* · {now.strftime('%H:%M')} UTC\n"
-                    f"Sport(s) en pause: `{', '.join(sorted(paused_sports))}` "
-                    f"(drawdown roulant > {_risk_manager.DRAWDOWN_LIMIT_PCT*100:.0f}%).\n"
-                    f"Autres sports non affectés — reprise manuelle uniquement pour ces sports."
-                )
         # (La partition fantôme a eu lieu AVANT la persistance, section B :
         # `emit_signals` ne contient déjà que des recommandés.) Chaque pari
         # part en SIMPLE, une fois (dédup 24 h) — plus de combiné.
@@ -3867,9 +3744,9 @@ def run():
             # savait pas si le scan avait tourné.
             _telegram_signals(a_annoncer, now, len(matches), no_pin_count, shadowed)
 
-    # Le rendez-vous quotidien de la couche d'apprentissage — hors du bloc
-    # des disjoncteurs ci-dessus : c'est un rapport, pas une recommandation.
-    _message_learning_du_jour(sb, now)
+    # Le résumé quotidien de la couche d'apprentissage ne part plus sur
+    # Telegram (décision opérateur du 2026-10-29) : il reste dans
+    # meta.learning_summary et le rapport hebdo imprimé.
 
     elite = [s for s in signals if s["edge_pct"] >= ELITE_EDGE]
     log.info("Done. %d candidates | %d balanced | %d elite.",

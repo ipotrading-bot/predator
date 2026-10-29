@@ -166,9 +166,9 @@ class TestLeBookVoyage:
              "selection_name": "Over 2.5", "executable_odd": 1.85, "edge_pct": 3.2,
              "soft_book": "bet365"}
         bloc = run_engine._signal_block(s, _now())
-        assert "`@ 1.85` · valeur `+3.2%` · chez *bet365*" in bloc
+        assert "→ Over 2.5 @ 1.85 · bet365" in bloc and "valeur" not in bloc
         s.pop("soft_book")
-        assert "chez" not in run_engine._signal_block(s, _now())
+        assert "bet365" not in run_engine._signal_block(s, _now())
 
     def test_le_ledger_recopie_le_book(self):
         import inspect

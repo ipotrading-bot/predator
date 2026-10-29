@@ -3,10 +3,12 @@ name: Predator Reports
 # Deux rapports EN LECTURE SEULE — pool `readonly` : clé anon + Telegram,
 # jamais SUPABASE_SERVICE_KEY. Hors de tout verrou : rien à courser.
 #
-#   rapport → Telegram toutes les 2 h à H+35 (run_rapport.py:REPORT_WINDOW_H
-#             doit rester égal à cet intervalle).
-#   hebdo   → lundi 07:00 UTC, après l'audit de 06:00 : classement des sports,
-#             calibration par bande, rapport de vérité (CLV, Brier, ROI, verdicts).
+#   rapport → toutes les 2 h, MUET depuis le 2026-10-29 (décision opérateur :
+#             Telegram = paris, résultats, bilan) ; gardé pour le chien de
+#             garde Cloudflare, qui surveille la fraîcheur de ce workflow.
+#   hebdo   → lundi 07:00 UTC : classement des sports, calibration par bande,
+#             rapport de vérité — IMPRIMÉ dans le log, envoyé seulement sur
+#             `--telegram` (scripts/weekly_report.py).
 
 # ⚠️ LES CONDITIONS DE JOB N'UTILISENT PAS LE CONTEXTE `inputs` (2026-08-26).
 # La première version écrivait `inputs.report == 'rapport'`. Sur un événement
@@ -64,7 +66,7 @@ jobs:
           SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
           SUPABASE_KEY: ${{ secrets.SUPABASE_KEY }}
           # ▲ fin du bloc généré (pool `readonly`, amorçage (Supabase seul))
-      - name: Envoyer le rapport Telegram
+      - name: État du moteur (muet, rien envoyé)
         env:
           # ▼ GÉNÉRÉ par `python scripts/ci_env.py --write` — pool `readonly`. NE PAS ÉDITER.
           SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
@@ -111,7 +113,7 @@ jobs:
           TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID }}
           # ▲ fin du bloc généré (pool `readonly`)
         run: python scripts/calibration_report.py
-      - name: Rapport hebdo de vérité (lecture seule + Telegram)
+      - name: Rapport hebdo de vérité (lecture seule, imprimé)
         env:
           # ▼ GÉNÉRÉ par `python scripts/ci_env.py --write` — pool `readonly`. NE PAS ÉDITER.
           SUPABASE_URL: ${{ secrets.SUPABASE_URL }}

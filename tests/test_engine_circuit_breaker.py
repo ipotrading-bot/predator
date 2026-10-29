@@ -62,7 +62,7 @@ def test_old_empty_harvest_does_not_block(monkeypatch):
 
 def test_alert_once_dedupes_within_ttl(monkeypatch):
     sent = []
-    monkeypatch.setattr(eng, "_telegram", lambda t: sent.append(t))
+    monkeypatch.setattr(eng, "_journaliser_alerte", lambda k, t: sent.append(t))
     sb = FakeSB()
     assert eng._alert_once(sb, "alert_x", "hello") is True
     assert eng._alert_once(sb, "alert_x", "hello") is False
@@ -72,16 +72,22 @@ def test_alert_once_dedupes_within_ttl(monkeypatch):
     assert len(sent) == 2
 
 
+def test_une_alerte_ne_part_jamais_sur_telegram(monkeypatch):
+    """Décision opérateur du 2026-10-29 : Telegram = paris, résultats, bilan."""
+    monkeypatch.setattr(eng, "_telegram", lambda t: (_ for _ in ()).throw(AssertionError(t)))
+    assert eng._alert_once(FakeSB(), "alert_x", "hello") is True
+
+
 def test_alert_once_without_db_always_sends(monkeypatch):
     sent = []
-    monkeypatch.setattr(eng, "_telegram", lambda t: sent.append(t))
+    monkeypatch.setattr(eng, "_journaliser_alerte", lambda k, t: sent.append(t))
     assert eng._alert_once(None, "alert_x", "a") and eng._alert_once(None, "alert_x", "b")
     assert sent == ["a", "b"]
 
 
 def test_pool_dead_alert_names_the_cause(monkeypatch):
     sent = []
-    monkeypatch.setattr(eng, "_telegram", lambda t: sent.append(t))
+    monkeypatch.setattr(eng, "_journaliser_alerte", lambda k, t: sent.append(t))
     monkeypatch.setattr(eng, "_odds_pool_status",
                         lambda: {"total": 2, "dead": 2, "live": 0, "reason": "HTTP 401"})
     eng._alert_oddsapi_pool_if_dead(FakeSB())

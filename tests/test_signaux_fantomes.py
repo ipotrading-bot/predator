@@ -222,11 +222,12 @@ class TestMigration:
 
 
 class TestAutresLecteurs:
-    def test_le_digest_telegram_ne_reliste_pas_les_fantomes(self):
-        """Le rapport bi-horaire lit `signals` directement : sans ce filtre,
-        la tranche que le moteur venait de taire repartait sur Telegram."""
-        import run_rapport
-        assert '.eq("is_shadow", False)' in inspect.getsource(run_rapport.main if hasattr(run_rapport, "main") else run_rapport)
+    def test_les_messages_de_l_audit_ne_comptent_pas_les_fantomes(self):
+        """Résultats et bilan de la veille (core/telegram_bilan) : seuls les
+        paris annoncés comme « à jouer » — jamais un fantôme."""
+        from core import telegram_bilan as tb
+        assert '.eq("is_shadow", False)' in inspect.getsource(tb.annoncer_resultats)
+        assert '.eq("is_shadow", False)' in inspect.getsource(tb._bilan_du_jour)
 
     def test_lexposition_ignore_les_fantomes(self):
         from core import risk_manager

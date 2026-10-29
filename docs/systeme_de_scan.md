@@ -7,7 +7,7 @@ Tout le reste (golden, deep, guerrilla) a été supprimé — voir en bas.
 
 | Mode | Ce qu'il fait | Coût |
 |---|---|---|
-| **standard** | Le VRAI scan : va chercher les cotes (OddsAPI payant + sources gratuites), calcule les edges sur 24 h, émet les signaux, les persiste, envoie le combiné Telegram, puis capte la ligne de clôture. | Crédits OddsAPI, bornés par le rythme mensuel (`core/scan_windows.py`) |
+| **standard** | Le VRAI scan : va chercher les cotes (OddsAPI payant + sources gratuites), calcule les edges sur 24 h, émet les signaux, les persiste, annonce les paris à jouer sur Telegram, puis capte la ligne de clôture. | Crédits OddsAPI, bornés par le rythme mensuel (`core/scan_windows.py`) |
 | **reprice** | Le tick horaire GRATUIT : reprend les cotes photographiées par le dernier standard (cache de 4 h), les recompare aux prix Matchbook du moment, capte la clôture d'exchange, et se tait s'il n'y a rien de neuf. Aucune clé payante dans son environnement, c'est mécanique. | Rien |
 
 ## Quand (UTC)
@@ -18,7 +18,7 @@ Tout le reste (golden, deep, guerrilla) a été supprimé — voir en bas.
 | Tick **reprice** | toutes les heures à H+25 | 24 |
 | Ligne de clôture (`closing_line.yml`) | H+14 · H+34 · H+54 | 72 |
 | Audit : règlement des paris, apprentissage (`audit.yml`) | 00:45 · 03:45 · 06:45 · 09:45 · 12:45 · 15:45 · 18:45 · 21:45 | 8 |
-| Digest Telegram (`reports.yml`) | toutes les 2 h à H+35 | 12 |
+| Job `rapport` (`reports.yml`), muet | toutes les 2 h à H+35 | 12 |
 | Rapport hebdomadaire | lundi 07:00 | 1/semaine |
 
 Chaque heure de scan standard est placée **2 h 30 à 6 h avant** un bloc de
@@ -58,10 +58,9 @@ l'après-midi — 0 invocation, 0 erreur, rien à voir dans le dépôt. Le crén
 11:03 n'a pas été servi, 14 ticks de closing line sur 15 ont sauté, et tous
 les runs livrés étaient verts. Deux gardes depuis ce jour :
 
-- le digest Telegram (`run_rapport.py`, toutes les 2 h à H+35) compare le
-  dernier créneau `standard` DÛ à la marque `meta.scan_standard_slot` et
-  alerte « créneau non servi » au-delà de 20 min — pas la fraîcheur d'un
-  fichier, le créneau (règle dure n°12) ;
+- (jusqu'au 2026-10-29) le digest Telegram alertait « créneau non servi » ;
+  Telegram ne porte plus d'alerte depuis (ta décision) — c'est désormais
+  `ops.py watchdog` qui le dit, à la demande ;
 - `python scripts/ops.py watchdog` tranche la cause en un écran : PAT du
   Worker (expiration), cron et secret posés, invocations sur 24 h, incident
   Cloudflare ouvert, dernier dispatch vu par GitHub, créneau dû servi ou non.
@@ -124,28 +123,17 @@ encore engageables à cette heure » de chaque run montre le plafond du moment.
 - **Dashboard, liste des paris** : uniquement les signaux RECOMMANDÉS. Un
   signal à moins de 2 h du coup d'envoi est un « fantôme » : mesuré, réglé,
   appris, mais jamais recommandé ni affiché (colonne `is_shadow`).
-- **Telegram**, quatre messages et pas un de plus :
-  - le scan **standard** parle à chaque passage : « N pari(s) recommandé(s) »
-    puis CHAQUE pari en simple (plus de combiné depuis le 3 septembre —
-    ta décision), ou « Aucun pari recommandé · 13 matchs analysés ·
-    1 écarté (< 2 h) » — le compte des écartés est le bilan honnête du run ;
-  - le **reprice** ne parle que s'il a un pari NEUF (un pari est annoncé
-    une seule fois par le scan, en 24 h) ;
-  - le **digest** toutes les 2 h liste les paris recommandés encore jouables :
-    🆕 ceux nés depuis le digest précédent, ⏳ ceux déjà annoncés. Rien à
-    lister et moteur vivant : il se tait. Moteur muet depuis plus de 2 h :
-    il alerte.
-  - le **learning** (🧠) UNE fois par jour, avec le premier scan standard du
-    jour (06:03 UTC) : ce que le dernier cycle d'audit a changé et pourquoi.
-    Depuis le 18 septembre il ne suit plus chaque digest — douze fois par
-    jour, ce pavé noyait ce qui comptait (ta décision). Si le scan du matin
-    meurt avant d'avoir parlé, c'est le scan suivant qui le dit, une seule
-    fois quand même.
-- **Les anomalies n'attendent pas ce rendez-vous** : une ligne d'apprentissage
-  qui signale une erreur probable (⚠️ « possible erreur de données/matching
-  gonflant l'edge », ⚠️ retrait d'un sport proposé) part par le digest dès le
-  cycle d'audit qui l'a produite. Il en va de même des alertes déjà en place :
-  moteur muet, créneau standard non servi, Supabase injoignable, disjoncteur.
+- **Telegram**, trois messages, simples (ta décision du 29 octobre 2026) :
+  - les **paris à jouer**, au scan : le match, l'heure, la sélection, la cote,
+    le book. Un pari n'est annoncé qu'une fois en 24 h ; rien à jouer, rien
+    d'envoyé ;
+  - les **résultats** après chaque audit (toutes les 3 h) : ✅ gagné,
+    ❌ perdu, ↩️ remboursé, un pari par ligne ;
+  - le **bilan de la veille**, une fois par jour, au premier audit après
+    06:00 UTC : « 📊 28/10 · 4 gagnés · 1 perdu · taux 80 % ».
+  Plus rien d'autre : ni digest, ni résumé d'apprentissage, ni alertes, ni
+  rapport hebdo. Ils restent dans les journaux des jobs et dans `meta`, et
+  `python scripts/ops.py status` / `watchdog` les montrent à la demande.
 - **Bouton « Scanner »** : ramassé au tick suivant (≤ 1 h). Si c'est un tick
   reprice, il devient un scan standard complet. Il n'y a pas de poller dédié,
   et il ne faut pas en ajouter (incident du 2026-07-07 : 288 déclenchements

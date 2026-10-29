@@ -545,20 +545,6 @@ def run_closing_lines():
 SETTLEMENT_STARVED_KEY = "settlement_starved_at"
 
 
-def _alerte_telegram(texte: str) -> None:
-    """Envoi best-effort. Une alerte qui plante ne doit pas tuer l'audit."""
-    jeton = os.environ.get("TELEGRAM_BOT_TOKEN")
-    chat = os.environ.get("TELEGRAM_CHAT_ID")
-    if not (jeton and chat):
-        return
-    try:
-        import requests
-        requests.post(f"https://api.telegram.org/bot{jeton}/sendMessage", timeout=10,
-                      json={"chat_id": chat, "text": texte, "parse_mode": "Markdown"})
-    except Exception as e:                                       # noqa: BLE001
-        log.warning("alerte Telegram: %s", e)
-
-
 def _signaler_audit_sterile(sb, counts: dict, total: int) -> None:
     """Alerte + marqueur en base quand un audit n'a RIEN pu régler.
 
@@ -575,9 +561,10 @@ def _signaler_audit_sterile(sb, counts: dict, total: int) -> None:
            "Les chemins de score sont probablement indisponibles : api-sports "
            "(clé/budget), MLB statsapi, TheSportsDB. Chercher « score_sources » "
            "et « budget journalier atteint » dans le log du job.")
+    # Plus sur Telegram depuis le 2026-10-29 (décision opérateur : paris,
+    # résultats, bilan) — le log et le marqueur en base restent.
     log.error("AUDIT STÉRILE — 0 réglé sur %d éligibles ; les signaux restent "
-              "actifs et la purge est repoussée", total)
-    _alerte_telegram(msg)
+              "actifs et la purge est repoussée | %s", total, msg.replace("\n", " "))
     try:
         sb.table("meta").upsert(
             {"key": SETTLEMENT_STARVED_KEY,
@@ -632,6 +619,20 @@ def _relancer_expires(sb) -> dict:
     return {}
 
 
+def _telegram_de_l_audit(sb, debut) -> None:
+    """Les deux messages Telegram de l'audit (décision opérateur 2026-10-29) :
+    les résultats réglés pendant CE passage, puis le bilan de la veille au
+    premier audit du matin. Ne fait jamais tomber l'audit."""
+    from core.telegram_bilan import annoncer_bilan_veille, annoncer_resultats
+    try:
+        n = annoncer_resultats(sb, debut)
+        log.info("Telegram : %d résultat(s) annoncé(s)", n)
+        if annoncer_bilan_veille(sb):
+            log.info("Telegram : bilan de la veille envoyé")
+    except Exception as e:                                       # noqa: BLE001
+        log.warning("Telegram de l'audit : %s", e)
+
+
 def run():
     # This module only ever deletes/inserts/upserts, it never serves public
     # reads — write=True fails fast and loud if SUPABASE_SERVICE_KEY is
@@ -643,6 +644,7 @@ def run():
         log.critical("%s", e)
         raise SystemExit(1)
 
+    debut_audit = datetime.now(timezone.utc)
     pending = prioriser(fetch_pending(sb))
     fantomes = sum(1 for s in pending if s.get("is_shadow"))
     log.info("━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━")
@@ -662,6 +664,7 @@ def run():
         # pendant 36 h — est couvert par l'alerte de CONTENU du scan
         # (run_engine, 2026-09-10), pas par ce contrat.
         _relancer_expires(sb)
+        _telegram_de_l_audit(sb, debut_audit)
         log.info("━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━")
         return
 
@@ -711,6 +714,8 @@ def run():
     else:
         log.info("0 réglé sur %d fantôme(s) seuls en attente — voies gratuites "
                  "seulement, pas un audit stérile", len(pending))
+
+    _telegram_de_l_audit(sb, debut_audit)
 
     log.info("--- Learning Layer ---")
     try:

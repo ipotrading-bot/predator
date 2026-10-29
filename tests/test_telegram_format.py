@@ -1,52 +1,37 @@
 """
-tests/test_telegram_format.py — format opérateur des messages Telegram.
+tests/test_telegram_format.py — Telegram, trois messages simples (2026-10-29).
 
-Demande opérateur 2026-07-21 : les messages ne doivent plus contenir que
-l'événement, le favori, la sélection, la cote, l'heure et la valeur. Les
-mises Kelly et la bankroll de référence (1000€) sont supprimées — elles
-affichaient "Mise 0€ · EV net taxe +0.01€" sur presque chaque ligne, et dans
-run_rapport un stake nul faisait carrément DISPARAÎTRE le signal du rapport.
+Décision opérateur du 2026-10-29 : « Telegram : les signaux à jouer, les
+résultats après chaque audit, les gains/pertes du jour précédent, par exemple
+22/11 4 gagnés 1 perdu taux 80 %. Simple, lisible. » Tout le reste a quitté
+Telegram (digest 2 h, résumé d'apprentissage, alertes, hebdo).
 
-Ces tests verrouillent l'absence de mise/bankroll et la présence des six
-champs demandés, sans aucun envoi réseau (_telegram est monkeypatché).
+Gardés ici, sans aucun envoi réseau :
+  1. le message des paris : match, heure, sélection, cote, book — ni valeur,
+     ni favori, ni tranche, ni mise ; SILENCE quand rien n'est à jouer ;
+  2. les résultats de l'audit : un pari par ligne, ✅ ❌ ↩️ ;
+  3. le bilan de la veille au format demandé, une seule fois par jour.
 """
 from datetime import datetime, timezone
 
 import pytest
 
 import run_engine
-import run_rapport
+from core import telegram_bilan as tb
 
-
-NOW = datetime(2026, 7, 21, 23, 8, tzinfo=timezone.utc)
+NOW = datetime(2026, 7, 21, 18, 8, tzinfo=timezone.utc)
 
 
 def _sig(**over) -> dict:
-    """Signal EN MÉMOIRE, tel que `run_engine._emit` le produit.
-
-    Le prix s'y nomme `executable_odd` depuis le 2026-08-27 : c'est la cote
-    réellement jouable (DNB synthétique en football), et plus le prix
-    dévigorisé que personne n'affiche. Voir `_row()` pour la forme persistée.
-    """
     base = {
         "match": "Real Madrid vs Barcelona", "sport": "soccer",
         "league": "La Liga", "market_key": "h2h", "market": "AH 0.0",
         "selection_name": "Barcelona", "executable_odd": 3.40, "sharp_prob": 0.31,
-        "edge_pct": 5.4, "risk_flag": "HIGH_VALUE",
-        "match_time": "2026-07-21T21:00:00+00:00",
+        "edge_pct": 5.4, "risk_flag": "HIGH_VALUE", "soft_book": "1xbet",
+        "match_time": "2026-07-21T21:00:00+00:00", "kelly_pct": 2.5,
     }
     base.update(over)
     return base
-
-
-def _row(**over) -> dict:
-    """La MÊME ligne, relue de `signals`. La colonne a gardé son nom
-    historique `xbet_odd` — `run_engine._save` fait la traduction au point
-    unique de persistance. `run_rapport` lit la base, donc lit ce nom-là."""
-    row = _sig()
-    row["xbet_odd"] = row.pop("executable_odd")
-    row.update(over)
-    return row
 
 
 @pytest.fixture
@@ -56,109 +41,141 @@ def sent(monkeypatch):
     return box
 
 
-class TestNoStakeNoBankroll:
-    @pytest.mark.parametrize("banned", ["Mise", "1000€", "EV net", "Kelly", "€"])
-    def test_engine_message_is_money_free(self, sent, banned):
-        run_engine._telegram_signals([_sig()], NOW, 46, 0)
-        assert banned not in sent[0]
+class TestParisAJouer:
+    def test_rien_a_jouer_rien_n_est_envoye(self, sent):
+        run_engine._telegram_signals([], NOW, matches=42, no_pin_count=3,
+                                     shadowed=[{"shadow_reason": "t_minus_2h"}])
+        assert sent == []
 
-    @pytest.mark.parametrize("banned", ["Mise", "1000€", "Kelly", "€"])
-    def test_report_line_is_money_free(self, banned):
-        assert banned not in run_rapport._signal_line(_row(), NOW)
+    def test_l_en_tete_dit_combien_de_paris_et_rien_d_autre(self, sent):
+        run_engine._telegram_signals([_sig()], NOW, matches=42, no_pin_count=3)
+        assert len(sent) == 1
+        en_tete = sent[0].splitlines()[0]
+        assert "1 pari(s) à jouer" in en_tete
+        for bruit in ("matchs analysés", "écarté", "Pinnacle"):
+            assert bruit not in sent[0]
 
-    def test_zero_stake_signal_is_still_reported(self):
-        # Régression : _signal_line renvoyait None quand la mise Kelly tombait
-        # sous MIN_STAKE, effaçant le signal du rapport sans rien dire.
-        assert run_rapport._signal_line(_row(xbet_odd=1.01, sharp_prob=0.01), NOW)
+    def test_un_pari_le_match_l_heure_la_selection_la_cote_le_book(self):
+        bloc = run_engine._signal_block(_sig(), NOW)
+        assert "Real Madrid vs Barcelona" in bloc and "21:00" in bloc
+        assert "→ Barcelona @ 3.40 · 1xbet" in bloc
 
+    @pytest.mark.parametrize("bruit", ["valeur", "Favori", "favori", "tranche", "Mise",
+                                       "Kelly", "€", "%"])
+    def test_ni_valeur_ni_favori_ni_mise(self, bruit):
+        assert bruit not in run_engine._signal_block(_sig(executable_odd=1.62), NOW)
 
-class TestRequiredFields:
-    def test_event_selection_odds_and_value_are_present(self):
-        line = run_rapport._signal_line(_row(), NOW)
-        assert "Real Madrid vs Barcelona" in line   # événement
-        assert "Barcelona" in line                  # signal proposé
-        assert "3.40" in line                       # cote
-        assert "+5.4%" in line                      # valeur
-        assert "21:00 UTC" in line                  # heure
+    def test_markdown_equilibre(self):
+        bloc = run_engine._signal_block(_sig(match="A_b vs C"), NOW)
+        assert bloc.count("*") % 2 == 0 and bloc.count("`") % 2 == 0
 
-    def test_kickoff_shows_date_when_not_today(self):
-        line = run_rapport._signal_line(_row(match_time="2026-07-22T02:30:00+00:00"), NOW)
-        assert "22/07 02:30 UTC" in line
-
-    def test_unknown_kickoff_prints_no_hour_rather_than_a_fake_one(self):
-        assert "UTC" not in run_rapport._signal_line(_row(match_time=""), NOW)
-
-
-class TestFavourite:
-    def test_outsider_pick_names_the_favourite(self):
-        line = run_rapport._signal_line(_row(), NOW)
-        assert "Favori : Real Madrid" in line
-
-    def test_favourite_pick_is_tagged_inline_not_repeated(self):
-        line = run_rapport._signal_line(
-            _sig(selection_name="Real Madrid", sharp_prob=0.62), NOW)
-        assert "(favori)" in line
-        assert "Favori :" not in line
-
-    def test_totals_market_claims_no_favourite(self):
-        # Aucun moneyline n'est stocké pour un totals — en nommer un serait
-        # l'inventer.
-        line = run_rapport._signal_line(
-            _sig(market_key="totals_under", selection_name="Under 2.75"), NOW)
-        assert "avori" not in line
-
-    def test_engine_and_report_agree(self):
-        s = _sig()
-        assert run_engine._favourite(s) == run_rapport._favourite(s) == "Real Madrid"
+    def test_une_longue_liste_est_coupee_entre_deux_paris(self, sent):
+        paris = [_sig(match=f"Equipe {i} vs Autre {i}") for i in range(80)]
+        run_engine._telegram_signals(paris, NOW, matches=200, no_pin_count=0)
+        assert len(sent) > 1 and all(len(m) <= 4096 for m in sent)
+        assert sum(m.count("→ ") for m in sent) == 80
 
 
-class TestEmptyAndSingles:
-    def test_no_signals_message_stays_one_short_line(self, sent):
-        run_engine._telegram_signals([], NOW, 8, 0)
-        assert "Aucun pari recommandé · 8 matchs analysés" in sent[0]
-        assert "€" not in sent[0]
-        assert "écarté" not in sent[0]
+class TestResultatsDeLAudit:
+    def test_un_pari_par_ligne(self):
+        texte = tb.message_resultats([
+            {"match": "Lyon vs Nice", "selection": "Over 2.5", "odds": 1.85, "outcome": "WIN"},
+            {"match": "Real vs Getafe", "selection": "Real", "odds": "1.62", "outcome": "LOSS"},
+            {"match": "A vs B", "selection": "A", "odds": 1.9, "outcome": "PUSH"},
+        ])
+        assert texte.splitlines() == ["📋 Résultats",
+                                      "✅ Lyon vs Nice — Over 2.5 @ 1.85",
+                                      "❌ Real vs Getafe — Real @ 1.62",
+                                      "↩️ A vs B — A @ 1.90 (remboursé)"]
 
-    def test_no_session_jargon_in_header(self, sent):
-        # « EU-CLOSE 🎯 🎯 » : libellé interne, icône doublée — parti le 2026-09-03.
-        run_engine._telegram_signals([], NOW, 8, 0)
-        run_engine._telegram_signals([_sig()], NOW, 8, 0)
-        for msg in sent:
-            for jargon in ("EU-CLOSE", "OVERNIGHT", "EU-OPEN", "EU-MID"):
-                assert jargon not in msg
+    def test_rien_de_regle_rien_n_est_envoye(self):
+        assert tb.message_resultats([]) is None
+        assert tb.message_resultats([{"match": "A vs B", "outcome": "expired"}]) is None
 
-    def test_fully_phantom_run_counts_its_discards(self, sent):
-        # Un scan standard intégralement fantôme ne se tait plus : il compte.
-        fantomes = [_sig(shadow_reason="t_minus_2h"), _sig(shadow_reason="t_minus_2h"),
-                    _sig(shadow_reason="shadow_sport")]
-        run_engine._telegram_signals([], NOW, 13, 0, fantomes)
-        assert "Aucun pari recommandé · 13 matchs analysés" in sent[0]
-        assert "2 écarté(s) (< 2 h)" in sent[0]
-        assert "1 écarté(s) (sport en observation)" in sent[0]
 
-    def test_header_with_signals_also_counts_discards(self, sent):
-        run_engine._telegram_signals([_sig()], NOW, 13, 0, [_sig(shadow_reason="t_minus_2h")])
-        assert "1 pari(s) recommandé(s) · 13 matchs analysés · 1 écarté(s) (< 2 h)" in sent[0]
+class TestBilanDeLaVeille:
+    JOUR = datetime(2026, 11, 22, tzinfo=timezone.utc)
 
-    def test_every_signal_is_sent_as_a_single_no_combo(self, sent):
-        # Décision opérateur 2026-09-03 : plus de combiné, chaque pari en simple.
-        legs = [_sig(), _sig(match="A vs B", selection_name="A", sharp_prob=0.55, edge_pct=2.1)]
-        run_engine._telegram_signals(legs, NOW, 46, 0)
-        assert "2 pari(s) recommandé(s)" in sent[0]
-        assert "Real Madrid vs Barcelona" in sent[0] and "A vs B" in sent[0]
-        assert "Combiné" not in sent[0]
-        assert "→ Barcelona `@ 3.40` · valeur `+5.4%`" in sent[0]
-        assert "→ A (favori) `@ 3.40` · valeur `+2.1%`" in sent[0]
+    def test_le_format_demande(self):
+        assert tb.message_bilan(self.JOUR, 4, 1) == "📊 22/11 · 4 gagnés · 1 perdu · taux 80 %"
 
-    def test_urgent_kickoff_first(self, sent):
-        soon = _sig(match="Soon vs Later", match_time="2026-07-21T23:30:00+00:00", edge_pct=1.5)
-        run_engine._telegram_signals([_sig(), soon], NOW, 46, 0)
-        assert sent[0].index("Soon vs Later") < sent[0].index("Real Madrid vs Barcelona")
+    def test_rembourses_et_attente_seulement_s_il_y_en_a(self):
+        assert tb.message_bilan(self.JOUR, 1, 2, rembourses=1, en_attente=2) == \
+            "📊 22/11 · 1 gagné · 2 perdus · taux 33 % · 1 remboursé · 2 en attente"
 
-    def test_long_list_is_chunked_between_signals(self, sent):
-        many = [_sig(match=f"Club {i} Longnom vs Adversaire {i} Longnom") for i in range(80)]
-        run_engine._telegram_signals(many, NOW, 200, 0)
-        assert len(sent) > 1
-        assert all(len(m) <= 4000 for m in sent)
-        body = "".join(sent[1:])
-        assert body.count("*Club ") == body.count("valeur `+") == 80
+    def test_une_journee_sans_pari_ne_fait_pas_de_message(self):
+        assert tb.message_bilan(self.JOUR, 0, 0) is None
+
+    class _SB:
+        """meta (dernier bilan), signals (paris d'hier), ledger (issues)."""
+
+        def __init__(self, deja=None):
+            self.meta = {} if deja is None else {tb.BILAN_KEY: deja}
+            self.t = None
+
+        def table(self, nom):
+            self.t, self.f = nom, {}
+            return self
+
+        def select(self, *_a, **_k): return self
+        def eq(self, c, v): self.f[c] = v; return self
+        def gte(self, *_a): return self
+        def lt(self, *_a): return self
+        def in_(self, *_a): return self
+        def limit(self, *_a): return self
+
+        def upsert(self, row, **_k):
+            self.meta[row["key"]] = row["value"]
+            return self
+
+        def execute(self):
+            if self.t == "meta":
+                v = self.meta.get(tb.BILAN_KEY)
+                return type("R", (), {"data": [{"value": v}] if v else []})()
+            if self.t == "signals":
+                return type("R", (), {"data": [{"id": i, "status": "settled"} for i in range(5)]
+                                       + [{"id": 9, "status": "active"}]})()
+            issues = ["WIN"] * 4 + ["LOSS"]
+            return type("R", (), {"data": [{"signal_id": i, "outcome": o}
+                                           for i, o in enumerate(issues)]})()
+
+    def test_une_seule_fois_par_jour_et_pas_avant_six_heures(self, monkeypatch):
+        envois = []
+        monkeypatch.setattr(tb, "envoyer", lambda t: envois.append(t) or True)
+        sb = self._SB()
+        assert tb.annoncer_bilan_veille(sb, datetime(2026, 11, 23, 3, 45, tzinfo=timezone.utc)) is False
+        assert tb.annoncer_bilan_veille(sb, datetime(2026, 11, 23, 6, 45, tzinfo=timezone.utc)) is True
+        assert tb.annoncer_bilan_veille(sb, datetime(2026, 11, 23, 9, 45, tzinfo=timezone.utc)) is False
+        assert envois == ["📊 22/11 · 4 gagnés · 1 perdu · taux 80 % · 1 en attente"]
+
+    def test_un_envoi_rate_repart_au_passage_suivant(self, monkeypatch):
+        monkeypatch.setattr(tb, "envoyer", lambda t: False)
+        sb = self._SB()
+        assert tb.annoncer_bilan_veille(sb, datetime(2026, 11, 23, 6, 45, tzinfo=timezone.utc)) is False
+        assert tb.BILAN_KEY not in sb.meta
+
+    def test_texte_brut_jamais_de_markdown(self):
+        import inspect
+        assert "parse_mode" not in inspect.getsource(tb.envoyer)
+
+
+class TestPlusRienDAutre:
+    def test_le_rapport_toutes_les_2h_est_muet(self):
+        import inspect
+        import run_rapport
+        src = inspect.getsource(run_rapport)
+        assert "sendMessage" not in src and "_send(" not in src
+
+    def test_l_audit_n_envoie_que_resultats_et_bilan(self):
+        import inspect
+        import core.audit_engine as ae
+        src = inspect.getsource(ae)
+        assert "sendMessage" not in src
+        assert "annoncer_resultats" in src and "annoncer_bilan_veille" in src
+
+    def test_le_scan_n_envoie_que_les_paris(self):
+        import inspect
+        import re
+        src = inspect.getsource(run_engine.run)
+        assert not re.search(r"(?<![\w])_telegram\(", src), \
+            "le scan ne parle que par _telegram_signals"

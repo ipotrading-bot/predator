@@ -638,7 +638,12 @@ def _send(text: str) -> bool:
 
 
 def main(argv: list[str] | None = None) -> int:
-    muet = "--no-telegram" in (sys.argv[1:] if argv is None else argv)
+    # MUET PAR DÉFAUT depuis le 2026-10-29 (décision opérateur : Telegram ne
+    # porte plus que les paris, les résultats et le bilan de la veille). Le
+    # rapport est calculé et IMPRIMÉ (logs du job hebdo) ; `--telegram`
+    # l'envoie quand même, à la demande. `--no-telegram` reste accepté.
+    args = sys.argv[1:] if argv is None else argv
+    muet = "--telegram" not in args
     sb = get_db(write=False)
     now = datetime.now(timezone.utc)
     metrics: dict[str, dict] = {}
@@ -702,7 +707,7 @@ def main(argv: list[str] | None = None) -> int:
                          leagues, frontiere, bande)
     print(text)
     if muet:
-        log.info("--no-telegram : rapport calculé et imprimé, rien envoyé")
+        log.info("rapport calculé et imprimé, rien envoyé (--telegram pour l'envoyer)")
         return 0
     return 0 if _send(text) else 1
 
