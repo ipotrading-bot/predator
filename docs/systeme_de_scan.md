@@ -18,7 +18,7 @@ Tout le reste (golden, deep, guerrilla) a été supprimé — voir en bas.
 | Tick **reprice** | toutes les heures à H+25 | 24 |
 | Ligne de clôture (`closing_line.yml`) | H+14 · H+34 · H+54 | 72 |
 | Audit : règlement des paris, apprentissage (`audit.yml`) | 00:45 · 03:45 · 06:45 · 09:45 · 12:45 · 15:45 · 18:45 · 21:45 | 8 |
-| Job `rapport` (`reports.yml`), muet | toutes les 2 h à H+35 | 12 |
+| Alertes techniques (`reports.yml`, job `rapport`) | toutes les 2 h à H+35 | 12 |
 | Rapport hebdomadaire | lundi 07:00 | 1/semaine |
 
 Chaque heure de scan standard est placée **2 h 30 à 6 h avant** un bloc de
@@ -58,9 +58,10 @@ l'après-midi — 0 invocation, 0 erreur, rien à voir dans le dépôt. Le crén
 11:03 n'a pas été servi, 14 ticks de closing line sur 15 ont sauté, et tous
 les runs livrés étaient verts. Deux gardes depuis ce jour :
 
-- (jusqu'au 2026-10-29) le digest Telegram alertait « créneau non servi » ;
-  Telegram ne porte plus d'alerte depuis (ta décision) — c'est désormais
-  `ops.py watchdog` qui le dit, à la demande ;
+- le job `rapport` (`run_rapport.py`, toutes les 2 h à H+35) compare le
+  dernier créneau `standard` DÛ à la marque `meta.scan_standard_slot` et
+  alerte « créneau non servi » au-delà de 20 min — pas la fraîcheur d'un
+  fichier, le créneau (règle dure n°12) ;
 - `python scripts/ops.py watchdog` tranche la cause en un écran : PAT du
   Worker (expiration), cron et secret posés, invocations sur 24 h, incident
   Cloudflare ouvert, dernier dispatch vu par GitHub, créneau dû servi ou non.
@@ -123,17 +124,22 @@ encore engageables à cette heure » de chaque run montre le plafond du moment.
 - **Dashboard, liste des paris** : uniquement les signaux RECOMMANDÉS. Un
   signal à moins de 2 h du coup d'envoi est un « fantôme » : mesuré, réglé,
   appris, mais jamais recommandé ni affiché (colonne `is_shadow`).
-- **Telegram**, trois messages, simples (ta décision du 29 octobre 2026) :
+- **Telegram**, simple (tes décisions du 29 octobre 2026) :
   - les **paris à jouer**, au scan : le match, l'heure, la sélection, la cote,
-    le book. Un pari n'est annoncé qu'une fois en 24 h ; rien à jouer, rien
-    d'envoyé ;
-  - les **résultats** après chaque audit (toutes les 3 h) : ✅ gagné,
-    ❌ perdu, ↩️ remboursé, un pari par ligne ;
+    le book — puis TOUJOURS les **paris encore jouables** (déjà annoncés,
+    coup d'envoi devant nous). Un scan standard sans nouveau pari les rappelle
+    (« aucun nouveau pari ») ; rien du tout : silence. Le reprice ne parle que
+    s'il a un pari neuf ;
+  - les **résultats** après chaque audit : ✅ gagné, ❌ perdu, ↩️ remboursé,
+    puis les paris encore jouables ;
   - le **bilan de la veille**, une fois par jour, au premier audit après
-    06:00 UTC : « 📊 28/10 · 4 gagnés · 1 perdu · taux 80 % ».
-  Plus rien d'autre : ni digest, ni résumé d'apprentissage, ni alertes, ni
-  rapport hebdo. Ils restent dans les journaux des jobs et dans `meta`, et
-  `python scripts/ops.py status` / `watchdog` les montrent à la demande.
+    06:00 UTC : « 📊 28/10 · 4 gagnés · 1 perdu · taux 80 % » ;
+  - les **alertes de problème technique** (moteur muet, créneau non servi,
+    base injoignable, sources épuisées, pool OddsAPI, audit stérile, pause
+    automatique) ;
+  - le **rapport du lundi**.
+  Ne partent plus : le digest toutes les 2 h, le résumé d'apprentissage
+  quotidien, « N matchs analysés · écartés ».
 - **Bouton « Scanner »** : ramassé au tick suivant (≤ 1 h). Si c'est un tick
   reprice, il devient un scan standard complet. Il n'y a pas de poller dédié,
   et il ne faut pas en ajouter (incident du 2026-07-07 : 288 déclenchements

@@ -3,14 +3,19 @@ tests/test_telegram_format.py — Telegram, trois messages simples (2026-10-29).
 
 Décision opérateur du 2026-10-29 : « Telegram : les signaux à jouer, les
 résultats après chaque audit, les gains/pertes du jour précédent, par exemple
-22/11 4 gagnés 1 perdu taux 80 %. Simple, lisible. » Tout le reste a quitté
-Telegram (digest 2 h, résumé d'apprentissage, alertes, hebdo).
+22/11 4 gagnés 1 perdu taux 80 %. Simple, lisible. » Puis, le même jour :
+« garde les alertes de problèmes techniques et le rapport du lundi,
+mentionne toujours les paris encore jouables ». Ne partent plus : le digest
+🆕/⏳ toutes les 2 h, le résumé d'apprentissage, « N matchs analysés ».
 
 Gardés ici, sans aucun envoi réseau :
   1. le message des paris : match, heure, sélection, cote, book — ni valeur,
-     ni favori, ni tranche, ni mise ; SILENCE quand rien n'est à jouer ;
-  2. les résultats de l'audit : un pari par ligne, ✅ ❌ ↩️ ;
-  3. le bilan de la veille au format demandé, une seule fois par jour.
+     ni favori, ni tranche, ni mise — puis les paris ENCORE JOUABLES ;
+     silence quand il n'y a ni nouveau ni encore jouable ;
+  2. les résultats de l'audit : un pari par ligne, ✅ ❌ ↩️, puis les encore
+     jouables ;
+  3. le bilan de la veille au format demandé, une seule fois par jour ;
+  4. (ailleurs) alertes techniques et rapport du lundi.
 """
 from datetime import datetime, timezone
 
@@ -159,23 +164,73 @@ class TestBilanDeLaVeille:
         assert "parse_mode" not in inspect.getsource(tb.envoyer)
 
 
-class TestPlusRienDAutre:
-    def test_le_rapport_toutes_les_2h_est_muet(self):
+class TestEncoreJouables:
+    """« Mentionne toujours les paris encore jouables » (2026-10-29)."""
+
+    @staticmethod
+    def _jouable(**over):
+        s = {"match": "Lyon vs Nice", "market_key": "totals_over", "selection_name": "Over 2.5",
+             "xbet_odd": 1.85, "match_time": "2026-07-21T21:00:00+00:00", "soft_book": "1xbet"}
+        s.update(over)
+        return s
+
+    def test_la_section(self):
+        texte = tb.section_encore_jouables([self._jouable()], NOW)
+        assert texte == "⏳ Encore jouables (1)\n• Lyon vs Nice · 21:00 → Over 2.5 @ 1.85 · 1xbet"
+        assert tb.section_encore_jouables([], NOW) == ""
+
+    def test_apres_les_nouveaux_paris(self, sent):
+        run_engine._telegram_signals([_sig()], NOW, matches=1, no_pin_count=0,
+                                     encore=[self._jouable()])
+        assert "pari(s) à jouer" in sent[0] and "⏳ Encore jouables (1)" in sent[0]
+        assert sent[0].index("→ Barcelona") < sent[0].index("⏳ Encore jouables")
+
+    def test_sans_nouveau_pari_le_scan_les_rappelle(self, sent):
+        run_engine._telegram_signals([], NOW, matches=1, no_pin_count=0,
+                                     encore=[self._jouable()])
+        assert len(sent) == 1 and "aucun nouveau pari" in sent[0]
+        assert "Lyon vs Nice" in sent[0]
+
+    def test_rien_du_tout_silence(self, sent):
+        run_engine._telegram_signals([], NOW, matches=1, no_pin_count=0, encore=[])
+        assert sent == []
+
+    def test_un_nom_a_soulignement_ne_casse_pas_le_markdown(self):
+        texte = tb.section_encore_jouables([self._jouable(match="Real_B vs C*D")], NOW,
+                                           markdown=True)
+        assert "Real\\_B" in texte and "C\\*D" in texte
+
+    def test_trop_de_paris_restent_lisibles(self):
+        texte = tb.section_encore_jouables([self._jouable()] * 40, NOW)
+        assert texte.count("• ") == tb._MAX_JOUABLES and "… et 15 autres" in texte
+
+    def test_le_scan_exclut_ce_qu_il_vient_d_annoncer(self):
+        import inspect
+        src = inspect.getsource(run_engine.run)
+        assert "encore=_lire_encore_jouables(sb, now, deja)" in src
+
+    def test_les_resultats_les_rappellent_aussi(self):
+        import inspect
+        assert "section_encore_jouables" in inspect.getsource(tb.annoncer_resultats)
+
+
+class TestCeQuiPartEncore:
+    def test_le_rapport_toutes_les_2h_ne_porte_que_des_alertes(self):
         import inspect
         import run_rapport
         src = inspect.getsource(run_rapport)
-        assert "sendMessage" not in src and "_send(" not in src
+        assert '.table("signals")' not in src and "composer_alertes" in src
 
-    def test_l_audit_n_envoie_que_resultats_et_bilan(self):
+    def test_l_audit_envoie_resultats_bilan_et_alerte_sterile(self):
         import inspect
         import core.audit_engine as ae
         src = inspect.getsource(ae)
-        assert "sendMessage" not in src
         assert "annoncer_resultats" in src and "annoncer_bilan_veille" in src
+        assert "envoyer(msg" in inspect.getsource(ae._signaler_audit_sterile)
 
-    def test_le_scan_n_envoie_que_les_paris(self):
+    def test_le_scan_ne_parle_que_par_les_paris_et_les_alertes(self):
         import inspect
         import re
         src = inspect.getsource(run_engine.run)
         assert not re.search(r"(?<![\w])_telegram\(", src), \
-            "le scan ne parle que par _telegram_signals"
+            "le scan ne parle que par _telegram_signals et _journaliser_alerte"

@@ -1,14 +1,17 @@
 """
 core/telegram_bilan.py — les deux messages de l'audit (2026-10-29).
 
-Décision opérateur du 2026-10-29 : Telegram ne porte plus que TROIS
-messages, « simples, lisibles » :
-  1. les paris à jouer — run_engine._telegram_signals, au scan ;
-  2. les RÉSULTATS après chaque audit — `annoncer_resultats` ;
+Décisions opérateur du 2026-10-29 — Telegram « simple, lisible » :
+  1. les paris à jouer — run_engine._telegram_signals, au scan, suivis
+     TOUJOURS des paris encore jouables (`section_encore_jouables`) ;
+  2. les RÉSULTATS après chaque audit — `annoncer_resultats`, suivis eux
+     aussi des paris encore jouables ;
   3. le BILAN de la veille, une fois par jour — `annoncer_bilan_veille`,
-     au format demandé : « 28/10 · 4 gagnés · 1 perdu · taux 80 % ».
-Tout le reste (alertes, résumé d'apprentissage, digest toutes les 2 h,
-rapport hebdo) a quitté Telegram ; les journaux et `meta` le gardent.
+     au format demandé : « 28/10 · 4 gagnés · 1 perdu · taux 80 % » ;
+  4. les ALERTES de problème technique (run_engine._journaliser_alerte,
+     audit stérile, run_rapport) et le rapport du LUNDI (weekly_report).
+Ne partent plus : le digest 🆕/⏳ toutes les 2 h, le résumé d'apprentissage
+quotidien, la ligne « N matchs analysés · écartés ».
 
 Le « taux » nu du bilan est une EXCEPTION voulue à la règle 7 : l'opérateur
 l'a demandé tel quel pour ce message. Les analyses gardent Wilson.
@@ -49,6 +52,73 @@ def envoyer(texte: str) -> bool:
         return False
 
 
+# ── Paris encore jouables (décision opérateur du 2026-10-29) ─────────────
+# « Mentionne toujours les paris encore jouables » : en fin du message des
+# paris (scan) et du message des résultats (audit). Recommandés seulement,
+# statut actif, coup d'envoi devant nous.
+
+_MAX_JOUABLES = 25      # au-delà, « … et N autres » : un message reste lisible
+
+
+def _heure(match_time, now: datetime) -> str:
+    try:
+        t = datetime.fromisoformat(str(match_time).replace("Z", "+00:00"))
+    except (TypeError, ValueError):
+        return "?"
+    t = t if t.tzinfo else t.replace(tzinfo=timezone.utc)
+    return f"{t:%H:%M}" if t.date() == now.date() else f"{t:%d/%m %H:%M}"
+
+
+def _sans_markdown(texte: str) -> str:
+    """Le message des paris part en Markdown : un « _ » ou un « * » dans un
+    nom d'équipe le ferait refuser par Telegram."""
+    for c in ("\\", "_", "*", "`", "["):
+        texte = texte.replace(c, "\\" + c)
+    return texte
+
+
+def lire_encore_jouables(sb, now: datetime, exclure: set | None = None) -> list[dict]:
+    """Recommandés actifs au coup d'envoi futur, du plus proche au plus loin.
+    `exclure` : clés (match, market_key, selection_name) déjà détaillées dans
+    le même message. Base illisible → [] (jamais bloquant)."""
+    if sb is None:
+        return []
+    try:
+        res = (sb.table("signals")
+               .select("match,market_key,selection_name,xbet_odd,match_time,soft_book")
+               .eq("status", "active")
+               .eq("is_shadow", False)
+               .gt("match_time", now.isoformat())
+               .order("match_time")
+               .limit(100)
+               .execute())
+    except Exception as e:                                       # noqa: BLE001
+        log.warning("paris encore jouables illisibles : %s", e)
+        return []
+    exclure = exclure or set()
+    return [s for s in (res.data or [])
+            if (s.get("match"), s.get("market_key"), s.get("selection_name")) not in exclure]
+
+
+def section_encore_jouables(paris: list[dict], now: datetime, markdown: bool = False) -> str:
+    """« ⏳ Encore jouables (N) » puis une ligne par pari ; "" s'il n'y en a pas."""
+    if not paris:
+        return ""
+    esc = _sans_markdown if markdown else (lambda t: t)
+    lignes = []
+    for s in paris[:_MAX_JOUABLES]:
+        try:
+            cote = f" @ {float(s.get('xbet_odd')):.2f}"
+        except (TypeError, ValueError):
+            cote = ""
+        book = f" · {s['soft_book']}" if s.get("soft_book") else ""
+        lignes.append(esc(f"• {s.get('match', '?')} · {_heure(s.get('match_time'), now)} → "
+                          f"{s.get('selection_name') or '?'}{cote}{book}"))
+    if len(paris) > _MAX_JOUABLES:
+        lignes.append(f"… et {len(paris) - _MAX_JOUABLES} autres")
+    return f"⏳ Encore jouables ({len(paris)})\n" + "\n".join(lignes)
+
+
 # ── 2. Résultats après chaque audit ──────────────────────────────────────
 
 def message_resultats(lignes: list[dict]) -> str | None:
@@ -86,7 +156,9 @@ def annoncer_resultats(sb, depuis: datetime) -> int:
     texte = message_resultats(lignes)
     if texte is None:
         return 0
-    envoyer(texte)
+    jouables = section_encore_jouables(lire_encore_jouables(sb, datetime.now(timezone.utc)),
+                                       datetime.now(timezone.utc))
+    envoyer(texte + ("\n\n" + jouables if jouables else ""))
     return sum(1 for l in lignes if l.get("outcome") in _ICONES)
 
 
