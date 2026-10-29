@@ -3588,6 +3588,82 @@ pas :
   plafond — et **0 signal NFL depuis toujours**. Aucune mesure ne justifie de
   lui donner la place d'une famille mesurée.
 
+### Le tennis gagnait 70 % et son seuil montait : le cliquet des seuils et la dérive biaisée (2026-10-29)
+
+Symptôme : `threshold_tennis` à 6,0 (le plafond dur), `threshold_seg_tennis_totals`
+et `threshold_seg_soccer_spreads` aussi, `threshold_soccer` à 4,0. Le tennis est
+passé d'environ 10 signaux par semaine à 1-4 depuis le 19/10, edge minimum émis
+6,1 %. Il gagnait pourtant 26 sur 37 en zone (70 % [54 ; 83], point mort 55 %,
+annoncé 59 %, z +1,45).
+
+Mesure (ledger post-époque, daté par signal, 692 réglés dont 436 recommandés
+en zone) : le moteur annonçait 58,4 % et réalisait 58,7 % (z +0,14), +18,9 u
+pour +17,1 attendus. L'edge n'apporte rien au-delà de `sharp_prob` (z ≈ 0 dans
+chaque bande). Presque tous les « motifs » de segment s'inversent entre la zone
+et les fantômes (football sous 4 % : gagnant en zone, perdant en fantômes).
+
+Deux causes, rejouées avec le vrai code sur le vrai ledger :
+1. **Cliquet structurel.** `_decide_threshold` ajoutait +0,4 dès que la
+   réussite CUMULÉE passait sous le point mort, et rejouait la décision à
+   chaque ligne neuve. L'empreinte du 2026-09-15 ne bloquait que le même
+   échantillon. La descente exigeait une preuve à 95 %. Simulé : un sport
+   à +5 % d'edge réel finit au plafond dans 51 % des cas en 60 paris.
+2. **Dérive biaisée.** La règle « dérive < −1 % sur ≥ 15 lignes → ↑ sans
+   attendre le win-rate » a poussé le tennis (−1,45 %). Sur 617 clôtures, la
+   dérive moyenne vaut −0,64 % (t −2,70) alors que les gagnés collent au prix
+   d'ENTRÉE (329 pour 329,4 annoncés, 327,3 à la clôture ; log-loss 0,652
+   contre 0,649). La clôture est le milieu arithmétique back/lay d'un
+   exchange, non dévigé, et elle est comparée à un prix d'entrée venu d'une
+   autre source : une part de la « dérive » est la fourchette. La corrélation
+   entre la dérive et le résidu (résultat − annoncé) vaut r +0,076 (t +1,8).
+
+Correctif (instruction opérateur du jour) :
+- `_verdict_seuil` / `_cible_seuil` : un seuil devient une FONCTION de la
+  preuve, sans mémoire. Il vaut le défaut, sauf perte prouvée (plafond dur)
+  ou gain prouvé (défaut − 0,5). La preuve est le réalisé CONTRE L'ANNONCÉ
+  (`calibration_stats`, |z| ≥ 1,96), ou Wilson contre le point mort.
+- Les fantômes du même sport servent de contre-épreuve : s'ils contredisent
+  (n ≥ 10), le motif n'est pas retenu ; s'ils vont dans le même sens, ils
+  s'ajoutent à la preuve.
+- `_mouvement_permis` : 20 réglés neufs entre deux mouvements. Les bases
+  passent en `learning_bases_v2`, ce qui réévalue en un audit chaque seuil
+  hérité.
+- `_derive_excedent` : la dérive se lit contre la référence commune du
+  ledger (−0,62 %) et ne sert plus que de frein à un abaissement (t ≤ −2).
+- `_calibration_flag`, les pas `_STEP_UP`/`_STEP_DOWN` et `_CLV_STRONG`
+  disparaissent.
+
+Effet attendu au premier audit, rejoué à blanc : tous les verdicts sont
+NEUTRES, donc tous les seuils hérités reviennent au défaut. Tennis 6,0 → 2,0,
+football 4,0 → 1,2 (plancher effectif `EV_EDGE_FLOOR` 1,5), basket 2,5 → 1,5,
+et les segments `soccer_spreads`, `soccer_totals` et `tennis_totals` retirés.
+Les plafonds d'edge (football 6 %, basket 4 %) ne changent pas. Le volume
+remonte : à relire, en zone, sur les réglés postérieurs au 2026-10-29.
+
+Au passage, point 4 de la même mesure : quatre colonnes du ledger n'avaient
+jamais reçu une valeur (`sharp_divergence_std`, `ai_confidence_score`,
+`news_sentiment_score`, `bookmaker_adjustment_speed_seconds`), et
+`consensus_score` vaut 100 partout. L'écart Pinnacle–exchange que
+`_enrich_from_exchange` mesurait puis jetait part désormais avec le signal
+(`sharp_divergence_pts`, sql/migrate_v10_22, appliquée AVANT le déploiement).
+sql/migrate_v10_23 retire les quatre colonnes mortes, après déploiement, avec
+une garde qui refuse si l'une d'elles a reçu une valeur.
+
+Question annexe tranchée le même jour : une IA ferait-elle mieux ? En
+walk-forward sur les 692 réglés (5 blocs, 416 prédits hors échantillon), une
+régression logistique (log-loss 0,673) et un gradient boosting (0,698)
+prédisent MOINS bien que `sharp_prob` seule (0,664). Filtrer les recommandés
+avec eux retire des paris sans gain mesurable : +8,7 u et +7,8 u, contre
++10,0 u pour tout jouer. Il n'existe pas encore de motif fin à apprendre :
+c'est la taille d'échantillon qui limite, pas l'intelligence de la règle.
+
+À retenir : **un seuil qui se règle par pas et se rejoue à chaque ligne neuve
+est une marche aléatoire à dérive montante** ; un seuil doit dépendre de la
+preuve, jamais de sa propre valeur précédente. Et **une mesure biaisée de la
+même façon pour tous les segments ne dit rien d'un segment** : la lire contre
+sa moyenne commune. Gardiens : `tests/test_seuils_sans_cliquet.py`,
+`tests/test_ecart_sharp.py`, `tests/test_incident_2026_09_15.py::TestCliquet`.
+
 ## Couche IA
 
 Le paysage des paliers gratuits change tous les mois. Rien de ce qui suit

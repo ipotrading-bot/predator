@@ -416,6 +416,10 @@ def log_to_ledger(sb, sig: dict, clv: float | None, outcome: str) -> None:
         # l'ouverture (learning_layer.calibration_stats) lit ceux-ci.
         "ouverture_sharp_prob":   sig.get("ouverture_sharp_prob"),
         "ouverture_cote":         sig.get("ouverture_cote"),
+        # Écart Pinnacle–exchange à l'entrée, en points (sql/migrate_v10_22) :
+        # remplace `sharp_divergence_std`, colonne jamais écrite (0/1357 au
+        # 2026-10-29) que v10_23 retire.
+        "sharp_divergence_pts":   sig.get("sharp_divergence_pts"),
     }
     payload = {
         "signal_id":             sig.get("id"),
@@ -428,7 +432,6 @@ def log_to_ledger(sb, sig: dict, clv: float | None, outcome: str) -> None:
         "odds":                  sig.get("xbet_odd"),
         "time_to_match_minutes": ttm,
         "initial_edge":          sig.get("edge_pct"),
-        "sharp_divergence_std":  None,
         "clv_final":             clv,
         "was_clv_positive":      (clv > 0) if clv is not None else None,
         "outcome":               outcome,

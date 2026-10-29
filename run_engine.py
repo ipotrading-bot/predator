@@ -408,7 +408,9 @@ _OPTIONAL_COLS = {"selection_name", "kelly_pct", "advice", "sharp_sources", "con
                   # (core/execution_books) ; rafraîchi AVEC le prix, jamais figé
                   "soft_book",
                   # sql/migrate_v10_21_prix_ouverture.sql — prix de la PREMIÈRE vue
-                  "ouverture_sharp_prob", "ouverture_cote"}
+                  "ouverture_sharp_prob", "ouverture_cote",
+                  # sql/migrate_v10_22_ecart_sharp.sql — accord des deux avis sharp
+                  "sharp_divergence_pts"}
 
 # Le prix de la PREMIÈRE insertion (2026-10-23) : posé par _save à l'INSERT,
 # jamais réécrit. Sans lui, un fantôme `basket_avant_effectifs` promu à T-4h
@@ -1179,6 +1181,10 @@ def _enrich_from_exchange(items: list, prices: dict, log) -> int:
                             ecart, _EXCHANGE_DIVERGENCE_PTS)
                 continue
             m["odds_exchange"] = {"1": bf["1"], "X": bf.get("X", 0.0), "2": bf["2"]}
+            # L'écart mesuré part avec le signal (sql/migrate_v10_22) : la
+            # seule donnée du ledger qui dise À QUEL POINT deux avis sharp
+            # s'accordaient à l'entrée — jusqu'ici calculé, loggé, jeté.
+            m["_sharp_divergence_pts"] = round(ecart, 3)
             # Loggé À CHAQUE comparaison, pas seulement aux refus : le seuil
             # a été posé sur 5 paires liquides et sa vraie distribution ne
             # peut venir que de la production (voir constants).
@@ -1537,7 +1543,7 @@ def _emit(signals, sb, now, log, name, sport, league, mkt_key, mkt_label,
           executable_odd, pin_odd, sharp_prob, emoji, selection_name="", min_edge=None,
           match_time="", match_id="", sharp_sources=None, consensus_score=None,
           ah0_value: bool = False, sharp_prob_cons=None, dnb_draw_odd: float = 0.0,
-          soft_book: str | None = None):
+          soft_book: str | None = None, sharp_divergence_pts: float | None = None):
     """Calcule l'EV, applique les gates de qualité, collecte le signal.
 
     `soft_book` : le book d'EXÉCUTION qui fournit `executable_odd`
@@ -1724,6 +1730,10 @@ def _emit(signals, sb, now, log, name, sport, league, mkt_key, mkt_label,
         "advice":         advice,
         "sharp_sources":  json.dumps(sharp_sources) if sharp_sources else None,
         "consensus_score": consensus_score,
+        # Écart Pinnacle–exchange du MATCH (moneyline), en points de
+        # probabilité, mesuré par _enrich_from_exchange ; None quand une
+        # seule source sharp cotait le match (sql/migrate_v10_22).
+        "sharp_divergence_pts": sharp_divergence_pts,
         "correlation_group": _correlation_group(sport, league or "", mt),
     }
     signals.append(signal)
@@ -1978,7 +1988,8 @@ def _process_h2h(m, name, sport, league, home, away, emoji, signals, sb, now, lo
           match_time=m.get("commence_time", ""), match_id=m.get("id", ""),
           sharp_sources=sources_found if sources_found else None,
           consensus_score=consensus_score if sources_found else None,
-          ah0_value=ah0_value, soft_book=soft_book)
+          ah0_value=ah0_value, soft_book=soft_book,
+          sharp_divergence_pts=m.get("_sharp_divergence_pts"))
 
 
 def _emit_book_prefere(bloc: dict, side: str, meilleur_prix: float, sides: list,
@@ -2421,7 +2432,8 @@ def _process_totals(m, name, sport, league, emoji, signals, sb, now, log, min_ed
               selection_name=sel, min_edge=min_edge,
               match_time=m.get("commence_time", ""), match_id=m.get("id", ""),
               sharp_sources=sources_found if sources_found else None,
-              consensus_score=consensus_score if sources_found else None)
+              consensus_score=consensus_score if sources_found else None,
+              sharp_divergence_pts=m.get("_sharp_divergence_pts"))
 
     signals.extend(_keep_best_side(sides, log, emoji, name))
 
@@ -2492,7 +2504,8 @@ def _process_spreads(m, name, sport, league, home, away, emoji, signals, sb, now
               selection_name=f"{team} {pt_str}", min_edge=min_edge,
               match_time=m.get("commence_time", ""), match_id=m.get("id", ""),
               sharp_sources=sources_found if sources_found else None,
-              consensus_score=consensus_score if sources_found else None)
+              consensus_score=consensus_score if sources_found else None,
+              sharp_divergence_pts=m.get("_sharp_divergence_pts"))
 
     signals.extend(_keep_best_side(sides, log, emoji, name))
 

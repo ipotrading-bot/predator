@@ -232,7 +232,7 @@ class TestCalibration:
         import json
         assert json.loads(poses[0]["value"])["calibration"] == calib["basketball"]
         # Consultatif : ni la décision de seuil ni le moteur ne la lisent.
-        assert "calibration_par_tranche" not in inspect.getsource(ll._decide_threshold)
+        assert "calibration_par_tranche" not in inspect.getsource(ll._verdict_seuil)
         assert "calibration_par_tranche" not in inspect.getsource(eng)
 
 

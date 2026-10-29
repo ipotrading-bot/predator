@@ -74,7 +74,7 @@ _TRAILING_NUMBER = re.compile(r"(-?\+?\d+(?:\.\d+)?)\s*$")
 # 73/142 en fantôme (51,4 %) portent un `clv_pct_real`. Donc ~36 % des lignes
 # réglées n'en portent aucun. Or le CLV converge ~3× plus vite que le résultat
 # (core/learning_layer.py, _CLV_MIN_SAMPLES=15 contre _MIN_SAMPLES=20) et c'est
-# un critère de PREMIER rang dans _decide_threshold : chaque capture perdue
+# la base du frein de dérive des seuils (_derive_excedent) : chaque capture perdue
 # coûte plus cher qu'une ligne de résultat perdue.
 #
 # Ce module énumérait DÉJÀ quatre causes possibles dans ses logs — et n'en
