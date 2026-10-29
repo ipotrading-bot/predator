@@ -3708,20 +3708,24 @@ chemins qui décident d'un WIN/LOSS ou d'une émission.
    désormais dans `market_key`, et un libellé illisible donne UNKNOWN au lieu
    de LOSS.
 
-**Défauts relevés, NON corrigés ici** (écriture en base ou décision opérateur) :
-- Ligne de ledger 10963 à repasser en PUSH ; lignes 10072 et 10184 à
-  réinsérer ; `is_shadow` faux au ledger pour 9812, 9829, 9832 (true pour des
-  paris à T-2h51..4h15) et 9824 (false pour un fantôme). Une écriture
-  directe exige une instruction qui nomme le signal.
-- `sql/migrate_v10_24_durcissement_droits.sql`, écrite et NON appliquée
-  (application refusée par le garde de permissions de la session). `anon`
-  et `authenticated` gardent INSERT, UPDATE, DELETE et TRUNCATE sur sept
-  tables, plus les séquences. Seule la RLS les arrête, et TRUNCATE n'y est
-  pas soumis. S'y ajoutent trois vues SECURITY DEFINER inutilisées et deux
-  fonctions héritées exécutables par anon.
-- `meta` n'est jamais purgée : clés `quota_*` et `oddsapi_demande_*`
-  quotidiennes, `mesure_books_*` à 20-80 Ko par jour, clés de sources
-  retirées (`sevenm_*`, `source_scorecard_odds500`).
+**Corrigés le même jour en base, sur instruction opérateur (« corriger l'ensemble ») :**
+- `sql/migrate_v10_25_corrections_audit.sql`, avec copie préalable de chaque
+  valeur dans `meta.correction_archive_v10_25` :
+  - `time_to_match_minutes` recalculé depuis la CRÉATION pour 66 lignes
+    (signaux du 24/08 au 02/09, calculées depuis le dernier rafraîchissement
+    avant le correctif du 03/09) ;
+  - `is_shadow` aligné pour les 11 lignes que ce délai faux avait fait passer
+    pour fantômes ; signal 9824 (émis à T-2h00) remis en zone ;
+  - 10963 passé en PUSH (ledger et signal) ;
+  - 10072 et 10184 réinsérés.
+  Ledger : 1 357 → 1 359 lignes, plus aucun délai ni drapeau discordant.
+- `v10_24` et `v10_26` : `anon` et `authenticated` n'ont plus que SELECT
+  partout (TRUNCATE, écritures et séquences retirés, `meta` comprise) ; vues
+  en `security_invoker` ; fonctions héritées non exécutables. Vérifié avec la
+  clé anon : lecture 200, écriture 401, `demander_scan` opérationnel.
+- `core/meta_retention.py` : l'audit retire les clés datées (`quota_*`,
+  `oddsapi_demande_*`, `closing_causes_*`, `mesure_books_*`) de plus de
+  60 jours. Les historiques relus par le code ne dépassent pas 7 jours.
 
 **Principe — le constat qui pèse le plus** : sur les 436 recommandés
 post-époque, l'EV annoncée vaut +3,9 % hors taxe et −5,2 % après la retenue

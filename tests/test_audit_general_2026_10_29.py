@@ -89,3 +89,48 @@ class TestReglement:
 
     def test_sans_cote_lisible_rien_n_est_invente(self):
         assert determine_outcome("soccer", "totals", "Total 2.5", "Lyon", "Nice", 2, 1) == "UNKNOWN"
+
+
+class TestRetentionMeta:
+    """`meta` n'était jamais purgée (quota_*, mesure_books_* à 20-80 Ko/jour)."""
+
+    class _Q:
+        def __init__(self, log, leve=False):
+            self.log, self.leve, self.f = log, leve, {}
+        def delete(self): return self
+        def like(self, c, v): self.f["like"] = v; return self
+        def lt(self, c, v): self.f["lt"] = v; return self
+        def execute(self):
+            if self.leve:
+                raise RuntimeError("réseau")
+            self.log.append(dict(self.f))
+            return type("R", (), {"data": [{"key": "x"}]})()
+
+    def _sb(self, log, leve=False):
+        test = self
+        class _SB:
+            def table(self, nom):
+                assert nom == "meta", "seule meta est purgée — jamais le ledger"
+                return test._Q(log, leve)
+        return _SB()
+
+    def test_seules_les_familles_datees_partent_apres_60_jours(self):
+        from datetime import datetime, timezone
+        from core import meta_retention as mr
+        log = []
+        n = mr.purger(self._sb(log), now=datetime(2026, 10, 29, tzinfo=timezone.utc))
+        assert [x["like"] for x in log] == [p + "%" for p in mr.PREFIXES_DATES]
+        assert all(x["lt"].startswith("2026-08-30") for x in log)
+        assert n == len(mr.PREFIXES_DATES)
+        assert not any(p.startswith(("threshold", "edge_ceiling", "sport_verdict", "learning"))
+                       for p in mr.PREFIXES_DATES)
+
+    def test_une_panne_ne_fait_pas_tomber_l_audit(self):
+        from core import meta_retention as mr
+        assert mr.purger(self._sb([], leve=True)) == 0
+        assert mr.purger(None) == 0
+
+    def test_l_audit_purge_apres_l_apprentissage(self):
+        import core.audit_engine as ae
+        src = inspect.getsource(ae.run)
+        assert src.index("_learn(sb)") < src.index("_purger_meta(sb)")
