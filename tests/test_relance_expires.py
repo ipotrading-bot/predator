@@ -264,7 +264,7 @@ class TestLaPlaceDansLaudit:
         # qui n'a rien de frais à régler : tout le budget est disponible.
         src = self._source()
         i_vide = src.index("Nothing to audit.")
-        i_fin = src.index("--- Learning Layer ---")
+        i_fin = src.index("_apprendre_et_entretenir(sb)", i_vide)
         assert "_relancer_expires" in src[i_vide:i_fin]
 
     def test_une_panne_de_relance_ne_fait_pas_echouer_laudit(self):

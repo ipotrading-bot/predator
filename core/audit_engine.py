@@ -621,6 +621,18 @@ def _relancer_expires(sb) -> dict:
     return {}
 
 
+def _apprendre_et_entretenir(sb) -> None:
+    """Couche d'apprentissage, puis rétention de `meta` (clés datées de plus
+    de 60 jours). À CHAQUE audit, vide compris. Ne fait jamais tomber l'audit."""
+    log.info("--- Learning Layer ---")
+    try:
+        _learn(sb)
+    except Exception as e:
+        log.error("Learning layer: %s", e)
+    from core.meta_retention import purger as _purger_meta
+    _purger_meta(sb)
+
+
 def _telegram_de_l_audit(sb, debut) -> None:
     """Les deux messages Telegram de l'audit (décision opérateur 2026-10-29) :
     les résultats réglés pendant CE passage, puis le bilan de la veille au
@@ -667,6 +679,12 @@ def run():
         # (run_engine, 2026-09-10), pas par ce contrat.
         _relancer_expires(sb)
         _telegram_de_l_audit(sb, debut_audit)
+        # L'APPRENTISSAGE TOURNE AUSSI SUR UN AUDIT VIDE (2026-10-29). Il sortait
+        # ici avant `_learn` : un seuil corrigé (règle sans cliquet, déployée à
+        # midi) attendait le prochain audit AVEC un pari à régler — 13:40 vide,
+        # rien appris depuis 04:31. Le ledger a pu changer sans pari en attente
+        # (relance des expirés, corrections de données).
+        _apprendre_et_entretenir(sb)
         log.info("━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━")
         return
 
@@ -719,15 +737,7 @@ def run():
 
     _telegram_de_l_audit(sb, debut_audit)
 
-    log.info("--- Learning Layer ---")
-    try:
-        _learn(sb)
-    except Exception as e:
-        log.error("Learning layer: %s", e)
-
-    # Rétention de `meta` (2026-10-29) : clés datées de plus de 60 jours.
-    from core.meta_retention import purger as _purger_meta
-    _purger_meta(sb)
+    _apprendre_et_entretenir(sb)
 
     log.info("━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━")
 

@@ -3787,6 +3787,14 @@ Gardiens : `tests/test_telegram_format.py`, `tests/test_rapport_alertes.py`,
 `tests/test_engine_circuit_breaker.py::test_une_alerte_technique_part_sur_telegram`.
 `tests/test_telegram_format.py::TestMarkdownRefuse`.
 
+Autre défaut, trouvé en vérifiant l'audit de 13:40 : un audit SANS pari en
+attente sortait avant la couche d'apprentissage et la purge de `meta`. Le
+seuil corrigé à midi (règle sans cliquet) restait donc non appliqué jusqu'au
+prochain audit qui avait quelque chose à régler, et rien n'avait été appris
+depuis 04:31. `audit_engine._apprendre_et_entretenir` tourne désormais à
+chaque audit, vide compris
+(`tests/test_audit_general_2026_10_29.py::TestRetentionMeta::test_un_audit_vide_apprend_aussi`).
+
 ## Couche IA
 
 Le paysage des paliers gratuits change tous les mois. Rien de ce qui suit
