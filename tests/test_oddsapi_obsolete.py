@@ -56,6 +56,9 @@ def scan_env(monkeypatch):
     monkeypatch.setattr(eng.time, "sleep", lambda _s: None)
     monkeypatch.setattr(eng._risk_manager, "check_circuit_breaker", lambda _sb: False)
     monkeypatch.setattr(eng, "_telegram", lambda t: telegrams.append(t))
+    # Les alertes vont au JOURNAL depuis le 2026-10-29 (plus sur Telegram) :
+    # la justesse de leur texte reste gardée ici.
+    monkeypatch.setattr(eng, "_journaliser_alerte", lambda k, t: telegrams.append(t))
     monkeypatch.setattr(eng, "_fixtures_espn", lambda sport, a, b: [])   # pas de réseau
 
     # Sources payantes / alertes de pool : toute sollicitation fait ÉCHOUER.

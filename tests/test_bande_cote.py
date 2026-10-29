@@ -231,7 +231,9 @@ class TestProposition:
                 "selection_name": "A", "market_key": "totals"}
         dedans = eng._signal_block(dict(base, executable_odd=1.62), now)
         dehors = eng._signal_block(dict(base, executable_odd=1.90), now)
-        assert "🎯 tranche 1,50-1,75" in dedans and "tranche" not in dehors
+        # Telegram SIMPLE (décision opérateur du 2026-10-29) : la tranche
+        # n'est plus étiquetée — le pari, la cote, le book.
+        assert "tranche" not in dedans and "tranche" not in dehors
         assert dedans.count("*") % 2 == 0 and dedans.count("`") % 2 == 0
 
     def test_le_dashboard_marque_la_bande(self):

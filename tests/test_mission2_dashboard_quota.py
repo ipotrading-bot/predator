@@ -125,7 +125,7 @@ class TestQuotaWatch:
     def test_four_percent_alerts_exactly_once_then_silence(self, monkeypatch):
         from tests.test_engine_circuit_breaker import FakeSB
         sent = []
-        monkeypatch.setattr(eng, "_telegram", lambda t: sent.append(t))
+        monkeypatch.setattr(eng, "_journaliser_alerte", lambda k, t: sent.append(t))
         monkeypatch.setattr(eng, "_odds_pool_totals", lambda: None)   # voie mono-clé
         monkeypatch.setattr(eng, "_odds_pool_counters",
                             lambda: {"remaining": 20, "used": 480, "total": 500, "pct": 4.0})
@@ -138,7 +138,7 @@ class TestQuotaWatch:
     def test_twenty_percent_tier_is_distinct(self, monkeypatch):
         from tests.test_engine_circuit_breaker import FakeSB
         sent = []
-        monkeypatch.setattr(eng, "_telegram", lambda t: sent.append(t))
+        monkeypatch.setattr(eng, "_journaliser_alerte", lambda k, t: sent.append(t))
         monkeypatch.setattr(eng, "_odds_pool_totals", lambda: None)   # voie mono-clé
         monkeypatch.setattr(eng, "_odds_pool_counters",
                             lambda: {"remaining": 90, "used": 410, "total": 500, "pct": 18.0})
@@ -148,7 +148,7 @@ class TestQuotaWatch:
     def test_healthy_pool_logs_but_never_alerts(self, monkeypatch):
         from tests.test_engine_circuit_breaker import FakeSB
         sent = []
-        monkeypatch.setattr(eng, "_telegram", lambda t: sent.append(t))
+        monkeypatch.setattr(eng, "_journaliser_alerte", lambda k, t: sent.append(t))
         monkeypatch.setattr(eng, "_odds_pool_totals", lambda: None)   # voie mono-clé
         monkeypatch.setattr(eng, "_odds_pool_counters",
                             lambda: {"remaining": 400, "used": 100, "total": 500, "pct": 80.0})

@@ -20,7 +20,6 @@ import logging
 from datetime import datetime, timedelta, timezone
 
 import run_engine
-import run_rapport
 from core.constants import EXECUTION_BOOKS
 from core.execution_books import (MEILLEUR_PRIX_MARCHES, avertissement_hors_reference,
                                   fusionner_lignes, prix_du_book, prix_reference,
@@ -150,17 +149,7 @@ class TestAffichage:
 
     def test_totaux_bet365_nomme_sans_avertissement(self):
         t = run_engine._signal_block(self._sig(SECOND, "totals_over"), _now())
-        d = run_rapport._signal_line(self._sig(SECOND, "totals_over"), _now())
-        assert f"chez *{SECOND}*" in t and "seulement" not in t
-        assert f"chez *{SECOND}*" in d and "seulement" not in d
-
-    def test_digest_nomme_le_book(self):
-        dehors = run_rapport._signal_line(self._sig(SECOND), _now())
-        dedans = run_rapport._signal_line(self._sig(REF), _now())
-        assert f"chez *{SECOND}*" in dehors and "seulement" in dehors
-        assert f"chez *{REF}*" in dedans and "seulement" not in dedans
-        for t in (dehors, dedans):
-            assert t.count("*") % 2 == 0 and t.count("`") % 2 == 0
+        assert f"· {SECOND}" in t and "seulement" not in t
 
     def test_les_books_restent_ceux_de_loperateur(self):
         """Règle 11 : rien ne coupe Bet365."""

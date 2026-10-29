@@ -46,28 +46,36 @@ class TestAuditSterile:
         def eq(self, _c, v): self.deletes.append(v); return self
         def execute(self): return type("R", (), {"data": []})()
 
+    # L'alerte passe au JOURNAL depuis le 2026-10-29 (décision opérateur :
+    # Telegram = paris, résultats, bilan). Le marqueur en base, lui, reste.
+    @staticmethod
+    def _journal(monkeypatch, ae):
+        envois = []
+        monkeypatch.setattr(ae.log, "error", lambda fmt, *a, **_k: envois.append(fmt % a))
+        return envois
+
     def test_zero_regle_alerte_et_pose_le_marqueur(self, monkeypatch):
         from core import audit_engine as ae
-        envois = []
-        monkeypatch.setattr(ae, "_alerte_telegram", lambda t: envois.append(t))
+        envois = self._journal(monkeypatch, ae)
         sb = self._SB()
         ae._signaler_audit_sterile(sb, {"settled": 0, "skipped": 52}, 52)
-        assert envois and "Audit stérile" in envois[0] and "52" in envois[0]
+        assert envois and "AUDIT STÉRILE" in envois[0] and "52" in envois[0]
         assert any(u["key"] == ae.SETTLEMENT_STARVED_KEY for u in sb.upserts)
+        assert not hasattr(ae, "_alerte_telegram"), "plus d'alerte Telegram depuis l'audit"
 
     def test_un_audit_productif_nalerte_pas(self, monkeypatch):
         from core import audit_engine as ae
-        envois = []
-        monkeypatch.setattr(ae, "_alerte_telegram", lambda t: envois.append(t))
-        ae._signaler_audit_sterile(self._SB(), {"settled": 3, "skipped": 1}, 4)
-        assert not envois
+        envois = self._journal(monkeypatch, ae)
+        sb = self._SB()
+        ae._signaler_audit_sterile(sb, {"settled": 3, "skipped": 1}, 4)
+        assert not envois and not sb.upserts
 
     def test_rien_a_auditer_nest_pas_une_famine(self, monkeypatch):
         from core import audit_engine as ae
-        envois = []
-        monkeypatch.setattr(ae, "_alerte_telegram", lambda t: envois.append(t))
-        ae._signaler_audit_sterile(self._SB(), {"settled": 0}, 0)
-        assert not envois
+        envois = self._journal(monkeypatch, ae)
+        sb = self._SB()
+        ae._signaler_audit_sterile(sb, {"settled": 0}, 0)
+        assert not envois and not sb.upserts
 
 
 class TestPurgeNeDetruitPasLechantillon:

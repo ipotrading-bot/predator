@@ -60,9 +60,10 @@ class TestRaison:
         src = inspect.getsource(eng._shadow_reason)
         assert "BASKET_AVANT_EFFECTIFS_MIN" in src and "360" not in src
 
-    def test_le_libelle_telegram(self):
-        sh = [{"shadow_reason": "basket_avant_effectifs"}]
-        assert eng._ecartes(sh) == " · 1 écarté(s) (basket > 6 h)"
+    def test_telegram_ne_compte_plus_les_ecartes(self):
+        """Décision opérateur du 2026-10-29 : Telegram = les paris à jouer,
+        sans « N écarté(s) »."""
+        assert not hasattr(eng, "_ecartes")
 
 
 class _SB:
