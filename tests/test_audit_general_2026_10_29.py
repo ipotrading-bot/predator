@@ -132,5 +132,14 @@ class TestRetentionMeta:
 
     def test_l_audit_purge_apres_l_apprentissage(self):
         import core.audit_engine as ae
-        src = inspect.getsource(ae.run)
+        src = inspect.getsource(ae._apprendre_et_entretenir)
         assert src.index("_learn(sb)") < src.index("_purger_meta(sb)")
+
+    def test_un_audit_vide_apprend_aussi(self):
+        """13:40 le 2026-10-29 : 0 pari en attente → sortie AVANT `_learn` ;
+        les seuils corrigés à midi n'étaient pas appliqués."""
+        import core.audit_engine as ae
+        src = inspect.getsource(ae.run)
+        vide = src[src.index("if not pending:"):src.index("return", src.index("if not pending:"))]
+        assert "_apprendre_et_entretenir(sb)" in vide
+        assert src.count("_apprendre_et_entretenir(sb)") == 2

@@ -148,7 +148,8 @@ class TestLeContratEstReellementCable:
         import inspect
         from core import audit_engine
         src = inspect.getsource(audit_engine.run)
-        assert src.index("_learn(sb)") < src.index("_terminer_run(")
+        assert src.rindex("_apprendre_et_entretenir(sb)") < src.index("_terminer_run(")
+        assert "_learn(sb)" in inspect.getsource(audit_engine._apprendre_et_entretenir)
 
 
 class TestLauditSterileSortEnEchec:
