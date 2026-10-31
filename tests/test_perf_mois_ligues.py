@@ -166,13 +166,104 @@ class TestLeagueBreakdown:
         assert tab[0]["league"] == SANS_LIGUE
         assert tab[0]["n"] == 5 and tab[0]["expired"] == 3
 
-    def test_pas_de_normalisation_des_libelles(self):
-        """Règle n°6 : « WNBA » et « USA - WNBA » restent deux lignes — la
-        divergence des sources se voit au lieu d'être cachée par une liste
-        tenue à la main."""
+    def test_une_ligue_inconnue_de_la_carte_nest_pas_devinee(self):
+        """Règle n°6 : « WNBA » et « USA - WNBA » (absentes de LEAGUE_MAP)
+        restent deux lignes — la divergence se voit au lieu d'être cachée par
+        une liste tenue à la main."""
         rows = ([_r("2026-09", "WIN", league="WNBA", sport="basketball")] * 5
                 + [_r("2026-09", "WIN", league="USA - WNBA", sport="basketball")] * 5)
         assert len(league_breakdown(rows, 0.0, 5)) == 2
+
+
+class TestLiguesRegroupees:
+    """2026-10-31 (demande opérateur) : PAR LIGUE coupait une même compétition
+    en plusieurs lignes selon la source. Libellés RÉELS du ledger d'octobre."""
+
+    # Groupes relevés dans ai_learning_ledger le 2026-10-31.
+    MEMES_LIGUES = [
+        ["La Liga - Spain", "Spain - LaLiga", "SPA D1", "La Liga"],
+        ["Ligue 1 - France", "France - Ligue 1", "FRA D1"],
+        ["Bundesliga - Germany", "Germany - Bundesliga", "GER D1"],
+        ["Serie A - Italy", "Italy - Serie A", "ITA D1", "Serie A"],
+        ["EPL", "England - Premier League", "ENG PR"],
+        ["England - Championship", "ENG LCH"],
+        ["Dutch Eredivisie", "Netherlands - Eredivisie"],
+        ["Turkey Super League", "Turkiye - Super Lig"],
+        ["Bundesliga 2 - Germany", "Germany - 2. Bundesliga"],
+        ["La Liga 2 - Spain", "Spain - LaLiga 2"],
+        ["Brazil Série A", "Brazil - Brasileiro Serie A", "BRA D1"],
+        ["UEFA Champions League", "International Clubs - UEFA Champions League",
+         "International Clubs - UEFA Champions League, Playoff Round"],
+        ["UEFA Europa League", "International Clubs - UEFA Europa League",
+         "International Clubs - UEFA Europa League, Playoff Round"],
+        ["MLS", "Major League Soccer", "USA - MLS"],
+        ["NBA", "USA - NBA"], ["MLB", "USA - MLB"],
+    ]
+
+    def test_chaque_groupe_reel_tombe_sur_une_seule_cle(self):
+        from core.source_adapter import league_key_affichage
+        for groupe in self.MEMES_LIGUES:
+            cles = {league_key_affichage(lib) for lib in groupe}
+            assert len(cles) == 1 and "" not in cles, (groupe, cles)
+
+    # Faux amis : la découpe par segment (league_key_correlation) les collait
+    # sur un grand championnat ; un bilan ne doit jamais les mélanger.
+    FAUX_AMIS = [
+        ("Egypt - Premier League", "EPL"),
+        ("Singapore - Premier League", "EPL"),
+        ("Ecuador - Serie A", "Serie A - Italy"),
+        ("Brazil - Serie A", "Serie A - Italy"),
+        ("Israel - National League", "England - National League"),
+        ("Turkiye - Super Lig, Women", "Turkiye - Super Lig"),
+        ("USA - NBA Preseason", "NBA"),
+        ("USL Championship", "England - Championship"),
+    ]
+
+    def test_les_faux_amis_restent_separes(self):
+        from core.source_adapter import league_key_affichage
+        for a, b in self.FAUX_AMIS:
+            ka = league_key_affichage(a)
+            assert ka == "" or ka != league_key_affichage(b), (a, b)
+
+    def test_le_tableau_regroupe_sous_le_libelle_le_plus_frequent(self):
+        """Bundesliga d'octobre : 0-5 et 1-3 sur deux lignes → 1-8 sur une."""
+        rows = ([_r("2026-10", "LOSS", league="Germany - Bundesliga")] * 5
+                + [_r("2026-10", "WIN", league="Bundesliga - Germany")]
+                + [_r("2026-10", "LOSS", league="Bundesliga - Germany")] * 3
+                + [_r("2026-10", "LOSS", league="GER D1")])
+        (lg,) = league_breakdown(rows, 0.0, 5)
+        assert lg["league"] == "Germany - Bundesliga"
+        assert (lg["wins"], lg["losses"]) == (1, 9)
+
+    def test_pas_de_melange_entre_sports(self):
+        rows = ([_r("2026-10", "WIN", league="NBA", sport="basketball")] * 5
+                + [_r("2026-10", "WIN", league="USA - NBA", sport="basketball")] * 5
+                + [_r("2026-10", "WIN", league="Serie A", sport="soccer")] * 5)
+        tab = league_breakdown(rows, 0.0, 5)
+        assert sorted((d["sport"], d["n"]) for d in tab) == [("basketball", 10), ("soccer", 5)]
+
+    def test_egalite_de_frequence_ordre_alphabetique(self):
+        carte = perf_view.libelles_regroupes(["Spain - LaLiga", "La Liga - Spain"])
+        assert set(carte.values()) == {"La Liga - Spain"}
+
+    def test_libelle_inconnu_intact(self):
+        assert perf_view.libelles_regroupes(["Coupe Inconnue"]) == {"Coupe Inconnue": "Coupe Inconnue"}
+
+    def test_aucune_forme_compactee_ambigue_dans_la_carte(self):
+        """Deux libellés de LEAGUE_MAP qui se compactent pareil mais mènent à
+        deux ligues rendraient le regroupement silencieusement partiel."""
+        from core import source_adapter as sa
+        vus: dict = {}
+        for lib, cle in sa.LEAGUE_MAP.items():
+            vus.setdefault(sa._compacte(lib), set()).add(cle)
+        assert {k: v for k, v in vus.items() if len(v) > 1} == {}
+
+    def test_lappariement_nutilise_pas_la_cle_daffichage(self):
+        """La clé d'affichage est plus large que `league_key` : elle ne doit
+        jamais servir à lier les cotes de deux sources."""
+        for f in ("run_engine.py", "core/harvester.py", "core/odds_api.py",
+                  "core/odds_api_io.py", "core/titan007.py"):
+            assert "league_key_affichage" not in (RACINE / f).read_text(encoding="utf-8"), f
 
 
 class TestBranchement:

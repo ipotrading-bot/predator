@@ -42,6 +42,7 @@ from core.learning_layer import (BANDE_COTE_DECISION_LE, BANDE_COTE_DEPUIS,
                                  _clv_stats, _dater_par_signal, _sport_stats,
                                  load_sport_verdicts, playable_rows,
                                  post_correction_rows)
+from core.perf_view import libelles_regroupes
 from core.stats_utils import brier_reference, brier_score, p_breakeven, wilson_ci
 
 logging.basicConfig(level=logging.WARNING, format="%(levelname)s | %(message)s")
@@ -444,9 +445,12 @@ def league_breakdown(rows: list[dict], min_decided: int = _LEAGUE_MIN_DECIDED) -
     Pure — testable sans réseau. Tri : décidés décroissants."""
     rows = [r for r in playable_rows(rows) if not r.get("is_shadow")
             and r.get("outcome") in _DECISIVE and r.get("odds")]
+    # Même regroupement des libellés que PAR LIGUE du dashboard (2026-10-31).
+    libelles = [str(r.get("league") or "?") for r in rows]
+    nom = libelles_regroupes(libelles)
     par_ligue: dict[str, list[dict]] = {}
-    for r in rows:
-        par_ligue.setdefault(str(r.get("league") or "?"), []).append(r)
+    for r, lib in zip(rows, libelles):
+        par_ligue.setdefault(nom[lib], []).append(r)
     out, autres = [], []
     for league, lr in par_ligue.items():
         (out if len(lr) >= min_decided else autres).append((league, lr))
