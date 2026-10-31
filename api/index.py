@@ -941,7 +941,7 @@ def performance():
                 global_s["pnl_units"] = round(sum(m["pnl_units"] for m in monthly), 2)
 
                 # PAR LIGUE — « quelles ligues perdent plus souvent ? »
-                # (2026-09-03). Perdantes d'abord. Le tableau ne CLASSE que
+                # (2026-09-03). Meilleure réussite d'abord (10-31). Le tableau ne CLASSE que
                 # les ligues à _LEAGUE_MIN_N paris ; il ne CONCLUT sur aucune
                 # sous n ≥ 30 (le verdict est celui de l'intervalle de Wilson
                 # contre le point mort, jamais un taux nu). Les libellés de
