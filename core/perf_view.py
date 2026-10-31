@@ -356,6 +356,27 @@ def _par_reussite(d: dict, nom: str) -> tuple:
     return (-(d["win_rate"] or 0.0), -d["n"], d[nom])
 
 
+def libelles_regroupes(labels) -> dict[str, str]:
+    """{libellé brut: libellé affiché} — les libellés d'une même ligue
+    (`source_adapter.league_key_affichage`) prennent tous le plus fréquent
+    d'entre eux (à égalité, l'ordre alphabétique). Un libellé que la carte ne
+    reconnaît pas reste tel quel : on ne devine pas. Pur ; partagé par PAR
+    LIGUE et par le rapport hebdomadaire, qui coupent ainsi au même endroit."""
+    from collections import Counter
+    from core.source_adapter import league_key_affichage
+    comptes = Counter(labels)
+    par_cle: dict[str, list[str]] = {}
+    for lib in comptes:
+        cle = league_key_affichage(lib)
+        if cle:
+            par_cle.setdefault(cle, []).append(lib)
+    carte = {lib: lib for lib in comptes}
+    for libs in par_cle.values():
+        nom = min(libs, key=lambda x: (-comptes[x], x))
+        carte.update({lib: nom for lib in libs})
+    return carte
+
+
 def league_breakdown(rows: list[dict], tax_rate: float, min_n: int = 5) -> list[dict]:
     """Réussite par (sport, ligue), la MEILLEURE réussite en premier (`_par_reussite`).
 
@@ -367,14 +388,18 @@ def league_breakdown(rows: list[dict], tax_rate: float, min_n: int = 5) -> list[
     sous n ≥ 30, « perdante » veut dire « intervalle de Wilson entièrement sous
     le point mort », pas « moins de 50 % ».
 
-    Les libellés de ligue viennent tels quels des sources : la même compétition
-    peut apparaître sous deux noms (« WNBA » / « USA - WNBA », « Brazil Série A »
-    / « BRA D1 ») selon le palier qui a émis le signal. On NE normalise PAS ici
-    — ce serait une liste tenue à la main (règle dure n°6) ; le tableau montre
-    la divergence au lieu de la cacher."""
+    Les libellés de ligue viennent des sources, et la même compétition arrive
+    sous plusieurs noms (« La Liga - Spain » / « Spain - LaLiga » / « SPA D1 »)
+    selon le palier qui a émis le signal. Depuis le 2026-10-31 (demande
+    opérateur) ils sont REGROUPÉS par `libelles_regroupes`, qui dérive de
+    `LEAGUE_MAP` — pas d'une liste tenue ici (règle n°6). Une ligue que la
+    carte ne connaît pas (« WNBA » / « USA - WNBA ») garde ses lignes séparées :
+    la divergence se voit plutôt que d'être devinée."""
+    libelles = [(r.get("league") or "").strip() or SANS_LIGUE for r in rows]
+    nom = libelles_regroupes(libelles)
     groupes: dict[tuple[str, str], list[dict]] = {}
-    for r in rows:
-        cle = (r.get("sport") or "", (r.get("league") or "").strip() or SANS_LIGUE)
+    for r, lib in zip(rows, libelles):
+        cle = (r.get("sport") or "", nom[lib])
         groupes.setdefault(cle, []).append(r)
     out = []
     for (sport, ligue), lignes in groupes.items():

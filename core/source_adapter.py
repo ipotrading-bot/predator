@@ -331,6 +331,14 @@ LEAGUE_MAP = {
     "japan - j1 league": "j_league",
     "international clubs - uefa champions league": "ucl",
     "international clubs - uefa europa league": "uel",
+    # libellés EXACTS relevés dans `ai_learning_ledger` le 2026-10-31 (titres
+    # OddsAPI et odds-api.io des signaux réglés) que ni la correspondance
+    # exacte ni l'inversion « Ligue - Pays » de `league_key_affichage` ne
+    # relient à leur ligue. « Championship » seul n'y est PAS : le même mot
+    # désigne aussi l'USL et l'Écosse.
+    "dutch eredivisie": "eredivisie", "turkey super league": "turkish_super",
+    "bundesliga 2 - germany": "bundesliga2",
+    "usa - nba": "nba", "usa - mlb": "mlb", "usa - nfl": "nfl",
 }
 
 
@@ -391,6 +399,65 @@ def league_key_correlation(label: str) -> str:
         if trouve:
             return trouve
     return " ".join(brut.lower().split())
+
+
+def _compacte(label: str) -> str:
+    """« La Liga - Spain » → « laligaspain » : minuscules, accents retirés,
+    ni espace ni ponctuation. Les idéogrammes restent (isalnum)."""
+    import unicodedata
+    s = unicodedata.normalize("NFKD", label or "")
+    return "".join(c for c in s.lower() if c.isalnum() and not unicodedata.combining(c))
+
+
+_INDEX_COMPACT: dict[str, str] | None = None
+
+
+def _index_compact() -> dict[str, str]:
+    """`LEAGUE_MAP` indexée par libellé compacté, construite une fois.
+    Une forme compactée qui mènerait à DEUX clés serait écartée (ambiguë) ;
+    il n'y en a aucune au 2026-10-31, et le gardien le vérifie."""
+    global _INDEX_COMPACT
+    if _INDEX_COMPACT is None:
+        vus: dict[str, set] = {}
+        for libelle, cle in LEAGUE_MAP.items():
+            vus.setdefault(_compacte(libelle), set()).add(cle)
+        _INDEX_COMPACT = {k: next(iter(v)) for k, v in vus.items() if len(v) == 1}
+    return _INDEX_COMPACT
+
+
+def league_key_affichage(label: str) -> str:
+    """Clé canonique d'une ligue pour REGROUPER un tableau de résultats, ou ""
+    si on ne sait pas. AFFICHAGE SEULEMENT : jamais pour apparier deux sources
+    (c'est `league_key`, exact par contrat) ni pour un tag de corrélation.
+
+    Pourquoi (2026-10-31, demande opérateur) : PAR LIGUE coupait la même
+    compétition en deux ou trois lignes selon la source qui avait émis le
+    signal — « La Liga - Spain » (OddsAPI), « Spain - LaLiga » (odds-api.io),
+    « SPA D1 » (titan007) — et la Bundesliga d'octobre se lisait 0-5 et 1-3
+    au lieu de 1-8.
+
+    Trois essais, tous adossés à `LEAGUE_MAP` (règle n°6 : aucune seconde
+    liste) : correspondance exacte (phase ôtée), puis libellé compacté (« La
+    Liga » = « LaLiga », « Série » = « Serie »), puis l'inversion « Ligue -
+    Pays » → « Pays - Ligue ». PAS la découpe par segment de
+    `league_key_correlation` : elle rangeait « Egypt - Premier League » dans
+    la Premier League anglaise et « Ecuador - Serie A » dans l'italienne — un
+    prix assumé pour refuser un combiné, faux pour un bilan. Une ligue
+    inconnue reste à part, sous son propre libellé."""
+    brut = _sans_phase((label or "").strip())
+    if not brut:
+        return ""
+    exact = league_key(label) or league_key(brut)
+    if exact:
+        return exact
+    index = _index_compact()
+    trouve = index.get(_compacte(brut))
+    if trouve:
+        return trouve
+    if " - " in brut:
+        ligue, pays = brut.split(" - ", 1)
+        return index.get(_compacte(f"{pays} - {ligue}"), "")
+    return ""
 
 
 # Ligues servies EN PREMIER quand une source coupe son calendrier (titan007 :

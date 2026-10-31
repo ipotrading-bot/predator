@@ -36,6 +36,12 @@ class TestLeagueBreakdown:
         assert [d["league"][:3] for d in out] == ["Big", "aut"]
         assert out[1]["n"] == 5 and "2 ligues" in out[1]["league"]
 
+    def test_meme_regroupement_que_le_dashboard(self):
+        """2026-10-31 : une ligue sous deux libellés de source = une ligne."""
+        rows = [_row("La Liga - Spain", "WIN")] * 6 + [_row("Spain - LaLiga", "LOSS")] * 4
+        (d,) = league_breakdown(rows, min_decided=10)
+        assert (d["league"], d["n"], d["wins"]) == ("La Liga - Spain", 10, 6)
+
     def test_vide_reste_vide(self):
         assert league_breakdown([]) == []
         assert format_leagues([]) == []
