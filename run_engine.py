@@ -3065,10 +3065,11 @@ def _telegram_signals(signals: list, now, matches: int, no_pin_count: int,
     aucune mise ni bankroll. Sans libellé de session (jargon).
     """
     # TELEGRAM SIMPLE (décisions opérateur du 2026-10-29) : les paris à jouer,
-    # puis TOUJOURS les paris encore jouables (`encore`, déjà annoncés,
-    # coup d'envoi devant nous). Plus de « N matchs analysés · écartés ».
+    # puis TOUJOURS le NOMBRE de paris encore jouables (`encore`, déjà
+    # annoncés, coup d'envoi devant nous ; le nombre seul depuis le
+    # 2026-10-31). Plus de « N matchs analysés · écartés ».
     # Rien de neuf ni d'encore jouable : SILENCE.
-    jouables = section_encore_jouables(encore or [], now, markdown=True)
+    jouables = section_encore_jouables(encore or [])
     if not signals and not jouables:
         log.info("Telegram : rien à jouer — silence (%d matchs analysés)", matches)
         return

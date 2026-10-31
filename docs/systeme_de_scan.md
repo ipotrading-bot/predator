@@ -126,12 +126,13 @@ encore engageables à cette heure » de chaque run montre le plafond du moment.
   appris, mais jamais recommandé ni affiché (colonne `is_shadow`).
 - **Telegram**, simple (tes décisions du 29 octobre 2026) :
   - les **paris à jouer**, au scan : le match, l'heure, la sélection, la cote,
-    le book — puis TOUJOURS les **paris encore jouables** (déjà annoncés,
-    coup d'envoi devant nous). Un scan standard sans nouveau pari les rappelle
+    le book — puis TOUJOURS le **nombre de paris encore jouables** (déjà
+    annoncés, coup d'envoi devant nous), sans détail depuis le 31 octobre :
+    « ⏳ Encore jouables : 12 ». Un scan standard sans nouveau pari les rappelle
     (« aucun nouveau pari ») ; rien du tout : silence. Le reprice ne parle que
     s'il a un pari neuf ;
   - les **résultats** après chaque audit : ✅ gagné, ❌ perdu, ↩️ remboursé,
-    puis les paris encore jouables ;
+    puis le nombre de paris encore jouables ;
   - le **bilan de la veille**, une fois par jour, au premier audit après
     06:00 UTC : « 📊 28/10 · 4 gagnés · 1 perdu · taux 80 % » ;
   - les **alertes de problème technique** (moteur muet, créneau non servi,

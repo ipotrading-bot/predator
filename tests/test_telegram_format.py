@@ -5,7 +5,8 @@ Décision opérateur du 2026-10-29 : « Telegram : les signaux à jouer, les
 résultats après chaque audit, les gains/pertes du jour précédent, par exemple
 22/11 4 gagnés 1 perdu taux 80 %. Simple, lisible. » Puis, le même jour :
 « garde les alertes de problèmes techniques et le rapport du lundi,
-mentionne toujours les paris encore jouables ». Ne partent plus : le digest
+mentionne toujours les paris encore jouables » — le NOMBRE seul
+depuis le 2026-10-31. Ne partent plus : le digest
 🆕/⏳ toutes les 2 h, le résumé d'apprentissage, « N matchs analysés ».
 
 Gardés ici, sans aucun envoi réseau :
@@ -174,35 +175,29 @@ class TestEncoreJouables:
         s.update(over)
         return s
 
-    def test_la_section(self):
-        texte = tb.section_encore_jouables([self._jouable()], NOW)
-        assert texte == "⏳ Encore jouables (1)\n• Lyon vs Nice · 21:00 → Over 2.5 @ 1.85 · 1xbet"
-        assert tb.section_encore_jouables([], NOW) == ""
+    def test_la_section_ne_donne_que_le_nombre(self):
+        """« donner nombre mais pas détails, sinon c'est surchargé » (2026-10-31)."""
+        texte = tb.section_encore_jouables([self._jouable()] * 3)
+        assert texte == "⏳ Encore jouables : 3"
+        assert "Lyon" not in texte and "1.85" not in texte and "1xbet" not in texte
+        assert tb.section_encore_jouables([]) == ""
 
     def test_apres_les_nouveaux_paris(self, sent):
         run_engine._telegram_signals([_sig()], NOW, matches=1, no_pin_count=0,
                                      encore=[self._jouable()])
-        assert "pari(s) à jouer" in sent[0] and "⏳ Encore jouables (1)" in sent[0]
+        assert "pari(s) à jouer" in sent[0] and "⏳ Encore jouables : 1" in sent[0]
         assert sent[0].index("→ Barcelona") < sent[0].index("⏳ Encore jouables")
+        assert "Lyon vs Nice" not in sent[0]
 
-    def test_sans_nouveau_pari_le_scan_les_rappelle(self, sent):
+    def test_sans_nouveau_pari_le_scan_en_donne_le_nombre(self, sent):
         run_engine._telegram_signals([], NOW, matches=1, no_pin_count=0,
-                                     encore=[self._jouable()])
+                                     encore=[self._jouable(), self._jouable()])
         assert len(sent) == 1 and "aucun nouveau pari" in sent[0]
-        assert "Lyon vs Nice" in sent[0]
+        assert "⏳ Encore jouables : 2" in sent[0] and "Lyon vs Nice" not in sent[0]
 
     def test_rien_du_tout_silence(self, sent):
         run_engine._telegram_signals([], NOW, matches=1, no_pin_count=0, encore=[])
         assert sent == []
-
-    def test_un_nom_a_soulignement_ne_casse_pas_le_markdown(self):
-        texte = tb.section_encore_jouables([self._jouable(match="Real_B vs C*D")], NOW,
-                                           markdown=True)
-        assert "Real\\_B" in texte and "C\\*D" in texte
-
-    def test_trop_de_paris_restent_lisibles(self):
-        texte = tb.section_encore_jouables([self._jouable()] * 40, NOW)
-        assert texte.count("• ") == tb._MAX_JOUABLES and "… et 15 autres" in texte
 
     def test_le_scan_exclut_ce_qu_il_vient_d_annoncer(self):
         import inspect
