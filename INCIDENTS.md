@@ -3758,7 +3758,10 @@ Ce qui part désormais :
 2. **paris encore jouables**, TOUJOURS, en fin du message des paris et du
    message des résultats (`core/telegram_bilan.section_encore_jouables`).
    Un scan standard sans nouveau pari les rappelle ; s'il n'y a ni l'un ni
-   l'autre, rien ne part ;
+   l'autre, rien ne part. **Depuis le 2026-10-31, le NOMBRE seul**
+   (« ⏳ Encore jouables : N ») : la liste détaillée — jusqu'à 25 lignes
+   répétées à chaque scan et chaque audit, 26 paris le samedi 31/10 —
+   surchargeait le message (« donner nombre mais pas détails ») ;
 3. **résultats** de chaque audit (`annoncer_resultats`), ✅ ❌ ↩️ ;
 4. **bilan de la veille** (`annoncer_bilan_veille`), au premier audit à partir
    de 06:00 UTC, une seule fois par jour (`meta.bilan_veille`, envoi raté =
