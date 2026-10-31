@@ -358,16 +358,24 @@ def _par_reussite(d: dict, nom: str) -> tuple:
 
 def libelles_regroupes(labels) -> dict[str, str]:
     """{libellé brut: libellé affiché} — les libellés d'une même ligue
-    (`source_adapter.league_key_affichage`) prennent tous le plus fréquent
+    (`source_adapter.league_key_affichage`) ou d'un même tournoi de tennis
+    (`odds_api.tournoi_tennis_affichage`) prennent tous le plus fréquent
     d'entre eux (à égalité, l'ordre alphabétique). Un libellé que la carte ne
     reconnaît pas reste tel quel : on ne devine pas. Pur ; partagé par PAR
     LIGUE et par le rapport hebdomadaire, qui coupent ainsi au même endroit."""
     from collections import Counter
     from core.source_adapter import league_key_affichage
+    try:
+        from core.odds_api import tournoi_tennis_affichage
+    except Exception as e:                                        # noqa: BLE001
+        # Le tableau reste juste sans le regroupement tennis ; il ne tombe pas.
+        import logging
+        logging.getLogger(__name__).warning("regroupement tennis indisponible (%s)", e)
+        tournoi_tennis_affichage = lambda _lib: ""                # noqa: E731
     comptes = Counter(labels)
     par_cle: dict[str, list[str]] = {}
     for lib in comptes:
-        cle = league_key_affichage(lib)
+        cle = league_key_affichage(lib) or tournoi_tennis_affichage(lib)
         if cle:
             par_cle.setdefault(cle, []).append(lib)
     carte = {lib: lib for lib in comptes}

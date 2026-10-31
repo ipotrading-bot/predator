@@ -433,6 +433,47 @@ def _tournoi_retenu(slug: str) -> bool:
     return any(f"_{t}_" in bornes for t in TENNIS_TOURNAMENTS)
 
 
+# Noms d'un MÊME tournoi (alias → nom de référence de TENNIS_TOURNAMENTS),
+# pour l'AFFICHAGE seulement (`tournoi_tennis_affichage`) — le périmètre ne
+# lit pas cette table. TENNIS_TOURNAMENTS liste des mots à chercher dans un
+# slug, pas des équivalences : « swiss_indoors » et « basel » y sont deux
+# entrées, alors que c'est un seul tournoi. odds-api.io nomme par VILLE
+# (« ATP - Beijing, China »), OddsAPI par NOM (« ATP China Open ») : seules
+# les paires où ville et nom diffèrent sont ici. Chaque valeur doit figurer
+# dans TENNIS_TOURNAMENTS (gardien : tests/test_perf_mois_ligues.py).
+_MEME_TOURNOI: dict[str, str] = {
+    "beijing": "china_open", "australian_open": "aus_open",
+    "roland_garros": "french_open", "swiss_indoors": "basel",
+    "erste_bank": "vienna", "japan_open": "tokyo", "pan_pacific": "tokyo",
+    "abn_amro": "rotterdam", "citi_open": "washington", "queen_s": "queens",
+    "rio_open": "rio", "seoul": "korea", "canada": "canadian",
+    "rome": "italian_open", "doha": "qatar", "mexican": "acapulco",
+    "mexican_open": "acapulco",
+}
+
+
+def tournoi_tennis_affichage(label: str) -> str:
+    """« tennis:<circuit>:<tournoi> » pour REGROUPER un tableau de résultats,
+    ou "" si le libellé ne désigne pas sans ambiguïté un tournoi retenu.
+
+    2026-10-31 (demande opérateur) : PAR LIGUE montrait « WTA - Wuhan, China »
+    6-0 et « WTA Wuhan Open » 3-1 sur deux lignes. Le circuit (premier mot,
+    ATP ou WTA) fait partie de la clé : l'ATP et la WTA de Pékin restent
+    séparées. Un libellé qui désignerait deux tournois différents, ou aucun,
+    n'est pas regroupé. Pur, ne lève jamais."""
+    import unicodedata
+    s = unicodedata.normalize("NFKD", label or "")
+    s = "".join(c for c in s.lower() if not unicodedata.combining(c))
+    mots = re.sub(r"[^0-9a-z]+", "_", s).strip("_")
+    circuit = mots.split("_", 1)[0]
+    if circuit not in ("atp", "wta"):
+        return ""
+    bornes = f"_{mots}_"
+    noms = {_MEME_TOURNOI.get(t, t) for t in (*TENNIS_TOURNAMENTS, *_MEME_TOURNOI)
+            if f"_{t}_" in bornes}
+    return f"tennis:{circuit}:{noms.pop()}" if len(noms) == 1 else ""
+
+
 def discover_tennis_keys(api_key: str, catalogue: list | None = None) -> dict[str, str]:
     """Clés tennis ACTIVES du catalogue, restreintes à TENNIS_TOURNAMENTS
     (Chelems, 1000, 500).

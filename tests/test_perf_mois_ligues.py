@@ -258,6 +258,43 @@ class TestLiguesRegroupees:
             vus.setdefault(sa._compacte(lib), set()).add(cle)
         assert {k: v for k, v in vus.items() if len(v) > 1} == {}
 
+    # Tennis : odds-api.io nomme par ville, OddsAPI par tournoi (ledger, 10-31).
+    MEMES_TOURNOIS = [
+        ["WTA - Wuhan, China", "WTA Wuhan Open"],
+        ["ATP - Shanghai, China", "ATP Shanghai Masters"],
+        ["ATP - Beijing, China", "ATP China Open"],
+        ["WTA - Beijing, China", "WTA China Open"],
+        ["ATP - Basel, Switzerland", "ATP Swiss Indoors Basel"],
+        ["ATP - Vienna, Austria", "ATP Vienna Open"],
+        ["ATP - Tokyo, Japan", "ATP Japan Open"],
+    ]
+
+    def test_chaque_tournoi_reel_tombe_sur_une_seule_cle(self):
+        from core.odds_api import tournoi_tennis_affichage
+        for groupe in self.MEMES_TOURNOIS:
+            cles = {tournoi_tennis_affichage(lib) for lib in groupe}
+            assert len(cles) == 1 and "" not in cles, (groupe, cles)
+
+    def test_tennis_circuits_et_hors_perimetre_separes(self):
+        from core.odds_api import tournoi_tennis_affichage as t
+        assert t("ATP China Open") != t("WTA China Open")
+        assert t("WTA 125K - Querétaro, Mexico, Qualifying") == ""
+        assert t("Davis Cup Finals") == ""
+        assert t("EPL") == ""
+
+    def test_les_alias_tennis_pointent_vers_le_perimetre(self):
+        """La table d'alias ne doit jamais inventer un tournoi : chaque nom de
+        référence est dans TENNIS_TOURNAMENTS (décision opérateur, règle 11)."""
+        from core.odds_api import TENNIS_TOURNAMENTS, _MEME_TOURNOI
+        assert set(_MEME_TOURNOI.values()) <= set(TENNIS_TOURNAMENTS)
+
+    def test_le_tableau_regroupe_le_tennis(self):
+        rows = ([_r("2026-10", "WIN", league="WTA - Wuhan, China", sport="tennis")] * 6
+                + [_r("2026-10", "WIN", league="WTA Wuhan Open", sport="tennis")] * 3
+                + [_r("2026-10", "LOSS", league="WTA Wuhan Open", sport="tennis")])
+        (lg,) = league_breakdown(rows, 0.0, 5)
+        assert (lg["league"], lg["wins"], lg["losses"]) == ("WTA - Wuhan, China", 9, 1)
+
     def test_lappariement_nutilise_pas_la_cle_daffichage(self):
         """La clé d'affichage est plus large que `league_key` : elle ne doit
         jamais servir à lier les cotes de deux sources."""
