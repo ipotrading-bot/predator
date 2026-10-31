@@ -70,6 +70,20 @@ class TestMonthlySummary:
         assert aout["win_rate"] == 50.0
         assert aout["label"] == "août 2026"
 
+    def test_la_reussite_prime_sur_les_unites(self):
+        """« classer par ordre de réussite » (2026-10-31) : 3 sur 5 à 3,00
+        rapporte plus d'unités que 4 sur 5 à 1,20, mais se classe après ; à
+        réussite égale, le plus gros échantillon passe devant."""
+        rows = ([_r("2026-09", "WIN", 3.0, league="Cotes hautes")] * 3
+                + [_r("2026-09", "LOSS", 3.0, league="Cotes hautes")] * 2
+                + [_r("2026-09", "WIN", 1.2, league="Favoris")] * 4
+                + [_r("2026-09", "LOSS", 1.2, league="Favoris")]
+                + [_r("2026-09", "WIN", 1.5, league="Gros")] * 8
+                + [_r("2026-09", "LOSS", 1.5, league="Gros")] * 2)
+        tab = league_breakdown(rows, 0.0, 5)
+        assert [l["league"] for l in tab] == ["Gros", "Favoris", "Cotes hautes"]
+        assert tab[2]["pnl_units"] > tab[1]["pnl_units"]
+
     def test_jamais_un_taux_nu(self):
         """Règle dure n°7 : Wilson ET point mort sur chaque carte."""
         carte = monthly_summary([_r("2026-09", "WIN", 1.5)] * 3, 0.0)[0]
@@ -113,15 +127,15 @@ class TestMonthlySummary:
 
 
 class TestLeagueBreakdown:
-    def test_perdantes_dabord_et_seuil_daffichage(self):
+    def test_meilleure_reussite_dabord_et_seuil_daffichage(self):
         rows = ([_r("2026-09", "LOSS", 1.8, league="Argentine")] * 4
                 + [_r("2026-09", "WIN", 1.8, league="Argentine")]
                 + [_r("2026-09", "WIN", 1.8, league="MLS")] * 5
                 + [_r("2026-09", "LOSS", 1.8, league="Japon")] * 2)
         tab = league_breakdown(rows, 0.0, min_n=5)
-        assert [l["league"] for l in tab] == ["Argentine", "MLS"]   # Japon : 2 < 5
-        assert tab[0]["pnl_units"] < tab[1]["pnl_units"]
-        assert (tab[0]["wins"], tab[0]["losses"], tab[0]["n"]) == (1, 4, 5)
+        assert [l["league"] for l in tab] == ["MLS", "Argentine"]   # Japon : 2 < 5
+        assert tab[0]["win_rate"] > tab[1]["win_rate"]
+        assert (tab[1]["wins"], tab[1]["losses"], tab[1]["n"]) == (1, 4, 5)
         tout = league_breakdown(rows, 0.0, min_n=1)
         assert len(tout) == 3
 
@@ -245,12 +259,12 @@ class TestRecommandesEtMarches:
         assert [perf_view.playable_zone(r) for r in perf_view.phantom_rows(rows)] == ["golden", "hors"]
         assert len(reco) + len(perf_view.phantom_rows(rows)) == len(rows)
 
-    def test_par_marche_perdants_dabord_et_repli_market(self):
+    def test_par_marche_meilleure_reussite_dabord_et_repli_market(self):
         rows = ([_r("2026-09", "LOSS", 1.9, market_type="spreads_away")] * 5
                 + [_r("2026-09", "WIN", 1.9, market="h2h")] * 5)
         tab = perf_view.market_breakdown(rows, 0.0, 5)
-        assert [m["market"] for m in tab] == ["spreads_away", "h2h"]
-        assert tab[0]["p_breakeven"] is not None and "win_rate_lo" in tab[0]
+        assert [m["market"] for m in tab] == ["h2h", "spreads_away"]
+        assert tab[1]["p_breakeven"] is not None and "win_rate_lo" in tab[1]
         assert perf_view.market_breakdown([_r("2026-09", "WIN")] * 2, 0.0, 5) == []
 
     def test_la_route_separe_recommandes_et_fantomes(self):

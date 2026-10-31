@@ -348,8 +348,16 @@ def monthly_summary(rows: list[dict], tax_rate: float) -> list[dict]:
     return out
 
 
+def _par_reussite(d: dict, nom: str) -> tuple:
+    """Clé de tri de PAR LIGUE et PAR MARCHÉ : la MEILLEURE réussite en haut
+    (demande opérateur du 2026-10-31, « classer par ordre de réussite »), à
+    égalité le plus gros échantillon d'abord, puis le nom. Jusque-là : la plus
+    perdante en unités d'abord."""
+    return (-(d["win_rate"] or 0.0), -d["n"], d[nom])
+
+
 def league_breakdown(rows: list[dict], tax_rate: float, min_n: int = 5) -> list[dict]:
-    """Réussite par (sport, ligue), la PLUS PERDANTE en premier (P&L croissant).
+    """Réussite par (sport, ligue), la MEILLEURE réussite en premier (`_par_reussite`).
 
     Ne garde que les ligues à `min_n` paris décisifs (WIN|LOSS) ou plus — sous
     cinq lignes un tableau ne classe que du bruit — mais `expired` est compté
@@ -377,7 +385,7 @@ def league_breakdown(rows: list[dict], tax_rate: float, min_n: int = 5) -> list[
         d.update({"sport": sport, "league": ligue,
                   "expired": sum(1 for r in lignes if r.get("outcome") == "expired")})
         out.append(d)
-    out.sort(key=lambda d: (d["pnl_units"], -d["n"], d["league"]))
+    out.sort(key=lambda d: _par_reussite(d, "league"))
     return out
 
 
@@ -415,7 +423,7 @@ def phantom_rows(rows: list[dict]) -> list[dict]:
 
 
 def market_breakdown(rows: list[dict], tax_rate: float, min_n: int = 5) -> list[dict]:
-    """Réussite par (sport, marché), la plus PERDANTE en premier — même contrat
+    """Réussite par (sport, marché), la MEILLEURE réussite en premier — même contrat
     que `league_breakdown`. `market_type` d'abord, `market` en repli : les deux
     colonnes coexistent dans le ledger selon l'époque d'écriture.
 
@@ -436,7 +444,7 @@ def market_breakdown(rows: list[dict], tax_rate: float, min_n: int = 5) -> list[
         d.update({"sport": sport, "market": mkt,
                   "expired": sum(1 for r in lignes if r.get("outcome") == "expired")})
         out.append(d)
-    out.sort(key=lambda d: (d["pnl_units"], -d["n"], d["market"]))
+    out.sort(key=lambda d: _par_reussite(d, "market"))
     return out
 
 
