@@ -42,7 +42,11 @@ runs:
     - uses: actions/setup-python@v5
       with:
         python-version: '3.11'
-        cache: 'pip'
+        # PAS de `cache: 'pip'` : site-packages est déjà en cache (step
+        # suivant), donc pip ne tourne pas et ne recrée jamais ~/.cache/pip.
+        # Une fois l'entrée évincée par GitHub (2026-11-01 ~16 h UTC), le
+        # post-step de setup-python échouait sur « dossier absent » : tous
+        # les jobs en rouge alors que leur travail était fait.
 
     - name: Restaurer site-packages
       if: inputs.fast-install == 'true'

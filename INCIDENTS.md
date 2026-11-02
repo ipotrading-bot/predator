@@ -4097,6 +4097,31 @@ TestFetchMatchResult::test_no_ai_layer_involved`,
 Cinq workflows sur six ont tourné à vide pendant une journée sans produire
 un seul log. C'est le mode de panne le plus coûteux du dépôt.
 
+### Le cache pip évincé : tous les jobs en rouge, travail fait (2026-11-01)
+
+Symptôme : depuis le 2026-11-01 ~16 h UTC, scan, audit, clôture et rapports
+finissent TOUS en `failure`. Les steps de travail réussissent pourtant :
+signaux émis, paris réglés (audits de 01 h, 05 h et 06 h le 11-02), créneaux
+servis.
+
+Cause : `.github/actions/setup` combinait `setup-python` `cache: 'pip'` et
+un cache de `site-packages`. Ce dernier est toujours retrouvé, donc pip ne
+tourne jamais et ne recrée jamais `~/.cache/pip`. Tant que l'entrée du cache
+pip existait, elle était restaurée et le dossier existait. GitHub l'a
+évincée entre le run de 13:10 (« Cache hit ») et celui de 16:10 (« pip cache
+is not found ») ; dès lors le post-step de setup-python échoue sur « Cache
+folder path is retrieved for pip but doesn't exist on disk », à chaque run,
+sans retour possible.
+
+Coût : un vrai échec (contrat de run) devient indiscernable du bruit, et
+le job de tests de `ci.yml` aurait bloqué le déploiement au prochain push.
+
+Fait : `cache: 'pip'` retiré ; le cache `site-packages` suffit.
+
+Règle : un seul étage de cache par dépendance ; un cache que rien ne
+re-remplit finit évincé. Gardé par
+`tests/test_workflow_secrets.py::test_setup_python_sans_cache_pip`.
+
 ### Le reprice « horaire » tournait toutes les 80 min, la clôture toutes les 30 : le Worker est l'horloge, ses seuils étaient ceux d'un filet (2026-10-11)
 
 Symptôme : aucun. Tout est vert, et la doc opérateur annonçait 24 reprice et
