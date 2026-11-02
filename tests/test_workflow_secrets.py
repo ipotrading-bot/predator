@@ -123,6 +123,19 @@ def test_la_version_de_python_des_runners_est_declaree_une_seule_fois():
         "./.github/actions/setup")
 
 
+@pytest.mark.parametrize("action", ACTIONS, ids=lambda p: p.parent.name)
+def test_setup_python_sans_cache_pip(action):
+    """site-packages est déjà en cache : pip ne tourne pas, ~/.cache/pip
+    n'existe jamais, et le post-step de setup-python (`cache: pip`) échoue
+    dès que GitHub évince son entrée — tous les jobs en rouge, travail fait
+    (2026-11-01, INCIDENTS.md « Le cache pip évincé »)."""
+    doc = yaml.safe_load(action.read_text(encoding="utf-8"))
+    fautifs = [s.get("with", {}).get("cache") for s in doc["runs"].get("steps", [])
+               if str(s.get("uses", "")).startswith("actions/setup-python")
+               and s.get("with", {}).get("cache")]
+    assert not fautifs, f"{action}: setup-python avec cache {fautifs}"
+
+
 def test_vercel_ne_deploie_pas_aussi_depuis_git():
     """Le `needs: test` de ci.yml n'est un gate QUE si Vercel ne déploie pas
     de son côté.
