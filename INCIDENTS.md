@@ -28,6 +28,59 @@ La carte des invariants et de leurs tests gardiens vit dans `AUDIT.md`.
 
 ## Le moteur : prix, edge, seuils
 
+### Le marché Euroleague sous-estime le domicile : correction de +3 pts sur les marchés de côté (2026-11-02)
+
+Symptôme : Euroleague 7-13 en zone (10-20 avec les fantômes) pour 55 %
+annoncés, −6,5 u, alors que le CLV affichait +4,6 %.
+
+Ce qui a été écarté, mesures à l'appui :
+- **Règlement** : les 30 paris re-réglés à la main contre l'API officielle,
+  appariés par date → 0 écart (une seule prolongation).
+- **Malchance** : P exacte (Poisson-binomiale) 0,062 en zone, ramenée à
+  ≈ 0,44 une fois corrigée parce que l'Euroleague est le pire des ~9 sports
+  regardés. Détecter un écart de 5 pts demande ~615 paris : la saison ne
+  tranchera jamais seule.
+- **Prix Pinnacle bruité / sélection adverse** : dérive entrée → clôture
+  −0,42 pt (IC95 −1,2 ; +0,4), écart-type 2,1 contre 3,1 au foot,
+  corr(edge, dérive) +0,33. Le CLV positif reflète l'écart d'entrée avec
+  1xbet, pas un mouvement de marché.
+
+Ce qui a été trouvé, sur 19 saisons : jeu Kaggle
+`archangel0x01/european-club-basketball-results-and-odds` (MIT), 4 842
+matchs, cote MOYENNE de clôture vainqueur, scores identiques à 100 % à
+l'API officielle sur les 1 750 matchs 2021-26. Le marché est calibré dans
+l'ensemble (pente 1,01), SAUF au domicile depuis 2021 : 63,1 % gagnés pour
+59,7 % annoncés (z +3,15 ; +2,54 en dévig puissance), 5 saisons pleines sur
+5. Outsiders à domicile +6,7 pts (z +3,0). Proxy handicap : le domicile bat
+l'écart implicite dans 53,9 % des cas. Le biais favori-outsider va dans
+l'autre sens pour l'outsider à domicile : il ne peut pas fabriquer l'effet.
+Or 8 de nos 9 paris de côté Euroleague étaient côté extérieur (2-6).
+Saison 2026-27 à rebours (domicile 55,6 % sur 90 matchs) : le biais ne
+« explique » pas octobre, il rend nos paris extérieur structurellement
+surestimés.
+
+Décision opérateur (« 2 ») : `CORRECTION_DOMICILE_LOGIT`
+(core/constants.py), +0,12 logit au domicile et −0,12 à l'extérieur
+(+3 pts à 50 %, sous les +3,4 / +3,9 mesurés), appliqués après le dévig dans
+`_process_spreads` et `_process_h2h` hors football, et loggés `DOMICILE`.
+Les totaux ne sont jamais corrigés.
+
+⚠️ La dérive sharp des seuils (`_derive_valeurs`) RETIRE la correction sur
+les lignes émises après `CORRECTION_DOMICILE_DEPUIS` : sinon la correction
+se lirait comme ±6 % de dérive et fausserait le frein. Le côté d'un
+vainqueur se lit au nom EXACT dans `match` ; introuvable → ligne écartée
+de la dérive. Le calibrage « contre l'annoncé » garde la valeur corrigée :
+c'est notre modèle qu'il juge.
+
+Non testé : les TOTAUX (21 de nos 30 paris). Aucune source gratuite et
+propre ne publie les lignes historiques de totaux Euroleague (OddsPortal :
+extraction interdite par ses conditions ; jeu payant = décision opérateur).
+
+Revue : après 30 paris de côté Euroleague réglés sous correction, ou au
+2027-02-01. Gardien : `tests/test_correction_domicile.py`. Elle comprend une
+contre-épreuve (correction coupée → le même pari est émis) : le premier jet
+du test filtrait sur une clé de signal inexistante et passait à vide.
+
 ### TAX_RATE remis à 0.20 contre instruction opérateur → émission fermée (2026-09-01)
 
 Chronologie :

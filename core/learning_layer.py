@@ -679,7 +679,7 @@ def _derive_valeurs(rows: list[dict]) -> list[float]:
     for r in rows:
         if r.get("closing_source") == CLOSING_SRC_ORACLE:
             continue
-        p, close = r.get("sharp_prob"), r.get("closing_pinnacle_price")
+        p, close = _prob_marche(r), r.get("closing_pinnacle_price")
         try:
             p, close = float(p), float(close)
         except (TypeError, ValueError):
@@ -688,6 +688,62 @@ def _derive_valeurs(rows: list[dict]) -> list[float]:
             continue
         derives.append(((1 / p) / close - 1) * 100)
     return derives
+
+
+def _instant(v):
+    """Horodatage ISO (« T » ou espace, décalage « +00 » ou « +00:00 ») en
+    datetime UTC ; None si illisible. Pur."""
+    from datetime import datetime, timezone
+    txt = str(v or "").strip().replace(" ", "T", 1)
+    if not txt:
+        return None
+    if len(txt) >= 3 and txt[-3] in "+-" and txt[-3:].lstrip("+-").isdigit():
+        txt += ":00"                      # « +00 » → « +00:00 »
+    try:
+        d = datetime.fromisoformat(txt.replace("Z", "+00:00"))
+    except ValueError:
+        return None
+    return d if d.tzinfo else d.replace(tzinfo=timezone.utc)
+
+
+def _cote_du_pari(r: dict) -> str | None:
+    """« home » / « away » d'un pari de CÔTÉ, « » pour un marché sans
+    domicile (totaux), None si le côté ne s'établit pas EXACTEMENT."""
+    mt = str(r.get("market_type") or "")
+    if mt.startswith("spreads_"):
+        return mt.split("_", 1)[1] if mt.endswith(("_home", "_away")) else None
+    if mt != "h2h":
+        return ""
+    camps = str(r.get("match") or "").split(" vs ")
+    sel = str(r.get("selection") or "")
+    if len(camps) == 2 and sel in camps and camps[0] != camps[1]:
+        return "home" if sel == camps[0] else "away"
+    return None
+
+
+def _prob_marche(r: dict):
+    """`sharp_prob` sans la correction domicile (core.constants.
+    CORRECTION_DOMICILE_LOGIT) sur les lignes émises après
+    CORRECTION_DOMICILE_DEPUIS : la dérive compare deux prix de MARCHÉ. Une
+    ligne corrigée dont le côté ne s'établit pas rend None (écartée de la
+    dérive) plutôt qu'un prix faux. Les autres lignes passent telles quelles."""
+    from core.constants import CORRECTION_DOMICILE_DEPUIS, CORRECTION_DOMICILE_LOGIT
+    from core.math_engine import retirer_correction_domicile
+    p = r.get("sharp_prob")
+    if r.get("sport") not in CORRECTION_DOMICILE_LOGIT:
+        return p
+    emis = _instant(r.get("signal_created_at"))
+    if emis is None or emis < _instant(CORRECTION_DOMICILE_DEPUIS):
+        return p
+    cote = _cote_du_pari(r)
+    if cote is None:
+        return None
+    if not cote:
+        return p
+    try:
+        return retirer_correction_domicile(float(p), r["sport"], cote)
+    except (TypeError, ValueError):
+        return None
 
 
 def _derive_excedent(rows: list[dict], reference: float | None) -> dict:
@@ -1088,7 +1144,7 @@ def _mouvement_permis(bases: dict, cle: str, n: int) -> bool:
 
 _LEDGER_SELECT = ("signal_id, outcome, kelly_pct, odds, market_type, initial_edge, sharp_prob, "
                   "clv_pct_real, closing_pinnacle_price, closing_source, time_to_match_minutes, "
-                  "created_at")
+                  "created_at, sport, selection, match")
 # Prix d'ouverture (sql/migrate_v10_21) : lu en plus quand la colonne existe ;
 # sans elle, la lecture retombe sur _LEDGER_SELECT au lieu de casser l'audit.
 _LEDGER_SELECT_OUVERTURE = _LEDGER_SELECT + ", ouverture_sharp_prob"

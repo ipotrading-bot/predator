@@ -40,7 +40,7 @@ from core.exchange_match import (candidat_proche as _candidat_proche,
 from core.odds_api_io import (declarer_prix_exchange as _declarer_prix_exchange,
                               fetch_all as _odds_api_io_all)
 from core.titan007 import fetch_matches as _titan007_fetch
-from core.math_engine import (to_binary, devig_bounds, is_round_number_line, devig as _devig,
+from core.math_engine import (to_binary, devig_bounds, corriger_domicile, is_round_number_line, devig as _devig,
                               dnb_leg_split as _dnb_leg_split,
                               executable_price as _prix_executable,
                               nul_cote as _nul_cote)
@@ -1873,6 +1873,21 @@ def _mesurer_books_candidats(sb, xbet_matches: list, now, log) -> int:
         return 0
 
 
+def _corriger_domicile(sharp_prob: float, sharp_cons: float, sport: str, cote: str,
+                       name: str, marche: str, emoji: str, log) -> tuple[float, float]:
+    """Applique `core.math_engine.corriger_domicile` aux deux bornes de la
+    probabilité sharp d'un marché de CÔTÉ, et logge chaque correction : un
+    moteur qui déplace une probabilité en silence est indéchiffrable au
+    diagnostic. Sport sans correction → valeurs rendues telles quelles."""
+    p2 = corriger_domicile(sharp_prob, sport, cote)
+    c2 = corriger_domicile(sharp_cons, sport, cote)
+    if p2 != sharp_prob:
+        log.info("DOMICILE | %s %s %s %s — Prob.Sharp %.1f%% → %.1f%% "
+                 "(biais domicile mesuré, CORRECTION_DOMICILE_LOGIT)",
+                 emoji, name, marche, cote, sharp_prob * 100, p2 * 100)
+    return p2, c2
+
+
 def _process_h2h(m, name, sport, league, home, away, emoji, signals, sb, now, log, min_edge=None):
     """H2H market: DNB for soccer, Moneyline for NBA/Tennis + Prob.Sharp filter."""
     prob_min    = SHARP_PROB_BY_MARKET.get("h2h_soccer" if sport == "soccer" else "h2h", 0.52)
@@ -1981,6 +1996,9 @@ def _process_h2h(m, name, sport, league, home, away, emoji, signals, sb, now, lo
             pin_price = con_fav
         opp_for_devig = con_opp if con_opp > 1.01 else opp_price
         sharp_prob, sharp_cons = devig_bounds(pin_price, opp_for_devig)
+        sharp_prob, sharp_cons = _corriger_domicile(
+            sharp_prob, sharp_cons, sport, "home" if fav_key == "1" else "away",
+            name, "h2h", emoji, log)
         _mesurer_outsider(par_book or {"?": bloc_h2h}, sport, name, emoji,
                           home if soft_fav != home else away,
                           opp_key, 1 - sharp_prob, log)
@@ -2514,6 +2532,8 @@ def _process_spreads(m, name, sport, league, home, away, emoji, signals, sb, now
             p_lay = con_other
 
         sharp_prob, sharp_cons = devig_bounds(p_odd, p_lay)
+        sharp_prob, sharp_cons = _corriger_domicile(
+            sharp_prob, sharp_cons, sport, side, name, "spreads", emoji, log)
         if sharp_prob < prob_min:
             log.info("LOWPROB | %s %s spreads %s — Prob.Sharp=%.0f%% < %.0f%%",
                      emoji, name, side, sharp_prob * 100, prob_min * 100)
