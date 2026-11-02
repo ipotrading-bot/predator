@@ -844,10 +844,11 @@ def performance():
                 # `settled` (donc le compte des pushes) sert encore aux stats
                 # plus haut. Les taux se calculent déjà sur `decisive`
                 # (WIN|LOSS), ils sont donc inchangés par ce masquage.
-                # HISTORIQUE et PAR LIGUE se limitent au mois sélectionné
-                # (2026-09-03, demande opérateur : août « archivé », accessible
-                # par le menu) ; le bandeau du haut et PAR SPORT restent sur
-                # la fenêtre entière, et le disent (`depuis_label`).
+                # HISTORIQUE, PAR LIGUE et PAR SPORT se limitent au mois
+                # sélectionné (2026-09-03, demande opérateur : août « archivé »,
+                # accessible par le menu ; PAR SPORT aussi depuis le
+                # 2026-11-02, « seulement mois en cours ») ; le bandeau du haut
+                # reste sur la fenêtre entière, et le dit (`depuis_label`).
                 scope   = _rows_of_month(reco, mois)
                 history = [r for r in scope if r.get("outcome") in ("WIN", "LOSS")]
                 wins    = sum(1 for r in settled if r.get("outcome") == "WIN")
@@ -918,8 +919,9 @@ def performance():
                 global_s["resolution"] = _resolution_rate(rows)
 
                 # Par sport — même bloc (Wilson, point mort, unités) que les
-                # mois et les ligues : core/perf_view.sport_breakdown.
-                global_s["by_sport"] = _sport_breakdown(reco, _TAX_RATE)
+                # mois et les ligues : core/perf_view.sport_breakdown. Mois
+                # sélectionné seulement (demande opérateur 2026-11-02).
+                global_s["by_sport"] = _sport_breakdown(scope, _TAX_RATE)
 
                 # (Retiré le 2026-08-22 : le tableau de CALIBRATION — Brier
                 # par tranche de confiance — quittait la page. Le score de
