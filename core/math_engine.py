@@ -153,6 +153,31 @@ def devig_bounds(own_odd: float, other_odd: float) -> tuple[float, float]:
     return round(p_med, 4), round(p_cons, 4)
 
 
+def corriger_domicile(p: float, sport: str, cote: str) -> float:
+    """Probabilité sharp corrigée du biais domicile mesuré pour `sport`
+    (core.constants.CORRECTION_DOMICILE_LOGIT). `cote` vaut « home » ou
+    « away » : +δ en logit pour le domicile, −δ pour l'extérieur, de sorte
+    que les deux côtés corrigés somment toujours à 1. Sport absent de la
+    table, cote inconnue ou p hors ]0;1[ → p inchangée. Pur."""
+    from core.constants import CORRECTION_DOMICILE_LOGIT
+    delta = CORRECTION_DOMICILE_LOGIT.get(sport, 0.0)
+    if not delta or cote not in ("home", "away") or not 0.0 < p < 1.0:
+        return p
+    z = math.log(p / (1.0 - p)) + (delta if cote == "home" else -delta)
+    return round(1.0 / (1.0 + math.exp(-z)), 4)
+
+
+def retirer_correction_domicile(p: float, sport: str, cote: str) -> float:
+    """Inverse exact de `corriger_domicile` : la probabilité de MARCHÉ d'une
+    probabilité corrigée. Mêmes cas neutres. Pur."""
+    from core.constants import CORRECTION_DOMICILE_LOGIT
+    delta = CORRECTION_DOMICILE_LOGIT.get(sport, 0.0)
+    if not delta or cote not in ("home", "away") or not 0.0 < p < 1.0:
+        return p
+    z = math.log(p / (1.0 - p)) - (delta if cote == "home" else -delta)
+    return 1.0 / (1.0 + math.exp(-z))
+
+
 def _power_devig3(o1: float, o2: float, o3: float) -> tuple[float, float, float]:
     """
     Dévigorisation d'un marché 3 voies. Nom conservé pour l'historique ;

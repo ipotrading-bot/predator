@@ -390,3 +390,31 @@ EXECUTION_BOOKS = ("1xbet", "bet365")
 # Book de référence (premier de la liste) — pour les libellés qui n'ont pas
 # de ligne sous la main. Un signal, lui, porte TOUJOURS son propre book.
 EXECUTION_BOOK = EXECUTION_BOOKS[0]
+
+
+# ── Correction domicile par sport (décision opérateur, 2026-11-02) ─────
+#
+# Décalage, en LOGIT, ajouté à la probabilité sharp de l'équipe à DOMICILE
+# (retranché à l'extérieur) sur les marchés de CÔTÉ : handicap et vainqueur
+# hors football. Les totaux n'ont pas de domicile : jamais corrigés.
+#
+# Euroleague 0.12 = +3,0 pts à 50 %. Mesuré sur 1 750 matchs 2021-26 (cote
+# moyenne de clôture, jeu Kaggle archangel0x01 recoupé à 100 % avec l'API
+# officielle) : le domicile gagne 63,1 % pour 59,7 % annoncés (z +3,15),
+# 5 saisons pleines sur 5 ; proxy handicap 53,9 % de couverture (+0,9 pt
+# d'écart). Ramené à +3 pts (sous les +3,4 / +3,9 mesurés) : un a priori
+# « marché juste » doit tirer l'estimation vers zéro, et l'opérateur a choisi
+# « environ +3 points ». 8 de nos 9 paris de côté Euroleague en octobre
+# étaient côté extérieur (2-6). Détail : INCIDENTS.md « Le marché Euroleague
+# sous-estime le domicile ».
+#
+# Ajouter un sport = une mesure multi-saisons publiée dans INCIDENTS.md ET
+# une instruction opérateur. Revue : après 30 paris de côté Euroleague
+# réglés sous correction, ou au 2027-02-01.
+CORRECTION_DOMICILE_LOGIT = {
+    "euroleague_basketball": 0.12,
+}
+# Émission à partir de laquelle `signals.sharp_prob` porte la correction. La
+# dérive sharp (core.learning_layer._derive_valeurs) la RETIRE sur ces lignes :
+# elle compare deux prix de MARCHÉ, pas notre modèle au marché.
+CORRECTION_DOMICILE_DEPUIS = "2026-11-02T14:50:00+00:00"
