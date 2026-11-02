@@ -246,11 +246,11 @@ details[open] > summary.sec-hdr::before { content: '▾'; }
   {# ── Par sport — réussite décroissante (demande opérateur 2026-09-09 ;
      perf_view.sport_breakdown garde son ordre « perdant d'abord » pour le
      rapport hebdomadaire). Section DÉROULANTE, repliée comme PAR LIGUE et
-     PAR MARCHÉ (demande opérateur 2026-10-02) ; elle porte sur la fenêtre
-     entière, d'où `depuis` et non le mois choisi. ── #}
+     PAR MARCHÉ (demande opérateur 2026-10-02) ; elle porte sur le mois
+     choisi, comme PAR LIGUE (demande opérateur 2026-11-02). ── #}
   {% if global_s.by_sport %}
   <details>
-    <summary class="sec-hdr">&#9632; PAR SPORT <em>{{ depuis }} &middot; {{ global_s.by_sport|length }}</em></summary>
+    <summary class="sec-hdr">&#9632; PAR SPORT <em>{{ mois_label }} &middot; {{ global_s.by_sport|length }}</em></summary>
     <div class="tbl-outer">
       <table class="perf-table">
         {{ th_row('Sport') }}

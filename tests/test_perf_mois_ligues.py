@@ -327,11 +327,11 @@ class TestBranchement:
 
     def test_par_sport_est_une_section_deroulante(self):
         """Demande opérateur du 2026-10-02 : PAR SPORT se replie comme PAR
-        LIGUE et PAR MARCHÉ. Elle couvre la fenêtre entière : son en-tête
-        porte `depuis`, pas le mois choisi."""
+        LIGUE et PAR MARCHÉ. Depuis le 2026-11-02 (« seulement mois en
+        cours ») elle couvre le mois choisi : son en-tête porte `mois_label`."""
         g = (RACINE / "templates" / "performance.html").read_text(encoding="utf-8")
         assert '<div class="sec-hdr">&#9632; PAR SPORT</div>' not in g
-        assert ('<summary class="sec-hdr">&#9632; PAR SPORT <em>{{ depuis }} &middot; '
+        assert ('<summary class="sec-hdr">&#9632; PAR SPORT <em>{{ mois_label }} &middot; '
                 '{{ global_s.by_sport|length }}</em></summary>') in g
         assert g.count("<details") == g.count("</details>") == 4
 
@@ -403,7 +403,9 @@ class TestRecommandesEtMarches:
         # les agrégats, les cartes, le détail : tout part de `reco`, plus de `rows`
         assert "for r in reco if r.get(\"outcome\") in (\"WIN\", \"LOSS\")" in src
         assert "_monthly_summary(reco" in src and "_rows_of_month(reco" in src
-        assert "_sport_breakdown(reco" in src
+        # PAR SPORT = mois choisi (2026-11-02), `scope` = recommandés du mois
+        assert "scope   = _rows_of_month(reco, mois)" in src
+        assert "_sport_breakdown(scope" in src
 
     def test_le_gabarit_montre_fantomes_et_marches(self):
         g = (RACINE / "templates" / "performance.html").read_text(encoding="utf-8")
