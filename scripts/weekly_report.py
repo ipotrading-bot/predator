@@ -610,17 +610,67 @@ def format_report(metrics_by_sport: dict[str, dict], verdicts: dict[str, dict],
     return "\n".join(lines)
 
 
-def _send(text: str) -> bool:
-    """True si Telegram a pris le rapport (ou n'est pas configuré).
+# Telegram refuse tout message de plus de 4096 caractères (HTTP 400 « message
+# is too long »). Même marge que run_engine._telegram_signals, qui coupe à 3800.
+TELEGRAM_COUPE = 3800
 
-    Le 2026-09-14 le rapport a été refusé (HTTP 400, mise en forme) et le job
-    est resté VERT : l'opérateur n'a rien reçu, personne ne l'a su. Un refus
-    de MISE EN FORME est retenté en texte brut — le contenu compte plus que
-    le gras ; tout autre échec rend False, et main() sort en échec."""
+
+def _decouper(text: str, limite: int = TELEGRAM_COUPE) -> list[str]:
+    """Le rapport en morceaux d'au plus `limite` caractères, coupés ENTRE deux
+    sections (ligne vide), à défaut entre deux lignes — jamais au milieu d'une
+    ligne, donc jamais au milieu d'un gras Markdown. Pure.
+
+    Les 2026-11-02 et 2026-11-09 le rapport faisait 5 432 puis 5 703
+    caractères : Telegram l'a refusé en bloc, deux lundis de suite. Aucune
+    ligne n'est retirée — l'opérateur a demandé de garder ce rapport tel quel
+    (2026-10-29) ; il part seulement en plusieurs messages."""
+    if len(text) <= limite:
+        return [text]
+    # Une section trop longue à elle seule est rendue ligne par ligne.
+    blocs: list[str] = []
+    for section in text.split("\n\n"):
+        blocs.extend([section] if len(section) <= limite else section.split("\n"))
+        blocs.append("")                    # la ligne vide qui séparait les sections
+    blocs.pop()
+    morceaux, courant = [], ""
+    for bloc in blocs:
+        # Une LIGNE plus longue que la limite (jamais vue) est coupée net :
+        # mieux vaut un gras cassé, renvoyé en texte brut, qu'un rapport perdu.
+        while len(bloc) > limite:
+            if courant.strip():
+                morceaux.append(courant.strip("\n"))
+            morceaux.append(bloc[:limite])
+            bloc, courant = bloc[limite:], ""
+        candidat = f"{courant}\n{bloc}" if courant else bloc
+        if len(candidat) > limite:
+            morceaux.append(courant.strip("\n"))
+            courant = bloc
+        else:
+            courant = candidat
+    if courant.strip():
+        morceaux.append(courant.strip("\n"))
+    return [m for m in morceaux if m.strip()]
+
+
+def _send(text: str) -> bool:
+    """True si Telegram a pris TOUT le rapport (ou n'est pas configuré).
+
+    Le rapport part en autant de messages qu'il en faut (`_decouper`) ; un
+    seul morceau refusé rend False, et main() sort en échec."""
     token, chat = os.environ.get("TELEGRAM_BOT_TOKEN"), os.environ.get("TELEGRAM_CHAT_ID")
     if not token or not chat:
         log.warning("Telegram non configuré — rapport imprimé seulement")
         return True
+    return all(_send_un(token, chat, morceau) for morceau in _decouper(text))
+
+
+def _send_un(token: str, chat: str, text: str) -> bool:
+    """Un message. True si Telegram l'a pris.
+
+    Le 2026-09-14 le rapport a été refusé (HTTP 400, mise en forme) et le job
+    est resté VERT : l'opérateur n'a rien reçu, personne ne l'a su. Un refus
+    de MISE EN FORME est retenté en texte brut — le contenu compte plus que
+    le gras ; tout autre échec rend False."""
     for mode in ("Markdown", None):
         payload = {"chat_id": chat, "text": text}
         if mode:
