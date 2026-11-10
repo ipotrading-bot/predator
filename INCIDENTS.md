@@ -1006,6 +1006,46 @@ liste brute dont l'ordre vient d'une source.
 Gardiens : `tests/test_football_americain.py` (répartition, ordre des
 passes, Pinnacle payé → marché vivant), `tests/test_engine_circuit_breaker.py`.
 
+### Le plafond du Tier 2 passait AVANT le périmètre : la moitié des places à des matchs non réglables (2026-11-10)
+
+**Symptôme.** Question opérateur : « pourquoi le tennis est très pauvre en
+signaux ainsi que le hockey ? ». Rien de cassé à l'écran ; trouvé en lisant
+deux lignes du même scan côte à côte.
+
+**Cause (code et logs).** `run_engine.run` coupait le Tier 2 à `MAX_MATCHES`
+(50, à tour de rôle par sport) sur les matchs à prix sharp, PUIS appelait
+`_filtrer_perimetre`. La règle de l'entrée précédente — un plafond se pose
+après le filtre qui décide — n'avait été appliquée qu'au premier filtre.
+Dans chaque sport l'ordre est celui des sources, par heure de coup d'envoi :
+les Challengers et l'AHL, qui jouent tôt, passaient en tête de file.
+
+MESURÉ le 2026-11-10, quatre scans standard (runs 42766722266, 42788471164,
+42805273066, 42822076995) : 124, 123, 141 et 137 matchs avec prix sharp ;
+50 retenus à chaque fois (basket 12, hockey 12, foot 13, tennis 13) ; 23, 28,
+22 et 27 réglables. Écartés « NON RÉGLABLE » après la coupe : 12 basket
+(Eurocup, FIBA Champions League, ligues nationales), 6 hockey (AHL,
+Allsvenskan), 7 à 11 tennis (Challengers). À 13:10, Musetti–Samuel (18:10) et
+Kostyuk–Pegula (20:00), réglables et cotés par Matchbook, n'ont pas été
+évalués. `ops.py chaine` à 14:45-15:05, sans plafond : 21 matchs de foot
+exploitables sur 82, 7 de hockey sur 43, 2 de tennis sur 51, 0 de basket sur
+28 — là où la coupe laissait 13 places au foot, jeunes compris.
+
+**Correctif.** Tous les matchs du Tier 2 à prix sharp entrent dans
+`_filtrer_perimetre` ; `_plafonner_tier2` coupe ensuite, le Tier 1 n'étant
+jamais coupé. Le slate de REPRICE est photographié après la coupe, donc
+toujours borné. Aucun seuil, aucune porte, aucun périmètre n'a bougé
+(règles 10 et 11). Coût : zéro requête de plus — ESPN et LiveScore sont lus
+une fois par sport et par jour, quel que soit le nombre de matchs.
+
+⚠️ Effets VOULUS à surveiller : plus de matchs de petites ligues de foot
+réglables atteignent l'évaluation les jours creux ; `_alerte_perimetre`
+mesure désormais son ratio sur TOUT le Tier 2 à prix sharp (plus de non
+réglables au dénominateur), elle peut donc partir plus souvent, au plus une
+fois par `_ALERT_TTL_H`.
+
+Gardiens : `tests/test_perimetre_avant_plafond.py`,
+`tests/test_football_americain.py`.
+
 ### Smarkets muet cinq jours : l'API a changé ses paramètres (2026-09-25 → 09-29)
 
 **Symptôme.** Du 2026-09-25 au 2026-09-29, chaque scan standard : six
