@@ -954,7 +954,6 @@ def chaine(args):
     from core import odds_api_io as io                                     # noqa: E402
     from core.matchbook import fetch_matchbook_prices                      # noqa: E402
     from core.smarkets import fetch_smarkets_prices                        # noqa: E402
-    from core.score_sources import fixtures_espn                           # noqa: E402
     import run_engine as eng                                               # noqa: E402
 
     sport = args[0] if args else "americanfootball"
@@ -973,17 +972,18 @@ def chaine(args):
         warning = info
 
     eng._enrich_from_exchange(matchs, sharp, _Muet())
-    dates = sorted(str(m.get("commence_time", ""))[:10] for m in matchs if m.get("commence_time"))
-    fixtures: dict = {}
-    for sp in {m.get("sport") for m in matchs}:
-        fixtures[sp] = fixtures_espn(sp, dates[0], dates[-1]) if dates else None
+    # Le périmètre du moteur lui-même, pas une copie (règle 6) : ESPN (deux
+    # camps exigés hors football depuis le 2026-10-01) PUIS LiveScore, qui
+    # admet ce qu'ESPN ne couvre pas — football depuis le 2026-09-21, tennis
+    # et hockey depuis le 2026-11-10. Jusqu'à ce jour cet outil n'appelait que
+    # `_reglable` (ESPN seul) et sous-comptait ce que le scan garde.
+    # sb=None : ni alerte Telegram, ni lecture de meta.
+    gardes = {id(m) for m in eng._filtrer_perimetre(list(matchs), _Muet(), (), sb=None)}
     exploitables = 0
     for m in sorted(matchs, key=lambda x: str(x.get("commence_time", ""))):
         vivant = eng._marche_vivant(m)
-        # La porte du moteur elle-même, pas une copie (règle 6) : deux camps
-        # exigés hors football depuis le 2026-10-01.
-        reglable = eng._reglable(m, fixtures)
-        ok = vivant and reglable and bool(m.get("odds_pinnacle"))
+        reglable = id(m) in gardes or not vivant
+        ok = id(m) in gardes and bool(m.get("odds_pinnacle"))
         exploitables += ok
         pin = m.get("odds_pinnacle") or {}
         soft = m.get("odds_1xbet") or {}

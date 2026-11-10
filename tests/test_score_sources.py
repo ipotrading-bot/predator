@@ -543,13 +543,15 @@ class TestLiveScore:
         assert ss.result_from_livescore("A FC vs B FC", "soccer", "2026-09-04") is None
 
     def test_un_sport_non_cable_ne_part_pas_en_requete(self, monkeypatch):
-        """Seul le football est câblé (mesuré : c'est là qu'est l'écart avec
-        ESPN). Un autre sport ne doit pas dépenser une requête pour rien."""
+        """Football, tennis et hockey sont câblés (tennis et hockey depuis le
+        2026-11-10, mesurés). Un autre sport ne doit pas dépenser une requête
+        pour rien."""
         appels = []
         monkeypatch.setattr(ss, "_get_json",
                             lambda url, b, bud, source=None: appels.append(url))
-        assert ss.result_from_livescore("A vs B", "tennis", "2026-09-04") is None
-        assert ss.result_from_livescore("A vs B", "basketball", "2026-09-04") is None
+        assert ss.result_from_livescore("Alba Berlin vs Bayern Munich", "basketball",
+                                        "2026-09-04") is None
+        assert ss.result_from_livescore("Tigers vs Giants", "baseball", "2026-09-04") is None
         assert not appels
 
     def test_une_journee_ne_coute_quune_requete(self, monkeypatch):

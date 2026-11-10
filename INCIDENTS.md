@@ -3931,6 +3931,61 @@ qui absorbe, pas une limite à surveiller à la main.
 Gardiens : `tests/test_hebdo_decoupage.py::TestDecouper`,
 `tests/test_hebdo_decoupage.py::TestEnvoi`.
 
+### Tennis et hockey : seuls les tableaux ATP/WTA et la NHL étaient réglables (2026-11-10, décision opérateur)
+
+Demande du jour : « pourquoi le tennis est très pauvre en signaux ainsi que
+le hockey ? », puis « inclus les autres ligues de tennis et de hockey »
+(règle 11 : instruction explicite). Elle LÈVE, pour ces deux sports, la
+consigne du 2026-10-08 de ne plus chercher à couvrir Challengers et ligues
+mineures.
+
+Cause du volume faible : `run_engine._reglable` ne connaît qu'ESPN, qui ne
+liste que `tennis/atp`, `tennis/wta` et `hockey/nhl`. LiveScore, qui admet
+déjà au périmètre et règle le football qu'ESPN ne couvre pas, n'était câblé
+que pour le football (`_LS_SPORTS`). Tout Challenger et toute ligue de hockey
+hors NHL sortait « NON RÉGLABLE — ligue non couverte », avec un prix 1xbet et
+un prix d'exchange en main.
+
+MESURÉ le 2026-11-10 :
+- quatre scans standard (runs 42766722266, 42788471164, 42805273066,
+  42822076995) : 34 matchs distincts écartés, 27 de tennis (Challengers
+  d'Orléans, Knoxville, Lima, Hersonissos) et 7 de hockey (6 AHL,
+  1 Hockeyallsvenskan). LiveScore (journées des 09, 10 et 11/11) les connaît
+  TOUS, 27/27 et 7/7, avec l'appariement strict du dépôt ;
+- règlement rejoué sur les matchs terminés des 09 et 10/11 : 83 de tennis et
+  13 de hockey réglés, 0 écart avec le vainqueur que LiveScore déclare ;
+  abandon (« Ret. »), forfait (« W.O. »), annulé, en cours, à venir : rien
+  de réglé ;
+- contrôle indépendant contre ESPN sur les matchs que les deux couvrent :
+  18/18 identiques — 6 NHL, dont une prolongation (Calgary 4-3) et une
+  séance de tirs au but (San Jose 3-2), et 12 de tennis, jeux compris
+  (Sabalenka–Muchova 14-11) ;
+- `ops.py chaine` avant/après, même heure : tennis 2 → 11 matchs
+  exploitables sur 49, hockey 7 → 14 sur 43.
+
+Fait (`core/score_sources`) : `_LS_SPORTS` porte tennis et hockey ;
+`_ls_issue` lit l'issue par sport — tennis sur « FT » seul, vainqueur par
+sets en drapeau 1-0 et JEUX en `decompte` (c'est lui qui règle un total) ;
+hockey sur le score final, prolongation et tirs au but compris ; football
+inchangé. `_ls_sens` accepte l'ordre inverse au tennis seulement et refuse
+un double. Budget LiveScore 120 → 300 requêtes/jour (62 mesurées le 09/11
+pour le football seul). `ops.py chaine` passe désormais par
+`_filtrer_perimetre` : il n'appelait que `_reglable` et sous-comptait ce
+qu'un scan garde.
+
+PAS fait, et pourquoi : l'ITF (aucun prix sharp, absente de LiveScore) et la
+KHL (absente de LiveScore) restent hors d'atteinte ; un match de tennis
+inachevé ne se règle pas — pas de chemin « annulé », il reste à trancher à
+la main ; aucun seuil ni aucune porte n'a bougé (règle 10).
+
+⚠️ Ce que ça ne promet pas : sur les 11 matchs de tennis et les 7 de hockey
+ajoutés ce jour-là, 1xbet était SOUS le prix sharp des deux côtés (AHL
+1,83/1,86 contre 2,01/2,08). Plus de matchs évalués, pas forcément plus de
+signaux. Revue du segment le 2026-12-10 (critère dans le commentaire de
+`_LS_SPORTS`) ; interrupteur général inchangé : `meta.perimetre_livescore`.
+
+Gardiens : `tests/test_livescore_tennis_hockey.py`.
+
 ## Couche IA
 
 Le paysage des paliers gratuits change tous les mois. Rien de ce qui suit
