@@ -1260,6 +1260,37 @@ def _repartir_par_sport(items: list, plafond: int) -> list:
     return out
 
 
+def _plafonner_tier2(matches: list, tier2: list, plafond: int, log) -> list:
+    """Le plafond du Tier 2, posé APRÈS le périmètre (2026-11-10).
+
+    `matches` : ce que `_filtrer_perimetre` a gardé (Tier 1 + Tier 2).
+    `tier2`   : les matchs du Tier 2 tels qu'ils y sont ENTRÉS (identité des
+    objets — le filtre rend les mêmes dictionnaires). Le Tier 1 n'est jamais
+    coupé ; le Tier 2 l'est à `plafond`, à tour de rôle par sport.
+
+    Avant, la coupe précédait le filtre. Mesuré sur les quatre scans standard
+    du 2026-11-10 : 123 à 141 matchs avec prix sharp, 50 retenus, puis 22 à 28
+    seulement réglables — Challengers (7 à 11 des 13 places du tennis), AHL
+    (6 des 12 du hockey), Eurocup/FIBA (les 12 du basket) prenaient la place
+    de matchs réglables jamais regardés (Musetti–Samuel, Kostyuk–Pegula à
+    13:10). Une place ne se donne plus qu'à un match qu'on saura régler."""
+    ids = {id(m) for m in tier2}
+    gardes_t2 = [m for m in matches if id(m) in ids]
+    retenus = _repartir_par_sport(gardes_t2, plafond)
+    par_sport: dict[str, int] = {}
+    for m in retenus:
+        par_sport[m.get("sport") or "?"] = par_sport.get(m.get("sport") or "?", 0) + 1
+    if tier2:
+        log.info("TIER 2 | %d match(s) avec prix sharp, %d au périmètre, %d retenu(s) "
+                 "(plafond %d réparti par sport, posé APRÈS le périmètre) : %s",
+                 len(tier2), len(gardes_t2), len(retenus), plafond,
+                 ", ".join(f"{sp}={n}" for sp, n in sorted(par_sport.items())) or "—")
+    if len(retenus) == len(gardes_t2):
+        return matches
+    coupes = {id(m) for m in gardes_t2} - {id(m) for m in retenus}
+    return [m for m in matches if id(m) not in coupes]
+
+
 def _heartbeat(sb, scan_time: datetime, matches: int | None, signals: int | None):
     """matches/signals à None = tick qui n'a PAS scanné (REPRICE à cache vide,
     sortie anticipée) : il rafraîchit `at` pour prouver sa vie, mais CONSERVE
@@ -3225,6 +3256,7 @@ def run():
     no_pin_count   = 0
     sharp_source   = "?"
     tier1_ok       = False  # OddsAPI a-t-il rendu quelque chose ? Voir le Tier 2.
+    tier2_avec_sharp: list = []   # matchs du Tier 2 à prix sharp — plafonnés APRÈS le périmètre
 
     # ── Tier 1: The Odds API ──────────────────────────────────────────
     # Horizon unique de 24 h pour les deux modes (HOURS_AHEAD reste
@@ -3568,6 +3600,9 @@ def run():
         # américain n'étaient JAMAIS examinés — 289 chargés, 50 regardés,
         # tous de foot. On garde désormais tout match qui a un prix sharp,
         # et le plafond se RÉPARTIT entre sports (`_repartir_par_sport`).
+        # LE PÉRIMÈTRE D'ABORD, LA COUPE ENSUITE (2026-11-10) : tous les
+        # matchs à prix sharp entrent ici, et `_plafonner_tier2` ne coupe
+        # qu'APRÈS `_filtrer_perimetre` — voir sa docstring.
         # Un sport RETIRÉ par l'opérateur (baseball, 2026-09-17, « sport
         # entier ») reste servi par odds-api.io : seule la coupe à 50 l'avait
         # tenu loin de l'émission. Le périmètre se dit ici, explicitement —
@@ -3598,14 +3633,8 @@ def run():
             log.info("TIER 2 | écartés faute de prix sharp (Échec prix Sharp) : %s",
                      ", ".join(f"{sp}={n}" for sp, n in sorted(sans_sharp.items())))
             _diagnostic_sans_sharp(ecartes_sans_sharp, [exchange_prices, sharp_payes], log)
-        retenus = _repartir_par_sport(avec_sharp, MAX_MATCHES)
-        par_sport: dict[str, int] = {}
-        for m in retenus:
-            par_sport[m.get("sport") or "?"] = par_sport.get(m.get("sport") or "?", 0) + 1
-        log.info("TIER 2 | %d match(s) avec prix sharp, %d retenu(s) (plafond %d réparti "
-                 "par sport) : %s", len(avec_sharp), len(retenus), MAX_MATCHES,
-                 ", ".join(f"{sp}={n}" for sp, n in sorted(par_sport.items())) or "—")
-        matches.extend(retenus)
+        tier2_avec_sharp = avec_sharp
+        matches.extend(avec_sharp)
 
         if matches:
             # Étiquette honnête : avec un Tier 1 vivant, les matchs viennent
@@ -3630,6 +3659,7 @@ def run():
     # AVANT la photographie du slate : un match banni ne doit pas revenir
     # par le cache du tick reprice suivant.
     matches = _filtrer_perimetre(matches, log, _ligues_exclues(sb), sb=sb)
+    matches = _plafonner_tier2(matches, tier2_avec_sharp, MAX_MATCHES, log)
     if not matches:
         log.warning("PÉRIMÈTRE | aucun match ne passe les gardes (marché vivant + réglable)")
         if sb:

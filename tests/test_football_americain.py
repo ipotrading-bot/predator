@@ -312,7 +312,7 @@ def test_le_moteur_trie_sur_le_prix_sharp_avant_de_couper():
     assert "for m in xbet_matches[:MAX_MATCHES]:" not in moteur
     t2 = moteur[moteur.index("xbet_matches = fetch_matches()"):]
     assert t2.index("_oddsapi_sharp_sans_execution()") < t2.index("_enrich_from_exchange(xbet_matches, exchange_prices")
-    assert t2.index("_enrich_from_exchange(xbet_matches, exchange_prices") < t2.index("_repartir_par_sport(")
+    assert t2.index("_enrich_from_exchange(xbet_matches, exchange_prices") < t2.index("_plafonner_tier2(")
 
 
 def test_un_sport_retire_ne_revient_pas_par_le_tier_2():
@@ -325,7 +325,7 @@ def test_un_sport_retire_ne_revient_pas_par_le_tier_2():
     assert "college_football" not in sports_au_perimetre()   # retirée le 2026-10-06
     moteur = (RACINE / "run_engine.py").read_text(encoding="utf-8")
     t2 = moteur[moteur.index("xbet_matches = fetch_matches()"):]
-    assert t2.index("not in perimetre") < t2.index("_repartir_par_sport(")
+    assert t2.index("not in perimetre") < t2.index("_plafonner_tier2(")
 
 
 def test_un_sport_retire_ne_coute_plus_une_requete_odds_api_io(monkeypatch, _io):
