@@ -2742,7 +2742,7 @@ _RAISON_NON_COUVERTE = "absent des sources de scores (ligue non couverte)"
 # BUDGET CHIFFRÉ (règle 13) : ZÉRO requête supplémentaire. `livescore_connait`
 # est DÉJÀ appelé sur chacun de ces matchs depuis le 09-10 pour la mesure, avec
 # un cache par journée et par processus sur le budget partagé
-# `livescore_results` (LIVESCORE_DAILY_BUDGET = 120/jour). On rend décisif un
+# `livescore_results` (LIVESCORE_DAILY_BUDGET, 120/jour alors). On rend décisif un
 # appel qui avait déjà lieu.
 #
 # CRITÈRE DE RETRAIT DATÉ (règle 13) — revue le 2026-10-19, même échéance que

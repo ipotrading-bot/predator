@@ -191,7 +191,7 @@ class TestMesureLiveScore:
         monkeypatch.setattr(ss, "_livescore_du_jour", lambda seg, jour: rows)
         assert ss.livescore_connait("A FC vs B FC", "soccer", "2026-09-10T18:00:00Z")
         assert not ss.livescore_connait("A FC vs C FC", "soccer", "2026-09-10")
-        assert not ss.livescore_connait("A vs B", "tennis", "2026-09-10")   # hors LiveScore
+        assert not ss.livescore_connait("A FC vs B FC", "basketball", "2026-09-10")   # hors LiveScore
         assert not ss.livescore_connait("A FC vs B FC", "soccer", "")
 
 

@@ -99,7 +99,13 @@ TSDB_DAILY_BUDGET = int(os.environ.get("THESPORTSDB_DAILY_BUDGET", "150"))
 # football pour le 2026-09-04, mesuré ; ESPN en rend 115 le même jour). Un
 # audit en consomme donc au plus 3 par sport — la fenêtre `_jours`. Borne
 # large, elle ne peut pas être atteinte par un fonctionnement normal.
-LIVESCORE_DAILY_BUDGET = int(os.environ.get("LIVESCORE_DAILY_BUDGET", "120"))
+# 120 → 300 le 2026-11-10, avec le tennis et le hockey (`_LS_SPORTS`). MESURÉ
+# football seul : 62 requêtes le 2026-11-09, 26 à 15:00 le 2026-11-10. Trois
+# sports au lieu d'un : ~190/jour attendus ; borne haute par sport et par
+# jour = 32 runs de scan × 2 journées + 8 audits × 3 journées = 88, soit 264.
+# Budget épuisé = journée lue VIDE : rien ne se règle faux, mais le football
+# attendrait aussi — d'où la marge.
+LIVESCORE_DAILY_BUDGET = int(os.environ.get("LIVESCORE_DAILY_BUDGET", "300"))
 # API officielle de l'EuroLeague : la saison ENTIÈRE (380 matchs) en UNE requête,
 # mise en cache pour le run. Un scan standard et un audit la lisent une fois
 # chacun → ~16 requêtes/jour à cadence nominale (8 + 8) ; borne à 60 pour
@@ -1140,11 +1146,42 @@ _LS_URL = "https://prod-public-api.livescore.com/v1/api/app/date"
 # tennis rend des ATHLÈTES — une structure que cet adaptateur ne sait pas
 # lire. Ajouter une ligne ici sans la mesurer serait une liste qu'on croit
 # exhaustive (règle n°6).
-_LS_SPORTS = {"soccer": "soccer"}
+#
+# TENNIS ET HOCKEY câblés le 2026-11-10 (DÉCISION OPÉRATEUR, règle 11 :
+# « inclus les autres ligues de tennis et de hockey »). ESPN ne règle que les
+# tableaux ATP/WTA et la NHL ; tout le reste sortait « NON RÉGLABLE ».
+# MESURÉ ce jour-là (journées LiveScore des 09, 10 et 11/11, appariement
+# strict `_apparie` du dépôt) sur les 34 matchs écartés des quatre scans
+# standard : tennis 27/27 (Challengers d'Orléans, Knoxville, Lima,
+# Hersonissos), hockey 7/7 (6 AHL, 1 Hockeyallsvenskan). LiveScore liste les
+# Challengers ATP, les WTA 125, l'AHL, la Swiss League, l'Allsvenskan, la
+# Ligue Magnus, la Liiga, l'Extraliga biélorusse ; ni l'ITF ni la KHL — ces
+# deux-là restent hors d'atteinte (l'ITF n'a de toute façon aucun prix sharp).
+# Structures lues, voir `_ls_issue` : le tennis rend les SETS dans `Tr1`/`Tr2`
+# et les JEUX set par set dans `Tr1S1`…`Tr2S5` ; le hockey rend le score FINAL
+# (prolongation et tirs au but compris) dans `Tr1`/`Tr2`.
+#
+# BUDGET (règle 13) : `LIVESCORE_DAILY_BUDGET`, une requête par sport et par
+# journée lue. CRITÈRE DE RETRAIT, à relever le 2026-12-10 sur les signaux
+# tennis/hockey admis par cette voie (`RÉGLABLE VIA LIVESCORE` au log) :
+# retirer le segment si moins de 80 % se règlent dans les 36 h, ou si un seul
+# règlement est trouvé FAUX. Gardien : tests/test_livescore_tennis_hockey.py.
+_LS_SPORTS = {"soccer": "soccer", "tennis": "tennis", "hockey": "hockey"}
 # Statuts TERMINÉS retenus. « FT » règle sur `Tr1`/`Tr2` ; « AP »/« AET »
 # seulement sur `Tr1OR`/`Tr2OR` — voir l'alerte ci-dessus.
 _LS_FINISHED = frozenset({"ft"})
 _LS_FINISHED_APRES_90 = frozenset({"ap", "aet"})
+# Hockey : « FT », « OT » (après prolongation) et « AP » (après tirs au but)
+# portent tous le score FINAL dans `Tr1`/`Tr2`, celui que mesure une moneyline
+# à deux issues. MESURÉ le 2026-11-10 : Calgary–Philadelphia « OT » Tr 4-3
+# (OR 3-3, OT 1-0) ; San Jose–NY Islanders « AP » Tr 3-2 (OR 2-2, séance 1-0).
+_LS_FINISHED_HOCKEY = frozenset({"ft", "ot", "ap"})
+# Tennis : « FT » SEUL. « Ret. » (abandon), « W.O. » (forfait) et « Canc. »
+# publient `Tr` 0-0 et ne règlent RIEN : le sort d'un pari sur un match
+# inachevé dépend du règlement du book, il n'y a pas de chemin « annulé » ici
+# (INCIDENTS « Match abandonné »). La ligne reste à régler à la main.
+_LS_FINISHED_TENNIS = frozenset({"ft"})
+_LS_SETS_MAX = 5
 
 
 def _livescore_du_jour(segment: str, jour: str) -> list:
@@ -1175,6 +1212,15 @@ def _livescore_du_jour(segment: str, jour: str) -> list:
                     "status": str(ev.get("Eps") or "").strip().lower(),
                     "id": str(ev.get("Eid") or ""),
                     "league": ligue,
+                    # Tennis : jeux set par set, dans l'ordre T1/T2. Vide
+                    # ailleurs (le football n'a pas ces champs).
+                    "sets": [(ev.get(f"Tr1S{i}"), ev.get(f"Tr2S{i}"))
+                             for i in range(1, _LS_SETS_MAX + 1)
+                             if ev.get(f"Tr1S{i}") is not None
+                             or ev.get(f"Tr2S{i}") is not None],
+                    # Vainqueur déclaré par LiveScore (1 ou 2) : un contrôle
+                    # de plus au tennis, jamais la source de l'issue.
+                    "gagnant": ev.get("Ewt"),
                 })
         _CACHE_LS[cle] = rows
     return _CACHE_LS[cle]
@@ -1184,6 +1230,76 @@ def _ls_camp(noms: list, attendu: str) -> bool:
     """Un des noms de ce camp correspond-il strictement à celui du signal ?
     Exonymes compris (voir `_variantes`) : LiveScore écrit « FC Cologne »."""
     return any(n and _apparie(attendu, n) for n in noms)
+
+
+def _ls_sens(segment: str, ev: dict, home: str, away: str) -> int:
+    """L'événement est-il le match du signal ? +1 dans l'ordre du signal,
+    −1 dans l'ordre INVERSE, 0 sinon. Les DEUX camps toujours.
+
+    L'ordre inverse n'existe qu'au tennis : deux athlètes, pas de domicile,
+    et chaque source les range à sa façon (même parade que `_espn_cotes`).
+    Un sport d'équipe rangé à l'envers n'est pas reconnu — on ne devine pas
+    qui reçoit. Au tennis un DOUBLE n'est jamais le match d'un signal de
+    simple : sans cette garde, « A vs B » s'apparierait à « A/X vs B/Y », le
+    double que les deux mêmes joueurs disputent le même jour."""
+    if segment == "tennis" and (len(ev["home"]) != 1 or len(ev["away"]) != 1):
+        return 0
+    if _ls_camp(ev["home"], home) and _ls_camp(ev["away"], away):
+        return 1
+    if segment == "tennis" and _ls_camp(ev["home"], away) and _ls_camp(ev["away"], home):
+        return -1
+    return 0
+
+
+def _ls_entiers(a, b) -> tuple[int, int] | None:
+    try:
+        return int(a), int(b)
+    except (TypeError, ValueError):
+        return None
+
+
+def _ls_issue(segment: str, ev: dict) -> tuple[int, int, tuple | None] | None:
+    """(score T1, score T2, décompte) d'un événement TERMINÉ, dans l'ordre
+    LiveScore ; None si le match n'est pas terminé ou pas lisible — la ligne
+    repassera. Pur.
+
+    · football : « FT » sur `Tr`, « AP »/« AET » sur le score à 90 minutes ;
+    · hockey : score final, prolongation et tirs au but compris ; une égalité
+      n'est pas un résultat de moneyline, refusée ;
+    · tennis : 1-0 / 0-1 au vainqueur par SETS (le drapeau de
+      SPORTS_SCORE_DRAPEAU, comme ESPN) et, à part, le décompte des JEUX qui
+      seul règle un total ou un handicap. Le décompte n'est rendu que si
+      chaque set gagné a sa ligne de jeux ; sinon le vainqueur seul."""
+    statut = ev["status"]
+    if segment == "hockey":
+        if statut not in _LS_FINISHED_HOCKEY:
+            return None
+        paire = _ls_entiers(ev["home_score"], ev["away_score"])
+        if not paire or paire[0] == paire[1]:
+            return None
+        return (paire[0], paire[1], None)
+    if segment == "tennis":
+        if statut not in _LS_FINISHED_TENNIS:
+            return None
+        sets = _ls_entiers(ev["home_score"], ev["away_score"])
+        if not sets or sets[0] == sets[1]:
+            return None
+        premier_gagne = sets[0] > sets[1]
+        if ev.get("gagnant") in (1, 2) and (ev["gagnant"] == 1) != premier_gagne:
+            return None                  # sets et vainqueur déclaré se contredisent
+        jeux = [_ls_entiers(a, b) for a, b in ev.get("sets") or []]
+        decompte = None
+        if jeux and all(jeux) and len(jeux) == sets[0] + sets[1]:
+            decompte = (sum(j[0] for j in jeux), sum(j[1] for j in jeux))
+        return (1, 0, decompte) if premier_gagne else (0, 1, decompte)
+    if statut in _LS_FINISHED:
+        paire = _ls_entiers(ev["home_score"], ev["away_score"])
+    elif statut in _LS_FINISHED_APRES_90:
+        # Prolongation / tirs au but : le score à 90 minutes ou rien.
+        paire = _ls_entiers(ev.get("home_score_90"), ev.get("away_score_90"))
+    else:
+        paire = None
+    return (paire[0], paire[1], None) if paire else None
 
 
 def livescore_connait(match_name: str, sport: str, match_date: str) -> bool:
@@ -1205,7 +1321,7 @@ def livescore_connait(match_name: str, sport: str, match_date: str) -> bool:
     if not parts or not segment or len(jour) != 10:
         return False
     home, away = parts
-    return any(_ls_camp(ev["home"], home) and _ls_camp(ev["away"], away)
+    return any(_ls_sens(segment, ev, home, away)
                for ev in _livescore_du_jour(segment, jour))
 
 
@@ -1218,33 +1334,36 @@ def result_from_livescore(match_name: str, sport: str, match_date: str) -> dict 
     if not parts or not segment:
         return None
     home, away = parts
-    vus: dict[str, tuple[int, int]] = {}
+    vus: dict[str, tuple[int, int, tuple | None]] = {}
     for jour in _jours(match_date) or []:
         for ev in _livescore_du_jour(segment, jour):
-            if not (_ls_camp(ev["home"], home) and _ls_camp(ev["away"], away)):
+            sens = _ls_sens(segment, ev, home, away)
+            if not sens:
                 continue
-            if ev["status"] in _LS_FINISHED:
-                paire = (ev["home_score"], ev["away_score"])
-            elif ev["status"] in _LS_FINISHED_APRES_90:
-                # Prolongation / tirs au but : le score à 90 minutes ou rien.
-                paire = (ev.get("home_score_90"), ev.get("away_score_90"))
-            else:
-                paire = None
-            try:
-                hs, as_ = int(paire[0]), int(paire[1])
-            except (TypeError, ValueError):
-                # Match trouvé mais pas terminé, ou terminé sans score à 90
-                # minutes publié : on ne règle pas — la ligne repassera au
-                # prochain audit.
+            issue = _ls_issue(segment, ev)
+            if issue is None:
+                # Match trouvé mais pas terminé, terminé sans score à 90
+                # minutes publié, ou inachevé (abandon, forfait au tennis) :
+                # on ne règle pas — la ligne repassera au prochain audit.
                 log.info("SETTLE SKIP livescore | %s — statut %r, on n'ecrit pas",
                          match_name, ev["status"])
                 continue
-            vus[ev["id"] or f"{jour}|{ev['league']}"] = (hs, as_)
+            hs, as_, decompte = issue
+            if sens < 0:                 # tennis rangé à l'envers du signal
+                hs, as_ = as_, hs
+                decompte = (decompte[1], decompte[0]) if decompte else None
+            vus[ev["id"] or f"{jour}|{ev['league']}"] = (hs, as_, decompte)
     if len(vus) == 1:
-        hs, as_ = next(iter(vus.values()))
-        log.info("SETTLE livescore | %s | %d-%d (0 appel IA)", match_name, hs, as_)
-        return {"home_score": hs, "away_score": as_, "completed": True,
-                "source": "livescore"}
+        hs, as_, decompte = next(iter(vus.values()))
+        log.info("SETTLE livescore | %s | %d-%d%s (0 appel IA)", match_name, hs, as_,
+                 f" | décompte {decompte[0]}-{decompte[1]}" if decompte else "")
+        out = {"home_score": hs, "away_score": as_, "completed": True,
+               "source": "livescore"}
+        if decompte:
+            # Total/handicap de tennis : ce décompte, jamais le drapeau —
+            # voir SPORTS_SCORE_DRAPEAU et settlement._paire_comptable.
+            out["decompte"] = decompte
+        return out
     if len(vus) > 1:
         log.info("SETTLE SKIP | %s — %d evenements LiveScore correspondent, "
                  "on ne devine pas", match_name, len(vus))
