@@ -3851,6 +3851,46 @@ depuis 04:31. `audit_engine._apprendre_et_entretenir` tourne désormais à
 chaque audit, vide compris
 (`tests/test_audit_general_2026_10_29.py::TestRetentionMeta::test_un_audit_vide_apprend_aussi`).
 
+### Le rapport hebdo dépassait 4096 caractères : refusé en bloc deux lundis de suite (2026-11-10)
+
+L'opérateur ne recevait plus le rapport du lundi. Le job `hebdo` de
+`reports.yml` sortait bien en ÉCHEC (c'est le correctif du 2026-09-15 qui le
+rend rouge), mais rien ne le signalait ailleurs que dans l'onglet Actions :
+trouvé le 10/11 en répondant à « comment se porte predator ».
+
+Cause : `scripts/weekly_report._send` envoyait le rapport en UN message.
+Telegram refuse au-delà de 4096 caractères (HTTP 400 « Bad Request: message
+is too long ») ; le repli en texte brut ne couvre que le refus de mise en
+forme (« parse entities »), donc l'envoi rendait False d'emblée. Le rapport
+a grossi section après section (par ligue, frontière jouable, bande de cote,
+causes de non-capture) sans que rien ne mesure sa longueur.
+
+MESURÉ le 2026-11-10 dans les logs : run 41485717155 (02/11 16:52) —
+5 432 caractères, refusé ; run 42662707525 (09/11 17:14) — 5 703
+caractères, refusé. Le texte du 09/11, rejoué dans `_decouper`, part en
+deux messages de 2 879 et 2 821 caractères, aucune ligne perdue.
+
+Fait : `_decouper` coupe ENTRE deux sections (ligne vide), à défaut entre
+deux lignes, à 3 800 caractères — la marge de `run_engine._telegram_signals`.
+`_send` envoie chaque morceau ; un seul refus rend False et le job échoue.
+PAS fait : raccourcir le rapport. L'opérateur a demandé de le garder tel quel
+(2026-10-29, « garde le rapport du lundi ») ; retirer des sections reste sa
+décision.
+
+Vu dans le même log, SANS effet mesuré : « permission denied for table
+signals_archive » dans `_dater_par_signal`. La clé de lecture du job n'a pas
+de droit sur l'archive (voulu, `sql/migrate_v10_11_rls_signals_archive.sql`).
+Sur les 1 000 lignes de ledger lues par le rapport, 999 se datent dans
+`signals`, 0 dans l'archive seule, 1 est introuvable : c'est cette dernière
+qui déclenche la lecture refusée. Rien à corriger tant que l'archive ne porte
+aucun signal du ledger lu.
+
+⚠️ Toute section ajoutée au rapport allonge un message : c'est le découpage
+qui absorbe, pas une limite à surveiller à la main.
+
+Gardiens : `tests/test_hebdo_decoupage.py::TestDecouper`,
+`tests/test_hebdo_decoupage.py::TestEnvoi`.
+
 ## Couche IA
 
 Le paysage des paliers gratuits change tous les mois. Rien de ce qui suit
