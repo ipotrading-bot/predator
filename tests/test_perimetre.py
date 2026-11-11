@@ -255,6 +255,31 @@ class TestAlertePerimetre:
         assert "décision opérateur" in texte
         assert "relais resté posé" not in texte, "ne plus envoyer vers le mauvais incident"
 
+    def test_les_jeunes_ne_comptent_pas_dans_le_ratio(self, monkeypatch, caplog):
+        """2026-11-10 21:15 — qualifs Euro U19 : 44/90 réglables, alerte
+        Telegram, dont 16 U19 écartées PAR DÉCISION OPÉRATEUR (09-08). Une
+        exclusion volontaire n'est pas un trou de couverture : sans elles,
+        44/74, sous le seuil. Elles restent loggées NON RÉGLABLE."""
+        envois = self._capture(monkeypatch)
+        monkeypatch.setattr(eng, "_fixtures_espn",
+                            lambda s, a, b: [_ev(f"T{i} FC", f"U{i} FC") for i in range(3)])
+        monkeypatch.setattr(eng, "_livescore_connait", lambda *a, **k: False)
+        reglables = [_m(match=f"T{i} FC vs U{i} FC", _exchange="matchbook") for i in range(3)]
+        trous = [_m(match=f"X{i} FC vs Y{i} FC", _exchange="matchbook") for i in range(2)]
+        jeunes = [_m(match=f"J{i} U19 vs K{i} U19", league="International Youth - U19 Euro",
+                     _exchange="matchbook") for i in range(5)]
+        with caplog.at_level(logging.INFO, logger="PREDATOR"):
+            gardes = eng._filtrer_perimetre(reglables + trous + jeunes,
+                                            logging.getLogger("PREDATOR"), sb=object())
+        assert len(gardes) == 3
+        assert envois == [], "3/5 hors jeunes : pas d'alerte (5/10 écartés avec elles)"
+        assert caplog.text.count("ligue de jeunes") == 5, "chaque refus reste loggé"
+        # Un vrai trou de couverture alerte toujours, et sans citer les jeunes
+        trous = [_m(match=f"X{i} FC vs Y{i} FC", _exchange="matchbook") for i in range(4)]
+        eng._filtrer_perimetre(reglables + trous + jeunes, logging.getLogger("PREDATOR"), sb=object())
+        assert len(envois) == 1
+        assert "3/7" in envois[0][1] and "jeunes" not in envois[0][1]
+
     def test_l_elargissement_actif_eteint_l_alerte(self, monkeypatch):
         """Conséquence directe de l'élargissement : ce qui déclenchait l'alerte
         le 21/09 (5/8 écartés, tous connus de LiveScore) devient une journée
