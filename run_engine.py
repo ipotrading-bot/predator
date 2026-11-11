@@ -2726,6 +2726,13 @@ def _ligues_exclues(sb) -> tuple[str, ...]:
 _PERIMETRE_ALERTE_MIN_VIVANTS = 5
 _PERIMETRE_ALERTE_PART_MAX = 0.5
 _RAISON_NON_COUVERTE = "absent des sources de scores (ligue non couverte)"
+# Une EXCLUSION VOLONTAIRE n'est pas un trou de couverture (2026-11-11) : les
+# ligues de jeunes sont écartées par décision opérateur (2026-09-08), comme les
+# ligues exclues et les hors-saison, qui sortent déjà AVANT le décompte. Les
+# jeunes, elles, étaient comptées comme « vivants non réglables » : le soir du
+# 2026-11-10 (qualifs Euro U19), 44/90 réglables → alerte, dont 16 U19 ; sans
+# elles 44/74, 40 % écartés, sous le seuil. Elles restent loggées NON RÉGLABLE.
+_RAISON_JEUNES = "ligue de jeunes, hors périmètre depuis le 2026-09-08"
 
 # ── Périmètre élargi à LiveScore (2026-09-21, DÉCISION OPÉRATEUR, règle 11) ──
 # `_reglable` ne demandait qu'« ESPN liste-t-il ce match ? », posé le 09-03,
@@ -2887,7 +2894,7 @@ def _filtrer_perimetre(matches: list, log, ligues_exclues: tuple = (), sb=None) 
             gardes.append(m)
             continue
         sport = (m.get("sport") or "").lower()
-        raison = ("ligue de jeunes, hors périmètre depuis le 2026-09-08"
+        raison = (_RAISON_JEUNES
                   if _section_jeunes(m.get("league") or "")
                   else "aucune source de scores pour ce sport"
                   if fixtures_par_sport.get(sport) is None
@@ -2927,7 +2934,12 @@ def _filtrer_perimetre(matches: list, log, ligues_exclues: tuple = (), sb=None) 
         log.info("PÉRIMÈTRE | LiveScore connaît %d des %d matchs écartés « ligue non "
                  "couverte » — restés écartés (élargissement %s)", ls_connus, non_couverts,
                  "coupé par l'opérateur" if not elargi else "actif")
-    _alerte_perimetre(sb, len(vivants), len(gardes), motifs, log, ls_connus, non_couverts)
+    # Les exclusions volontaires sortent du ratio ET du détail de l'alerte
+    # (voir _RAISON_JEUNES) : l'alerte ne parle que de trous de couverture.
+    jeunes = motifs.get(_RAISON_JEUNES, 0)
+    motifs_alerte = {k: v for k, v in motifs.items() if k != _RAISON_JEUNES}
+    _alerte_perimetre(sb, len(vivants) - jeunes, len(gardes), motifs_alerte, log,
+                      ls_connus, non_couverts)
     return gardes
 
 
