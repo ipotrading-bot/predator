@@ -58,6 +58,7 @@ joué ne se règle pas mieux plus tard, il sort en `expired`.
 """
 from __future__ import annotations
 
+import difflib
 import json
 import logging
 import os
@@ -799,9 +800,69 @@ def _apparie(nom_signal: str, nom_source: str, restes: bool = True) -> bool:
                for v in _variantes(nom_source))
 
 
+# ── Franchises : un SURNOM ou une VILLE seuls ne désignent pas une équipe ──
+#
+# Le 2026-11-11, « South Florida Bulls vs Saint Josephs Hawks » (basket
+# universitaire, odds-api.io « USA - NCAA ») a été émis en RECOMMANDÉ : le
+# scoreboard NBA listait « Atlanta Hawks at Chicago Bulls » le 14, et ESPN
+# publie pour chaque franchise son surnom nu (`name` = « Bulls », « Hawks »)
+# et sa ville nue (`location`). Le containment de `strict_team_match` les
+# trouvait dans le nom du signal, des DEUX côtés : la garde « deux camps »
+# de `_reglable` (2026-10-01) passait, sur deux homonymes. Signal 12558
+# jamais réglable, quatre audits de suite en échec le 12. Le règlement lit les mêmes
+# noms : joué le même jour, il aurait écrit le score de la NBA (et « Texas
+# Stars vs Iowa Wild », AHL admise le 2026-11-10, celui de Dallas–Minnesota).
+#
+# Règle : quand ESPN nomme l'équipe « <ville> <surnom> » (structure LUE dans
+# sa réponse, aucune liste — règle 6), une forme courte ne vaut que si ce
+# qui RESTE du nom du signal ne contredit pas l'autre moitié du nom entier :
+# « South Florida » contredit « Chicago », « LA » (sigle, 3 lettres au plus)
+# ou rien ne contredisent pas. Elle ne fait que REFUSER. Les clubs dont
+# ESPN répète le nom entier dans `name` et `location` (tout le football) et
+# les athlètes ne sont pas concernés. Gardien : tests/test_homonymes_franchise.py.
+_MOT = re.compile(r"[a-z0-9]+")
+_FRANCHISE_SEUIL = 0.60          # le seuil de `strict_team_match`
+_FRANCHISE_LIAISONS = frozenset({"the", "of", "de", "la", "le", "and"})
+
+
+def _mots(nom: str) -> list[str]:
+    return _MOT.findall(_fold(nom))
+
+
+def _contredit(nom_signal: str, court: str, entier: str) -> bool:
+    """Le nom du signal, apparié à la forme courte `court`, porte-t-il un
+    reste PLEIN qui ne ressemble pas au reste du nom `entier` ? Pur."""
+    pris = set(_mots(court))
+    reste_signal = " ".join(t for t in _mots(nom_signal)
+                            if t not in pris and t not in _FRANCHISE_LIAISONS)
+    reste_source = " ".join(t for t in _mots(entier)
+                            if t not in pris and t not in _FRANCHISE_LIAISONS)
+    if len(reste_signal) <= 3 or len(reste_source) <= 3:
+        return False                     # sigle ou rien : aucune preuve du contraire
+    return difflib.SequenceMatcher(None, reste_signal, reste_source).ratio() < _FRANCHISE_SEUIL
+
+
+def _franchise(competitor: dict) -> str | None:
+    """Le nom entier si ESPN nomme l'équipe « <ville> <surnom> », None sinon
+    (club de football, athlète, réponse incomplète)."""
+    team = competitor.get("team") or {}
+    entier, ville, surnom = (team.get(k) or "" for k in ("displayName", "location", "name"))
+    if ville and surnom and _mots(entier) == _mots(ville) + _mots(surnom):
+        return entier
+    return None
+
+
 def _meme_equipe(nom_signal: str, competitor: dict, restes: bool = True) -> bool:
-    return any(_apparie(nom_signal, n, restes=restes)
-               for n in _espn_noms(competitor))
+    entier = _franchise(competitor)
+    if entier is None:
+        return any(_apparie(nom_signal, n, restes=restes)
+                   for n in _espn_noms(competitor))
+    # Nom entier : la règle des restes TOUJOURS — son exemption à l'émission
+    # (`restes=False`) a été mesurée sur le football seul (2026-09-15).
+    if _apparie(nom_signal, entier, restes=True):
+        return True
+    return any(_apparie(nom_signal, n, restes=restes) and not _contredit(nom_signal, n, entier)
+               for n in _espn_noms(competitor) if n != entier)
 
 
 def _espn_cotes(comp: dict, home: str, away: str,
