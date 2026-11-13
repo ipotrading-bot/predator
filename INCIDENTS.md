@@ -4048,6 +4048,63 @@ toujours aucun chemin « reporté / abandonné » dans le règlement.
 
 Gardien : `tests/test_homonymes_franchise.py`.
 
+### La recherche web d'Ollama est devenue payante : remplacée par 365scores (2026-11-13, décision opérateur)
+
+Symptôme : `score_sources[web_search_results]: HTTP Error 402: Payment
+Required` aux audits de 08:30 et 11:32 UTC (run 43417924436). L'étage de
+dernier recours du 2026-09-24 ne rendait plus rien.
+
+Cause : sondée en direct avec la clé de `app_secrets`, l'API répond « Add
+usage credits to use web search, or subscribe ». La clé est valide ; le
+palier gratuit de `/api/web_search` n'existe plus.
+
+DÉCISION OPÉRATEUR (règle 11) : « retirer ollama, le remplacer par solution
+gratuite ». Retirés : `result_from_web`, la lecture de titres, les portes
+`web_ok` / `_web_encore_utile` / `ligue_a_elimination`, la clé
+`OLLAMA_SEARCH_KEY` (plus lue par aucun code ; encore dans `app_secrets`,
+à supprimer par l'opérateur : `ops.py supabase secrets del`). Le fournisseur IA
+`ollama_cloud` du routeur n'est PAS concerné : autre clé, autre usage.
+
+MESURÉ le 2026-11-13, avant d'écrire :
+- DuckDuckGo HTML : HTTP 202, défi anti-robot depuis une IP de datacenter —
+  écarté ;
+- 365scores (`webws.365scores.com`, l'API de son site, sans clé) : une
+  journée de football par requête, 129 à 793 matchs selon le jour ;
+- contre LiveScore sur les 07, 08, 11 et 12/11 : 1 131 matchs « FT »
+  retrouvés « Ended », 1 129 scores identiques ; les 17 « AET » / « AP »
+  sont tous « After ET » / « After Penalties », jamais « Ended » ;
+- les 2 écarts : Montañeses–Los Cabos (2-1 ici, 2-0 chez LiveScore, source
+  juste inconnue) et un faux appariement de noms voisins (« Kalamaria » /
+  « Kalamata ») — le vrai match était rangé à l'envers chez 365scores ;
+- les 32 lignes de football du ledger sans issue depuis août : 22 « Ended »
+  à candidat unique, 10 absentes. Toutes les 22 sont des fantômes ; la
+  porte « recommandés ≥ 12 h » de l'étage web n'en aurait ouvert aucune —
+  0 recommandé de football sans issue depuis le 2026-10-10.
+
+Fait : `result_from_365scores`, football seul, statut « Ended » seul, deux
+camps dans l'ordre, candidat unique ; placé APRÈS LiveScore et avant
+TheSportsDB, ouvert aux fantômes et à la relance des expirés (source
+structurée à la journée, comme LiveScore — la porte de l'étage web tenait à
+son budget de 20 req/j). Budget `SCORES365_DAILY_BUDGET` = 200 req/j.
+
+PAS fait, et pourquoi : le périmètre d'émission ne s'élargit pas à ce que
+365scores connaît (décision opérateur, règle 11) ; aucun autre sport câblé
+(rien mesuré) ; « Final Result Only » et « Awarded » refusés faute de
+savoir ce qu'ils portent.
+
+⚠️ NON MESURÉ à l'entrée : la joignabilité depuis les runners GitHub (la
+sonde vient d'un Codespace). À lire dans le premier audit : « SETTLE
+365scores | » ou un WARNING `score_sources[scores365_results]`.
+⚠️ Source unique sur ce qu'elle règle : elle ne parle que quand ESPN et
+LiveScore se taisent, personne ne la recoupe. D'où le critère de retrait —
+revue le 2026-12-13 : sortie si une issue est contredite, si rien n'a été
+réglé en un mois, ou si les runners ne la joignent pas.
+⚠️ Les 22 lignes anciennes vont se régler au fil des relances (6 par
+audit) : ce sont des fantômes d'août et septembre, à séparer de toute
+statistique récente.
+
+Gardien : `tests/test_scores365.py`.
+
 ## Couche IA
 
 Le paysage des paliers gratuits change tous les mois. Rien de ce qui suit
