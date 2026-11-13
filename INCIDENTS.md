@@ -3986,6 +3986,68 @@ signaux. Revue du segment le 2026-12-10 (critère dans le commentaire de
 
 Gardiens : `tests/test_livescore_tennis_hockey.py`.
 
+### Deux surnoms de la NBA ont fait entrer un match universitaire : ESPN publie « Bulls » et « Hawks » nus (2026-11-13)
+
+Symptôme : quatre audits de suite en échec le 2026-11-12 (11:49 → 20:26 UTC),
+« RUN STÉRILE — 1 règlement éligible, AUCUN abouti ». Le signal 12558,
+« South Florida Bulls vs Saint Josephs Hawks » (basket universitaire,
+odds-api.io « USA - NCAA »), émis en RECOMMANDÉ le 11-11 à 15:28, ne se
+réglait nulle part ; clos sans score le 11-13 à 08:31.
+
+Cause : `core.score_sources._meme_equipe` essayait TOUS les libellés d'un
+compétiteur ESPN, dont `name` (le surnom nu, « Bulls ») et `location` (la
+ville nue). `strict_team_match` accepte le containment : « bulls » est dans
+« south florida bulls », « hawks » dans « saint josephs hawks ». Le
+scoreboard NBA listait « Atlanta Hawks at Chicago Bulls » le 11-14, dans la
+fenêtre du run : la garde « deux camps hors football » de `_reglable`
+(2026-10-01, Havirov Panthers) passait — sur DEUX homonymes. La règle des
+restes n'y pouvait rien, le containment rend True avant elle.
+
+MESURÉ le 2026-11-13 :
+- rejeu de `fixture_connue` sur le calendrier ESPN réel du 11-11 au 11-14 :
+  admis avant, refusé après, à l'émission comme au règlement ;
+- les runs 43277077325 et 43300265731 (audits de 18:10 et 20:26) : 12558
+  seul éligible, « No score yet », sortie en échec ;
+- rejeu ancien / nouveau sur les 153 matchs hors football émis depuis le
+  2026-09-01 que l'ancien appariait (70 requêtes ESPN) : 152 inchangés, 1
+  refusé — « Connecticut Huskies vs Syracuse Orange » du 10-03, qu'ESPN
+  nomme « UConn Huskies » (football universitaire, ligue retirée le 10-06,
+  ligne déjà réglée) ;
+- football : 0 compétiteur « franchise » sur 12 438 lus (15 jours de
+  `soccer/all`), 197 matchs rejoués, 0 écart.
+
+Fait : quand ESPN nomme l'équipe « <ville> <surnom> » (structure lue dans
+SA réponse, aucune liste — règle 6), une forme courte ne vaut que si ce qui
+reste du nom du signal ne contredit pas l'autre moitié du nom entier
+(`_contredit` : restes pleins, plus de 3 lettres, ressemblance < 0,60). Le
+nom entier d'une franchise se compare toujours avec la règle des restes.
+La règle ne fait que REFUSER, et vaut pour l'émission ET le règlement.
+
+PAS fait, et pourquoi : aucun motif « ncaa » posé dans
+`meta.perimetre_ligues_exclues` — le basket universitaire n'a pas de source
+de scores (ESPN `basketball/nba` et `wnba` seulement, LiveScore sans
+basket), il retombe donc seul en « ligue non couverte » ; l'exclure par
+libellé serait une décision de périmètre (règle 11). « UConn » n'a pas reçu
+d'alias : la ligue est retirée.
+
+⚠️ Le risque couvert au passage, NON observé en base : le règlement lisait
+les mêmes surnoms. Un match d'AHL (admise via LiveScore le 2026-11-10 —
+« Texas Stars vs Iowa Wild », « Belleville Senators », « Providence
+Bruins ») joué le même jour que Dallas–Minnesota en NHL aurait pris le
+score de la NHL ; « New York Giants » s'appariait aux Jets par la ville, et
+la ville « LA » à tout nom contenant « la » (« Atlanta », « Lakers »).
+⚠️ Les faux événements ESPN des tests ne portaient que `displayName` : la
+panne n'y était pas reproductible. Un test d'appariement ESPN se construit
+avec `name` et `location`, comme la vraie réponse.
+
+Le même jour, sans rapport de cause : signal 12600 (Mount Pleasant FC vs
+Portmore United, Jamaïque) REPORTÉ (LiveScore « postp. », absent des trois
+jours suivants), audit de 11:32 stérile (run 43417924436). Réglé PUSH à la
+main sur instruction opérateur, comme le 10927 du 2026-10-11 : il n'existe
+toujours aucun chemin « reporté / abandonné » dans le règlement.
+
+Gardien : `tests/test_homonymes_franchise.py`.
+
 ## Couche IA
 
 Le paysage des paliers gratuits change tous les mois. Rien de ce qui suit
