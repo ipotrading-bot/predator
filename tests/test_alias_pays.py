@@ -52,7 +52,8 @@ class TestLesEcartsMesures:
 
 
 class TestLeFrancais:
-    """Un titre de page lu par l'étage web peut être en français."""
+    """Une source peut nommer un pays en français (l'étage web du 2026-09-24,
+    retiré le 2026-11-13, lisait des titres de pages ; la table reste)."""
 
     @pytest.mark.parametrize("anglais,francais", [
         ("Germany", "Allemagne"), ("England", "Angleterre"), ("Netherlands", "Pays-Bas"),
@@ -64,9 +65,6 @@ class TestLeFrancais:
     def test_le_nom_francais_designe_le_meme_pays(self, anglais, francais):
         assert _apparie(anglais, francais)
 
-    def test_un_titre_francais_regle(self):
-        assert ss.score_du_titre("Allemagne 2-1 Écosse | L'Équipe", "Germany", "Scotland") == (2, 1)
-        assert ss.score_du_titre("Pays-Bas - Suisse 0:0", "Netherlands", "Switzerland") == (0, 0)
 
 
 class TestLeNomEntier:
