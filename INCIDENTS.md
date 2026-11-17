@@ -415,7 +415,7 @@ empirique et tout backtest qui les ignorerait aurait un biais de survie.
 Une source qui « répond » ne porte pas forcément un prix, et une source qui
 échoue ne le fait presque jamais bruyamment.
 
-### « Tennis toujours pauvre malgré l'ajout de ligues » : les tournois ajoutés étaient écartés AVANT paiement ; la NFL est évaluée en entier et n'a rien à prendre (2026-11-17)
+### « Tennis toujours pauvre malgré l'ajout de ligues » : les tournois ajoutés étaient écartés AVANT paiement ; la NFL et le hockey sont évalués en entier et n'ont rien à prendre (2026-11-17)
 
 Symptôme (opérateur) : « nfl est pauvre et toujours perdant, tennis est
 toujours pauvre, aucun impact malgré l'ajout de ligues ».
@@ -465,6 +465,25 @@ z −0,71 : rien de démontré à n=15. Contre la clôture DraftKings (ESPN) : 1
 handicaps et totaux, ligne meilleure 10 fois, égale 2 fois, jamais pire
 (+0,88 pt, t +5,7) — et 4-8. Le moteur prend de bons numéros ; 1xbet en
 offre rarement.
+
+HOCKEY (« aussi pauvre, mal calibré, toujours perdant », même jour) — pas de
+défaut non plus. Recommandés depuis le 09-01 : 8-5, 62 % [IC95 36–82] pour
+un point mort à 58 %, annoncé 60 % (z +0,10), +0,65 u ; depuis le 10-01
+(moneyline NHL seule) : 6-2, +1,84 u — les deux pertes sont les deux
+derniers paris (11-14, 11-16). Ni perdant ni mal calibré à n=13. Pauvre,
+oui : 46 à 73 matchs NHL évalués par semaine (toute la ligue), 156 moneylines
+refusées sur leur EV en cinq semaines — médiane du meilleur EV −1,6 %, 19
+positives, UNE au-dessus de 1,5 % ; signaux par semaine 1, 0, 2, 1, 1.
+L'outsider est mesuré à part : 3 036 observations, EV médian −6,2 %, jamais
+positif — 1xbet charge sa marge sur l'outsider. La porte 55 % du h2h laisse
+81 matchs NHL sur 238 sans moneyline évaluée (34 % ; tennis 11 %, NFL 7 %),
+mais au taux de passage des favoris (≈ 3 %) cela vaut 2 à 3 paris en cinq
+semaines. Les ligues ajoutées le 11-10 (AHL, Suède, Tchéquie) : 113 matchs
+évalués la semaine du 09/11, EV médian −6,1 %, aucun positif, 0 signal. Les
+totaux et handicaps NHL de 1xbet restent en temps réglementaire (2026-10-01),
+donc incomparables au sharp. L'achat OddsAPI de la NHL a été sauté EN
+fenêtre favorable pour cause de rythme 17 fois du 19/10 au 08/11, 0 fois
+depuis.
 
 ⚠️ Ouvrir le RÈGLEMENT d'une ligue ne l'ouvre pas à l'ACHAT : une décision de
 périmètre se vérifie sur la ligne de log de la source (« N match(s) des
