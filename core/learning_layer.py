@@ -124,10 +124,25 @@ SPORT_DEFAULTS: dict[str, float] = {
     "mma":         2.0,
     "boxing":      2.0,
     # Phase 2 (2026-08-22) — nouveaux flux, seuil conservateur au départ.
-    "americanfootball":      2.0,
+    # NFL à 1,5 % — DÉCISION OPÉRATEUR du 2026-11-17 (« 1 et 2 oui », après
+    # « nfl est pauvre »), prise SANS preuve et dite telle : recommandés 7-8,
+    # 47 % [IC95 25–70] pour un point mort à 53 % (n=15). Mesuré sur cinq
+    # semaines de logs : 300 paris distincts refusés sur leur EV, 274 jamais
+    # positifs, 5 entre 1,5 et 2,0 % — soit ~1 pari de plus par semaine. Le
+    # DÉFAUT et non une clé meta : sous _MIN_SAMPLES réglés, compute_and_save
+    # retire tout seuil posé. 1,5 est EV_EDGE_FLOOR, le plancher du moteur :
+    # on ne descend pas plus bas. À _MIN_SAMPLES réglés, _verdict_seuil juge
+    # seul (perte prouvée → _THRESHOLD_MAX).
+    "americanfootball":      1.5,
     "euroleague_basketball": 2.0,
     # Phase 3 (2026-08-22) — NCAAF + tennis majeur, même prudence.
     "college_football":      2.0,
+    # Tennis : le défaut RESTE 2,0. `meta.threshold_tennis = 1.5` a été posé
+    # à la main le 2026-11-17 sur décision opérateur — la valeur que
+    # _verdict_seuil rendait déjà (« gain prouvé » : 44 réglés, 73 % [IC95
+    # 58–84] pour un point mort à 55 %) et que _mouvement_permis retenait
+    # encore 13 réglés. Poser la cible elle-même ne rejoue aucun cliquet :
+    # _poser_ou_retirer ne touche pas un seuil déjà à sa cible.
     "tennis":                2.0,
 }
 _THRESHOLD_MIN = 1.0   # Floor soccer — permet de capter amicaux et WC avec petit edge
