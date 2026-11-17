@@ -57,7 +57,7 @@ class TestRaison:
 
     def test_la_borne_est_celle_de_la_mesure(self):
         assert eng.BASKET_AVANT_EFFECTIFS_MIN == ll._TRANCHE_COURTE_MAX_MINUTES
-        src = inspect.getsource(eng._shadow_reason)
+        src = inspect.getsource(eng._raison_de_zone)
         assert "BASKET_AVANT_EFFECTIFS_MIN" in src and "360" not in src
 
     def test_telegram_ne_compte_plus_les_ecartes(self):
@@ -69,7 +69,8 @@ class TestRaison:
 class _SB:
     """Faux client : l'INSERT est refusé (ligne active existante) et chaque
     UPDATE est noté avec ses filtres ; `shadow_reason_en_base` simule la ligne
-    stockée — le filtre `.eq("shadow_reason", …)` ne matche que si égal."""
+    stockée — le filtre `.in_("shadow_reason", […])` de la promotion ne matche
+    que si la raison stockée est dans la liste."""
 
     def __init__(self, shadow_reason_en_base=None, insert_ok=False):
         self.inserts, self.updates = [], []
@@ -95,6 +96,10 @@ class _SB:
                 self.filtres[col] = val
                 return self
 
+            def in_(self, col, vals):
+                self.filtres[col] = tuple(vals)
+                return self
+
             def execute(self):
                 if self.op == "insert":
                     if sb.insert_ok:
@@ -102,8 +107,8 @@ class _SB:
                         return type("R", (), {"data": [{"id": 1}]})()
                     raise RuntimeError('duplicate key value violates unique constraint "signals_active_uniq"')
                 sb.updates.append((self.champs, dict(self.filtres)))
-                voulu = self.filtres.get("shadow_reason", sb.raison)
-                return type("R", (), {"data": [{"id": 1}] if voulu == sb.raison else []})()
+                voulues = self.filtres.get("shadow_reason", (sb.raison,))
+                return type("R", (), {"data": [{"id": 1}] if sb.raison in voulues else []})()
         return _Q()
 
 
@@ -135,7 +140,8 @@ class TestPersistance:
         promo = [(c, f) for c, f in sb.updates if f.get("shadow_reason")]
         assert promo == [({"is_shadow": False, "shadow_reason": None},
                           {"status": "active", "match_id": "m1", "market_key": "totals",
-                           "shadow_reason": "basket_avant_effectifs"})]
+                           "shadow_reason": eng._RAISONS_PROMOUVABLES})]
+        assert "basket_avant_effectifs" in eng._RAISONS_PROMOUVABLES
 
     def test_rescan_encore_avant_6h_ne_promeut_pas(self):
         sb = _SB(shadow_reason_en_base="basket_avant_effectifs")
@@ -147,7 +153,8 @@ class TestPersistance:
         trouve pas, rien ne bascule même si le payload est recommandé."""
         sb = _SB(shadow_reason_en_base="t_minus_2h")
         eng._save(sb, _pret(240))
-        assert all(f.get("shadow_reason") in (None, "basket_avant_effectifs") for _, f in sb.updates)
+        assert all(f.get("shadow_reason") in (None, eng._RAISONS_PROMOUVABLES) for _, f in sb.updates)
+        assert "t_minus_2h" not in eng._RAISONS_PROMOUVABLES
         rafraichi, _ = sb.updates[0]
         assert "is_shadow" not in rafraichi and "shadow_reason" not in rafraichi
 

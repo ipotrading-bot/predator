@@ -52,6 +52,9 @@ from core.match_reel import (coup_d_envoi as _coup_d_envoi,
                              fenetre_jumeau_min as _fenetre_jumeau_min,
                              meme_match_reel as _meme_match_reel)
 from core.source_adapter import ligue_exclue as _ligue_exclue
+from core.source_adapter import (LIGUES_EXCLUES_META_KEY, RAISON_PRESAISON_NBA as _RAISON_PRESAISON_NBA,
+                                 ligue_nba as _ligue_nba, motifs_ligues as _motifs_ligues,
+                                 presaison_nba_par_libelle as _presaison_nba_par_libelle)
 from core.score_sources import livescore_connait as _livescore_connait
 from core.score_sources import SPORTS_SANS_ESPN as _SPORTS_SANS_ESPN
 from core.score_sources import saison_espn as _saison_espn, ESPN_PRESAISON as _ESPN_PRESAISON
@@ -198,7 +201,7 @@ BANDE_COTE_PROPOSEE = True
 # l'opérateur). Un signal basket à plus de BASKET_AVANT_EFFECTIFS_MIN du coup
 # d'envoi est fantôme `basket_avant_effectifs` : persisté, réglé, mesuré, pas
 # envoyé. Un scan ultérieur à T-2..6h qui le revoit avec un edge le PROMEUT
-# recommandé (_save) — seule raison de fantôme réversible.
+# recommandé (_save) — raison de fantôme réversible (_RAISONS_PROMOUVABLES).
 # Mesure (zone 2-24h, époque A6, mise plate, hors taxe) : basket 6-24h, 5
 # gagnés pour 10,8 annoncés par sharp_prob (z −2,68, n=19), dérive sharp
 # −3,9 pts contre nous ; basket 2-6h, 7 pour 8,0 (z −0,54), dérive +0,4 ; foot
@@ -437,11 +440,34 @@ _OUVERTURE = frozenset({"ouverture_sharp_prob", "ouverture_cote"})
 # (même match/marché revu par un tick ultérieur, typiquement à T-1h) ne doit
 # jamais transformer une recommandation déjà envoyée en fantôme — le
 # dashboard la cacherait alors que l'opérateur l'a peut-être déjà jouée.
-# Le cas inverse n'existe que pour UNE raison, `basket_avant_effectifs`
-# (2026-10-23) : _save la promeut par un UPDATE distinct, filtré en base sur
-# cette raison — aucune autre ligne fantôme ne peut basculer.
+# Le cas inverse n'existe que pour les raisons RÉVERSIBLES
+# (_RAISONS_PROMOUVABLES : `basket_avant_effectifs`, 2026-10-23 ;
+# `plafond_edge`, 2026-11-17) : _save les promeut par un UPDATE distinct,
+# filtré en base sur ces raisons — aucune autre ligne fantôme ne peut basculer.
 _FIGES_AU_RAFRAICHISSEMENT = frozenset({"is_shadow", "shadow_reason"}) | _OUVERTURE
 _RAISON_PROMOUVABLE = "basket_avant_effectifs"
+
+# Refus du plafond d'edge appris : FANTÔME mesuré, plus un DISCARD (2026-11-17).
+# Un signal jeté n'est ni réglé ni appris : la bande haute ne recevait plus une
+# ligne, `_top_band_verdict` rejugeait indéfiniment les mêmes, et le plafond ne
+# pouvait plus tomber — basket 4,0 %, posé sur 15 lignes dont 10 de PRÉSAISON
+# (coupée le 10-09), appliqué à la saison régulière. Reconstitué depuis les
+# logs de 961 scans (20/10 → 17/11) et réglé contre ESPN : 42 paris refusés,
+# 27-15, réussite 64 % [IC95 49–77] pour un point mort ~52 % ; les 13 vus à
+# T-2..6 h, 6-7. Lever le plafond n'aurait rien changé à l'envoyé : on MESURE.
+# RIEN ne change dans ce qui est envoyé, par construction :
+#   · hors quota (_portfolio_balance trie par edge : il aurait pris la place
+#     d'un recommandé) ;
+#   · il ne « tient » jamais une famille contre un pari normal
+#     (_sans_contradiction) ;
+#   · revu SOUS le plafond dans la zone, il est PROMU comme l'aurait été le
+#     signal neuf d'avant — seconde raison réversible, avec
+#     `basket_avant_effectifs` ;
+#   · il passe APRÈS les raisons de zone (_shadow_reason).
+# La clé privée ne part jamais en base (_save la retire).
+_RAISON_PLAFOND = "plafond_edge"
+_CLE_PLAFOND = "_au_dessus_du_plafond"
+_RAISONS_PROMOUVABLES = (_RAISON_PROMOUVABLE, _RAISON_PLAFOND)
 
 
 def _save(sb, signal) -> bool:
@@ -483,6 +509,7 @@ def _save(sb, signal) -> bool:
     from core.db import update_signal_fields
 
     payload = dict(signal)
+    payload.pop(_CLE_PLAFOND, None)      # marqueur du moteur, pas une colonne
     # MAPPING EXPLICITE — le moteur nomme le prix `executable_odd` depuis le
     # 2026-08-27, parce que c'est ce qu'il est : la cote qu'on peut réellement
     # jouer. La COLONNE reste `xbet_odd` : la renommer demanderait une
@@ -530,7 +557,8 @@ def _save(sb, signal) -> bool:
         return True
 
     def _promouvoir() -> None:
-        """Fantôme `basket_avant_effectifs` revu SANS raison de fantôme → recommandé.
+        """Fantôme RÉVERSIBLE (_RAISONS_PROMOUVABLES : `basket_avant_effectifs`,
+        `plafond_edge`) revu SANS raison de fantôme → recommandé.
         Le filtre sur shadow_reason est en BASE : une ligne `t_minus_2h` ou
         `shadow_sport` ne matche pas, une recommandée non plus. Un échec
         laisse la ligne fantôme — le pari n'est pas envoyé deux fois, il est
@@ -540,12 +568,13 @@ def _save(sb, signal) -> bool:
                    .update({"is_shadow": False, "shadow_reason": None})
                    .eq("status", "active").eq("match_id", mid)
                    .eq("market_key", mkey)
-                   .eq("shadow_reason", _RAISON_PROMOUVABLE).execute())
+                   .in_("shadow_reason", list(_RAISONS_PROMOUVABLES)).execute())
         except Exception as e:
             log.error("Supabase promotion (signal %s): %s", sig_label, str(e)[:100])
             return
         if res.data:
-            log.info("PROMU | %s — basket revu après les effectifs, recommandé", sig_label)
+            log.info("PROMU | %s — fantôme réversible revu sans raison de fantôme, "
+                     "recommandé", sig_label)
 
     def _rafraichir_sans_contrainte() -> bool:
         """Chemin des lignes SANS identifiant, que l'index ne protège pas : on
@@ -1653,11 +1682,14 @@ def _emit(signals, sb, now, log, name, sport, league, mkt_key, mkt_label,
     # au-dessus de 6% affichait 36,7% de réussite sur 49 paris pour 47,8%
     # requis, quand la bande 1,5-4% gagnait. Un edge trop gros n'est pas une
     # inefficience, c'est un prix mal apparié.
+    # Depuis le 2026-11-17 le refus n'est plus un DISCARD : le signal continue,
+    # marqué, et sort FANTÔME `plafond_edge` (_shadow_reason) — voir
+    # _RAISON_PLAFOND. Il n'est toujours pas envoyé.
     ceiling = _EDGE_CEILINGS.get(sport)
-    if ceiling is not None and edge > ceiling:
-        log.warning("PLAFOND | %s %s | %s — Edge=+%.2f%% > %.1f%% appris — DISCARD",
-                    emoji, name, mkt_label, edge, ceiling)
-        return
+    au_dessus_du_plafond = ceiling is not None and edge > ceiling
+    if au_dessus_du_plafond:
+        log.warning("PLAFOND | %s %s | %s — Edge=+%.2f%% > %.1f%% appris — FANTÔME "
+                    "(mesuré, non envoyé)", emoji, name, mkt_label, edge, ceiling)
 
     # Plafond de COTE appris — au-dessus, la sélection n'est pas un favori mais
     # un quasi pile-ou-face que le ledger a prouvé perdant pour ce sport.
@@ -1790,6 +1822,8 @@ def _emit(signals, sb, now, log, name, sport, league, mkt_key, mkt_label,
         "sharp_divergence_pts": sharp_divergence_pts,
         "correlation_group": _correlation_group(sport, league or "", mt),
     }
+    if au_dessus_du_plafond:
+        signal[_CLE_PLAFOND] = True
     signals.append(signal)
 
 
@@ -2252,7 +2286,7 @@ def _actifs_des_matchs(sb, candidats: list, log) -> list:
     ids = sorted({s["match_id"] for s in candidats if s.get("match_id")})
     if not sb or not ids:
         return []
-    champs = "id,match_id,market_key,selection_name,match,sport,match_time"
+    champs = "id,match_id,market_key,selection_name,match,sport,match_time,shadow_reason"
     instants = [t for t in (_coup_d_envoi(s.get("match_time")) for s in candidats) if t]
     sports = sorted({s.get("sport") for s in candidats if s.get("sport")})
     try:
@@ -2677,41 +2711,34 @@ def _nhl_hors_saison(m: dict, fixtures_par_sport: dict) -> str | None:
 # pas une preuve. Le libellé suffit quand il dit « preseason » ; sinon le
 # scoreboard ESPN tranche, comme pour la NHL (saison inconnue → refus). La
 # garde se lève seule à l'ouverture de la saison : rien à retirer.
-_NBA = re.compile(r"\bnba\b", re.I)
-_LIBELLE_PRESAISON = re.compile(r"pre-?\s?season", re.I)
+# La lecture du LIBELLÉ vit dans core.source_adapter depuis le 2026-11-17 : le
+# verdict par sport (learning_layer) coupe au même endroit que le scan.
 
 
 def _nba_hors_saison(m: dict, fixtures_par_sport: dict) -> str | None:
     """Raison d'écarter un match NBA hors saison régulière, None s'il passe
     (ou s'il n'est pas un match NBA — « WNBA » n'est pas le mot « NBA »). Pur."""
-    league = m.get("league") or ""
-    if (m.get("sport") or "").lower() != "basketball" or not _NBA.search(league):
+    sport, league = m.get("sport"), m.get("league") or ""
+    if not _ligue_nba(sport, league):
         return None
-    if _LIBELLE_PRESAISON.search(league):
-        return "présaison NBA"
+    if _presaison_nba_par_libelle(sport, league):
+        return _RAISON_PRESAISON_NBA
     saison = _saison_espn(m.get("match") or "", fixtures_par_sport.get("basketball") or [])
     if saison is None:
         return "saison NBA non confirmée par ESPN"
     if saison == _ESPN_PRESAISON:
-        return "présaison NBA"
+        return _RAISON_PRESAISON_NBA
     return None
 
 
-# Clé meta lue une fois par run : motifs de libellés de ligue exclus par
-# l'opérateur (règle 11 — périmètre = décision opérateur), séparés par « ; »
-# ou un retour à la ligne. Posée le 2026-09-08 avec la Primera División
-# argentine (5-7, −2.44 u, Wilson bas 19 % contre 57 % de point mort) —
-# voir INCIDENTS.md. Se lève par `ops.py supabase meta-set
-# perimetre_ligues_exclues ""`.
-LIGUES_EXCLUES_META_KEY = "perimetre_ligues_exclues"
+# Motifs de libellés de ligue exclus par l'opérateur (règle 11) : la clé meta
+# et sa lecture sont définies dans core.source_adapter (LIGUES_EXCLUES_META_KEY,
+# motifs_ligues), partagées avec le verdict par sport.
 
 
 def _ligues_exclues(sb) -> tuple[str, ...]:
     """Motifs opérateur, vides sans base ou sans clé."""
-    raw = _meta_get(sb, LIGUES_EXCLUES_META_KEY) if sb else None
-    if not raw:
-        return ()
-    return tuple(m.strip() for m in raw.replace("\n", ";").split(";") if m.strip())
+    return _motifs_ligues(_meta_get(sb, LIGUES_EXCLUES_META_KEY) if sb else None)
 
 
 # ── Alerte sur le CONTENU d'un scan (2026-09-10) ──────────────────────
@@ -2963,6 +2990,19 @@ def _minutes_avant_coup_denvoi(s: dict) -> float | None:
 def _shadow_reason(s: dict) -> str | None:
     """Pourquoi ce signal est fantôme — None s'il est à recommander.
 
+    Les raisons de ZONE d'abord (_raison_de_zone), puis `plafond_edge` : un
+    signal au-dessus du plafond d'edge appris (marqué par _emit), que rien
+    d'autre n'écarte — exception de la bande de cote comprise. L'ordre garde
+    à un basket d'avant les effectifs sa raison promouvable d'origine."""
+    raison = _raison_de_zone(s)
+    if raison is None and s.get(_CLE_PLAFOND):
+        return _RAISON_PLAFOND
+    return raison
+
+
+def _raison_de_zone(s: dict) -> str | None:
+    """Raison de fantôme tenant au sport ou au délai — None s'il n'y en a pas.
+
     Quatre raisons, dans l'ordre, et TOUTES par SIGNAL (aucune ne dépend
     du mode du run) :
       · `shadow_sport`  — sport listé dans SHADOW_SPORTS (décision opérateur) ;
@@ -3021,6 +3061,30 @@ def _dans_bande(s: dict) -> bool:
     avant persistance, `xbet_odd` une fois en base (renommée à l'écriture)."""
     cote = s.get("executable_odd")
     return dans_bande_cote(cote if cote is not None else s.get("xbet_odd"))
+
+
+def _hors_plafond(candidats: list) -> tuple[list, list]:
+    """(candidats normaux, refus du plafond d'edge) — ordre conservé. Pure."""
+    normaux = [c for c in candidats if not c.get(_CLE_PLAFOND)]
+    return normaux, [c for c in candidats if c.get(_CLE_PLAFOND)]
+
+
+def _arbitrer_familles(signals: list, au_plafond: list, actifs: list, log) -> list:
+    """`_sans_contradiction` en deux temps, pour qu'un fantôme `plafond_edge`
+    ne coûte jamais un pari envoyé (voir _RAISON_PLAFOND). Pure.
+
+    1. Les signaux normaux s'arbitrent contre les actifs SAUF les lignes
+       `plafond_edge` : avant le 2026-11-17 ces lignes n'existaient pas, elles
+       ne tiennent donc aucune famille. Le même pari revu sous le plafond
+       rafraîchit sa ligne et la promeut (_save).
+    2. Les refus du plafond s'arbitrent ensuite contre TOUT — actifs et
+       signaux normaux de ce scan : le premier arrivé tient, eux passent
+       derrière."""
+    tenants = [a for a in actifs if a.get("shadow_reason") != _RAISON_PLAFOND]
+    signals = _sans_contradiction(signals, tenants, log)
+    if not au_plafond:
+        return signals
+    return signals + _sans_contradiction(au_plafond, list(actifs) + signals, log)
 
 
 def _shadow_partition(signals: list) -> tuple[list, list]:
@@ -3740,6 +3804,9 @@ def run():
             continue
 
     # ── Portfolio Balancer — apply quota + alpha priority ─────────────
+    # Les refus du plafond d'edge restent HORS quota : triés par edge, ils
+    # auraient pris la place d'un pari à envoyer (voir _RAISON_PLAFOND).
+    candidates, au_plafond = _hors_plafond(candidates)
     signals = _portfolio_balance(candidates)
     discarded = len(candidates) - len(signals)
     if discarded:
@@ -3749,7 +3816,8 @@ def run():
     # ── Un match = un pari par famille, d'un scan à l'autre (2026-09-15) ──
     # AVANT le partage fantôme/recommandé : Telegram et la base partent de
     # `signals`.
-    signals = _sans_contradiction(signals, _actifs_des_matchs(sb, signals, log), log)
+    signals = _arbitrer_familles(signals, au_plafond,
+                                 _actifs_des_matchs(sb, signals + au_plafond, log), log)
     sport_counts = {}
     for s in signals:
         sport_counts[s.get("sport", "?")] = sport_counts.get(s.get("sport", "?"), 0) + 1

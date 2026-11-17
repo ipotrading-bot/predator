@@ -51,6 +51,7 @@ pipeline trouve ses edges. On garde donc la magnitude choisie par l'opérateur
 import json
 import logging
 import os
+import re
 from dataclasses import dataclass, field
 from datetime import datetime, timedelta, timezone
 
@@ -530,6 +531,58 @@ def ligue_exclue(label: str, motifs) -> str:
         if m and m in replie:
             return str(motif).strip()
     return ""
+
+
+# ── Périmètre VIVANT, lu sur un libellé de ligue (2026-11-17) ─────────
+# Deux lecteurs : le scan (run_engine._filtrer_perimetre) et le verdict par
+# sport (learning_layer, rapport hebdo). Une seule définition (règle 6).
+#
+# Clé meta lue une fois par run : motifs de libellés de ligue exclus par
+# l'opérateur (règle 11 — périmètre = décision opérateur), séparés par « ; »
+# ou un retour à la ligne. Posée le 2026-09-08 avec la Primera División
+# argentine (5-7, −2.44 u, Wilson bas 19 % contre 57 % de point mort) —
+# voir INCIDENTS.md. Se lève par `ops.py supabase meta-set
+# perimetre_ligues_exclues ""`.
+LIGUES_EXCLUES_META_KEY = "perimetre_ligues_exclues"
+_NBA = re.compile(r"\bnba\b", re.I)
+_LIBELLE_PRESAISON = re.compile(r"pre-?\s?season", re.I)
+RAISON_PRESAISON_NBA = "présaison NBA"
+
+
+def motifs_ligues(raw) -> tuple[str, ...]:
+    """Les motifs de `meta.perimetre_ligues_exclues`, vides sans valeur."""
+    if not raw:
+        return ()
+    return tuple(m.strip() for m in str(raw).replace("\n", ";").split(";") if m.strip())
+
+
+def ligue_nba(sport, league) -> bool:
+    """Le libellé désigne la NBA (« WNBA » n'est pas le mot « NBA »)."""
+    return (sport or "").lower() == "basketball" and bool(_NBA.search(league or ""))
+
+
+def presaison_nba_par_libelle(sport, league) -> bool:
+    """La NBA de PRÉSAISON, quand le libellé le dit (« USA - NBA Preseason »).
+    Écartée du scan le 2026-10-09 (décision opérateur) ; un libellé muet se
+    tranche par le scoreboard ESPN, côté scan seulement."""
+    return ligue_nba(sport, league) and bool(_LIBELLE_PRESAISON.search(league or ""))
+
+
+def hors_perimetre_vivant(sport, league, motifs) -> str:
+    """Pourquoi cette ligne de RÉSULTATS n'appartient plus au périmètre que le
+    scan émet aujourd'hui — "" si elle en fait partie. Pure.
+
+    POURQUOI (2026-11-17). Le verdict « basketball » annonçait −2,78 u et un
+    ROI Kelly de −8,5 % sur 94 réglés : 17 de présaison NBA (6-11, −4,78 u,
+    coupée le 10-09), 5 de WNBA (2-3, −1,14 u, retirée le 09-24) et 72 de
+    saison régulière (39-33, +3,14 u). Il jugeait un périmètre qui n'existe
+    plus, et l'opérateur a lu « la NBA perd ». Les lignes ne sont ni
+    supprimées ni archivées (règle 9) : elles sortent de ce qui est DIT.
+    Un libellé vide reste DANS le périmètre : on ne devine pas."""
+    if presaison_nba_par_libelle(sport, league):
+        return RAISON_PRESAISON_NBA
+    motif = ligue_exclue(league or "", motifs)
+    return f"ligue exclue (« {motif} »)" if motif else ""
 
 
 def detect_lang(text: str) -> str:

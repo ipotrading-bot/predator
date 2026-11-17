@@ -10,6 +10,7 @@ scripts/ops.py — pilotage Supabase + Vercel depuis le terminal, sans CLI.
     python scripts/ops.py candidats [jours]           # books candidats : DNB foot qui passeraient la porte, par book (mesure seule, 0 crédit)
     python scripts/ops.py chaine <sport> [heures]     # chemin Tier 2 de bout en bout, sans écrire (~4 req odds-api.io)
     python scripts/ops.py noms                        # les signaux ACTIFS se régleront-ils par leur NOM ? (ESPN + LiveScore, hors budget, lecture seule)
+    python scripts/ops.py nba [jours]                 # NBA : points pris sur la ligne de CLÔTURE (ESPN/DraftKings, ~110 req pour 30 j, lecture seule) — le juge à lire à la place du gagné/perdu
     python scripts/ops.py ai                          # sonde CHAQUE fournisseur IA par une INFÉRENCE réelle (catalogue ≠ utilisable)
     python scripts/ops.py watchdog                    # le chien de garde Cloudflare fait-il son travail ? PAT, cron, invocations 24 h, incident Cloudflare, créneau dû
     python scripts/ops.py secrets-push [--run]        # recopie les clés du .env vers les secrets Actions (403 depuis un Codespace)
@@ -1066,6 +1067,125 @@ def noms():
     print(f"{a_verifier} match(s) à vérifier" if a_verifier else "Tous les noms s'apparient.")
 
 
+def nba(args):
+    """NBA : la ligne prise contre la ligne de CLÔTURE, en points.
+
+    Le juge à lire à la place du gagné/perdu (core/points_cloture : pourquoi,
+    budget, critère de retrait). Pour chaque handicap ou total NBA réglé des
+    `jours` derniers jours (défaut 30) : le scoreboard ESPN du jour (un jour
+    par requête, règle 15), puis le résumé du match, dont `pickcenter` porte
+    la clôture DraftKings.
+
+    LECTURE SEULE et HORS BUDGET des runners : lecture directe, sans les
+    compteurs `daily_quota`, plafonnée à points_cloture.REQUETES_MAX requêtes
+    par appel ; rien n'est écrit en base."""
+    import urllib.request                                          # noqa: E402
+    from core import points_cloture as pc                          # noqa: E402
+    from core import score_sources as ss                           # noqa: E402
+    from core.constants import TAX_RATE                            # noqa: E402
+    from core.settlement import _ligne_du_libelle                  # noqa: E402
+    from core.source_adapter import ligue_nba, presaison_nba_par_libelle  # noqa: E402
+
+    try:
+        jours = int(args[0]) if args else 30
+    except ValueError:
+        die("usage : ops.py nba [jours]")
+    requetes = {"n": 0}
+
+    def _lecture_directe(url, _bucket, _budget, source=None):
+        if requetes["n"] >= pc.REQUETES_MAX:
+            return None
+        requetes["n"] += 1
+        entetes = dict(ss._SOURCE_HEADERS.get(source or "", {"User-Agent": "Mozilla/5.0"}))
+        try:
+            with urllib.request.urlopen(urllib.request.Request(url, headers=entetes),
+                                        timeout=40) as resp:
+                return json.loads(resp.read().decode("utf-8", errors="replace"))
+        except Exception as e:                                     # noqa: BLE001
+            print(f"  (source muette : {url.split('?')[0]} — {e})")
+            return None
+
+    ss._get_json = _lecture_directe
+    depuis = (datetime.now(timezone.utc) - timedelta(days=jours)).isoformat()
+    colonnes = "id, match, league, sport, market_key, selection_name, xbet_odd, outcome, is_shadow, match_time"
+    lignes = sb_sql(
+        f"select {colonnes} from signals where sport = 'basketball' and outcome in ('WIN','LOSS') "
+        f"and match_time >= '{depuis}' union all "
+        f"select {colonnes} from signals_archive where sport = 'basketball' "
+        f"and outcome in ('WIN','LOSS') and match_time >= '{depuis}'") or []
+    paris = [r for r in lignes
+             if ligue_nba(r.get("sport"), r.get("league"))
+             and not presaison_nba_par_libelle(r.get("sport"), r.get("league"))
+             and (r.get("market_key") or "").startswith(("totals_", "spreads_"))]
+
+    resumes: dict = {}
+
+    def _match(r):
+        """(lignes de clôture, score dom, score ext, domicile en premier) ou None."""
+        cotes = ss._split(r.get("match") or "")
+        jour = str(r.get("match_time") or "")[:10]
+        if not cotes or len(jour) != 10:
+            return None
+        candidats = []
+        for j in ss._jours(jour):
+            for ev in ss._espn_jour(pc.CHEMIN_ESPN, j.replace("-", "")):
+                for comp in ss._espn_competitions(ev):
+                    if not ((comp.get("status") or {}).get("type") or {}).get("completed"):
+                        continue
+                    for sens, (a, b) in ((True, cotes), (False, cotes[::-1])):
+                        paire = ss._espn_paire(comp, a, b)
+                        if paire:
+                            candidats.append((comp.get("date") or ev.get("date"), ev.get("id"),
+                                              paire, sens))
+        choisi = pc.le_plus_proche(candidats, r.get("match_time"))
+        if not choisi:
+            return None
+        _date, ev_id, paire, sens = choisi
+        try:
+            dom, ext = int(paire[0].get("score")), int(paire[1].get("score"))
+        except (TypeError, ValueError):
+            return None
+        if ev_id not in resumes:
+            resumes[ev_id] = pc.lignes_du_resume(ss._get_json(
+                f"{ss.ESPN_BASE}/{pc.CHEMIN_ESPN}/summary?event={ev_id}", "", 0, source="espn"))
+        return (resumes[ev_id], dom, ext, sens) if resumes[ev_id] else None
+
+    mesures = []
+    for r in paris:
+        trouve = _match(r)
+        if not trouve:
+            continue
+        lignes_c, dom, ext, sens = trouve
+        m = pc.mesurer(r["market_key"], _ligne_du_libelle(r.get("selection_name") or ""),
+                       lignes_c, dom, ext, sens)
+        if m:
+            mesures.append({**m, "outcome": r["outcome"], "odds": r.get("xbet_odd"),
+                            "is_shadow": bool(r.get("is_shadow")),
+                            "famille": r["market_key"].split("_")[0]})
+
+    print(f"── NBA : ligne prise contre la clôture DraftKings (ESPN) — {jours} j, "
+          f"{len(mesures)}/{len(paris)} paris mesurés, {requetes['n']} requêtes ──")
+    if requetes["n"] >= pc.REQUETES_MAX:
+        print(f"  ⚠ plafond de {pc.REQUETES_MAX} requêtes atteint : lecture PARTIELLE, réduire [jours]")
+    if not mesures:
+        print("Aucun pari mesurable.")
+        return
+    print(pc.EN_TETE)
+    for nom, groupe in (
+            ("recommandés", [m for m in mesures if not m["is_shadow"]]),
+            ("fantômes", [m for m in mesures if m["is_shadow"]]),
+            ("tout", mesures),
+            ("  handicaps", [m for m in mesures if m["famille"] == "spreads"]),
+            ("  totaux", [m for m in mesures if m["famille"] == "totals"]),
+            ("avance gardée (> 0)", [m for m in mesures if m["points"] > 0]),
+            ("avance perdue (≤ 0)", [m for m in mesures if m["points"] <= 0])):
+        print(pc.ligne_de_bilan(nom, pc.bilan(groupe, TAX_RATE)))
+    couverture = len(mesures) / len(paris)
+    print(f"couverture {couverture * 100:.0f} % (retrait sous {pc.COUVERTURE_MIN * 100:.0f} %, "
+          f"revue le {pc.REVUE_LE})"
+          + ("" if couverture >= pc.COUVERTURE_MIN else " — ⚠ SOUS LE CRITÈRE DE RETRAIT"))
+
+
 def main(argv):
     if not argv or argv[0] in ("-h", "--help"):
         print(__doc__)
@@ -1087,6 +1207,8 @@ def main(argv):
         chaine(rest)
     elif cmd == "noms":
         noms()
+    elif cmd == "nba":
+        nba(rest)
     elif cmd == "ai":
         ai()
     elif cmd == "watchdog":
