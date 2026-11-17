@@ -485,6 +485,17 @@ donc incomparables au sharp. L'achat OddsAPI de la NHL a été sauté EN
 fenêtre favorable pour cause de rythme 17 fois du 19/10 au 08/11, 0 fois
 depuis.
 
+DÉCISIONS OPÉRATEUR du même soir (« 1 et 2 oui ») :
+1. tennis — `meta.threshold_tennis = 1.5` posé à la main (`ops.py supabase
+   meta-set`), la cible que le mécanisme rendait déjà ; le défaut du sport
+   reste 2,0. Attendu : ~4 paris de plus par semaine EN SAISON ;
+2. NFL — défaut du sport 2,0 → 1,5 % (`SPORT_DEFAULTS`, le plancher
+   `EV_EDGE_FLOOR`), SANS preuve et dit tel (7-8 à n=15) : ~1 pari de plus
+   par semaine. Dans le code et non en meta : sous 20 réglés,
+   `compute_and_save` retire tout seuil posé. À 20 réglés, `_verdict_seuil`
+   juge seul.
+Gardien : `tests/test_seuils_decision_2026_11_17.py`.
+
 ⚠️ Ouvrir le RÈGLEMENT d'une ligue ne l'ouvre pas à l'ACHAT : une décision de
 périmètre se vérifie sur la ligne de log de la source (« N match(s) des
 tournois retenus, N autre(s) … »), pas sur `ops.py chaine` — qui tourne sans
