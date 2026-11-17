@@ -9,6 +9,9 @@ Pages   : /            signaux actifs encore jouables
 API     : /api/signals /api/health
 Écriture: /api/scan       met une demande de scan dans meta (cooldown 120 s)
           /api/audit/run  déclenche audit.yml — JETON D'ADMIN REQUIS
+Porte   : /login /logout — TOUT le reste exige une session (mot de passe
+          `DASHBOARD_PASSWORD`) ou le jeton d'admin ; seuls /api/health,
+          /static, le manifeste et le favicon restent publics (2026-11-17).
 
 Le numéro de version vit dans DASHBOARD_VERSION (une seule définition,
 injectée dans les templates et rendue par /api/health). Cet en-tête portait
@@ -16,6 +19,7 @@ injectée dans les templates et rendue par /api/health). Cet en-tête portait
 jour par personne, ce qui est le sort de tout numéro recopié à la main.
 Les modules de core/ portent leurs propres versions, indépendantes.
 """
+import hashlib
 import hmac
 import json
 import logging
@@ -26,7 +30,8 @@ from datetime import datetime, timezone as _tz
 
 import requests
 from dotenv import load_dotenv
-from flask import Flask, jsonify, render_template, request, send_from_directory
+from flask import (Flask, jsonify, redirect, render_template, request,
+                   send_from_directory)
 
 # (Allégé le 2026-08-22.) Les imports de la couche d'apprentissage
 # (SPORT_DEFAULTS, load_thresholds, load_segment_thresholds,
@@ -76,7 +81,9 @@ app = Flask(__name__, template_folder=_template_dir, static_folder=_static_dir, 
 # deja predator.css en cache ne verrait AUCUN changement de style.
 # 10.7 (2026-09-09) : la page /bank et la bankroll mensuelle, construites
 # le jour meme, sont RETIREES sur decision operateur ; trois entrees de nav.
-DASHBOARD_VERSION = "10.7"
+# 10.8 (2026-11-17) : le dashboard n'est plus public — porte par mot de passe
+# sur toutes les pages et toutes les API (voir « LA PORTE » plus bas).
+DASHBOARD_VERSION = "10.8"
 
 
 # Instants de tir des scans pour le compte à rebours « prochain scan » du
@@ -123,6 +130,18 @@ def _inject_version():
 # apparaitre un deploiement en moins d'un quart d'heure.
 _STATIC_MAX_AGE = 600
 
+# · X-Frame-Options : la page de connexion ne s'affiche dans aucune iframe
+#   (clickjacking du formulaire de mot de passe) ;
+# · nosniff : un asset n'est jamais réinterprété comme du script ;
+# · no-referrer : l'URL du dashboard ne part chez aucun tiers (polices) ;
+# · noindex : aucun moteur ne référence un tableau de bord privé.
+_EN_TETES_SECURITE = {
+    "X-Frame-Options":        "DENY",
+    "X-Content-Type-Options": "nosniff",
+    "Referrer-Policy":        "no-referrer",
+    "X-Robots-Tag":           "noindex, nofollow",
+}
+
 
 @app.after_request
 def no_cache(response):
@@ -134,6 +153,12 @@ def no_cache(response):
     re-telecharger predator.css et les icones a chaque navigation — couteux
     sur mobile et sans le moindre benefice de fraicheur.
     """
+    # En-têtes de sécurité, sur TOUTES les réponses (2026-11-17 : la
+    # production n'en portait aucun hormis le HSTS de Vercel). Pas de CSP :
+    # les gabarits portent du JavaScript en ligne, une CSP stricte les
+    # casserait et une CSP `unsafe-inline` ne protégerait de rien.
+    for nom, valeur in _EN_TETES_SECURITE.items():
+        response.headers.setdefault(nom, valeur)
     if request.path.startswith("/static/"):
         response.headers["Cache-Control"] = f"public, max-age={_STATIC_MAX_AGE}"
         return response
@@ -1050,7 +1075,149 @@ def _admin_autorise() -> bool:
                     "est journalisée par Vercel, le proxy, le shell et le "
                     "navigateur. Utiliser l'en-tête X-Predator-Token.")
     fourni = request.headers.get("X-Predator-Token") or ""
-    return hmac.compare_digest(fourni, attendu)
+    return _egal(fourni, attendu)
+
+
+def _egal(a: str, b: str) -> bool:
+    """Égalité à temps constant, sur des OCTETS.
+
+    `hmac.compare_digest` lève TypeError sur une chaîne non ASCII : un
+    en-tête ou un mot de passe portant un « é » rendait un 500 au lieu d'un
+    refus. Ce n'était pas un contournement, mais une porte ne plante pas."""
+    return hmac.compare_digest(a.encode("utf-8", "replace"),
+                               b.encode("utf-8", "replace"))
+
+
+# ══ LA PORTE — le dashboard n'est plus public (2026-11-17) ════════════════
+# MESURÉ le 2026-11-17 sur la production : `/`, `/ledger`, `/audit`,
+# `/performance`, `/system` et `/api/signals` répondaient 200 à n'importe qui,
+# et l'URL figure dans le dépôt. Tout visiteur lisait les paris ; pire, il
+# pouvait cliquer « Scanner » : une demande manuelle promeut le tick horaire
+# gratuit en scan PAYANT sans passer par le garde « créneau déjà servi »
+# (scripts/ci_scan_mode.py) — jusqu'à 24 scans payants forcés par jour.
+#
+# Règles de la porte :
+#   · ÉCHEC FERMÉ. Sans `DASHBOARD_PASSWORD` (ou trop court), PERSONNE
+#     n'entre par mot de passe — même forme que `_admin_autorise`.
+#   · Un seul secret. La session est un cookie SIGNÉ, sans état serveur
+#     (Vercel n'en garde aucun entre deux instances) ; la clé de signature
+#     DÉRIVE du mot de passe : le changer ferme toutes les sessions ouvertes.
+#   · La session n'est PAS l'administration : `/api/audit/run` exige toujours
+#     son jeton. Le jeton d'admin, lui, ouvre la porte (curl d'opérateur).
+#   · Refus indiscernables : mauvais mot de passe, mot de passe non configuré
+#     et limite de débit rendent la même réponse.
+PASSWORD_ENV = "DASHBOARD_PASSWORD"
+# Plancher de longueur : la limite de débit ci-dessous vit dans la mémoire
+# d'UNE instance Vercel (voir `_scan_rate_limited`), elle ne résiste pas à un
+# flot distribué. C'est la longueur du mot de passe qui tient la porte ; en
+# dessous de 12 caractères il est traité comme absent, donc fermé.
+PASSWORD_MIN = 12
+_SESSION_COOKIE = "predator_session"
+_SESSION_TTL_S = 30 * 86400       # un téléphone se reconnecte une fois par mois
+_LOGIN_LIMIT_N = 5                # tentatives…
+_LOGIN_LIMIT_WINDOW_S = 300       # …par IP et par fenêtre de 5 minutes
+_login_hits: dict[str, list[float]] = {}
+
+# Ce qui reste servi sans session : la sonde de disponibilité (aucune donnée),
+# la porte elle-même, et ce dont le navigateur a besoin AVANT de se connecter
+# (feuille de style, icônes, manifeste de la PWA). Aucun de ces chemins ne
+# lit la base.
+_CHEMINS_PUBLICS = frozenset({"/login", "/logout", "/api/health",
+                              "/manifest.json", "/favicon.ico"})
+
+
+def _mot_de_passe() -> str:
+    """Le mot de passe configuré, ou "" s'il est absent ou trop court."""
+    mdp = os.environ.get(PASSWORD_ENV, "")
+    return mdp if len(mdp) >= PASSWORD_MIN else ""
+
+
+def _signer_session(mdp: str, expire: int) -> str:
+    """`<expiration>.<HMAC-SHA256>` — la valeur du cookie de session. Pur."""
+    cle = hashlib.sha256(b"predator-session|" + mdp.encode("utf-8")).digest()
+    sceau = hmac.new(cle, str(expire).encode("ascii"), hashlib.sha256).hexdigest()
+    return f"{expire}.{sceau}"
+
+
+def _session_valide(maintenant: float | None = None) -> bool:
+    """Le cookie de session est-il signé par le mot de passe ACTUEL et non
+    expiré ? L'expiration est DANS la partie signée : la repousser à la main
+    invalide le sceau."""
+    mdp = _mot_de_passe()
+    if not mdp:
+        return False
+    brut = request.cookies.get(_SESSION_COOKIE, "")
+    expire = brut.partition(".")[0]
+    if not expire.isascii() or not expire.isdigit():
+        return False
+    maintenant = time.time() if maintenant is None else maintenant
+    if int(expire) <= maintenant:
+        return False
+    return _egal(brut, _signer_session(mdp, int(expire)))
+
+
+@app.before_request
+def _porte():
+    """Refuse tout ce qui n'est ni public, ni authentifié.
+
+    Une API rend 401 en JSON (le bouton « Scanner » l'affiche tel quel) ; une
+    page renvoie vers `/login`. Pas de paramètre `next` : après connexion on
+    arrive sur l'accueil, et il n'existe donc aucune redirection à détourner.
+    """
+    chemin = request.path
+    if chemin in _CHEMINS_PUBLICS or chemin.startswith("/static/"):
+        return None
+    if _session_valide() or _admin_autorise():
+        return None
+    if chemin.startswith("/api/"):
+        return jsonify({"error": "non autorisé"}), 401
+    return redirect("/login", code=303)
+
+
+@app.route("/login", methods=["GET", "POST"])
+def login():
+    """Formulaire de connexion (GET) et vérification du mot de passe (POST).
+
+    Le POST ne rend JAMAIS de page : il redirige (303) — vers l'accueil avec
+    le cookie, ou vers `/login?e=1` sans rien dire de la cause."""
+    if request.method == "GET":
+        if _session_valide():
+            return redirect("/", code=303)
+        return render_template("login.html", refus=bool(request.args.get("e")))
+
+    ip = _client_ip()
+    mdp = _mot_de_passe()
+    limite = _debit_depasse(_login_hits, ip, _LOGIN_LIMIT_N, _LOGIN_LIMIT_WINDOW_S)
+    fourni = request.form.get("password", "")
+    if limite or not mdp or not _egal(fourni, mdp):
+        # La cause va au log du déploiement, jamais dans la réponse ; le mot
+        # de passe saisi n'est écrit nulle part.
+        log.warning("connexion refusée pour %s (%s)", ip,
+                    "limite de débit" if limite
+                    else "mot de passe non configuré ou trop court" if not mdp
+                    else "mauvais mot de passe")
+        return redirect("/login?e=1", code=303)
+
+    expire = int(time.time()) + _SESSION_TTL_S
+    reponse = redirect("/", code=303)
+    reponse.set_cookie(
+        _SESSION_COOKIE, _signer_session(mdp, expire),
+        max_age=_SESSION_TTL_S,
+        httponly=True,       # illisible par le JavaScript de la page
+        samesite="Lax",      # un site tiers ne peut pas faire POSTer /api/scan
+        # `Secure` partout sauf sur le poste de dev (http://127.0.0.1) : en
+        # dériver la valeur de `request.is_secure` serait faux derrière le
+        # proxy de Vercel, qui parle HTTP à la fonction.
+        secure=request.host.split(":")[0] not in ("127.0.0.1", "localhost"),
+    )
+    return reponse
+
+
+@app.route("/logout")
+def logout():
+    reponse = redirect("/login", code=303)
+    reponse.delete_cookie(_SESSION_COOKIE)
+    return reponse
 
 
 @app.route("/api/audit/run", methods=["POST"])
@@ -1134,6 +1301,10 @@ def health():
         "version":    DASHBOARD_VERSION,
         "db_configured": bool(os.environ.get("SUPABASE_URL")
                               and os.environ.get("SUPABASE_KEY")),
+        # Un booléen, jamais la valeur : `false` = porte FERMÉE à tous
+        # (mot de passe absent ou sous le plancher), ce que l'opérateur doit
+        # pouvoir lire sans ouvrir les logs du déploiement.
+        "auth_configured": bool(_mot_de_passe()),
         "time":       datetime.now(_tz.utc).isoformat(),
     })
 
@@ -1203,18 +1374,27 @@ def _scan_rate_limited(ip: str, maintenant: float | None = None) -> bool:
     La vraie limite, partagée entre instances et non falsifiable, est l'objet
     de C3 — comptée dans Postgres, du côté où l'état est commun.
     """
+    return _debit_depasse(_scan_hits, ip, _SCAN_RATE_LIMIT_N,
+                          _SCAN_RATE_LIMIT_WINDOW_S, maintenant)
+
+
+def _debit_depasse(hits: dict, ip: str, n: int, fenetre_s: int,
+                   maintenant: float | None = None) -> bool:
+    """Fenêtre glissante par IP, en mémoire du processus — partagée par
+    `/api/scan` et `/login`, chacun avec SON dictionnaire et SES bornes.
+    Mêmes limites que celles décrites dans `_scan_rate_limited`."""
     maintenant = time.time() if maintenant is None else maintenant
-    debut = maintenant - _SCAN_RATE_LIMIT_WINDOW_S
-    recents = [t for t in _scan_hits.get(ip, []) if t > debut]
-    if len(recents) >= _SCAN_RATE_LIMIT_N:
-        _scan_hits[ip] = recents
+    debut = maintenant - fenetre_s
+    recents = [t for t in hits.get(ip, []) if t > debut]
+    if len(recents) >= n:
+        hits[ip] = recents
         return True
     recents.append(maintenant)
-    _scan_hits[ip] = recents
+    hits[ip] = recents
     # Purge des IP dont la fenêtre est vide : sans elle, le dictionnaire
     # grandit indéfiniment sur une instance chaude longue durée.
-    for autre in [k for k, v in _scan_hits.items() if not v or v[-1] <= debut]:
-        _scan_hits.pop(autre, None)
+    for autre in [k for k, v in hits.items() if not v or v[-1] <= debut]:
+        hits.pop(autre, None)
     return False
 
 

@@ -83,3 +83,30 @@ def _no_ambient_ai_keys(monkeypatch):
         monkeypatch.delenv(provider.env_key, raising=False)
     for extra in ("CLOUDFLARE_ACCOUNT_ID", "TAVILY_API_KEY", "JINA_API_KEY"):
         monkeypatch.delenv(extra, raising=False)
+
+
+@pytest.fixture(autouse=True)
+def _dashboard_porte_ouverte(request, monkeypatch):
+    """Ouvre la porte du dashboard pour les tests qui testent AUTRE CHOSE.
+
+    Depuis le 2026-11-17 toute route de `api/index.py` exige une session
+    (voir « LA PORTE »). Dix fichiers de test appellent ces routes pour
+    vérifier leur contenu, leur limite de débit ou leur jeton d'admin : sans
+    ce garde, chacun devrait fabriquer un cookie avant de tester ce qu'il
+    teste. La porte, elle, a son propre fichier — `tests/test_dashboard_porte.py`
+    — qui se DISPENSE de ce garde (marque `porte_reelle`) et l'éprouve fermée.
+
+    Seule la session est simulée : `_admin_autorise` reste le vrai, donc
+    `/api/audit/run` refuse toujours sans jeton — une session n'est pas
+    l'administration, et les tests de `test_api_admin_auth.py` le prouvent
+    porte ouverte.
+    """
+    if request.node.get_closest_marker("porte_reelle"):
+        return
+    import api.index as dashboard
+    monkeypatch.setattr(dashboard, "_session_valide", lambda maintenant=None: True)
+
+
+def pytest_configure(config):
+    config.addinivalue_line(
+        "markers", "porte_reelle: n'ouvre pas la porte du dashboard (tests de la porte)")

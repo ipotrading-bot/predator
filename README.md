@@ -214,6 +214,27 @@ budget crédits avant/après, carte des crons, boucle de calibration) est docume
 
 Toutes les routes sont définies dans [`api/index.py`](api/index.py) — c'est la seule source de vérité, cette table doit rester synchronisée avec ce fichier.
 
+#### La porte — `DASHBOARD_PASSWORD` (2026-11-17)
+
+Le dashboard n'est plus public. Jusqu'au 2026-11-17, toutes les pages et
+`/api/signals` répondaient 200 à n'importe qui, et un visiteur pouvait cliquer
+« Scanner », donc forcer un scan payant à chaque tick horaire.
+
+Toute route exige désormais une **session** : `/login` vérifie le mot de passe
+et pose un cookie signé de 30 jours. Seuls `/api/health`, `/static`, le
+manifeste et le favicon restent publics. La porte **échoue fermée** : sans
+`DASHBOARD_PASSWORD`, ou en dessous de 12 caractères, personne n'entre —
+`/api/health` le dit par `auth_configured: false`.
+
+```bash
+# Poser ou changer le mot de passe (≥ 12 caractères), puis redéployer :
+python scripts/ops.py vercel env set DASHBOARD_PASSWORD '<mot de passe>' production
+```
+
+Changer le mot de passe ferme toutes les sessions ouvertes. La session n'est
+pas l'administration : `/api/audit/run` exige toujours son jeton, et ce jeton
+(`X-Predator-Token`) ouvre aussi la porte pour un `curl` d'opérateur.
+
 #### Route d'administration — `DASHBOARD_ADMIN_TOKEN`
 
 `/api/audit/run` était **ouverte à tout Internet** jusqu'au 2026-08-22 : un
@@ -256,14 +277,15 @@ Tant que `SUPABASE_SERVICE_KEY` restait posée sur Vercel, une faille de la
 fonction publique donnait les pleins pouvoirs sur `signals`,
 `ai_learning_ledger`, `meta` et `app_secrets`. Elle n'y a plus aucun usage.
 
-**FAIT le 2026-08-27.** Le déploiement ne porte plus que ces QUATRE
-variables — la liste exacte de ce que le code lit :
+**FAIT le 2026-08-27, complété le 2026-11-17.** Le déploiement porte ces
+CINQ variables — la liste exacte de ce que le code lit :
 
 | Variable | Rôle |
 |---|---|
 | `SUPABASE_URL` | lecture |
 | `SUPABASE_KEY` | clé anon, LECTURE SEULE — l'écriture passe par `demander_scan()` |
 | `DASHBOARD_ADMIN_TOKEN` | `/api/audit/run` |
+| `DASHBOARD_PASSWORD` | la porte du dashboard (`/login`), ≥ 12 caractères |
 | `GITHUB_PAT` | `/api/audit/run` déclenche `audit.yml` |
 
 Onze variables ont été retirées le même jour, dont `SUPABASE_SERVICE_KEY`.
@@ -334,7 +356,7 @@ predator/
 │   │  ── Infrastructure ──────────────────────────────────────────────
 │   ├── db.py                # Source unique des clients Supabase (lecture vs écriture)
 │   └── secret_store.py      # Table `app_secrets` — BAT os.environ
-├── templates/               # index / ledger / audit / performance / system / bank
+├── templates/               # index / ledger / audit / performance / system / login
 ├── sql/                     # Migrations Supabase — À APPLIQUER À LA MAIN
 ├── tests/                   # pytest — voir AUDIT.md pour la carte des invariants testés
 ├── .github/workflows/       # 6 workflows — tout le calcul tourne ici
