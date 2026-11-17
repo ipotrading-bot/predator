@@ -415,6 +415,66 @@ empirique et tout backtest qui les ignorerait aurait un biais de survie.
 Une source qui « répond » ne porte pas forcément un prix, et une source qui
 échoue ne le fait presque jamais bruyamment.
 
+### « Tennis toujours pauvre malgré l'ajout de ligues » : les tournois ajoutés étaient écartés AVANT paiement ; la NFL est évaluée en entier et n'a rien à prendre (2026-11-17)
+
+Symptôme (opérateur) : « nfl est pauvre et toujours perdant, tennis est
+toujours pauvre, aucun impact malgré l'ajout de ligues ».
+
+TENNIS — cause : `core/odds_api_io._tennis_au_perimetre` (2026-10-01) ne
+gardait que les matchs appariés au pré-vol d'un tournoi RETENU dès qu'il y
+en avait un. La décision du 2026-11-10 (« inclus les autres ligues de
+tennis ») a ouvert le RÈGLEMENT (LiveScore) sans toucher ce filtre d'ACHAT :
+250, Challengers et WTA 125 restaient écartés en amont, donc jamais évalués.
+Le Masters de fin de saison est entré au pré-vol l'après-midi même.
+
+MESURÉ le 2026-11-17 (logs de 871 scans du 20/10 au 17/11) :
+- 201 scans filtrés : 1,5 à 12 matchs payés par scan, ~180 écartés ; 24
+  scans sans tournoi retenu : 34 à 53 matchs payés, dont 20 à 49 avec un prix
+  d'exchange — et le seul signal hors grand tournoi de la période
+  (Stockholm, 11-10, gagné) ;
+- semaine du 09/11 : 56 matchs évalués ; du 16/11 : 5 ;
+- rejeu réel APRÈS correctif (`ops.py chaine tennis 24`, 7 requêtes, compteur
+  136 → 143) : 42 matchs à prix exécutable, 29 exploitables (prix + sharp +
+  réglable), aucun ITF ni double ;
+- dépense : 254 à 295 requêtes/jour les jours sans filtre, 259 en médiane
+  les jours filtrés (plafond 400) — le tennis n'est pas le poste qui pèse.
+
+Fait : tout simple hors ITF/UTR se paie, les tournois retenus D'ABORD, puis
+ceux qui ont un prix d'exchange, dans la limite du plafond (60 matchs, 6
+requêtes par scan). Revue le 2026-12-17 (critère dans la docstring).
+
+Ce que ça NE promet PAS : sur ces tournois 1xbet est sous le prix sharp des
+deux côtés (rejeu : 1,71/1,99 contre 1,86/2,17) ; meilleur EV médian −4,1 %
+la semaine du 09/11 contre −2,5 % sur le circuit principal. Et la saison
+s'arrête : après le Masters, plus de grand tournoi avant fin décembre.
+
+Le tennis GAGNE (recommandés 34-12, 74 % [IC95 60–84] pour un point mort à
+56 %, +15,60 u, z +2,14) : c'est le volume qui manque. Second levier,
+MESURÉ, NON appliqué : `_verdict_seuil` rend « gain prouvé → seuil abaissé »
+(2,0 → 1,5 %), mais `_mouvement_permis` attend 20 réglés neufs depuis le
+dernier mouvement (base à 37, 44 aujourd'hui). 23 paris tennis refusés
+avaient un meilleur EV entre 1,5 et 2,0 % sur la période. Le poser à la main
+= décision opérateur.
+
+NFL — pas de défaut. 13 à 16 matchs évalués par semaine (toute la journée
+NFL), 300 paris distincts refusés sur leur EV en cinq semaines : 274 n'ont
+JAMAIS eu un EV positif (médiane du meilleur EV −2,5 %), 5 sont passés entre
+1,5 % (plancher) et 2,0 % (seuil du sport). Signaux par semaine : 5, 4, 1,
+0, 0. Recommandés 7-8, 47 % [25–70] pour un point mort à 53 %, −2,12 u,
+z −0,71 : rien de démontré à n=15. Contre la clôture DraftKings (ESPN) : 12
+handicaps et totaux, ligne meilleure 10 fois, égale 2 fois, jamais pire
+(+0,88 pt, t +5,7) — et 4-8. Le moteur prend de bons numéros ; 1xbet en
+offre rarement.
+
+⚠️ Ouvrir le RÈGLEMENT d'une ligue ne l'ouvre pas à l'ACHAT : une décision de
+périmètre se vérifie sur la ligne de log de la source (« N match(s) des
+tournois retenus, N autre(s) … »), pas sur `ops.py chaine` — qui tourne sans
+pré-vol et montrait déjà 11 matchs le 10/11.
+⚠️ `ops.py chaine` coûte le budget des scans : un seul rejeu, compteur lu
+avant et après.
+
+Gardien : `tests/test_tennis_odds_api_io.py::TestLesTournoisRetenusDAbordPuisLesAutres`.
+
 ### Smarkets prenait la moitié du scan standard : 60 marchés par appel quand l'API en accepte 200 (2026-10-11)
 
 Symptôme : aucun. Les runs sont verts ; seule la DURÉE du `Scan standard`
