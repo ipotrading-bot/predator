@@ -5446,6 +5446,46 @@ une valeur périmée dans la table gagne quand même.
 
 ## Dashboard et base
 
+### Le dashboard était lisible par tout Internet, bouton « Scanner » compris (2026-11-17)
+
+Symptôme : aucun. Trouvé par l'audit de sécurité du 2026-11-17, pas par une
+panne.
+
+Mesuré sur la production : `/`, `/ledger`, `/audit`, `/performance`,
+`/system` et `/api/signals?all=1` répondaient 200 sans rien demander ; l'URL
+figure dans le dépôt, qui est public. Tout visiteur lisait les paris. Il
+pouvait aussi POSTer `/api/scan` : `scripts/ci_scan_mode.py` exempte une
+demande MANUELLE du garde « créneau déjà servi » (`not manual`), donc chaque
+tick horaire gratuit devenait un scan payant — jusqu'à 24 par jour, le
+cooldown de 120 s ne bornant que la fréquence d'écriture du flag. Aucun en-tête
+de sécurité hormis le HSTS de Vercel.
+
+Cause : les corrections C1–C3 d'août ont fermé l'ÉCRITURE (jeton d'admin,
+clé anon, limite de débit dans Postgres) ; la LECTURE et le bouton étaient
+restés publics « parce que le bouton est servi à tout le monde ».
+
+Fait : un `before_request` (`_porte`) exige une session sur toute route hors
+`_CHEMINS_PUBLICS`. `/login` compare le mot de passe (`DASHBOARD_PASSWORD`,
+≥ 12 caractères) à temps constant et pose un cookie signé HMAC, 30 jours,
+`HttpOnly`/`Secure`/`SameSite=Lax` ; la clé de signature dérive du mot de
+passe, donc le changer ferme toutes les sessions. ÉCHEC FERMÉ sans mot de
+passe. La session n'ouvre pas `/api/audit/run`. Quatre en-têtes de sécurité
+sur toutes les réponses ; pas de CSP (JavaScript en ligne dans les gabarits).
+
+Règles :
+- Aucune route qui lit la base n'entre dans `_CHEMINS_PUBLICS`.
+- La limite de débit de `/login` vit dans UNE instance Vercel : c'est la
+  longueur du mot de passe qui tient la porte, d'où le plancher.
+- `Secure` ne se dérive pas de `request.is_secure` : derrière le proxy de
+  Vercel la fonction voit du HTTP.
+- Une variable Vercel ne prend effet qu'au déploiement suivant : poser
+  `DASHBOARD_PASSWORD` AVANT de déployer la porte, sinon elle ferme à tous.
+
+Gardiens : `tests/test_dashboard_porte.py` (dont
+`test_toute_route_du_dashboard_est_derriere_la_porte`, dérivé de la table de
+routes), `.claude/hooks/dashboard_smoketest.sh` (refuse un `/` à 200 sans
+session).
+
 ### Le même match de tennis en deux cartes : deux sources, deux heures, deux ordres de nom (2026-10-02)
 
 Symptôme (capture opérateur du 2026-10-02, 12:48) : « 5 matchs » en bandeau

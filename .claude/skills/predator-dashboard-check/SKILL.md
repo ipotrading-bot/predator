@@ -11,6 +11,16 @@ only proves "does it render / route at all", not "is the data correct". That's
 still worth checking every time, because template errors (undefined Jinja vars,
 broken `{% %}` blocks) throw 500s even with no data.
 
+**The dashboard is behind a password gate since 2026-11-17** (`api/index.py`,
+« LA PORTE »). Without a session every page answers 303 → `/login` and every
+API 401 — that is correct, not a bug. For the smoke test, start the server
+with a throwaway admin token and send it on each request:
+`DASHBOARD_ADMIN_TOKEN=smoke python3 -c "…"` then
+`curl -H "X-Predator-Token: smoke" …`. Also check `/login` → 200 and `/`
+WITHOUT the header → 303. `.claude/hooks/dashboard_smoketest.sh` does exactly
+this. Never POST `/api/scan` with a valid token or session in a test: it
+calls the real `demander_scan()`.
+
 ## Steps
 
 1. Confirm no stray instance is already bound to the port you're about to use:

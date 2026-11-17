@@ -1,0 +1,45 @@
+<!DOCTYPE html>
+<html lang="fr">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover">
+<meta name="theme-color" content="#00E87F">
+<meta name="mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+<meta name="apple-mobile-web-app-title" content="PREDATOR">
+<meta name="robots" content="noindex, nofollow">
+<title>PREDATOR</title>
+<link rel="manifest" href="/manifest.json">
+<link rel="icon" type="image/png" sizes="32x32" href="/static/icons/favicon-32.png">
+<link rel="shortcut icon" href="/favicon.ico">
+<link rel="apple-touch-icon" sizes="192x192" href="/static/icons/icon-192.png">
+<link rel="stylesheet" href="/static/css/predator.css?v={{ version }}">
+<style>
+/* Porte du dashboard (2026-11-17). Aucune police distante ici : la page est
+   servie AVANT toute session, elle ne contacte aucun tiers. */
+.porte { min-height: 100vh; min-height: 100dvh; display: flex; align-items: center;
+  justify-content: center; padding: 24px; }
+.porte form { width: 100%; max-width: 320px; display: flex; flex-direction: column; gap: 12px; }
+.porte h1 { font-size: 18px; font-weight: 700; color: var(--green); letter-spacing: 2px;
+  text-align: center; margin: 0 0 8px; }
+.porte input { font: inherit; font-size: 16px; padding: 14px; border-radius: var(--r);
+  border: 1px solid var(--bd); background: transparent; color: inherit; color-scheme: dark; }
+.porte input:focus { outline: none; border-color: var(--green); }
+.porte input.refus { border-color: var(--red); }
+.porte button { font: inherit; font-size: 15px; font-weight: 700; padding: 14px;
+  border-radius: var(--r); border: 0; background: var(--green); color: #030305; cursor: pointer; }
+</style>
+</head>
+<body>
+<main class="porte">
+  <form method="post" action="/login" autocomplete="on">
+    <h1>PREDATOR</h1>
+    <input type="password" name="password" autocomplete="current-password"
+           aria-label="Mot de passe" placeholder="Mot de passe"
+           {% if refus %}class="refus" title="Refusé"{% endif %} required autofocus>
+    <button type="submit">Entrer</button>
+  </form>
+</main>
+</body>
+</html>
