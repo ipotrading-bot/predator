@@ -5446,6 +5446,31 @@ une valeur périmée dans la table gagne quand même.
 
 ## Dashboard et base
 
+### Porte par mot de passe : construite puis RETIRÉE le même jour (2026-11-17)
+
+Constat de l'audit de sécurité du 2026-11-17, mesuré sur la production et
+TOUJOURS VRAI : `/`, `/ledger`, `/audit`, `/performance`, `/system` et
+`/api/signals?all=1` répondent 200 à n'importe qui, l'URL figure dans le
+dépôt (public), et un visiteur peut POSTer `/api/scan` — une demande
+manuelle est exemptée du garde « créneau déjà servi »
+(`scripts/ci_scan_mode.py`, `not manual`), donc chaque tick horaire gratuit
+peut être promu en scan payant, jusqu'à 24 par jour.
+
+Fait puis défait : une porte par mot de passe (`before_request`, cookie
+signé, `DASHBOARD_PASSWORD`) a été déployée (d0938b9), vérifiée en
+production, puis RETIRÉE le même jour sur décision opérateur (« laisse
+tomber, annuler aussi le mot de passe »), avec les quatre en-têtes de
+sécurité livrés dans le même commit. Le passage du dépôt en privé a été
+abandonné au même moment : un dépôt privé gratuit n'offre que 2 000 minutes
+Actions par mois contre ~6 000 à 7 000 consommées.
+
+Règles :
+- Ne pas reproposer de mot de passe, de double authentification ni de
+  passage en privé : décisions opérateur, comme la bankroll du 2026-09-09.
+- Le dashboard public est un choix assumé, pas un oubli à « corriger ».
+- Ce qui reste ouvert et ne dépend pas de ce choix : le jeton Telegram de
+  l'historique git (commits 20a6af6, 65df9d3) est à révoquer chez BotFather.
+
 ### Le même match de tennis en deux cartes : deux sources, deux heures, deux ordres de nom (2026-10-02)
 
 Symptôme (capture opérateur du 2026-10-02, 12:48) : « 5 matchs » en bandeau
