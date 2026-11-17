@@ -158,7 +158,7 @@ class TestLeTotalDeJeux:
         assert oa._MARKETS_BY_SPORT["tennis"] == "h2h,totals"
 
 
-# ── Le périmètre : tournois retenus seulement ────────────────────────────
+# ── Le périmètre : tournois retenus d'abord, puis les autres simples ────────────────────────────
 
 CALENDRIER = [
     _event(1, "Sheldon, Max", "Pieczkowski, Olaf", "Tennis - ITF Men Ann Arbor - R16",
@@ -180,46 +180,93 @@ PREVOL = {
 }
 
 
-class TestSeulsLesTournoisRetenusSePaient:
-    def test_le_prevol_designe_les_matchs_lus(self, monkeypatch, caplog):
+class TestLesTournoisRetenusDAbordPuisLesAutres:
+    """Décision opérateur du 2026-11-10 (« inclus les autres ligues de
+    tennis »), rendue effective le 2026-11-17 : 250, Challengers et WTA 125 se
+    paient aussi. Le filtre du 2026-10-01 les écartait avant paiement dès
+    qu'un tournoi retenu était au pré-vol — 201 scans sur 225 du 20/10 au
+    17/11, 1,5 à 12 matchs payés pour ~180 écartés."""
+
+    def test_les_retenus_passent_devant_les_autres_simples_suivent(self, monkeypatch, caplog):
         _prevol(monkeypatch, PREVOL)
         calls = _wire(monkeypatch, CALENDRIER, _books())
         with caplog.at_level(logging.INFO):
             out = oai.fetch_sport("tennis", api_key="k", hours_ahead=24 * 3650)
-        assert calls["multi"] == [["4", "5"]], "ni ITF, ni Challenger, ni double, ni 250"
-        assert sorted(m["match"] for m in out) == [
-            "Daniil Medvedev vs Pablo Carreno Busta", "Jaume Munar vs Jaime Faria"]
-        assert any("2 match(s) des tournois retenus, 4 écarté(s)" in r.getMessage()
-                   for r in caplog.records)
+        (payes,) = calls["multi"]
+        assert payes[:2] == ["4", "5"], "Tokyo et Pékin, les tournois retenus, d'abord"
+        assert sorted(payes[2:]) == ["2", "6"], "puis le Challenger et le 250"
+        assert len(out) == 4
+        assert any("2 match(s) des tournois retenus, 2 autre(s) simple(s) au périmètre, "
+                   "2 écarté(s)" in r.getMessage() for r in caplog.records)
 
-    def test_sans_tournoi_retenu_au_prevol_on_lit_comme_avant(self, monkeypatch, caplog):
+    def test_ni_itf_ni_utr_ni_double_ne_se_paient(self, monkeypatch):
+        """Hors jeu de l'opérateur (2026-10-08), pré-vol présent ou non."""
+        for prevol in (PREVOL, {}):
+            _prevol(monkeypatch, prevol)
+            calls = _wire(monkeypatch, CALENDRIER, _books())
+            oai.fetch_sport("tennis", api_key="k", hours_ahead=24 * 3650)
+            assert sorted(calls["multi"][0]) == ["2", "4", "5", "6"]
+
+    @pytest.mark.parametrize("ligue,home,hors", [
+        ("Tennis - ITF Men Ann Arbor - R16", "Sheldon, Max", True),
+        ("UTR Pro Tennis Series Newport", "Smith, John", True),
+        ("ATP - Tokyo, Japan, Doubles", "Galloway R / Goransson A", True),
+        ("ATP - Tokyo, Japan", "Galloway R / Goransson A", True),      # la paire suffit
+        ("Challenger - Columbus, USA", "Nakashima, Bryce", False),
+        ("ATP - Almaty, Kazakhstan", "Lehecka, Jiri", False),
+        ("WTA 125 - Angers, France", "Parry, Diane", False),
+        ("WTA - WTA Tour Finals", "Pegula, Jessica", False),
+    ])
+    def test_le_hors_jeu_se_lit_au_libelle(self, ligue, home, hors):
+        assert oai._tennis_hors_jeu(_event(9, home, "X, Y", ligue)) is hors
+
+    def test_la_coupe_sert_les_retenus_avant_tout(self, monkeypatch):
+        """Le Challenger se joue plus tôt : sans priorité il prendrait une des
+        deux places."""
+        monkeypatch.setitem(oai.MAX_EVENTS_PAR_SPORT, "tennis", 2)
+        _prevol(monkeypatch, PREVOL)
+        calls = _wire(monkeypatch, CALENDRIER, _books())
+        oai.fetch_sport("tennis", api_key="k", hours_ahead=24 * 3650)
+        assert calls["multi"] == [["4", "5"]]
+
+    def test_apres_les_retenus_le_prix_dexchange_passe_devant(self, monkeypatch):
+        """Le 250 d'Almaty a un prix sharp d'exchange, le Challenger non : il
+        prend la troisième place bien qu'il se joue quinze heures plus tard."""
+        monkeypatch.setitem(oai.MAX_EVENTS_PAR_SPORT, "tennis", 3)
+        _prevol(monkeypatch, PREVOL)
+        calls = _wire(monkeypatch, CALENDRIER, _books())
+        oai.declarer_prix_exchange({"jiri lehecka_ugo humbert": {
+            "home": "Jiri Lehecka", "away": "Ugo Humbert", "1": 1.80, "X": 0.0, "2": 2.05}})
+        oai.fetch_sport("tennis", api_key="k", hours_ahead=24 * 3650)
+        assert calls["multi"] == [["4", "5", "6"]]
+
+    def test_sans_prevol_aucun_retenu_et_le_reste_se_paie(self, monkeypatch, caplog):
         """Tier 1 éteint ou pool mort : une panne n'est jamais « pas de match »."""
         calls = _wire(monkeypatch, CALENDRIER, _books())
         with caplog.at_level(logging.INFO):
             oai.fetch_sport("tennis", api_key="k", hours_ahead=24 * 3650)
-        assert sorted(calls["multi"][0]) == ["1", "2", "3", "4", "5", "6"]
-        assert any("pré-vol OddsAPI sans tournoi retenu" in r.getMessage()
+        assert sorted(calls["multi"][0]) == ["2", "4", "5", "6"]
+        assert any("0 match(s) des tournois retenus, 4 autre(s)" in r.getMessage()
                    for r in caplog.records)
 
-    def test_des_tournois_retenus_sans_match_ne_paient_rien(self, monkeypatch):
-        _prevol(monkeypatch, {"tennis_atp_japan_open": []})
-        calls = _wire(monkeypatch, CALENDRIER, _books())
-        assert oai.fetch_sport("tennis", api_key="k", hours_ahead=24 * 3650) == []
-        assert calls["multi"] == []
-
-    def test_un_homonyme_a_plus_de_douze_heures_n_est_pas_le_meme_match(self, monkeypatch):
+    def test_un_homonyme_a_plus_de_douze_heures_n_est_pas_un_retenu(self, monkeypatch):
         _prevol(monkeypatch, {"tennis_atp_japan_open": [
             ("Jaume Munar", "Jaime Faria", "2030-01-03T02:00:00Z")]})   # le lendemain
-        calls = _wire(monkeypatch, CALENDRIER, _books())
-        assert oai.fetch_sport("tennis", api_key="k", hours_ahead=24 * 3650) == []
-        assert calls["multi"] == []
+        gardes, retenus, ecartes = oai._tennis_au_perimetre(list(CALENDRIER))
+        assert retenus == set()
+        assert sorted(e["id"] for e in gardes) == [2, 4, 5, 6] and ecartes == 2
 
-    def test_un_seul_joueur_apparie_ne_suffit_pas(self, monkeypatch):
+    def test_budget_et_revue_sont_ecrits(self):
+        """Règle 13 : l'élargissement porte son budget chiffré et sa revue."""
+        doc = oai._tennis_au_perimetre.__doc__
+        assert "BUDGET" in doc and "REVUE le 2026-12-17" in doc and "360/400" in doc
+        assert oai.cap_pour("tennis") // oai.MULTI_BATCH <= 6
+
+    def test_un_seul_joueur_apparie_ne_fait_pas_un_retenu(self, monkeypatch):
         _prevol(monkeypatch, {"tennis_atp_japan_open": [
             ("Jaume Munar", "Stefanos Tsitsipas", "2030-01-02T02:00:00Z")]})
-        calls = _wire(monkeypatch, CALENDRIER, _books())
-        assert oai.fetch_sport("tennis", api_key="k", hours_ahead=24 * 3650) == []
-        assert calls["multi"] == []
+        _gardes, retenus, _ecartes = oai._tennis_au_perimetre(list(CALENDRIER))
+        assert retenus == set()
 
     def test_les_autres_sports_ne_passent_pas_par_ce_filtre(self, monkeypatch):
         _prevol(monkeypatch, PREVOL)
