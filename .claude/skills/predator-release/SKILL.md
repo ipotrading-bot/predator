@@ -19,10 +19,7 @@ de déploiement est touché — il ne l'exécute pas (credentials opérateur).
 2. `python scripts/ops.py vercel deployments | head -3` → l'état doit être
    **READY**, pas ERROR.
 3. `curl -s https://predator-two.vercel.app/api/health` → version attendue,
-   `db_configured: true` ET `auth_configured: true` (`false` = porte fermée
-   à tous : `DASHBOARD_PASSWORD` absent ou < 12 caractères sur Vercel). Puis
-   `curl -s -o /dev/null -w '%{http_code}' https://predator-two.vercel.app/`
-   → **303** : un 200 voudrait dire que le dashboard est redevenu public.
+   `db_configured: true`.
 4. Une SEULE source de déploiement : les deployments récents doivent venir
    de `cli`, jamais de `git` — sinon le gate `needs: test` est décoratif
    (`tests/test_workflow_secrets.py::test_vercel_ne_deploie_pas_aussi_depuis_git`).

@@ -432,27 +432,6 @@ python scripts/ops.py supabase sql "select count(*) from team_aliases"
 
 ---
 
-## 7. Dashboard — mot de passe de la porte ⏳ CÔTÉ CODE FAIT le 2026-11-17
-
-Le dashboard exige une session depuis le 2026-11-17 (`api/index.py`, « LA
-PORTE »). Le mot de passe vit dans la variable Vercel `DASHBOARD_PASSWORD` :
-c'est à toi de le choisir, il ne doit transiter par aucune session.
-
-```bash
-# ≥ 12 caractères, sinon il est traité comme absent (porte fermée à tous).
-python scripts/ops.py vercel env set DASHBOARD_PASSWORD '<mot de passe>' production
-```
-
-Une variable Vercel ne prend effet qu'au déploiement SUIVANT : la poser
-AVANT de pousser le code de la porte, ou relancer un déploiement après.
-Vérifier : `curl -s https://predator-two.vercel.app/api/health` →
-`auth_configured: true`, puis ouvrir le site → page de connexion.
-
-Le changer (même commande) ferme toutes les sessions ouvertes : c'est le
-geste à faire si le téléphone est perdu ou le mot de passe partagé par erreur.
-
----
-
 ## Claude Code — le serveur MCP Supabase est ÉPINGLÉ et en lecture seule
 
 `.mcp.json` lance `@supabase/mcp-server-supabase@0.11.0` (version exacte,

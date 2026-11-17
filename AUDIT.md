@@ -241,10 +241,6 @@ C'est le tableau à consulter avant de toucher à quoi que ce soit.
 | La fenêtre GLISSE — la limite n'est pas un bannissement | `…::test_la_fenetre_glisse` |
 | Le compteur par IP ne grandit pas indéfiniment | `…::test_le_compteur_ne_grandit_pas_indefiniment` |
 | Le dashboard ne demande JAMAIS de clé d'écriture (vérifié sur l'AST) | `tests/test_api_admin_auth.py::TestLeDashboardNaPlusDeCleDEcriture` |
-| TOUTE route du dashboard est derrière la porte (dérivé de la table de routes) | `tests/test_dashboard_porte.py::TestPorteFermee::test_toute_route_du_dashboard_est_derriere_la_porte` |
-| La porte échoue **fermée** sans mot de passe, ou sous 12 caractères | `tests/test_dashboard_porte.py::TestEchecFerme` |
-| Une session n'est pas l'administration (`/api/audit/run` garde son jeton) | `tests/test_dashboard_porte.py::TestJetonDAdmin::test_une_session_nest_pas_ladministration` |
-| Chaque réponse porte les en-têtes de sécurité | `tests/test_dashboard_porte.py::TestEnTetesDeSecurite` |
 | `/api/scan` passe par `demander_scan()`, jamais par une écriture directe | `…::TestScanPasseParLaFonctionPostgres` |
 | Une panne de la fonction ne fuit ni son nom ni la policy dans la réponse | `…::test_une_panne_de_la_fonction_ne_fuit_pas_dans_la_reponse` |
 | `anon` ne peut plus écrire `meta` (RLS + GRANT retirés) | `sql/migrate_v10_9_scan_request_rpc.sql` §3 |

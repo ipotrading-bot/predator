@@ -11,12 +11,6 @@ paths:
   vérifié sur l'AST). `/api/scan` passe par la fonction Postgres
   `demander_scan()` ; `/api/audit/run` exige `DASHBOARD_ADMIN_TOKEN` et
   échoue FERMÉ — ne pas « réparer » son 401.
-- Le dashboard est PRIVÉ depuis le 2026-11-17 : un `before_request` (« LA
-  PORTE ») exige une session (`DASHBOARD_PASSWORD`, `/login`) ou le jeton
-  d'admin sur TOUTE route hors `_CHEMINS_PUBLICS`. Échec FERMÉ — ne pas
-  « réparer » le 303/401, ni ajouter de route publique qui lit la base
-  (`tests/test_dashboard_porte.py`). Les autres tests voient la porte
-  ouverte par `tests/conftest.py::_dashboard_porte_ouverte`.
 - **Règle dure n°5** : une suite verte ne prouve RIEN sur le déploiement.
   Après toute retouche de `api/index.py` (ou `vercel.json`,
   `.python-version`, `requirements*`) : skill `predator-release`
