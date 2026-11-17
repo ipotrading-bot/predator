@@ -28,6 +28,90 @@ La carte des invariants et de leurs tests gardiens vit dans `AUDIT.md`.
 
 ## Le moteur : prix, edge, seuils
 
+### « La NBA perd trop » : un verdict qui jugeait la présaison, un plafond d'edge qui ne pouvait plus tomber, et le gagné/perdu pris pour juge (2026-11-17)
+
+Symptôme : l'opérateur — « nba perd trop » — après cinq paris NBA perdus de
+suite (11-14 → 11-17) et un verdict « basketball : edge non démontré …
+ROI Kelly −8,5 % · mise plate −2,78 u » dans le résumé d'apprentissage.
+
+Ce que la mesure a dit, le 2026-11-17 (`signals` + `signals_archive`, ligues
+« NBA » et « USA - NBA », signaux du 10-20 au 11-17, mise plate, hors taxe) :
+
+- recommandés 19-16, réussite 54,3 % [IC95 38–70] pour un point mort à
+  52,4 %, annoncé 53,9 % (z +0,04), +1,76 u ; avec les fantômes 51-41,
+  55,4 % [45–65] pour 52,0 %, +6,40 u. La NBA de saison régulière ne perd
+  pas : sommet à +6,84 u le 11-14, puis cinq pertes sur quatre matchs ;
+- règlement : 92 réglés sur 92 recalculés contre ESPN (un jour par requête),
+  0 écart, aucun handicap du mauvais côté ; aucun doublon ;
+- rien de démontré par segment : handicaps 4-9 en recommandés mais 11-7 en
+  fantômes (15-16) ; totaux 34-24 ; écart Pinnacle/exchange > 1 pt 7-11 en
+  NBA mais 51-31 tous sports ; « créés 18-21 h UTC » 18-3 = la meilleure de
+  ~40 découpes, pas une preuve (voir « Le maximum sélectionné n'est pas une
+  preuve ») ;
+- ligue entière contre la clôture DraftKings (205 matchs, ESPN) : domicile
+  49,3 %, favori 53,7 %, over 47,8 % — aucun biais du type Euroleague.
+
+Trois défauts réels, trouvés en chemin :
+
+1. LE VERDICT JUGEAIT UN PÉRIMÈTRE RETIRÉ. Les 94 réglés du verdict
+   « basketball » comptaient 17 lignes de présaison NBA (6-11, −4,78 u,
+   coupée le 10-09), 5 de WNBA (2-3, −1,14 u, retirée le 09-24) et 1 de
+   NCAA ; la saison régulière seule : 72 réglés, 54,2 % [43–65] pour 51,7 %,
+   +3,14 u. Fait : `source_adapter.hors_perimetre_vivant` (présaison NBA par
+   libellé + `meta.perimetre_ligues_exclues`, la clé du scan — une seule
+   définition, `run_engine` la relit), appliqué à ce qui est DIT : verdict,
+   calibration jointe, diagnostic de bandes, ligne par sport du rapport
+   hebdo. Aucune ligne n'est supprimée ni archivée (règle 9).
+
+2. LE PLAFOND D'EDGE NE POUVAIT PLUS TOMBER. `edge_ceiling_basketball = 4.0`
+   repose sur 15 lignes dont 10 de présaison (4-6) et 5 de saison régulière
+   (2-3). `_emit` JETAIT tout signal au-dessus : la bande haute ne recevait
+   plus une ligne, `_top_band_verdict` rejugeait les mêmes à chaque audit —
+   un cliquet, comme celui des seuils (2026-10-29). Reconstitué depuis les
+   logs de 961 scans (`PLAFOND | 🏀`, standard ET reprice) et réglé contre
+   ESPN : 42 paris distincts refusés, 27-15, 64 % [49–77] pour ~52 % ; vus à
+   T-2..6 h (auraient été envoyés) 6-7 ; à plus de 6 h 16-3 ; à moins de 2 h
+   5-6. « Un gros edge est un prix mal apparié » est faux en saison
+   régulière — mais lever le plafond n'aurait rien changé à l'envoyé. Fait :
+   le refus sort FANTÔME `plafond_edge`, persisté, réglé, appris.
+   Volume attendu : ~1,7 ligne/jour au basket, ~2,6 au football (plafond 6 %).
+
+3. LE GAGNÉ/PERDU NE PEUT PAS JUGER LA NBA. 35 paris à cote ~1,93 :
+   espérance annoncée +1,06 u, écart-type 5,67 u ; un repli de 5 u depuis un
+   sommet arrive 54 fois sur 100 avec un moteur exact, une série de cinq
+   pertes 31 fois sur 100 ; ~3 900 paris pour voir l'edge. Les POINTS pris
+   sur la clôture tranchent à 89 paris : +0,90 pt (t +5,6 ; 57 meilleures,
+   21 égales, 11 pires), mêmes paris à la ligne de clôture 45-44 ; avance
+   gardée 36-21, perdue 13-19. Fait : `python scripts/ops.py nba [jours]`
+   (`core/points_cloture.py`, lecture seule, ~110 requêtes ESPN pour 30 j,
+   plafond 250, revue 2026-12-17, retrait sous 80 % de couverture).
+
+PAS fait, et pourquoi : le plafond reste APPLIQUÉ et calculé sur TOUTES les
+lignes. Le restreindre au périmètre vivant le ferait tomber tout de suite (5
+lignes de saison régulière pour 10 exigées) — un changement d'émission sans
+mesure (règle 10) quand les 13 refus de la zone font 6-7. Les fantômes
+`plafond_edge` le jugeront. Ni seuil monté, ni handicaps coupés : les
+fantômes disent l'inverse. Le critère de réouverture de la tranche 6-24 h
+(2026-10-23) a été LU : 38 fantômes, z −0,07 (rempli), dérive depuis
+l'ouverture −0,66 % (non rempli) — elle reste fermée.
+
+⚠️ Un fantôme `plafond_edge` ne doit JAMAIS coûter un pari envoyé — avant, la
+ligne n'existait pas : hors quota (`_portfolio_balance` trie par edge), il ne
+tient aucune famille contre un pari normal (`_arbitrer_familles`), il passe
+après les raisons de zone, et revu SOUS le plafond il est promu comme le
+signal neuf d'avant (`_RAISONS_PROMOUVABLES`).
+⚠️ Un premier décompte des refus, sur les seuls scans standard, donnait 9-1 :
+les scans reprice évaluent aussi le basket, le compte complet est 27-15.
+⚠️ `ops.py nba` apparie le match par l'heure du coup d'envoi
+(`points_cloture.le_plus_proche`) : sa première version prenait le premier
+match des deux franchises sur trois jours et rendait 58/18/13 au lieu de
+57/21/11.
+⚠️ `gh run view` lancé hors du dépôt exige `-R <owner/repo>` : sous
+`2>/dev/null` il sort vide, en silence — 321 logs vides avant de le voir.
+
+Gardiens : `tests/test_plafond_en_fantome.py`,
+`tests/test_verdict_perimetre_vivant.py`, `tests/test_points_cloture.py`.
+
 ### Le marché Euroleague sous-estime le domicile : correction de +3 pts sur les marchés de côté (2026-11-02)
 
 Symptôme : Euroleague 7-13 en zone (10-20 avec les fantômes) pour 55 %

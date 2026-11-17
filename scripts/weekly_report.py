@@ -40,6 +40,7 @@ from core.learning_layer import (BANDE_COTE_DECISION_LE, BANDE_COTE_DEPUIS,
                                  SPORT_DEFAULTS, _LEDGER_SELECT, _PLAYABLE_MAX_MINUTES,
                                  _PLAYABLE_MIN_MINUTES,
                                  _clv_stats, _dater_par_signal, _sport_stats,
+                                 lignes_du_perimetre, lire_motifs_exclus,
                                  load_sport_verdicts, playable_rows,
                                  post_correction_rows)
 from core.perf_view import libelles_regroupes
@@ -698,12 +699,16 @@ def main(argv: list[str] | None = None) -> int:
     sb = get_db(write=False)
     now = datetime.now(timezone.utc)
     metrics: dict[str, dict] = {}
+    # Périmètre VIVANT, comme le verdict (2026-11-17) : la présaison NBA et les
+    # ligues exclues ne pèsent plus sur la ligne d'un sport qu'on émet encore.
+    motifs_exclus = lire_motifs_exclus(sb)
     for sport in SPORT_DEFAULTS:
         try:
             res = (sb.table("ai_learning_ledger").select(_LEDGER_SELECT)
                    .eq("sport", sport).order("created_at", desc=True)
                    .limit(LIMIT).execute())
-            metrics[sport] = sport_truth_metrics(res.data or [])
+            metrics[sport] = sport_truth_metrics(
+                lignes_du_perimetre(res.data or [], motifs_exclus))
         except Exception as e:
             print(f"{sport}: lecture impossible — {e}")
     try:

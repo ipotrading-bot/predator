@@ -47,7 +47,7 @@ class TestRaisonDuFantome:
         assert eng._shadow_reason(_sig(minutes=_PLAYABLE_MIN_MINUTES)) is None
 
     def test_la_borne_est_importee_pas_recopiee(self):
-        src = inspect.getsource(eng._shadow_reason)
+        src = inspect.getsource(eng._raison_de_zone)
         assert "_PLAYABLE_MIN_MINUTES" in src and "120" not in src
 
     def test_hors_zone_haute_est_fantome(self):
@@ -65,7 +65,7 @@ class TestRaisonDuFantome:
     def test_les_deux_bornes_sont_importees_de_la_meme_source(self):
         """Règle n°6 : le moteur, la couche d'apprentissage et /performance
         découpent au même endroit — aux DEUX bouts, pas seulement en bas."""
-        src = inspect.getsource(eng._shadow_reason)
+        src = inspect.getsource(eng._raison_de_zone)
         assert "_PLAYABLE_MAX_MINUTES" in src and "1440" not in src
         from core import learning_layer
         assert eng._PLAYABLE_MIN_MINUTES is learning_layer._PLAYABLE_MIN_MINUTES
@@ -88,7 +88,7 @@ class TestRaisonDuFantome:
             monkeypatch.setattr(eng, "REPRICE", reprice)
             assert eng._shadow_reason(_sig(minutes=600)) is None
             assert eng._shadow_reason(_sig(minutes=30)) == "t_minus_2h"
-        corps = inspect.getsource(eng._shadow_reason).split('"""')[2]
+        corps = inspect.getsource(eng._raison_de_zone).split('"""')[2]
         assert "golden_hour" not in corps
 
     def test_sport_fantome_prime(self, monkeypatch):

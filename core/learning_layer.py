@@ -31,6 +31,8 @@ import os
 from datetime import datetime, timezone
 
 from core.constants import CLOSING_SRC_ORACLE, TAX_RATE as _TAX_RATE, net_b, roi_net_of_tax
+from core.source_adapter import (LIGUES_EXCLUES_META_KEY, hors_perimetre_vivant,
+                                 motifs_ligues)
 from core.stats_utils import brier_reference, brier_score, p_breakeven, wilson_ci
 
 log = logging.getLogger("LEARN")
@@ -1144,11 +1146,39 @@ def _mouvement_permis(bases: dict, cle: str, n: int) -> bool:
 
 _LEDGER_SELECT = ("signal_id, outcome, kelly_pct, odds, market_type, initial_edge, sharp_prob, "
                   "clv_pct_real, closing_pinnacle_price, closing_source, time_to_match_minutes, "
-                  "created_at, sport, selection, match")
+                  "created_at, sport, selection, match, league")
 # Prix d'ouverture (sql/migrate_v10_21) : lu en plus quand la colonne existe ;
 # sans elle, la lecture retombe sur _LEDGER_SELECT au lieu de casser l'audit.
 _LEDGER_SELECT_OUVERTURE = _LEDGER_SELECT + ", ouverture_sharp_prob"
 _LECTURE_MAX = 5000   # garde-fou de volume de compute_and_save, pas une fenêtre
+
+
+def lire_motifs_exclus(sb) -> tuple[str, ...]:
+    """Motifs de ligues exclus par l'opérateur (`meta.perimetre_ligues_exclues`),
+    la clé que lit le scan. Panne ou clé absente → () + log : rien n'est exclu."""
+    try:
+        res = (sb.table("meta").select("value")
+               .eq("key", LIGUES_EXCLUES_META_KEY).limit(1).execute())
+        lignes = res.data or []
+        return motifs_ligues(lignes[0].get("value") if lignes else None)
+    except Exception as e:
+        log.warning("lecture de %s : %s — verdicts sur toutes les lignes",
+                    LIGUES_EXCLUES_META_KEY, e)
+        return ()
+
+
+def lignes_du_perimetre(rows: list[dict], motifs) -> list[dict]:
+    """Les lignes du périmètre VIVANT (source_adapter.hors_perimetre_vivant) :
+    ni présaison NBA, ni ligue exclue par l'opérateur. Pure.
+
+    Sert à ce qui est DIT — verdict par sport, calibration jointe, diagnostic
+    de bandes, rapport hebdo. Ce qui est APPLIQUÉ (seuils, plafonds, ordre des
+    sports au scan) garde toutes les lignes : le restreindre ferait tomber le
+    plafond d'edge du basket (5 lignes de saison régulière pour 10 exigées),
+    donc changerait l'émission sans mesure (règle 10). Les refus du plafond
+    sont mesurés en fantôme depuis le même jour : c'est eux qui le jugeront."""
+    return [r for r in rows
+            if not hors_perimetre_vivant(r.get("sport"), r.get("league"), motifs)]
 
 
 def _dater_par_signal(sb, rows: list[dict]) -> list[dict]:
@@ -1395,6 +1425,8 @@ def compute_and_save(sb) -> dict[str, float]:
 
     perimetre = sports_au_perimetre()
     ranking_stats: dict[str, dict] = {}   # sport -> stats, pour _save_sport_ranking
+    verdict_stats: dict[str, dict] = {}   # sport -> stats du périmètre VIVANT, pour les verdicts
+    motifs_exclus = lire_motifs_exclus(sb)
     clv_by_sport: dict[str, dict] = {}    # sport -> _clv_stats, pour les verdicts
     calib_by_sport: dict[str, dict] = {}  # sport -> calibration_par_tranche, consultatif
     all_preds: list[tuple[float, int]] = []   # calibration, tous sports confondus
@@ -1465,8 +1497,18 @@ def compute_and_save(sb) -> dict[str, float]:
                          CALIBRATION_EPOCH)
             stats = _sport_stats(appliquables)
             ranking_stats[sport] = stats
-            clv_by_sport[sport] = _clv_stats(appliquables)
-            calib_by_sport[sport] = calibration_par_tranche(appliquables)
+            # Ce qui est DIT juge le périmètre VIVANT (2026-11-17) : le verdict
+            # basket annonçait −2,78 u sur 94 réglés, dont 22 de présaison NBA
+            # et de WNBA (−5,92 u) ; la saison régulière seule faisait +3,14 u.
+            # `stats`, les plafonds et les seuils gardent TOUTES les lignes —
+            # voir lignes_du_perimetre.
+            dits = lignes_du_perimetre(appliquables, motifs_exclus)
+            if len(dits) != len(appliquables):
+                log.info("[%s] verdict sur %d/%d lignes (périmètre vivant : présaison "
+                         "NBA et ligues exclues sorties)", sport, len(dits), len(appliquables))
+            verdict_stats[sport] = _sport_stats(dits)
+            clv_by_sport[sport] = _clv_stats(dits)
+            calib_by_sport[sport] = calibration_par_tranche(dits)
             all_preds.extend(
                 (r["sharp_prob"], 1 if r["outcome"] == "WIN" else 0)
                 for r in rows
@@ -1549,7 +1591,8 @@ def compute_and_save(sb) -> dict[str, float]:
                     sport, SPORT_DEFAULTS[sport], lignes_sport, now)
                 updated[sport] = en_vigueur if en_vigueur is not None else SPORT_DEFAULTS[sport]
 
-            edge_warning = _edge_band_diagnostic(sport, rows)
+            edge_warning = _edge_band_diagnostic(
+                sport, lignes_du_perimetre(rows, motifs_exclus))
             if edge_warning:
                 lignes_sport.append(edge_warning)
 
@@ -1605,7 +1648,7 @@ def compute_and_save(sb) -> dict[str, float]:
 
     # Verdicts promotion/rétrogradation (Phase 4) — loggés, jamais appliqués.
     try:
-        summary_lines.extend(_save_sport_verdicts(sb, ranking_stats, clv_by_sport, now,
+        summary_lines.extend(_save_sport_verdicts(sb, verdict_stats, clv_by_sport, now,
                                                   perimetre=perimetre,
                                                   calib_by_sport=calib_by_sport))
     except Exception as e:
