@@ -411,6 +411,12 @@ def _espn_jour(path: str, jour: str) -> list:
 # les runners (HTTP ≠ 200 sur trois audits de suite) : remettre alors le
 # chemin à vide et sortir la ligue de l'achat (modèle de la boxe,
 # `core.odds_api.LIGUES_RETIREES`). Gardien : tests/test_euroleague_scores.py.
+# REVUE DU 2026-11-15, faite le 2026-11-18 — LA VOIE RESTE : 43 signaux
+# Euroleague sur 43 émis depuis le 2026-10-01 sont réglés (28 recommandés,
+# 15 fantômes), et `meta.quota_euroleague_results_<jour>` montre 1 à 21
+# requêtes servies par jour de match pour un budget de 60. Le second critère
+# (HTTP ≠ 200 sur trois audits de suite) reste en vigueur sans date ;
+# prochaine relecture à la fin de la saison, le 2027-04-16.
 EUROLEAGUE_BASE = "https://api-live.euroleague.net/v2/competitions/E/seasons"
 # La saison change de code à l'été : un match d'octobre 2026 comme un match
 # d'avril 2027 appartiennent à « E2026 ».

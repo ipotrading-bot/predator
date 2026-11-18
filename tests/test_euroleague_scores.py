@@ -110,6 +110,9 @@ class TestLaSourceEstAuRegistre:
         source = inspect.getsource(ss)
         bloc = source[source.index("1ter. EuroLeague"): source.index("def _euroleague_saison")]
         assert "RETRAIT" in bloc and "2026-11-15" in bloc
+        # La revue du 2026-11-15 est faite (43/43 réglés) : elle est écrite
+        # là où vit le critère, avec la date de la relecture suivante.
+        assert "REVUE DU 2026-11-15" in bloc and "2027-04-16" in bloc
 
 
 class TestLaSaison:

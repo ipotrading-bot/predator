@@ -132,6 +132,8 @@ _WINDOWS: dict[str, list[tuple]] = {
     # Segunda : 12:00→19:00 UTC du vendredi au lundi → 09:03 à 16:03.
     "soccer_spain_segunda_division":     [((5, 6), 9, 13), (_ALL, 13, 17)],
     # Série B brésilienne : 19:00→00:00 UTC → 16:03, 19:03, 21:03, 23:03.
+    # Retirée du scan payant le 2026-11-18 (LIGUES_RETIREES, décision
+    # opérateur) : fenêtre conservée pour une réouverture.
     "soccer_brazil_serie_b":             [(_ALL, 16, 24)],
     # ── Second élargissement (2026-10-01, décision opérateur) ─────────
     # Fenêtres DÉRIVÉES des coups d'envoi réels de la journée du 9 au 12/10
