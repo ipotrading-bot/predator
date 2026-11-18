@@ -807,6 +807,150 @@ peu la dépense des ligues déjà scannées. À recaler sur
 Gardien : `tests/test_ordre_de_depense.py::TestSecondLotDu1erOctobre` et
 `::TestLiguesEnEssai`.
 
+### Deux dates de revue dépassées, dont une sans aucune trace ; la Série B brésilienne payée huit semaines pour zéro signal (2026-11-18)
+
+**Symptôme.** Aucun, et c'est le défaut. Les critères de retrait « datés »
+(règle 13) portaient le 2026-10-20 pour le premier lot de ligues en essai
+(cinq, entrées le 2026-09-22), le 2026-11-15 pour le second lot (sept,
+entrées le 2026-10-01) et pour la voie de scores Euroleague, le 2026-11-16
+pour le tennis ATP/WTA 500. Au 2026-11-18, aucune de ces revues n'était
+faite, et celle du 2026-10-20 n'avait laissé AUCUNE trace — ni ici, ni dans
+le code.
+
+**Cause.** Une date dans un commentaire ne sonne pas : rien ne rappelait
+l'échéance. Les gardiens vérifiaient qu'une date ÉTAIT écrite, pas qu'elle
+était encore à venir. Les revues ont été faites le 2026-11-18, à la demande
+de l'opérateur (« fais les revues »).
+
+MESURÉ le 2026-11-18. Recommandés (`is_shadow` faux) de la table `signals`,
+réglés, mise plate, hors taxe, matchs depuis le 2026-09-22 ; prix sharp =
+`meta.oddsapi_exec_<clé>` (« k/N ») au dernier achat ; coût = lignes
+`<clé>: N events | … used=…` comptées dans les logs des 146 scans standard
+du 2026-11-04 au 2026-11-18, à 3 crédits par achat (vérifié sur le compteur
+`used=` 360 → 363 → 366 du run 42367049333). La fenêtre contient la trêve
+internationale : ces coûts sont un MINIMUM.
+
+| ligue | G-P-N | mise plate | prix sharp | crédits / 14 j |
+|---|---|---|---|---|
+| **Premier lot (2026-09-22)** | | | | |
+| Ligue des Nations | 43-16-3 | +13,84 u | — | 123 |
+| Segunda | 10-9-0 | −1,14 u | 1/1 | 120 |
+| League One | 1-0-0 | +1,08 u | 5/5 | 18 |
+| League Two | 0-0-0 | — | 9/9 | 27 |
+| Série B brésilienne | 0-0-0 | — | 7/7 | 90 |
+| **Second lot (2026-10-01)** | | | | |
+| Turquie | 5-2-1 | +1,68 u | 4/4 | 24 |
+| Eredivisie | 2-5-0 | −3,32 u | 1/1 | 30 |
+| 2. Bundesliga | 2-1-0 | +0,28 u | 3/3 | 18 |
+| Championship | 2-0-0 | +1,91 u | 11/11 | 15 |
+| Belgique | 1-0-0 | +0,89 u | 4/4 | 27 |
+| Serie B italienne | 1-0-0 | +0,75 u | 6/6 | 6 |
+| Ligue 2 | 0-0-0 | — | 7/7 | 9 |
+
+- Ligue des Nations : 73 % sur 59 décidés, Wilson IC95 [60–83 %] pour un
+  point mort à 58 % (cote moyenne 1,718) — au-dessus du point mort.
+- Second lot entier : 13-8-1, +2,19 u, 62 % [Wilson 41–79 %] pour un point
+  mort vers 55 % ; 129 crédits en 14 jours, soit ~9/j mesurés pour 22,7/j
+  budgétés — dernière famille, refusée en premier : 9 à 21 refus « rythme »
+  par ligue sur la fenêtre.
+- Aucun des deux critères (« < 20 % des matchs avec prix sharp », « sous le
+  point mort sur 30 réglés ») ne déclenche, pour aucune ligue. Mais aucune
+  ligue du second lot n'approche 30 réglés : 8 au mieux en 6,5 semaines,
+  ~3 signaux par semaine pour les sept. Le critère PAR LIGUE ne pouvait pas
+  trancher avant des mois.
+
+**Série B brésilienne.** Aucun signal, ni recommandé ni fantôme, dans
+`signals` depuis le 2026-09-22, pour 30 achats = 90 crédits sur les seuls 14
+derniers jours. Vérifié que ce n'est PAS un défaut : au scan standard du
+2026-11-14 16:11 UTC (run 43614152115), 7 événements achetés, prix sharp
+présent (« CONTRE-EXP … matchbook d'accord avec Pinnacle » sur 6 matchs),
+matchs évalués, puis DISCARD sur EV négatif — DNB (AH 0.0) de −5,44 % à
+−11,82 % : América Mineiro–Avaí −11,82 %, Criciúma–Novorizontino −10,80 %,
+CRB–Ceará −8,08 %, Atlético Goianiense–Cuiabá −7,38 %, Juventude–Botafogo-SP
+−5,44 %. 1xbet y est sous le prix juste : il n'y a pas d'edge à prendre.
+
+**Tennis ATP/WTA 500** (élargissement du 2026-09-30 ; critère : retirer si
+n < 10 ou sous le point mort). Tokyo ATP 5-0 (+4,14 u), Bâle 2-1 (+0,43 u),
+Vienne 0-2 (−2,00 u), Tokyo WTA 1-0 (+1,00 u), Ningbo aucun signal : 8-3,
++3,57 u, n=11 ; 73 % [Wilson 43–90 %] pour un point mort vers 54 %. Reste.
+
+**Euroleague, voie de scores `api-live.euroleague.net`** (critère : au moins
+8 signaux sur 10 réglés). 43 signaux sur 43 réglés depuis le 2026-10-01 (28
+recommandés, 12-16 ; 15 fantômes, 7-8) ; `meta.quota_euroleague_results_<jour>`
+montre 1 à 21 requêtes par jour pour un budget de 60. Reste.
+
+**Fait**, sur DÉCISIONS OPÉRATEUR du 2026-11-18 (« oui fais les 2 », règle
+11) :
+1. `soccer_brazil_serie_b` sort de `SPORT_KEYS` et de `LIGUES_EN_ESSAI`,
+   entre dans `core.odds_api.LIGUES_RETIREES` avec sa date et son motif ; sa
+   fenêtre de `core.scan_windows._WINDOWS` est conservée pour une
+   réouverture (même modèle que l'Argentine et la WNBA). C'est une décision,
+   PAS une preuve de perte (règle 7) : zéro ligne réglée.
+2. Nouvelles dates : 2026-12-31 pour les onze ligues en essai restantes, le
+   second lot étant désormais jugé EN LOT (« sous le point mort sur 30
+   réglés du LOT ») ; 2027-03-15 pour le tennis 500 (après la tournée de
+   février, sur 30 réglés) ; Euroleague relue en fin de saison, le
+   2027-04-16, le critère « HTTP ≠ 200 sur trois audits de suite » restant
+   en vigueur.
+3. Le compte rendu de chaque revue est écrit DANS le module, à côté du
+   critère : `core/odds_api.py` au-dessus de `LIGUES_EN_ESSAI` et dans
+   `TENNIS_TOURNAMENTS`, `core/score_sources.py` bloc « 1ter. EuroLeague ».
+
+**Pas fait.**
+- Aucun motif « Brazil … Serie B » posé dans `meta.perimetre_ligues_exclues` :
+  le retrait coupe la dépense OddsAPI seulement, odds-api.io peut encore
+  présenter ces matchs (ils ne coûtent pas de crédit OddsAPI). Non demandé
+  par l'opérateur.
+- Aucune autre ligue retirée : Eredivisie 2-5 sur 7 décidés n'est pas une
+  mesure (règle 7).
+- Aucun seuil touché (règle 10).
+- Aucun rappel automatique d'échéance n'a été construit : le gardien vérifie
+  seulement que les dates écrites étaient à venir AU JOUR DE LA REVUE. Le
+  2026-12-31 passera aussi silencieusement que le 2026-10-20 si personne ne
+  le lit.
+
+⚠️ Un critère de retrait « daté » ne se déclenche pas tout seul : la date du
+2026-10-20 est passée sans que personne la lise. À chaque revue, écrire le
+résultat dans le module ET reposer une date à venir.
+
+⚠️ « Sous le point mort sur 30 réglés » par ligue n'est atteignable que par
+une ligue qui ÉMET. Une ligue qui n'émet RIEN (Série B brésilienne, League
+Two, Ligue 2) ne déclenchera jamais ce critère alors qu'elle coûte. Le signal
+à lire pour elles : crédits dépensés / signaux émis.
+
+⚠️ Ne pas confondre `soccer_brazil_serie_b` (retirée) avec
+`soccer_italy_serie_b` (en essai, conservée), ni avec
+`soccer_brazil_campeonato` (Série A, achetée).
+
+Requête de la mesure, par ligue. `match_time` est du TEXTE : le cast
+`::timestamptz` est obligatoire.
+
+```sql
+select league,
+       count(*) filter (where outcome='WIN')  w,
+       count(*) filter (where outcome='LOSS') l,
+       count(*) filter (where outcome='PUSH') p,
+       round(sum(case when outcome='WIN'  then xbet_odd-1
+                      when outcome='LOSS' then -1 else 0 end)::numeric, 2) pl
+from signals
+where sport='soccer' and not coalesce(is_shadow,false)
+  and match_time::timestamptz >= '2026-09-22'
+group by 1 order by 1;
+```
+
+Les libellés des deux sources se regroupent À LA MAIN, après lecture de la
+liste complète (règle opérateur « toujours vérifier les noms ») :
+« Championship » / « England - Championship » ; « Dutch Eredivisie » /
+« Netherlands - Eredivisie » ; « Belgium First Div » ; « Turkey Super
+League » / « Turkiye - Super Lig » ; « Bundesliga 2 - Germany » ; « Italy -
+Serie B » ; « La Liga 2 - Spain » / « Spain - LaLiga 2 » ; « League 1 » ;
+« UEFA Nations League » et « International - UEFA Nations League, … ».
+
+Gardiens : `tests/test_ordre_de_depense.py::TestSerieBBresilienneRetiree`,
+`::TestRevueDu18Novembre`,
+`::TestSecondLotDu1erOctobre::test_les_sept_sont_achetees_en_essai_et_datees` ;
+`tests/test_euroleague_scores.py` (`test_le_critere_de_retrait_est_ecrit_et_date`).
+
 ### Le tennis du circuit principal n'était jamais lu chez odds-api.io (2026-10-01)
 
 **Symptôme.** Depuis l'élargissement aux 500 (2026-09-30), l'ATP de Tokyo et

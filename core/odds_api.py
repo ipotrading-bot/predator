@@ -149,7 +149,8 @@ SPORT_KEYS = {
     "soccer_england_league1":                "soccer",      # D3 anglaise — samedi 14h UTC
     "soccer_england_league2":                "soccer",      # D4 anglaise — samedi 14h UTC
     "soccer_spain_segunda_division":         "soccer",      # D2 espagnole — ven-lun
-    "soccer_brazil_serie_b":                 "soccer",      # D2 brésilienne — soirées 19-23h UTC
+    # Série B brésilienne : RETIRÉE le 2026-11-18, décision opérateur — voir
+    # LIGUES_RETIREES (0 signal en 8 semaines d'essai).
     # ── Second élargissement (2026-10-01, décision opérateur) ────────
     # Même famille, même rang : dernières servies. MESURÉ ce jour-là : la
     # demande réelle d'OddsAPI (`meta.oddsapi_demande_<jour>`) tournait à ~90
@@ -218,21 +219,44 @@ def rangs_par_famille(cles=None) -> dict[str, int]:
 # plus Pinnacle seul depuis Matchbook et Smarkets — mais c'est exactement ce
 # que le critère « < 20 % des matchs avec prix sharp » va trancher, ligue par
 # ligue, sur des lignes réglées.
+#
+# REVUE DU 2026-11-18 (les deux dates, 10-20 et 11-15, étaient dépassées ; la
+# première n'avait laissé aucune trace). Recommandés réglés depuis le
+# 2026-09-22, mise plate, hors taxe ; prix sharp = `meta.oddsapi_exec_<clé>`
+# au dernier achat ; coût = achats comptés dans les 146 scans standard du
+# 04 au 18/11 (3 crédits par achat, fenêtre qui contient une trêve).
+#   Ligue des Nations   43-16-3  +13,84 u  — 73 % [Wilson 60–83 %] pour un
+#                       point mort à 58 % : au-dessus, sur 59 décidés.
+#   Segunda             10-9     −1,14 u   1/1 sharp   120 crédits / 14 j
+#   League One           1-0     +1,08 u   5/5          18
+#   League Two           0-0        —      9/9          27
+#   Série B brésilienne  0-0        —      7/7          90   → RETIRÉE
+#   Turquie              5-2-1   +1,68 u   4/4          24
+#   Eredivisie           2-5     −3,32 u   1/1          30
+#   2. Bundesliga        2-1     +0,28 u   3/3          18
+#   Championship         2-0     +1,91 u  11/11         15
+#   Belgique             1-0     +0,89 u   4/4          27
+#   Serie B italienne    1-0     +0,75 u   6/6           6
+#   Ligue 2              0-0        —      7/7           9
+# Second lot ensemble : 13-8-1, +2,19 u, 62 % [41–79 %] pour un point mort
+# vers 55 % ; 129 crédits en 14 jours (~9/j mesurés pour 22,7 budgétés : la
+# dernière famille est refusée en premier, 9 à 21 refus de rythme chacune).
+# AUCUN critère ne déclenche. Mais à ~3 signaux par semaine pour sept ligues,
+# « 30 réglés » par ligue n'arrive pas avant des mois : le second lot se
+# juge désormais EN LOT (décision opérateur du 2026-11-18), nouvelle date
+# 2026-12-31 pour tous. Requête de la mesure : INCIDENTS.md, même date.
 LIGUES_EN_ESSAI: dict[str, str] = {
     "soccer_uefa_nations_league":
-        "2026-09-22, ~5.4 créd/j — retrait le 2026-10-20 si < 20 % des matchs "
+        "2026-09-22, ~5.4 créd/j — retrait le 2026-12-31 si < 20 % des matchs "
         "avec prix sharp, ou sous le point mort sur 30 réglés",
     "soccer_england_league1":
-        "2026-09-22, ~0.9 créd/j — retrait le 2026-10-20 si < 20 % des matchs "
+        "2026-09-22, ~0.9 créd/j — retrait le 2026-12-31 si < 20 % des matchs "
         "avec prix sharp, ou sous le point mort sur 30 réglés",
     "soccer_england_league2":
-        "2026-09-22, ~1.8 créd/j — retrait le 2026-10-20 si < 20 % des matchs "
+        "2026-09-22, ~1.8 créd/j — retrait le 2026-12-31 si < 20 % des matchs "
         "avec prix sharp, ou sous le point mort sur 30 réglés",
     "soccer_spain_segunda_division":
-        "2026-09-22, ~3.6 créd/j — retrait le 2026-10-20 si < 20 % des matchs "
-        "avec prix sharp, ou sous le point mort sur 30 réglés",
-    "soccer_brazil_serie_b":
-        "2026-09-22, ~6.9 créd/j — retrait le 2026-10-20 si < 20 % des matchs "
+        "2026-09-22, ~3.6 créd/j — retrait le 2026-12-31 si < 20 % des matchs "
         "avec prix sharp, ou sous le point mort sur 30 réglés",
     # ── Second lot, 2026-10-01 ────────────────────────────────────────
     # Budget MESURÉ par le rejeu de la VRAIE politique de dépense
@@ -249,26 +273,26 @@ LIGUES_EN_ESSAI: dict[str, str] = {
     # Couverture de règlement : 6/6 sur les prochains matchs de chacune
     # (`ops.py ligues soccer 14` — ESPN `soccer/all`, LiveScore en repli).
     "soccer_efl_champ":
-        "2026-10-01, ~3.0 créd/j — retrait le 2026-11-15 si < 20 % des matchs "
-        "avec prix sharp, ou sous le point mort sur 30 réglés",
+        "2026-10-01, ~3.0 créd/j — retrait le 2026-12-31 si < 20 % des matchs "
+        "avec prix sharp, ou sous le point mort sur 30 réglés du LOT",
     "soccer_netherlands_eredivisie":
-        "2026-10-01, ~3.9 créd/j — retrait le 2026-11-15 si < 20 % des matchs "
-        "avec prix sharp, ou sous le point mort sur 30 réglés",
+        "2026-10-01, ~3.9 créd/j — retrait le 2026-12-31 si < 20 % des matchs "
+        "avec prix sharp, ou sous le point mort sur 30 réglés du LOT",
     "soccer_belgium_first_div":
-        "2026-10-01, ~4.3 créd/j — retrait le 2026-11-15 si < 20 % des matchs "
-        "avec prix sharp, ou sous le point mort sur 30 réglés",
+        "2026-10-01, ~4.3 créd/j — retrait le 2026-12-31 si < 20 % des matchs "
+        "avec prix sharp, ou sous le point mort sur 30 réglés du LOT",
     "soccer_turkey_super_league":
-        "2026-10-01, ~4.7 créd/j — retrait le 2026-11-15 si < 20 % des matchs "
-        "avec prix sharp, ou sous le point mort sur 30 réglés",
+        "2026-10-01, ~4.7 créd/j — retrait le 2026-12-31 si < 20 % des matchs "
+        "avec prix sharp, ou sous le point mort sur 30 réglés du LOT",
     "soccer_germany_bundesliga2":
-        "2026-10-01, ~2.1 créd/j — retrait le 2026-11-15 si < 20 % des matchs "
-        "avec prix sharp, ou sous le point mort sur 30 réglés",
+        "2026-10-01, ~2.1 créd/j — retrait le 2026-12-31 si < 20 % des matchs "
+        "avec prix sharp, ou sous le point mort sur 30 réglés du LOT",
     "soccer_france_ligue_two":
-        "2026-10-01, ~1.7 créd/j — retrait le 2026-11-15 si < 20 % des matchs "
-        "avec prix sharp, ou sous le point mort sur 30 réglés",
+        "2026-10-01, ~1.7 créd/j — retrait le 2026-12-31 si < 20 % des matchs "
+        "avec prix sharp, ou sous le point mort sur 30 réglés du LOT",
     "soccer_italy_serie_b":
-        "2026-10-01, ~3.0 créd/j — retrait le 2026-11-15 si < 20 % des matchs "
-        "avec prix sharp, ou sous le point mort sur 30 réglés",
+        "2026-10-01, ~3.0 créd/j — retrait le 2026-12-31 si < 20 % des matchs "
+        "avec prix sharp, ou sous le point mort sur 30 réglés du LOT",
 }
 
 
@@ -322,6 +346,19 @@ LIGUES_RETIREES: dict[str, str] = {
     # ESPN) : les lignes passées se lisent et se règlent toujours (règle 9).
     "americanfootball_ncaaf": "2026-10-06 — décision opérateur : NCAA retirée, NFL conservée",
     "boxing_boxing": "2026-09-17 — aucune source de scores (ESPN 400), jamais payable, 0 signal émis",
+    # DÉCISION OPÉRATEUR du 2026-11-18 (règle 11), à la revue des ligues en
+    # essai. Entrée le 2026-09-22 pour ~6,9 créd/j : en huit semaines, AUCUN
+    # signal (recommandé ou fantôme) dans `signals`, pour 30 achats = 90
+    # crédits sur les seuls 14 derniers jours. Ce n'est PAS un défaut : au
+    # scan du 2026-11-14 16:11 UTC (run 43614152115) ses 7 matchs portent un
+    # prix sharp (Pinnacle confirmé par Matchbook) et sont évalués — 1xbet y
+    # est 5 à 12 % SOUS le prix juste (DNB : EV −5,44 à −11,82 %). Le critère
+    # écrit ne la sortait pas (7/7 avec prix sharp, 0 réglé) : c'est une
+    # décision, pas une preuve de perte (règle 7). Le retrait de la clé coupe
+    # la dépense OddsAPI seulement ; odds-api.io peut encore présenter ses
+    # matchs (aucun motif posé dans `meta.perimetre_ligues_exclues`).
+    # Réouverture : instruction opérateur.
+    "soccer_brazil_serie_b": "2026-11-18 — décision opérateur : 0 signal en 8 semaines d'essai, ~6 créd/j payés pour rien",
 }
 
 
@@ -407,9 +444,16 @@ TENNIS_TOURNAMENTS: tuple = (
     # de Tokyo. Budget : ~21 crédits/semaine par tournoi ouvert
     # (`ops.py ligues tennis`), soit ~40-60/semaine les semaines de 500, sous
     # le plafond par créneau de SpendPolicy (le tennis passe en DERNIER).
-    # Revue le 2026-11-16 : si les recommandés réglés de ces tournois restent
-    # sous n=10, ou que le digest les montre sous le point mort, les retirer
-    # d'ici — décision opérateur.
+    # REVUE DU 2026-11-16, faite le 2026-11-18 — ILS RESTENT. Recommandés
+    # réglés des 500 depuis le 2026-09-30, mise plate : Tokyo ATP 5-0
+    # (+4,14 u), Bâle 2-1 (+0,43 u), Vienne 0-2 (−2,00 u), Tokyo WTA 1-0
+    # (+1,00 u) → 8-3, +3,57 u, n=11 : le seuil de 10 est passé de justesse,
+    # 73 % [Wilson 43–90 %] pour un point mort vers 54 %. Pas sous le point
+    # mort, et pas une preuve non plus (règle 7).
+    # Prochaine revue le 2027-03-15 (décision opérateur du 2026-11-18), après
+    # la tournée de février : si les recommandés réglés de ces tournois sont
+    # alors sous le point mort sur 30 réglés, les retirer d'ici — décision
+    # opérateur.
     # Noms ATP 500
     "rotterdam", "abn_amro", "dallas", "rio", "rio_open", "acapulco",
     "mexican", "mexican_open", "barcelona", "munich", "halle", "queens",

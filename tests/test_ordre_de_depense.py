@@ -15,6 +15,8 @@ Deux décisions à garder :
   2. le baseball est retiré du scan payant (décision opérateur du
      2026-09-17) — sans rien effacer : ses lignes restent réglables.
 """
+import re
+
 import run_engine
 from core import odds_api, scan_windows
 from core.odds_api import SPORT_KEYS, LIGUES_RETIREES, LIGUES_EN_ESSAI
@@ -188,12 +190,63 @@ class TestArgentineRetiree:
         assert "soccer" in sports_reglables()
 
 
+class TestSerieBBresilienneRetiree:
+    """Décision opérateur du 2026-11-18, à la revue des ligues en essai : la
+    Série B brésilienne n'a émis AUCUN signal en huit semaines (1xbet y est
+    5 à 12 % sous le prix juste) pour ~6 crédits par jour."""
+
+    def test_la_serie_b_bresilienne_nest_plus_achetee(self):
+        assert "soccer_brazil_serie_b" not in SPORT_KEYS
+        assert "soccer_brazil_serie_b" not in LIGUES_EN_ESSAI
+        assert LIGUES_RETIREES["soccer_brazil_serie_b"].startswith("2026-11-18")
+        assert "décision opérateur" in LIGUES_RETIREES["soccer_brazil_serie_b"]
+        # La Série A brésilienne et la Serie B ITALIENNE, elles, restent.
+        assert "soccer_brazil_campeonato" in SPORT_KEYS
+        assert "soccer_italy_serie_b" in SPORT_KEYS
+
+    def test_sa_fenetre_est_conservee_mais_ne_pese_plus(self):
+        """Comme les autres ligues retirées : la fenêtre reste pour une
+        réouverture sans re-mesure, et ne crée plus de demande."""
+        assert scan_windows._WINDOWS["soccer_brazil_serie_b"]
+        assert "soccer_brazil_serie_b" not in odds_api.rangs_par_famille()
+
+
+class TestRevueDu18Novembre:
+    """Les dates de revue du 2026-10-20 et du 2026-11-15 étaient dépassées,
+    la première sans aucune trace de revue. Un critère « daté » dont la date
+    est passée ne garde plus rien (règle 13) : la revue est écrite dans le
+    module, et chaque essai restant porte une date À VENIR à la date de cette
+    revue."""
+
+    def test_plus_aucun_essai_ne_porte_une_date_depassee_a_la_revue(self):
+        import re
+        from datetime import date
+        for cle, motif in LIGUES_EN_ESSAI.items():
+            m = re.search(r"retrait le (\d{4})-(\d{2})-(\d{2})", motif)
+            assert m, cle
+            assert date(*map(int, m.groups())) > date(2026, 11, 18), cle
+
+    def test_la_revue_est_ecrite_la_ou_vit_le_registre(self):
+        import inspect
+        source = inspect.getsource(odds_api)
+        bloc = source[source.index("REVUE DU 2026-11-18"): source.index("LIGUES_EN_ESSAI: dict")]
+        for mot in ("Ligue des Nations", "Segunda", "Série B brésilienne", "EN LOT"):
+            assert mot in bloc, mot
+
+    def test_le_tennis_500_porte_sa_revue_et_sa_date_suivante(self):
+        import inspect
+        source = inspect.getsource(odds_api)
+        bloc = source[source.index("TENNIS_TOURNAMENTS: tuple"): source.index("_TENNIS_PREFIXES")]
+        assert "REVUE DU 2026-11-16" in bloc and "2027-03-15" in bloc
+
+
 class TestLiguesEnEssai:
     """Règle 13 (AUDIT.md §3bis) : une ligue n'entre qu'avec un budget chiffré,
     un critère de retrait DATÉ et un gardien. Cinq sont entrées le
     2026-09-22, le jour où la mesure a montré que 10 des 11 ligues de foot
     scannées n'avaient aucun match de la semaine (trêve internationale) ;
-    sept le 2026-10-01 (voir TestSecondLotDu1erOctobre)."""
+    sept le 2026-10-01 (voir TestSecondLotDu1erOctobre). La Série B
+    brésilienne est sortie le 2026-11-18 (TestSerieBBresilienneRetiree)."""
 
     def test_chaque_ligue_en_essai_est_reellement_achetee(self):
         """Un registre d'essai qui nomme une ligue qu'on n'achète pas est un
@@ -206,7 +259,10 @@ class TestLiguesEnEssai:
         for cle, motif in LIGUES_EN_ESSAI.items():
             assert motif.startswith("2026-"), f"{cle} : pas de date d'entrée"
             assert "créd/j" in motif, f"{cle} : pas de budget chiffré"
-            assert "retrait le 2026-" in motif, f"{cle} : pas de critère daté"
+            # Une date ENTIÈRE, quelle que soit l'année : le prochain report
+            # peut tomber en 2027.
+            assert re.search(r"retrait le \d{4}-\d{2}-\d{2}", motif), \
+                f"{cle} : pas de critère daté"
 
     def test_une_ligue_en_essai_a_sa_fenetre_de_depense(self):
         """L'invariant qui casse le plus souvent (règle 6) : une clé présente
@@ -243,7 +299,10 @@ class TestSecondLotDu1erOctobre:
         for cle in self.LOT:
             assert SPORT_KEYS[cle] == "soccer", cle
             assert LIGUES_EN_ESSAI[cle].startswith("2026-10-01"), cle
-            assert "retrait le 2026-11-15" in LIGUES_EN_ESSAI[cle], cle
+            # Revue du 2026-11-15 faite le 2026-11-18 : aucun critère ne
+            # déclenche, le lot se juge EN LOT à la date suivante.
+            assert "retrait le 2026-12-31" in LIGUES_EN_ESSAI[cle], cle
+            assert "30 réglés du LOT" in LIGUES_EN_ESSAI[cle], cle
 
     def test_le_budget_annonce_est_celui_du_rejeu(self):
         """Somme des « ~N créd/j » du lot : 22,7, le chiffre du rejeu. Le
