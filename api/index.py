@@ -50,7 +50,8 @@ from core.perf_view import (ALL_MONTHS as _ALL_MONTHS,
                             resolution_rate as _resolution_rate,
                             rows_of_month as _rows_of_month,
                             shown_months as _perf_shown_months,
-                            sport_breakdown as _sport_breakdown)
+                            sport_breakdown as _sport_breakdown,
+                            une_et_autres_mois as _une_et_autres_mois)
 from core.constants import TAX_RATE as _TAX_RATE
 from core.match_reel import meme_match_reel as _meme_match_reel
 from core.db import get_db as _get_db_client
@@ -786,6 +787,8 @@ def performance():
     leagues_hidden  = 0    # ligues sous _LEAGUE_MIN_N paris, non listées
     markets: list   = []   # ventilation par marché du mois sélectionné, perdants d'abord
     global_s: dict  = {}
+    une: dict       = {}   # carte À LA UNE : le mois choisi (perf_view.une_et_autres_mois)
+    autres: list    = []   # cartes des autres mois, repliées
     # Mois sélectionné par le menu déroulant `?mois=YYYY-MM` (ou « tout »).
     # Validé contre la fenêtre affichée : une valeur hors fenêtre — faute de
     # frappe, mois archivé, juillet — retombe sur le mois courant. Le menu est
@@ -898,6 +901,7 @@ def performance():
                     "win_rate_hi":  round(ci_hi * 100, 1),
                     "p_breakeven":  round(breakeven * 100, 1) if breakeven is not None else None,
                     "above_breakeven": (breakeven is not None and ci_lo > breakeven),
+                    "below_breakeven": (breakeven is not None and ci_hi < breakeven),
                     "avg_clv":      round(sum(clv_all) / len(clv_all), 2) if clv_all else None,
                     "avg_edge":     round(sum(edges) / len(edges), 2) if edges else None,
                     "clv_hit":      round(sum(1 for c in clv_all if c >= 0) / max(len(clv_all), 1) * 100, 1) if clv_all else None,
@@ -941,6 +945,10 @@ def performance():
                     m["phantoms"] = {"wins": sum(1 for r in gm if r["outcome"] == "WIN"),
                                      "losses": sum(1 for r in gm if r["outcome"] == "LOSS")}
                 global_s["pnl_units"] = round(sum(m["pnl_units"] for m in monthly), 2)
+                # À LA UNE le mois choisi, le global en bandeau, les autres
+                # mois repliés (demande opérateur du 2026-11-25).
+                une, autres = _une_et_autres_mois(monthly, mois, global_s,
+                                                  _depuis_label(months))
 
                 # PAR LIGUE — « quelles ligues perdent plus souvent ? »
                 # (2026-09-03). Meilleure réussite d'abord (10-31). Le tableau ne CLASSE que
@@ -965,7 +973,7 @@ def performance():
     return render_template("performance.html", rows=rows, history=history,
                            global_s=global_s, monthly=monthly,
                            leagues=leagues, leagues_hidden=leagues_hidden,
-                           markets=markets,
+                           markets=markets, une=une, autres=autres,
                            league_min_n=_LEAGUE_MIN_N,
                            months=[(m, _month_label(m)) for m in months],
                            mois=mois, all_months=_ALL_MONTHS,
