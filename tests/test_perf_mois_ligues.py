@@ -425,6 +425,17 @@ class TestParSport:
         assert tab[0]["pnl_units"] == -3.0 and tab[1]["p_breakeven"] is not None
         assert "win_rate_lo" in tab[1] and "wilson_ci(" not in inspect.getsource(perf_view.sport_breakdown)
 
+    def test_euroleague_est_comptee_dans_le_basket(self):
+        """Demande opérateur du 2026-11-25 : une seule ligne Basket, NBA et
+        Euroleague confondues — affichage seul, le moteur les garde à part."""
+        from core.odds_api import sports_au_perimetre
+        assert {"basketball", "euroleague_basketball"} <= sports_au_perimetre()
+        rows = ([_r("2026-11", "WIN", 2.0, sport="basketball")] * 2
+                + [_r("2026-11", "LOSS", 1.9, sport="euroleague_basketball")] * 3)
+        tab = perf_view.sport_breakdown(rows, 0.0)
+        assert [d["sport"] for d in tab] == ["basketball"]
+        assert tab[0]["pnl_units"] == -1.0
+
     def test_un_sport_que_le_moteur_n_emet_plus_n_a_pas_de_ligne(self):
         """Demande opérateur du 2026-10-08 : MLB (retirée le 09-17) et NCAA
         (10-06) restaient au tableau. La liste est DÉRIVÉE du périmètre du

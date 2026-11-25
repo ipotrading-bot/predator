@@ -481,6 +481,13 @@ def market_breakdown(rows: list[dict], tax_rate: float, min_n: int = 5) -> list[
     return out
 
 
+# Sports AFFICHÉS sous un autre dans le tableau PAR SPORT (demande opérateur
+# du 2026-11-25 : « fusionner Euroligue dans basket »). Affichage SEUL : le
+# moteur garde `euroleague_basketball` à part (Kelly, seuil, correction
+# domicile dédiés) et la ventilation PAR LIGUE le montre toujours seul.
+_FAMILLE_AFFICHEE = {"euroleague_basketball": "basketball"}
+
+
 def sport_breakdown(rows: list[dict], tax_rate: float,
                     perimetre: frozenset | None = None) -> list[dict]:
     """Réussite par sport, même bloc que les mois et les ligues (Wilson, point
@@ -503,7 +510,8 @@ def sport_breakdown(rows: list[dict], tax_rate: float,
     groupes: dict[str, list[dict]] = {}
     for r in rows:
         if r.get("outcome") in _DECISIF and r.get("sport") in perimetre:
-            groupes.setdefault(r["sport"], []).append(r)
+            cle = _FAMILLE_AFFICHEE.get(r["sport"], r["sport"])
+            groupes.setdefault(cle, []).append(r)
     out = []
     for sport, decisifs in groupes.items():
         d = _bloc_decisif(decisifs, tax_rate)
