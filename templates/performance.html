@@ -56,6 +56,7 @@
 .pk:last-child { border-right: none; }
 .pk-v { font-size: 22px; font-weight: 800; line-height: 1; font-family: var(--font-data); white-space: nowrap; }
 .pk-l { font-size: 8.5px; color: var(--t2); text-transform: uppercase; letter-spacing: .6px; margin-top: 6px; line-height: 1.4; font-weight: 600; }
+.pk-ci { font-size: 9px; color: var(--t3); font-family: var(--font-data); margin-top: 2px; white-space: nowrap; }
 @media (min-width: 640px) { .pk { padding: 16px 14px; } .pk-v { font-size: 26px; } .pk-l { font-size: 9px; } }
 
 .sec-hdr { font-size: 10px; font-weight: 600; letter-spacing: 1.5px; text-transform: uppercase; color: var(--t2);
@@ -175,7 +176,8 @@ details[open] > summary.sec-hdr::before { content: '▾'; }
   {# ── Global : gagnés, perdus, remboursés, rien d'autre (demande
      opérateur du 2026-11-25 : « met juste global avec total gagné, perdu,
      remboursé, masquer tout le reste » ; les autres mois aussi, joignables
-     par le menu). Aucun taux ici, donc pas de règle n°7 à rendre. Ce qui
+     par le menu), précédés de la réussite (même jour, « mets le [pourcentage]
+     en premier ») — avec Wilson et point mort dessous, règle n°7. Ce qui
      n'est plus à l'écran reste en infobulle : résolution (biais de survie,
      perf_view.resolution_rate) et fantômes golden hour (< T-2h, jamais
      envoyés, hors de tous les chiffres). « Tous les mois » met déjà le
@@ -184,6 +186,9 @@ details[open] > summary.sec-hdr::before { content: '▾'; }
   {% if not une.global %}
   <div class="sec-hdr">&#9632; GLOBAL</div>
   <div class="perf-kpis" title="{{ depuis }} · {{ global_s.settled }} réglés{% if r and r.rate_pct is not none %} · {{ r.settled }} sur {{ r.denom }} suivis, {{ r.sans_score }} sans score{% endif %} · hors {{ global_s.phantoms.wins }}–{{ global_s.phantoms.losses }} fantômes à moins de 2 h du coup d'envoi, jamais envoyés">
+    {% set g_col = 'var(--green)' if global_s.above_breakeven else ('var(--red)' if global_s.below_breakeven else 'var(--yellow)') %}
+    <div class="pk"><div class="pk-v" style="color:{{ g_col }}">{{ "%.1f"|format(global_s.win_rate) }}%</div><div class="pk-l">Réussite</div>
+      <div class="pk-ci" title="Intervalle de Wilson 95 % · point mort après taxe">{{ "%.0f"|format(global_s.win_rate_lo) }}&ndash;{{ "%.0f"|format(global_s.win_rate_hi) }}{% if global_s.p_breakeven is not none %} &middot; s.{{ "%.0f"|format(global_s.p_breakeven) }}{% endif %}</div></div>
     <div class="pk"><div class="pk-v" style="color:var(--green)">{{ global_s.wins }}</div><div class="pk-l">Gagnés</div></div>
     <div class="pk"><div class="pk-v" style="color:var(--red)">{{ global_s.losses }}</div><div class="pk-l">Perdus</div></div>
     <div class="pk"><div class="pk-v" style="color:var(--t1)">{{ global_s.pushes }}</div><div class="pk-l">Remboursés</div></div>
