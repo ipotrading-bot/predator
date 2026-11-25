@@ -416,6 +416,24 @@ class TestRecommandesEtMarches:
         assert "Les chiffres du haut de page" not in g
 
 
+class TestParMarcheLisible:
+    """Demande opérateur du 2026-11-25 (« améliorer, simplifier ») : l'Euroleague
+    rejoint le basket comme au tableau PAR SPORT, les marchés ont un libellé."""
+
+    def test_euroleague_et_nba_font_une_ligne(self):
+        rows = ([_r("2026-11", "WIN", 1.9, sport="basketball", market_type="spreads_home")] * 4
+                + [_r("2026-11", "LOSS", 1.9, sport="euroleague_basketball", market_type="spreads_home")] * 5)
+        tab = perf_view.market_breakdown(rows, 0.0, min_n=5)
+        assert [(d["sport"], d["market"]) for d in tab] == [("basketball", "spreads_home")]
+        assert tab[0]["label"] == "Handicap dom."
+
+    def test_libelles(self):
+        assert perf_view.libelle_marche("soccer", "h2h") == "Nul remboursé"
+        assert perf_view.libelle_marche("tennis", "h2h") == "Vainqueur"
+        assert perf_view.libelle_marche("soccer", "totals_under") == "Moins"
+        assert perf_view.libelle_marche("soccer", "btts") == "btts"   # inconnu : tel quel
+
+
 class TestParSport:
     def test_meme_bloc_que_les_mois_et_les_ligues(self):
         rows = ([_r("2026-09", "WIN", 1.6, sport="soccer")] * 6
