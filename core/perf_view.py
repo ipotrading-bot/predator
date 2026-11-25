@@ -348,6 +348,36 @@ def monthly_summary(rows: list[dict], tax_rate: float) -> list[dict]:
     return out
 
 
+def une_et_autres_mois(monthly: list[dict], mois: str | None,
+                       global_s: dict, depuis: str) -> tuple[dict, list[dict]]:
+    """La carte À LA UNE de /performance et les cartes repliées des autres mois
+    (demande opérateur du 2026-11-25 : « à la une en grand les résultats
+    mensuels, puis les résultats globaux, puis masquer les mois passés »).
+
+    À la une : la carte du mois choisi dans le menu. Un mois de la fenêtre sans
+    aucune ligne (le 1er au matin) reste À LA UNE, vide — jamais remplacé en
+    silence par le global, qui se lirait comme le mois. « Tous les mois » met
+    le global à la une ; la page masque alors son bandeau global (doublon).
+    Les autres mois : tous ceux qui ne sont pas à la une, du plus récent au
+    plus ancien."""
+    if mois == ALL_MONTHS:
+        une = {k: global_s.get(k) for k in (
+            "wins", "losses", "pushes", "win_rate", "win_rate_lo", "win_rate_hi",
+            "p_breakeven", "above_breakeven", "below_breakeven", "pnl_units",
+            "avg_clv", "clv_is_real", "clv_n", "avg_edge")}
+        une.update({"month": ALL_MONTHS, "label": depuis, "global": True,
+                    "n": (global_s.get("wins") or 0) + (global_s.get("losses") or 0)})
+        return une, list(monthly)
+    une = next((dict(m) for m in monthly if m.get("month") == mois), None)
+    if une is None:
+        une = {"month": mois, "label": month_label(mois or ""), "n": 0,
+               "win_rate": None, "wins": 0, "losses": 0, "pushes": 0,
+               "pnl_units": 0.0, "avg_clv": None, "clv_is_real": False,
+               "clv_n": 0, "avg_edge": None, "p_breakeven": None,
+               "above_breakeven": False, "below_breakeven": False}
+    return une, [m for m in monthly if m.get("month") != mois]
+
+
 def _par_reussite(d: dict, nom: str) -> tuple:
     """Clé de tri de PAR LIGUE et PAR MARCHÉ : la MEILLEURE réussite en haut
     (demande opérateur du 2026-10-31, « classer par ordre de réussite »), à
