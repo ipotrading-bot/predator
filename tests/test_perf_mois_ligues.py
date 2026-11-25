@@ -442,7 +442,10 @@ class TestALaUne:
         assert "{% if not une.global %}" in g                          # pas de doublon
         glob = g[g.index("&#9632; GLOBAL"):g.index("Cellules communes")]
         assert "global_s.wins" in glob and "global_s.losses" in glob and "global_s.pushes" in glob
-        assert "win_rate" not in glob and "in autres" not in g and "month-grid" not in g
+        # la réussite EN PREMIER, avec Wilson et point mort (règle n°7)
+        assert glob.index("global_s.win_rate") < glob.index("global_s.wins }}")
+        assert "global_s.win_rate_lo" in glob and "global_s.p_breakeven" in glob
+        assert "in autres" not in g and "month-grid" not in g
 
 
 class TestParMarcheLisible:
