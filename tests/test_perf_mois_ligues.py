@@ -318,12 +318,12 @@ class TestBranchement:
     def test_le_gabarit_porte_menu_cartes_et_ligues(self):
         g = (RACINE / "templates" / "performance.html").read_text(encoding="utf-8")
         assert 'id="mois-select"' in g and "?mois=" in g
-        for v in ("autres", "une.", "leagues", "mois_label", "all_months"):   # cartes = une + autres (2026-11-25)
+        for v in ("une.", "leagues", "mois_label", "all_months"):   # carte à la une (2026-11-25)
             assert v in g, v
         # Règle n°7 rendue : Wilson et point mort sur les cartes ET les ligues
         assert g.count("win_rate_lo") >= 2 and g.count("p_breakeven") >= 3
         # Fantômes T-2h à part sur les cartes et dans les tuiles, jamais dans un taux
-        assert "m.phantoms" in g and "global_s.phantoms" in g
+        assert "une.phantoms" in g and "global_s.phantoms" in g   # carte du mois à la une (2026-11-25)
 
     def test_par_sport_est_une_section_deroulante(self):
         """Demande opérateur du 2026-10-02 : PAR SPORT se replie comme PAR
@@ -333,7 +333,7 @@ class TestBranchement:
         assert '<div class="sec-hdr">&#9632; PAR SPORT</div>' not in g
         assert ('<summary class="sec-hdr">&#9632; PAR SPORT <em>{{ mois_label }} &middot; '
                 '{{ global_s.by_sport|length }}</em></summary>') in g
-        assert g.count("<details") == g.count("</details>") == 5   # + AUTRES MOIS (2026-11-25)
+        assert g.count("<details") == g.count("</details>") == 4
 
     def test_le_menu_ne_propose_que_la_fenetre(self):
         """Les options du menu sont `months` (= shown_months) + « tout » :
@@ -418,32 +418,31 @@ class TestRecommandesEtMarches:
 
 class TestALaUne:
     """Demande opérateur du 2026-11-25 : le mois choisi À LA UNE en grand, le
-    global en bandeau, les autres mois repliés."""
+    global réduit à gagnés / perdus / remboursés, les autres mois masqués."""
     MONTHLY = [{"month": "2026-11", "label": "novembre 2026", "win_rate": 60.0},
-               {"month": "2026-10", "label": "octobre 2026", "win_rate": 59.0},
-               {"month": "2026-09", "label": "septembre 2026", "win_rate": 60.0}]
+               {"month": "2026-10", "label": "octobre 2026", "win_rate": 59.0}]
     G = {"wins": 536, "losses": 358, "pushes": 3, "win_rate": 60.0, "pnl_units": 52.3}
 
-    def test_le_mois_choisi_est_a_la_une_les_autres_replies(self):
-        une, autres = perf_view.une_et_autres_mois(self.MONTHLY, "2026-10", self.G, "depuis septembre 2026")
+    def test_le_mois_choisi_est_a_la_une(self):
+        une = perf_view.une_du_mois(self.MONTHLY, "2026-10", self.G, "depuis septembre 2026")
         assert une["month"] == "2026-10" and not une.get("global")
-        assert [m["month"] for m in autres] == ["2026-11", "2026-09"]
 
     def test_un_mois_vide_reste_a_la_une_vide_jamais_le_global(self):
-        une, autres = perf_view.une_et_autres_mois(self.MONTHLY, "2026-12", self.G, "depuis septembre 2026")
+        une = perf_view.une_du_mois(self.MONTHLY, "2026-12", self.G, "depuis septembre 2026")
         assert une["label"] == "décembre 2026" and une["win_rate"] is None and une["wins"] == 0
-        assert len(autres) == 3
 
     def test_tous_les_mois_met_le_global_a_la_une(self):
-        une, autres = perf_view.une_et_autres_mois(self.MONTHLY, perf_view.ALL_MONTHS, self.G, "depuis septembre 2026")
+        une = perf_view.une_du_mois(self.MONTHLY, perf_view.ALL_MONTHS, self.G, "depuis septembre 2026")
         assert une["global"] and une["wins"] == 536 and une["label"] == "depuis septembre 2026"
-        assert len(autres) == 3
 
-    def test_le_gabarit_rend_wilson_et_seuil_a_la_une(self):
+    def test_le_gabarit(self):
         g = (RACINE / "templates" / "performance.html").read_text(encoding="utf-8")
         une = g[g.index('<section class="une"'):g.index("</section>")]
         assert "une.win_rate_lo" in une and "une.p_breakeven" in une   # règle n°7
         assert "{% if not une.global %}" in g                          # pas de doublon
+        glob = g[g.index("&#9632; GLOBAL"):g.index("Cellules communes")]
+        assert "global_s.wins" in glob and "global_s.losses" in glob and "global_s.pushes" in glob
+        assert "win_rate" not in glob and "in autres" not in g and "month-grid" not in g
 
 
 class TestParMarcheLisible:

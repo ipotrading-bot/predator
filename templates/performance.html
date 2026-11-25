@@ -56,7 +56,6 @@
 .pk:last-child { border-right: none; }
 .pk-v { font-size: 22px; font-weight: 800; line-height: 1; font-family: var(--font-data); white-space: nowrap; }
 .pk-l { font-size: 8.5px; color: var(--t2); text-transform: uppercase; letter-spacing: .6px; margin-top: 6px; line-height: 1.4; font-weight: 600; }
-.pk-ci { font-size: 9px; color: var(--t3); font-family: var(--font-data); margin-top: 2px; white-space: nowrap; }
 @media (min-width: 640px) { .pk { padding: 16px 14px; } .pk-v { font-size: 26px; } .pk-l { font-size: 9px; } }
 
 .sec-hdr { font-size: 10px; font-weight: 600; letter-spacing: 1.5px; text-transform: uppercase; color: var(--t2);
@@ -69,22 +68,6 @@ details > summary.sec-hdr::-webkit-details-marker { display: none; }
 details > summary.sec-hdr::before { content: '▸'; color: var(--t2); font-size: 11px; }
 details[open] > summary.sec-hdr::before { content: '▾'; }
 
-.month-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; padding: 0 16px 4px; }
-@media (min-width: 640px) { .month-grid { grid-template-columns: repeat(3, 1fr); gap: 12px; padding: 0 24px 6px; } }
-.mc { display: block; color: inherit; text-decoration: none; background: var(--bg1); border: 1px solid var(--bd); border-radius: var(--r); padding: 10px 12px; }
-.mc:hover { border-color: var(--bd3); }
-.mc-month { font-size: 11px; font-weight: 700; color: var(--t1); margin-bottom: 8px; text-transform: capitalize;
-  display: flex; justify-content: space-between; align-items: center; gap: 6px; }
-.mc-wr { font-size: 10px; font-weight: 700; padding: 2px 8px; border-radius: 100px; font-family: var(--font-data); }
-.wr-good { background: rgba(0,232,127,.08);  color: var(--green);  border: 1px solid rgba(0,232,127,.2); }
-.wr-ok   { background: rgba(245,197,24,.08); color: var(--yellow); border: 1px solid rgba(245,197,24,.2); }
-.wr-bad  { background: rgba(251,78,110,.08); color: var(--red);    border: 1px solid rgba(251,78,110,.2); }
-.wr-none { background: transparent;          color: var(--t3);     border: 1px solid var(--bd2); }
-.mc-stats { display: flex; gap: 6px; }
-.mc-stat { flex: 1; min-width: 0; }
-.mc-sv { font-size: 17px; font-weight: 800; line-height: 1; font-family: var(--font-data); }
-.mc-sl { font-size: 8px; color: var(--t2); text-transform: uppercase; letter-spacing: .5px; margin-top: 4px; }
-.mc-foot { margin-top: 7px; padding-top: 5px; border-top: 1px solid var(--bd); font-size: 9px; color: var(--t2); font-family: var(--font-data); white-space: nowrap; }
 
 /* Tableaux resserrés : pas de largeur minimale, donc jamais de défilement
    horizontal ; le libellé (match, ligue) est la seule colonne qui s'étire. */
@@ -162,12 +145,12 @@ details[open] > summary.sec-hdr::before { content: '▾'; }
   {% if global_s %}
 
   {# ── À la une : le MOIS CHOISI (demande opérateur du 2026-11-25) ─────
-     Le mois en grand, le global en bandeau dessous, les autres mois repliés.
+     Le mois en grand, le global (gagnés, perdus, remboursés) dessous.
      Règle dure n°7 : jamais un taux nu — l'intervalle de Wilson et le point
      mort après taxe sont rendus sous le taux, la couleur porte le verdict
      (vert : démontré rentable, rouge : démontré perdant, jaune : rien de
      démontré). « Tous les mois » met le global à la une et retire le
-     bandeau (doublon) : perf_view.une_et_autres_mois. #}
+     bandeau (doublon) : perf_view.une_du_mois. #}
   {% set u_col = 'var(--t3)' if une.win_rate is none else ('var(--green)' if une.above_breakeven else ('var(--red)' if une.below_breakeven else 'var(--yellow)')) %}
   <section class="une" style="--u:{{ u_col }}"{% if une.phantoms and (une.phantoms.wins + une.phantoms.losses) %} title="hors {{ une.phantoms.wins }}–{{ une.phantoms.losses }} fantômes non envoyés"{% endif %}>
     <div class="une-top">
@@ -189,72 +172,22 @@ details[open] > summary.sec-hdr::before { content: '▾'; }
     </div>
   </section>
 
-  {# ── Global : toute la fenêtre, en bandeau compact ──────────────────
-     Les fantômes golden hour (< T-2h, jamais envoyés) restent hors de tous
-     les chiffres, comptés en infobulle seulement. La résolution (réglés /
-     réglés + sans score) reste visible : sans elle la page ne décrit que les
-     paris qu'on a su suivre — biais de survie, perf_view.resolution_rate. #}
+  {# ── Global : gagnés, perdus, remboursés, rien d'autre (demande
+     opérateur du 2026-11-25 : « met juste global avec total gagné, perdu,
+     remboursé, masquer tout le reste » ; les autres mois aussi, joignables
+     par le menu). Aucun taux ici, donc pas de règle n°7 à rendre. Ce qui
+     n'est plus à l'écran reste en infobulle : résolution (biais de survie,
+     perf_view.resolution_rate) et fantômes golden hour (< T-2h, jamais
+     envoyés, hors de tous les chiffres). « Tous les mois » met déjà le
+     global à la une : pas de doublon. #}
   {% set r = global_s.resolution %}
   {% if not une.global %}
-  {% set g_col = 'var(--green)' if global_s.above_breakeven else ('var(--red)' if global_s.below_breakeven else 'var(--yellow)') %}
-  <div class="sec-hdr">&#9632; GLOBAL <em>{{ depuis }}</em></div>
-  <div class="perf-kpis">
-    <div class="pk" title="{{ global_s.settled }} réglés : {{ global_s.wins }} gagnés, {{ global_s.losses }} perdus, {{ global_s.pushes }} remboursés · IC 95 % {{ global_s.win_rate_lo }}–{{ global_s.win_rate_hi }} %{% if global_s.p_breakeven is not none %} · point mort après taxe {{ "%.0f"|format(global_s.p_breakeven) }} %{% endif %} · hors {{ global_s.phantoms.wins }}–{{ global_s.phantoms.losses }} fantômes à moins de 2 h du coup d'envoi, jamais envoyés">
-      <div class="pk-v" style="color:{{ g_col }}">{{ "%.1f"|format(global_s.win_rate) }}%</div>
-      <div class="pk-l">Réussite</div>
-      <div class="pk-ci">{{ "%.0f"|format(global_s.win_rate_lo) }}&ndash;{{ "%.0f"|format(global_s.win_rate_hi) }}{% if global_s.p_breakeven is not none %} &middot; s.{{ "%.0f"|format(global_s.p_breakeven) }}{% endif %}</div>
-    </div>
-    <div class="pk" title="Mise plate 1 unité, après taxe">
-      <div class="pk-v {{ 'pos' if global_s.pnl_units >= 0 else 'neg' }}">{{ "%+.1f"|format(global_s.pnl_units) }}</div>
-      <div class="pk-l">Unités</div>
-      <div class="pk-ci"><span class="pos">{{ global_s.wins }}</span>&ndash;<span class="neg">{{ global_s.losses }}</span></div>
-    </div>
-    <div class="pk">
-      {% if global_s.clv_is_real and global_s.avg_clv is not none %}
-      <div class="pk-v {{ 'pos' if global_s.avg_clv >= 0 else 'neg' }}">{{ "%+.2f"|format(global_s.avg_clv) }}%</div>
-      <div class="pk-l">CLV</div>
-      <div class="pk-ci">{{ global_s.clv_n }} mesurés</div>
-      {% else %}
-      <div class="pk-v" style="color:var(--t3)">&mdash;</div>
-      <div class="pk-l">CLV</div>
-      {% endif %}
-    </div>
-    <div class="pk" title="{{ r.settled }} réglés sur {{ r.denom }} suivis ; {{ r.sans_score }} sans score (expirés ou clos sur leur seule clôture), absents de tous les chiffres">
-      {% if r and r.rate_pct is not none %}
-      {% set res_color = 'var(--green)' if r.rate_pct >= 80 else ('var(--yellow)' if r.rate_pct >= 50 else 'var(--red)') %}
-      <div class="pk-v" style="color:{{ res_color }}">{{ "%.0f"|format(r.rate_pct) }}%</div>
-      {% else %}
-      <div class="pk-v" style="color:var(--t3)">&mdash;</div>
-      {% endif %}
-      <div class="pk-l">Résolus</div>
-      {% if r %}<div class="pk-ci">{{ r.settled }}/{{ r.denom }}</div>{% endif %}
-    </div>
+  <div class="sec-hdr">&#9632; GLOBAL</div>
+  <div class="perf-kpis" title="{{ depuis }} · {{ global_s.settled }} réglés{% if r and r.rate_pct is not none %} · {{ r.settled }} sur {{ r.denom }} suivis, {{ r.sans_score }} sans score{% endif %} · hors {{ global_s.phantoms.wins }}–{{ global_s.phantoms.losses }} fantômes à moins de 2 h du coup d'envoi, jamais envoyés">
+    <div class="pk"><div class="pk-v" style="color:var(--green)">{{ global_s.wins }}</div><div class="pk-l">Gagnés</div></div>
+    <div class="pk"><div class="pk-v" style="color:var(--red)">{{ global_s.losses }}</div><div class="pk-l">Perdus</div></div>
+    <div class="pk"><div class="pk-v" style="color:var(--t1)">{{ global_s.pushes }}</div><div class="pk-l">Remboursés</div></div>
   </div>
-  {% endif %}
-
-  {# ── Autres mois : repliés, une carte = un lien vers ce mois ─────────
-     Pastille = verdict de l'intervalle (vert : entier au-dessus du point
-     mort ; rouge : entier en dessous ; jaune : rien de démontré). Fantômes
-     du mois en infobulle, jamais dans le taux. #}
-  {% if autres %}
-  <details>
-    <summary class="sec-hdr">&#9632; {{ 'PAR MOIS' if une.global else 'AUTRES MOIS' }} <em>{{ autres|length }}</em></summary>
-    <div class="month-grid">
-      {% for m in autres %}
-      {% set wr_cls = 'wr-none' if m.win_rate is none else ('wr-good' if m.above_breakeven else ('wr-bad' if m.below_breakeven else 'wr-ok')) %}
-      <a class="mc" href="?mois={{ m.month }}"{% if m.phantoms and (m.phantoms.wins + m.phantoms.losses) %} title="hors {{ m.phantoms.wins }}–{{ m.phantoms.losses }} fantômes non envoyés"{% endif %}>
-        <div class="mc-month">{{ m.label }}
-          <span class="mc-wr {{ wr_cls }}">{% if m.win_rate is not none %}{{ "%.0f"|format(m.win_rate) }}%{% else %}&mdash;{% endif %}</span></div>
-        <div class="mc-stats">
-          <div class="mc-stat"><div class="mc-sv" style="color:var(--green)">{{ m.wins }}</div><div class="mc-sl">Gagnés</div></div>
-          <div class="mc-stat"><div class="mc-sv" style="color:var(--red)">{{ m.losses }}</div><div class="mc-sl">Perdus</div></div>
-          <div class="mc-stat"><div class="mc-sv {{ 'pos' if m.pnl_units >= 0 else 'neg' }}">{{ "%+.1f"|format(m.pnl_units) }}</div><div class="mc-sl">Unités</div></div>
-        </div>
-        <div class="mc-foot" title="Intervalle de Wilson 95 % · point mort après taxe">{% if m.win_rate is not none %}IC {{ "%.0f"|format(m.win_rate_lo) }}&ndash;{{ "%.0f"|format(m.win_rate_hi) }}{% if m.p_breakeven is not none %} &middot; seuil {{ "%.0f"|format(m.p_breakeven) }}{% endif %}{% else %}&mdash;{% endif %}</div>
-      </a>
-      {% endfor %}
-    </div>
-  </details>
   {% endif %}
 
   {# ── Cellules communes ─────────────────────────────────────────────

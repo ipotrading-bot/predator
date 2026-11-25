@@ -58,7 +58,7 @@ def test_les_fantomes_sont_hors_ecran_mais_toujours_separes():
         assert avant.rfind('title="') > avant.rfind('">'), (
             "une mention des fantômes est rendue à l'écran : " + corps[m.start()-60:m.start()+20])
     # …et la séparation recommandés / fantômes reste rendue (gardien historique).
-    assert "global_s.phantoms" in PERF and "m.phantoms" in PERF
+    assert "global_s.phantoms" in PERF and "une.phantoms" in PERF   # cartes de mois retirées le 2026-11-25
 
 
 def test_chaque_taux_porte_wilson_et_point_mort():
