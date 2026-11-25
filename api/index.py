@@ -38,6 +38,7 @@ from flask import Flask, jsonify, render_template, request, send_from_directory
 from core.perf_view import (ALL_MONTHS as _ALL_MONTHS,
                             avec_date_du_match as _avec_date_du_match,
                             depuis_label as _depuis_label,
+                            cumul_months as _cumul_months,
                             filter_rows as _perf_filter_rows,
                             league_breakdown as _league_breakdown,
                             market_breakdown as _market_breakdown,
@@ -734,7 +735,10 @@ _COUPS_D_ENVOI_LOT = 400
 # octobre 16 = 1 018 lignes pour la fenêtre de trois mois, donc les 18 plus
 # anciennes d'août sortaient de leur propre carte. Borne dure : cinq pages.
 _LEDGER_PAGE = 1000
-_LEDGER_PAGES_MAX = 5
+# 20 000 lignes. Était 5 : depuis que /performance lit TOUT depuis août
+# (cumul, 2026-11-25), ~600 lignes par mois l'auraient atteint au printemps
+# 2027 et le global aurait été tronqué sans le dire. Atteint → log ERROR.
+_LEDGER_PAGES_MAX = 20
 
 
 def _ledger_par_pages(sb, depuis: str | None) -> list:
@@ -755,6 +759,9 @@ def _ledger_par_pages(sb, depuis: str | None) -> list:
         lignes.extend(lot)
         if len(lot) < _LEDGER_PAGE:
             break
+    else:
+        log.error("Ledger : plafond de %d lignes atteint, lecture TRONQUÉE — "
+                  "relever _LEDGER_PAGES_MAX", _LEDGER_PAGE * _LEDGER_PAGES_MAX)
     return lignes
 
 
@@ -794,13 +801,18 @@ def performance():
     # la seule porte vers août, et il ne propose que `shown_months()`.
     months = _perf_shown_months()
     mois = _pick_month(request.args.get("mois"), months)
+    # CUMUL depuis l'époque zéro (août), mois en cours compris, jour après
+    # jour (demande opérateur du 2026-11-25) : la fenêtre `months` ne pilote
+    # plus que le menu. Avant, le global ne comptait que les 3 derniers mois
+    # et aurait BAISSÉ au 1er décembre (septembre sortant de la fenêtre).
+    cumul = _cumul_months()
     try:
         sb = _db()
         if sb:
             # Borne SQL sur le plus ancien mois affiché, lecture par pages :
             # le `limit(500)` d'origine, puis le `limit(1000)`, tronquaient
             # les lignes les plus anciennes de la fenêtre sans le dire.
-            data = _ledger_par_pages(sb, f"{months[-1]}-01" if months else None)
+            data = _ledger_par_pages(sb, f"{cumul[-1]}-01" if cumul else None)
             # Mission 2 (2026-08-22) : sports retirés et mois archivés
             # n'apparaissent plus — filtre d'AFFICHAGE (core/perf_view.py),
             # rien n'est supprimé du ledger.
@@ -811,7 +823,8 @@ def performance():
             # ci-dessus reste sur `created_at` : un match se règle toujours
             # APRÈS son coup d'envoi, elle ne peut donc écarter aucune ligne
             # d'un mois affiché.
-            rows = _perf_filter_rows(_avec_date_du_match(data, _coups_d_envoi(sb, data)))
+            rows = _perf_filter_rows(_avec_date_du_match(data, _coups_d_envoi(sb, data)),
+                                     months_shown=len(cumul))
 
             if rows:
                 # (Retiré le 2026-08-22 — simplification demandée par
@@ -947,7 +960,7 @@ def performance():
                 # À LA UNE le mois choisi, le global en bandeau (gagnés,
                 # perdus, remboursés), les autres mois masqués — demande
                 # opérateur du 2026-11-25.
-                une = _une_du_mois(monthly, mois, global_s, _depuis_label(months))
+                une = _une_du_mois(monthly, mois, global_s, _depuis_label(cumul))
 
                 # PAR LIGUE — « quelles ligues perdent plus souvent ? »
                 # (2026-09-03). Meilleure réussite d'abord (10-31). Le tableau ne CLASSE que
@@ -976,8 +989,8 @@ def performance():
                            league_min_n=_LEAGUE_MIN_N,
                            months=[(m, _month_label(m)) for m in months],
                            mois=mois, all_months=_ALL_MONTHS,
-                           depuis=_depuis_label(months),
-                           mois_label=(_depuis_label(months) if mois == _ALL_MONTHS
+                           depuis=_depuis_label(cumul),
+                           mois_label=(_depuis_label(cumul) if mois == _ALL_MONTHS
                                        else _month_label(mois or "")),
                            sport_emoji=_SPORT_EMOJI, sport_label=_SPORT_LABEL)
 

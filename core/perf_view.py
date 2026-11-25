@@ -92,6 +92,22 @@ def mois_de(r: dict) -> str:
     return (r.get("match_time") or r.get("created_at") or "")[:7]
 
 
+def cumul_months(now: datetime | None = None) -> list[str]:
+    """TOUS les mois depuis l'époque zéro (`PERF_START_MONTH`) jusqu'au mois
+    courant inclus, du plus récent au plus ancien.
+
+    Demande opérateur du 2026-11-25 : « dans le global toujours additionner le
+    mois en cours jour après jour, le résultat doit toujours être à jour » —
+    départ en AOÛT (décision opérateur, même jour). Jusque-là les chiffres de
+    /performance portaient sur la fenêtre glissante `shown_months()` : le 1er
+    décembre septembre en serait sorti et le GLOBAL aurait BAISSÉ. La fenêtre
+    ne sert plus qu'au menu des mois."""
+    now = now or datetime.now(timezone.utc)
+    debut_y, debut_m = (int(x) for x in PERF_START_MONTH.split("-"))
+    n = (now.year - debut_y) * 12 + (now.month - debut_m) + 1
+    return shown_months(now, max(n, 0))
+
+
 def depuis_label(months: list[str]) -> str:
     """« depuis septembre 2026 » — le plus ANCIEN mois de la fenêtre affichée.
 

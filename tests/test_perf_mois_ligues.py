@@ -416,6 +416,37 @@ class TestRecommandesEtMarches:
         assert "Les chiffres du haut de page" not in g
 
 
+class TestGlobalCumule:
+    """Demande opérateur du 2026-11-25 : le global additionne le mois en cours
+    jour après jour et ne perd jamais un mois ; départ en août (décision
+    opérateur). La fenêtre de 3 mois ne pilote plus que le menu."""
+
+    def test_le_cumul_part_d_aout_et_finit_au_mois_courant(self):
+        from datetime import datetime, timezone
+        nov = datetime(2026, 11, 25, tzinfo=timezone.utc)
+        assert perf_view.cumul_months(nov) == ["2026-11", "2026-10", "2026-09", "2026-08"]
+        dec = datetime(2026, 12, 1, tzinfo=timezone.utc)
+        assert perf_view.cumul_months(dec)[-1] == "2026-08" and perf_view.cumul_months(dec)[0] == "2026-12"
+        assert perf_view.shown_months(dec) == ["2026-12", "2026-11", "2026-10"]   # le menu, lui, glisse
+
+    def test_un_mois_ne_sort_jamais_du_cumul(self):
+        from datetime import datetime, timezone
+        rows = [_r("2026-08", "WIN"), _r("2026-09", "WIN"), _r("2026-12", "LOSS")]
+        dec = datetime(2026, 12, 1, tzinfo=timezone.utc)
+        gardees = perf_view.filter_rows(rows, now=dec, months_shown=len(perf_view.cumul_months(dec)))
+        assert len(gardees) == 3
+        # juillet, avant l'époque, ne revient pas
+        assert perf_view.filter_rows([_r("2026-07", "WIN")], now=dec,
+                                     months_shown=len(perf_view.cumul_months(dec))) == []
+
+    def test_la_route_lit_et_compte_depuis_l_epoque(self):
+        import api.index as dash
+        src = inspect.getsource(dash.performance)
+        assert "cumul = _cumul_months()" in src
+        assert 'f"{cumul[-1]}-01"' in src and "months_shown=len(cumul)" in src
+        assert "months[-1]" not in src
+
+
 class TestALaUne:
     """Demande opérateur du 2026-11-25 : le mois choisi À LA UNE en grand, le
     global réduit à gagnés / perdus / remboursés, les autres mois masqués."""

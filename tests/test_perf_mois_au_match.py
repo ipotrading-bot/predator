@@ -133,7 +133,7 @@ class TestBranchement:
         import api.index as dash
         src = inspect.getsource(dash.performance)
         assert '(r.get("created_at") or "")[:7]' not in src
-        assert "_mois_de(r)" in src and "depuis=_depuis_label(months)" in src
+        assert "_mois_de(r)" in src and "depuis=_depuis_label(cumul)" in src   # cumul depuis août (2026-11-25)
 
     def test_perf_view_n_a_qu_une_lecture_du_mois(self):
         from core import perf_view
