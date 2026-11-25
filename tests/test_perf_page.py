@@ -49,6 +49,15 @@ def test_reussite_puis_resultat_en_premiere_colonne():
     assert premier_th == "Résultat", premier_th
 
 
+def test_les_tableaux_n_ont_plus_de_colonne_unites():
+    """Demande opérateur du 2026-11-25 : « dans tous les autres tableaux,
+    masquer unités ». Elles restent sur la carte du mois à la une."""
+    m = re.search(r"\{% macro th_row\(titre\) %\}(.*?)\{% endmacro %\}", PERF, re.S)
+    assert "Unités" not in m.group(1)
+    assert "sp.pnl_units" not in PERF and "x.pnl_units" not in PERF
+    assert "une.pnl_units" in PERF
+
+
 def test_les_fantomes_sont_hors_ecran_mais_toujours_separes():
     corps = _sans_commentaires_jinja(PERF)
     # Plus de tuile ni de pied de carte « fantômes » : chaque mention restante

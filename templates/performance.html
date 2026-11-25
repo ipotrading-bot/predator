@@ -208,8 +208,11 @@ details[open] > summary.sec-hdr::before { content: '▾'; }
   {% macro cell_gp(x) %}
   <td class="num gp" title="gagnés–perdus"><span class="pos">{{ x.wins }}</span>&ndash;<span class="neg">{{ x.losses }}</span></td>
   {% endmacro %}
+  {# Plus de colonne Unités dans les tableaux (demande opérateur du
+     2026-11-25) : réussite, libellé, G–P. Les unités restent sur la carte
+     du mois. #}
   {% macro th_row(titre) %}
-  <thead><tr><th title="Taux de réussite · IC 95 % · point mort après taxe">Réussite</th><th>{{ titre }}</th><th class="num" title="Mise plate 1 unité">Unités</th><th class="num" title="gagnés–perdus">G&ndash;P</th></tr></thead>
+  <thead><tr><th title="Taux de réussite · IC 95 % · point mort après taxe">Réussite</th><th>{{ titre }}</th><th class="num" title="gagnés–perdus">G&ndash;P</th></tr></thead>
   {% endmacro %}
 
   {# ── Par sport — réussite décroissante (demande opérateur 2026-09-09 ;
@@ -228,7 +231,6 @@ details[open] > summary.sec-hdr::before { content: '▾'; }
           <tr>
             {{ cell_rate(sp) }}
             <td class="lbl">{{ sport_emoji.get(sp.sport, '🎯') }} {{ sport_label.get(sp.sport, sp.sport) }}</td>
-            <td class="num {{ 'pos' if sp.pnl_units >= 0 else 'neg' }}">{{ "%+.1f"|format(sp.pnl_units) }}</td>
             {{ cell_gp(sp) }}
           </tr>
           {% endfor %}
@@ -253,7 +255,6 @@ details[open] > summary.sec-hdr::before { content: '▾'; }
         <tr>
           {{ cell_rate(x) }}
           <td class="lbl"{% if x.label is defined and x.label != x[cle] %} title="{{ x[cle] }}"{% endif %}>{{ sport_emoji.get(x.sport, '🎯') }} {{ x.label if x.label is defined else x[cle] }}</td>
-          <td class="num {{ 'pos' if x.pnl_units >= 0 else 'neg' }}">{{ "%+.1f"|format(x.pnl_units) }}</td>
           {{ cell_gp(x) }}
         </tr>
         {% endfor %}
