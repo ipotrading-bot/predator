@@ -455,6 +455,27 @@ def phantom_rows(rows: list[dict]) -> list[dict]:
     return [r for r in rows if is_phantom(r)]
 
 
+# Sports AFFICHÉS sous un autre dans les tableaux PAR SPORT et PAR MARCHÉ
+# (demande opérateur du 2026-11-25 : « fusionner Euroligue dans basket »).
+# Affichage SEUL : le moteur garde `euroleague_basketball` à part (Kelly,
+# seuil, correction domicile dédiés) et PAR LIGUE la montre toujours seule.
+_FAMILLE_AFFICHEE = {"euroleague_basketball": "basketball"}
+
+# Libellés courts des marchés du ledger (2026-11-25 : la page montrait les
+# clés brutes « spreads_away »). Le h2h du football est un DNB (pari remboursé
+# sur nul, run_engine), d'où son libellé à part. Clé inconnue : affichée telle
+# quelle, jamais masquée.
+_LIBELLE_MARCHE = {"h2h": "Vainqueur", "totals_over": "Plus",
+                   "totals_under": "Moins", "spreads_home": "Handicap dom.",
+                   "spreads_away": "Handicap ext."}
+
+
+def libelle_marche(sport: str, marche: str) -> str:
+    if sport == "soccer" and marche == "h2h":
+        return "Nul remboursé"
+    return _LIBELLE_MARCHE.get(marche, marche)
+
+
 def market_breakdown(rows: list[dict], tax_rate: float, min_n: int = 5) -> list[dict]:
     """Réussite par (sport, marché), la MEILLEURE réussite en premier — même contrat
     que `league_breakdown`. `market_type` d'abord, `market` en repli : les deux
@@ -467,25 +488,19 @@ def market_breakdown(rows: list[dict], tax_rate: float, min_n: int = 5) -> list[
     groupes: dict[tuple[str, str], list[dict]] = {}
     for r in rows:
         mkt = (r.get("market_type") or r.get("market") or "").strip() or "(sans marché)"
-        groupes.setdefault((r.get("sport") or "", mkt), []).append(r)
+        sport = r.get("sport") or ""
+        groupes.setdefault((_FAMILLE_AFFICHEE.get(sport, sport), mkt), []).append(r)
     out = []
     for (sport, mkt), lignes in groupes.items():
         decisifs = [r for r in lignes if r.get("outcome") in _DECISIF]
         if len(decisifs) < max(min_n, 1):
             continue
         d = _bloc_decisif(decisifs, tax_rate)
-        d.update({"sport": sport, "market": mkt,
+        d.update({"sport": sport, "market": mkt, "label": libelle_marche(sport, mkt),
                   "expired": sum(1 for r in lignes if r.get("outcome") == "expired")})
         out.append(d)
     out.sort(key=lambda d: _par_reussite(d, "market"))
     return out
-
-
-# Sports AFFICHÉS sous un autre dans le tableau PAR SPORT (demande opérateur
-# du 2026-11-25 : « fusionner Euroligue dans basket »). Affichage SEUL : le
-# moteur garde `euroleague_basketball` à part (Kelly, seuil, correction
-# domicile dédiés) et la ventilation PAR LIGUE le montre toujours seul.
-_FAMILLE_AFFICHEE = {"euroleague_basketball": "basketball"}
 
 
 def sport_breakdown(rows: list[dict], tax_rate: float,

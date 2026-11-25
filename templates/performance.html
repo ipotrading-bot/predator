@@ -283,7 +283,7 @@ details[open] > summary.sec-hdr::before { content: '▾'; }
         {% for x in lignes %}
         <tr>
           {{ cell_rate(x) }}
-          <td class="lbl">{{ sport_emoji.get(x.sport, '🎯') }} {{ x[cle] }}</td>
+          <td class="lbl"{% if x.label is defined and x.label != x[cle] %} title="{{ x[cle] }}"{% endif %}>{{ sport_emoji.get(x.sport, '🎯') }} {{ x.label if x.label is defined else x[cle] }}</td>
           <td class="num {{ 'pos' if x.pnl_units >= 0 else 'neg' }}">{{ "%+.1f"|format(x.pnl_units) }}</td>
           {{ cell_gp(x) }}
         </tr>
