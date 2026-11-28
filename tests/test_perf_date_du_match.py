@@ -44,7 +44,11 @@ class TestBranchement:
         src = (_RACINE / "api" / "index.py").read_text(encoding="utf-8")
         # Depuis le 2026-10-02 TOUTES les lignes sont datées, avant le filtre
         # de fenêtre — voir tests/test_perf_mois_au_match.py.
-        assert "_perf_filter_rows(_avec_date_du_match(data, _coups_d_envoi(sb, data))," in src
+        # Depuis le 2026-11-28 la lecture (ledger + coups d'envoi) passe par
+        # `_lecture_ledger`, mémorisée une minute — tests/test_dashboard_vitesse.py.
+        assert "data, coups = _lecture_ledger(sb," in src
+        assert "coups = _coups_d_envoi(sb, data)" in src
+        assert "_perf_filter_rows(_avec_date_du_match(data, coups)," in src
 
     def test_le_template_affiche_le_coup_d_envoi(self):
         tpl = (_RACINE / "templates" / "performance.html").read_text(encoding="utf-8")

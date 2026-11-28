@@ -309,8 +309,10 @@ class TestBranchement:
         src = inspect.getsource(dash.performance)
         for attendu in ("_monthly_summary(", "_league_breakdown(", "_pick_month(",
                         "_rows_of_month(", 'request.args.get("mois")',
-                        "_perf_filter_rows(", "_ledger_par_pages("):
+                        "_perf_filter_rows(", "_lecture_ledger("):
             assert attendu in src, attendu
+        # La lecture paginée vit derrière la mémoire d'une minute (2026-11-28).
+        assert "_ledger_par_pages(sb, depuis)" in inspect.getsource(dash._lecture_ledger)
         # La borne SQL sur le plus ancien mois affiché vit dans la lecture
         # paginée (2026-10-02).
         assert ".gte(\"created_at\"" in inspect.getsource(dash._ledger_par_pages)

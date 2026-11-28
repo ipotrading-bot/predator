@@ -1,5 +1,6 @@
 {
   "version": 2,
+  "regions": ["arn1"],
   "env": {
     "PYTHON_VERSION": "3.12"
   },
