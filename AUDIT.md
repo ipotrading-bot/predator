@@ -247,6 +247,9 @@ C'est le tableau à consulter avant de toucher à quoi que ce soit.
 | `anon` ne peut plus écrire `meta` (RLS + GRANT retirés) | `sql/migrate_v10_9_scan_request_rpc.sql` §3 |
 | Le déploiement Vercel ne porte que les 4 variables réellement lues | README §« Le dashboard n'a plus de clé d'écriture » |
 | Aucun script du dashboard ne vient d'une URL flottante | `tests/test_dashboard_cdn.py::TestPlusAucuneURLFlottante` |
+| La fonction Vercel tourne dans la région de la base (`regions: ["arn1"]`, Supabase `eu-north-1`) : sans la clé, Vercel retombe sur `iad1` et chaque requête SQL traverse l'Atlantique | `tests/test_dashboard_vitesse.py::TestLaFonctionVitPresDeLaBase` |
+| Aucune page ni API portant une DONNÉE n'est mise en cache (navigateur ou CDN) ; seuls les fichiers figés (`/static/`, manifest, favicon) et les pages sans donnée (`/system`) passent par le CDN, jamais une erreur | `tests/test_dashboard_vitesse.py::TestPolitiqueDeCache` |
+| `/performance` relit le ledger au plus une fois par minute ; une panne ne se mémorise pas | `tests/test_dashboard_vitesse.py::TestLectureDuLedgerMemorisee` |
 | Tout script DISTANT porte `integrity` ET `crossorigin` | `…::TestToutTiersEstVerifie` |
 | Tailwind est servi par le dépôt, et son empreinte est vérifiée | `…::TestTailwindEstServiParLeDepot` |
 | L'ordre de chargement des scripts reste correct | `…::TestLaPageResteChargeable` |

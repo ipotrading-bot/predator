@@ -125,23 +125,58 @@ def _inject_version():
 # apparaitre un deploiement en moins d'un quart d'heure.
 _STATIC_MAX_AGE = 600
 
+# Durée de cache au CDN (`s-maxage`, lu par Vercel seul, jamais par le
+# navigateur). Longue SANS risque de périmé : le cache du CDN Vercel est
+# propre à chaque déploiement, un déploiement neuf repart de zéro. Sans
+# elle, le CDN suivait `max-age` : toutes les dix minutes chaque icône et
+# chaque feuille de style réveillait la fonction Python (2026-11-28).
+_CDN_MAX_AGE = 31536000
+
+# Servis hors de /static/ mais tout aussi figés : `/manifest.json` et
+# `/favicon.ico` sont liés par les CINQ gabarits. Ils partaient en
+# `no-store`, donc deux invocations de la fonction par navigation, pour deux
+# fichiers qui ne changent qu'au déploiement.
+_CHEMINS_FIGES = ("/manifest.json", "/favicon.ico")
+
+# Pages SANS donnée : le gabarit ne reçoit que `version`. Servies par le CDN,
+# elles s'ouvrent même quand la fonction dort ; le navigateur revalide à
+# chaque visite (`max-age=0`), il ne garde donc jamais une version périmée.
+_PAGES_SANS_DONNEE = ("/system",)
+
+
+def _politique_de_cache(chemin: str) -> dict:
+    """Les en-têtes de cache d'une réponse, d'après son chemin. Pur.
+
+    Trois familles, et une seule règle : rien de ce qui porte une DONNÉE
+    n'est mis en cache, nulle part.
+      · fichiers figés (/static/, manifest, favicon) : dix minutes dans le
+        navigateur, jusqu'au prochain déploiement au CDN ;
+      · pages sans donnée (/system) : CDN, revalidation à chaque visite ;
+      · tout le reste (signaux, bilans, API) : `no-store`. Un signal périmé
+        affiché comme actif est un faux pari."""
+    if chemin.startswith("/static/") or chemin in _CHEMINS_FIGES:
+        return {"Cache-Control":
+                f"public, max-age={_STATIC_MAX_AGE}, s-maxage={_CDN_MAX_AGE}"}
+    if chemin in _PAGES_SANS_DONNEE:
+        return {"Cache-Control":
+                f"public, max-age=0, s-maxage={_CDN_MAX_AGE}, must-revalidate"}
+    return {"Cache-Control": "no-cache, no-store, must-revalidate",
+            "Pragma": "no-cache", "Expires": "0"}
+
 
 @app.after_request
 def no_cache(response):
-    """Pas de cache sur les PAGES, cache court sur les ASSETS.
+    """Pas de cache sur les PAGES de données, cache sur ce qui est figé.
 
     Le no-store s'appliquait indistinctement : les donnees doivent en effet
     etre fraiches a chaque chargement (un signal perime affiche comme actif
     est un faux pari), mais l'appliquer aussi a /static faisait
     re-telecharger predator.css et les icones a chaque navigation — couteux
-    sur mobile et sans le moindre benefice de fraicheur.
+    sur mobile et sans le moindre benefice de fraicheur. La règle vit dans
+    `_politique_de_cache`. Une erreur (404, 500) n'est jamais mise en cache.
     """
-    if request.path.startswith("/static/"):
-        response.headers["Cache-Control"] = f"public, max-age={_STATIC_MAX_AGE}"
-        return response
-    response.headers["Cache-Control"] = "no-cache, no-store, must-revalidate"
-    response.headers["Pragma"]        = "no-cache"
-    response.headers["Expires"]       = "0"
+    chemin = request.path if response.status_code < 400 else ""
+    response.headers.update(_politique_de_cache(chemin))
     return response
 
 
@@ -785,6 +820,32 @@ def _coups_d_envoi(sb, rows: list) -> dict:
     return out
 
 
+# Durée de vie de la lecture du ledger gardée en mémoire du processus. Le
+# ledger ne bouge qu'à l'audit (toutes les 3 h) : une minute de retard ne se
+# voit pas, alors que chaque changement de mois dans le menu relisait TOUT
+# depuis août — 9 requêtes à la suite, 1,8 Mo, 3,7 s mesurées le 2026-11-28.
+_LECTURE_LEDGER_TTL_S = 60
+
+# {depuis: (instant de lecture, lignes, coups d'envoi)} — mémoire du PROCESSUS.
+_lecture_ledger_memo: dict = {}
+
+
+def _lecture_ledger(sb, depuis: str | None, maintenant: float | None = None) -> tuple:
+    """(lignes du ledger, coups d'envoi) pour /performance, relus au plus une
+    fois par `_LECTURE_LEDGER_TTL_S`. Les lignes rendues sont celles de la
+    mémoire : ne JAMAIS les modifier (`avec_date_du_match` les copie). Une
+    panne du ledger remonte et ne mémorise rien."""
+    t = time.monotonic() if maintenant is None else maintenant
+    vu = _lecture_ledger_memo.get(depuis)
+    if vu and 0 <= t - vu[0] < _LECTURE_LEDGER_TTL_S:
+        return vu[1], vu[2]
+    data = _ledger_par_pages(sb, depuis)
+    coups = _coups_d_envoi(sb, data)
+    _lecture_ledger_memo.clear()      # une seule fenêtre gardée, jamais d'empilement
+    _lecture_ledger_memo[depuis] = (t, data, coups)
+    return data, coups
+
+
 @app.route("/performance")
 def performance():
     rows: list      = []
@@ -812,7 +873,7 @@ def performance():
             # Borne SQL sur le plus ancien mois affiché, lecture par pages :
             # le `limit(500)` d'origine, puis le `limit(1000)`, tronquaient
             # les lignes les plus anciennes de la fenêtre sans le dire.
-            data = _ledger_par_pages(sb, f"{cumul[-1]}-01" if cumul else None)
+            data, coups = _lecture_ledger(sb, f"{cumul[-1]}-01" if cumul else None)
             # Mission 2 (2026-08-22) : sports retirés et mois archivés
             # n'apparaissent plus — filtre d'AFFICHAGE (core/perf_view.py),
             # rien n'est supprimé du ledger.
@@ -823,7 +884,7 @@ def performance():
             # ci-dessus reste sur `created_at` : un match se règle toujours
             # APRÈS son coup d'envoi, elle ne peut donc écarter aucune ligne
             # d'un mois affiché.
-            rows = _perf_filter_rows(_avec_date_du_match(data, _coups_d_envoi(sb, data)),
+            rows = _perf_filter_rows(_avec_date_du_match(data, coups),
                                      months_shown=len(cumul))
 
             if rows:
