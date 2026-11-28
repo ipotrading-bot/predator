@@ -5590,6 +5590,95 @@ une valeur périmée dans la table gagne quand même.
 
 ## Dashboard et base
 
+### La fonction tournait sur un autre continent que la base (2026-11-28)
+
+Symptôme (plainte opérateur du 2026-11-28) : « Predator est lent au
+démarrage, les liens aussi chargent lentement ».
+
+MESURÉ le 2026-11-28 avant correctif, par curl sur
+`https://predator-two.vercel.app`, temps jusqu'au premier octet : `/` 3,08 s
+au premier appel puis 0,40 à 1,40 s ; `/performance` 3,71 à 4,43 s À CHAQUE
+chargement ; `/ledger` 1,12 à 1,16 s ; `/audit` 0,76 à 0,83 s ; `/api/health`,
+qui ne fait aucune requête en base, 0,13 s.
+
+Trois causes :
+1. La fonction Vercel tournait à Washington : en-tête
+   `x-vercel-id: lhr1::iad1::…`, réglage projet
+   `serverlessFunctionRegion = iad1` — le défaut Vercel, jamais choisi. La
+   base Supabase (projet `chnyxeyqpdipeogirrpu`) est en `eu-north-1`,
+   Stockholm (lu sur l'API de gestion Supabase). Chaque requête SQL
+   traversait l'Atlantique. Contre-mesure : la même route `/performance`,
+   exécutée depuis un poste en Angleterre contre la même base, prenait 1,15 s
+   (9 requêtes ≈ 0,11 s chacune) contre 3,7 s en production.
+2. `/performance` relisait tout le ledger à chaque chargement, y compris à
+   chaque changement de mois dans le menu : 3 pages de `_ledger_par_pages` +
+   6 lots de `_coups_d_envoi` = 9 requêtes à la suite, 2 045 lignes, 1,76 Mo
+   de JSON (29 colonnes en `select *`). C'est le cumul depuis août du
+   2026-11-25 (commit 25c6548) qui a fait passer la lecture de trois mois à
+   tout l'historique ; le coût croît de ~600 lignes par mois.
+3. `/manifest.json` et `/favicon.ico`, liés par les cinq gabarits, étaient
+   servis par des routes hors `/static/` et partaient donc en `no-store` :
+   deux invocations de la fonction par navigation. Les fichiers de `/static/`
+   n'étaient gardés au CDN que 10 minutes (le CDN suivait `max-age=600`).
+
+Écarté par la mesure, à ne pas re-diagnostiquer : le client `supabase` n'est
+PAS la cause du démarrage lent. Import mesuré avec bytecode : flask seul
+0,15 s, flask + postgrest 0,30 s, flask + supabase 0,41 s, `api.index` entier
+0,46 s — remplacer le client par postgrest nu gagnerait 0,1 s. Sans bytecode
+l'import entier coûte 1,74 s, dont 1,11 s pour flask seul.
+
+Correctif (commit dbb7719, fusion 2258982, run CI 46178197566, déploiement
+Vercel `predator-13xmj1hjm` READY à 18:53 UTC) :
+- `vercel.json` : `"regions": ["arn1"]` — Stockholm, même centre de données
+  que la base. Vérifié après déploiement : `x-vercel-id: lhr1::arn1::…`.
+- `api/index.py`, `_lecture_ledger(sb, depuis)` : le couple (lignes du
+  ledger, coups d'envoi) est gardé 60 s en mémoire du processus
+  (`_LECTURE_LEDGER_TTL_S`), une seule fenêtre gardée ; une panne du ledger
+  remonte et ne mémorise rien. Le ledger ne bouge qu'à l'audit (toutes les
+  3 h).
+- `api/index.py`, `_politique_de_cache(chemin)`, fonction pure appelée par
+  `no_cache` : fichiers figés (`/static/`, `/manifest.json`, `/favicon.ico`)
+  en `public, max-age=600, s-maxage=31536000` ; page sans donnée (`/system`)
+  en `public, max-age=0, s-maxage=31536000, must-revalidate` ; tout le reste
+  en `no-store` ; une réponse d'erreur (statut ≥ 400) n'est jamais mise en
+  cache. Le cache du CDN Vercel est propre à chaque déploiement : un
+  déploiement neuf repart de zéro, d'où la durée longue sans risque de
+  périmé.
+
+MESURÉ après correctif, même commande curl, déploiement 2258982 : `/` 0,12 à
+0,14 s à chaud ; `/performance` 1,02 s à la première lecture puis 0,09 à
+0,11 s ; `/performance?mois=2026-10` 0,10 s ; `/ledger` 0,17 à 0,23 s ;
+`/audit` 0,15 à 0,18 s ; `/system`, `/manifest.json`, `/favicon.ico` et le
+CSS 0,02 à 0,08 s, `x-vercel-cache: HIT`. Le démarrage à froid d'après
+correctif n'est PAS encore mesuré au moment de la rédaction : à relever sur
+le premier appel après un déploiement.
+
+Ce qui n'a PAS été fait :
+- le démarrage à froid lui-même (réveil de l'instance + imports Python) n'est
+  pas supprimé ; seule la part « requêtes transatlantiques » l'est ;
+- le client `supabase` reste : 0,1 s à gagner, voir la mesure plus haut ;
+- les polices Google (lien bloquant dans les cinq gabarits) sont laissées :
+  `display=swap` est déjà posé, et les rendre asynchrones ferait clignoter la
+  police à chaque navigation.
+
+⚠️ Ne pas retirer `regions` de `vercel.json` ni « revenir au défaut » : le
+défaut est `iad1`. Si la base change de région, la fonction suit.
+⛔ Ne JAMAIS poser `s-maxage` ni `stale-while-revalidate` sur une page ou une
+API portant une donnée (`/`, `/performance`, `/ledger`, `/audit`, `/api/*`) :
+un signal périmé affiché comme actif est un faux pari. `/system` n'est au CDN
+que parce que sa route ne passe rien au gabarit ; le jour où elle lit la
+base, elle sort de `_PAGES_SANS_DONNEE`.
+⚠️ Le cache NAVIGATEUR des fichiers statiques reste à 10 minutes : pas
+d'empreinte dans les noms de fichiers, un cache navigateur long garderait un
+CSS périmé.
+⚠️ Les lignes rendues par `_lecture_ledger` sont celles de la mémoire : ne
+jamais les modifier en place (`avec_date_du_match` les copie).
+Gardiens : `tests/test_dashboard_vitesse.py::TestLaFonctionVitPresDeLaBase`,
+`::TestLectureDuLedgerMemorisee`, `::TestPolitiqueDeCache` ; branchement de
+la route : `tests/test_perf_date_du_match.py::TestBranchement::test_la_route_lit_les_coups_d_envoi`,
+`tests/test_perf_mois_ligues.py::TestBranchement::test_la_route_utilise_les_fonctions_pures`.
+Invariants portés dans `AUDIT.md` §2.
+
 ### Porte par mot de passe : construite puis RETIRÉE le même jour (2026-11-17)
 
 Constat de l'audit de sécurité du 2026-11-17, mesuré sur la production et
